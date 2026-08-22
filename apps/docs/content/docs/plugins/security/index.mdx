@@ -18,3 +18,11 @@ Plugins are trusted executable packages. Happier keeps their behavior reviewable
 - Use host services for mediated process, network, filesystem, and session operations.
 
 Host access declarations constrain host-mediated services; they are not an operating-system sandbox for arbitrary trusted code. Review source and dependencies before trusting a package.
+
+## In this section
+
+- [Trust model](/plugins/security/trust-model) — the whole-package Install & Trust boundary, and why it is whole-package.
+- [Isolation and boundaries](/plugins/security/sandboxing) — which surfaces are isolated and which are simply trusted code.
+- [Host access](/plugins/security/permissions) — declaring privileged operations, and which declarations the host actually enforces.
+- [Network access](/plugins/security/network) — host-mediated HTTP and narrowly scoped network reach.
+- [Secret handling](/plugins/security/secret-handling) — keeping credentials out of projection and logs.

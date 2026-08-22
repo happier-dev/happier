@@ -82,6 +82,32 @@ That split is intentional:
 - built-in generic ACP agents such as Kiro are declared in `@happier-dev/agents` and consumed by the generic ACP layer
 - `apps/cli/src/backends/**` is retired host-backend residue and must not be recreated
 
+#### One catalog-entry hook owner for bundled and contributed Agents
+
+`apps/cli/src/plugins/projection/registry/agentCatalogEntryHooks.ts#createAgentRuntimeCatalogEntryHooks`
+is the single builder of an Agent's catalog-entry hooks. It has two production callers:
+
+- `sources/generatedBundledPlugins.ts` binds each bundled plugin's
+  `AGENT_RUNTIME_CONTRIBUTION` module, which may carry host callbacks.
+- `projectManifestAgentContribution.ts` builds the same contribution shape from the
+  Agent's manifest for every projected Agent, bundled or installed.
+
+A bundled Agent carries facts such as its vendor-resume level in the host's own
+`@happier-dev/agents` tables. An installed Agent has no host table, so it declares
+those facts in the manifest `catalog` block
+(`PluginAgentCatalogV2Schema` in `packages/protocol/src/plugins/contributions/v2.ts`)
+and reaches the identical catalog contract. `catalog.vendorResume.support` is the
+Agent's declared level; without it the host infers `supported`/`unsupported` from
+`capabilities.sessions.open`, which cannot express `experimental`. An Agent whose
+level resolves to `experimental` without a catalog-owned resume hook fails closed at
+`apps/cli/src/session/runtime/catalogHooks.ts#getVendorResumeSupport` and therefore at
+the daemon spawn resume gate.
+
+Do not add a second builder for a contributed Agent's catalog entry. Manifest-only
+facts (id, CLI subcommand, CLI detect/auth spec, Connected Service ids) stay in
+`agentCliMetadata.ts#createManifestAgentCatalogEntry`; every hook-shaped fact belongs to
+the hook family.
+
 ### 4) App agents catalog: `apps/ui/sources/agents/catalog/catalog.ts`
 
 This is the app’s single public surface for screens:
@@ -92,6 +118,79 @@ This is the app’s single public surface for screens:
   - **behavior registry** (`registry/registryUiBehavior.ts`) for Agent-specific hooks projected from plugin descriptors
 
 First-party Agent UI definitions live with their plugin under `packages/plugins/<agentId>/src/ui/**`. Generated descriptor projections under `apps/ui/sources/agents/registry/generatedBundledPluginEntries*.ts` feed the host registries; do not recreate the retired `apps/ui/sources/agents/providers/**` tree.
+
+---
+
+## Session current-Agent identity (one flat vendor key)
+
+A Session declares exactly one current Agent, and its metadata must carry the flat vendor resume key
+of **that Agent only**. A view holding two keys has no authoritative identity; before this rule had
+an owner, such a Session could not be resumed at all.
+
+The single pure projector is `projectCurrentAgentSessionView`
+(`packages/agents/src/session/state/projectCurrentAgentSessionView.ts`). It seals three things every
+writer used to re-derive:
+
+1. **Declared identity** — `flavor` and the runtime descriptor name the Agent.
+2. **One flat vendor key** — the `identity.providerSessionId` field is cleared first, which drops
+   every Agent's flat resume key *and* its catalog-declared native session-log path; only then is the
+   target's id written, through `writeProviderSessionIdSessionState`. An Agent whose catalog declares
+   no log-path slot has none, so a path handed to the wrong Agent is dropped rather than left behind
+   as an unowned local path.
+3. **State disposition** — a `carry` / `clear` policy for Agent-scoped current projections.
+
+The resume identity is `AgentNativeResumeIdentityV1 = { v, vendorResumeId }` — the Agent's own
+conversation id and nothing else. There is no continuity proof (`AM-24`): resuming is what answers
+whether a recorded id is usable, and both Agents that support native resume fail loudly rather than
+silently starting fresh. The released bare-string form is accepted as the same identity.
+
+### Where the id lives, for an Agent with no flat vendor key
+
+The flat `<vendor>SessionId` keys are **generated for bundled Agents only**. A contributed Agent
+declares no such slot, so its native conversation id lives in the one agent-agnostic carrier:
+`runtimeDescriptorV1.agent.providerSessionId`. The descriptor already names exactly one Agent, so the
+id is attributed to the Agent that produced it and is never lent to another.
+
+Both slots have one writer and one reader:
+
+- **Writer** — `providerSessionIdBinding`
+  (`packages/agents/src/session/state/bindings/providerSessionId.ts`). A catalog-declared flat slot
+  wins when the Agent has one; otherwise the id is written into the descriptor. It is never dropped,
+  and a caller can never name an arbitrary metadata key.
+- **Reader** — `resolveVendorResumeIdFromSessionMetadata`
+  (`packages/agents/src/session/controls/vendorResumePolicy.ts`), in declared-authority order: the
+  Agent's session-control adapter (Pi resumes from an absolute session-file path, not a bare id),
+  then the catalog-declared flat field, then the descriptor slot. The descriptor tier is last, so it
+  cannot change any bundled Agent's answer.
+
+The host publishes the id through the public `provider-session-id` runtime event and through the
+runtime-descriptor publication; the absence of a flat slot no longer suppresses either. Everything
+that decides whether a Session can resume — the daemon spawn/respawn path, the CLI listing, and the
+client's resume affordance — goes through that one reader, so they cannot disagree about whether a
+Session is resumable.
+
+The Agent's own **session-log path** is a separate, still-live fact. It rides the same
+`identity.providerSessionId` write as `nativeSessionLogPath`, because the path names exactly one
+conversation and an id write that inherited the previous id's path would point a reader at the wrong
+log. Both key names come from the manifest resume contract (`resume.vendorResumeIdField` and the
+log-path key, still spelled `vendorResumeContinuityProofField` pending a generated-projection
+rename), so the projector stays Agent-agnostic. The path is a POINTER offered to a successor Agent on
+the same machine; it gates nothing.
+
+`carry` versus `clear` is the difference between the two Session-level moves:
+
+- **Session handoff** moves the *same* Agent to another Machine, so work state, commands,
+  capabilities and intents are still true and are carried.
+- **Agent transition** replaces the Agent in place and passes `clear`, so the incoming Agent
+  republishes its own slash commands, tools, capabilities, facets, mode/model/config catalogs and
+  activity headlines, and the `runtime.*` / `intent.*` session-state fields are dropped.
+
+Session-global facts — identity, workspace, permission intent, history, cursors, terminal — survive
+both. The projector is pure and applies no intent of its own: a selected target model, mode or
+config is applied afterwards through the canonical intent writers, and the cleared state *is* what an
+omitted selection means.
+
+See `agent-transition.md` for the transition flow that consumes this projector.
 
 ---
 

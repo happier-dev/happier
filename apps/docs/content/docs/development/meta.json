@@ -1,12 +1,14 @@
 {
-  "title": "Development",
+  "title": "Contributing",
   "pages": [
     "index",
-    "app-env",
-    "extensions",
-    "bootstrap-qa",
     "testing",
+    "app-env",
+    "bootstrap-qa",
     "devcontainers",
-    "release-artifacts"
-  ]
+    "extensions",
+    "release-artifacts",
+    "architecture"
+  ],
+  "root": true
 }

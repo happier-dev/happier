@@ -300,7 +300,7 @@ by CPU count, adds a low-memory penalty, and randomly distributes commands among
 Healthy samples are cached briefly (15 seconds by default); unavailable samples are cached longer
 (2 minutes by default). Refreshes are coalesced with a lightweight filesystem lock, so concurrent
 agents do not each probe the same host. The selector excludes a target that cannot launch the
-requested top-level executable or whose repository filesystem reports no free space, and adjusts
+requested top-level executable or does not have enough filesystem scratch space, and adjusts
 each cached score for commands already dispatched there
 but not yet visible in its next load sample. Pass the executable directly when practical: wrapping
 it in `sh -lc` hides inner tool requirements from this preflight. If the selected host cannot
@@ -308,6 +308,13 @@ establish its command connection, the launcher temporarily excludes it and tries
 target before applying `fallback=local|error`. Once a command starts, its result is authoritative
 and is never replayed elsewhere. `includeLocal` controls whether local load normally competes; it is
 independent from allowing local fallback.
+
+The normal scratch floor is 1 GiB. A target whose synchronized checkout has not installed the
+current dependencies needs at least 16 GiB for automatic dependency-backed routing, covering the
+Yarn cache and linked workspace tree. Already-prepared targets keep using the normal floor, and
+source searches can still use an otherwise healthy unprepared target. An explicit
+`dev-targets exec <name>` remains an operator override and can still attempt dependency preparation
+on that target.
 
 On POSIX, the checkout-local launcher first performs a conservative filesystem check. If no
 repository target configuration can exist, it replaces itself with the requested command without
@@ -386,6 +393,11 @@ node ./apps/stack/scripts/repo_local.mjs dev-targets sync-service stop
 Detached mode does not leave a Stack or Node wrapper running. Mutagen's daemon owns the live
 sessions. `start` resumes and checks each configured synchronization session; it does not install
 dependencies or build outputs. Command and service preflight own executable/dependency readiness.
+A one-way replica can occasionally retain ignored generated files after their local source root is
+deleted. On startup, the sync service repairs that narrow conflict only when the local root is still
+absent and the remote residue is limited to target-local generated artifacts. Source conflicts,
+unknown paths, and roots that reappear locally remain untouched and keep the target unavailable for
+inspection.
 A configured Windows mirror remains sync-only because the native automatic execution launcher does
 not select Windows. `status` reports synchronization transport separately from command readiness.
 When Stack starts, it renders synchronization from every

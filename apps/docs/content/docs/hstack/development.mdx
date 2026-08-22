@@ -7,15 +7,15 @@ This document is intended to be sufficient for **humans and LLMs** to work safel
 
 If you’re brand new, read these first:
 
-- Worktrees + forks: `/docs/hstack/worktrees-and-forks`
-- Stacks: `/docs/hstack/stacks`
-- Paths/env precedence: `/docs/hstack/paths-and-env`
-- Quickstarts (copy/paste flows): `/docs/hstack/quickstarts`
-- Running (dev vs start): `/docs/hstack/running`
-- Validation (typecheck/lint/test): `/docs/hstack/validation`
-- CLI reference: `/docs/hstack/cli-reference`
-- Debugging: `/docs/hstack/debugging`
-- Troubleshooting: `/docs/hstack/troubleshooting`
+- Worktrees + forks: [Worktrees and forks](/hstack/worktrees-and-forks)
+- Stacks: [Stacks (isolated instances)](/hstack/stacks)
+- Paths/env precedence: [Paths and env](/hstack/paths-and-env)
+- Quickstarts (copy/paste flows): [Quickstarts](/hstack/quickstarts)
+- Running (dev vs start): [Running (dev vs start)](/hstack/running)
+- Validation (typecheck/lint/test): [Validation (typecheck, lint, test)](/hstack/validation)
+- CLI reference: [CLI reference (high-signal)](/hstack/cli-reference)
+- Debugging: [Debugging (inspect + env knobs)](/hstack/debugging)
+- Troubleshooting: [Troubleshooting](/hstack/troubleshooting)
 
 ---
 
@@ -75,7 +75,7 @@ Each stack runs exactly one server flavor:
 - `happier-server-light` (recommended) — simplest local install (SQLite by default; optional embedded Postgres via PGlite)
 - `happier-server` (full) — Docker-managed Postgres/Redis/Minio
 
-See: `/docs/hstack/server-flavors`.
+See: [Server flavors](/hstack/server-flavors).
 
 ---
 
@@ -180,7 +180,7 @@ Recommended flow:
 
 hstack helps keep this clean by defaulting new worktrees to upstream-based histories and by encouraging `origin` pushes.
 
-See: `/docs/hstack/worktrees-and-forks`.
+See: [Worktrees and forks](/hstack/worktrees-and-forks).
 
 If you prefer a guided workflow for “extract feature branch from dev”, use:
 
@@ -214,7 +214,7 @@ Then new stacks can reuse the same auth:
 hstack stack auth <stack> copy-from dev-auth
 ```
 
-See: `/docs/hstack/auth`.
+See: [Auth (dev-auth seeding)](/hstack/auth).
 
 ---
 

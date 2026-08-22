@@ -1,5 +1,5 @@
 ---
-title: Agent capabilities
+title: Agent surfaces
 description: Optional terminal and external-session capabilities contributed by an Agent plugin.
 ---
 
@@ -17,3 +17,8 @@ flow, permissions, Happier session records, transcript projection, and
 cleanup.
 
 Create, resume, and fork are typed `AgentSessionOpenRequest` variants handled by `sessions.open(...)`; they are not separate runtime registries or author-defined lifecycle owners. Execution-run checkpoints are native execution-run events, not a general workspace restore surface.
+
+## In this section
+
+- [Terminal surface](/plugins/surfaces/terminal-runtime) — resolving an Agent-specific terminal launch plan.
+- [External sessions](/plugins/surfaces/external-sessions) — contributing discovery and transcript access for Agent-native sessions created outside Happier.

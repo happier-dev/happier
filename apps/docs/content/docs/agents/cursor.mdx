@@ -1,0 +1,57 @@
+---
+title: Cursor Agent (experimental)
+description: Configure Cursor Agent CLI in Happier, including install, API-key authentication, and current limitations.
+---
+
+Happier supports **Cursor Agent CLI** as a local CLI-backed Agent. The binary is
+called `cursor-agent`.
+
+## Requirements
+
+- Cursor Agent CLI installed locally
+- `cursor-agent` available on `PATH`, or `HAPPIER_CURSOR_PATH` set to its absolute path
+
+## Install Cursor Agent
+
+Happier does not bundle an install recipe for Cursor — follow Cursor's own
+installation guide at
+[cursor.com/docs/cli/installation](https://cursor.com/docs/cli/installation),
+then restart Happier:
+
+```bash
+cursor-agent --version
+```
+
+## Authentication
+
+Cursor authenticates with an API key rather than a browser login, so there is no
+login flow for Happier to launch. Set `CURSOR_API_KEY` in the environment the
+agent runs in, or sign in through Cursor's own CLI.
+
+Happier reads the login state safely in the background by running
+`cursor-agent about --format json`, so the status on
+**Settings → Agents → Cursor** reflects reality without you pressing
+anything.
+
+## What Happier can drive
+
+- **Session modes** come from ACP and can be changed mid-session.
+- **Model selection** is supported.
+- **Resume** is experimental — the path works and is not considered settled.
+- **Handoff, listing and forking** are not supported.
+
+The full matrix is on [Agent capabilities](/agents/capabilities).
+
+## Troubleshooting
+
+### "Not authenticated"
+
+Confirm the key is visible to the agent:
+
+```bash
+cursor-agent about --format json
+```
+
+That is the same command Happier runs. If it reports a signed-out state, the
+key is not reaching the process — check that `CURSOR_API_KEY` is exported in the
+environment the daemon runs under, not only in your interactive shell.

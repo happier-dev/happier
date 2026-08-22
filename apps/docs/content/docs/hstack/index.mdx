@@ -1,27 +1,63 @@
 ---
 title: hstack (Happier Stack)
-description: Self-host, run, and develop Happier locally with stacks + worktrees.
+description: The local stack orchestrator — running Happier from your own checkout, in isolated instances, without the pieces stepping on each other.
 ---
 
-`hstack` is the official local “stack orchestrator” for Happier. It’s designed for:
+`hstack` runs Happier from your own checkout. Its job is isolation: several
+complete instances (**stacks**) side by side on one machine, each pinned to its
+own checkout, ports and data directory, so a branch you are testing cannot
+disturb the one you are developing.
 
-- self-hosting the full Happier stack on your machine
-- running multiple isolated instances (“stacks”) in parallel
-- developing Happier safely using git worktrees (clean PR history)
-- contributor workflows (dev branch, fork PRs)
-
-For interactive development, prefer running commands via the TUI wrapper:
+For interactive work, prefer the TUI wrapper — it shows what each command is
+doing rather than leaving you to read log files:
 
 ```bash
 hstack tui stack dev dev
 ```
 
-## Quick links
+## Get set up
 
-- Setup: `/docs/hstack/setup`
-- Development workflow: `/docs/hstack/development`
-- Auth seeding (`dev-auth`): `/docs/hstack/auth`
-- Stacks (isolated instances): `/docs/hstack/stacks`
-- Worktrees + forks: `/docs/hstack/worktrees-and-forks`
-- Server flavors (light vs full): `/docs/hstack/server-flavors`
-- Remote access (Tailscale Serve): `/docs/hstack/remote-access`
+- [Setup](/hstack/setup) — installing hstack, choosing a workspace, initializing the main and dev checkouts.
+- [Paths, folders and env precedence](/hstack/paths-and-env) — where everything lands, and which env file wins.
+
+## Day to day
+
+- [Development workflow](/hstack/development) — the one-stop guide: worktrees, stacks and dev-auth together.
+- [Quickstarts](/hstack/quickstarts) — the copy/paste companion for feature work, PR testing and server changes.
+- [Running (dev vs start)](/hstack/running) — how the server, daemon and UI come up, watch mode, and safe restarts.
+- [Remote development targets](/hstack/dev-targets) — mirroring one checkout to Linux, macOS or Windows machines.
+- [Validation](/hstack/validation) — typecheck, lint and test, scoped to a checkout or a stack.
+- [CLI reference](/hstack/cli-reference) — the commands you will actually use, with the flags that matter.
+
+## How isolation works
+
+These four pages are the model. Read them before wondering why two stacks share
+something they should not.
+
+- [Stacks](/hstack/stacks) — isolated instances: ports, directories and repo pinning.
+- [Worktrees and forks](/hstack/worktrees-and-forks) — clean upstream PR worktrees with fork-only patches kept out of them.
+- [Auth (dev-auth seeding)](/hstack/auth) — seed credentials once, reuse them for new stacks without logging in again.
+- [Server flavors](/hstack/server-flavors) — light (SQLite, optionally PGlite) against full (Docker-managed infrastructure).
+
+## Reaching a stack from elsewhere
+
+- [Remote access (Tailscale)](/hstack/remote-access) — an HTTPS secure context on a phone or another laptop.
+- [Remote daemon setup (SSH)](/hstack/remote-daemon) — installing Happier and pairing credentials on a remote host.
+- [Remote server setup (SSH)](/hstack/remote-server) — installing the self-host server on one.
+
+## Other surfaces
+
+- [Mobile (iOS)](/hstack/mobile-ios) — the dev-client workflow for a local stack.
+- [Desktop app (Tauri)](/hstack/tauri) — the native wrapper around the web UI.
+- [Menu bar (SwiftBar)](/hstack/menubar) — monitoring stacks and switching worktrees from the macOS menu bar.
+- [Isolated Linux VM](/hstack/isolated-linux-vm) — repeatable validation in a clean VM on Apple Silicon.
+
+## Workflow tooling
+
+- [Edison](/hstack/edison) — tasks, QA and evidence capture, run through hstack so isolation still holds.
+- [Monorepo port](/hstack/monorepo-port) — bringing commits from the legacy split repos into the monorepo.
+
+## When something is wrong
+
+- [Debugging](/hstack/debugging) — effective paths, the pinned repo, ports, logs and the env knobs that change them.
+- [Troubleshooting](/hstack/troubleshooting) — the common failures: auth, ports, wrong checkout, unhealthy stacks.

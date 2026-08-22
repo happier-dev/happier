@@ -123,3 +123,11 @@ The in-process testkit and default CLI test do not prove real-host integration.
 Use `happier plugins test . --packed` for the canonical packed daemon smoke,
 then exercise any additional claimed user flows and uninstall behavior on the
 relevant supported hosts before distribution.
+
+## In this section
+
+- [Fixtures](/plugins/testing/fixtures) — the public SDK examples and runtime fixtures to validate against.
+- [Agent runtime tests](/plugins/testing/runtime-tests) — session, execution-run, event and cleanup contracts for a native `AgentRuntime`.
+- [Manual QA](/plugins/testing/manual-qa) — validating behavior through the app, CLI, daemon and agent runtime.
+- [Diagnostics and errors](/plugins/testing/diagnostics) — the one public error contract, and telling author checks apart from daemon lifecycle evidence.
+- [Debugging](/plugins/testing/debugging) — where to look when manifest, activation, runtime or agent integration goes wrong.

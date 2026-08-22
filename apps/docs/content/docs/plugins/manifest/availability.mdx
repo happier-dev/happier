@@ -1,0 +1,139 @@
+---
+title: What you can build today
+description: Every contribution family, service, host-access capability and SDK entrypoint, with its current availability — generated from capability-matrix.json.
+---
+
+The Plugin SDK ships ahead of its own surface: some of what the manifest schema
+accepts is not yet wired end to end. `capability-matrix.json` in
+`packages/plugin-sdk` is the authority on which is which, and this page is a
+projection of it — so it cannot disagree with the artifact the rest of the
+corridor cites.
+
+**Available** means there is a proving consumer: a real plugin registering
+through that path today. **Deferred** means the schema accepts the declaration
+but the host does not complete the lifecycle — conformance only. Build against a
+deferred family and it will validate, then do nothing.
+
+At the time this page was generated: **33 of 44 contribution families**,
+**15 of 19 services**, **9 of 13 host-access capabilities**
+and **45 of 45 SDK entrypoints** are available.
+
+## Contribution families you can use
+
+`definePlugin(...)` key and the entrypoint that exports its types.
+
+| Family | Author key | Entrypoint | Realm |
+| --- | --- | --- | --- |
+| `accountCollections` | `accountCollections` | `.` | any |
+| `actions` | `actions` | `.` | any |
+| `agents` | `agents` | `.` | any |
+| `backgroundServices` | `backgroundServices` | `.` | any |
+| `browserActions` | `browserActions` | `.` | any |
+| `browserTargets` | `browserTargets` | `.` | any |
+| `connectedAccountDescriptors` | `connectedAccountDescriptors` | `.` | any |
+| `events` | `events` | `.` | any |
+| `executionRunProfiles` | `executionRunProfiles` | `.` | any |
+| `hooks` | `hooks` | `.` | any |
+| `managedDependencies` | `managedDependencies` | `.` | any |
+| `mcp.discoverySources` | `mcp` | `.` | any |
+| `notificationChannels` | `notificationChannels` | `.` | any |
+| `notifications` | `notifications` | `.` | any |
+| `pluginContributionPoints` | `contributionPoints` | `.` | any |
+| `promptAssets` | `promptAssets` | `.` | any |
+| `providers` | `providers` | `.` | any |
+| `requestInterceptors` | `requestInterceptors` | `.` | any |
+| `resources` | `resources` | `.` | any |
+| `scmBackends` | `scmBackends` | `.` | any |
+| `scmHostingProviders` | `scmHostingProviders` | `.` | any |
+| `settings` | `settings` | `.` | any |
+| `settings.fields` | `settings` | `.` | any |
+| `systemTools` | `systemTools` | `.` | any |
+| `targetedPluginContributions` | `contributesTo` | `.` | any |
+| `transcriptActivities` | `transcriptActivities` | `.` | any |
+| `ui.renderers` | `ui` | `.` | any |
+| `ui.settingsGroups` | `ui` | `.` | any |
+| `ui.settingsPages` | `ui` | `.` | any |
+| `ui.translations` | `ui` | `.` | any |
+| `ui.views` | `ui` | `.` | any |
+| `voiceProviders` | `voiceProviders` | `.` | any |
+| `webhooks` | `webhooks` | `.` | any |
+
+## Contribution families that are deferred
+
+| Name | What would unblock it |
+| --- | --- |
+| `commands` | An exact packed external Command invokes its Action through the canonical plugin command catalog and proves replacement, disable, and uninstall currentness. |
+| `composerAttachments` | A maintained plugin author declares composer.attachments and proves preparation, Message admission, dispatch resolution, and fallback lifecycle. |
+| `composerControls` | A maintained plugin author declares composer.controls and proves canonical control projection and interaction lifecycle. |
+| `composerReferences` | A maintained plugin author declares composer.references and proves the canonical picker, search, and resolution lifecycle. |
+| `composerRegions` | A maintained plugin author declares composer.regions and proves canonical before/after composer mount lifecycle. |
+| `daemonDatabases` | A maintained plugin author declares a daemon database and proves its canonical migration and lifecycle owner. |
+| `mcp.servers` | A maintained plugin author declares and registers an MCP server through the canonical MCP lifecycle. |
+| `openableContentViewers` | A maintained plugin author declares an openable-content viewer and proves the canonical host read lifecycle. |
+| `sessionHeaderActions` | A maintained plugin author declares a session header Action and proves the canonical Session UI lifecycle. |
+| `tools` | An exact packed external Tool invokes its Action through the real daemon MCP catalog and proves replacement, disable, and uninstall currentness. |
+| `voiceModelPacks` | A maintained Voice plugin author declares a model pack and proves the canonical Voice lifecycle. |
+
+## Services you can use
+
+Reached through `context.services` inside a plugin invocation.
+
+| Service | Type | Entrypoint | Lifecycle |
+| --- | --- | --- | --- |
+| `context.services.actions` | `ActionsService` | `./actions` | invocation-scoped |
+| `context.services.composerContent` | `ComposerContentService` | `.` | invocation-scoped |
+| `context.services.connectedAccounts` | `ConnectedAccountsService` | `./connected-accounts` | invocation-scoped |
+| `context.services.exec` | `ExecService` | `./exec` | invocation-scoped |
+| `context.services.http` | `HttpService` | `./http` | invocation-scoped |
+| `context.services.interactions` | `InteractionsService` | `./interactions` | invocation-scoped |
+| `context.services.logger` | `LoggerService` | `.` | invocation-scoped |
+| `context.services.managedServices` | `ManagedServices` | `./managed-services` | invocation-scoped |
+| `context.services.mcp` | `McpService` | `./mcp` | invocation-scoped |
+| `context.services.notifications` | `NotificationsService` | `./notifications` | invocation-scoped |
+| `context.services.secrets` | `SecretsService` | `./secrets` | invocation-scoped |
+| `context.services.sessions` | `SessionsService` | `./sessions` | invocation-scoped |
+| `context.services.settings` | `SettingsService` | `./settings` | invocation-scoped |
+| `context.services.storage` | `StorageService` | `./storage` | invocation-scoped |
+| `context.services.targetedContributions` | `TargetedContributionsService` | `.` | invocation-scoped |
+
+## Services that are deferred
+
+| Name | What would unblock it |
+| --- | --- |
+| `events` | A maintained plugin author invokes the canonical EventsService through an invocation lifecycle. |
+| `fs` | A maintained plugin author invokes the canonical FileSystemService through an invocation lifecycle. |
+| `providers` | A maintained plugin author invokes the canonical ProvidersService through an invocation lifecycle. |
+| `resources` | A maintained plugin author invokes the canonical ResourcesService through an invocation lifecycle. |
+
+## Host-access capabilities
+
+What each authorization class actually enforces is on
+[Host access](/plugins/security/permissions) — the classes differ more than the
+names suggest.
+
+| Capability | Class |
+| --- | --- |
+| `connectedAccounts` | hostResourceSelection |
+| `environment` | cooperativeDisclosure |
+| `filesystem` | cooperativeDisclosure |
+| `network` | cooperativeDisclosure |
+| `network.client` | cooperativeDisclosure |
+| `process` | cooperativeDisclosure |
+| `sessions` | hostResourceSelection |
+| `storage.account` | hostResourceSelection |
+| `terminal` | presentIntentOrOs |
+
+### Deferred
+
+| Name | What would unblock it |
+| --- | --- |
+| `browser` | A plugin-owned browser product flow proves present-intent, cancellation, currentness, and cleanup through the canonical browser owner. |
+| `clipboard` | A plugin-owned clipboard product flow proves present-intent, platform behavior, and cleanup through the canonical clipboard owner. |
+| `externalLinks` | A plugin-owned external-link product flow proves present-intent and canonical URL handling through the external-link owner. |
+| `mcp` | A maintained plugin author declares an `mcp` hostAccess request and proves the canonical MCP server call lifecycle. |
+
+## Related
+
+- [Contributions](/plugins/manifest/contributions) — what each family does.
+- [Capabilities and permissions](/plugins/manifest/capabilities-and-permissions)
+- [SDK entrypoints](/plugins/api/sdk-entrypoints)

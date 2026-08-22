@@ -1,0 +1,93 @@
+---
+title: Feature matrix
+description: User-facing feature coverage across clients and runtimes.
+---
+
+This page summarizes the main user-facing capabilities currently surfaced in Happier.
+
+Status legend:
+
+- **Stable**: intended for regular use
+- **Experimental**: available, still being hardened
+- **Capability-driven**: depends on backend/provider support
+- **Development only**: present in the current development source, not in released builds
+
+## Core capabilities
+
+| Capability | Status | Where it works | Notes |
+| --- | --- | --- | --- |
+| Multi-server profiles + switching | Stable | App, Web, CLI | Accounts and runtime state are scoped per server. |
+| Session sharing + collaboration | Stable | App, Web | Share sessions with friends/teammates and manage access. |
+| Session read/unread state | Stable | App, Web, Mobile app | Unread badges plus Mark as unread/read actions in session lists, context menus, headers, and Session info. Direct sessions can also use provider-observed attention. |
+| Happier sessions + resume | Stable | App, Web, CLI | Resume inactive Happier-managed sessions when the provider/backend supports vendor resume for that session. |
+| New session shortcuts | Stable | App, Web, Mobile app | Start a new session from a project or Session info while reusing the relevant session setup; existing composer draft content is preserved while launch selections are replaced. |
+| Session handoff between machines | Capability-driven | App, Web | Move a live session to another machine while keeping the same session id. Claude and OpenCode are supported; Codex is experimental. |
+| Continue with another Agent | Development only | App, Web | Replace the Agent running a session without leaving it: same session id and transcript, a transition divider, and a bounded context recap for the new Agent. Server feature `sessions.agentSwitching`, enabled by default. Not yet in released builds. |
+| Direct provider sessions | Experimental | App, Web | Browse provider-native sessions, open them directly, and optionally sync them into Happier. |
+| Mobile session cockpit | Stable | Mobile app, mobile web | Default phone session layout with bottom tabs for agent chat, Files, Git, open details tabs, and Terminal when available. |
+| Embedded terminal | Experimental | App, Web, Mobile app | Session-owned terminal dockable to bottom/sidebar/details; requires a connected daemon and reachable machine. |
+| Pending queue | Stable | App, Web, CLI runtime | Queue, reorder, edit, remove, and send-now workflows. |
+| In-flight steering while busy | Capability-driven | App, Web, CLI runtime | When supported by backend/runtime, messages can steer an active turn instead of waiting in queue. |
+| Git/file manager | Stable | App, Web, Mobile app | Browse/search files, upload/download, rename/delete, open previews/editors, inspect metadata, open markdown file links, initialize Git repositories, and review changed files from the session UI. |
+| Git write operations | Experimental | App, Web, Mobile app | Stage/unstage/commit/pull/push/revert plus selected-for-commit, branch publish/switch/stash, branch checkout recovery, and commit-message-generation workflows behind the Git operations feature toggle. |
+| SCM hosting providers | Capability-driven | App, Web, daemon | Detect GitHub/GitLab/Bitbucket remotes, publish local repositories to GitHub where enabled, and open/reuse/checkout PRs or MRs where provider auth is available. |
+| Turn/session/selected changed-file scopes | Capability-driven | App, Web, Mobile app | Git changed-files scope dropdown can show repository changes, latest-turn changes, session-attributed changes, and selected-for-commit files when data is available. |
+| Review comments | Experimental | App, Web | Add line-specific comments to file/diff lines, select which comments are sent, reuse saved workspace comments in new sessions, and jump back to commented files from the transcript. |
+| Tool timeline normalization | Stable | App, Web, CLI runtime | Provider tools are normalized to canonical UI tool types. |
+| Subagent timeline visibility | Capability-driven | App, Web | When providers expose subagents, Happier shows their activity in-session. |
+| Tool detail controls (title/summary/full) | Stable | App, Web | Configure default/per-tool timeline detail levels. |
+| Turn-level change summaries | Capability-driven | App, Web | Per-turn summary and diff rendering quality depends on provider/runtime payloads. |
+| Permission modes | Capability-driven | App, Web, CLI | Effective behavior varies by provider/backend capabilities. |
+| Model/mode selection + favorites | Capability-driven | App, Web, CLI | Model lists can be dynamic or static; favorites are available from the new-session engine picker. |
+| Connected services | Stable | App, Web, CLI, daemon | Connect provider subscriptions, API keys, and source-control tokens where enabled, then reuse them across supported backends, sessions, and source-control workflows. |
+| Connected-services auth picker | Stable | App, Web | New-session auth picker shows only backend-compatible connected services and profiles. |
+| Connected-services quotas | Capability-driven | App, Web, daemon | Quota badges and profile detail meters currently exist for `openai-codex`, `claude-subscription`, and `gemini`. |
+| Local memory search | Experimental | App, Web, daemon | Opt-in machine-local transcript search with light/deep indexing, backfill controls, and optional embeddings reranking. |
+| Pets | Experimental | App, Web, Desktop app, daemon | Optional pet companions with built-in pets, Codex-compatible imports, desktop activity overlay integration, per-device size, and server-side feature controls. |
+| ACP backends | Experimental | App, Web, CLI runtime | Add arbitrary ACP-compatible CLIs through Custom ACP and use each configured backend as a first-class backend choice. |
+| Installables | Stable | App, Web, daemon | Manage machine-local tools such as Codex ACP and optional source-control CLIs with per-machine install/update policy. |
+| Server feature flags | Stable | App, Web, Server | Server can disable features (for example social/voice/bug reports) and clients adapt UI accordingly. |
+| Notification routing to session/server | Stable | App, Web | Notification taps route to the correct session/server; mobile also supports permission `Allow` / `Deny` and action-request `Answer` buttons with safe server-aware routing. |
+| In-app bug reports + diagnostics | Stable | App | Submit issue reports with optional diagnostics; server can disable upload/report UI. |
+| Voice: Happier Voice | Capability-driven | App, Web | Managed realtime ElevenLabs voice; requires server voice config and feature enablement. |
+| Voice: BYO ElevenLabs | Stable | App, Web | Uses your own ElevenLabs account/API key, supports voice previews, and can provision/update a Happier-compatible ElevenLabs agent. |
+| Voice: Local voice | Experimental | App, Web | Mix device, OpenAI-compatible, Google, and local-neural STT/TTS providers; supports direct-to-session and agent conversation modes. |
+| Voice: Local neural speech | Experimental | App, Web | Kokoro local neural TTS works on web and native; Sherpa local neural STT currently requires a native build. |
+
+## Provider availability
+
+| Provider | Current docs page |
+| --- | --- |
+| Claude | [/docs/providers/claude](/agents/claude) |
+| Codex | [/docs/providers/codex](/agents/codex) |
+| Gemini | [/docs/providers/gemini](/agents/gemini) |
+| OpenCode | [/docs/providers/opencode](/agents/opencode) |
+| Augment (Auggie) | [/docs/providers/augment](/agents/augment) |
+| Custom ACP | [/docs/providers/custom-acp](/agents/custom-acp) |
+| Kilo | [/docs/providers/kilo](/agents/kilo) |
+| Kimi | [/docs/providers/kimi](/agents/kimi) |
+| Kiro | [/docs/providers/kiro](/agents/kiro) |
+| Qwen | [/docs/providers/qwen](/agents/qwen) |
+
+## Related guides
+
+- [Permissions](/sessions/permissions)
+- [ACP backends](/agents/acp-backends)
+- [Model and engine selection](/agents/model-and-engine-selection)
+- [New session shortcuts](/sessions/new-session-shortcuts)
+- [Session handoff](/sessions/session-handoff)
+- [Session read and unread state](/organize/session-read-state)
+- [Pending queue](/sessions/pending-queue)
+- [Steering while busy](/sessions/steering)
+- [Embedded terminal](/extras/embedded-terminal)
+- [Tool timeline & normalization](/organize/tool-timeline)
+- [Server feature flags](/extras/feature-flags)
+- [Bug reports](/extras/bug-reports)
+- [Git & file browser](/code/git)
+- [Connected services](/accounts/connected-services)
+- [Installables](/extending/installables)
+- [Review comments](/code/review-comments)
+- [Local memory search](/organize/local-memory-search)
+- [Pets](/extras/pets)
+- [Notifications](/extras/notifications-setup)
+- [Update channels and update behavior](/releases/updates)

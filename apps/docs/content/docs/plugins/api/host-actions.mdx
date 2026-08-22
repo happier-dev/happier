@@ -3,7 +3,7 @@ title: Host actions
 description: Generated reference for every host Action available through the Plugin Actions service.
 ---
 
-<!-- Generated from the canonical ActionSpec registry. Do not hand-edit. -->
+{/* Generated from the canonical ActionSpec registry. Do not hand-edit. */}
 
 Use this reference when calling host Actions from a Plugin invocation context. It is generated from the canonical ActionSpec registry, so each listed id is available through `context.services.actions.execute(...)` and no hand-maintained Action list can drift from the host.
 
@@ -109,18 +109,6 @@ The Action service validates the exact input and result contract for each id. Us
 ## `automation.conversation.admit`
 
 **Admit Automation conversation occurrence** — Admit a conversation occurrence through the canonical Automation owner.
-
-- Safety: `danger`; side effect: `write`.
-- Approval: `none` result; `deferred` flow.
-- Also surfaced on: none.
-
-### Input guidance
-
-No field hints are published. Use the typed input accepted by `execute`.
-
-## `automation.conversation.target.create`
-
-**Create Automation conversation target** — Author a conversation-triggered Automation through the canonical Automation owner.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `none` result; `deferred` flow.

@@ -1,11 +1,11 @@
 {
-  "title": "Plugins",
+  "title": "Plugin SDK",
   "pages": [
     "index",
     "quickstart",
-    "guides",
-    "glossary",
     "concepts",
+    "glossary",
+    "guides",
     "manifest",
     "api",
     "agent-runtimes",
@@ -16,5 +16,6 @@
     "packaging",
     "testing",
     "examples"
-  ]
+  ],
+  "root": true
 }

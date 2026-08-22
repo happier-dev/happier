@@ -52,3 +52,19 @@ an existing Action with `.contribute()` and `.bind(localId)`. The role's
 immutable `.declaration` supplies Action facts; neither side scans Actions or
 adds another dispatcher. See
 [Cross-plugin contributions](/plugins/guides/cross-plugin-contributions).
+
+## In this section
+
+**Getting your code to run**
+
+- [SDK entrypoints](/plugins/api/sdk-entrypoints) — which public import path a capability, type, build or test belongs to.
+- [Activation](/plugins/api/activation) — binding executable behavior to manifest-declared local ids.
+- [Activation cleanup](/plugins/api/lifecycle) — releasing what a successful activation created.
+- [Invocation context](/plugins/api/context) — the operation-scoped services and UI intent an invoked handler receives.
+
+**What a plugin can expose**
+
+- [Actions, tools and commands](/plugins/api/actions-tools-commands) — declaring an executable operation, where it can be invoked from, and where it runs.
+- [Host actions](/plugins/api/host-actions) — every Action the host itself offers through the Actions service. Generated.
+- [Hooks](/plugins/api/hooks) — extending host workflows from a declared handler.
+- [Events](/plugins/api/events) — publishing and observing manifest-declared events.

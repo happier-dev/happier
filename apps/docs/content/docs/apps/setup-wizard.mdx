@@ -1,0 +1,173 @@
+---
+title: Setup wizard
+description: Guided setup for Relay selection, login, machine setup, and secure access.
+---
+
+The Setup wizard is the guided in-app flow for getting a Relay and one or more machines ready.
+
+On desktop it appears as a full-screen onboarding modal. On web and mobile-sized layouts the chrome adapts to the screen size, but the flow stays the same wizard.
+
+Layout notes:
+- Phone-sized viewports render a full-screen sheet (no backdrop scrim).
+- Desktop-sized viewports render a centered card inside a modal backdrop.
+
+It helps you:
+
+- pick the active Relay (Happier Cloud or self-hosted)
+- sign in / create an account on that Relay
+- set up a machine (background service)
+- host a local Relay (optional)
+- enable private access (optional, for example Tailscale)
+- set up providers (optional)
+
+Which options you see depends on what your server advertises via `GET /v1/features` (enterprise/self-host policy).
+See: [Server → Setup & bootstrap policy](/self-hosting/setup-and-bootstrap-policy).
+
+## Desktop vs web behavior
+
+- **Desktop app (recommended control panel)**: can execute setup actions directly through the shared system-task executor.
+- **Web app**: can guide you through setup and show copy/paste commands, but cannot execute local system tasks on your computer.
+
+If you’re using the web app and the wizard shows a “Run this command” step, you can:
+
+- run the command in a terminal on the target machine, or
+- continue in the desktop app for one-click execution.
+
+When the wizard shows relay rows, the current Relay stays selected even if it is unreachable; the row menu still lets you retry or remove saved entries, and the footer uses an `Active relay:` label to show the canonical Relay URL.
+
+## Main entrypoints
+
+### Set up this computer (local machine)
+
+Use this when the background service should run on the same computer as the desktop app.
+
+The wizard will guide you through one-command setup:
+
+```bash
+happier setup --relay-url https://YOUR_RELAY_URL
+```
+
+What it does (high level):
+
+- selects the Relay — and, run without a Relay flag on a computer that has no account yet, asks where your Relay lives before signing in
+- signs in if needed
+- installs and enables the background service (unless skipped)
+- optionally guides provider setup
+
+`happier setup plan` only previews the steps. `happier setup` is the executor.
+
+Setup configures this computer. If the computer was already configured and later drifted or broke, use the supported repair path instead:
+
+```bash
+happier doctor repair
+```
+
+If you log in from the mobile app with **Login with secret key instead**, the wizard continues the same onboarding flow after sign-in instead of sending you to a separate settings page.
+
+### Host a Relay on this computer (optional)
+
+If you want to run a Relay locally (for example on a dev box or LAN machine), the wizard guides you through installing the **managed Relay runtime**:
+
+```bash
+happier relay host install
+```
+
+By default this installs the Relay runtime in `user` mode (no root required).
+If you want a system-wide service, use `--mode system` (requires root/sudo):
+
+```bash
+sudo happier relay host install --mode system
+```
+
+After installing a local Relay, you may still need to configure **private access** (see below) so phones and other devices can reach it.
+
+Local bind options:
+
+```bash
+happier relay host install --lan
+happier relay host install --expose
+happier relay host install --host 192.168.1.25
+```
+
+`--lan`, `--expose`, and `--host <ip>` choose where the local Relay listens. They do not configure a share/public URL strategy by themselves; use **Private access** for that.
+
+Local Relay profile aliases:
+
+```bash
+happier relay use --local
+happier relay add --local
+happier relay set --local --use
+happier relay auth
+happier relay start-daemon
+```
+
+Pass `--local-channel stable|preview|dev` when the local Relay you want belongs to a different installed release channel.
+
+### Set up a remote machine over SSH
+
+Use this when you want the background service and providers to run on another machine (VPS, home server, dev box), but you want to control setup from your desktop.
+
+The wizard will either:
+
+- run an SSH bootstrap task from the desktop app, or
+- show the equivalent CLI command to run yourself.
+
+CLI example:
+
+```bash
+happier machine setup --ssh user@host
+```
+
+If you already saved the machine as a Remote host, you can pick it from the wizard instead of retyping the SSH details.
+
+When you enter a new SSH target inline, the wizard shows a **Save this host** toggle inside the SSH form itself. That lets you decide before submitting whether the host should be saved as a reusable Remote host.
+
+## Agent setup (optional)
+
+After a machine is set up, the wizard can guide agent setup. The underlying CLI surface is:
+
+```bash
+happier agents setup
+```
+
+You can also pass an agent list when you already know what you want:
+
+```bash
+happier agents setup --providers codex,claude
+```
+
+When you choose agents in the wizard, it can prefill the CLI command with the selected agents for you.
+
+If remote-host persistence is disabled by your server/build policy, the wizard still supports one-time SSH setup. It simply won’t offer long-term saving for the host.
+
+## Secure access (optional)
+
+If your Relay URL is not publicly reachable (for example it’s only `localhost`), phones and other devices won’t be able to sign in or connect.
+
+The wizard can guide private access setup using Tailscale when available. After configuration, you should see a reachable HTTPS URL that you can use as the Relay URL in the app and CLI.
+
+CLI equivalent (share URL strategy):
+
+```bash
+happier relay access status
+happier relay access configure --provider tailscaleServe --upstream-url http://127.0.0.1:53288
+```
+
+User guide: [Relay access](/apps/relay-access).
+
+## Troubleshooting
+
+### “Unreachable” Relay in the wizard
+
+- Use **Retry** (or the row menu) to re-check reachability.
+- If the Relay is truly down, select a different Relay or edit the URL.
+
+If you are using the **web app on HTTPS** and your Relay is `http://...`, your browser may block the probe as mixed-content.
+In that case, use the desktop app or expose your Relay over HTTPS (for example via Tailscale Serve/Funnel or a reverse proxy).
+
+The inline **Use a different Relay URL** action always opens the same manual Relay URL step, so you do not have to remember a separate settings page.
+
+### “Login with secret key instead”
+
+If you are restoring a device that already has an account, the wizard sends you to the secret-key login step when you choose **Login with secret key instead**.
+That path is separate from the QR-code login flow and is meant for account/device restoration, not terminal approval.

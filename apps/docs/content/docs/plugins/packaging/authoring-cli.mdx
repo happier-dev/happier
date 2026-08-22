@@ -5,7 +5,10 @@ description: Use the one local create, development, validation, review, and pack
 
 This page is the canonical command reference for plugin authors. Run commands
 from the plugin root unless a command takes an explicit path. `--json` selects
-the structured result for automation; it does not bypass review or trust.
+the structured result for automation; it does not bypass review or trust. The
+one explicit non-interactive trust decision is the `--trust` flag on a local
+development install, documented in
+[Install a development source without a prompt](#install-a-development-source-without-a-prompt).
 
 ## Create and develop
 
@@ -77,12 +80,14 @@ a second checked-in manifest. See [Pack plugins](/plugins/packaging/pack) for
 archive contents.
 
 `happier plugins install <path|archive|package> [--kind path|archive|npm]
-[--selector <version>] [--integrity <sha256-SRI>] [--dev] [--dry-run]` submits
-one reviewed install to the active daemon. The daemon, rather than the CLI,
-owns package activation, currentness, and retained last-known-good behavior.
-Use `--dev` only for an intentional watcher-free package-root development
-source. [Install and trust](/plugins/packaging/install-trust) owns the detailed
-trust, update, rollback, enable/disable, inspection, and uninstall contracts.
+[--selector <version>] [--integrity <sha256-SRI>] [--dev [--trust]] [--dry-run]`
+submits one reviewed install to the active daemon. The daemon, rather than the
+CLI, owns package activation, currentness, and retained last-known-good
+behavior. Use `--dev` only for an intentional watcher-free package-root
+development source, and `--trust` only to carry the trust decision for that
+source on the command line.
+[Install and trust](/plugins/packaging/install-trust) owns the detailed trust,
+update, rollback, enable/disable, inspection, and uninstall contracts.
 
 ## Reload a development source
 
@@ -97,6 +102,35 @@ than one registered source contains that directory, pass the explicit plugin
 id. A failed replacement leaves the last accepted generation serving; do not
 start a second watcher or invent a source-only reload path.
 
+## Install a development source without a prompt
+
+```bash
+happier plugins install . --dev --trust --json
+happier plugins reload --json
+```
+
+`--trust` carries one explicit non-interactive authorization for that exact
+local development source, so the first install of a source root completes
+without a terminal prompt. Use it whenever no present user can answer the
+source-root question: a CI job, a script, or an Agent Session driving the loop.
+
+The flag is deliberately narrow:
+
+- It is valid only with `--dev` on a local path. Any other request fails with
+  `plugin_explicit_trust_requires_development_path`.
+- It decides source-root trust and package trust for that one resolved path. If
+  the daemon's prepared review names a different source, the pending change is
+  cancelled with `plugin_explicit_trust_target_mismatch` rather than approved.
+- It selects no optional host resources; those remain available only through the
+  reviewed prompt.
+- It does not extend to consequential updates or secrets, which stay with a
+  present user.
+
+`happier plugins dev` has no `--trust` equivalent, so this install route plus
+`happier plugins reload` is the headless edit loop. Once the source root is
+trusted, later requests for that root skip source-root review, so no further
+decision is required until the reviewed source identity changes.
+
 ## Review a pending change
 
 An install or development request can return a daemon-issued pending change
@@ -109,12 +143,13 @@ happier plugins change reject <pendingChangeId> --json
 ```
 
 `status` is read-only. `approve` and `reject` are explicit present-user
-decisions; an Agent may prepare a request but cannot decide it. A source-root
+decisions on this pending-change route; apart from the `--trust` flag above, an
+Agent may prepare a request but cannot decide it. A source-root
 approval can return `reviewRequired` with the same pending ID when package
 review remains. Review the reported package facts, then use `approve` again on
-the same pending ID. `reject` cancels the request. JSON or noninteractive
-installation never auto-approves, and a direct noninteractive approval selects
-no optional host resources.
+the same pending ID. `reject` cancels the request. Apart from the `--trust`
+flag above, JSON or noninteractive installation never auto-approves, and a
+direct noninteractive approval selects no optional host resources.
 
 The same decision is available in the app. Settings -> Plugins lists every
 change the machine's daemon is still holding, including one an Agent prepared,

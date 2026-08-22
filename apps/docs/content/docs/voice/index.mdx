@@ -1,0 +1,478 @@
+---
+title: Voice
+description: Choose a voice mode, understand how voice conversations map to sessions, and configure realtime or local voice in Happier.
+---
+
+Happier has two voice surfaces, and they are configured separately because they do
+different jobs.
+
+**Dictation** turns one spoken utterance into composer text. It has its own
+speech-to-text provider, and it keeps working when you have never started a voice
+conversation.
+
+**Voice conversations** are the hands-free modes: you talk, Happier answers out loud,
+and the assistant can act on real sessions through typed actions rather than by
+guessing at free-form speech.
+
+**Settings → Voice** opens onto four groups matching that split — **Dictation**,
+**Voice conversations**, **Privacy & data**, and **Advanced**. This page uses those
+group names when it tells you where a control lives.
+
+## Availability
+
+Voice is gated in three places, and all three have to agree before anything appears.
+
+- **Your server** must advertise the `voice` feature. Without it, neither the composer
+  microphone nor the conversation modes render at all.
+- **You** must turn on **Settings → Features → Voice**. It is an experimental toggle
+  and it is off by default, so it stays hidden until the experiments switch at the top
+  of that screen is on.
+- **Individual modes** add their own gates: **Happier Voice** needs the server-side
+  `voice.happierVoice` feature, and the daemon-backed **Local voice** agent needs
+  **Settings → Features → Voice agent**, which is likewise experimental and off by
+  default.
+
+No conversation provider is selected until you pick one, so turning Voice on gives you
+Dictation and an empty provider list rather than a live microphone. See
+[Feature flags](/extras/feature-flags) for the full gating model.
+
+## Conversation modes
+
+The provider list is built from what is installed, so it grows when a plugin
+contributes a voice provider. These ship with Happier:
+
+| Mode, as the app labels it | What it is | Status |
+| --- | --- | --- |
+| **Happier Voice** | Realtime ElevenLabs voice on Happier-managed credentials and server-side quotas. | Shipped, where the server advertises it |
+| **Use My ElevenLabs** | The same ElevenLabs provider billed to your own account and agent. | Shipped |
+| **Local voice** | A configurable speech pipeline: device, self-hosted, Google, or on-device neural speech. | Shipped; **Agent** mode needs the Voice agent feature |
+| **OpenAI Realtime** | WebRTC voice against the OpenAI Realtime API, authenticated by a saved key or a Connected Service. | Development only |
+| **Grok Voice · BYOK** | xAI's realtime voice through Happier's shared PCM conversation host. | Development only |
+| **Codex Realtime (Experimental)** | A realtime conversation attached to a Codex agent session. Settings and privacy copy call this feature **Codex Live**. | Experimental, development only |
+
+**Happier Voice** and **Use My ElevenLabs** are not two providers. They are two billing
+choices on one ElevenLabs provider, which is why they share a voice picker, a model
+list, and a tuning panel.
+
+<Callout type="warn">
+  "Development only" means the code is in the development source and not in a released
+  Happier build. OpenAI Realtime, Codex Realtime and Grok Voice all declare web, iOS and
+  Android, and the development source also runs ElevenLabs natively through the same
+  provider lifecycle as web — but none of that is a release claim. Native audio still
+  needs a packaged build and physical-device certification before it counts as shipped.
+</Callout>
+
+## Start here
+
+If you only need one rule of thumb:
+
+- choose **Happier Voice** for the simplest “just works” realtime voice experience
+- choose **Use My ElevenLabs** if you want full control over your own ElevenLabs account and agent
+- choose **Local voice** if you want device speech, self-hosted endpoints, or on-device neural speech
+- in a development build, choose **OpenAI Realtime** for OpenAI WebRTC voice with an explicit saved-secret or Connected Service authentication source
+- in a development build, choose **Grok Voice · BYOK** for xAI's realtime conversation with host-owned microphone capture and playback
+- in a development build, choose **Codex Realtime (Experimental)** when you want a realtime conversation attached to an existing or global hidden Codex session
+
+Dictation is separate from every one of these. Use the microphone in a session composer
+to transcribe one bounded utterance into the draft — it works while the conversational
+provider is **Off**, and it has its own speech-to-text selection under
+**Settings → Voice → Dictation**. That selection defaults to
+**Device STT (experimental)**; choose **Same as Local Voice** if you would rather it
+follow whatever Local voice is using.
+
+## Common settings
+
+A few settings apply whichever conversation mode you chose:
+
+### Preferred language
+
+**Preferred language** sets the language Happier should prefer for spoken responses and voice-side interactions.
+
+Use this when:
+
+- you want the assistant to answer in a specific language
+- your speech provider supports multiple languages
+- you want local voice and ElevenLabs voice to stay aligned with the same preference
+
+### Voice UI defaults
+
+**Settings → Voice → Advanced** holds the voice surface's own behavior:
+
+- whether voice defaults to **global** or **session** scope
+- whether the voice surface prefers the **sidebar**, the **session screen**, or **auto**
+- whether the activity feed is shown and auto-expands
+
+These are app-level UX settings. They do not change how a provider itself speaks or reasons.
+
+### Voice activity feed
+
+**Enable voice activity feed** shows recent voice events directly in the UI while voice is active.
+
+You can also enable **Auto-expand on start** if you want the activity feed to open automatically whenever a voice session starts.
+
+### Privacy
+
+**Settings → Voice → Privacy & data** holds three related things: the processing
+disclosure for the providers you have currently selected for conversations, Dictation
+and Local voice; the controls for what voice providers can see — session summaries,
+recent messages, tool names, device inventory, permission requests; and
+**Voice History**.
+
+Local file paths and tool arguments are always excluded from Voice provider context. Current settings do not offer controls to enable either one. For stricter privacy, disable the other context categories you do not want to share, such as **Share recent messages**.
+
+> **Development status:** **Current UI context** is a Developer Preview
+> capability whose implementation and packaged web/iOS/Android certification
+> are still in progress. It is not available in a released Happier build yet.
+
+Current UI context is limited to the active Happier app window or browser tab
+hosting the Voice attempt. It uses a bounded semantic snapshot supplied by the
+app and admitted mounted surfaces; it does not inspect the whole device, scrape
+the rendered screen, or observe another Happier client.
+
+| Setting | What Voice receives |
+| --- | --- |
+| **Off** | No current-UI read, contextual-command tool, or automatic navigation update. |
+| **On demand** | A bounded current-UI read only when requested; no automatic navigation updates. |
+| **Automatic** | The same on-demand read, plus best-effort automatic navigation metadata such as the admitted area, screen, host-owned title, and presentation. Detailed semantic context remains on demand. |
+
+Context disclosure and effects are separate. **On demand** and **Automatic**
+do not by themselves enable contextual commands: the active Voice provider and
+attempt must also support the existing effect-custody gate, and normal
+confirmation and safety rules still apply.
+
+## Where a voice conversation is written
+
+Voice in Happier is more than a floating microphone button: what you say and what the
+assistant says back get stored somewhere, and *where* depends on the mode and on whether
+the conversation has a target session. There are three different answers, and the
+difference matters both for what you can reread later and for what "clear my history"
+actually deletes.
+
+### A conversation with a target session
+
+The realtime providers — ElevenLabs, OpenAI Realtime, Grok Voice — write their spoken
+turns into the target session's own transcript when there is one. A voice surface shown
+inside a session targets that session, so there is no separate hidden conversation to go
+and find: reread it where you would reread anything else in that session.
+
+### Voice History, the standalone carrier
+
+The same providers, running with no target session, write into one account-wide hidden
+session instead: the Voice History carrier. It is shared rather than per-provider, so
+moving between realtime providers between conversations keeps adding to the same
+history.
+
+Read it at **Settings → Voice → Privacy & data → Voice History**. Search runs over the
+messages already decrypted on this device, and you can load older pages, export the
+loaded history as JSON, or clear it. Clearing deletes that one carrier session for the
+account and cannot be undone; it leaves transcripts that were written into real sessions
+untouched, and it will not run while a voice conversation is live.
+
+### An agent-backed conversation
+
+**Codex Realtime (Experimental)** has no carrier: the Codex agent session *is* the
+conversation, so the turns live in that session's transcript. Opened from a session it
+attaches to exactly that one. Started globally, Happier creates or reuses a hidden Codex
+session for the machine, directory, permission intent and account you selected, reusing
+an existing one only while it is still usable.
+
+**Local voice** in **Agent** mode works the same way: the voice agent's own run session
+carries the conversation, at voice home or at the session's project root depending on
+where you started it and on **Stay in voice home**.
+
+Neither of these is the Voice History carrier, so neither shows up in Voice History and
+neither is removed by clearing it. Delete the underlying session instead.
+
+### Local voice, direct to session
+
+**Local voice** in **Direct to session** mode keeps no hidden conversation at all. Your
+speech is transcribed and sent into the session, and that session's transcript is the
+only record.
+
+### Target session
+
+Whichever of those applies, voice actions still need a real session to act on. The
+target session is where voice can:
+
+- send messages
+- answer user-action requests
+- switch modes when supported
+- continue work on your behalf
+
+This is why voice behaves like a real assistant rather than typing speech into whatever
+text box happens to be focused.
+
+## Where the voice starts
+
+For local voice agent mode, start location depends on **where** you launch voice and on your directory policy:
+
+- **Start from the sidebar / global voice surface**: starts from **voice home**
+- **Start from a session surface**: starts from that session’s **project root**
+- **If “Stay in voice home” is enabled**: session starts also stay in **voice home**
+
+This gives you a neutral default for global voice use, while still letting session-started voice work directly against the current project when you want that behavior.
+
+## Happier Voice
+
+**Happier Voice** is the managed realtime option.
+
+Use it when you want:
+
+- the least setup
+- a true realtime voice session
+- server-managed access control, quota enforcement, and subscription rules
+
+Happier Voice is available only when the connected server advertises it through `/v1/features`.
+
+### Native audio lifecycle
+
+In current development native builds, realtime ElevenLabs uses the same attempt, credential, tools, transcript, cancellation, and retirement lifecycle as the web provider. Happier remains the owner of the native call-style audio session; the ElevenLabs native adapter configures only the provider SDK's WebRTC setup.
+
+Background and lock-screen behavior still depends on the operating system and has not yet received packaged physical-device certification. This call-style behavior applies to the realtime ElevenLabs path, not to Local voice.
+
+## Use My ElevenLabs
+
+**Use My ElevenLabs** runs the same realtime ElevenLabs provider as Happier Voice, billed to your own ElevenLabs account settings instead.
+
+This mode is useful when you want:
+
+- your own ElevenLabs billing
+- your own ElevenLabs agent
+- direct control over voice, model, and voice tuning
+
+### What you configure
+
+In **Settings → Voice → Voice conversations → Use My ElevenLabs**, you can configure:
+
+- **API key**
+- **Agent ID**
+- **Voice**
+- **Realtime model**
+- **Voice tuning** such as stability, similarity, and speed
+- **Welcome mode**
+
+The voice picker is searchable and supports inline preview playback, so you can audition voices before choosing one.
+
+### API key permissions
+
+When creating a restricted ElevenLabs API key for Happier, enable:
+
+- **Text to Speech** → **Access**
+- **Voices** → **Read**
+- **Conversational AI / Agents** → **Read & Write**
+- optional: **User** → **Read**
+
+### Saved credentials
+
+Your ElevenLabs API key is saved in Happier as an encrypted secret setting rather than a plaintext field, so you do not need to re-enter it every time.
+
+### Auto-provisioning a Happier agent
+
+If you do not want to create or update the ElevenLabs agent manually, Happier can help provision it for you.
+
+From the ElevenLabs section you can:
+
+- create a new Happier-compatible agent
+- update an existing Happier agent template
+- reuse an existing agent if you already have one
+
+This is the easiest way to keep your ElevenLabs agent aligned with Happier’s current tool and prompt wiring.
+
+## OpenAI Realtime
+
+**OpenAI Realtime** sends the live audio and conversation from your device to OpenAI over WebRTC. Choose exactly one authentication source:
+
+This mode is currently development-only on web, iOS, and Android. It is not yet available in released Happier builds, and native audio remains subject to packaged physical-device certification.
+
+- **Saved Voice API key**: stored in Happier account secrets and materialized only while minting short-lived Realtime client authentication. This is the standalone option and does not require a daemon.
+- **OpenAI Connected Service**: uses the exact selected OpenAI profile or account group through the selected machine and its connected daemon.
+- **OpenAI Codex OAuth (experimental)**: uses the exact selected Codex OAuth profile or account group through the selected machine and its connected daemon.
+
+Happier does not fall back from one source, key, account, or provider to another. If the selected source is unavailable, the conversation fails with a setup or authentication error so you can fix that source explicitly.
+
+## Codex Realtime
+
+The provider picker lists this as **Codex Realtime (Experimental)**; its settings section and privacy disclosure call the feature **Codex Live**. They are the same mode.
+
+It sends the live audio and the Codex Live conversation from your device to OpenAI over WebRTC while the selected Codex session runs on the selected machine.
+
+This mode is currently experimental and development-only on web, iOS, and Android. It is not yet available in released Happier builds, and native audio remains subject to packaged physical-device certification.
+
+- **Direct Voice** attaches to the exact Codex session you opened it from.
+- **Global Voice** uses the selected machine, directory, permission intent, and Connected Services account to create or reuse an exact matching hidden Codex session.
+- OpenAI may receive bounded startup and session context plus delegated Codex results so the conversation can continue and responses can be spoken.
+- Happier's server and relay do not carry Codex Live audio. The daemon and Codex app-server still participate in signaling, session lifecycle, delegation, tools, and permission control. Provider-operated network relays may participate.
+
+Codex Live uses the selected session's canonical authentication and never falls back to OpenAI Realtime, a different account, or a different provider.
+
+## Grok Voice
+
+Listed in the provider picker as **Grok Voice · BYOK**, this uses xAI's realtime Voice connection with live PCM microphone capture and playback owned by Happier's shared Voice media lifecycle.
+
+This mode is currently development-only on web, iOS, and Android. It is not yet available in released Happier builds, and native audio remains subject to packaged physical-device certification.
+
+- Happier uses the configured xAI API key only for bounded client-auth minting and voice-catalog operations.
+- Web and native use the same public provider runtime, protocol translation, transcript admission, tools, interruption, cancellation, and retirement behavior.
+- Native capture and playback share Happier's existing audio-session, AEC, route, and lifecycle owner rather than creating a provider-specific native audio stack.
+- If conversation resumption is enabled, Happier retains the provider conversation ID. Forgetting it removes Happier's saved ID; it does not delete data retained by xAI.
+
+## Local voice
+
+**Local voice** is the configurable speech pipeline. Pick a speech-to-text provider and
+a text-to-speech provider independently:
+
+- **STT**: **Device STT (experimental)**, an **OpenAI-compatible endpoint**, Google
+  Gemini, or **Local neural (beta)**
+- **TTS**: **Device TTS (experimental)**, an **OpenAI-compatible endpoint**, Google
+  Cloud, or **Local neural (beta)**
+
+<Callout type="warn">
+  "Local" describes where you point the pipeline, not a guarantee about where audio is
+  processed. Device speech hands audio to the browser or operating system service, which
+  may process it off-device — Happier says so in the provider's own disclosure. Google
+  and OpenAI-compatible providers are network services by definition, and local-neural
+  speech runs on the daemon rather than in the browser on web. Only native on-device
+  neural packs are genuinely on-device. **Settings → Voice → Privacy & data** shows the
+  processing disclosure for whatever you have selected.
+</Callout>
+
+Local voice is a good fit when you want a self-hosted speech stack, device speech
+services, a hybrid such as device STT with cloud TTS, or on-device neural models like
+Kokoro TTS and Sherpa STT on a native build.
+
+Local voice settings also include voice-agent behavior such as backend selection, machine targeting, resumability, and working-directory policy when you use **Agent** mode.
+
+### Backend and model lists are machine-aware
+
+When you use **Agent** mode, Happier does not guess a fake model list locally.
+
+- the **Voice agent backend** list follows your enabled backend toggles
+- the **Agent machine** setting decides which machine Happier probes for backend capabilities
+- the **chat model** and **commit model** lists come from that selected machine when the backend supports dynamic model probing
+
+This means the exact model list can differ between machines.
+
+If the selected machine cannot provide a dynamic list for the chosen backend, Happier falls back to the safe options that are always valid:
+
+- **Use CLI settings**
+- **Custom…**
+
+In practice, this usually means one of these is true on the selected machine/account:
+
+- the backend is not installed there
+- the backend is installed but not authenticated there
+- the backend does not expose a dynamic model probe for that machine context
+
+If you expect a richer model list, first check:
+
+- **Settings → Voice → Voice conversations → Agent machine**
+- the selected backend is actually available on that machine
+- that machine is signed in for the backend you selected
+
+### Conversation modes
+
+Local voice supports two conversation modes:
+
+- **Direct to session**: your transcribed speech is sent straight into the session
+- **Agent**: your speech goes through a dedicated voice agent first
+
+Use **Direct to session** when you want speech input to behave like direct dictation into a session.
+
+Use **Agent** when you want a colleague-style voice layer that can ask follow-up questions, summarize, and use structured actions before writing anything back.
+
+### TTS still matters in direct-to-session mode
+
+Even in **Direct to session**, TTS can still be enabled so Happier can read agent replies back to you.
+
+### Hands-free mode
+
+When you use **Device STT (experimental)**, Happier can also expose hands-free endpointing controls such as silence timeout and minimum speech duration.
+
+### Test TTS
+
+Use **Test TTS** to verify the currently selected local TTS provider.
+
+That single button is the canonical end-to-end test for local voice output, regardless of whether you are using device TTS, OpenAI-compatible TTS, Google Cloud TTS, or local neural TTS.
+
+See the full setup guide: [Local voice providers](/voice/local-providers).
+
+## What voice can do
+
+Voice uses the same structured action system as the rest of Happier.
+
+Common voice actions include:
+
+- sending a message to a session
+- announcing pending permission requests so you can review them in the session
+- answering user-action requests
+- changing the active target session
+- changing tracked sessions
+- searching or resolving supported actions
+- switching session mode when supported
+
+This is why voice is more reliable than a plain free-form speech interface: it can call typed actions instead of guessing.
+
+Answering a user-action request and approving a permission are not the same thing. Voice can answer a session's user-action requests, but it cannot approve a coding-session permission from spoken language such as “yes,” “approve,” or “allow.” The session's own permission UI stays authoritative for approve-once, approve-session, deny, and cancel. Ending voice does not settle or remove a pending permission.
+
+## Practical setup recipes
+
+### I want the simplest realtime voice setup
+
+Use **Happier Voice**.
+
+### I want ElevenLabs, but with my own billing and voices
+
+Use **Use My ElevenLabs**.
+
+### I want local or self-hosted speech services
+
+Use **Local voice**.
+
+### I want OpenAI realtime voice
+
+In a development build, use **OpenAI Realtime**, then explicitly choose either the standalone saved-secret source or a Connected Service source.
+
+### I want realtime voice attached to Codex
+
+In a development build, use **Codex Realtime (Experimental)** and choose the exact session, or the global Voice account and machine you want to use.
+
+### I want speech input without turning every utterance into a session message
+
+Use **Local voice** with **Conversation mode** set to **Agent**.
+
+### I want to reread or delete standalone voice transcripts
+
+Go to **Settings → Voice → Privacy & data → Voice History**. That covers conversations
+that had no target session; anything voice wrote into a real session lives in that
+session.
+
+## Troubleshooting
+
+### Voice is connected, but nothing is spoken back
+
+Check:
+
+- that TTS is enabled for the selected provider
+- that the correct TTS provider is selected
+- that **Test TTS** succeeds in the Local voice section
+
+### My ElevenLabs voice list is empty
+
+Check:
+
+- your API key is present
+- the key has **Voices → Read** permission
+- the selected agent and voice still exist in ElevenLabs
+
+### Local voice does not reach my self-hosted server
+
+On mobile, `localhost` usually points to the phone itself, not your computer. Use your computer’s LAN IP or a tunnel instead.
+
+## Related pages
+
+- [Local voice providers](/voice/local-providers)
+- [Add Voice to a plugin](/plugins/guides/voice)
+- [Feature flags](/extras/feature-flags)
+- [Permissions](/sessions/permissions)
+- [Inbox and approvals](/sessions/inbox-and-approvals)
+- [Happier tools](/extending/happier-tools)

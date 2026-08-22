@@ -1,0 +1,48 @@
+---
+title: Apps and interface
+description: The surfaces Happier gives you — the app, the desktop control panel, the CLI and the daemon — and the parts of the interface worth knowing about.
+---
+
+Happier is the same account and the same sessions everywhere. What changes is
+the surface you reach them through, and how much of the machine that surface
+can see.
+
+## Where Happier runs
+
+- [App](/apps/app) — desktop, web and mobile. The one you will spend your time in.
+- [Desktop control panel](/apps/control-panel) — the desktop app doing the jobs that need a real machine: relay, daemon and secure-access setup.
+- [Windows](/apps/windows) — the behaviour and troubleshooting that only applies there.
+- [Custom mobile build](/apps/custom-mobile-build) — building your own app against a self-hosted server, without going through the stores.
+
+## Getting a machine connected
+
+- [Setup wizard](/apps/setup-wizard) — guided relay selection, login, machine setup and secure access.
+- [Relay access](/apps/relay-access) — making a self-hosted relay reachable from your other devices, over Tailscale, Cloudflare, the LAN, or not at all.
+- [Remote hosts (SSH)](/apps/remote-hosts) — saved SSH targets the setup flows reuse.
+
+## From a terminal
+
+- [CLI](/apps/cli) — installing, signing in, and choosing which server you are talking to.
+- [CLI sessions](/apps/cli-sessions) — creating, listing, sending, resuming and attaching, all scriptable.
+- [Daemon](/apps/daemon) — keeping remote control available with no terminal open.
+
+## Inside the interface
+
+- [Attachments and image previews](/apps/attachments)
+- [Keyboard shortcuts](/apps/keyboard-shortcuts) — every rebindable shortcut and the command palette. Generated.
+
+## What every surface shares
+
+Whichever one you use, the control plane underneath is the same: the same
+account and server selection, the same catalog of actions an agent or a person
+can invoke, the same per-surface settings for those actions, and the same
+approval flow when an action is gated.
+
+That is why an approval raised by a session on your laptop can be answered from
+your phone, and why voice and an external MCP host can drive the same actions
+the app exposes.
+
+## Related
+
+- [Happier as an MCP server](/extending/happier-as-mcp-server) — letting an editor or an automation drive Happier.
+- [Multiple relays](/accounts/multi-server) — server selection and profile switching.

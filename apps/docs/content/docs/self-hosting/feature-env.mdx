@@ -1,0 +1,320 @@
+---
+title: Feature environment variables
+description: Every HAPPIER_FEATURE_* variable the server reads, generated from the server's feature environment schema.
+---
+
+This is the complete list of environment variables the server reads to decide
+what it advertises and how much of it a client may use. There are **158**, of
+which **52** are on/off switches and the rest are limits, timeouts,
+policies and header names.
+
+Two kinds of variable are mixed together here on purpose, because the server
+treats them the same way:
+
+- **Switches** (`…__ENABLED`) turn a capability on or off. When the capability
+  also appears in the client feature catalog, it is listed with its flag id on
+  [Feature flags](/extras/feature-flags) — start there if you are trying to
+  hide or reveal something users can see.
+- **Settings** tune a capability that is already on: byte ceilings, rate limits,
+  idle timeouts, accepted encodings, certificate header names. Most have no
+  catalog flag at all, so this page is the only place they are listed.
+
+<Callout type="info">
+  Setting a variable for a capability whose switch is off does nothing. Check
+  the switch in the same group first — a tunnel cap that seems to be ignored is
+  usually a tunnel feature that was never enabled.
+</Callout>
+
+This page is the complete index, so it lists names rather than values.
+[Environment variables](/self-hosting/env) carries the defaults, ranges and
+worked examples for the ones self-hosters tune most often.
+
+## Variables
+
+Grouped and ordered as the server's schema declares them.
+
+### Automations
+
+| Variable | Kind |
+| --- | --- |
+| `HAPPIER_FEATURE_AUTOMATIONS__ENABLED` | Switch |
+
+### Bug reports
+
+| Variable | Kind |
+| --- | --- |
+| `HAPPIER_FEATURE_BUG_REPORTS__ENABLED` | Switch |
+| `HAPPIER_FEATURE_BUG_REPORTS__PROVIDER_URL` | Setting |
+| `HAPPIER_FEATURE_BUG_REPORTS__DEFAULT_INCLUDE_DIAGNOSTICS` | Setting |
+| `HAPPIER_FEATURE_BUG_REPORTS__MAX_ARTIFACT_BYTES` | Setting |
+| `HAPPIER_FEATURE_BUG_REPORTS__UPLOAD_TIMEOUT_MS` | Setting |
+| `HAPPIER_FEATURE_BUG_REPORTS__ACCEPTED_ARTIFACT_KINDS` | Setting |
+| `HAPPIER_FEATURE_BUG_REPORTS__CONTEXT_WINDOW_MS` | Setting |
+
+### Voice
+
+| Variable | Kind |
+| --- | --- |
+| `HAPPIER_FEATURE_VOICE__ENABLED` | Switch |
+| `HAPPIER_FEATURE_VOICE__REQUIRE_SUBSCRIPTION` | Setting |
+
+### Connected services
+
+| Variable | Kind |
+| --- | --- |
+| `HAPPIER_FEATURE_CONNECTED_SERVICES_QUOTAS__ENABLED` | Switch |
+| `HAPPIER_FEATURE_CONNECTED_SERVICES_ACCOUNT_GROUPS__ENABLED` | Switch |
+| `HAPPIER_FEATURE_CONNECTED_SERVICES_ACCOUNT_FALLBACK__ENABLED` | Switch |
+
+### Updates ota
+
+| Variable | Kind |
+| --- | --- |
+| `HAPPIER_FEATURE_UPDATES_OTA__ENABLED` | Switch |
+
+### Attachments uploads
+
+| Variable | Kind |
+| --- | --- |
+| `HAPPIER_FEATURE_ATTACHMENTS_UPLOADS__ENABLED` | Switch |
+
+### Pets
+
+| Variable | Kind |
+| --- | --- |
+| `HAPPIER_FEATURE_PETS_COMPANION__ENABLED` | Switch |
+| `HAPPIER_FEATURE_PETS_SYNC__ENABLED` | Switch |
+| `HAPPIER_FEATURE_PETS_SYNC__MAX_MANIFEST_BYTES` | Setting |
+| `HAPPIER_FEATURE_PETS_SYNC__MAX_CANONICAL_SPRITESHEET_BYTES` | Setting |
+| `HAPPIER_FEATURE_PETS_SYNC__MAX_CANONICAL_PACKAGE_BYTES` | Setting |
+| `HAPPIER_FEATURE_PETS_SYNC__MAX_IMPORTED_PETS_PER_ACCOUNT` | Setting |
+| `HAPPIER_FEATURE_PETS_SYNC__MAX_IMPORTED_PET_BYTES_PER_ACCOUNT` | Setting |
+| `HAPPIER_FEATURE_PETS_SYNC__ENCRYPTED_CUSTOM_PET_SYNC_POLICY` | Setting |
+
+### Sessions
+
+| Variable | Kind |
+| --- | --- |
+| `HAPPIER_FEATURE_SESSIONS_HANDOFF__ENABLED` | Switch |
+| `HAPPIER_FEATURE_SESSIONS_AGENT_SWITCHING__ENABLED` | Switch |
+| `HAPPIER_FEATURE_SESSIONS_FOLDERS__ENABLED` | Switch |
+| `HAPPIER_FEATURE_SESSIONS_USAGE_LIMIT_RECOVERY__ENABLED` | Switch |
+
+### Machines
+
+| Variable | Kind |
+| --- | --- |
+| `HAPPIER_FEATURE_MACHINES_TRANSFER_DIRECT_PEER__ENABLED` | Switch |
+| `HAPPIER_FEATURE_MACHINES_RPC_DIRECT_PEER__ENABLED` | Switch |
+| `HAPPIER_FEATURE_MACHINES_TRANSFER_SERVER_ROUTED__ENABLED` | Switch |
+| `HAPPIER_FEATURE_MACHINES_TRANSFER_SERVER_ROUTED__MAX_BYTES` | Setting |
+| `HAPPIER_FEATURE_MACHINES_TRANSFER_SERVER_ROUTED__MAX_ACTIVE_TRANSFERS_PER_SOCKET` | Setting |
+| `HAPPIER_FEATURE_MACHINES_TUNNEL_DIRECT_PEER__ENABLED` | Switch |
+| `HAPPIER_FEATURE_MACHINES_TUNNEL_SERVER_ROUTED__ENABLED` | Switch |
+| `HAPPIER_FEATURE_MACHINES_TUNNEL_SERVER_ROUTED__MAX_BYTES` | Setting |
+| `HAPPIER_FEATURE_MACHINES_TUNNEL_SERVER_ROUTED__MAX_ACTIVE_TUNNELS_PER_SOCKET` | Setting |
+| `HAPPIER_FEATURE_MACHINES_TUNNEL_SERVER_ROUTED__MAX_FRAME_BYTES` | Setting |
+| `HAPPIER_FEATURE_MACHINES_TUNNEL_SERVER_ROUTED__SUPPORTED_ENCODINGS` | Setting |
+| `HAPPIER_FEATURE_MACHINES_TUNNEL_SERVER_ROUTED__PREFERRED_ENCODING` | Setting |
+| `HAPPIER_FEATURE_MACHINES_TUNNEL_SERVER_ROUTED__ALLOW_V1_FALLBACK` | Setting |
+| `HAPPIER_FEATURE_MACHINES_TUNNEL_SERVER_ROUTED__MAX_BINARY_HEADER_BYTES` | Setting |
+| `HAPPIER_FEATURE_MACHINES_TUNNEL_SERVER_ROUTED__MAX_RAW_PAYLOAD_BYTES` | Setting |
+| `HAPPIER_FEATURE_MACHINES_TUNNEL_SERVER_ROUTED__MAX_FRAMED_MESSAGE_BYTES` | Setting |
+| `HAPPIER_FEATURE_MACHINES_TUNNEL_SERVER_ROUTED__MAX_CONCURRENT_SUBSTREAMS` | Setting |
+| `HAPPIER_FEATURE_MACHINES_TUNNEL_SERVER_ROUTED__MAX_TOTAL_SUBSTREAMS` | Setting |
+| `HAPPIER_FEATURE_MACHINES_TUNNEL_SERVER_ROUTED__MAX_BYTES_PER_SUBSTREAM` | Setting |
+| `HAPPIER_FEATURE_MACHINES_TUNNEL_SERVER_ROUTED__MAX_AGGREGATE_BYTES` | Setting |
+| `HAPPIER_FEATURE_MACHINES_TUNNEL_SERVER_ROUTED__MAX_SUBSTREAM_IDLE_MS` | Setting |
+| `HAPPIER_FEATURE_MACHINES_TUNNEL_SERVER_ROUTED__MAX_SESSION_IDLE_MS` | Setting |
+| `HAPPIER_FEATURE_MACHINES_TUNNEL__MAX_IDLE_MS` | Setting |
+| `HAPPIER_FEATURE_MACHINES_TUNNEL__MAX_DURATION_MS` | Setting |
+| `HAPPIER_FEATURE_MACHINES_TUNNEL_ALLOWED_PORTS` | Setting |
+
+### Local services
+
+Core local-services product gates (server-represented + default-allow). Exposure (preview / publicPreview) below stays fail-closed default-off.
+
+| Variable | Kind |
+| --- | --- |
+| `HAPPIER_FEATURE_LOCAL_SERVICES__ENABLED` | Switch |
+| `HAPPIER_FEATURE_LOCAL_SERVICES_MANAGED__ENABLED` | Switch |
+| `HAPPIER_FEATURE_LOCAL_SERVICES_LAUNCHER__ENABLED` | Switch |
+| `HAPPIER_FEATURE_LOCAL_SERVICES_ACTIONS__ENABLED` | Switch |
+| `HAPPIER_FEATURE_LOCAL_SERVICES_ACTIONS_TERMINATE__ENABLED` | Switch |
+| `HAPPIER_FEATURE_LOCAL_SERVICES_INVENTORY__ENABLED` | Switch |
+| `HAPPIER_FEATURE_LOCAL_SERVICES_PREVIEW__ENABLED` | Switch |
+| `HAPPIER_FEATURE_LOCAL_SERVICES_PREVIEW__TOKEN_TTL_MS` | Setting |
+| `HAPPIER_FEATURE_LOCAL_SERVICES_PREVIEW__HOST_ORIGIN_DOMAIN` | Setting |
+| `HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__ENABLED` | Switch |
+| `HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__ALLOWED_MODES` | Setting |
+| `HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__MAX_TTL_MS` | Setting |
+| `HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__MAX_CONCURRENT_EXPOSURES` | Setting |
+| `HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__DNS_TLS_REQUIRED` | Setting |
+| `HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__AUDIT_REQUIRED` | Setting |
+| `HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__AUDIT_SINK` | Setting |
+| `HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__AUDIT_LOG_PATH` | Setting |
+| `HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__ALLOW_TEST_AUDIT_SINK` | Setting |
+| `HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__RATE_LIMIT_PROFILE_IDS` | Setting |
+| `HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__RATE_LIMIT_CHECKER` | Setting |
+| `HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__RATE_LIMIT_MAX_REQUESTS` | Setting |
+| `HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__RATE_LIMIT_WINDOW_MS` | Setting |
+| `HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__ALLOW_TEST_RATE_LIMIT_CHECKER` | Setting |
+
+### Providers
+
+| Variable | Kind |
+| --- | --- |
+| `HAPPIER_FEATURE_PROVIDERS__ENABLED` | Switch |
+| `HAPPIER_FEATURE_PROVIDERS_LOCAL_DISCOVERY__ENABLED` | Switch |
+| `HAPPIER_FEATURE_PROVIDERS_LOCAL_MODEL_MANAGEMENT__ENABLED` | Switch |
+
+### Browser
+
+Core browser product gates (server-represented + default-allow). The capture/automation surfaces (sidecar/diagnostics/context/recording/automation) are server-represented but default-off.
+
+| Variable | Kind |
+| --- | --- |
+| `HAPPIER_FEATURE_BROWSER__ENABLED` | Switch |
+| `HAPPIER_FEATURE_BROWSER_VIEW_TARGETS__ENABLED` | Switch |
+| `HAPPIER_FEATURE_BROWSER_INTERNAL__ENABLED` | Switch |
+| `HAPPIER_FEATURE_BROWSER_SIDECAR__ENABLED` | Switch |
+| `HAPPIER_FEATURE_BROWSER_DIAGNOSTICS__ENABLED` | Switch |
+| `HAPPIER_FEATURE_BROWSER_CONTEXT__ENABLED` | Switch |
+| `HAPPIER_FEATURE_BROWSER_RECORDING__ENABLED` | Switch |
+| `HAPPIER_FEATURE_BROWSER_AUTOMATION__ENABLED` | Switch |
+
+### Plugins
+
+Core plugin platform + UI projection gates (server-represented + default-allow). The plugin UI tiers below are server-represented + default-ALLOW kill-switches: per-plugin install/enable/trust/runtime derivation (5.1/5.2) governs actual availability. devHotReload stays client + fail-closed (CLI/UI policy owns it).
+
+| Variable | Kind |
+| --- | --- |
+| `HAPPIER_FEATURE_PLUGINS__ENABLED` | Switch |
+| `HAPPIER_FEATURE_PLUGINS_WEBHOOKS__ENABLED` | Switch |
+| `HAPPIER_FEATURE_PLUGINS_WEBHOOKS__PROCESS_MAX_REQUESTS` | Setting |
+| `HAPPIER_FEATURE_PLUGINS_WEBHOOKS__PROCESS_MAX_WORKING_BYTES` | Setting |
+| `HAPPIER_FEATURE_PLUGINS_WEBHOOKS__ROUTE_RATE_PER_MINUTE` | Setting |
+| `HAPPIER_FEATURE_PLUGINS_WEBHOOKS__ROUTE_CONCURRENCY` | Setting |
+| `HAPPIER_FEATURE_PLUGINS_WEBHOOKS__ENDPOINT_RATE_PER_MINUTE` | Setting |
+| `HAPPIER_FEATURE_PLUGINS_WEBHOOKS__ENDPOINT_CONCURRENCY` | Setting |
+| `HAPPIER_FEATURE_PLUGINS_WEBHOOKS__ACCOUNT_RATE_PER_MINUTE` | Setting |
+| `HAPPIER_FEATURE_PLUGINS_WEBHOOKS__ACCOUNT_CONCURRENCY` | Setting |
+| `HAPPIER_FEATURE_PLUGINS_UI__ENABLED` | Switch |
+| `HAPPIER_FEATURE_PLUGINS_UI_HOSTED_WEB__ENABLED` | Switch |
+| `HAPPIER_FEATURE_PLUGINS_UI_REACT_NATIVE_BUNDLES__ENABLED` | Switch |
+| `HAPPIER_FEATURE_PLUGINS_UI_ARTIFACT_HOSTING__ENABLED` | Switch |
+| `HAPPIER_FEATURE_PLUGINS_UI_ARTIFACT_HOSTING__MAX_ARTIFACT_BYTES` | Setting |
+| `HAPPIER_FEATURE_PLUGINS_UI_ARTIFACT_HOSTING__MAX_ACCOUNT_BYTES` | Setting |
+
+### Collection
+
+| Variable | Kind |
+| --- | --- |
+| `HAPPIER_COLLECTION_MAX_ROW_ENCODED_BYTES` | Setting |
+| `HAPPIER_COLLECTION_MAX_BATCH_BYTES` | Setting |
+| `HAPPIER_COLLECTION_MAX_BATCH_ROWS` | Setting |
+| `HAPPIER_COLLECTION_MAX_ACCOUNT_ROWS` | Setting |
+| `HAPPIER_COLLECTION_MAX_ACCOUNT_BYTES` | Setting |
+
+### Devices
+
+Device/simulator preview gates (server-represented + default-allow per): viewing your own simulator. The live-stream + browser.viewTargets dependency closure still gates availability.
+
+| Variable | Kind |
+| --- | --- |
+| `HAPPIER_FEATURE_DEVICES__ENABLED` | Switch |
+| `HAPPIER_FEATURE_DEVICES_SIMULATOR_PREVIEW__ENABLED` | Switch |
+
+### Machines live stream
+
+| Variable | Kind |
+| --- | --- |
+| `HAPPIER_FEATURE_MACHINES_LIVE_STREAM_DIRECT_PEER__ENABLED` | Switch |
+| `HAPPIER_FEATURE_MACHINES_LIVE_STREAM_SERVER_ROUTED__ENABLED` | Switch |
+| `HAPPIER_FEATURE_MACHINES_LIVE_STREAM_SERVER_ROUTED__MAX_BITRATE_BPS` | Setting |
+| `HAPPIER_FEATURE_MACHINES_LIVE_STREAM_SERVER_ROUTED__MAX_FRAMES_PER_SECOND` | Setting |
+| `HAPPIER_FEATURE_MACHINES_LIVE_STREAM_SERVER_ROUTED__MAX_FRAME_BYTES` | Setting |
+| `HAPPIER_FEATURE_MACHINES_LIVE_STREAM_SERVER_ROUTED__MAX_DURATION_MS` | Setting |
+| `HAPPIER_FEATURE_MACHINES_LIVE_STREAM_SERVER_ROUTED__MAX_TOTAL_BYTES` | Setting |
+| `HAPPIER_FEATURE_MACHINES_LIVE_STREAM_SERVER_ROUTED__MAX_CONCURRENT_STREAMS_PER_ACCOUNT` | Setting |
+| `HAPPIER_FEATURE_MACHINES_LIVE_STREAM_SERVER_ROUTED__MAX_CONCURRENT_STREAMS_PER_SOCKET` | Setting |
+| `HAPPIER_FEATURE_MACHINES_LIVE_STREAM_SERVER_ROUTED__MAX_CONCURRENT_STREAMS_PER_MACHINE` | Setting |
+
+### Peer mediation route grant signing
+
+| Variable | Kind |
+| --- | --- |
+| `HAPPIER_PEER_MEDIATION_ROUTE_GRANT_SIGNING_KEY_ID` | Setting |
+| `HAPPIER_PEER_MEDIATION_ROUTE_GRANT_SIGNING_PRIVATE_KEY` | Setting |
+| `HAPPIER_PEER_MEDIATION_ROUTE_GRANT_SIGNING_PUBLIC_KEY` | Setting |
+| `HAPPIER_PEER_MEDIATION_ROUTE_GRANT_SIGNING_EXPIRES_AT` | Setting |
+
+### Terminal
+
+| Variable | Kind |
+| --- | --- |
+| `HAPPIER_FEATURE_TERMINAL_EMBEDDED_PTY__ENABLED` | Switch |
+| `HAPPIER_FEATURE_TERMINAL_TRANSPORT_BYTE_STREAM__ENABLED` | Switch |
+
+### Social friends
+
+| Variable | Kind |
+| --- | --- |
+| `HAPPIER_FEATURE_SOCIAL_FRIENDS__ENABLED` | Switch |
+| `HAPPIER_FEATURE_SOCIAL_FRIENDS__ALLOW_USERNAME` | Setting |
+| `HAPPIER_FEATURE_SOCIAL_FRIENDS__IDENTITY_PROVIDER` | Setting |
+
+### Auth
+
+| Variable | Kind |
+| --- | --- |
+| `HAPPIER_FEATURE_AUTH_RECOVERY__PROVIDER_RESET_ENABLED` | Setting |
+| `HAPPIER_FEATURE_AUTH_LOGIN__KEY_CHALLENGE_ENABLED` | Setting |
+| `HAPPIER_FEATURE_AUTH_PAIRING__DESKTOP_QR_MOBILE_SCAN_ENABLED` | Setting |
+| `HAPPIER_FEATURE_AUTH_UI__AUTO_REDIRECT_ENABLED` | Setting |
+| `HAPPIER_FEATURE_AUTH_UI__AUTO_REDIRECT_PROVIDER_ID` | Setting |
+| `HAPPIER_FEATURE_AUTH_UI__RECOVERY_KEY_REMINDER_ENABLED` | Setting |
+| `HAPPIER_FEATURE_AUTH_MTLS__ENABLED` | Switch |
+| `HAPPIER_FEATURE_AUTH_MTLS__MODE` | Setting |
+| `HAPPIER_FEATURE_AUTH_MTLS__AUTO_PROVISION` | Setting |
+| `HAPPIER_FEATURE_AUTH_MTLS__TRUST_FORWARDED_HEADERS` | Setting |
+| `HAPPIER_FEATURE_AUTH_MTLS__IDENTITY_SOURCE` | Setting |
+| `HAPPIER_FEATURE_AUTH_MTLS__ALLOWED_EMAIL_DOMAINS` | Setting |
+| `HAPPIER_FEATURE_AUTH_MTLS__ALLOWED_ISSUERS` | Setting |
+| `HAPPIER_FEATURE_AUTH_MTLS__FORWARDED_EMAIL_HEADER` | Setting |
+| `HAPPIER_FEATURE_AUTH_MTLS__FORWARDED_UPN_HEADER` | Setting |
+| `HAPPIER_FEATURE_AUTH_MTLS__FORWARDED_SUBJECT_HEADER` | Setting |
+| `HAPPIER_FEATURE_AUTH_MTLS__FORWARDED_FINGERPRINT_HEADER` | Setting |
+| `HAPPIER_FEATURE_AUTH_MTLS__FORWARDED_ISSUER_HEADER` | Setting |
+| `HAPPIER_FEATURE_AUTH_MTLS__RETURN_TO_ALLOW_PREFIXES` | Setting |
+| `HAPPIER_FEATURE_AUTH_MTLS__CLAIM_TTL_SECONDS` | Setting |
+
+### Auth oauth
+
+| Variable | Kind |
+| --- | --- |
+| `HAPPIER_FEATURE_AUTH_OAUTH__KEYLESS_ENABLED` | Setting |
+| `HAPPIER_FEATURE_AUTH_OAUTH__KEYLESS_PROVIDERS` | Setting |
+| `HAPPIER_FEATURE_AUTH_OAUTH__KEYLESS_AUTO_PROVISION` | Setting |
+
+### Encryption
+
+| Variable | Kind |
+| --- | --- |
+| `HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY` | Setting |
+| `HAPPIER_FEATURE_ENCRYPTION__ALLOW_ACCOUNT_OPTOUT` | Setting |
+| `HAPPIER_FEATURE_ENCRYPTION__DEFAULT_ACCOUNT_MODE` | Setting |
+| `HAPPIER_FEATURE_ENCRYPTION__PLAIN_ACCOUNT_SETTINGS_AT_REST` | Setting |
+| `HAPPIER_FEATURE_ENCRYPTION__PLAIN_ACCOUNT_CREDENTIALS_AT_REST` | Setting |
+| `HAPPIER_FEATURE_ENCRYPTION__PLAIN_ACCOUNT_ARTIFACTS_AT_REST` | Setting |
+
+### E2ee
+
+| Variable | Kind |
+| --- | --- |
+| `HAPPIER_FEATURE_E2EE__KEYLESS_ACCOUNTS_ENABLED` | Setting |
+
+## Related
+
+- [Feature flags](/extras/feature-flags) — the capabilities these gate, and which ones users can see.
+- [Environment variables](/self-hosting/env) — the rest of the server's configuration.

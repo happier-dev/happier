@@ -5,7 +5,9 @@ import { fileURLToPath } from 'node:url';
 
 import { runDocsBuild } from './build.mjs';
 
-test('makes explicit Fumadocs generation authoritative after Next route type generation', () => {
+const noContentProblems = () => ({ links: [], labels: [], generated: [] });
+
+test('makes explicit Fumadocs generation authoritative after Next route type generation', async () => {
   const packageJsonPath = fileURLToPath(new URL('../package.json', import.meta.url));
   const packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf8'));
 
@@ -16,9 +18,10 @@ test('makes explicit Fumadocs generation authoritative after Next route type gen
   ]);
 });
 
-test('runs the native typecheck before invoking the local Next build CLI', () => {
+test('runs the native typecheck before invoking the local Next build CLI', async () => {
   const calls = [];
-  runDocsBuild({
+  await runDocsBuild({
+    runContentChecksImpl: noContentProblems,
     packageRoot: '/repo/apps/docs',
     processExecPath: '/managed/node',
     execYarnImpl(args, options) {
@@ -42,9 +45,10 @@ test('runs the native typecheck before invoking the local Next build CLI', () =>
   ]);
 });
 
-test('fails when the local Next CLI exits unsuccessfully', () => {
-  assert.throws(
+test('fails when the local Next CLI exits unsuccessfully', async () => {
+  await assert.rejects(
     () => runDocsBuild({
+      runContentChecksImpl: noContentProblems,
       packageRoot: '/repo/apps/docs',
       execYarnImpl() {},
       resolveNextCliPathImpl: () => '/repo/node_modules/next/dist/bin/next',
@@ -52,4 +56,27 @@ test('fails when the local Next CLI exits unsuccessfully', () => {
     }),
     /Next build failed with code 2/,
   );
+});
+
+test('refuses to build when a documented link or UI label is wrong', async () => {
+  const calls = [];
+
+  await assert.rejects(
+    () => runDocsBuild({
+      packageRoot: '/repo/apps/docs',
+      processExecPath: '/managed/node',
+      runContentChecksImpl: () => ({
+        links: [{ at: 'a.mdx:1', target: '/gone', reason: 'no page at this route' }],
+        labels: [],
+        generated: [],
+      }),
+      execYarnImpl() { calls.push('yarn'); },
+      resolveNextCliPathImpl: () => '/repo/node_modules/next/dist/bin/next',
+      spawnSyncImpl() { calls.push('next'); return { status: 0 }; },
+    }),
+    /Docs content checks failed with 1 problem/,
+  );
+
+  // The point of checking first is not spending a Next build to find out.
+  assert.deepEqual(calls, []);
 });

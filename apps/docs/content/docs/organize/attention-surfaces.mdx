@@ -1,0 +1,156 @@
+---
+title: Attention surfaces
+description: How Happier shows session attention across Inbox, notifications, the desktop overlay, Live Activities, widgets, badges, and webhooks.
+---
+
+Happier has several **attention surfaces**. They all answer the same question:
+
+> What needs attention, and where is the safest place to handle it?
+
+The same session event can appear in different places depending on your settings, device, privacy mode, quiet hours, and whether you are already looking at the session.
+
+## What can trigger attention
+
+Happier routes these event types through the attention policy:
+
+- a session is ready after a turn
+- a permission request needs approval
+- a user-action request needs an answer
+- a session starts
+- a task is acknowledged
+- a task completes or fails
+- a resource limit needs attention
+- a probe or diagnostic event is detected
+
+The strongest states, such as permission requests and user-action requests, are prioritized over passive unread updates.
+
+## Where attention can appear
+
+Happier can deliver attention through these channels:
+
+- **Inbox** for the durable in-app queue of approvals, requests, unread sessions, and follow-up work
+- **Push notifications** for re-entry when you are away from the app
+- **Local notifications** for device-local reminders
+- **Desktop overlay** for a small always-available desktop island
+- **Live Activities and Dynamic Island** on iOS
+- **Home widgets** for glanceable iOS state
+- **Badges** for count-based attention
+- **Webhooks** for automation and external routing
+
+These are channels, not separate systems. Happier builds the attention state once, then each surface renders the amount of detail it is allowed to show.
+
+## Privacy modes
+
+Surfaces can use one of three preview modes:
+
+- **Status only**: show state such as ready, pending, or permission required without session details.
+- **Title only**: show the session title, but hide preview content.
+- **Include preview**: show the title and safe preview text when available.
+
+You can set a default privacy mode and override specific surfaces. For example, you may want the desktop overlay to include previews, while Live Activities or widgets only show status on the lock screen.
+
+Direct actions from lock-screen style surfaces are also privacy-aware. A Live Activity or widget action can execute immediately only when the surface is allowed to expose enough context and Happier can verify the target session/server. If privacy is restricted or the target cannot be verified, Happier opens the session instead.
+
+## Quiet hours
+
+Quiet hours can deliver, silence, or suppress attention:
+
+- **Deliver**: send normally.
+- **Silent**: update the surface without making noise.
+- **Suppress**: do not deliver on that channel during quiet hours.
+
+Default behavior is tuned by channel:
+
+- Push and local notifications are suppressed during quiet hours.
+- Webhooks, badges, and the desktop overlay keep delivering.
+- Live Activities and home widgets keep updating silently.
+
+This means lock-screen and glanceable surfaces can stay useful without waking you up.
+
+## Notification sounds
+
+Happier includes bundled notification tones:
+
+- **Soft** for general attention.
+- **Urgent** for permission requests and user-action requests.
+
+You can also use the native system default or make notifications silent. Unknown custom sound ids are treated as custom values and are not passed as bundled app sounds unless the platform can support them.
+
+On Android, bundled sounds map to dedicated notification channels so request notifications can be tuned separately from general ready notifications.
+
+## Desktop overlay
+
+The desktop overlay is the compact activity island on desktop. It summarizes active attention without requiring you to open the full app.
+
+It can show:
+
+- the current primary session
+- total attention counts
+- permission cards
+- user-question cards
+- quota or resource summaries
+- completion states
+
+Permission cards classify request risk. Low-risk read-only requests can show quick allow options, including an **Always allow** shortcut. High-risk requests do not show the blanket allow shortcut; they keep review-oriented actions visible instead.
+
+User-question cards can show numbered choices. When a single question has direct options, the overlay can also offer **Other** so you can answer in context with free text.
+
+Completion states are queued by priority. Pending tool work is shown before a normal turn completion, and subagent completion can remain sticky so it is not lost behind a faster-changing session.
+
+## Live Activities, Dynamic Island, and widgets
+
+On iOS, Happier can mirror the current session state into Live Activities, Dynamic Island, and home widgets.
+
+These surfaces are designed for glanceable attention:
+
+- ready and unread state
+- thinking/pending state
+- permission required
+- action required
+- overflow counts when more sessions need attention than the surface can show
+
+Live Activities can update locally while the app is active or recently available. If your server and device are configured for remote updates, the server can also update or end an existing Live Activity after the app has registered the ActivityKit target. See [Live Activity remote updates](/self-hosting/live-activity-remote-updates) for the deployment side.
+
+## How Happier chooses the primary item
+
+When multiple sessions need attention, Happier selects a primary item for compact surfaces. The selection uses shared dwell timing so the primary item does not flicker between sessions too aggressively.
+
+In practice:
+
+- urgent requests beat passive unread state
+- stale entries age out
+- the currently selected item is held briefly when it remains eligible
+- each surface can use its own display limits and freshness budget
+
+## Common workflows
+
+### Answer a permission request from desktop
+
+1. Hover or open the desktop overlay.
+2. Review the permission card.
+3. Use the quick action if it is low-risk, or open the session for review if it is high-risk.
+
+### Answer a question from a surface
+
+1. Open the overlay, notification, Live Activity, or widget action.
+2. Choose a numbered option when one is available.
+3. Use **Other** or open the session when you need to type a custom answer.
+
+### Keep the lock screen private
+
+1. Open notification or activity-surface settings.
+2. Set Live Activities or widgets to **Status only** or **Title only**.
+3. Leave direct actions enabled only for surfaces where you are comfortable showing enough context.
+
+### Reduce noise without losing state
+
+1. Configure quiet hours.
+2. Let push notifications suppress or silence during those hours.
+3. Keep Live Activities, widgets, badges, and desktop overlay available for silent glanceable state.
+
+## Related pages
+
+- [Inbox and approvals](/sessions/inbox-and-approvals)
+- [Notification routing](/extras/notifications-routing)
+- [Notifications](/extras/notifications-setup)
+- [Live Activity remote updates](/self-hosting/live-activity-remote-updates)

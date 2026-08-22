@@ -1,0 +1,46 @@
+---
+title: CodeRabbit (experimental)
+description: Configure the CodeRabbit review CLI in Happier, including install and API-key authentication.
+---
+
+**CodeRabbit** is a review CLI rather than a general coding agent. Happier runs
+it the same way it runs any local CLI-backed Agent, but it offers no model
+choice and no session resume, because the tool has neither.
+
+## Requirements
+
+- CodeRabbit CLI installed locally
+- `coderabbit` available on `PATH`, or `HAPPIER_CODERABBIT_PATH` set to its absolute path
+- `CODERABBIT_API_KEY` in the environment the agent runs in
+
+## Install CodeRabbit
+
+Happier does not bundle an install recipe for CodeRabbit. Install it with
+whatever method the vendor documents, then confirm Happier can see it:
+
+```bash
+coderabbit --version
+```
+
+## Authentication
+
+CodeRabbit has no login flow for Happier to launch. Happier reports it as
+signed in when `CODERABBIT_API_KEY` is present in the environment the agent
+runs in — nothing else is checked, and Happier cannot verify the key is valid,
+only that it is set.
+
+## What Happier can drive
+
+- **Model selection** is not available — the tool does not offer one.
+- **Resume**, **handoff**, **listing** and **forking** are not supported.
+- **Session modes** are not exposed to Happier.
+
+This is expected for a review CLI: a run reviews what you point it at and ends.
+
+## Troubleshooting
+
+### Status shows signed out with a key set
+
+Happier reads the environment of the process the agent runs in. If the key is
+exported in your shell but the daemon was started at login, the daemon does not
+see it. Set it where the service runs, then use **Check now**.

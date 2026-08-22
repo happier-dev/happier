@@ -1,0 +1,210 @@
+---
+title: Agent and model selection
+description: Choose an Agent, pick native or Provider models, and save exact model choices for new sessions.
+---
+
+Happier uses **Agent** for the executable coding tool that runs a session. Some internal and compatibility surfaces still call that choice an engine or backend.
+
+An Agent choice can be:
+
+- a built-in Agent, such as Claude, Codex, Gemini, OpenCode, or Pi
+- a configured **Custom ACP** backend
+- a configured runtime variant exposed by an Agent plugin
+
+The **Model** section shows the Agent's native models and grouped models from every enabled, compatible Provider connection.
+
+## Where to find it
+
+Open the **new session** flow and use the Agent/model picker in the bottom bar.
+
+The left side shows Agent choices. The right side shows the selected Agent's details, including:
+
+- model choices
+- Provider or ACP configuration options
+- refresh status when Happier is probing the selected machine
+- model-specific controls, when the provider exposes them
+
+Running sessions can also show a model/config picker in the input settings for the current session. Favorites are part of the **new session** picker.
+
+In the current development source, that in-session picker also lists other Agents. Choosing one arms the session to change Agent on your next message rather than changing the model — see [Continue with another Agent](/sessions/continue-with-another-agent).
+
+## Choose an Agent
+
+Pick the Agent that should launch the session.
+
+The list is capability-aware:
+
+- disabled or hidden Agents do not appear;
+- configured ACP backends appear as Agent choices;
+- profiles can filter which Agents are compatible;
+- details can vary by machine, working directory, profile, Provider, and connected-service state.
+
+If only one Agent is available, Happier can skip most of the picker chrome and use it directly.
+
+## Choose a model
+
+Native model sections may offer **Use CLI settings**.
+
+Use this when you want Happier to avoid setting a native model override and let the Agent CLI/runtime decide from its own settings. Provider-backed selections always identify an exact Provider connection and model.
+
+When you choose a specific model, Happier stores its Agent target, exact Provider connection (or `null` for native), and model id. Apply behavior depends on the Agent runtime: some can change models for the next prompt, while others require a restart or fork. Happier never guesses another connection or silently falls back to a native model.
+
+For running-session apply timing, see [Permissions](/sessions/permissions).
+
+## Live model lists
+
+Provider connections and some native Agent runtimes expose models dynamically. Happier probes from the selected machine and shows the current merged catalog.
+
+This matters because the available list can depend on:
+
+- the installed Agent CLI version
+- whether Agent authentication or the Provider connection is ready
+- account or subscription entitlements
+- selected connected-service profile
+- Custom ACP backend args and environment
+- the selected working directory, when the provider uses project-local config
+
+Use the refresh button after changing Agent login state, Provider connection settings, CLI config, Custom ACP settings, or working directory.
+
+## Static model lists
+
+Not every Agent or Provider has a dynamic model API.
+
+For static-only sources, Happier uses verified plugin catalog metadata. Claude's native list is a common example.
+
+Static model lists can still change when Happier updates its provider catalog.
+
+## Custom model ids
+
+Provider connections that allow manual catalog entries support custom model ids.
+
+Use this for Provider connections whose endpoint cannot list models but whose exact model id you know.
+
+Important details:
+
+- Happier sends the id through the selected Provider connection; the Provider still decides whether it is valid.
+- Manual ids are useful for compatible gateways, custom endpoints, or newly released models.
+- Manual models retain their provenance and may be favorited as exact structured selections.
+
+## Model-specific options
+
+Some models expose extra controls, such as thinking, reasoning, effort, or a Provider-specific mode.
+
+When those controls exist, Happier shows them with the selected model. They are part of the Agent/model configuration surface, not a separate global settings page.
+
+Not every Provider exposes these options, and not every model from the same Provider supports the same options.
+
+## Favorite models
+
+Favorite models help you keep a short list of model choices you use often.
+
+To favorite a model:
+
+1. Open the new-session Agent/model picker.
+2. Choose an Agent.
+3. Select a concrete model.
+4. Use the star button on the selected model card.
+
+The filled star means the model is already a favorite. The outline star means it can be added.
+
+The **Use CLI settings** default is not favoritable because it is not a concrete model choice.
+
+## Favorites section
+
+After you save at least one favorite model, the engine picker can show a **Favorites** section in the left rail.
+
+Use it to jump directly to saved engine/model combinations without scanning a long model list.
+
+Selecting a favorite:
+
+- switches to the favorite's Agent
+- applies the favorite's model
+- keeps other launch settings, such as profile, permissions, modes, and config options, governed by the normal new-session controls
+
+Favorites are account settings. They include the Agent target, exact Provider connection (when present), and model id, so identical model ids from two connections remain separate favorites.
+
+## Removing favorites
+
+You can remove a favorite by clicking the filled star:
+
+- from the normal model list, when the favorited model is visible
+- from the **Favorites** section
+
+Already-favorited models keep showing the filled star so you can remove them without selecting them first.
+
+## Availability rules
+
+Favorites are saved, but selection still respects the current Agent, Provider connection, and target-machine state.
+
+For dynamically probed sources:
+
+- a current favorite is selectable when its exact connection and model are available;
+- if a model disappears from the current catalog, Happier keeps the stale reference renderable instead of silently changing it;
+- refresh the catalog after fixing authentication or connection configuration.
+
+For static-only sources:
+
+- favorites are checked against verified plugin catalog metadata;
+- native Claude models can be favorited without a live Provider probe.
+
+If a saved favorite no longer appears in the current catalog, Happier keeps it visible as a stale reference with a setup hint. It is not silently redirected to another connection or model.
+
+## Profile and Agent compatibility
+
+Favorites respect the current Agent list.
+
+If a selected profile filters out an Agent, favorites for that incompatible Agent are hidden from the Favorites section for that picker state.
+
+This keeps the Favorites section focused on choices that make sense for the current launch configuration.
+
+## What favorites do not store
+
+A favorite stores an exact Agent/connection/model reference. It does not replace profiles, Provider connections, or Agent settings.
+
+Favorites do not store:
+
+- API keys or connected-service credentials
+- environment variables
+- working directory
+- permission mode
+- session mode
+- model-specific controls such as reasoning effort
+
+Use [Profiles](/agents/profiles) for optional launch preferences such as permission defaults and extra non-routing environment. Use **Settings → Providers** for model endpoints, Provider credentials, catalogs, and model visibility.
+
+## Common use cases
+
+Use favorite models when you want to:
+
+- keep your normal Claude, Codex, or Gemini model one click away
+- quickly switch between a fast model and a deeper reasoning model
+- save favorite models for several Custom ACP backends
+- avoid scrolling through a long live model list
+- preserve a favorite while a provider login or entitlement issue is temporarily hiding it
+
+## Troubleshooting
+
+### A favorite is visible but does not start
+
+The model is saved, but the current backend does not report it as available.
+
+Check Agent authentication, the Provider connection, connected-service profile, Custom ACP config, and selected machine. Then refresh the catalog.
+
+### A favorite disappeared from the left rail
+
+The Favorites section only shows favorites for Agents that are currently visible and compatible with the picker state.
+
+Check whether a selected profile or feature setting is hiding that engine.
+
+### I cannot favorite a custom model id
+
+Add the model under **Settings → Providers** for the exact connection first. Manual and probed models then share the same structured selection path.
+
+## Related guides
+
+- [Start a new session](/sessions/start-a-session)
+- [Profiles](/agents/profiles)
+- [ACP backends](/agents/acp-backends)
+- [Agent authentication](/agents/provider-authentication)
+- [Permissions](/sessions/permissions)
+- [Session modes](/sessions/session-modes)

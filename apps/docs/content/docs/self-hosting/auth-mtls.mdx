@@ -1,0 +1,203 @@
+---
+title: mTLS Auth
+description: Enterprise authentication using client certificates (MDM-issued). Includes auto-provisioning and multi-device identity mapping.
+---
+
+mTLS (mutual TLS) is an enterprise authentication mode where a client device presents a company-issued TLS certificate during the handshake.
+
+Happier can use mTLS to:
+
+- authenticate users without OAuth redirects,
+- optionally auto-provision accounts on first login,
+- enforce strict “only company devices” access policies.
+
+Important:
+
+- mTLS is **authentication**, not end-to-end encryption (E2EE).
+- If you disable E2EE (encryption opt-out / plaintext storage), the server can read and index session content (enabling features like server-side search). See: [Encryption & plaintext storage](/self-hosting/encryption).
+
+## When to choose mTLS vs OIDC
+
+- Choose **mTLS** when your enterprise already distributes device certificates (MDM) and wants “login with device certificate”.
+- Choose **OIDC** (Okta/Azure AD/Auth0/Keycloak) when you want identity provider UX, group-based policies, or SSO workflows in the browser.
+
+## Two deployment modes
+
+Happier supports both modes; operators choose using environment variables.
+
+### Mode A: Forwarded mTLS (recommended)
+
+In this mode, a reverse proxy / load balancer terminates TLS, enforces client certificates, and forwards a **trusted identity** to Happier (for example, a certificate fingerprint or a user principal).
+
+Why this is recommended:
+
+- centralizes TLS policy at the edge,
+- avoids running the app server with HTTPS configuration,
+- matches how many production setups already work.
+
+Security note:
+
+- forwarded identity headers must be **stripped and overwritten at the edge** so clients cannot spoof them.
+
+### Mode B: Direct mTLS (app server terminates TLS)
+
+In this mode, the Happier API itself listens on HTTPS and verifies the client certificate chain against a configured CA bundle.
+
+This is appropriate when you want a single-node deployment without a separate proxy, or when your platform makes it easy to manage TLS materials directly on the app server.
+
+## Stable identity mapping (multi-device behavior)
+
+Enterprises typically want a user to be the “same account” across devices.
+
+To support this, Happier derives an `mtls` identity id from the certificate using a configurable strategy:
+
+- Preferred: **SAN email** or **SAN UPN** (stable across device certificate rotation).
+- Fallback: **subject CN** (only when your PKI guarantees uniqueness and stability).
+- Last resort: **certificate fingerprint** (unique per certificate; usually produces one account per device unless you add a linking process).
+
+Recommendation:
+
+- Use `SAN email` or `SAN UPN`, and enforce issuer + domain allowlists.
+
+## Auto-provisioning
+
+Auto-provisioning means:
+
+1. The client presents a valid certificate.
+2. Happier derives the stable identity id (see above).
+3. If no existing account is linked to that identity, Happier creates a new account and links the identity.
+4. Happier returns a standard bearer token, and all subsequent requests use `Authorization: Bearer ...`.
+
+If auto-provisioning is disabled:
+
+- unknown certificates are rejected (operators can pre-provision accounts / identities via an admin process).
+
+## Keyless behavior contract (activation pending)
+
+mTLS is intended to be a **keyless** login method for plain accounts:
+
+- A genuinely keyless mTLS credential is token-only and contains zero Account E2EE
+  material.
+- After activation, mTLS provisioning creates a token-only/plain account without
+  fabricating a device key.
+- If an mTLS identity maps to an account that is currently **E2EE**, the server will refuse to mint a token and will require a **restore / key-challenge** flow instead.
+
+This preserves the core invariant: **E2EE accounts require possession of the secret key** to log in.
+
+The complete token-only UI/daemon path remains activation-closed while account-data
+migrations and composed checks finish. Keep mTLS keyless auto-provisioning disabled in
+production until the [Server Auth](/self-hosting/auth) rollout warning is removed.
+Configuration-schema presence is not activation evidence.
+
+## Encryption opt-out (recommended pairing for enterprise)
+
+If your enterprise wants:
+
+- no user-managed encryption keys,
+- server-side search/indexing,
+- simpler multi-device behavior,
+
+then pair mTLS with **plaintext storage mode** (encryption opt-out). In that mode, new sessions can be stored without E2EE.
+
+Note: switching encryption mode does not retroactively decrypt or re-encrypt historical data.
+
+## Environment variables (overview)
+
+### Enable mTLS
+
+- `HAPPIER_FEATURE_AUTH_MTLS__ENABLED` (`0`/`1`)
+- `HAPPIER_FEATURE_AUTH_MTLS__MODE` (`forwarded` | `direct`)
+- `HAPPIER_FEATURE_AUTH_MTLS__AUTO_PROVISION` (`0`/`1`)
+
+### Identity mapping
+
+- `HAPPIER_FEATURE_AUTH_MTLS__IDENTITY_SOURCE` (`san_email` | `san_upn` | `subject_cn` | `fingerprint`)
+- `HAPPIER_FEATURE_AUTH_MTLS__ALLOWED_EMAIL_DOMAINS` (CSV; recommended with `san_email` / `san_upn`)
+- `HAPPIER_FEATURE_AUTH_MTLS__ALLOWED_ISSUERS` (recommended; supports CN or exact DN matching)
+
+Notes:
+- CN allowlist entries (most common) can be either `cn=...` or bare CN strings (e.g. `Example Root CA`). Multiple CN entries can be comma-separated.
+- Exact DN allowlist entries can be provided as full issuer DNs (e.g. `C=US, O=Example Corp, CN=Example Root CA`). If you want multiple DN entries, separate them with **newlines** or `;` (DN strings include commas).
+- Forwarded issuer strings can be either a simple `CN=...` value or a full DN. Happier performs case/whitespace-insensitive normalization.
+- Matching behavior:
+  - if an allowlist entry is CN-only, Happier compares it against the extracted issuer CN.
+  - if an allowlist entry is a full DN, Happier requires an exact DN match (after normalization).
+
+### Forwarded-header configuration (forwarded mode only)
+
+- `HAPPIER_FEATURE_AUTH_MTLS__TRUST_FORWARDED_HEADERS` (`0`/`1`)
+- `HAPPIER_FEATURE_AUTH_MTLS__FORWARDED_EMAIL_HEADER` (default `x-happier-client-cert-email`)
+- `HAPPIER_FEATURE_AUTH_MTLS__FORWARDED_UPN_HEADER` (default `x-happier-client-cert-upn`)
+- `HAPPIER_FEATURE_AUTH_MTLS__FORWARDED_SUBJECT_HEADER` (default `x-happier-client-cert-subject`)
+- `HAPPIER_FEATURE_AUTH_MTLS__FORWARDED_FINGERPRINT_HEADER` (default `x-happier-client-cert-sha256`)
+- `HAPPIER_FEATURE_AUTH_MTLS__FORWARDED_ISSUER_HEADER` (default `x-happier-client-cert-issuer`)
+
+### Native app handoff (mobile)
+
+- `HAPPIER_FEATURE_AUTH_MTLS__RETURN_TO_ALLOW_PREFIXES` (CSV; defaults to `happier://` and `HAPPIER_WEBAPP_URL`)
+- `HAPPIER_FEATURE_AUTH_MTLS__CLAIM_TTL_SECONDS` (default `60`)
+
+Notes:
+
+- For `http://` / `https://` entries, Happier validates `returnTo` by **origin** (scheme + host + port), with an optional path-prefix constraint if you include a path in the allowlist entry. This prevents “prefix” open-redirect bypasses like `https://app.example.com.evil.com/...`.
+- For deep links, use a scheme prefix like `happier://` (or a more specific prefix like `happier:///mtls`).
+
+### Auto-redirect (skip the connection screen)
+
+If mTLS is the only supported login flow for your deployment, you can enable auto-redirect so users don’t have to tap “Sign in with certificate”.
+
+- `HAPPIER_FEATURE_AUTH_UI__AUTO_REDIRECT_ENABLED=1`
+- `HAPPIER_FEATURE_AUTH_UI__AUTO_REDIRECT_PROVIDER_ID=mtls`
+- Disable anonymous signup: `AUTH_ANONYMOUS_SIGNUP_ENABLED=0`
+
+On mobile, this will open the system browser to start the certificate-authenticated flow.
+
+For the full canonical list, see [Deployment → Environment variables](/self-hosting/env).
+
+## Setup checklist
+
+### Forwarded mode (recommended)
+
+1. Configure your reverse proxy / load balancer to require a valid client certificate.
+2. Configure your proxy to forward a stable identity (fingerprint and/or user principal).
+3. Ensure the proxy strips any incoming identity headers from the public internet and overwrites them with verified values.
+4. Enable forwarded mode in Happier and enable auto-provisioning if desired.
+
+### Direct mode
+
+1. Ensure you have:
+   - server certificate + private key (for HTTPS),
+   - a CA bundle that issued your client certificates.
+2. Configure the Happier server to listen on HTTPS with:
+   - client cert verification required,
+   - CA chain configured for verification.
+3. Enable direct mode in Happier and confirm the API rejects requests without a valid client cert.
+
+Note: Direct mode is not implemented yet in the open-source server; use forwarded mode for now.
+
+## Troubleshooting
+
+### “mTLS login isn’t offered in the UI”
+
+- Confirm `GET /v1/features` advertises mTLS as enabled.
+- Confirm you restarted the server after changing env vars.
+
+### “Auto-provisioning doesn’t create accounts”
+
+- Confirm `HAPPIER_FEATURE_AUTH_MTLS__AUTO_PROVISION=1`.
+- Confirm your identity mapping is producing a stable id (use `san_email`/`san_upn` when possible).
+- Confirm domain allowlists are not rejecting the cert.
+
+Also confirm that plaintext storage is allowed if you want keyless auto-provisioning:
+
+- `HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY=optional|plaintext_only`
+
+### “Users get multiple accounts across devices”
+
+- You are likely using `fingerprint` identity mapping.
+- Switch to `san_email`/`san_upn`, and enforce issuer + domain allowlists.
+
+### Identity normalization notes
+
+- `san_email` and `san_upn` are normalized to lowercase.
+- Issuer comparisons are case-insensitive and whitespace-insensitive (but you must still configure the allowlist with comma-separated issuer strings).

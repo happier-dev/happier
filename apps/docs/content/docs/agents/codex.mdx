@@ -1,0 +1,245 @@
+---
+title: Codex
+description: Configure Codex in Happier, including the default App Server backend, installables, local control, and resume behavior.
+---
+
+This page documents how Happier integrates with **Codex** and what Codex-specific behavior matters for day-to-day usage.
+
+## Install Codex
+
+If you use hstack, you can install Codex with its legacy-named `providers` installer:
+
+```bash
+hstack providers install codex
+codex --version
+```
+
+Or install manually, then restart Happier:
+
+```bash
+npm install -g @openai/codex
+codex --version
+```
+
+## Local authentication in Happier
+
+Codex supports machine-local auth management in:
+
+- **Settings → Agents → Codex**
+
+From there you can:
+
+- see whether Codex is logged in on the selected machine
+- see whether Happier detected CLI login or `OPENAI_API_KEY`
+- open `codex login` directly inside Happier
+- use **Check now** after logging in outside Happier
+
+For the shared user guide, see [Agent authentication](/agents/provider-authentication).
+
+## Authentication (subscriptions and API keys)
+
+Codex can authenticate through Happier connected services:
+
+- **OpenAI Codex subscription** (`openai-codex`): OAuth via device code, paste redirect URL, or in-app browser on native
+- **OpenAI API key** (`openai`): manual key entry
+
+In the app:
+
+- Settings → Connected services → OpenAI (Codex)
+
+In the CLI:
+
+```bash
+# Subscription auth (recommended): device code flow
+happier connect codex --device
+
+# Headless fallback: paste the redirect URL
+happier connect codex --paste
+
+# API key mode
+happier connect codex --api-key
+```
+
+Notes:
+
+- Device auth can require enabling “device code authorization for Codex” in ChatGPT settings.
+- If you connect multiple profiles, you can choose which one to use when starting a new session.
+- On web, Happier uses device or paste flows. Embedded OAuth is native-only.
+
+Codex-connected-service selection can also affect **session browsing** and the **Resume ID** picker. See:
+
+- [Browse and import Agent sessions](/sessions/browse-and-import-sessions)
+- [Resume an Agent session (Resume ID)](/sessions/resume-provider-sessions)
+
+## Session handoff
+
+Codex supports Happier session handoff as an **experimental** capability.
+
+What that means in practice:
+
+- the handoff action can move the same Happier session id to another machine
+- Codex continuity can work across machines when the destination is ready
+- the feature is less mature than Claude or OpenCode handoff
+
+Practical guidance:
+
+- prefer Claude or OpenCode when you want the most stable cross-machine handoff today
+- keep Codex authenticated and ready on the destination machine
+- use connected services when possible to reduce machine-local auth friction
+
+See:
+
+- [Session handoff](/sessions/session-handoff)
+- [Connected services](/accounts/connected-services)
+
+## Backends and local control
+
+Happier can run Codex using different backends depending on what’s available and what features you enable:
+
+- **Codex App Server (default)**: the recommended and default path for normal Codex sessions in Happier. It supports the app-first workflow, local/remote switching, and vendor resume when the session metadata is available.
+- **Codex ACP**: still available as an explicit fallback when you switch Codex to ACP mode.
+- **Codex MCP**: still available for fresh sessions, but plain MCP is not the default or normal vendor-resume path in current Happier builds.
+- **Local-control**: Happier can switch a session into a “local control” mode that mirrors Codex activity (useful when moving control from the app back to your terminal).
+
+Important Codex behavior:
+
+- Happier defaults Codex to **App Server**
+- old `mcp_resume` behavior is gone
+- if App Server is unavailable for a **new** session, the default Codex launch fails instead of silently falling back; choose ACP or MCP explicitly if you want a different backend
+- local/remote switching and normal Codex resume work on the default App Server path
+
+If you manually switch Codex to plain `mcp` in settings, new sessions can still run, but vendor resume is not available on that plain MCP path.
+
+Codex local control is exclusive. When the Codex TUI owns the session, Happier watches Codex turn boundaries and process state so it can tell when it is safe to resume remote processing. Completed turns, aborted turns, and Agent process exit are treated as safe boundaries for handing control back to Happier.
+
+Codex model availability depends on the active Codex backend, installed runtime, and account state. The new-session engine picker can show the currently available Codex models, model-specific options such as reasoning effort, and favorite Codex model shortcuts when those models are available for the selected backend.
+
+For the full model guide, see:
+
+- [Model and engine selection](/agents/model-and-engine-selection)
+
+For the full user-facing MCP guide in Happier, see:
+
+- [MCP servers](/extending/mcp-servers)
+
+## Codex ACP installables behavior
+
+Codex ACP depends on a machine-local **Codex ACP** installable.
+
+Happier exposes that in:
+
+- **Machine details → Installables**
+
+This matters for two reasons:
+
+- **cold start performance** — a preinstalled Codex ACP binary avoids first-run install/setup delay
+- **ACP-mode reliability** — if you explicitly choose ACP, keeping Codex ACP installed avoids install-time waits and missing-capability errors
+
+### Default behavior
+
+For the managed Codex ACP installable, Happier defaults to:
+
+- **Auto-install when needed**: on
+- **Auto-update**: auto
+
+If you select the Codex ACP backend for a new session and Codex ACP is missing, Happier can install it in the background so that later sessions on that machine start more reliably and with less startup overhead.
+
+### Important distinction: new sessions vs resume
+
+For a **new** Codex session:
+
+- Happier can install Codex ACP in the background when policy allows it
+- later ACP sessions on that machine benefit from having the installable ready ahead of time
+
+For **resume in ACP mode**:
+
+- Codex ACP must already be available
+- Happier does not silently replace resume with a fresh session
+
+If you want predictable Codex resume while using ACP on a machine, keep Codex ACP installed there and leave automatic updates enabled unless you have a specific reason not to. If you stay on the default App Server path, this ACP installable is not required for normal resume.
+
+Full guide: [Installables](/extending/installables).
+
+## Start in Happier, continue in the terminal
+
+Codex supports Happier’s attach flow for app-started sessions:
+
+- start the session from the Happier app,
+- let it run remotely in the background on your machine,
+- later run `happier attach <session-id>` from a terminal on that same machine,
+- switch into local control when you want to use Codex’s terminal UI directly.
+
+You can later switch back to remote control and keep using the same session from Happier.
+
+Local control starts from the terminal. Use `happier attach <session-id>` on the owning machine.
+
+If you send a message from the app while Codex is locally controlled, Happier stores it in the pending queue first. If Codex is idle, Happier can switch back to remote control and process it. If Codex is still running a local turn, Happier waits for that turn to finish, abort, or exit before switching, which avoids interrupting the current Codex TUI turn.
+
+On machines with `tmux`, this is usually a tmux-backed attach flow. On Windows, use Happier’s Windows remote session mode (`Windows Terminal`, `Console`, or `Hidden`) instead of relying on tmux.
+
+For the end-to-end workflow, see [Features → Attach to a running session](/sessions/attach-to-session).
+
+## Resume inactive Codex sessions
+
+Codex resume in Happier normally uses the default App Server path. ACP resume still works when you explicitly choose ACP.
+
+An inactive Codex session can be resumed when:
+
+- the session has valid Codex resume metadata
+- the current backend/machine combination supports resume for that session (App Server by default, or ACP when explicitly selected)
+- any required machine dependency for the selected resume path is already installed
+
+From the CLI, use:
+
+```bash
+happier resume
+```
+
+or:
+
+```bash
+happier resume <session-id>
+```
+
+From the app/web UI, inactive Codex sessions are resumable only when those same checks pass.
+
+Resume is strict: Happier does not silently replace a failed Codex resume with a fresh Codex session.
+
+## Permissions and modes
+
+Happier uses an **Agent-agnostic permission mode** (`default`, `read-only`, `safe-yolo`, `yolo`) and applies it to Codex in the best available way.
+
+For the full user guide (CLI flags, UI picker, defaults, apply timing), see:
+
+- [Permissions](/sessions/permissions)
+- [Session modes](/sessions/session-modes)
+
+### What permission modes mean in Codex
+
+Codex enforcement is a combination of:
+- **Happier tool-approval gating** (what Happier will auto-approve vs deny vs prompt for), and
+- **Agent-native sandbox/policy** (what the Codex runtime enforces internally).
+
+Important notes:
+
+- `read-only` is enforced by Happier by **denying write-like actions** (edits/patches/exec) when Happier is the approver.
+- `safe-yolo` and `yolo` control whether Happier prompts vs auto-approves actions it can approve.
+- Codex backends may have sandbox policies that are **fixed at session start**. Changing permission mode mid-session can still update Happier’s approval behavior, but it may not change Codex’s internal sandbox until you start a new Codex session.
+
+### Plan mode
+
+Plan is a **session mode**, not a normal permission mode.
+
+It is shown only when the current Codex backend/session advertises a compatible session mode.
+
+If plan is not supported for the current session, Happier simply does not show the Mode control for that session/backend.
+
+## Switching and permission persistence
+
+When you change permission mode:
+- it is stored canonically in **session metadata**, and
+- it follows you when you open the same session on another device or switch local ↔ remote.
+
+If you choose **Apply timing: next prompt** in the app:
+- the selection applies to the next message you send (as message metadata), and
+- it becomes session-wide only after that message is committed.

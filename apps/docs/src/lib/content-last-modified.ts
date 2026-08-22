@@ -91,7 +91,7 @@ let cached: Map<string, Date> | undefined;
 
 /**
  * @param pagePath collection-relative path of the MDX file — fumadocs'
- *   `page.path`, e.g. `features/inbox-and-approvals.mdx`.
+ *   `page.path`, e.g. `sessions/inbox-and-approvals.mdx`.
  * @returns the last commit date, or `undefined` when git could not be read.
  */
 export function contentLastModified(pagePath: string): Date | undefined {

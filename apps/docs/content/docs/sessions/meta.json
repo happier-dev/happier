@@ -1,0 +1,23 @@
+{
+  "title": "Working in a session",
+  "pages": [
+    "index",
+    "start-a-session",
+    "new-session-shortcuts",
+    "pending-queue",
+    "steering",
+    "permissions",
+    "inbox-and-approvals",
+    "session-modes",
+    "session-settings",
+    "session-resume",
+    "resume-provider-sessions",
+    "browse-and-import-sessions",
+    "direct-sessions",
+    "session-handoff",
+    "session-forking",
+    "continue-with-another-agent",
+    "attach-to-session",
+    "claude-unified-terminal"
+  ]
+}

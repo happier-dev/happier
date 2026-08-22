@@ -1,0 +1,170 @@
+---
+title: Agent authentication
+description: Manage machine-local Agent CLI authentication from Happier, check auth status, and open Agent login flows inside the app.
+---
+
+Happier can inspect and manage the **machine-local authentication state** of supported Agent CLIs directly from each Agent settings page. This page retains its `/features/provider-authentication` URL for link compatibility.
+
+This is separate from [Connected services](/accounts/connected-services):
+
+- **Agent authentication** = the native login state of an Agent CLI installed on a specific machine
+- **Connected services** = account/subscription credentials stored in Happier and reused across compatible Agents
+- **Provider connections** = model-source endpoint, catalog, and API-key configuration managed under **Settings → Providers**
+
+This also differs from **Custom ACP**:
+
+- built-in Agents such as Claude, Codex, Gemini, or Kiro have dedicated Agent pages
+- Custom ACP stores readiness/login metadata inside each ACP backend definition instead of exposing one single Agent-wide auth state for every custom backend
+
+## Where to find it
+
+Open:
+
+1. **Settings**
+2. **Agents**
+3. Choose an Agent
+4. Choose the target machine in the context bar
+5. Look for the **Authentication** section
+
+The Authentication section is machine-specific. If you switch to a different machine, Happier checks that machine's Agent CLI instead.
+
+## What Happier shows
+
+Depending on the Agent, Happier can show:
+
+- **Status** — Logged in, logged out, or unknown
+- **Logged in as** — an account email or label when the Agent exposes one safely
+- **Method** — for example API key, auth token, OAuth CLI login, credentials file, or Google ADC
+- **Source** — whether the result came from environment variables, local files, or an Agent CLI command
+- **Issue** — why login could not be confirmed, such as missing credentials or expired credentials
+- **Last checked** — when Happier last refreshed that auth state
+
+## Actions
+
+### Log in / Re-authenticate
+
+If the Agent supports a native CLI login flow, Happier can open it directly inside the app.
+
+What happens:
+
+- on larger layouts, the login terminal opens in the same shared bottom-pane system used by session terminals
+- on phone-sized layouts, Happier uses a more focused terminal presentation
+- Happier launches the Agent's real CLI on the selected machine
+- if the Agent needs an in-terminal command such as `/login`, `/auth`, `/setup`, or `/connect`, Happier sends it for you
+- if the Agent prints a URL, Happier shows copy/open actions in the terminal UI
+
+When the login flow exits, Happier refreshes the Agent auth state automatically.
+
+### Check now
+
+**Check now** forces an immediate auth refresh for the selected Agent on the selected machine.
+
+Use it when:
+
+- you logged in outside Happier and want the status to update immediately
+- you changed environment variables
+- you want to re-check a previously unknown status
+
+## What “unknown” means
+
+Some Agents expose a safe, non-interactive way to confirm local auth. Others do not.
+
+If Happier shows **Unknown**, that usually means one of these:
+
+- the Agent does not expose a reliable non-interactive auth probe yet
+- the Agent CLI check timed out or failed
+- Happier intentionally avoided an interactive Agent command during background detection
+
+Unknown does **not** automatically mean “logged out”.
+
+## Which Agents support what
+
+| Agent | Login from Happier | Auth status detection |
+| --- | --- | --- |
+| Claude | Yes | Yes |
+| Codex | Yes | Yes |
+| Gemini | Yes | Yes |
+| OpenCode | Yes | Yes |
+| Copilot | Yes | Yes |
+| Augment (Auggie) | Yes | Limited / conservative |
+| Kiro | Yes | Limited / conservative |
+| Qwen | Yes | Limited / conservative |
+| Kimi | Yes | Limited / conservative |
+| Kilo | Yes | Limited / conservative |
+| Pi | No native login flow in Happier | Yes, env-based |
+
+“Limited / conservative” means Happier can launch the login flow, but only reports a positive auth state when the Agent exposes a safe local signal.
+
+## How this works with Custom ACP
+
+Custom ACP is more generic than a dedicated Agent page.
+
+For Custom ACP:
+
+- auth/login hints live on the **ACP backend** definition
+- different ACP backends can expose different login/status behavior
+So if you are using **Custom ACP**, think in terms of:
+
+- “is this backend ready on this machine?”
+- not “does the generic Custom ACP Agent have one global login state?”
+
+See [ACP backends](/agents/acp-backends).
+
+## How the login terminal fits with the rest of Happier
+
+The Agent login terminal is not a one-off modal. It reuses the same terminal foundation as Happier's embedded session terminal:
+
+- the same connected-machine terminal transport
+- the same URL detection and open/copy actions
+- the same bottom-pane host on larger layouts
+- the same close / restart / clear behaviors
+
+That keeps Agent login flows consistent with the rest of the app instead of introducing a second terminal UI.
+
+## Common use cases
+
+### “I installed an Agent CLI and want to finish setup in the app”
+
+Open the Agent's settings page, confirm the CLI is detected, then use **Log in**.
+
+### “I already logged in in my terminal and want Happier to pick it up”
+
+Open the Agent's settings page and use **Check now**.
+
+### “I want to know which account the machine is using”
+
+If the Agent exposes an account label safely, Happier shows it in **Logged in as**.
+
+### “I use env-based auth instead of interactive login”
+
+Happier can detect env-backed auth for Agents that expose it and shows the auth method accordingly.
+
+## Important limitations
+
+- Agent authentication is **machine-local**. Logging into an Agent on one machine does not log it in on another machine.
+- Not every Agent supports reliable non-interactive auth detection.
+- Connected services, machine-local Agent auth, and model Provider connections solve different problems and may coexist.
+- If an Agent login flow changes upstream, Happier follows the Agent CLI's real current behavior rather than inventing a custom auth flow.
+- For Custom ACP, authentication/readiness is backend-specific rather than one global Agent-wide state.
+
+## Agent authentication and session handoff
+
+This matters directly for **session handoff between machines**.
+
+When you move a session to another machine:
+
+- machine-local Agent auth does not come along automatically
+- the target machine must still be able to run that Agent
+
+If the Agent supports Happier [Connected services](/accounts/connected-services), that is often the easiest way to make the target machine ready for handoff without depending only on a native CLI login on that machine.
+
+If the Agent depends on native machine-local auth, you still need the destination machine to be authenticated.
+
+## Related guides
+
+- [Agents](/agents)
+- [ACP backends](/agents/acp-backends)
+- [Session handoff](/sessions/session-handoff)
+- [Connected services](/accounts/connected-services)
+- [Embedded terminal](/extras/embedded-terminal)
+- [Daemon](/apps/daemon)

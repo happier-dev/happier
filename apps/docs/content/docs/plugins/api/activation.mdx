@@ -40,12 +40,18 @@ Static manifest-declared registration methods return `void`. Dynamic watches
 or subscriptions may return `Disposable` when their documented lifetime is
 genuinely author-owned.
 
-## Low-level ABI conformance
+## Low-level daemon ABI conformance
 
-Handwriting `activate` is only for low-level ABI conformance or host-owned test
-fixtures. It is not a second normal authoring path. A conforming module still
-uses the same registration-only contract and may return one cleanup function
-after successful registration:
+Handwriting a root/daemon `activate` that receives the broad `PluginApi` is only
+for low-level ABI conformance or host-owned test fixtures. It is not a second
+normal daemon authoring path. This restriction does not apply to the ordinary
+client artifact `activate(api)` above: that module receives `PluginClientApi`
+and is the documented Developer Preview authoring shape for client Action and
+Voice registrations. See the linked capability guides for their incomplete
+implementation and proof status.
+
+A low-level daemon ABI module still uses the registration-only contract and may
+return one cleanup function after successful registration:
 
 ```ts
 import type { PluginApi } from '@happier-dev/plugin-sdk';

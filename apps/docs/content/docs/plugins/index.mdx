@@ -46,19 +46,38 @@ Start from the thing you need to add, not from a broad API inventory:
 ## Start here
 
 <Cards>
-  <Card title="Quickstart" href="/plugins/quickstart" />
-  <Card title="Choose a task" href="/plugins/guides" />
-  <Card title="Glossary" href="/plugins/glossary" />
-  <Card title="Manifest" href="/plugins/manifest" />
-  <Card title="Activation API" href="/plugins/api/activation" />
-  <Card title="Runtime context" href="/plugins/api/context" />
-  <Card title="Agent runtimes" href="/plugins/agent-runtimes/agent-runtime" />
-  <Card title="Authoring CLI" href="/plugins/packaging/authoring-cli" />
-  <Card title="Diagnostics and errors" href="/plugins/testing/diagnostics" />
-  <Card title="Hooks and lifecycle" href="/plugins/api/hooks" />
-  <Card title="Events" href="/plugins/api/events" />
-  <Card title="Security and permissions" href="/plugins/security" />
+  <Card title="Quickstart" href="/plugins/quickstart" description="Create, develop, test, pack and install a minimal plugin." />
+  <Card title="Choose a task" href="/plugins/guides" description="Start from the capability you need rather than from an API inventory." />
+  <Card title="What you can build today" href="/plugins/manifest/availability" description="Every family and service with its current availability, generated from the capability matrix." />
 </Cards>
+
+Read [Plugin concepts](/plugins/concepts) for the ownership boundaries the rest
+of this section assumes, and [Glossary](/plugins/glossary) when a term is doing
+more work than it looks like it is.
+
+## The whole section
+
+**Declaring what a plugin is**
+
+- [Manifest](/plugins/manifest) — the cold facts pack projects: package anatomy, contribution families, host access, and what stays readable without executing code.
+- [Plugin API](/plugins/api) — activation, invocation context, actions, hooks, events, cleanup, and which SDK entrypoint to import from.
+
+**Running agent code**
+
+- [Agent runtimes](/plugins/agent-runtimes) — the executable object behind a custom Agent: sessions, execution-runs, ACP and MCP.
+- [Surfaces](/plugins/surfaces) — the optional terminal and external-session capabilities an Agent plugin can add.
+- [Runtime services](/plugins/services) — what the host lends an invoked handler: exec, storage, settings, secrets, sessions, notifications, connected accounts.
+
+**Presenting it**
+
+- [UI](/plugins/ui) — host-rendered settings, React Native surfaces, artifacts, and the current state of hosted web.
+
+**Shipping it**
+
+- [Security](/plugins/security) — the trust boundary, what host access actually enforces, and what it does not.
+- [Packaging](/plugins/packaging) — the authoring CLI, the development loop, pack, install and trust, versioning.
+- [Testing](/plugins/testing) — fixtures, runtime tests, manual QA, diagnostics and debugging.
+- [Examples](/plugins/examples) — working plugins for each of the main shapes.
 
 ## Preview authoring rules
 
@@ -89,7 +108,7 @@ Daemon plugin code runs through `entrypoints.daemon` or, in the development loop
 
 ## Related docs
 
-- [Runtime architecture](/architecture/runtime)
-- [Happier tools and actions](/features/happier-tools)
-- [MCP servers](/features/mcp-servers)
-- [Permissions](/features/permissions)
+- [Runtime architecture](/development/architecture/runtime)
+- [Happier tools and actions](/extending/happier-tools)
+- [MCP servers](/extending/mcp-servers)
+- [Permissions](/sessions/permissions)

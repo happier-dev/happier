@@ -1,0 +1,93 @@
+---
+title: Runtime events
+description: Every kind of live runtime event an agent emits, generated from the protocol schema.
+---
+
+`AgentSessionRuntimeEvent` is the payload an agent runtime emits as a session
+runs. Provider leaves map whatever their agent natively produces into these, so
+the host sees one shape regardless of which agent is running.
+
+There are **21 event kinds**, plus context compaction, which is one kind with
+6 phases.
+
+<Callout type="info">
+  Runtime events are live facts, not transcript rows. The host decides which of
+  them become durable transcript entries, session state, notifications or UI
+  status — emitting one does not persist anything by itself. They are also not
+  the plugin SDK's event-bus envelope, which is a different shape.
+</Callout>
+
+## Event kinds
+
+### Input custody
+
+What happened to something you sent. Every input reaches exactly one of these, so a message that seems to have vanished has an event explaining where it went.
+
+| Kind |
+| --- |
+| `input-accepted` |
+| `input-rejected` |
+| `input-custody-unknown` |
+| `input-delivery-failed` |
+
+### Turn lifecycle
+
+A turn starts, runs, and ends exactly once. `turn-complete`, `turn-failed` and `turn-cancelled` are the three terminal events.
+
+| Kind |
+| --- |
+| `turn-start` |
+| `turn-progress` |
+| `turn-agent-id-observed` |
+| `turn-complete` |
+| `turn-failed` |
+| `turn-cancelled` |
+| `turn-rollback-boundary` |
+| `provider-session-id` |
+| `runtime-ended` |
+
+### Output
+
+What the agent produced, as it produces it.
+
+| Kind |
+| --- |
+| `message-delta` |
+| `tool-call` |
+| `tool-progress` |
+| `tool-result` |
+| `transcript-message-committed` |
+| `file-edit` |
+| `usage-observed` |
+
+### Activity
+
+A periodic snapshot of what the runtime is doing, rather than a discrete thing that happened.
+
+| Kind |
+| --- |
+| `runtime-activity-snapshot` |
+
+## Context compaction
+
+Compaction events all carry `kind: 'context-compaction'` and are told apart by
+`phase` rather than by kind. They also carry `compactionId`, `trigger`,
+`retryAttempt` and the token count before compaction.
+
+| Phase |
+| --- |
+| `started` |
+| `progress` |
+| `completed` |
+| `failed` |
+| `cancelled` |
+| `outcomeUnknown` |
+
+`outcomeUnknown` is worth noticing: compaction can end without the runtime
+learning whether it succeeded, and the schema represents that rather than
+guessing a result.
+
+## Related
+
+- [Session loop](/development/architecture/runtime/session-loop) — what consumes these.
+- [Transcripts and state](/development/architecture/runtime/transcripts-state) — which of them become durable rows.

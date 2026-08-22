@@ -6,6 +6,7 @@
     "activation",
     "context",
     "actions-tools-commands",
+    "host-actions",
     "hooks",
     "events",
     "lifecycle"

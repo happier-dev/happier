@@ -9,7 +9,7 @@ description: Contribution families that a plugin can declare for projection and 
 
 | Family | Purpose | Code-defined author field |
 | --- | --- | --- |
-| `actions` | User, CLI, MCP, and session-agent operations | `actions.<id>.run` |
+| `actions` | User, CLI, MCP, and session-agent operations | daemon root: `actions.<id>.run`; client leaf: `activate(api)` → `api.actions.register(...)`. See [Actions, tools, and commands](/plugins/api/actions-tools-commands#invocation-surface-and-execution-target). |
 | `tools` | **Deferred — conformance only.** Declarative tool-facing wrappers around actions | manifest action reference |
 | `commands` | **Deferred — conformance only.** Declarative CLI entries around actions | manifest action reference |
 | `hooks` | Host extension points | `hooks.<id>.handler` |
@@ -29,7 +29,7 @@ description: Contribution families that a plugin can declare for projection and 
 | `managedDependencies` | Host-managed tool/runtime dependencies | dependency installer/validator |
 | `voiceModelPacks` | Immutable STT/TTS model and voice assets for host-owned engines | none; declarative data only |
 | `voiceProviders` | Conversation, STT, and TTS providers with strict settings, catalogs, limits, and credential declarations (supported preview) | `voiceProviders.<id>.runtime` when the declared realm needs one |
-| `sessionHeaderActions` | **Deferred — conformance only.** Declarative Session-header actions | manifest command reference |
+| `sessionHeaderActions` | **Deferred — conformance only.** Declarative Session-header actions | manifest action reference |
 
 The generated `capability-matrix.json` in a proven published SDK artifact is the
 availability authority for that exact artifact. This catalog describes shapes

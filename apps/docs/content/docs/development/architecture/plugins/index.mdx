@@ -1,0 +1,28 @@
+---
+title: Plugin platform architecture
+description: How Happier validates, projects, activates, and executes plugins.
+---
+
+The plugin platform provides the host lifecycle around installable plugins.
+
+## Responsibilities
+
+- install and trust source records
+- normalize and validate manifests
+- project contribution registries
+- build catalogs without executing plugin code
+- load daemon plugin modules only after trust and validation
+- provide nested `PluginApi` registration hosts
+- construct `PluginInvocationContext` for invoked handlers
+- apply valid reloads while preserving the last working plugin on failed edits
+
+## In this section
+
+- [Plugin platform](/development/architecture/plugins/plugin-platform) — manifest ingestion, contribution projection, activation and reload ownership.
+- [No-execute projection](/development/architecture/plugins/no-execute-projection) — why catalogs and UI must render before plugin code runs.
+- [SDK boundaries](/development/architecture/plugins/sdk-boundaries) — public plugin contracts against host implementation details.
+- [Provider leaves](/development/architecture/plugins/provider-leaves) — keeping provider-specific behavior inside plugin-owned backend leaves.
+
+## Public authoring docs
+
+Use the [Plugin SDK](/plugins) section for author-facing guides.

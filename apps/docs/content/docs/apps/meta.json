@@ -1,0 +1,18 @@
+{
+  "title": "Apps and interface",
+  "pages": [
+    "index",
+    "app",
+    "control-panel",
+    "setup-wizard",
+    "relay-access",
+    "remote-hosts",
+    "cli",
+    "cli-sessions",
+    "daemon",
+    "windows",
+    "attachments",
+    "keyboard-shortcuts",
+    "custom-mobile-build"
+  ]
+}

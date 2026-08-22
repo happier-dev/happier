@@ -1,9 +1,11 @@
 ---
 title: Host access
-description: Declare privileged plugin operations through strict Manifest V2 host-access requests.
+description: Declare privileged plugin operations through Manifest V2 host-access requests, and understand which of them the host actually enforces.
 ---
 
-Manifest V2 represents runtime authority under `manifest.hostAccess.required[]` and `manifest.hostAccess.optional[]`. The retired `permissions` and `declares.capabilities` owners are rejected by the current schema.
+Manifest V2 represents runtime authority under `manifest.hostAccess.required[]`
+and `manifest.hostAccess.optional[]`. The retired `permissions` and
+`declares.capabilities` owners are rejected by the current schema.
 
 Each request contains:
 
@@ -12,7 +14,40 @@ Each request contains:
 - `reason`: user-readable justification;
 - `scope`: the strict, capability-specific boundary.
 
-Optional requests are not active authority until the host trusts a matching grant. Missing or malformed grants fail closed.
+## Not every declaration is a gate
+
+This is the part to get right before writing a manifest. A host-access request
+means one of three different things depending on its capability, and only one of
+the three is enforced at the operation boundary.
+
+| Class | Capabilities | What the host does |
+| --- | --- | --- |
+| **Cooperative disclosure** | `network`, `network.client`, `filesystem`, `process`, `environment` | Shows the declaration to the person installing the plugin, and configures the matching host-mediated service. It does **not** sandbox equivalent direct Node or native access. |
+| **Host resource selection** | `connectedAccounts`, `sessions`, `storage.account`, `mcp` | Real host-owned resources. An optional request here is inert until a matching grant is trusted, and the grant is scope-checked. |
+| **Present intent or OS** | `terminal` (available); `browser`, `clipboard`, `externalLinks` (deferred) | A user-visible effect that may require present intent or an operating-system authorization at the moment of the operation. |
+
+<Callout type="warn">
+  A declared scope is a statement of intent for a reviewer to read, not a
+  firewall — except for host resource selection. Declaring
+  `network` with `targets: [https://api.example.com]` does not stop the plugin
+  reaching another origin through ordinary Node APIs. Plugins are
+  [trusted code](/plugins/security/sandboxing); the manifest tells a human what
+  to expect, and the host constrains the services it owns.
+</Callout>
+
+Three of the capabilities above are **deferred** — the schema accepts them and
+the host does not yet complete the lifecycle. [What you can build
+today](/plugins/manifest/availability) is generated from the capability matrix
+and is the authority on which is which.
+
+Two consequences worth stating plainly:
+
+- **Only host-resource-selection capabilities may be optional.** `connectedAccounts`,
+  `sessions`, `storage.account` and `mcp` are the complete list. A manifest that
+  puts anything else in `optional[]` is rejected.
+- **A required request is not scope-checked at runtime.** Required authority is
+  granted at install time by the person who chose to trust the package. The
+  runtime grant comparison exists for optional resource selections.
 
 ## Example
 
@@ -20,6 +55,25 @@ Optional requests are not active authority until the host trusts a matching gran
 {
   "hostAccess": {
     "required": [
+      {
+        "id": "service-account",
+        "capability": "connectedAccounts",
+        "reason": "Materializes only the exact Connected Account the user selects.",
+        "scope": {
+          "serviceRefs": ["service-api"],
+          "operations": ["select", "use"],
+          "materializationKinds": ["httpHeaders"]
+        }
+      },
+      {
+        "id": "service-network",
+        "capability": "network",
+        "reason": "Reads the service API for the selected account.",
+        "scope": {
+          "targets": [{ "kind": "connectedAccountOrigin", "service": "service-api" }],
+          "methods": ["GET"]
+        }
+      },
       {
         "id": "git-process",
         "capability": "process",
@@ -30,35 +84,50 @@ Optional requests are not active authority until the host trusts a matching gran
         }
       }
     ],
-    "optional": [
-      {
-        "id": "service-api",
-        "capability": "network",
-        "reason": "Connects to the configured service.",
-        "scope": {
-          "targets": [{ "kind": "fixedOrigin", "origin": "https://api.example.com" }],
-          "methods": ["GET"]
-        }
-      }
-    ]
+    "optional": []
   }
 }
 ```
 
-The `git-cli` reference must resolve to a declared `contributes.systemTools[]` entry. Other capabilities similarly use typed references and scopes; raw wildcard strings and unscoped executable paths are not the current contract.
+Three things in that example are worth copying rather than the shapes people
+usually reach for first.
+
+`network` sits in `required[]` — it is a cooperative disclosure, not a
+selectable resource, so it can never be optional. Its target is a
+`connectedAccountOrigin` bound to the account service rather than a hardcoded
+`fixedOrigin`, which is what shipping plugins do: the origin follows whichever
+account the user picked instead of being frozen at authoring time. And the
+`git-cli` reference resolves to a declared `contributes.systemTools[]` entry —
+raw wildcard strings and unscoped executable paths are not the current contract.
+
+Every scope shape is capability-specific and strict. The manifest reference has
+the full list: [Capabilities and permissions](/plugins/manifest/capabilities-and-permissions).
 
 ## Authority versus declarations
 
 Actions, tools, commands, hooks, notifications, Agents, UI, and other
 contribution families are projected from `definePlugin(...)` declarations.
-Declaring one or accepting its generated registration does not create
+Declaring one, or accepting its generated registration, does not create
 privileged host authority. Contribution-local capabilities describe support
 only.
 
-## Safety rules
+## Writing a manifest people will trust
 
-- Request only authority that has a host checkpoint.
-- Keep network origins, filesystem locations, executable references, account services, session targets, and other scopes minimal.
+- Keep every scope minimal — origins, filesystem locations, executable
+  references, account services, session targets. A reviewer reads these, and a
+  narrow scope is the strongest signal you can send about what the plugin does.
+- Give each request a `reason` a non-author can evaluate. It is shown at install
+  time.
 - Treat optional access as unavailable until granted.
-- Do not infer authority from contribution presence, support flags, settings, or Provider compatibility.
-- Use host-mediated services; do not bypass them with ambient process, filesystem, environment, or network access.
+- Do not infer authority from contribution presence, support flags, settings, or
+  Agent compatibility.
+- Use host-mediated services rather than bypassing them with ambient process,
+  filesystem, environment, or network access — not because the host will stop
+  you, but because the services carry the cancellation, redaction and audit
+  behaviour that ambient access does not.
+
+## Related
+
+- [Trust model](/plugins/security/trust-model)
+- [What is and is not sandboxed](/plugins/security/sandboxing)
+- [Capabilities and permissions](/plugins/manifest/capabilities-and-permissions) — the manifest reference.

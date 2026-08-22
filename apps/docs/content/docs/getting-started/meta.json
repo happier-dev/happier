@@ -2,7 +2,9 @@
   "title": "Getting started",
   "pages": [
     "index",
+    "get-the-apps",
     "onboarding",
-    "local-development"
+    "local-development",
+    "check-your-setup"
   ]
 }

@@ -146,6 +146,34 @@ making the prompt-asset and UI-consumer vocabulary explicit. Do not introduce a
 new import alias or import `/resources` into client UI merely to obtain its host
 Resource API.
 
+## How published names are shaped
+
+Two shapes recur across every entrypoint, and each one carries information.
+Read them when you consume the surface; apply them when you add to it.
+
+**`V<n>` marks a versioned contract, never a new spelling.** A published name
+carries `V1`, `V2`, … only when the concept behind it has a real schema version
+that its Protocol owner can evolve: a wire payload, a persisted shape, a
+manifest contribution family, or a bound constant that ships with the contract.
+`PluginUiSemanticCommandV1` is suffixed because
+`PluginUiSemanticCommandV1Schema` exists and versions it. A runtime-only shape
+cannot be versioned — an object holding an `AbortSignal`, a callback, or a live
+service handle never crosses a wire or a disk — so it takes no suffix:
+`PluginClientActionContext`, `PluginInvocationContext`, `ActionHandler`. A
+suffix added for symmetry with a neighbouring name is drift: it promises a
+schema version that does not exist, and it implies a `V2` you will never be
+able to ship.
+
+**One concept, one published name.** The `Plugin` prefix disambiguates a
+declaration whose bare noun would collide with a host, platform, or
+ecosystem-common identifier. It is not a badge for everything a plugin touches,
+and it must not produce two spellings of one type. Re-exporting a declaration
+under a second name at a path boundary — publishing both `PluginSettingDescriptor`
+and `SettingDescriptor` for one declaration — gives an author two names with no
+signal that they are the same, and it defeats the duplicate-name guard in
+`api-surface`, which compares export names. Pick the name at the declaration and
+publish that one everywhere.
+
 ## What `/testing` proves
 
 `@happier-dev/plugin-sdk/testing` is for deterministic author-facing contracts:

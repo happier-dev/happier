@@ -73,6 +73,43 @@ The platform-admission owner, not this build config, decides whether that exact
 hosted graph is usable in a browser/desktop frame, iOS WebView, or Android
 WebView.
 
+### Client activation artifacts
+
+A React Native build target may contain a client `activate(api)` module without
+being a visual renderer. Client Actions and conversation Voice providers use
+this shape when their declaration points at an exact client artifact, module,
+and `activate` export:
+
+```ts
+import { defineBuildConfig } from '@happier-dev/plugin-sdk/ui/build';
+
+export default defineBuildConfig({
+  targets: [{
+    rendererId: 'client-runtime',
+    entry: 'src/clientRuntime.ts',
+    kind: 'reactNative',
+    platforms: ['web', 'ios', 'android'],
+    module: {
+      containerName: 'com_example_plugin_client_runtime',
+      modulePath: './clientRuntime',
+      exportName: 'activate',
+    },
+  }],
+});
+```
+
+For this non-renderer target, `rendererId` is the build API's retained name for
+the emitted artifact id. It must equal the declaration's `artifactId`; the
+`modulePath` and `exportName` must also match. Do not add a
+`contributes.ui.renderers` row unless the artifact separately exports a visual
+surface that a UI contribution actually mounts.
+
+The one `reactNative` target emits a React Native Web artifact for `web` and
+Re.Pack artifacts for `ios` and `android`. The client source exports the normal
+`activate(api)` entrypoint and registers its declared local ids there. See
+[Actions, tools, and commands](/plugins/api/actions-tools-commands#invocation-surface-and-execution-target)
+for the matching Action declaration and handler.
+
 If no config is found, the config is invalid, or it declares no targets, the
 command exits non-zero with an actionable error.
 

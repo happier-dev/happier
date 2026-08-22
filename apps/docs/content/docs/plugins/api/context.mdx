@@ -61,6 +61,12 @@ These terminal outcomes are returned as the result; confirmation is not a
 boolean, and cancellation or unavailability is not remapped into a legacy
 `PluginError` contract.
 
+The host decides whether a request carries a deadline, and an interactive prompt
+in the exact current Session carries none — it waits for the person, so it stamps
+no `expiresAtMs` and cannot return `timedOut`. `timedOut` is reachable only where
+the host binds a deadline, such as a present-user application invocation that
+carries its own invocation budget.
+
 Tool approvals use the exact `InteractionTransientApprovalAuthorRequestV1`
 input shape:
 

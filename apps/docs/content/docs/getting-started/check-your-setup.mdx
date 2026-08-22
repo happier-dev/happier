@@ -1,0 +1,116 @@
+---
+title: Check your setup
+description: Find out what Happier thinks is wrong with this machine, and let it fix what it can.
+---
+
+When a machine will not come online, or a session refuses to start, or the app
+shows a computer you are sure is running, there is one command that tells you
+why:
+
+```bash
+happier status
+```
+
+It reads everything and changes nothing. You can run it whenever you want, on
+any machine, without wondering whether it will restart something mid-session.
+
+## What it looks at
+
+`happier status` checks the whole chain between you and a working session:
+
+- **Your account** — whether this machine is signed in, and whether the sign-in
+  has expired.
+- **Relays** — which relay profiles are configured, which is active, and whether
+  the machine is registered against it. A machine can be signed in and still not
+  registered, which is the usual reason a computer never appears in the app.
+- **Automatic startup** — whether the background service is installed, running,
+  pointing at the right channel, and not duplicated.
+- **The CLI itself** — which channel it is on (`happier`, `hprev`, `hdev`),
+  whether an update is waiting, and whether a running daemon was built from a
+  different version than the CLI you just invoked.
+
+It reports 26 distinct problems in those areas. Most are things you would never
+guess at: a background service left over from a channel you switched away from,
+two startup entries fighting over the same relay, a daemon still running from an
+older CLI, a local relay whose version has drifted from the client's.
+
+## Fixing what it finds
+
+`happier status` never changes anything — it refuses `--yes` outright and tells
+you to use the repair command instead. When you are ready:
+
+```bash
+happier doctor repair
+```
+
+This walks the same findings and offers to fix each one, asking before it acts.
+Add `--yes` to accept every repair it can make without prompting, which is what
+you want in a script or over SSH:
+
+```bash
+happier doctor repair --yes
+```
+
+Add `--report-only` to see the plan without applying it. That is exactly what
+`happier status` runs underneath, so the two are interchangeable when you just
+want to look.
+
+Some findings cannot be repaired automatically, and the report says so rather
+than pretending. Expired authentication is the common one: Happier can tell you
+the sign-in has lapsed, but only you can complete a login.
+
+## The background service
+
+Most of what `status` reports is about automatic startup, because that is what
+keeps a machine reachable when no terminal is open. You can drive it directly:
+
+```bash
+happier service status      # the default if you pass nothing
+happier service install
+happier service start
+happier service stop
+happier service restart
+happier service uninstall
+happier service logs
+happier service list
+happier service paths
+happier service repair
+```
+
+`happier service logs` is worth knowing before you need it — when a machine
+keeps dropping offline, the service log usually says why, and it is easier to
+read than reproducing the failure by hand.
+
+<Callout type="info">
+  `happier daemon …` still works and does something related but different:
+  `service` manages the operating system's autostart registration, `daemon`
+  manages the process that is running right now. If a machine is offline after a
+  reboot, `service` is the one you want.
+</Callout>
+
+## Machine-readable output
+
+Both commands can emit JSON, which is what you want in CI or a health check:
+
+```bash
+happier doctor --json
+happier doctor repair --report-only --json
+```
+
+## Clearing stuck processes
+
+Rarely, a crashed run leaves processes behind that hold a port and stop the
+daemon from starting:
+
+```bash
+happier doctor clean
+```
+
+It reports how many it stopped. Reach for it when `status` reports a port in use
+or a conflicting manual daemon and a plain repair has not settled it.
+
+## Related
+
+- [CLI](/apps/cli) — the full command surface.
+- [Daemon](/apps/daemon) — what the background process actually does.
+- [Onboarding](/getting-started/onboarding) — first-time setup.

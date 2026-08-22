@@ -1,0 +1,74 @@
+---
+title: Get the apps
+description: Where to download Happier for iPhone, Android, desktop and the browser, and which one to start with.
+---
+
+Happier runs your coding agents on a computer you control and gives you a way to
+drive them from somewhere else. So you need two things: the CLI on the machine
+that will do the work, and a client to drive it from.
+
+Start with the client. You cannot finish the CLI's login without one — the
+terminal prints a code for a browser or phone you are already signed in on.
+
+## On your phone
+
+<Cards>
+  <Card title="iPhone and iPad" href="https://apps.apple.com/app/happier-claude-codex-opencode/id6758554297" description="Happier on the App Store." />
+  <Card title="Android (APK)" href="https://github.com/happier-dev/happier/releases/download/ui-mobile-preview/happier-preview.apk" description="Direct download. There is no public Play listing yet." />
+</Cards>
+
+Android is worth a sentence of explanation. There is no public Google Play
+listing today — the Play track is closed testing, so the store page returns
+"not found" unless your Google account is already on the tester list. The APK
+above is a direct download and is how most Android users are running Happier.
+If you would rather go through Play, you can [join the testing
+programme](https://play.google.com/apps/testing/dev.happier.app) first; the store page starts working for your
+account once you have.
+
+## In a browser
+
+[app.happier.dev](https://app.happier.dev/) is the
+full client — no install, and the fastest way to see whether Happier suits you.
+It is also the easiest place to complete the CLI login, because you are probably
+already signed in to a browser on the machine you are setting up.
+
+## On your desktop
+
+The desktop app adds things a browser tab cannot do: it can install and manage
+the background service for you, and it keeps a window and tray presence when the
+session is running somewhere else.
+
+| Platform | Download |
+| --- | --- |
+| macOS (Apple Silicon) | [Download](https://github.com/happier-dev/happier/releases/download/ui-desktop-stable/happier-ui-desktop-darwin-aarch64-v0.2.0.dmg) |
+| macOS (Intel) | [Download](https://github.com/happier-dev/happier/releases/download/ui-desktop-stable/happier-ui-desktop-darwin-x86_64-v0.2.0.dmg) |
+| Windows (x64) | [Download](https://github.com/happier-dev/happier/releases/download/ui-desktop-stable/happier-ui-desktop-windows-x86_64-v0.2.0.exe) |
+| Linux (x64, AppImage) | [Download](https://github.com/happier-dev/happier/releases/download/ui-desktop-stable/happier-ui-desktop-linux-x86_64-v0.2.0.AppImage) |
+
+Current desktop build: **v0.2.0**. Every build is listed on the
+[releases page](https://github.com/happier-dev/happier/releases/tag/ui-desktop-stable) if you need an older one or a different
+architecture. The desktop app is versioned separately from the CLI, so its
+number will not match `happier --version`.
+
+## On the machine that runs your agents
+
+This is the part that does the work, and it is a CLI rather than an app:
+
+```bash
+curl -fsSL https://happier.dev/install | bash
+```
+
+On Windows, in PowerShell:
+
+```powershell
+iwr https://happier.dev/install.ps1 -useb | iex
+```
+
+The installer verifies every release signature before unpacking. See
+[CLI](/apps/cli) for the other install routes, release channels, and what to
+do when the command is not found afterwards.
+
+## Related
+
+- [Onboarding](/getting-started/onboarding) — connecting the two halves.
+- [Check your setup](/getting-started/check-your-setup) — confirming it worked.

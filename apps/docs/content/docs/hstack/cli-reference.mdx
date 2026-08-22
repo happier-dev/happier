@@ -5,9 +5,9 @@ description: The commands you’ll use most, with the important flags and patter
 
 This is a concise reference. For conceptual docs, see:
 
-- `/docs/hstack/development`
-- `/docs/hstack/stacks`
-- `/docs/hstack/worktrees-and-forks`
+- [Development workflow](/hstack/development)
+- [Stacks (isolated instances)](/hstack/stacks)
+- [Worktrees and forks](/hstack/worktrees-and-forks)
 
 Tip: most commands support `--help` and `--json`.
 
@@ -42,7 +42,7 @@ Remote development targets:
 - Remote execution: `hstack dev-targets exec <name>|auto [--cwd=<repo-relative-path>] [--env=KEY=VALUE]... [--flush] [--tty] [--stack=<name>] -- <command> [args...]`
 - Remove: `hstack dev-targets remove <name> [--stack=<name>]`
 
-See: `/docs/hstack/dev-targets`.
+See: [Remote development targets](/hstack/dev-targets).
 
 ---
 
@@ -154,7 +154,7 @@ PR stacks:
 - Install an isolated per-stack app (Release, no Metro): `hstack stack mobile:install <stack> [--device=...] [--name=...]`
 - Regenerate native projects (Pods, deployment target patches): `hstack mobile --prebuild [--clean]`
 
-See: `/docs/hstack/mobile-ios`.
+See: [Mobile (iOS)](/hstack/mobile-ios).
 
 ---
 
@@ -169,7 +169,7 @@ Sync stack env → EAS Environment Variables UI (project settings):
 
 - `hstack stack eas <stack> env:sync --environment production [--dry-run] [--hide-values]`
 
-See: `/docs/hstack/mobile-ios` (EAS builds per stack).
+See: [Mobile (iOS)](/hstack/mobile-ios) (EAS builds per stack).
 
 ---
 
@@ -206,7 +206,7 @@ Push:
 - `hstack auth copy-from <seed> --all --except=main,dev-auth`
 - `hstack auth dev-key --print`
 
-See: `/docs/hstack/auth`.
+See: [Auth (dev-auth seeding)](/hstack/auth).
 
 ---
 
@@ -227,7 +227,7 @@ Useful flags:
 - `--force` / `--reinstall` (re-run installer even if already installed)
 - `--json` (scripting)
 
-See also: `/docs/providers`.
+See also: [Agents](/agents).
 
 ---
 
@@ -243,8 +243,8 @@ Provision a remote machine over SSH to run the self-hosted server as a managed s
 
 See:
 
-- `/docs/hstack/remote-daemon`
-- `/docs/hstack/remote-server`
+- [Remote background service setup (SSH)](/hstack/remote-daemon)
+- [Remote server setup (SSH)](/hstack/remote-server)
 
 ---
 
@@ -300,4 +300,4 @@ hstack includes “maintainer tools” as subcommands (setup-pr, review-pr, impo
 
 - `hstack monorepo port --help`
 
-See: `/docs/hstack/monorepo-port`.
+See: [Monorepo port (legacy split repos)](/hstack/monorepo-port).

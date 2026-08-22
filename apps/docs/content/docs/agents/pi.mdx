@@ -1,0 +1,65 @@
+---
+title: Pi (experimental)
+description: Configure Pi Coding Agent in Happier (ACP), including install and detection.
+---
+
+Happier can run **Pi Coding Agent** through the local `pi` CLI.
+
+## Install Pi
+
+If you use hstack, you can install Pi with its legacy-named `providers` installer:
+
+```bash
+hstack providers install pi
+pi --version
+```
+
+Or install manually:
+
+```bash
+npm install -g @mariozechner/pi-coding-agent
+pi --version
+```
+
+## Start Pi with Happier
+
+```bash
+happier pi
+```
+
+## Local authentication in Happier
+
+Pi does not currently expose a native interactive login flow through Happier Agent settings.
+
+Instead, Happier shows the machine-local auth state for Pi in:
+
+- **Settings → Agents → Pi**
+
+Today that status is based on supported environment-backed credentials on the selected machine.
+
+For the shared user guide, see [Agent authentication](/agents/provider-authentication).
+
+## Authentication (connected services)
+
+Pi can reuse connected services profiles when spawned by Happier:
+
+- `openai-codex` (subscription OAuth)
+- `openai` (API key)
+- `claude-subscription` (setup-token only) for Claude subscription auth (materialized as `ANTHROPIC_OAUTH_TOKEN`)
+- `anthropic` for Anthropic API key auth (`ANTHROPIC_API_KEY`)
+
+If multiple compatible profiles exist, Happier will let you pick one when starting a new session.
+
+Important limitation:
+
+- Pi does not currently accept Claude OAuth profiles from `claude-subscription`; use a Claude setup-token profile instead.
+
+See: [Connected services](/accounts/connected-services)
+
+## Troubleshooting
+
+If Pi is not detected:
+
+1. Verify `pi --version` works.
+2. Restart Happier.
+3. Set `HAPPIER_PI_PATH` if your binary is not in `PATH`.

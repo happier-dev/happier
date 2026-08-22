@@ -1,0 +1,601 @@
+---
+title: CLI
+description: Install, authenticate, control sessions, and run the external MCP server from the CLI.
+---
+
+The Happier CLI is the power-user client for:
+
+- installing and updating Happier
+- authenticating to one or more servers
+- selecting a default server profile or targeting one command
+- creating, listing, resuming, attaching to, and managing sessions
+- running the external Happier MCP server
+- inspecting Happier tools and action-driven workflows
+
+## Install
+
+```bash
+curl -fsSL https://happier.dev/install | bash
+```
+
+Public installer lanes:
+
+- `stable`: `curl -fsSL https://happier.dev/install | bash` -> `happier`
+- `preview`: `curl -fsSL https://happier.dev/install-preview | bash` -> `hprev`
+- `dev`: `curl -fsSL https://happier.dev/install-dev | bash` -> `hdev`
+
+The installer installs or refreshes the CLI payload and shims for that lane. On a fresh interactive install it continues into `happier setup`; unattended installs and already-configured computers skip that handoff. Run `happier setup` yourself to resume an incomplete first setup.
+
+Windows (PowerShell):
+
+```powershell
+irm https://happier.dev/install.ps1 | iex
+```
+
+To pass installer flags like `-SetupRelay` or `-Run`, invoke it as a script block:
+
+```powershell
+& ([ScriptBlock]::Create((irm https://happier.dev/install.ps1))) -SetupRelay
+```
+
+npm fallback (power-user / Node workflow):
+
+```bash
+npm install -g @happier-dev/cli
+```
+
+Important:
+
+- npm installs expose the npm dist-tags (`@latest` and `@next`).
+- The rolling `dev` lane is installer-managed (`install-dev` / `hdev`), not a separate npm dist-tag.
+
+## Updates
+
+How you update depends on how you installed the CLI:
+
+- **Installer install**: run the lane-specific command (`happier`, `hprev`, or `hdev`) with `self check` / `self update` (or rerun the matching installer endpoint). Installer installs keep the full CLI payload under `~/.happier/cli/current` and refresh the selected lane shim for you.
+- Stable is `~/.happier/cli/current`; preview/dev use `~/.happier/cli-preview/current` and `~/.happier/cli-dev/current`.
+- **npm install**: `npm install -g @happier-dev/cli@latest` (or `@next` for preview). npm does not currently expose a separate public `dev` dist-tag.
+
+For installer-managed installs, the default `happier` shim can follow a selected release channel:
+
+```bash
+happier self release-channel status
+happier self release-channel list
+happier self release-channel use stable
+happier self release-channel use preview
+happier self release-channel use dev
+```
+
+If this computer has a default-following automatic startup entry, changing the release channel also handles the background-service follow-up so automatic startup keeps using the selected lane.
+
+The CLI can also show periodic update notices in TTY sessions; disable with:
+
+```bash
+HAPPIER_CLI_UPDATE_CHECK=0
+```
+
+Full matrix (all apps/assets): [Updates](/releases/updates).
+
+## Authenticate
+
+```bash
+happier auth login
+```
+
+`happier auth login` prints both web and mobile connection options (URLs).
+By default it prints a single QR code for the mobile deep link, plus the web URL as a fallback.
+When using self-hosted servers, run login against the correct server profile (see below).
+
+Recommended first-run flow:
+
+- Use the mobile app path first (QR/deep link) to sign in/create account and approve terminal connection.
+- If you already use Happier on another device, sign in with that same account.
+- If you open a terminal-connect link while logged out, Happier routes you through sign in and then returns you to terminal approval automatically.
+
+Notes:
+- The CLI never needs your secret key directly. For device-key accounts, restore happens in the app (mobile/web UI).
+- The target enterprise/keyless flow (mTLS or keyless OAuth) uses the same
+  `happier auth login` entry point and a token-only credential with zero Account E2EE
+  material. That complete browser/app/daemon flow is still activation-closed; do not
+  infer production readiness from `GET /v1/features` fields alone.
+- **Terminal connect is separate from account restore.** In the app, use **Scan QR to connect terminal** only for terminal/background-service approval. To sign a phone into the same account, use **Add your phone** on an already-signed-in desktop/web app and **Restore account** on the phone.
+- If the mobile QR/deep link does not include a server URL, your current server is probably loopback-only (`localhost` / `127.0.0.1`). Configure the phone to a reachable server URL first, then retry.
+
+Advanced:
+- To also print optional “configure server” links (rarely needed): `happier auth login --print-configure-links`
+
+User guide: [Features → Device linking & restore](/accounts/device-linking-and-restore)
+
+## Bootstrap & setup (one-command)
+
+`happier setup` is the guided setup executor from the terminal. It settles the Relay first, signs in if needed, configures the service, and optionally sets up Agents. Each step delegates to the existing Relay, auth, service, Agent, and Relay-access commands rather than keeping a second implementation of them.
+
+Use it when you want Happier to do the work instead of only previewing a plan:
+
+```bash
+happier setup --relay-url https://YOUR_RELAY_URL
+```
+
+Run without a Relay flag and setup asks where your Relay lives — Happier Cloud, a Relay you already run, or one on this computer — before it signs you in. Your account is stored per Relay, so signing in first and pointing at your own Relay afterwards creates a second account instead of moving the first one. Setup asks only when this computer has no account on its current Relay yet; passing `--relay-url` (or `--server`) answers the question up front.
+
+Choosing **On this computer** runs `happier relay host install`. If the installed Relay ends up reachable from this computer only, setup then offers the [Relay access](/apps/relay-access) methods — the same ones `happier relay access` configures — so your phone can reach it.
+
+Useful flags:
+
+- `--skip-daemon` (historical flag name; skips background-service install/enable)
+- `--skip-providers` (don’t run provider setup)
+- `--provider <id>` (preselect providers to set up)
+- `--yes` (with an explicitly named Relay, perform deterministic work and stop before the human-approved sign-in)
+- `--non-interactive` (change nothing)
+
+`--yes` without a Relay choice refuses to guess, because that could create an account on the wrong Relay. `--yes` and `--non-interactive` have opposite contracts and cannot be combined.
+
+Dry-run the plan only if you want to inspect the steps before running them:
+
+```bash
+happier setup plan --relay-url https://YOUR_RELAY_URL
+```
+
+`happier setup plan` is a preview. `happier setup` is the executor.
+Note: `--json` output is currently supported for `happier setup plan` only.
+
+### Repair an existing setup
+
+Use setup for first-time configuration of this computer. Use doctor repair when an existing install has drifted or broken state: wrong automatic startup lane, stopped background service, stale service definition, missing auth, or mismatched Relay state.
+
+```bash
+happier doctor repair
+happier doctor repair --report-only
+happier doctor repair --json
+```
+
+`happier doctor repair` is the supported repair entrypoint. It shares the same repair model used by installer preflight and service diagnostics; `--report-only` prints guidance without applying changes.
+
+Agent-only setup:
+
+```bash
+happier agents setup
+```
+
+## Remote machine setup (SSH)
+
+If you want to set up a remote machine to run the background service and providers (VPS, home server, dev box):
+
+```bash
+happier machine setup --ssh user@host
+```
+
+Common flags:
+
+- `--ssh-user <user>` / `--ssh-host <host>` / `--ssh-port <port>` (split SSH form)
+- `--install-relay-runtime` (also install the managed Relay runtime on that host)
+- `--service-mode user|none` (background-service mode)
+- `--relay-runtime-mode user|system` (relay runtime install mode)
+- `--ssh-auth agent|keyfile|password` (select auth mode)
+- `--identity-file <path>` (for `keyfile` mode)
+- `--ssh-config-file <path>` (use an explicit SSH config)
+- `--known-hosts-path <path>` (override host-key storage)
+- `--trusted-host-key <line>` (pin a host key)
+- `--server-url <url>` / `--local-server-url <url>` / `--webapp-url <url>` (target a specific Relay profile)
+- `--require-local-approval` (fail closed when the current machine cannot approve the pairing request)
+- `--yes` (auto-accept prompts for non-interactive runs)
+- `--json` (stream protocol JSON events/results)
+
+SSH auth modes:
+
+- `agent` uses your SSH agent
+- `keyfile` uses a private key path
+- `password` prompts for a password in the terminal when supported
+
+Tip: if you want to save the host for later reuse in the app, use the desktop Remote Hosts screen instead of a one-off inline SSH bootstrap. The inline SSH bootstrap is intentionally one-off; reusable SSH profiles live in the app.
+
+Self-hosted Relay runtime (managed service):
+
+```bash
+happier relay host install
+happier relay host status
+```
+
+By default this installs the Relay runtime in `user` mode (no root required).
+To install as a system-wide service, use `--mode system` (requires root/sudo):
+
+```bash
+sudo happier relay host install --mode system
+```
+
+Remote host (over SSH):
+
+```bash
+happier relay host install --ssh user@host
+```
+
+```bash
+happier relay host uninstall --ssh user@host
+```
+
+Local bind flags:
+
+```bash
+happier relay host install --lan
+happier relay host install --expose
+happier relay host install --host 192.168.1.25
+```
+
+- `--lan` binds the local Relay to a private LAN address.
+- `--expose` binds the local Relay to all interfaces.
+- `--host <ip>` binds the local Relay to a specific local address.
+
+These flags apply only to local `install`; they are intentionally separate from `happier relay access ...`, which configures the share/public URL strategy.
+
+Local Relay profile aliases:
+
+```bash
+happier relay use --local
+happier relay add --local
+happier relay set --local --use
+happier relay start-daemon
+happier relay auth
+```
+
+By default, local Relay aliases target the local Relay installed for the current CLI release channel. Pass `--local-channel stable|preview|dev` to target another installed lane explicitly.
+
+Service lifecycle helpers:
+
+```bash
+happier relay host start
+happier relay host stop
+happier relay host restart
+happier relay host uninstall
+```
+
+Background service reference: [Background service](/apps/daemon).
+
+## Relay access (share/public URL strategy)
+
+If your self-hosted Relay is only reachable locally (for example `localhost`), other devices (phones, other computers) won’t be able to use it until you expose a reachable Relay URL (often HTTPS).
+
+Inspect and configure the relay access method:
+
+```bash
+happier relay access status
+happier relay access configure --provider tailscaleServe --upstream-url http://127.0.0.1:53288
+```
+
+You can also apply the same configuration on a remote host:
+
+```bash
+happier relay access status --ssh user@host
+happier relay access configure --ssh user@host --provider tailscaleServe --upstream-url http://127.0.0.1:53288
+```
+
+User guide: [Relay access](/apps/relay-access).
+
+### Remote machine pairing (SSH, automated)
+
+If you want to run Happier on a **remote machine** (VPS, home server, dev box) but approve/authenticate it from a machine where you're already signed in:
+
+```bash
+happier auth pair-remote --ssh user@host --json
+```
+
+Notes:
+
+- This orchestrates a claim-gated pairing flow over SSH (remote request → local approve → remote wait).
+- Add `--server ...` or `--server-url/--webapp-url` if you're targeting a self-hosted server.
+
+### Pairing (JSON, manual / scripting)
+
+Split the flow when you want full control (automation, custom SSH, etc):
+
+```bash
+# On the remote host (prints a request + publicKey)
+happier auth request --json
+
+# On a local machine that's already authenticated (approves the public key)
+happier auth approve --public-key <publicKey> --json
+
+# Back on the remote host (waits, claims, and writes credentials)
+happier auth wait --public-key <publicKey> --json
+```
+
+This is terminal/CLI pairing, not the same flow as device restore inside the app.
+
+## Server profiles
+
+### Save and switch servers
+
+```bash
+happier server list
+happier server current
+happier server add --name company --server-url https://api.company.example --webapp-url https://app.company.example --use
+happier server use company
+```
+
+`--use` (and `happier server use ...`) sets the **default server** for future commands, so you can usually omit `--server ...` once it’s selected.
+
+### Target a server for one command
+
+Use per-invocation targeting when you do not want to switch the default:
+
+```bash
+happier --server company auth login
+happier --server personal service status
+```
+
+You can also use URL flags:
+
+```bash
+happier --server-url https://api.company.example --webapp-url https://app.company.example auth login
+happier --server-url https://api.company.example --webapp-url https://app.company.example auth pair-remote --ssh user@host --json
+```
+
+## Background service
+
+For automatic startup, remote control, and headless servers, see [Background service](/apps/daemon).
+
+## Attach to an existing session
+
+If a supported session is already running, you can reattach to that same live session from a terminal:
+
+```bash
+happier attach
+happier attach <session-id>
+```
+
+This is the main “start in the app, continue in the terminal” workflow. In a supported TTY, `happier attach` opens an interactive picker of active sessions:
+
+- **local attachable sessions** are selectable immediately
+- **active but non-attachable sessions** stay visible but disabled with a reason
+- **remote-capable provider sessions** are marked as remote; press `P` in the picker to run a reachability check before attaching
+
+If the session is stopped, use `happier resume` instead.
+
+Important notes:
+
+- tmux and other terminal-host attach flows work only for sessions that are still owned by the current machine.
+- You must target the same Happier account/server profile that owns the session.
+
+Attach strategy depends on the provider:
+
+- Some providers use Happier's `tmux`-backed attach flow.
+- OpenCode uses a provider-native attach flow for server-backed sessions.
+
+For OpenCode, the supported reattach command is still `happier attach <session-id>`. Do not rely on a raw vendor `opencode attach ...` command as your normal Happier workflow.
+
+Supported attach styles include:
+
+- **tmux-backed sessions** on machines where tmux is enabled
+- **Windows Terminal** or **Console** hosted sessions on Windows
+- **provider-native attach** for supported provider sessions such as OpenCode
+
+For the full workflow, see [Features → Attach to a running session](/sessions/attach-to-session).
+
+## Resume an inactive session
+
+If a Happier session is inactive but still vendor-resumable, you can resume it directly from the CLI.
+
+### Interactive selector
+
+```bash
+happier resume
+```
+
+In a supported TTY, Happier shows an interactive picker of resumable inactive sessions.
+
+### Resume by id
+
+```bash
+happier resume <session-id>
+```
+
+You can use a full session id or an unambiguous prefix.
+
+Important behavior:
+
+- resume is strict: if the provider resume fails, Happier errors instead of starting a fresh session
+- archived or already-active sessions cannot be resumed
+- the command restores the session working directory before launching the provider again
+
+For the full user guide and the meaning of “resumable”, see [Features → Resume inactive sessions](/sessions/session-resume).
+
+## List sessions
+
+Use:
+
+```bash
+happier session list
+```
+
+The default output is a table that includes session id, agent, recent activity, active state, resume state, title, and path.
+
+Useful variants:
+
+```bash
+happier session list --resumable
+happier session list --plain
+happier session list --json
+```
+
+- `--resumable` filters to sessions that can currently be resumed
+- `--plain` restores the older one-line output
+- `--json` is for scripting
+
+## Session control (non-interactive)
+
+The `happier session ...` command group is the non-interactive surface for creating and controlling sessions.
+
+Deep reference: [CLI sessions](/apps/cli-sessions).
+
+### Create a session (scriptable)
+
+```bash
+happier session create --title "My session" --message "Hello"
+```
+
+Optional targeting:
+
+```bash
+happier session create --path /path/to/repo --backend <backend-target-key> --tag <tag>
+```
+
+`--backend` expects a **backend target key** (not a short name). Common forms:
+
+```bash
+# Built-in catalog agent
+happier session create --backend "agent:<agent-id>"
+
+# ACP backend target (e.g. opencode, gemini, etc)
+happier session create --backend "acpBackend:<backend-id>"
+```
+
+### Send messages
+
+```bash
+happier session send <session-id> "ping"
+```
+
+Wait for an agent response (useful for scripts; can time out if the agent is busy/offline):
+
+```bash
+happier session send <session-id> "ping" --wait --timeout 60
+```
+
+### Status, stop, archive
+
+```bash
+happier session status <session-id>
+happier session history <session-id>
+happier session wait <session-id> --timeout 60
+happier session stop <session-id>
+happier session archive <session-id>
+happier session unarchive <session-id>
+```
+
+### Set title / model / permission mode
+
+```bash
+happier session set-title <session-id> "New title"
+happier session set-model <session-id> <model-id>
+happier session set-permission-mode <session-id> <mode>
+```
+
+`<mode>` accepts common aliases (for example `ask`, `default`, `yolo`). Use `--json` to script and see the normalized `permissionMode` value.
+
+### Session id prefixes
+
+Commands that accept `<session-id-or-prefix>` allow an **unambiguous prefix** of a full session id.
+
+If the prefix matches multiple sessions, the command fails with candidates.
+
+### Approvals from CLI commands
+
+Some actions can be configured as **approval-gated** on the CLI surface.
+
+In that case, the CLI command does not execute immediately; it creates an approval request instead.
+Use the app’s **Inbox** to review/approve/deny and see the final execution result:
+
+- [Inbox and approvals](/sessions/inbox-and-approvals)
+- [Happier tools & actions](/extending/happier-tools)
+
+For advanced automation, approvals can also be decided through the generic action executor:
+
+```bash
+happier session actions execute <session-id> approval.request.decide --input-json '{"artifactId":"<id>","decision":"approve"}' --json
+```
+
+### Action catalog from the CLI
+
+You can inspect and execute Happier actions directly:
+
+```bash
+happier session actions list
+happier session actions describe <action-id>
+happier session actions execute <session-id> <action-id> --input-json '<json>'
+```
+
+### Execution runs (review / plan / delegate / voice agent)
+
+Execution runs are the structured “run” layer for multi-step flows in a session (for example: start a review run, then send follow-up messages, then stop).
+
+```bash
+happier session run list <session-id>
+happier session run start <session-id> --intent <intent> --backend <backend-target-key>
+happier session run send <session-id> <run-id> "message"
+happier session run stop <session-id> <run-id>
+```
+
+## External MCP control surface
+
+If you want an MCP host (editor/agent) to control Happier sessions and actions, run the external MCP server:
+
+```bash
+happier mcp serve
+```
+
+`happier mcp start` is accepted as a compatibility alias, but `serve` is the canonical command name in the docs and CLI help.
+
+Guide: [Happier MCP (external)](/extending/happier-as-mcp-server)
+
+## Backend profiles
+
+The CLI supports backend profiles for session starts and profile discovery:
+
+```bash
+happier profiles list
+happier claude --profile deepseek
+happier codex --profile openai
+```
+
+For the full guide, see [Features → Profiles](/agents/profiles).
+
+## Happier tools
+
+The CLI also exposes the unified **Happier tools** surface directly.
+
+Use it when you want to:
+
+- inspect which built-in Happier tools are currently available
+- inspect which custom MCP tools resolve in the current machine/workspace context
+- call one of those tools directly from the terminal
+
+### List tools
+
+```bash
+happier tools list
+```
+
+Optional:
+
+```bash
+happier tools list --directory /path/to/project
+```
+
+This lists:
+
+- built-in Happier tools
+- custom MCP tools that resolve for the selected directory and machine
+
+`list` does **not** require a session id.
+
+### Call a tool
+
+```bash
+happier tools call --session-id <session-id> --source happier --tool action_spec_search --args-json '{"query":"plan mode","limit":5}'
+```
+
+Examples:
+
+- `--source happier --tool review_start`
+- `--source happier --tool subagents_plan_start`
+- `--source happier --tool action_spec_get`
+- `--source happier --tool action_options_resolve`
+- `--source playwright --tool browser_navigate`
+
+Use the Happier built-in discovery tools when you do not know the exact action id or valid option values yet.
+
+For the broader product model, see [Happier tools & actions](/extending/happier-tools).
+
+## Multi-server reference
+
+For full multi-Relay and background-service guidance, see [Features → Multi-server](/accounts/multi-server).

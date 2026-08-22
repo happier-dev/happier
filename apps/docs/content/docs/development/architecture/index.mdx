@@ -1,0 +1,57 @@
+---
+title: Architecture overview
+description: How server, CLI, and app fit together.
+---
+
+## Components
+
+- **Server**: stores encrypted payloads + sync metadata, provides HTTP API and realtime updates.
+- **CLI**: runs local agents/LLMs, keeps sessions synced, talks to the server for multi-device.
+- **App**: mobile/web UI for sessions and devices.
+- **Plugin platform**: validates manifests, projects contribution catalogs, loads daemon plugin code, and binds executable handlers.
+- **Runtime host**: resolves backend engines, constructs plugin runtime context, runs session and execution-run host loops, and owns durable state projection.
+
+## Architecture areas
+
+<Cards>
+  <Card title="Runtime architecture" href="/development/architecture/runtime" />
+  <Card title="Plugin platform" href="/development/architecture/plugins" />
+  <Card title="Plugins" href="/plugins" />
+  <Card title="Providers" href="/agents" />
+</Cards>
+
+## The socket and HTTP
+
+It is tempting to read the socket as a notification channel and HTTP as the real
+API. That is not how this works, and getting it backwards makes the rest of the
+system hard to follow.
+
+**The socket is an operation transport.** It carries a full RPC layer —
+`rpc-register`, `rpc-call`, `rpc-request`, `rpc-cancel` — with request
+correlation and cancellation, defined in `packages/protocol/src/rpc/socket.ts`.
+On top of that it carries artifact create, read, update and delete, session
+start ingress, pending-session enqueue, terminal capture and finalize, machine
+transfer envelopes, and live-stream relay. The server registers 39 socket
+handlers, and most of them change state rather than announce it.
+
+**HTTP carries a REST surface** across accounts, sessions, machines, artifacts,
+plugins, auth, features and more. Several operations exist on both transports:
+artifacts, for instance, can be written over the socket or through
+`POST /v1/artifacts`.
+
+So the split is not "notifications versus truth". It is closer to: the socket is
+how a connected client and a connected machine talk to each other through the
+server in real time, and HTTP is how anything reads or writes without holding a
+live connection.
+
+## Catching up after a disconnect
+
+This is where HTTP is genuinely the authority. Each account carries a monotonic
+`seq`, and `GET /v2/cursor` returns the account's current cursor together with a
+`changesFloor`. A client that missed socket traffic replays from its last cursor
+rather than guessing, which is what makes reconnection deterministic instead of
+best-effort.
+
+The floor matters: it is the oldest change the server can still replay. A client
+whose cursor is below it cannot catch up incrementally and has to resynchronise
+from scratch.

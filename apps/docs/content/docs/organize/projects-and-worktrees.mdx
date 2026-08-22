@@ -1,0 +1,222 @@
+---
+title: Projects & worktrees
+description: Use Happier projects as persistent repository surfaces, switch between worktrees safely, keep your place, and turn project review comments into a new session.
+---
+
+Happier projects are the repository-focused surface you use **outside an active session**.
+
+Use a project when you want to:
+
+- browse a repository before starting a session
+- inspect **Files** and **Source control** without opening a transcript first
+- keep project-specific tabs, editors, and review state around between visits
+- switch between the main checkout and Git worktrees
+- collect review comments and then launch a new session from that exact checkout context
+
+Projects and sessions share the same underlying repository tooling, but they solve different jobs:
+
+- **Projects** are for persistent repository context and preparation
+- **Sessions** are for agent conversation and execution
+
+## What a project looks like
+
+On desktop and wider layouts, a project is split into three cooperating surfaces:
+
+- a **header** with back, worktrees, and terminal actions
+- a **main content area** that stays anchored to the project itself
+- a **right panel** with **Source control** and **Files**
+
+On phone-sized layouts, the same project is shown as route-based screens:
+
+- **Files**
+- **Source control**
+- **Details / overview**
+
+The same project header model is used on both desktop and mobile:
+
+- back button to return to the project list
+- project title
+- current-worktree-aware title when you are not on the main checkout
+- worktrees button
+- terminal button
+
+## Project root vs selected worktree
+
+This is the most important mental model:
+
+- the **project** stays the same repository
+- the **selected worktree** changes the checkout context used by Files, Source control, terminals, and new sessions
+
+Selecting a worktree does **not** turn the project into a different project.
+
+The project overview stays anchored to the base repository, while the selected checkout affects:
+
+- the Files browser
+- Source control status and diff review
+- review comments scope
+- terminal launches
+- the default folder when you start a new session from that project
+
+## Worktrees list behavior
+
+The project overview includes a searchable worktrees list.
+
+That list includes:
+
+- the project’s main/root checkout
+- visible live Git worktrees for that repository
+
+Use it to move the project’s active checkout context without leaving the project.
+
+### What happens when you select one
+
+When you select a row:
+
+1. the project keeps the same identity
+2. the active checkout switches to that root/worktree
+3. Files and Source control immediately start using that checkout
+4. the URL and remembered project state are updated
+
+This means you can inspect one worktree, switch to another, open a terminal there, then start a session in that same checkout.
+
+## What happens if a worktree was deleted
+
+Happier treats deleted/prunable worktrees as invalid selections.
+
+If the currently remembered or deep-linked worktree no longer exists:
+
+- Happier automatically falls back to the main project root
+- the stored project selection is repaired
+- the route is normalized
+- a recovery toast tells you the missing worktree was reverted to the project root
+
+Deleted worktrees should not leave the project stranded in a broken state.
+
+## Reopening a project
+
+Projects are designed to reopen where you left them.
+
+Happier remembers project state such as:
+
+- the last active mobile sub-screen
+- the selected worktree/root
+- right-panel state
+- open details tabs
+- local draft/edit state owned by those panes
+
+### Desktop
+
+On desktop, reopening a project restores the same project pane scope instead of dropping you back to a blank overview every time.
+
+### Mobile
+
+On mobile, opening a project from the project list returns to:
+
+1. the last active project screen for that project, if one exists
+2. otherwise **Files**
+
+The selected worktree is also restored when possible.
+
+## Opening the worktrees overview
+
+The worktrees button in the header is an explicit project view mode.
+
+- If you are already in Files, Source control, or Details, pressing it opens the worktrees overview
+- If details tabs already exist, the overview still opens
+- Opening a new details action from overview exits overview and returns to the detailed surface
+
+In other words, “show me worktrees” is treated as explicit user intent, not as something suppressed just because details already exist.
+
+## Terminal from a project
+
+The terminal action in the project header always opens a terminal details tab for the current selected checkout.
+
+That means:
+
+- if you switched to a worktree, the terminal starts there
+- if you are on the main checkout, the terminal starts from the project root
+- if you were looking at the worktrees overview, opening the terminal exits overview and opens the details tab
+
+## Review comments in projects
+
+Projects support the same review-comment drafting model as session repository surfaces.
+
+You can create review comments from:
+
+- **file details** views
+- **diff review** views
+
+This is useful when you want to prepare a review-driven prompt before starting a session.
+
+### How review comments are scoped
+
+Review comments are stored per exact workspace scope:
+
+- server
+- machine
+- root path / worktree path
+
+That means review comments are isolated correctly between:
+
+- the main repository root
+- each Git worktree
+- the same repo on a different machine
+
+If you switch from one worktree to another, you see that worktree’s review comments, not a merged global bucket.
+
+## Start a new session from project review comments
+
+When the current project checkout has saved review comments, the project details header shows a **new session** action.
+
+Use it when you want to turn your project review notes into a real agent task.
+
+When you open the new-session screen from that project:
+
+- the selected machine is preserved
+- the selected directory is the current project root or worktree
+- project shortcuts can reuse the newest session setup from that project when **Remember last project session selections** is on
+- the new-session screen automatically discovers review comments for that exact path
+
+For the full shortcut model, see [New session shortcuts](/sessions/new-session-shortcuts).
+
+## Review comments in the new-session screen
+
+The new-session screen now uses one unified path-based model.
+
+If the current machine + directory match saved review comments, Happier shows a **Review comments (N)** chip with a small switch.
+
+Important behavior:
+
+- the chip is shown for project-launched flows and generic `/new` flows
+- it is **enabled by default** when matching review comments exist
+- the switch can be turned off without deleting the saved drafts
+- changing the selected directory or machine updates discovery automatically
+- if the new path has no review comments, the chip disappears
+
+This avoids two competing systems such as “project-seeded review comments” vs “generic new-session review comments”.
+
+There is only one rule:
+
+- if the current new-session path matches saved review comments, Happier offers them for that path
+
+## What gets sent when review comments are enabled
+
+When you create the session with the review-comments chip enabled:
+
+- Happier creates the session first
+- then it sends a follow-up message containing the review comments payload
+- any additional initial message text is included in the same follow-up
+
+If the same new-session flow also includes file attachments:
+
+- attachments are uploaded first
+- the review-comments follow-up includes the attachment file references too
+
+This keeps the first actionable message coherent: the agent sees the review comments and any related attachments together.
+
+## Related guides
+
+- [Git & Files](/code/git)
+- [Attachments & image previews](/apps/attachments)
+- [Embedded terminal](/extras/embedded-terminal)
+- [Session settings](/sessions/session-settings)

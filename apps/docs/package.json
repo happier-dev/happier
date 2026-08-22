@@ -5,6 +5,8 @@
   "scripts": {
     "tsc": "node ../../scripts/workspaces/runTypeScriptCli.mjs",
     "build": "node scripts/build.mjs",
+    "check:content": "node scripts/checkContent.mjs",
+    "generate:reference": "node scripts/generateReference.mjs",
     "test": "node --test \"scripts/**/*.test.mjs\"",
     "dev": "next dev",
     "start": "next start",

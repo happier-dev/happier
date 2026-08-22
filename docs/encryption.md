@@ -147,8 +147,15 @@ Device-local sealing is deliberately separate from account encryption:
   `~/.happier/device-local-secret-key.json`;
 - the file is created once with publish-if-absent semantics so concurrent daemon
   startup cannot replace another process's key;
-- POSIX installations enforce a private parent and `0600` file mode; Windows relies
-  on the user's profile ACL and must not use POSIX-mode assumptions;
+- protection is applied by one owner,
+  `apps/cli/src/utils/fs/protectedLocalState.ts`, for every private local file the
+  CLI/daemon writes — device-local key, bearer credentials, capability file,
+  machine-local records alike. POSIX installations enforce a private parent
+  (owner-owned, no `0077` bits) and a `0600` file mode; Windows cannot express a
+  POSIX mode, so it applies and then verifies a protected DACL (inheritance
+  disabled, owner plus `LOCAL SYSTEM`, full control, no reparse point) through
+  `packages/cli-common/src/fs/windowsProtectedAcl.ts`. A Windows install where that
+  DACL cannot be proven fails closed rather than publishing an unprotected file;
 - the key is 32 random bytes and is never derived from a bearer token, account key,
   installation signing identity, Machine identity, or server response;
 - local secret payloads use AES-256-GCM with a random 12-byte nonce and
@@ -178,6 +185,47 @@ must never be uploaded as an account recovery mechanism.
 The secure External Session transcript-refresh path reads the existing
 `StoredCredentials` union and requires the daemon to inject this device-local custody
 explicitly. It has no Account-key/HMAC fallback and no second local secret store.
+
+### Machine-local Agent native-resume records
+
+Same-Session Agent transition can return to an Agent used earlier in the same Session by resuming
+that Agent's own native session. The record holds the Agent's own conversation id and the transcript
+seq it last saw (`{ v, vendorResumeId }` plus `departureSeqInclusive`) — **not a continuity proof**;
+the proof mechanism was removed, so there is no pre-check, no `stat()` and no liveness probe. It is
+machine-local because a vendor session on one machine cannot be resumed on another, and it is
+deliberately kept off the wire. It is machine-local state, not Account data.
+
+`apps/cli/src/session/handoff/metadata/localSessionHandoffMetadataStore.ts` owns the record:
+
+- path `<activeServerDir>/session-handoff/agent-native-resume/<hash>.json`, where `<hash>` is
+  SHA-256 over a domain-separated tuple (`happier.local-agent-native-resume.v1`, Session id, Agent
+  id). Filenames therefore disclose neither the Session nor the Agent, and the plaintext keys inside
+  the record are re-verified against the request before it is used;
+- written and read through `writeProtectedLocalStateFileAtomic` /
+  `readProtectedLocalStateFile` (`apps/cli/src/utils/fs/protectedLocalState.ts`): directories `0700`,
+  files `0600`, forbidden bits `0077`, and an atomic tmp+rename replace whose verification is of the
+  path's permissions, not a content read-back. `writeAgentNativeResumeRecord` returns `void`: every
+  read `safeParse`s, so a partial file already reads as absent and a read-back could only restate
+  that;
+- a corrupt or unreadable record resolves to `null` and the target Agent starts fresh. It is never
+  silently rewritten;
+- the record is **not** discarded when the target Agent starts. A discard was not observable and was
+  not garbage collection either, since nothing sweeps the directory; a later departure overwrites the
+  record instead. Orphaned records after Session deletion are a disclosed residual — no Session-delete
+  signal reaches this store.
+
+This is file protection on one machine, in the same sense as device-local sealing above: it is not
+Account material, it is not portable to another device, it is never uploaded, and it confers no
+account-scoped confidentiality. It is distinct from device-local *sealing* — the record's contents
+are not encrypted with the device-local key; its protection is filesystem permissions plus a
+non-identifying filename. Do not promote it to an Account-scoped identity or reuse it as a recovery
+mechanism.
+
+`remote-dev` has the same device-local record in
+`apps/cli/src/session/handoff/metadata/localAgentNativeResumeRecordStore.ts`. Its dedicated module
+and dev's combined metadata store are a file-layout difference only: both use the same protected
+path/strict stored shape and byte-compatible record. The record never crosses the wire, so a return
+on a different machine still starts fresh with full bounded context.
 
 ## Overview
 

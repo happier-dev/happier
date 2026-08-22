@@ -1,0 +1,144 @@
+---
+title: Desktop control panel
+description: Use the desktop app as the control panel for Relay, machine, background-service, and secure-access setup.
+---
+
+The desktop app is the main control panel for Happier setup and machine management.
+It hosts the full-screen onboarding wizard, plus the settings surfaces for Relay, machines, remote hosts, and local relay control.
+
+Use it to keep four things aligned:
+
+1. **Relay selection**
+2. **Account sign-in**
+3. **Background service and machine setup**
+4. **Optional secure access for self-hosted Relays**
+
+## Recommended flow
+
+### 1. Choose your Relay first
+
+Open the desktop app and choose the Relay you want to use before creating or signing into an account.
+
+This avoids the common mistake where:
+
+- the app signs into one Relay
+- the CLI or background service points at another Relay
+- terminal/background-service setup later looks “broken” even though the account is valid
+
+### 2. Sign in on that Relay
+
+After selecting the Relay, sign in or create an account there.
+
+The app keeps account state scoped to the selected Relay, so switching to another Relay later does not overwrite the first one.
+
+### 3. Set up a machine
+
+From the desktop app, you can choose between:
+
+- **Set up this computer** — configure the local background service against the active Relay
+- **Add machine over SSH** — set up a remote machine from the desktop app
+
+The primary entrypoint for these flows is the in-app **Setup wizard** (a full-screen onboarding modal, not a settings page).
+
+User guide: [Setup wizard](/apps/setup-wizard).
+
+The local flow is best when the background service should run on your laptop or desktop. The SSH flow is best when the background service should run on a remote box but you still want to manage it from your laptop.
+
+## What the control panel can manage
+
+### Relay settings
+
+Use the Relay settings screen to:
+
+- add and save multiple Relay profiles
+- switch the active Relay
+- see when the background service is connected to a different Relay
+- repair Relay drift from the app instead of redoing setup manually
+
+The relay selection list also uses reachability state directly:
+
+- unreachable rows stay selected if they are the active Relay
+- the row menu stays available for retry/remove actions
+- `Continue` stays disabled until you choose a reachable option
+
+### Machines
+
+Use the Machines screen to:
+
+- set up the current computer
+- set up a remote machine over SSH
+- continue provider setup for the specific machine that was just prepared
+
+If you repeatedly manage the same SSH targets, save them as **Remote hosts** in settings and reuse them in the setup wizard.
+Saved remote hosts are synced, so the same host list can follow you across devices when your policy allows it.
+
+User guide: [Remote hosts (SSH)](/apps/remote-hosts).
+
+### Local self-hosted Relay runtime
+
+If you are running a self-hosted Relay locally, the app can also manage the local Relay runtime:
+
+- inspect status
+- install or update it
+- start or stop it
+- surface the local Relay URL
+
+### Private access for other devices
+
+For local or self-hosted Relays, the app can guide secure private access setup so phones or other computers can still reach the Relay without exposing it publicly.
+
+Today this is surfaced as a local secure-access task from the desktop app.
+
+User guide: [Relay access](/apps/relay-access).
+
+## Relay drift
+
+Relay drift means the app is using one Relay while the background service is configured against another one.
+
+The desktop app surfaces this explicitly and offers a repair action.
+
+This is important because many “why can’t I connect my background service / terminal / machine?” issues are really Relay mismatches, not auth failures.
+
+## Common setups
+
+### Hosted Relay + local background service
+
+- Choose Happier Cloud in the app
+- Sign in
+- Use **Set up this computer**
+
+### Self-hosted Relay + local background service
+
+- Add/select your self-hosted Relay in the app
+- Sign in there
+- Use **Set up this computer**
+- Optionally enable private access for phones and other devices
+
+### Self-hosted Relay + remote background service
+
+- Add/select your self-hosted Relay in the app
+- Sign in there
+- Use **Add machine over SSH**
+- Continue provider setup for the returned machine
+
+### Mixed setup (remote Relay + remote background service + laptop control panel)
+
+- Keep the desktop app on your laptop as the control surface
+- Run the Relay on one machine
+- Run the background service/agents on another machine
+- Manage both from the desktop app
+
+## CLI fallback
+
+The CLI still exposes the underlying commands (`server`, `auth`, `service`, and the legacy `daemon` alias), but the recommended user flow is:
+
+- pick the Relay in the app
+- sign in there
+- let the desktop app drive machine setup actions
+
+That keeps Relay/account/machine state visible and reduces mismatches.
+
+## Web vs desktop
+
+The web app is great for onboarding, status, and settings, but it cannot execute local system tasks on your computer.
+If a setup step needs to install a service or run privileged operations, use the desktop control panel (one-click) or copy/paste the provided CLI commands.

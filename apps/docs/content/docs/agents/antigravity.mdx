@@ -1,0 +1,74 @@
+---
+title: Antigravity (experimental)
+description: Configure Google's Antigravity CLI in Happier, including install, terminal login, and what Happier can drive.
+---
+
+Happier supports **Antigravity CLI** as a local CLI-backed Agent. The binary is
+called `agy`, not `antigravity`, which is the usual reason a working install
+looks missing.
+
+## Requirements
+
+- Antigravity CLI installed locally
+- `agy` available on `PATH`, or `HAPPIER_ANTIGRAVITY_PATH` set to its absolute path
+
+## Install Antigravity
+
+Happier ships the vendor's own install recipe and can run it for you from
+**Settings → Agents → Antigravity**. When Happier drives the install it asks
+first — running a vendor script is not something it will do silently.
+
+To install it yourself:
+
+```bash
+curl -fsSL https://antigravity.google/cli/install.sh | bash
+agy --version
+```
+
+On Windows, in PowerShell:
+
+```powershell
+irm https://antigravity.google/cli/install.ps1 | iex
+```
+
+Google's own instructions are at
+[antigravity.google/docs/cli-install](https://antigravity.google/docs/cli-install).
+
+## Authentication
+
+Antigravity logs in through its own terminal flow. From
+**Settings → Agents → Antigravity** Happier can open that flow on the
+selected machine.
+
+Happier does not probe Antigravity's login state in the background — the agent
+exposes no safe non-interactive signal — so the status may read **Unknown** even
+when you are signed in. Use **Check now** after logging in.
+
+## What Happier can drive
+
+- **Model selection** is supported.
+- **Resume** is supported through Antigravity's own session state.
+- **Session modes** are not exposed to Happier, so there is no mode picker.
+- **Handoff, listing and forking** are not supported.
+
+The full matrix is on [Agent capabilities](/agents/capabilities).
+
+## Troubleshooting
+
+### "Antigravity not found"
+
+Check the binary name — it is `agy`:
+
+```bash
+agy --version
+```
+
+If it is installed somewhere off `PATH`, point Happier at it directly:
+
+```bash
+export HAPPIER_ANTIGRAVITY_PATH=/absolute/path/to/agy
+```
+
+Happier ignores an override that does not point at an executable file, falling
+back to `PATH` rather than reporting an error — so a typo here looks exactly
+like no override at all.

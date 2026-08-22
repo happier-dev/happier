@@ -1,30 +1,62 @@
 ---
 title: Happier Docs
-description: Sync with explicit E2EE and plaintext storage modes.
+description: Run coding agents on your own machines and drive them from your phone, a browser, or anywhere else.
 ---
 
-Happier is a sync system for CLI + mobile/web clients with explicit storage modes.
-E2EE content remains opaque to the sync server. Plaintext-account and plaintext-Session
-content is intentionally server-readable and may optionally be sealed by the server at
-rest; that sealing is not end-to-end encryption.
+Happier runs coding agents — Claude Code, Codex, OpenCode, Cursor, Gemini and a
+dozen more — on computers you control, and lets you watch, steer, approve and
+reply to them from your phone, a browser, or another machine. The work happens
+on your hardware, in your repository, with your agent's own credentials.
+
+Sessions sync end-to-end encrypted. On a hosted relay, and on a self-hosted
+server at its defaults, the server holds ciphertext and routing metadata and
+cannot read your conversations. A self-hosted operator can choose a plaintext
+storage policy instead — [Security](/security) covers exactly what changes.
 
 ## Start here
 
 <Cards>
-  <Card icon={<Rocket />} title="Getting started" href="/getting-started" description="Install the CLI, pair a device, and run your first session from your phone." />
-  <Card icon={<Laptop />} title="Local development (hstack)" href="/hstack" description="Run the whole stack — server, CLI and app — against your own machine." />
-  <Card icon={<Table />} title="Feature matrix" href="/features/feature-matrix" description="What each client supports today, surface by surface." />
-  <Card icon={<Blocks />} title="Plugins" href="/plugins" description="Extend Happier with your own actions, surfaces and agent integrations." />
-  <Card icon={<Boxes />} title="Providers" href="/providers" description="Every coding agent Happier drives, and what each one needs installed." />
-  <Card icon={<Ship />} title="Deployment" href="/deployment" description="Self-host the relay: containers, TLS, database and the settings that matter." />
-  <Card icon={<Network />} title="Architecture overview" href="/architecture" description="How the CLI, relay and clients fit together, and where encryption sits." />
+  <Card icon={<Rocket />} title="Start here" href="/getting-started" description="Install a client and the CLI, connect them, and run your first session. About ten minutes." />
+  <Card icon={<Laptop />} title="Get the apps" href="/getting-started/get-the-apps" description="iPhone, Android, desktop and browser — and which one to start with." />
+  <Card icon={<Boxes />} title="Coding agents" href="/agents" description="Every agent Happier drives, what each needs installed, and how to authenticate it." />
+  <Card icon={<Table />} title="Agent capabilities" href="/agents/capabilities" description="What varies between agents: session modes, resume, handoff, listing, forking." />
+  <Card icon={<Network />} title="Working in a session" href="/sessions" description="Permissions, queueing, steering, and picking a session back up later." />
+  <Card icon={<Blocks />} title="Plugin SDK" href="/plugins" description="Add agents, actions, surfaces and integrations to Happier itself." />
+  <Card icon={<Ship />} title="Run your own relay" href="/self-hosting" description="Self-hosting: containers, TLS, database, auth and the settings that matter." />
 </Cards>
 
-## What lives in this repo
+## Browse by topic
 
-- **Server**: sync API + realtime updates.
-- **CLI**: local agent runner + daemon + remote sync client.
-- **App**: mobile + web UI for sessions and devices.
-- **Protocol**: shared types/contracts between components.
-- **Plugins**: manifest-first extension points for actions, hooks, UI, MCP, and AI backends.
-- **Website / Docs**: deployable static sites.
+**Using Happier**
+
+- [Working in a session](/sessions) — permissions, queueing, steering, and coming back to a session later.
+- [Staying on top of work](/organize) — projects, unread state, attention surfaces and search, once you are running more than a few.
+- [Code and review](/code) — review comments and git, from inside the session.
+- [Coding agents](/agents) — every agent, plus models, profiles and authentication.
+- [Voice](/voice) — the voice modes, and what voice is allowed to do on your behalf.
+
+**Connecting things to it**
+
+- [Extending Happier](/extending) — MCP servers, skills, delegated work, and driving Happier from an editor.
+- [Accounts, machines and sharing](/accounts) — linked agent accounts, multiple relays, sharing a session.
+- [Apps and interface](/apps) — the app, the desktop control panel, the CLI and the daemon.
+- [Extras](/extras) — notifications, the embedded terminal, feature flags.
+
+**Running and trusting it**
+
+- [Security](/security) — what the server can and cannot read.
+- [Self-hosting](/self-hosting) — your own relay, and who is allowed to sign in to it.
+- [Release channels](/releases) — stable, preview and dev, and how to move between them.
+- [Legal](/legal) — terms and privacy.
+
+## If something is not working
+
+[Check your setup](/getting-started/check-your-setup) explains `happier status`
+and `happier doctor repair`, which between them diagnose and fix most of what
+goes wrong on a machine.
+
+## Building on Happier
+
+- [Plugin SDK](/plugins) — the manifest, the activation API, agent runtimes, services and packaging.
+- [Contributing](/development) — working on Happier itself, including the [architecture](/development/architecture).
+- [hstack](/hstack) — the local stack that runs the server, CLI and app against your own checkout.

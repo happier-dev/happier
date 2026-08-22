@@ -24,6 +24,28 @@ or raw grant. The host retains source selection, current binding/grant checks,
 disclosure approval, cancellation, and materialization. Conversation code must
 not use the hosted-web `ui/client` path as a Voice runtime import.
 
+## Roles decide where a provider is offered
+
+`roles` is not documentation — it is what puts your contribution in a picker.
+A speech contribution declaring `dictation_stt` appears in the composer
+Dictation provider list; `conversation_stt` and `conversation_tts` appear in
+Local voice's speech pipeline. Declare both STT roles only when the same engine
+genuinely serves both, and give independently selectable STT and TTS their own
+contribution ids.
+
+## The host owns the transcript, not your runtime
+
+A `direct_media` conversation runtime does not decide where its turns are
+persisted. The host resolves that per attempt: an attempt with a target session
+writes into that session's transcript, and a targetless one writes into the one
+account-wide Voice History carrier shared by every such provider. An
+`experimental_agent_session_realtime` runtime binds `native_session` instead, so
+the Agent session itself carries the conversation.
+
+External and bundled conversation providers go through the same runtime host and
+the same acquisition path, so a plugin you install gets identical transcript,
+tool, cancellation and retirement behaviour to a bundled one.
+
 The [contribution reference](/plugins/manifest/contributions#voice-providers-supported-preview)
 and the public-authoring example contain full conversation, STT, and TTS
 shapes.
@@ -31,9 +53,10 @@ shapes.
 ## Current UI context
 
 > **Development status:** Current-UI context for Voice is an approved
-> Developer Preview vertical under active source implementation. It has not
-> completed loaded-candidate proof on web, iOS, or Android and is not a shipped
-> availability claim.
+> Developer Preview capability whose implementation and packaged web/iOS/Android
+> certification remain in progress. The public package surface is not yet
+> released for supported use, and no released build currently provides this
+> capability.
 
 “Current UI” means the foreground, mounted interface of the exact client that
 hosts the active Voice attempt. It never means another phone, browser tab, or
@@ -48,20 +71,28 @@ that baseline. A mounted product or plugin surface may additionally provide
 bounded semantic entity/detail data and contextual commands for only its
 mount lifetime; retirement removes that enrichment synchronously.
 
-Voice's independent `currentUiContextMode` privacy setting has three source
-contract values:
+Voice's independent `currentUiContextMode` privacy setting defaults to
+`on_demand` and has three source contract values:
 
 | Mode | Disclosure contract |
 | --- | --- |
-| `off` | Expose neither current-UI tools nor automatic updates. |
-| `on_demand` | Allow an explicit current read only; send no navigation updates. |
-| `automatic` | Allow explicit reads and send best-effort metadata-only navigation transitions. |
+| `off` | Expose no current-UI read or command tool, and send no automatic updates. |
+| `on_demand` | Advertise an explicit current-UI read; send no navigation updates. |
+| `automatic` | Keep that explicit read and add best-effort metadata-only navigation transitions. |
 
-Automatic transitions contain navigation metadata such as area, screen,
-title, and presentation. Semantic entity summaries, detail, form content, and
-command payloads remain on demand. Automatic updates are ephemeral: they are
-not persisted, synchronized, replayed across restarts, or ordered across
-clients.
+Disclosure and command availability are separate. A read can disclose opaque
+contextual-command descriptors, but the `invokeCurrentUiCommand` tool is
+advertised only when the active Voice provider and attempt support the existing
+stable effect-custody contract. Enabling `on_demand` or `automatic` does not
+weaken that capability gate.
+
+Automatic transitions contain admitted navigation metadata such as area,
+screen, presentation, and a title supplied by the host's canonical navigation
+owner. A title published by a mounted plugin remains plugin-provided semantic
+content and is disclosed only by an explicit current-UI read, alongside entity
+summaries, detail, form content, and command payloads. Automatic updates are
+ephemeral: they are not persisted, synchronized, replayed across restarts, or
+ordered across clients.
 
 Contextual command ids are opaque and scoped to the current snapshot. The
 invoking client resolves them again immediately before execution, then
@@ -70,7 +101,8 @@ custody, cancellation, currentness, result redaction, and no-blind-retry rules
 remain unchanged. A stale command or retired surface has no effect, and
 client-local work has no daemon or cross-client fallback.
 
-This contract is the same for maintained built-in and packed external plugins.
-Both are trusted executable packages using the public declaration,
-`activate(api)`, currentness, navigation, and Action paths; it is not a new
-plugin sandbox or a privileged built-in Voice route.
+Maintained built-ins and the prepared packed-external fixture use the same
+public declaration, `activate(api)`, currentness, navigation, and Action paths.
+They remain trusted executable package code; this is not a new plugin sandbox
+or a privileged built-in Voice route. Exact packed and loaded parity is still
+part of the open proof named above.

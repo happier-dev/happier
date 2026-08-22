@@ -1,0 +1,323 @@
+---
+title: Session settings
+description: Configure session behavior, permissions, transcript presentation, and tool rendering from the app.
+---
+
+The **Session** settings screen controls how Happier sessions behave in the app.
+
+Recent versions split the advanced controls into focused sub-screens so the root page stays easier to scan:
+
+- **Permissions**
+- **Session handoff**
+- **Transcript**
+- **Tool Rendering**
+
+The root session settings screen keeps the most common session-wide controls in one place and links to the more detailed sections when needed.
+
+## Where to find it
+
+Open:
+
+1. **Settings**
+2. **Session**
+
+From there, use the dedicated entries to open:
+
+- **Permissions**
+- **Session handoff**
+- **Transcript**
+- **Tool Rendering**
+
+## What stays on the main Session screen
+
+The root Session screen keeps the controls that affect how you work day to day:
+
+- **Session list** behavior such as density, grouping, hidden inactive sessions, and tags
+- **New session shortcut** behavior such as whether project shortcuts reuse the newest project session selections
+- **Mobile session layout** for choosing the phone session cockpit or the classic focused-screen layout
+- **Message sending** behavior such as interrupt vs queue/pending strategies
+- **Composer input behavior** such as **Enter to Send**, action-bar layout, chip density, and context-size display
+- **Message history** scope as a dropdown
+- **Replay / resume** defaults
+- **Session handoff** defaults
+- **Terminal connect** options
+- **Attach / local-control launch defaults** such as tmux and Windows remote session mode
+
+This keeps the root screen focused on common workflow choices instead of mixing them with large advanced settings groups.
+
+## Session handoff settings
+
+The dedicated **Session handoff** screen controls the defaults used when you move a session between machines.
+
+It includes:
+
+- **Transfer workspace**
+- **Workspace conflict policy**
+- **Ignored files**
+- **Direct session target mode**
+
+### Workspace transfer defaults
+
+By default, Happier keeps workspace transfer **off**.
+
+You can change the default behavior to:
+
+- transfer the workspace by default
+- keep the target workspace unchanged by default
+
+The handoff modal still lets you override this per handoff.
+
+### Conflict policy
+
+The default conflict policy can be:
+
+- **Create sibling copy**
+- **Replace existing path**
+
+This controls what should happen if the destination path already exists.
+
+### Ignored files
+
+The default ignored-file mode can be:
+
+- **Exclude ignored files**
+- **Include selected ignored files**
+
+If you choose **Include selected ignored files**, you can set comma-separated include globs such as:
+
+- `dist/**`
+- `.env.local`
+
+### Direct session target mode
+
+This applies only when the source session is currently **Direct**.
+
+You can choose:
+
+- **Keep direct**
+- **Convert to Happier**
+
+That setting becomes the default choice in the handoff modal, but you can still override it case by case.
+
+For the full workflow, see [Session handoff](/sessions/session-handoff).
+
+## Attach and local-control settings
+
+The root Session screen also contains the defaults that control how app-started sessions can later be continued from a terminal.
+
+### tmux integration
+
+Enable **tmux integration** when you want supported sessions to start inside `tmux`.
+
+Use this on machines where:
+
+- `tmux` is installed,
+- you want to start from the app first, then later run `happier attach <session-id>` from a shell,
+- you want providers such as **Claude** or **Codex** to reopen inside the same tmux-backed local host.
+
+### Windows remote session mode
+
+For Windows machines, the Session screen also exposes a **default Windows remote session mode**.
+
+The available modes are:
+
+- **Hidden** — keep the session in the background for remote app usage
+- **Windows Terminal** — start the session in a dedicated Windows Terminal host so you can later continue there locally
+- **Console** — start the session in a visible console host
+
+This is the global default. You can still override it:
+
+- per machine from the machine details screen
+- per session from the new-session flow when the selected machine is Windows
+
+Precedence is:
+
+1. per-session choice
+2. machine override
+3. global Session setting
+
+For the full workflow, see [Attach to a running session](/sessions/attach-to-session).
+
+## Permissions screen
+
+The dedicated **Permissions** screen separates two different concerns:
+
+### 1. Default permissions
+
+This section shows one row per enabled backend choice and lets you choose the default permission mode for new sessions.
+
+Important details:
+
+- the list is **dynamic**
+- it comes from the resolved backend catalog
+- built-in backends and configured **Custom ACP** backends can both appear here
+- if a backend choice is not enabled for your account/build/settings, it should not appear
+
+### 2. Apply permission changes
+
+This is now a separate dropdown group.
+
+It controls **when** a permission change should take effect for a running session:
+
+- **Immediate**
+- **Next prompt**
+
+Use **Immediate** when you want the running session to react right away. Use **Next prompt** when you want the change to arm for the next turn instead of changing the current one mid-flight.
+
+The same screen can also show related permission/session-default controls such as where prompts appear and transcript-storage defaults for backend choices when those features are available.
+
+Full guide: [Permissions](/sessions/permissions)
+
+## New session shortcut settings
+
+The root **Session** settings screen includes a **New session modal** group.
+
+This group contains shortcut settings for project-based session creation.
+
+The **Remember last project session selections** setting controls what happens when you use the project **+** action in the session list.
+
+When it is on, Happier seeds the new-session screen from the newest session in that project group. This reuses selections such as machine, folder, engine, profile, permissions, model, session mode, MCP selection, connected services, and provider config options.
+
+When it is off, the project **+** action only preselects the project machine and folder. The rest of the new-session screen follows the normal draft/default behavior.
+
+Contextual shortcuts preserve typed draft content, such as an unsent prompt, while replacing launch selections with the shortcut source. This keeps your written intent without carrying stale choices from another project.
+
+Full guide: [New session shortcuts](/sessions/new-session-shortcuts)
+
+## Transcript screen
+
+The **Transcript** screen controls how session conversations are presented:
+
+- transcript layout
+- thinking display
+- tool chrome mode
+- tool grouping / collapsed preview behavior
+- motion / scrolling defaults
+- code and diff presentation
+
+This is a presentation layer. It does not change provider behavior or tool permissions.
+
+Some transcript-related defaults, such as transcript-storage defaults for new sessions, are still backend-aware. That means a built-in backend and a configured ACP backend can have different default behavior.
+
+## Tool Rendering screen
+
+The **Tool Rendering** screen controls how tool calls appear in the transcript.
+
+It contains:
+
+- default tool-detail behavior
+- per-tool overrides
+- separate overrides for the expanded/full view
+
+This is useful when you want different defaults for tools like:
+
+- `Bash`
+- `Read`
+- `Edit`
+- `Diff`
+- `WebSearch`
+
+For example, you might keep most tools compact in the timeline but still expand `Diff` or `Patch` more aggressively when opened.
+
+Related guide: [Tool timeline & normalization](/organize/tool-timeline)
+
+## Composer input behavior
+
+Session settings also includes controls for how the message composer behaves and how its controls are arranged.
+
+These settings change the app input experience. They do not change provider permissions, model behavior, or transcript storage.
+
+### Enter to Send
+
+**Enter to Send** controls what the Return/Enter key does in the composer.
+
+When it is off:
+
+- pressing Enter inserts a new line in the composer
+- use the send button to send the message
+
+When it is on:
+
+- on web, pressing Enter sends the message
+- on web, pressing Shift+Enter inserts a new line
+- on iOS and iPadOS with a physical keyboard, pressing Enter sends the message
+- on iOS and iPadOS with a physical keyboard, pressing Shift+Enter still inserts a new line
+
+Happier only sends when the composer has sendable content. That can be typed text, attached files, or included review-comment context. Empty composers and disabled send states are ignored.
+
+Use **Enter to Send** when you prefer a chat-style workflow. Leave it off when you often write longer prompts, code blocks, logs, or multi-line instructions.
+
+The web and native app settings are stored separately, so you can use Enter-to-send on one platform and keep Enter-for-new-line on another.
+
+On phones and tablets without a physical keyboard, the visible send button remains the clearest way to send a prompt.
+
+## Mobile session layout
+
+**Mobile session layout** controls how phone-sized session screens are organized.
+
+The setting is synced with your account and defaults to **Cockpit**.
+
+### Cockpit
+
+Cockpit is the default phone layout.
+
+It shows a bottom session tab bar with the session’s main work surfaces:
+
+- the current agent chat, labeled by backend such as **Claude**, **Codex**, or **OpenCode**
+- **Files**
+- **Git**
+- **Tabs** for open file previews, editors, Review, commit details, stash details, and other detail views
+- **Terminal** when the embedded terminal is enabled and available as a session tab
+
+Use Cockpit when you want mobile sessions to behave like a compact workspace instead of a single long chat screen.
+
+### Classic
+
+Classic keeps the older focused-screen layout for phone-sized sessions.
+
+Use Classic if you prefer opening Files, Git, Terminal, and details as separate focused routes instead of switching through the cockpit tab bar.
+
+You can change the setting at any time from **Settings → Session → Mobile session layout**.
+
+### Input layout
+
+The input layout controls decide how composer action chips are shown.
+
+The layout can:
+
+- wrap chips across rows when there is enough room
+- use horizontally scrollable chip rows on narrower layouts
+- collapse controls into the action menu when you want the most compact composer
+
+Primary controls and secondary controls stay separated in wrap and scroll layouts. In collapsed layout, those controls move into the action menu.
+
+Chip density controls whether chips prefer labels, icons, or automatic label hiding.
+
+### Message history
+
+Message history is now a dropdown instead of an inline toggle pair.
+
+The options let you choose whether composer history is kept:
+
+- per session, or
+- globally
+
+This makes the current selection easier to understand at a glance.
+
+## Why this structure changed
+
+The goal of the split is simple:
+
+- keep the main Session page fast to scan
+- move high-detail controls into dedicated screens
+- make advanced settings easier to reason about
+- preserve the same underlying logic instead of creating separate implementations
+
+If you are looking for a setting and no longer see it inline on the root Session screen, it most likely moved into one of the dedicated sub-screens rather than being removed.
+
+## Related guides
+
+- [Session handoff](/sessions/session-handoff)
+- [New session shortcuts](/sessions/new-session-shortcuts)
+- [ACP backends](/agents/acp-backends)
+- [Profiles](/agents/profiles)

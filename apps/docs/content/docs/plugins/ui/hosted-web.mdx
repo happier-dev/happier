@@ -82,15 +82,24 @@ claim.
 | --- | --- | --- |
 | Browser | DOM iframe | `{ platform: 'web', adapter: 'domIframe' }` |
 | Packaged desktop — macOS | Direct Wry child (`WKWebView` subview) | `{ platform: 'desktop', adapter: 'wry' }` |
-| Packaged desktop — Windows | Direct Wry child (child `HWND` + WebView2) | `{ platform: 'desktop', adapter: 'wry' }` |
-| Packaged desktop — Linux/X11 | Direct Wry child (native X11 container window) | `{ platform: 'desktop', adapter: 'wry' }` |
+| Packaged desktop — Windows | Direct Wry child (child `HWND` + WebView2), implemented but not yet proved | `desktop_hosted_artifact_platform_frame_unproved` |
+| Packaged desktop — Linux/X11 | Direct Wry child (native X11 container window), implemented but not yet proved | `desktop_hosted_artifact_platform_frame_unproved` |
 | Packaged desktop — Linux/Wayland | None | `desktop_hosted_artifact_wayland_gtk_container_unimplemented` |
 | Packaged desktop — Linux, no display server | None | `desktop_hosted_artifact_linux_display_unavailable` |
 | iOS | `WKWebView` | `{ platform: 'ios', adapter: 'WKWebView' }` |
 | Android | `WebViewAssetLoader` | `{ platform: 'android', adapter: 'WebViewAssetLoader' }` |
 
-Linux/Wayland is the one desktop cell with no adapter. Wry's `build_as_child`
-constructor requires an X11 parent window handle and returns
+macOS is the one proved packaged-desktop cell. The Windows and Linux/X11
+direct-Wry children are implemented, selectable and unit-tested in the shell,
+but no hosted-Artifact loaded run has been recorded on either platform, so both
+report `desktop_hosted_artifact_platform_frame_unproved` instead of advertising
+an adapter. That reason names the missing proof rather than claiming the adapter
+does not exist, and it is withdrawn per platform when that platform's own
+hosted-Artifact loaded run is recorded — a compiling implementation, a passing
+unit test, a CI build matrix, or desktop-browser QA does not stand in for it.
+
+Linux/Wayland is the one desktop cell with no adapter at all. Wry's
+`build_as_child` constructor requires an X11 parent window handle and returns
 `UnsupportedWindowHandle` under Wayland, which has no X11-style native
 subwindow. Wry's supported Wayland route builds into an application-owned
 `gtk::Fixed` that overlays the shell's own webview — a different host widget
@@ -99,5 +108,4 @@ reports the typed reason rather than a frame it cannot construct.
 
 Availability is a transport fact only. It does not attest to Artifact hosting,
 Account eligibility, an endpoint, or any other server-owned admission
-condition, and an available adapter is not by itself a statement that a given
-host has completed device QA.
+condition.

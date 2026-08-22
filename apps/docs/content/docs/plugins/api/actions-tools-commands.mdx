@@ -47,6 +47,10 @@ An Action is declared and implemented once. Its `surfaces` say who may invoke
 it; its required `execution` field says where its one handler runs. Those are
 independent decisions.
 
+Adding another invocation surface does not create another handler. Every
+admitted surface resolves the same current declaration and its one registered
+target handler through the canonical dispatcher.
+
 - `execution: { target: 'daemon' }` runs through the daemon Action executor.
 - `execution: { target: 'client', ... }` names one exact client artifact,
   module, export, and supported platform list.
@@ -69,9 +73,9 @@ must fail unavailable; it must not fall back to a daemon, move to another
 client, or enter a cross-client queue.
 
 > **Development status:** The explicit `daemon | client` declaration is part
-> of the current Developer Preview source contract. End-to-end client Action
-> dispatch and loaded web/iOS/Android proof are still in progress. Do not treat
-> a client-target declaration as a released or currently runnable capability.
+> of the current Developer Preview contract, whose implementation remains in
+> progress, as is packaged web/iOS/Android certification. The public package
+> surface is not yet released for supported use.
 
 For example, the root declaration names the exact client artifact without an
 inline handler:
@@ -92,7 +96,7 @@ export const { manifest, activate } = definePlugin({
         target: 'client',
         client: {
           artifactId: 'action-client',
-          modulePath: './client-runtime',
+          modulePath: './clientRuntime',
           exportName: 'activate',
         },
         platforms: ['web', 'ios', 'android'],
@@ -115,6 +119,35 @@ export async function activate(api: PluginClientApi) {
 }
 ```
 
+Build that client module as a React Native client artifact with the public UI
+artifact builder. The build target id must match
+`execution.client.artifactId`; this target is executable client code and does
+not need a `contributes.ui.renderers` entry:
+
+```ts
+import { defineBuildConfig } from '@happier-dev/plugin-sdk/ui/build';
+
+export default defineBuildConfig({
+  targets: [{
+    rendererId: 'action-client',
+    entry: 'src/client-runtime.ts',
+    kind: 'reactNative',
+    platforms: ['web', 'ios', 'android'],
+    module: {
+      containerName: 'com_example_details_action_client',
+      modulePath: './clientRuntime',
+      exportName: 'activate',
+    },
+  }],
+});
+```
+
+Run `happier-plugin-build-ui --project-root .` to emit the artifact tree. The
+build API retains the field name `rendererId`, but for this non-renderer target
+it names the artifact consumed by the client Action declaration. See
+[UI artifacts](/plugins/ui/ui-artifacts#client-activation-artifacts) for the
+platform outputs and identity rules.
+
 Client handlers receive a client-safe context, including cancellation,
 invocation surface, plugin identity, current-UI context when available, and
 host-owned navigation. They do not acquire daemon services. Existing schema
@@ -129,10 +162,11 @@ own manifest-declared handler (the low-level ABI method is
 `api.actions.register(...)`). When a daemon handler needs an existing host
 operation, call the same canonical Action through
 `context.services.actions.execute(...)`; do not create a parallel RPC or
-duplicate host handler. Use an exact action id documented by the feature that
-owns that operation; the SDK deliberately does not maintain a second
-author-facing dump of every host action id, safety rule, or input shape. The
-owning action contract remains the source of truth.
+duplicate host handler. Use an exact action id from [Host actions](/plugins/api/host-actions), which is
+generated from the canonical ActionSpec registry — so every id it lists is
+reachable through `execute(...)`, and it cannot drift from the host. The owning
+action contract remains the source of truth for behaviour; that page is the
+index of what exists.
 
 ```ts
 const result = await context.services.actions.execute('action.spec.get', {
@@ -230,8 +264,8 @@ Commands expose CLI-facing entries. Command declarations specify their path, vis
 
 ### Current-UI commands
 
-The current-UI contract under active development keeps contextual commands as
-data, not callbacks. A mounted surface may contribute bounded presentation and
+The current-UI contract keeps contextual commands as data, not callbacks. A
+mounted surface may contribute bounded presentation and
 one existing semantic command: either `executeAction` or `openSurface`. Voice
 and other readers see only a snapshot-scoped opaque command id plus its title
 and optional description; the executable payload stays local to the client.
@@ -242,10 +276,11 @@ generation, or unknown id produces no effect. This preserves the existing
 Action and navigation owners instead of creating a screen-specific Voice
 handler or callback registry.
 
-> **Development status:** The DTOs and semantic-command vocabulary exist in
-> current source, but mounted publication, Voice read/invoke wiring, and loaded
-> candidate proof are not complete. The source-green mounted publication
-> contract is documented under [Plugin UI](/plugins/ui#publish-mounted-semantic-context).
+> **Development status:** This current-UI Developer Preview capability is still
+> under implementation, as is packaged web/iOS/Android certification. The
+> public package surface is not yet released for supported use. The
+> mounted publication contract is documented under
+> [Plugin UI](/plugins/ui#publish-mounted-semantic-context).
 
 ## Approvals
 

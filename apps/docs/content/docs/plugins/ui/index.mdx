@@ -96,10 +96,11 @@ Collection-query entry.
 
 ## Publish mounted semantic context
 
-> **Development status:** `publishCurrentUiContext` is source-green in the
-> public Developer Preview Host API. Its mounted product integration, Voice
-> read/invoke path, and loaded web/iOS/Android candidate proof are still in
-> progress, so this is not a shipped availability claim.
+> **Development status:** `publishCurrentUiContext` belongs to a Developer
+> Preview capability whose implementation and packaged web/iOS/Android
+> certification remain in progress. The public package surface is not yet
+> released for supported use, and no released build currently provides this
+> capability.
 
 The host automatically supplies a privacy-safe, parameter-free navigation
 baseline. A mounted surface can optionally enrich that baseline with bounded
@@ -152,9 +153,10 @@ before any effect. Plugins do not generate or persist those ids.
 This publication does not itself send data to a Voice provider. The active
 Voice client's privacy mode decides whether current-UI data leaves that client,
 and automatic mode sends navigation metadata only; semantic detail and
-commands remain on demand. Maintained built-ins and packed external plugins
-use this same public Host API and mount retirement path, and both remain
-trusted executable package code.
+commands remain on demand. The source contract and prepared packed-external
+fixture exercise this same public Host API and mount-retirement contract.
+Exact packed and loaded parity remains unverified pending the candidate proof
+called out above; package code remains trusted executable code.
 
 ## Destinations and form factors
 
@@ -275,3 +277,10 @@ happier plugins create ./my-plugin \
   or navigation path.
 - Treat the whole installed package as the trust unit, including client code.
 - Use `context.ui` from daemon invocations for host-owned prompts, notifications, status, widgets, title, and composer controls; it is separate from executable surface rendering.
+
+## In this section
+
+- [Host-rendered plugin UI](/plugins/ui/settings-ui) — declarative settings, status and actions, with no renderer code of your own.
+- [React Native UI](/plugins/ui/react-native) — trusted, native-feeling UI in supported clients.
+- [UI artifacts](/plugins/ui/ui-artifacts) — building, digesting and verifying a portable artifact tree.
+- [Hosted web UI](/plugins/ui/hosted-web) — the isolated artifact, and the frame runtime it is still waiting on.

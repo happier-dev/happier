@@ -1,0 +1,131 @@
+---
+title: Self-hosting
+description: Running your own Happier relay — how to deploy it, how to configure who may sign in, and what the server keeps.
+---
+
+This section is about running **your own Happier relay** (the sync backend that
+clients and machines connect to). Everything here is optional: Happier Cloud
+exists so you do not have to.
+
+Your clients and machines then point at your URL — say `https://api.example.com`
+— instead of the Cloud one. Nothing else about how you use Happier changes.
+
+Most production self-hosts need at least:
+
+- `HANDY_MASTER_SECRET` — required.
+- `HAPPIER_PUBLIC_SERVER_URL` — used in QR codes and deep links, so get it right early.
+- `HAPPIER_WEBAPP_URL` — when you host the web client yourself, or use OAuth return-to.
+- the env for your chosen storage backend (`DATABASE_URL`, `S3_*`, and so on).
+
+## Pick how to run it
+
+<Cards>
+  <Card title="Server quickstart" href="/self-hosting/quickstart" description="The minimum production configuration, and which env vars actually matter." />
+  <Card title="Docker" href="/self-hosting/docker" description="Compose files for single-container and split API/worker deployments." />
+  <Card title="Self-host runtime" href="/self-hosting/self-host-runtime" description="A managed service on a host or VPS — what the installer and the runner each own." />
+  <Card title="Run from a monorepo clone" href="/self-hosting/repo-local" description="Repo-local mode, for developing or customizing from source." />
+  <Card title="Proxmox VE" href="/self-hosting/proxmox" description="Deploying with the community helper scripts." />
+</Cards>
+
+If you are unsure: **Docker** if you already run a supervisor, the
+**self-host runtime** if you want a managed service on a plain host, and
+**repo-local** if you are changing the server itself.
+
+## Configure it
+
+- [Environment variables](/self-hosting/env) — the complete server runtime surface. The canonical template is `apps/server/.env.example`.
+- [Feature environment variables](/self-hosting/feature-env) — every `HAPPIER_FEATURE_*` variable, generated from the server's own key map.
+- [API rate limits](/self-hosting/rate-limits) — every limited endpoint, its default, and the two variables that change it.
+- [Setup and bootstrap policy](/self-hosting/setup-and-bootstrap-policy) — which setup surfaces your clients are allowed to show at all.
+- [Observability](/self-hosting/observability) — Prometheus, Grafana and Alertmanager against your deployment.
+- [Live Activity remote updates](/self-hosting/live-activity-remote-updates) — server-side updates for iOS Live Activities and the Dynamic Island.
+
+## Decide who may sign in
+
+This is the part that takes the longest and is the easiest to get subtly wrong,
+so it has a page per provider rather than one long one.
+
+- [Auth overview](/self-hosting/auth) — the policy model, and how the pieces below combine.
+- [GitHub](/self-hosting/auth-github) — OAuth for signup and connect, plus allowlists.
+- [OIDC](/self-hosting/auth-oidc) — Okta, Auth0, Entra ID, Keycloak and anything else generic.
+- [mTLS](/self-hosting/auth-mtls) — client certificates from your MDM, auto-provisioning, and mapping one person's devices to one identity.
+- [Custom providers](/self-hosting/auth-custom-providers) — adding your own without forking the core auth logic.
+
+## Decide what the server keeps
+
+- [Encryption and plaintext storage](/self-hosting/encryption) — whether session content is stored end-to-end encrypted or readable by the server.
+- [Retention](/self-hosting/retention) — automatic cleanup. The default is to keep everything forever.
+
+## Understand what you are running
+
+- [Protocol](/self-hosting/protocol) — the contracts shared between the server, the CLI and the app.
+
+## Flavors
+
+Both flavors run the same API and the same logic. The difference is only which
+storage backends they use.
+
+- **Full** — external Postgres (default) or MySQL 8.0.16+, with S3 or a
+  compatible store (default; `HAPPIER_FILES_BACKEND=local` switches to disk).
+  Redis is optional and only needed for multi-replica realtime.
+- **Light** — SQLite (default) or embedded Postgres (PGlite) on disk, with local
+  file storage served by the server at `GET /files/*`.
+
+Use **full** for a shared server; use **light** for the easiest single node.
+
+<Callout>
+  With SQLite and no `DATABASE_URL`, the server requires
+  `HAPPIER_SERVER_LIGHT_DATA_DIR` and refuses to start without it.
+</Callout>
+
+## Roles and scaling
+
+One process is the simple case. To split it, set `SERVER_ROLE`:
+
+| `SERVER_ROLE` | What the process does |
+| --- | --- |
+| unset (default `all`) | API, realtime and background work together |
+| `api` | API and realtime only — this is what clients connect to |
+| `worker` | background work only, no HTTP listener |
+
+Two things about that table are worth knowing before you rely on it:
+
+- **An unrecognized value is not an error.** Anything other than `api` or
+  `worker` — including a typo — silently resolves to `all`. A misspelled
+  `SERVER_ROLE=wroker` gives you a second full server, not a worker.
+- **`worker` requires the Redis adapter.** The process throws at startup unless
+  `REDIS_URL` is set and `HAPPIER_SOCKET_ADAPTER=redis-streams`, because a
+  worker publishes to rooms it has no direct sockets for.
+
+The converse also holds: once the Redis adapter is on, durable presence writes
+are consumed by a worker. An all-`api` deployment with Redis enabled will log
+that it needs one, and presence will not be written durably until you run one.
+
+For multi-replica API deployments, enable Redis fanout and configure sticky
+sessions at your load balancer. [Docker](/self-hosting/docker) has a working
+example.
+
+## Reverse proxy basics
+
+In production, run the API behind a proxy that:
+
+- terminates TLS,
+- supports WebSocket upgrades — Socket.IO realtime lives at `/v1/updates`,
+- uses timeouts long enough for a long-lived connection,
+- and keeps secrets in your platform's env or secret manager rather than in git.
+
+If you serve `/files/*` from the server (light flavor), allow those routes too.
+
+<Callout type="warn">
+  Broken `/v1/updates` upgrades are the single most common self-hosting failure,
+  and they do not look like a networking problem: machines register fine and
+  then sit there offline, reported as `machine.none_online`.
+</Callout>
+
+## Related
+
+The local stack CLI can also bootstrap a remote host over SSH, which is often
+faster than doing it by hand:
+
+- [Remote server setup (SSH)](/hstack/remote-server) — installing the self-host server on a remote host.
+- [Remote daemon setup (SSH)](/hstack/remote-daemon) — installing Happier and pairing credentials on one.

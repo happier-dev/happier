@@ -1,0 +1,32 @@
+---
+title: Runtime architecture
+description: The Happier runtime model for sessions, execution-runs, and plugin-owned Agent leaves.
+---
+
+Happier runtime architecture separates product lifecycle from provider-specific execution.
+
+## Layers
+
+1. UI and client flows choose an Agent.
+2. CLI daemon receives session or execution-run work.
+3. The Agent catalog resolves the manifest contribution and registered native runtime.
+4. The host constructs bounded Agent factory, session, or execution-run contexts.
+5. Native `AgentRuntime` supplies session and/or execution-run factories.
+6. Session or execution-run host bridge owns product lifecycle.
+7. The Agent leaf maps Agent-native behavior into shared runtime contracts.
+
+## Core invariant
+
+The host owns lifecycle, permissions, pending queue behavior, transcript
+projection, durable state, runtime identity publication, and user-facing
+status. Agent leaves own Agent-native commands, codecs, correlation, and
+authoritative evidence. Model Providers remain a separate domain.
+
+## In this section
+
+- [Host runtime](/development/architecture/runtime/host-runtime) — the host-owned layer around provider leaves.
+- [Agent runtime registry](/development/architecture/runtime/engine-registry) — resolving a manifest-declared Agent to a registered native runtime.
+- [Session loop](/development/architecture/runtime/session-loop) — how a live backend session is actually run.
+- [Execution-runs](/development/architecture/runtime/execution-runs) — how task-like execution reuses the same backend path.
+- [Runtime events](/development/architecture/runtime/runtime-events) — every kind of live event an agent emits. Generated from the protocol schema.
+- [Transcripts and state](/development/architecture/runtime/transcripts-state) — why durable session data stays host-owned even when a leaf produces the evidence.

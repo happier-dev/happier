@@ -13,7 +13,7 @@ Happier always follows the same high-level flow:
    - **Remote machine**: bootstrap it over SSH from the app, and optionally save the SSH target as a reusable Remote host.
 5. **Optionally enable private access** (for example Tailscale) for self-hosted/local Relay access from other devices.
 
-User guide: [Relay access](/clients/relay-access).
+User guide: [Relay access](/apps/relay-access).
 
 ## Choose your setup
 
@@ -33,23 +33,23 @@ Optional CLI path:
 ```bash
 # Node-free (recommended): install the CLI binary via the official installer
 curl -fsSL https://happier.dev/install | bash
-happier setup --relay-url https://api.happier.dev
+# The interactive installer starts setup automatically. Resume it if needed:
+happier setup
 ```
 
-The app-first setup is the recommended control-panel flow. The CLI is a great fallback when you want one-command setup from a terminal.
-`happier setup` is the terminal executor for the same shared setup flow; `happier setup plan` only previews the steps.
+The app-first setup is the recommended control-panel flow. The CLI is a great fallback when you want one-command setup from a terminal. Both settle the Relay before sign-in; the CLI delegates each step to the existing Relay, auth, service, Agent, and Relay-access commands. `happier setup plan` only previews the steps.
 
 Notes:
 - The desktop app and the installer-installed CLI are self-contained; you do not need system Node/Yarn installed.
-- If you prefer an npm workflow, see [CLI install](/clients/cli) (requires Node).
+- If you prefer an npm workflow, see [CLI install](/apps/cli) (requires Node).
 
 ### Option B — Self-host Relay only (background service on your laptop)
 You run your own Relay (remote machine, LAN box, or even your own computer), but keep the background service on another machine.
 
 1. Install your Relay (examples):
-   - Proxmox: see [Proxmox deployment](../deployment/proxmox).
+   - Proxmox: see [Proxmox deployment](/self-hosting/proxmox).
    - Any machine (managed service): install the CLI, then run `happier relay host install` (or remote: `happier relay host install --ssh user@host`). To install as a system-wide service, use `--mode system` (requires root/sudo). For a local Relay, use `--lan`, `--expose`, or `--host <ip>` when it should listen beyond loopback.
-   - Docker: see [Deployment → Docker](../deployment/docker).
+   - Docker: see [Deployment → Docker](/self-hosting/docker).
 
 2. Open the desktop app (recommended) or web UI (status/management only) and choose that Relay.
    - Some installers print one-click links/QRs that prefill the Relay URL.
@@ -67,7 +67,7 @@ If you need a CLI fallback for the background-service host:
 happier setup --relay-url https://YOUR_SERVER_URL --skip-providers
 ```
 
-This is the same guided executor path as the app wizard, but from the terminal.
+This is the terminal guided executor for the same outcome as the app wizard.
 If the machine was already set up and later drifted, run `happier doctor repair` instead of repeating first-time setup.
 
 If you want to bootstrap a *remote machine* over SSH instead, use:
@@ -75,7 +75,7 @@ If you want to bootstrap a *remote machine* over SSH instead, use:
 ```bash
 happier machine setup --ssh user@host
 ```
-If you want to save a reusable Relay profile for future CLI commands, see [CLI → Server profiles](/clients/cli#server-profiles).
+If you want to save a reusable Relay profile for future CLI commands, see [CLI → Server profiles](/apps/cli#server-profiles).
 
 ### Option C — Devbox (Relay + background service on the same machine)
 You install both the Relay and the background service on one box.
@@ -120,4 +120,4 @@ happier --server personal service status
 happier --server company service status
 ```
 
-For complete profile/switching behavior and CLI reference, see [Features → Multi-server](/features/multi-server).
+For complete profile/switching behavior and CLI reference, see [Features → Multi-server](/accounts/multi-server).

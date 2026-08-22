@@ -1,0 +1,185 @@
+---
+title: Background service
+description: Run Happier in the background for sessions, remote control, and headless servers.
+---
+
+## What is the background service?
+
+The Happier **background service** keeps Happier available on your machine.
+
+In practice, it starts and manages sessions even when you do not have a terminal open. This is especially important for features like **remote start** from the app or web UI: the local runtime on your computer receives that request and launches the session locally.
+
+It also helps the CLI:
+
+- keep long-running sessions alive
+- reconnect to and manage existing sessions
+- support remote control / orchestration features without requiring your terminal to stay open
+
+## Embedded terminal support
+
+The in-app embedded terminal also depends on the background service.
+
+That is what allows Happier to:
+
+- create the terminal session on your machine,
+- reconnect to that same terminal after refresh/navigation,
+- stream output back into the app UI,
+- resize and restart the terminal from the app.
+
+If the background service is not running or the machine is unreachable, the embedded terminal cannot work.
+
+Full guide: [Embedded terminal](/extras/embedded-terminal).
+
+## Agent authentication and Provider support
+
+Agent login flows in Agent settings depend on the background service because Happier runs the real Agent CLI on the target machine. Provider probing, local discovery, and scoped credential materialization also happen in the background service rather than the browser.
+
+That is what allows Happier to:
+
+- launch Agent login commands on the selected machine
+- stream the Agent's terminal output back into the app
+- detect URLs printed during login flows
+- refresh machine-local auth state after the login flow exits
+
+Full guides: [Agent authentication](/agents/provider-authentication) and [Provider integrations](/agents/provider-integrations).
+
+## Local memory search support
+
+Local memory search also depends on the background service.
+
+That is what allows Happier to:
+
+- build the machine-local memory index
+- maintain light or deep transcript indexing in the background
+- run optional local embeddings models on the machine
+- query the local index from the app/web UI
+
+Because the index is machine-local, memory search is scoped to the specific machine where the background service runs.
+
+Full guide: [Local memory search](/organize/local-memory-search).
+
+## When does it run?
+
+You can run it in two ways:
+
+- **On-demand**: start it when you need it (some CLI commands may start it automatically).
+- **Automatic startup (recommended)**: install it as a **user service** so it starts after login and keeps running in the background.
+
+Why automatic startup is recommended:
+
+- It makes your machine **ready to start sessions remotely** at any time.
+- It avoids “why can’t I start a session?” situations where the background service simply is not running yet.
+- It’s the smoothest experience on headless servers (or laptops you want to control remotely).
+
+## Common commands
+
+```bash
+happier service status
+happier service start
+happier service stop
+happier service list
+happier service logs
+```
+
+`happier daemon ...` remains available as a legacy alias for background-service commands.
+
+## Release lanes
+
+The background service follows the CLI/runtime lane you installed on that machine:
+
+- `stable` CLI install -> stable background-service runtime
+- `preview` CLI install -> preview background-service runtime
+- `dev` CLI install -> dev background-service runtime
+
+Default-following automatic startup tracks the selected managed release channel. To inspect or change that default:
+
+```bash
+happier self release-channel status
+happier self release-channel use stable
+happier self release-channel use preview
+happier self release-channel use dev
+```
+
+When you change the default release channel, Happier syncs the shims and runs or prompts for the background-service restart follow-up when a default-following automatic startup entry is installed.
+
+Updater commands stay lane-specific:
+
+```bash
+happier self update
+hprev self update
+hdev self update
+```
+
+There is no separate public background-service installer endpoint today. Install the CLI first, then use setup or service commands on the machine you want to configure.
+
+### Side-by-side installs (stable vs preview vs dev)
+
+You can install all three public lanes side-by-side (`happier`, `hprev`, `hdev`) without them overwriting each other.
+
+Runtime state is lane-scoped, and automatic startup entries (LaunchAgent/systemd/Scheduled Task) use lane-scoped service identifiers.
+To inspect the exact service name/label/unit on your platform, run:
+
+```bash
+happier service paths
+hprev service paths
+hdev service paths
+```
+
+Recommendation: keep only one lane’s automatic startup entry enabled for a given Relay profile unless you have a specific reason to run multiple local runtimes concurrently.
+
+## Always-on: install as a user service
+
+Install for your current default server profile:
+
+```bash
+happier service install
+```
+
+Advanced lifecycle control (and dry-run planning):
+
+```bash
+happier service status
+happier service install --dry-run
+happier service restart
+```
+
+Platform notes:
+
+- **macOS**: LaunchAgent
+- **Linux**: `systemd --user`
+- **Windows**: Scheduled Task (user-level)
+
+To remove it:
+
+```bash
+happier service uninstall
+```
+
+On Windows, `happier service paths` prints the Scheduled Task name and wrapper path.
+
+## Headless authentication (no TTY)
+
+On headless servers (or anywhere you don’t have an interactive TTY), use:
+
+```bash
+happier auth login --no-open --method web
+```
+
+This prints an authorization URL and waits until you approve it in your browser (the request can expire; if it does, rerun the command).
+
+### Recommended: remote pairing over SSH
+
+If you have SSH access and want a fully automated experience (request + approval + credential write), run this from a machine where you're already authenticated:
+
+```bash
+happier auth pair-remote --ssh user@host --json
+```
+
+This is especially useful for provisioning headless servers because you can approve the connection from your already-signed-in machine and avoid copy/pasting URLs.
+
+## Troubleshooting
+
+- **Check status**: `happier service status`
+- **Find logs**: `happier service logs`
+- **Service paths**: `happier service paths`
+- **Repair drift or broken state**: `happier doctor repair`

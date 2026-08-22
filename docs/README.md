@@ -5,6 +5,7 @@ This folder documents how Happier works internally, with a focus on protocol, ba
 ## Index
 - protocol.md: Wire protocol (WebSocket), payload formats, sequencing, and concurrency rules.
 - pending-delivery.md: Durable pending-delivery vocabulary, ownership, compatibility, and receipt boundaries.
+- agent-transition.md: Same-Session Agent transition — wire contract, divider, split cutover, attribution, feature gate, device-local native return, and compatibility. Unreleased.
 - api.md: HTTP endpoints and authentication flows.
 - encryption.md: Encryption boundaries, on-wire encoding, and session storage modes.
 - feature-gating.md: Canonical feature catalog, payload, policy, and gate-consumption contracts.

@@ -1,0 +1,67 @@
+---
+title: oh-my-pi (experimental)
+description: Configure the oh-my-pi CLI in Happier, including install, provider API keys, and what Happier can drive.
+---
+
+Happier supports **oh-my-pi CLI** as a local CLI-backed Agent. The binary is
+called `omp`.
+
+## Requirements
+
+- oh-my-pi installed locally
+- `omp` available on `PATH`, or `HAPPIER_OHMYPI_PATH` set to its absolute path
+- an API key for whichever model provider you intend it to use
+
+## Install oh-my-pi
+
+Happier can install it for you as a managed release binary, pulled from the
+project's GitHub releases — that path needs no package manager on your machine.
+
+To install it yourself, the project recommends Bun:
+
+```bash
+bun install -g @oh-my-pi/pi-coding-agent
+omp --version
+```
+
+The project's own instructions are at
+[github.com/can1357/oh-my-pi](https://github.com/can1357/oh-my-pi).
+
+## Authentication
+
+oh-my-pi has no login flow of its own. It reads a provider API key from the
+environment, and Happier reports it as signed in when one of these is present:
+
+- `OPENAI_CODEX_OAUTH_TOKEN`
+- `OPENAI_API_KEY`
+- `ANTHROPIC_OAUTH_TOKEN`
+- `ANTHROPIC_API_KEY`
+- `GEMINI_API_KEY`
+
+Because the signal is the environment variable rather than a stored credential,
+the status reflects the environment the agent runs in. A key exported only in
+your interactive shell will not be visible to a daemon started at login.
+
+## What Happier can drive
+
+- **Session modes** come from ACP and can be changed mid-session.
+- **Model selection** is supported.
+- **Resume** is supported.
+- **Session listing** and **forking** are supported.
+- **Handoff** is not supported.
+
+The full matrix is on [Agent capabilities](/agents/capabilities).
+
+## Troubleshooting
+
+### "oh-my-pi not found"
+
+Check the binary name — it is `omp`:
+
+```bash
+omp --version
+```
+
+If it lives outside `PATH`, set `HAPPIER_OHMYPI_PATH` to its absolute path. An
+override that does not point at an executable is ignored silently, so a wrong
+path behaves the same as no override.

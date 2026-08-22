@@ -44,6 +44,29 @@ The catalog entry is client-represented, has `defaultFailMode: 'fail_closed'`, a
 
 Features that declare `sessions.direct` as a dependency, including the current Claude unified-terminal and Codex app-server feature rows, are disabled by `applyFeatureDependencies(...)` when External Sessions is disabled or unknown. Call sites must not reproduce or bypass that dependency closure.
 
+### Session Agent switching feature id
+
+`sessions.agentSwitching` gates continuing one Session with another Agent (`agent-transition.md`).
+It is server-represented, `defaultFailMode: 'fail_closed'`, and depends on `sessions`.
+
+Its server value is produced by `resolveSessionAgentSwitchingFeature`
+(`apps/server/sources/app/features/sessionAgentSwitchingFeature.ts`), registered in
+`apps/server/sources/app/features/catalog/serverFeatureRegistry.ts`, reading
+`parseBooleanEnv(env[FEATURE_ENV_KEYS.sessionsAgentSwitchingEnabled], true)`. It is therefore
+**enabled by default**, with `HAPPIER_FEATURE_SESSIONS_AGENT_SWITCHING__ENABLED` as an operator
+opt-out. The registry is resolved at process start, so changing it needs a server restart.
+
+Default-on and `fail_closed` are orthogonal and both correct: a server that answers advertises
+`true`, while a missing or malformed bit resolves to the client's disabled default. `sessions.folders`
+is the same combination and is the shape to copy.
+
+The gate is **enforced at the server boundary**, not only in the UI. The cutover route
+(`registerSessionAgentTransitionRoute`) carries
+`createServerFeatureGatePreHandler('sessions.agentSwitching')`, so a server with the opt-out set
+answers `404 { error: 'not_found' }` and the lifecycle mutation never runs — a hidden surface is not
+a gate. That route is the only place the switch becomes durable, so one gate at that choke point
+refuses the operation for every caller, UI or not.
+
 ### Provider feature dependencies
 
 The first-class model-provider program uses these canonical ids:
@@ -83,6 +106,12 @@ For features intended to be user-opt-in via UI Experimental Features toggles:
 
 ## Server rules
 
+- A server-represented gate needs a **resolver registered in `serverFeatureRegistry.ts`**, not only a
+  catalog entry. Without one, nothing ever writes `features.<id>.enabled`, so
+  `readServerEnabledBit(...)` returns the schema default in every deployment, permanently, and the
+  feature is dark everywhere while its client half looks complete. This shipped once
+  (`sessions.agentSwitching`). When a gated surface never appears, check the producer before the
+  consumer.
 - `/v1/features` assembly is centralized in `resolveServerFeaturePayload.ts`.
 - Route gating should use `apps/server/sources/app/features/catalog/serverFeatureGate.ts`:
   - `createServerFeatureGatePreHandler(featureId)`

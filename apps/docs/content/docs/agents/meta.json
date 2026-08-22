@@ -1,0 +1,31 @@
+{
+  "title": "Agents and models",
+  "pages": [
+    "index",
+    "capabilities",
+    "model-and-engine-selection",
+    "provider-authentication",
+    "profiles",
+    "claude",
+    "codex",
+    "cursor",
+    "opencode",
+    "gemini",
+    "grok",
+    "copilot",
+    "qwen",
+    "kimi",
+    "augment",
+    "kilo",
+    "kiro",
+    "pi",
+    "antigravity",
+    "oh-my-pi",
+    "coderabbit",
+    "deepsec",
+    "custom-acp",
+    "acp-backends",
+    "provider-integrations",
+    "feature-matrix"
+  ]
+}

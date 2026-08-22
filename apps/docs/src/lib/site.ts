@@ -1,29 +1,34 @@
 /**
- * The canonical origin this site is served from, and the helpers that turn a
- * page URL into an absolute one.
+ * Canonical identity for the documentation site.
  *
- * This exists because Next resolves every relative metadata URL against
- * `metadataBase`, and when `metadataBase` is unset it silently falls back to
- * `http://localhost:3000`. Nothing fails, nothing warns in production, and the
- * broken value is baked into every prerendered page's `og:image` at build time
- * — 225 social cards pointing at a machine that is not on the internet. One
- * constant, used by the root layout, the canonicals, the sitemap and robots.txt,
- * is the only way that stays fixed.
+ * Everything that needs an absolute URL or the site's own name reads this, so
+ * there is one place to change when the origin moves. This mirrors the guides
+ * site's `src/lib/site.ts` deliberately — the two Next apps are siblings and
+ * diverging on something this basic is how a preview build ends up publishing
+ * production URLs.
  *
- * `NEXT_PUBLIC_DOCS_URL` exists so a preview deployment can advertise itself
- * honestly instead of claiming to be production.
+ * Why this file exists at all: without a `metadataBase`, Next resolves the
+ * root-relative `openGraph.images` path against its own `http://localhost:3000`
+ * fallback and bakes that into every prerendered page. Every share to Slack,
+ * Discord, X or iMessage then renders a broken card.
  */
-export const SITE_URL = (process.env.NEXT_PUBLIC_DOCS_URL ?? 'https://docs.happier.dev').replace(
+export const SITE_URL = (process.env.NEXT_PUBLIC_SITE_URL || 'https://docs.happier.dev').replace(
   /\/+$/,
   '',
 );
 
 export const SITE_NAME = 'Happier Docs';
 
+/**
+ * Used as the site-wide `<meta name="description">` and the fallback share
+ * description. It names agents on purpose: the single most common way people
+ * arrive here is searching for one of them plus "from my phone".
+ */
 export const SITE_DESCRIPTION =
-  'Reference documentation for Happier — the open-source client that runs Claude Code, Codex, OpenCode and ten more coding agents from your phone, laptop or a server you own.';
+  'Documentation for Happier — run Claude Code, Codex, Cursor, OpenCode and thirteen more coding agents on your own machines, and drive them from your phone, a browser, or anywhere else.';
 
-/** `https://docs.happier.dev/features/inbox-and-approvals` from `/features/inbox-and-approvals`. */
+/** Join the site origin with a fumadocs page url (`/`, `/code/git`). */
 export function absoluteUrl(pathname: string): string {
+  if (!pathname || pathname === '/') return `${SITE_URL}/`;
   return `${SITE_URL}${pathname.startsWith('/') ? pathname : `/${pathname}`}`;
 }

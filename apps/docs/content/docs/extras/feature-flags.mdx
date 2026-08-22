@@ -1,0 +1,184 @@
+---
+title: Feature flags
+description: Every capability Happier can gate, who controls it, and what it defaults to — generated from the feature catalog.
+---
+
+Not everything Happier can do is switched on for everybody. A capability can be
+gated in three places, and a feature is only usable when all three agree:
+
+1. **The server** advertises which features it supports. Self-hosters control
+   this with `HAPPIER_FEATURE_*` environment variables; on Happier Cloud it is
+   set for you.
+2. **The build** can deny features regardless of the server, through
+   `HAPPIER_BUILD_FEATURES_ALLOW` and `HAPPIER_BUILD_FEATURES_DENY`.
+3. **You** turn some of them on in **Settings → Features**.
+
+Every feature in the catalog is **fail-closed**: if the client cannot get a
+clear answer about whether a feature is available, it treats it as unavailable.
+That is why a feature can seem to vanish when a server is unreachable, and why
+a misconfigured self-hosted server hides features rather than half-enabling them.
+
+There are 128 features in the catalog. 23 of them have a switch you can
+reach; the other 105 are decided before you get there.
+
+## Features you can turn on yourself
+
+These appear in **Settings → Features**. 16 of the 23 are marked experimental.
+
+| Feature | Id | Kind | Default |
+| --- | --- | --- | --- |
+| **Home Screen Widgets** | `app.ui.homeScreenWidgets` | Experimental | Off |
+| **Live Activities** | `app.ui.liveActivities` | Experimental | Off |
+| **Attachment uploads** | `attachments.uploads` | Experimental | Off |
+| **Automations** | `automations` | Experimental | On |
+| **Connected services quotas** | `connectedServices.quotas` | Experimental | Off |
+| **Subagents** | `execution.runs` | Experimental | Off |
+| **Diff syntax highlighting** | `files.diffSyntaxHighlighting` | Standard | On |
+| **Embedded file editor** | `files.editor` | Standard | On |
+| **Rich markdown editor** | `files.markdownRichEditor` | Experimental | Off |
+| **File review comments** | `files.reviewComments` | Standard | On |
+| **Advanced syntax highlighting** | `files.syntaxHighlighting.advanced` | Standard | On |
+| **Memory search** | `memory.search` | Experimental | Off |
+| **Pets** | `pets.companion` | Experimental | Off |
+| **Source control operations** | `scm.writeOperations` | Experimental | Off |
+| **External Sessions** | `sessions.direct` | Standard | On |
+| **Session folders** | `sessions.folders` | Standard | On |
+| **Friends** | `social.friends` | Experimental | Off |
+| **Embedded terminal** | `terminal.embeddedPty` | Experimental | Off |
+| **Usage reporting** | `usage.reporting` | Standard | On |
+| **Voice** | `voice` | Experimental | Off |
+| **Voice agent** | `voice.agent` | Experimental | Off |
+| **Voice daemon inference** | `voice.daemonInference` | Experimental | Off |
+| **Zen** | `zen.navigation` | Experimental | On |
+
+Experimental toggles are hidden until you turn on the experiments switch at the
+top of that screen. If a page tells you to enable something here and you cannot
+find the row, that switch is almost always why.
+
+A toggle only offers what the server already allows. Turning something on
+locally cannot enable a feature the server has not advertised.
+
+## Features the server decides
+
+These have no user-facing switch. A self-hoster sets them through the
+environment; on Happier Cloud they are managed for you. `server` means the
+server owns the decision outright; `client` means the client owns the
+behaviour but still needs the server to advertise the capability.
+
+| Id | What it gates | Owned by | Depends on | Environment variable |
+| --- | --- | --- | --- | --- |
+| `actions.approvals` | ActionSpec-driven approval request queue and inbox UI surfaces. | client | `inbox.global` | — |
+| `agents.claude.unifiedTerminal` | Claude unified terminal runtime capability. | client | `sessions.direct` | — |
+| `agents.claude.unifiedTerminal.tuiRuntimeControl` | Claude unified terminal TUI runtime-control controller (live model/effort/permission-mode controls). Falls back to restart/unsupported outcomes when disabled. | client | `agents.claude.unifiedTerminal` | — |
+| `agents.codex.appServer.goals` | Codex app-server native session goal controls and work-state projection (provider-specific sub-gate under the generalized agents.goals umbrella). | client | — | — |
+| `agents.codex.appServer.permissionProfiles` | Codex app-server native permission profiles and runtime policy edits. | client | `sessions.direct` | — |
+| `agents.codex.appServer.plugins` | Codex app-server readonly vendor plugin catalog and structured mentions. | client | `sessions.direct`, `prompts.skills.registries` | — |
+| `agents.codex.appServer.structuredInput` | Codex app-server structured turn inputs for text, images, skills, and vendor plugin mentions. | client | `sessions.direct`, `attachments.uploads` | — |
+| `agents.goals` | Generalized agent session goal controls and work-state goal projection (umbrella over provider-specific goal sub-gates). | client | — | — |
+| `app.analytics` | Anonymous analytics and instrumentation (PostHog). | client | — | — |
+| `app.crashReports` | Crash reports and error telemetry (Sentry). | client | — | — |
+| `app.ui.changelog` | What’s New / changelog UI surfaces (banner, settings entry, changelog screen). | client | — | — |
+| `app.ui.onboardingShowcase` | Deprecated first-launch onboarding story-deck modal flag; retained fail-closed for compatibility. | client | — | — |
+| `app.ui.onboardingTour` | Unified onboarding tour and demo-mode journey surfaces. | client | `app.ui.sessionGettingStartedGuidance` | — |
+| `app.ui.releaseNotes` | Curated release-notes story-deck modal (Notelet-style cards). | client | — | — |
+| `app.ui.sessionGettingStartedGuidance` | Session getting-started guidance UI (includes CLI install instructions). | client | — | — |
+| `app.ui.storeReviewPrompts` | In-app store review prompts (native App Store / Play Store review sheet). | client | — | — |
+| `auth.login.keyChallenge` | Key-challenge login route availability (POST /v1/auth). | server | — | — |
+| `auth.mtls` | mTLS client certificate authentication support. | server | — | `HAPPIER_FEATURE_AUTH_MTLS__ENABLED` |
+| `auth.pairing.desktopQrMobileScan` | Pairing session support for desktop/web QR → logged-out mobile scan sign-in. | server | — | — |
+| `auth.recovery.providerReset` | Auth provider reset support during recovery flows. | server | — | — |
+| `auth.ui.recoveryKeyReminder` | Recovery key reminder UI behavior. | server | — | — |
+| `browser` | Browser view vocabulary, target dispatch, and browser-adjacent UI surfaces. | server | — | `HAPPIER_FEATURE_BROWSER__ENABLED` |
+| `browser.automation` | Host-owned browser automation control and action timeline surfaces. | server | `browser.internal` | `HAPPIER_FEATURE_BROWSER_AUTOMATION__ENABLED` |
+| `browser.automation.eval` | Policy-bound browser automation eval capability layered on diagnostics. | client | `browser.automation`, `browser.diagnostics` | — |
+| `browser.automation.injectedPage` | Centralized injected-page browser automation runtime when adapter policy allows it. | client | `browser.automation` | — |
+| `browser.context` | Explicit browser context capture and composer/agent attachment surfaces. | server | `browser.internal` | `HAPPIER_FEATURE_BROWSER_CONTEXT__ENABLED` |
+| `browser.diagnostics` | Browser diagnostics and devtools event surfaces with adapter fidelity metadata. | server | `browser.internal` | `HAPPIER_FEATURE_BROWSER_DIAGNOSTICS__ENABLED` |
+| `browser.internal` | Internal browser session/profile/view surfaces. | server | `browser.viewTargets` | `HAPPIER_FEATURE_BROWSER_INTERNAL__ENABLED` |
+| `browser.recording` | Browser recording evidence artifact lifecycle and reference metadata. | server | `browser.internal` | `HAPPIER_FEATURE_BROWSER_RECORDING__ENABLED` |
+| `browser.recording.attachments` | Attach finalized browser recording evidence references to composer/session media flows. | client | `browser.recording`, `attachments.uploads`, `browser.context` | — |
+| `browser.sidecar` | Managed sidecar browser host capability for automation-heavy browser sessions. | server | `browser.internal` | `HAPPIER_FEATURE_BROWSER_SIDECAR__ENABLED` |
+| `browser.viewTargets` | Host-owned browser view target dispatch for previews, hosted UI, and external URLs. | server | `browser` | `HAPPIER_FEATURE_BROWSER_VIEW_TARGETS__ENABLED` |
+| `bugReports` | Bug report submission and diagnostics capability. | server | — | `HAPPIER_FEATURE_BUG_REPORTS__ENABLED` |
+| `connectedServices.accountFallback` | Connected service account group fallback and automatic active account switching APIs. | server | `connectedServices.accountGroups`, `sessions.usageLimitRecovery` | `HAPPIER_FEATURE_CONNECTED_SERVICES_ACCOUNT_FALLBACK__ENABLED` |
+| `connectedServices.accountGroups` | Connected service account groups and member management APIs. | server | — | `HAPPIER_FEATURE_CONNECTED_SERVICES_ACCOUNT_GROUPS__ENABLED` |
+| `devices` | Device and simulator preview/control surfaces. | client | — | `HAPPIER_FEATURE_DEVICES__ENABLED` |
+| `devices.simulatorPreview` | Simulator and emulator preview panes over the live-stream substrate. | server | `devices`, `machines.liveStream`, `browser.viewTargets` | `HAPPIER_FEATURE_DEVICES_SIMULATOR_PREVIEW__ENABLED` |
+| `e2ee.keylessAccounts` | Keyless account support (accounts may omit E2EE signing keys). | server | — | — |
+| `encryption.accountOptOut` | Per-account encryption opt-out toggle support. | server | `encryption.plaintextStorage` | — |
+| `encryption.plaintextStorage` | Plaintext session storage support (no E2EE at rest). | server | — | — |
+| `inbox.global` | Global inbox aggregation surfaces (approvals, permissions, social, updates). | client | — | — |
+| `localServices` | Local service inventory, preview, and exposure product surfaces. | server | — | `HAPPIER_FEATURE_LOCAL_SERVICES__ENABLED` |
+| `localServices.actions` | Governed local service actions for copy, preview, forget, and managed controls. | server | `localServices.inventory` | `HAPPIER_FEATURE_LOCAL_SERVICES_ACTIONS__ENABLED` |
+| `localServices.actions.terminate` | Dangerous terminate action for eligible detected local service processes. | server | `localServices.actions` | `HAPPIER_FEATURE_LOCAL_SERVICES_ACTIONS_TERMINATE__ENABLED` |
+| `localServices.inventory` | Passive local service inventory and machine-scoped port provenance. | server | `localServices` | `HAPPIER_FEATURE_LOCAL_SERVICES_INVENTORY__ENABLED` |
+| `localServices.launcher` | Local service launchpad suggestions and preview discovery surfaces. | server | `localServices.inventory`, `browser.viewTargets` | `HAPPIER_FEATURE_LOCAL_SERVICES_LAUNCHER__ENABLED` |
+| `localServices.managed` | Managed local service launch, naming, health, and lifecycle surfaces. | server | `localServices.inventory` | `HAPPIER_FEATURE_LOCAL_SERVICES_MANAGED__ENABLED` |
+| `localServices.preview` | Private session-scoped local service preview resources and UI surfaces. | server | `localServices.inventory` | `HAPPIER_FEATURE_LOCAL_SERVICES_PREVIEW__ENABLED` |
+| `localServices.publicPreview` | Explicit public exposure for selected local service previews. | server | `localServices.preview` | `HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__ENABLED` |
+| `machines` | Machine control-plane transport capabilities. | client | — | — |
+| `machines.liveStream` | Machine live stream control plane. | client | `machines` | — |
+| `machines.liveStream.directPeer` | Direct peer machine live stream capability. | server | `machines.liveStream` | `HAPPIER_FEATURE_MACHINES_LIVE_STREAM_DIRECT_PEER__ENABLED` |
+| `machines.liveStream.serverRouted` | Server-routed machine live stream fallback capability. | server | `machines.liveStream` | `HAPPIER_FEATURE_MACHINES_LIVE_STREAM_SERVER_ROUTED__ENABLED` |
+| `machines.peerMediation` | Peer mediation substrate for machine tunnels, live streams, grants, and relay-owned flows. | client | `machines` | — |
+| `machines.peerMediation.observability` | Scoped peer mediation flow observability for tunnels, streams, preview requests, and relay diagnostics. | server | `machines.peerMediation` | — |
+| `machines.rpc` | Machine RPC direct-route control plane. | client | `machines` | — |
+| `machines.rpc.directPeer` | Direct peer machine RPC capability. | server | `machines.rpc` | `HAPPIER_FEATURE_MACHINES_RPC_DIRECT_PEER__ENABLED` |
+| `machines.transfer` | Same-account machine transfer control plane. | client | `machines` | — |
+| `machines.transfer.directPeer` | Direct peer machine transfer capability. | server | `machines.transfer` | `HAPPIER_FEATURE_MACHINES_TRANSFER_DIRECT_PEER__ENABLED` |
+| `machines.transfer.serverRouted` | Server-routed machine transfer fallback capability. | server | `machines.transfer` | `HAPPIER_FEATURE_MACHINES_TRANSFER_SERVER_ROUTED__ENABLED` |
+| `machines.tunnel` | Machine TCP tunnel control plane. | client | `machines` | — |
+| `machines.tunnel.directPeer` | Direct peer machine TCP tunnel capability. | server | `machines.tunnel` | `HAPPIER_FEATURE_MACHINES_TUNNEL_DIRECT_PEER__ENABLED` |
+| `machines.tunnel.serverRouted` | Server-routed machine TCP tunnel fallback capability. | server | `machines.tunnel` | `HAPPIER_FEATURE_MACHINES_TUNNEL_SERVER_ROUTED__ENABLED` |
+| `mcp.servers` | MCP servers management and injection support. | client | — | — |
+| `pets.sync` | Synced account pet library and cross-device pet package references. | server | — | `HAPPIER_FEATURE_PETS_SYNC__ENABLED` |
+| `plugins` | Plugin platform surfaces and contribution projection. | server | — | `HAPPIER_FEATURE_PLUGINS__ENABLED` |
+| `plugins.ui` | Plugin UI descriptor and executable UI tier projection. | server | `plugins` | `HAPPIER_FEATURE_PLUGINS_UI__ENABLED` |
+| `plugins.ui.hostedWeb` | Hosted web plugin UI surfaces embedded through host-owned preview frames and bridges. | server | `plugins.ui` | `HAPPIER_FEATURE_PLUGINS_UI_HOSTED_WEB__ENABLED` |
+| `plugins.ui.reactNativeBundles` | Trusted React Native plugin UI bundle execution with compatibility and fallback policy. | server | `plugins.ui` | `HAPPIER_FEATURE_PLUGINS_UI_REACT_NATIVE_BUNDLES__ENABLED` |
+| `plugins.ui.reactNativeBundles.devHotReload` | Development hot reload for React Native plugin UI bundles. | client | `plugins.ui.reactNativeBundles` | — |
+| `plugins.webhooks` | Durable public webhook ingress for plugin-contributed Actions. | server | `plugins` | `HAPPIER_FEATURE_PLUGINS_WEBHOOKS__ENABLED` |
+| `prompts.assets.external` | External prompt assets import/export surfaces and daemon adapters. | client | `prompts.library` | — |
+| `prompts.library` | Prompt library (docs + skills bundles) stored as artifacts. | client | — | — |
+| `prompts.skills.registries` | Prompt/skills registries and marketplace integrations (registry-of-registries). | client | `prompts.library`, `prompts.assets.external` | — |
+| `providers` | First-class model-provider connections, catalogs, and agent bindings. | server | — | `HAPPIER_FEATURE_PROVIDERS__ENABLED` |
+| `providers.localDiscovery` | Machine-local provider discovery through the local-services listener inventory. | server | `providers`, `localServices.inventory` | `HAPPIER_FEATURE_PROVIDERS_LOCAL_DISCOVERY__ENABLED` |
+| `providers.localModelManagement` | Explicit, bounded local model-management actions for trusted provider contributions. | server | `providers` | `HAPPIER_FEATURE_PROVIDERS_LOCAL_MODEL_MANAGEMENT__ENABLED` |
+| `remoteHosts.management` | Remote SSH host profile persistence and management surfaces. | server | — | — |
+| `remoteHosts.secretMaterial` | Remote host secret material persistence (passwords/private keys) for saved SSH profiles. | server | `remoteHosts.management` | — |
+| `sessions` | Session-level product surfaces and control-plane capabilities. | client | — | — |
+| `sessions.agentSwitching` | Continue one Session in place with another coding Agent, and create configurable Sessions from a typed source-context recipe. | server | `sessions` | `HAPPIER_FEATURE_SESSIONS_AGENT_SWITCHING__ENABLED` |
+| `sessions.handoff` | Session handoff between machines. | server | `sessions` | `HAPPIER_FEATURE_SESSIONS_HANDOFF__ENABLED` |
+| `sessions.usageLimitRecovery` | Session usage-limit recovery, wait/resume intents, and usage-limit retry controls. | server | `sessions` | `HAPPIER_FEATURE_SESSIONS_USAGE_LIMIT_RECOVERY__ENABLED` |
+| `setup.machine.allowLocalMachineSetup` | Build-time policy gate: whether local machine setup surfaces are allowed. | client | — | — |
+| `setup.machine.allowRemoteSshMachineSetup` | Build-time policy gate: whether remote SSH machine setup surfaces are allowed. | client | — | — |
+| `setup.providers.allowProviderSetup` | Build-time policy gate: whether provider onboarding/setup surfaces are allowed. | client | — | — |
+| `setup.relay.allowCustomRelayUrl` | Build-time policy gate: whether custom/manual relay URL entry is allowed. | client | — | — |
+| `setup.relay.allowHappierCloud` | Build-time policy gate: whether Happier Cloud (https://api.happier.dev) is allowed as a relay option. | client | — | — |
+| `setup.relay.allowLocalRelayHost` | Build-time policy gate: whether local relay hosting/setup surfaces are allowed. | client | — | — |
+| `setup.relay.allowRelaySelection` | Build-time policy gate: whether relay selection surfaces are allowed at all. | client | — | — |
+| `setup.relay.allowRemoteSshRelayHost` | Build-time policy gate: whether remote SSH relay hosting/setup surfaces are allowed. | client | — | — |
+| `setup.relayAccess.allowCloudflareTunnel` | Build-time policy gate: whether Cloudflare tunnel relay access setup surfaces are allowed. | client | — | — |
+| `setup.relayAccess.allowTailscale` | Build-time policy gate: whether Tailscale relay access setup surfaces are allowed. | client | — | — |
+| `setup.ssh.nativeTransport` | Build-time policy gate: whether the optional native SSH transport substrate is available. | client | — | — |
+| `sharing.contentKeys` | Sharing content-key exchange support (E2EE sharing). | server | — | — |
+| `sharing.pendingDeliveryState` | Durable provider-delivery state for pending queue v2. | server | `sharing.pendingQueueV2` | — |
+| `sharing.pendingQueueV2` | Pending queue v2 sharing/bridging surfaces and runtime. | server | — | — |
+| `sharing.public` | Public sharing link support for session content. | server | — | — |
+| `sharing.session` | Session sharing capability (share session with other users/devices). | server | — | — |
+| `terminal.renderer.androidTermux` | Optional Android Termux terminal-view native renderer experiment. | client | `terminal.renderer.native` | — |
+| `terminal.renderer.iosGhostty` | Optional iOS Ghostty-based native terminal renderer experiment. | client | `terminal.renderer.native` | — |
+| `terminal.renderer.native` | Optional native terminal renderer experiments gated behind the byte-stream terminal foundation. | client | `terminal.transport.byteStream` | — |
+| `terminal.transport.byteStream` | Byte-stream terminal transport using bounded base64 frames over machine RPC. | server | `terminal.embeddedPty` | `HAPPIER_FEATURE_TERMINAL_TRANSPORT_BYTE_STREAM__ENABLED` |
+| `updates.ota` | Expo over-the-air update checks and apply flows. | server | — | `HAPPIER_FEATURE_UPDATES_OTA__ENABLED` |
+| `voice.happierVoice` | Happier-hosted voice backend availability (server-configured voice). | server | `voice` | — |
+
+Where a feature depends on another, both must be enabled — enabling the
+dependant alone does nothing.
+
+## Related
+
+- [Feature environment variables](/self-hosting/feature-env) — every `HAPPIER_FEATURE_*` variable,
+  including the tuning knobs that gate no feature and appear in no table above.
+- [Environment variables](/self-hosting/env) — the rest of the server's configuration.
+- [Agent capabilities](/agents/capabilities) — what varies by agent rather than by flag.

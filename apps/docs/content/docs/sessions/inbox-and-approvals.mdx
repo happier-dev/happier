@@ -1,0 +1,229 @@
+---
+title: Inbox and approvals
+description: Use Inbox as Happier's attention center for approvals, session requests, unread sessions, and other cross-product updates.
+---
+
+Happier has a **global Inbox**.
+
+Inbox is the place to answer one question:
+
+> What needs my attention right now?
+
+It is not a replacement for the Sessions tab. The Sessions tab is where you browse and organize sessions. Inbox is where Happier gathers the things that currently need review, action, or follow-up.
+
+## What appears in Inbox
+
+Inbox can surface:
+
+- **Approval requests** for higher-level actions that require review before they run
+- **Session requests** that need a decision now, including permission requests and user-action requests
+- **Unread sessions** so you can quickly find sessions that changed since you last viewed them
+- **Friend requests** and outgoing friend requests that are still pending
+- **Activity/feed updates**
+- important banners such as app updates or recovery reminders when relevant
+
+## What does not appear in Inbox
+
+Two distinctions matter:
+
+### Shared sessions are not listed in Inbox just because they are shared
+
+Shared sessions now live in the **Sessions** tab, inside a dedicated **Shared sessions** subgroup within the normal **Active** and **Inactive** sections.
+
+That keeps shared sessions feeling native to the main session list instead of turning Inbox into a second session browser.
+
+### Pending queue messages are separate from unread
+
+Queued messages do not make a session “unread”.
+
+Instead, the session shows its own pending-message badge and pending UI. See [Pending queue](/sessions/pending-queue).
+
+## Attention indicators across the app
+
+Inbox is only one part of the attention model.
+
+### Inbox dot
+
+The **Inbox** tab or sidebar button shows a dot when Inbox has important content, such as:
+
+- open approval requests
+- session requests that need a decision
+- unread sessions
+- friend requests or pending outgoing requests
+- feed items
+- unread changelog/update attention
+
+### Sessions dot
+
+The **Sessions** tab also shows a dot when any session needs attention.
+
+That can include:
+
+- unread activity
+- permission requests
+- user-action requests
+- queued input that still needs processing
+
+This lets you notice session-specific attention even before opening Inbox.
+
+### Session-row indicators
+
+Inside the session list itself, Happier also emphasizes sessions that need attention.
+
+Examples include:
+
+- unread sessions
+- sessions with permission or action-required state
+- sessions with pending messages
+
+## Approval requests
+
+Approval requests are the user-facing review layer for actions that should not run immediately.
+
+Instead of executing directly, Happier creates an approval item that you can open, review, and approve or reject.
+
+Common examples:
+
+- prompt or saved configuration updates proposed by an agent
+- filesystem changes, installs, or exports routed through the approval queue
+- session-control or tool-like actions that are configured to require explicit approval
+
+### What an approval contains
+
+An approval request can include:
+
+- the action being requested
+- the target arguments
+- a short summary
+- optional preview information such as files, paths, or a mutation plan
+- a current status
+
+Typical statuses include:
+
+- open
+- approved
+- rejected
+- executed
+- failed
+
+### Why Happier uses approvals
+
+Approvals give you:
+
+- a durable review point before sensitive work happens
+- a record of what was requested
+- one shared model that works across app UI, CLI, tools, and other surfaces
+
+## Permission requests
+
+Permission requests are about **runtime tool access inside a session**.
+
+Examples:
+
+- allow a command to run
+- allow a file write
+- allow a tool invocation pattern
+
+These are different from approvals:
+
+- **Permission request** = “may this tool/action run in this session?”
+- **Approval request** = “should Happier execute this higher-level action?”
+
+## User-action requests
+
+Some requests are not simple tool permissions.
+
+Happier also supports **user-action requests**, where the agent needs a structured human response before it can continue.
+
+Common examples:
+
+- **AskUserQuestion**
+- **Exit Plan Mode**
+- provider-specific review/approval flows
+
+Depending on the request, you might be asked to:
+
+- approve
+- reject
+- request changes
+- answer one or more questions
+- choose a provider-specific approval variant
+
+## Unread sessions
+
+Unread sessions are first-class Inbox items.
+
+If a session has new activity since you last viewed it, Happier can show it in the **Unread sessions** section of Inbox so you can jump back to it quickly.
+
+This matters because “nothing is blocked” and “you should still look at this” are different states. Inbox handles both.
+
+For the full read/unread model and manual actions, see [Session read and unread state](/organize/session-read-state).
+
+### How unread works in practice
+
+Think of unread as:
+
+> this session changed, and you have not reviewed that change yet
+
+Inbox only shows the session once. If a session already has a stronger attention reason, such as a permission or user-action request, Happier surfaces it in that request-focused section instead of duplicating it again under unread.
+
+## Session requests in Inbox
+
+When a session needs an immediate decision, Inbox shows the request with session context.
+
+That context can include:
+
+- the session name
+- the machine/device label
+- the relevant path
+- the permission prompt or user-action prompt itself
+
+This makes Inbox a good place to handle urgent session work without first browsing the full session list.
+
+## Notifications and Inbox
+
+Push notifications and Inbox work together, but they are not the same thing.
+
+- Notifications are the fast re-entry path when something happens away from the app
+- Inbox is the in-app queue that collects attention items once you are back inside Happier
+
+For push behavior, see [Notifications](/extras/notifications-setup) and [Notification routing](/extras/notifications-routing).
+
+## Common workflows
+
+### Review an approval request
+
+1. Open **Inbox**
+2. Open the approval item
+3. Review the summary and preview information
+4. Approve or reject it
+
+### Handle a session request
+
+1. Open **Inbox**
+2. Find the session that needs action
+3. Review the permission request or user-action request
+4. Respond in context
+
+### Catch up on unread work
+
+1. Open **Inbox**
+2. Look at **Unread sessions**
+3. Open the sessions you have not reviewed yet
+4. Continue from the session transcript
+
+### Find a shared session
+
+1. Open **Sessions**
+2. Look under **Active** or **Inactive**
+3. Open the **Shared sessions** subgroup
+4. Open or pin the session there
+
+## Related docs
+
+- [Permissions](/sessions/permissions)
+- [Session modes](/sessions/session-modes)
+- [Session sharing](/accounts/session-sharing)
+- [Pending queue](/sessions/pending-queue)
+- [Friends](/accounts/friends)
+- [Notification routing](/extras/notifications-routing)

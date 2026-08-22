@@ -17,21 +17,157 @@ Import the authoring contract from its final capability path,
 > authoring and host behavior. It does not claim that loaded or packaged
 > release artifacts expose this surface.
 
+## Ordinary authoring
+
+One `definePlugin` Agent entry carries the capability, the source declaration,
+and every implemented facet. This package-root file imports its Agent-specific
+implementation leaf; copy both files from the maintained Advanced package-root
+reference when starting from this shape.
+
+```ts
+import { definePlugin } from '@happier-dev/plugin-sdk';
+import {
+  createReviewAgentRuntime,
+  externalSessions,
+} from './agent/reviewAgent.js';
+
+export const { manifest, activate } = definePlugin({
+  id: 'examples.external-session-source',
+  version: '0.1.0',
+  entrypoints: { daemon: './dist/index.js' },
+  agents: {
+    reviewer: {
+      declaration: {
+        title: 'Review Agent',
+        runtime: { kind: 'custom' },
+        primary: 'sessions',
+        capabilities: {
+          surfaces: ['externalSessions'],
+          sessions: { open: ['create'], delivery: ['newTurn'], cancel: true },
+        },
+        surfaces: {
+          externalSession: {
+            externalLinkedTakeover: { writerSafety: 'unsupported' },
+            sources: [{
+              sourceKind: 'exampleReviewHome',
+              schema: {
+                fields: [
+                  { kind: 'literal', name: 'kind', value: 'exampleReviewHome' },
+                  { kind: 'string', name: 'home', min: 1, max: 10_000, nullish: true },
+                ],
+              },
+              key: {
+                segments: [
+                  { kind: 'literal', value: 'exampleReviewHome' },
+                  { kind: 'field', field: 'home' },
+                ],
+              },
+              instances: [{ kind: 'default', constants: {} }],
+            }],
+          },
+        },
+      },
+      factory: createReviewAgentRuntime,
+      sessionRunnerFactory: {
+        module: './agent/reviewAgent.js',
+        export: 'createReviewAgentRuntime',
+        runtimeApiVersion: 1,
+        externalSessionsExport: 'externalSessions',
+      },
+      externalSessions,
+    },
+  },
+});
+```
+
+The `agent/reviewAgent.ts` companion supplies the Agent runtime and
+`externalSessions` implementation; the `.js` specifier is its emitted ESM
+path. Add an optional hook, takeover, or observation facet only when that
+companion implements it. Their exact contracts appear below.
+
+Each optional-facet example below is this same package root with one field
+added. They name the declaration `reviewerDeclaration` so the added field stays
+easy to see; its value is the one shown here.
+
+The capability and the facet are related at author time: an entry whose
+`capabilities.surfaces` literal contains `'externalSessions'` does not compile
+without an `externalSessions` contribution, and an entry that omits the surface
+does not compile with any of the four facets. A capability list a plugin
+projects at runtime carries no literal for the compiler to read, so
+`definePlugin` still refuses both mistakes with a `TypeError` at definition
+time — which is also what a JavaScript author gets.
+
 ## Low-level ABI equivalent
 
-The following direct `PluginApi` shape explains the generated binding for host
-conformance fixtures. It is not a second ordinary authoring path:
+The following direct `PluginApi` shape explains the bindings `definePlugin`
+generates, for host conformance fixtures. It is not a second ordinary authoring
+path, and it is the only ABI block on this page: every optional facet below is
+authored as a field on the same `definePlugin` Agent entry.
 
 ```ts
 import type { PluginApi } from '@happier-dev/plugin-sdk';
 import type {
+  AgentExternalSessionHooksContribution,
+  AgentExternalSessionObservationContribution,
   AgentExternalSessionsContribution,
+  AgentExternalSessionTakeoverContribution,
 } from '@happier-dev/plugin-sdk/sessions/external';
 
 declare const externalSessions: AgentExternalSessionsContribution;
+declare const hooks: AgentExternalSessionHooksContribution;
+declare const takeover: AgentExternalSessionTakeoverContribution;
+const observation = {
+  describeResource(request) {
+    // Grouping only: no watch, read, or observation authority is granted here.
+    return {
+      resourceKey: `exampleReviewHome:${String(request.source.home ?? 'default')}`,
+      linkKey: request.remoteSessionId,
+    };
+  },
+
+  observeResource(request) {
+    // Ask the host to reconcile rather than pushing unsolicited evidence, and
+    // dispose whatever this call started.
+    request.requestReconcile();
+    return { dispose() {} };
+  },
+
+  reconcileResource(request) {
+    const observedAtMs = Date.now();
+    if (request.purpose === 'resource_descriptors') {
+      return {
+        purpose: 'resource_descriptors',
+        outcomes: request.links.map(({ linkKey }) => ({
+          kind: 'described',
+          descriptor: {
+            resourceKey: request.resourceKey,
+            linkKey,
+            changeObservation: 'reconcile_only',
+          },
+        })),
+      };
+    }
+    return {
+      purpose: 'observation_evidence',
+      outcomes: request.links.map(({ linkKey }) => ({
+        linkKey,
+        facts: [{
+          kind: 'successful_empty',
+          evidenceClass: 'reconciliation',
+          emptyTurnPhase: 'idle',
+          observedAtMs,
+          expiresAtMs: observedAtMs + 30_000,
+        }],
+      })),
+    };
+  },
+} satisfies AgentExternalSessionObservationContribution;
 
 export function activate(api: PluginApi) {
   api.agents.registerExternalSessions('example', externalSessions);
+  api.agents.registerExternalSessionHooks('example', hooks);
+  api.agents.registerExternalSessionTakeover('example', takeover);
+  api.agents.registerExternalSessionObservation('example', observation);
 }
 ```
 
@@ -71,6 +207,43 @@ and host-access contract. The six callback methods remain exactly six; the
 operation. The contextual `services.sessions.external` surface described below
 also remains exactly six operations.
 
+### Optional managed-endpoint resolution
+
+A source served by a local server the contribution owns declares that server
+through the optional seventh member, `resolveManagedEndpointService`. It is a
+declaration, not a capability:
+
+```ts
+import type { ManagedServiceSpec } from '@happier-dev/plugin-sdk/managed-services';
+import type {
+  AgentExternalSessionsContribution,
+} from '@happier-dev/plugin-sdk/sessions/external';
+
+declare const sixRequiredMethods: AgentExternalSessionsContribution;
+declare const exampleReviewServerSpec: ManagedServiceSpec;
+
+const externalSessions = {
+  ...sixRequiredMethods,
+  async resolveManagedEndpointService(request) {
+    if (request.source.kind !== 'exampleReviewServer') return null;
+    return exampleReviewServerSpec;
+  },
+} satisfies AgentExternalSessionsContribution;
+```
+
+The callback receives only the `source` and a `signal`, and returns a
+`ManagedServiceSpec` or `null`. It never receives `ManagedServices`, a handle,
+a base URL, or a credential. The host owns admission, credential minting,
+supervision, reuse and teardown, and refuses a spawn whose client access is not
+host-minted. Return `null` for a source the contribution reaches directly — the
+absence of the member means the same thing.
+
+Declaring it is what makes a managed-endpoint read independent of a live
+Session runner: `managedEndpointRead` reaches the declared service instead of
+depending on some runner having started the same server first. It adds no
+capability, manifest declaration, or contribution family, and it is not one of
+the six required methods.
+
 ## Transcript records
 
 `pageTranscript` and `readAfterTranscript` return
@@ -101,8 +274,16 @@ const agentTurn: AgentExternalSessionTranscriptRawRecord = {
 A user record is `{ role: 'user', content: { type: 'text', text } }`. An agent
 record wraps the provider-native body in an agent record; `{ type: 'acp',
 agentId, data }` is the general form for an Agent without a first-party content
-dialect. Both accept additional provider-native fields alongside the required
-ones.
+dialect.
+
+Extensibility is on the agent content wrapper only. Both records are strict at
+the top level: `role` and `content` are the only admitted keys, and a record
+carrying a sibling such as `meta` is rejected. The user `content` is strict too
+— `type` and `text` and nothing else. The agent `content` is the extensible
+one: keep the canonical `type` (and, for `acp`, a non-empty `agentId`) and any
+further provider-native fields alongside them are carried through. Persisted
+history produced by supported older versions keeps its own permissive reader;
+that reader is not the contribution contract.
 
 Decode source rows into that record rather than returning a provider-native
 envelope. The host admits the contract once, when it accepts the transcript
@@ -110,6 +291,85 @@ result, so a non-record `raw` fails the whole page with the `agent_error`
 contribution failure instead of reaching a reader that cannot render it. Keep
 source-derived routing facts such as `messageRole` and `localId` beside `raw`,
 never inside it, so `raw` never has to be loosened to carry routing.
+
+## Paging, continuation, and recovery
+
+### Cursors are host-reissued and scope-bound
+
+A contribution returns its own native cursor. Before that result reaches any
+caller the host reissues it inside an opaque envelope bound to the plugin id,
+the Agent local id, the current generation, the exact source, the method, and —
+for transcript reads — the `remoteSessionId`. Callers only ever hold the
+envelope; the contribution always receives its own native cursor back, already
+decoded, so a source never has to parse a host format.
+
+A cursor replayed under a different method, source, session, or a retired
+generation is refused with `invalid_request` before the contribution is called.
+Native cursors are limited to 2,000 code units, and an over-long one fails the
+result rather than being truncated.
+
+`pageTranscript`'s optional `tailCursor` is reissued in the
+`readAfterTranscript` scope specifically, so the tail a page reports is the
+cursor to continue from — no separate tail lookup is needed.
+
+### Page results
+
+`pageTranscript` returns `{ items, nextCursor }` plus optional `tailCursor`,
+`hasMore`, and `truncated`. Two rules are enforced and reject the whole page
+with `agent_error` when broken:
+
+- `items` must not exceed the `maxItems` the host passed in; and
+- `hasMore: true` requires a non-null `nextCursor`, while `hasMore: false`
+  requires `nextCursor: null`.
+
+### `readAfterTranscript` outcomes
+
+The continuation call returns exactly one of six outcomes, and only `advanced`
+carries a payload:
+
+- `already_current` — the cursor is at the source's current end.
+- `advanced` — `{ items, nextCursor, boundary }` plus optional `diagnostics`.
+  `nextCursor` must differ from the input cursor, and an `advanced` result with
+  neither items nor diagnostics is rejected. `boundary` is the contribution's
+  own watermark, limited to 2,000 code units, and is the one cursor-shaped
+  value the host does **not** reissue; `nextCursor` is the reissued cursor for
+  the next call.
+- `gap_or_cursor_expired` — the source can no longer serve continuity from that
+  cursor.
+- `source_replaced` — the underlying source identity changed.
+- `source_unavailable` — the source cannot be read right now.
+- `read_failed` — the read itself failed.
+
+Report a recoverable break with the matching outcome rather than a failure
+envelope: the outcome is the recovery vocabulary, and a `{ ok: false }`
+contribution failure is for the call itself failing.
+
+### Diagnostics
+
+An `advanced` result may carry up to 32 diagnostics. Each is
+`{ code, count, positions }` where `code` is at most 128 code units, `count` is
+a positive integer no smaller than `positions.length`, and `positions` is at
+most 200 non-negative integers. Positions are bounded source-local numeric
+positions such as line numbers or byte offsets. Source content, file paths, and
+identifiers are never diagnostics.
+
+### Per-call ceilings
+
+The host clamps every request to its own ceiling before calling, and rejects an
+over-budget settled result instead of truncating it:
+
+| Method | Items | Settled result |
+| --- | --- | --- |
+| `resolveSource` | — | 262,144 bytes |
+| `listCandidates` | 50 | 1,048,576 bytes |
+| `resolveLinkIdentity` | — | 262,144 bytes |
+| `resolveLinkedIdentity` | — | 262,144 bytes |
+| `pageTranscript` | 200 | 524,288 bytes |
+| `readAfterTranscript` | 200 | 524,288 bytes |
+
+Every call also carries a 15-second ordinary deadline. Cancellation is
+cooperative: honor `request.signal` and `request.deadlineAtMs`, because a late
+result is discarded rather than admitted.
 
 `raw` is the Agent-direction producer facet. A consuming plugin reading
 `SessionsService.external.readTranscript` receives
@@ -210,18 +470,50 @@ contribution on the same Agent aggregate. It declares a bounded immutable set
 of installation variants and exactly two callbacks:
 
 ```ts
-import type {
-  PluginApi,
-  PluginInvocationContext,
-} from '@happier-dev/plugin-sdk';
+import { definePlugin } from '@happier-dev/plugin-sdk';
+import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import type { PluginCustomAgentDeclaration } from '@happier-dev/plugin-sdk/agents';
 import type {
   AgentExternalSessionHooksContribution,
   AgentExternalSessionHookResolveInstallationRequest,
-  AgentExternalSessionsContribution,
 } from '@happier-dev/plugin-sdk/sessions/external';
+import {
+  createReviewAgentRuntime,
+  externalSessions,
+} from './agent/reviewAgent.js';
 
-declare const externalSessions: AgentExternalSessionsContribution;
 declare function resolveAgentSettingsPath(): string;
+
+const reviewerDeclaration = {
+  title: 'Review Agent',
+  runtime: { kind: 'custom' },
+  primary: 'sessions',
+  capabilities: {
+    surfaces: ['externalSessions'],
+    sessions: { open: ['create'], delivery: ['newTurn'], cancel: true },
+  },
+  surfaces: {
+    externalSession: {
+      externalLinkedTakeover: { writerSafety: 'unsupported' },
+      sources: [{
+        sourceKind: 'exampleReviewHome',
+        schema: {
+          fields: [
+            { kind: 'literal', name: 'kind', value: 'exampleReviewHome' },
+            { kind: 'string', name: 'home', min: 1, max: 10_000, nullish: true },
+          ],
+        },
+        key: {
+          segments: [
+            { kind: 'literal', value: 'exampleReviewHome' },
+            { kind: 'field', field: 'home' },
+          ],
+        },
+        instances: [{ kind: 'default', constants: {} }],
+      }],
+    },
+  },
+} satisfies PluginCustomAgentDeclaration;
 
 const hooks = {
   installationVariants: [{
@@ -282,18 +574,33 @@ const hooks = {
   },
 } satisfies AgentExternalSessionHooksContribution;
 
-export function activate(api: PluginApi) {
-  api.agents.registerExternalSessions('example', externalSessions);
-  api.agents.registerExternalSessionHooks('example', hooks);
-}
+export const { manifest, activate } = definePlugin({
+  id: 'examples.external-session-source',
+  version: '0.1.0',
+  entrypoints: { daemon: './dist/index.js' },
+  agents: {
+    reviewer: {
+      declaration: reviewerDeclaration,
+      factory: createReviewAgentRuntime,
+      sessionRunnerFactory: {
+        module: './agent/reviewAgent.js',
+        export: 'createReviewAgentRuntime',
+        runtimeApiVersion: 1,
+        externalSessionsExport: 'externalSessions',
+      },
+      externalSessions,
+      externalSessionHooks: hooks,
+    },
+  },
+});
 ```
 
 `externalSessionHooks` is optional, duplicate-rejecting, and may accompany
 other same-Agent author fields in any order. The same `definePlugin` Agent entry
 must provide the exact-six External Sessions contribution and have its existing
 `externalSessions` manifest right. Hook registration adds no capability,
-manifest declaration, or separate contribution family. The direct ABI binding
-shown above is for conformance only.
+manifest declaration, or separate contribution family. The generated binding
+appears once under "Low-level ABI equivalent" and is for conformance only.
 
 `installationVariants` is the complete registration-time snapshot. Each
 variant declares its configuration targets and every event the host must
@@ -333,13 +640,46 @@ facet on the same Agent aggregate. This facet derives only the Agent-native
 launch values needed to resume the freshly resolved linked session:
 
 ```ts
-import type { PluginApi } from '@happier-dev/plugin-sdk';
+import { definePlugin } from '@happier-dev/plugin-sdk';
+import type { PluginCustomAgentDeclaration } from '@happier-dev/plugin-sdk/agents';
 import type {
-  AgentExternalSessionsContribution,
   AgentExternalSessionTakeoverContribution,
 } from '@happier-dev/plugin-sdk/sessions/external';
+import {
+  createReviewAgentRuntime,
+  externalSessions,
+} from './agent/reviewAgent.js';
 
-declare const externalSessions: AgentExternalSessionsContribution;
+const reviewerDeclaration = {
+  title: 'Review Agent',
+  runtime: { kind: 'custom' },
+  primary: 'sessions',
+  capabilities: {
+    surfaces: ['externalSessions'],
+    sessions: { open: ['create'], delivery: ['newTurn'], cancel: true },
+  },
+  surfaces: {
+    externalSession: {
+      externalLinkedTakeover: { writerSafety: 'unsupported' },
+      sources: [{
+        sourceKind: 'exampleReviewHome',
+        schema: {
+          fields: [
+            { kind: 'literal', name: 'kind', value: 'exampleReviewHome' },
+            { kind: 'string', name: 'home', min: 1, max: 10_000, nullish: true },
+          ],
+        },
+        key: {
+          segments: [
+            { kind: 'literal', value: 'exampleReviewHome' },
+            { kind: 'field', field: 'home' },
+          ],
+        },
+        instances: [{ kind: 'default', constants: {} }],
+      }],
+    },
+  },
+} satisfies PluginCustomAgentDeclaration;
 
 const takeover = {
   async resolveLaunch(request) {
@@ -360,10 +700,25 @@ const takeover = {
   },
 } satisfies AgentExternalSessionTakeoverContribution;
 
-export function activate(api: PluginApi) {
-  api.agents.registerExternalSessions('example', externalSessions);
-  api.agents.registerExternalSessionTakeover('example', takeover);
-}
+export const { manifest, activate } = definePlugin({
+  id: 'examples.external-session-source',
+  version: '0.1.0',
+  entrypoints: { daemon: './dist/index.js' },
+  agents: {
+    reviewer: {
+      declaration: reviewerDeclaration,
+      factory: createReviewAgentRuntime,
+      sessionRunnerFactory: {
+        module: './agent/reviewAgent.js',
+        export: 'createReviewAgentRuntime',
+        runtimeApiVersion: 1,
+        externalSessionsExport: 'externalSessions',
+      },
+      externalSessions,
+      externalSessionTakeover: takeover,
+    },
+  },
+});
 ```
 
 `externalSessionTakeover` is optional, duplicate-rejecting, and may accompany
@@ -374,8 +729,8 @@ Agent entry must also provide that Agent's exact-six External Sessions
 contribution or the complete activation is rejected. A primary runtime factory
 is not required for the declaration, so auxiliary-only and declarative ACP
 Agents can provide the facet; an actual takeover still requires a current
-spawnable primary runtime immediately before spawn. The direct ABI binding
-shown above is for conformance only.
+spawnable primary runtime immediately before spawn. The generated binding
+appears once under "Low-level ABI equivalent" and is for conformance only.
 
 Immediately before `resolveLaunch`, the host calls the same current
 generation's `resolveLinkedIdentity` and uses that fresh successful result.
@@ -446,23 +801,116 @@ contract and consumed host fence.
 ## Optional observation facet
 
 An Agent with the six-method contribution may also provide one
-`externalSessionObservation` facet on the same `definePlugin` Agent aggregate.
-The direct ABI equivalent is:
+`externalSessionObservation` facet on the same `definePlugin` Agent aggregate:
 
 ```ts
-import type { PluginApi } from '@happier-dev/plugin-sdk';
+import { definePlugin } from '@happier-dev/plugin-sdk';
+import type { PluginCustomAgentDeclaration } from '@happier-dev/plugin-sdk/agents';
 import type {
   AgentExternalSessionObservationContribution,
-  AgentExternalSessionsContribution,
 } from '@happier-dev/plugin-sdk/sessions/external';
+import {
+  createReviewAgentRuntime,
+  externalSessions,
+} from './agent/reviewAgent.js';
 
-declare const externalSessions: AgentExternalSessionsContribution;
-declare const observation: AgentExternalSessionObservationContribution;
+const observation = {
+  describeResource(request) {
+    // Grouping only: no watch, read, or observation authority is granted here.
+    return {
+      resourceKey: `exampleReviewHome:${String(request.source.home ?? 'default')}`,
+      linkKey: request.remoteSessionId,
+    };
+  },
 
-export function activate(api: PluginApi) {
-  api.agents.registerExternalSessions('example', externalSessions);
-  api.agents.registerExternalSessionObservation('example', observation);
-}
+  observeResource(request) {
+    // Ask the host to reconcile rather than pushing unsolicited evidence, and
+    // dispose whatever this call started.
+    request.requestReconcile();
+    return { dispose() {} };
+  },
+
+  reconcileResource(request) {
+    const observedAtMs = Date.now();
+    if (request.purpose === 'resource_descriptors') {
+      return {
+        purpose: 'resource_descriptors',
+        outcomes: request.links.map(({ linkKey }) => ({
+          kind: 'described',
+          descriptor: {
+            resourceKey: request.resourceKey,
+            linkKey,
+            changeObservation: 'reconcile_only',
+          },
+        })),
+      };
+    }
+    return {
+      purpose: 'observation_evidence',
+      outcomes: request.links.map(({ linkKey }) => ({
+        linkKey,
+        facts: [{
+          kind: 'successful_empty',
+          evidenceClass: 'reconciliation',
+          emptyTurnPhase: 'idle',
+          observedAtMs,
+          expiresAtMs: observedAtMs + 30_000,
+        }],
+      })),
+    };
+  },
+} satisfies AgentExternalSessionObservationContribution;
+
+const reviewerDeclaration = {
+  title: 'Review Agent',
+  runtime: { kind: 'custom' },
+  primary: 'sessions',
+  capabilities: {
+    surfaces: ['externalSessions'],
+    sessions: { open: ['create'], delivery: ['newTurn'], cancel: true },
+  },
+  surfaces: {
+    externalSession: {
+      externalLinkedTakeover: { writerSafety: 'unsupported' },
+      sources: [{
+        sourceKind: 'exampleReviewHome',
+        schema: {
+          fields: [
+            { kind: 'literal', name: 'kind', value: 'exampleReviewHome' },
+            { kind: 'string', name: 'home', min: 1, max: 10_000, nullish: true },
+          ],
+        },
+        key: {
+          segments: [
+            { kind: 'literal', value: 'exampleReviewHome' },
+            { kind: 'field', field: 'home' },
+          ],
+        },
+        instances: [{ kind: 'default', constants: {} }],
+      }],
+    },
+  },
+} satisfies PluginCustomAgentDeclaration;
+
+export const { manifest, activate } = definePlugin({
+  id: 'examples.external-session-source',
+  version: '0.1.0',
+  entrypoints: { daemon: './dist/index.js' },
+  agents: {
+    reviewer: {
+      declaration: reviewerDeclaration,
+      factory: createReviewAgentRuntime,
+      sessionRunnerFactory: {
+        module: './agent/reviewAgent.js',
+        export: 'createReviewAgentRuntime',
+        runtimeApiVersion: 1,
+        externalSessionsExport: 'externalSessions',
+      },
+      externalSessions,
+      externalSessionObservation: observation,
+    },
+  },
+});
 ```
 
 The observation contribution has exactly three required operations:

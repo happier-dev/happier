@@ -33,6 +33,33 @@ When the package root is ambiguous or the command runs elsewhere, select the
 plugin explicitly: `happier plugins reload com.example.my-plugin`. Both routes
 preserve the last accepted generation when validation rejects a change.
 
+### Trust a development source on the command line
+
+An interactive terminal answers the source-root question with a prompt. When no
+present user can answer it — a CI job, a script, or an Agent Session driving the
+authoring loop — carry the same decision on the command line:
+
+```bash
+happier plugins install . --dev --trust --json
+happier plugins reload --json
+```
+
+`--trust` is the only non-interactive approval Happier accepts. It is scoped to
+the one development source it names:
+
+- Valid only with `--dev` on a local path; any other request fails with
+  `plugin_explicit_trust_requires_development_path`.
+- Decides source-root trust and package trust for that one resolved path, and
+  records the decision as an explicit CLI trust flag rather than a prompt.
+- Cancels the pending change with `plugin_explicit_trust_target_mismatch` when
+  the daemon's prepared review names any other source, so a substituted source
+  is refused instead of trusted.
+- Selects no optional host resources, and does not extend to consequential
+  updates or secrets. Those remain present-user decisions.
+
+Once the source root is trusted, later requests for that root skip source-root
+review until the reviewed source identity changes.
+
 Plugin cleanup is an author callback returned by `setup` in a successful
 `definePlugin(...)` module; generated activation returns it after registration.
 Happier calls it when that activation is no longer serving. Plugin code does
