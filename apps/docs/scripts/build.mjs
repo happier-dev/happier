@@ -1,10 +1,12 @@
 import { spawnSync } from 'node:child_process';
+import { writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { execYarn } from '../../../scripts/workspaces/execYarnCommand.mjs';
 import { formatProblems, runContentChecks } from './checkContent.mjs';
+import { renderRedirects } from './generateRedirects.mjs';
 
 const require = createRequire(import.meta.url);
 const defaultPackageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -20,6 +22,8 @@ export async function runDocsBuild({
   resolveNextCliPathImpl = resolveNextCliPath,
   spawnSyncImpl = spawnSync,
   runContentChecksImpl = runContentChecks,
+  renderRedirectsImpl = renderRedirects,
+  writeFileImpl = writeFile,
 } = {}) {
   // Before anything expensive: a broken internal link, a renamed UI label and a
   // stale generated page all build perfectly green, and all three mislead every
@@ -32,6 +36,15 @@ export async function runDocsBuild({
       `Docs content checks failed with ${problemCount} problem${problemCount === 1 ? '' : 's'}:\n${formatProblems(contentProblems)}`,
     );
   }
+
+  // public/_redirects has to exist BEFORE `next build`, because the export
+  // copies public/ into out/ as part of the build. Generating it after would
+  // produce an out/ with dead URLs and no sign anything was wrong.
+  await writeFileImpl(
+    resolve(packageRoot, 'public', '_redirects'),
+    renderRedirectsImpl(),
+    'utf8',
+  );
 
   execYarnImpl(['-s', 'types:check'], { cwd: packageRoot, stdio: 'inherit' });
   const result = spawnSyncImpl(

@@ -3,6 +3,7 @@
   "pages": [
     "index",
     "testing",
+    "desktop-qa",
     "app-env",
     "bootstrap-qa",
     "devcontainers",

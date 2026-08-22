@@ -12,6 +12,8 @@
     "daemon",
     "windows",
     "attachments",
+    "markdown",
+    "themes",
     "keyboard-shortcuts",
     "custom-mobile-build"
   ]

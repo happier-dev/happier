@@ -8,6 +8,7 @@
     "happier-tools",
     "prompts-and-skills",
     "installables",
-    "subagents"
+    "subagents",
+    "agent-autonomy"
   ]
 }

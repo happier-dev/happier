@@ -1,0 +1,50 @@
+# Cloudflare Workers deployment for docs.happier.dev.
+#
+# The site is a fully static Next export — `output: 'export'` in next.config.mjs
+# writes every page to out/<route>/index.html, and the OG images and Markdown
+# sources alongside them. Those requests are served by the static-asset layer
+# and are free and unlimited on every plan; they never invoke the Worker script.
+#
+# The Worker script exists for three paths only (see worker/index.ts): the
+# /ingest/* analytics proxy, /health, and the *.mdx source rewrite. Only those
+# requests are billable invocations.
+#
+# This replaces a Cloudflare PAGES project fed by a deploy hook, which rebuilt
+# the app inside Cloudflare's build container on every push to
+# deploy/<env>/docs. Deployment is now driven by
+# .github/workflows/promote-docs.yml, which builds in a secret-free job and
+# uploads the finished out/ across the trust boundary. Do not re-point
+# Cloudflare's Git integration at this repo: it would rebuild the whole monorepo
+# in Cloudflare's build container and bypass the release-actor and trusted-ref
+# guards that workflow enforces.
+
+name = "happier-docs"
+compatibility_date = "2026-08-22"
+main = "worker/index.ts"
+
+# No happier-docs.<subdomain>.workers.dev route: the site answers on its own
+# custom domain, and a second public origin serving the same pages is an SEO
+# duplicate nobody asked for.
+workers_dev = false
+# Preview URLs are NOT the workers.dev route, but they default to following it —
+# so turning workers_dev off silently disables `--preview-alias preview`.
+# Preview is where _redirects and the 404 behaviour get verified before
+# production, so it is turned back on explicitly.
+preview_urls = true
+
+[assets]
+directory = "./out/"
+binding = "ASSETS"
+
+# Serve out/404.html with a real HTTP 404 for anything that matches no asset.
+# A soft 404 (200 + "not found" page) would also mean the *.mdx rewrite answers
+# every typo with a page instead of a miss.
+not_found_handling = "404-page"
+
+# /agents and /agents/ both resolve to one file.
+html_handling = "auto-trailing-slash"
+
+# Everything except these is served straight from assets without a billable
+# invocation. `/*.mdx` is a rewrite rather than a redirect, so it cannot live in
+# _redirects and has to reach the script — see worker/index.ts.
+run_worker_first = ["/ingest/*", "/health", "/*.mdx"]

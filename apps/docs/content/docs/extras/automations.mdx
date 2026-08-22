@@ -1,0 +1,65 @@
+---
+title: Automations
+description: Run a session on a schedule, or queue recurring messages into one you already have.
+---
+
+Some work is worth doing on a timer rather than when you remember it: a nightly
+dependency check, a Monday-morning triage pass, a recurring prompt against a
+repository you watch. Automations run that work on your machines without you
+opening the app.
+
+<Callout type="warn">
+  Automations are experimental. The in-app message when they are off says it
+  plainly: enable them from Settings, then turn on **Experiments** and
+  **Automations**. The experiments switch gates the toggle, so you need both.
+</Callout>
+
+Find them at **Settings → Automations** — "Manage scheduled sessions and
+recurring runs".
+
+## Two kinds
+
+**A scheduled session** starts a new session on a machine you choose, on a
+schedule. This is the one for work that should happen whether or not you are
+looking: create it from the new-session flow, where you have already picked the
+machine, folder, agent and model.
+
+**A session automation** queues a message into a session that already exists,
+repeatedly. Add one from the session itself when you want a recurring nudge in a
+conversation you are keeping around.
+
+## Scheduling
+
+A schedule is either an interval — every *n* minutes — or a cron expression,
+with presets for the common cases (**Every hour**, **Daily midnight**). Cron
+schedules run against a timezone you set, so a "daily at midnight" automation
+means midnight where you are rather than wherever the machine thinks it is.
+
+Each automation is **Active** or **Paused**. Pausing keeps the definition and
+stops the runs, which is what you want while you are away.
+
+## Running one now
+
+**Run now** triggers an automation immediately without waiting for its next
+scheduled time — useful for checking that a new automation does what you meant
+before you leave it alone.
+
+It queues rather than executing synchronously: the assigned daemon picks it up
+when it is available. If the machine is asleep, the run waits rather than
+failing.
+
+From a terminal:
+
+```bash
+happier automation run <automation-id> [--idempotency-key <key>] [--json]
+```
+
+Pass `--idempotency-key` when the caller might retry — a repeated key will not
+run the automation twice.
+
+## Related
+
+- [Starting a session](/sessions/new-session-shortcuts) — where scheduled sessions are created.
+- [Agent autonomy](/extending/agent-autonomy) — agents creating sessions themselves.
+- [Feature flags](/extras/feature-flags) — the `automations` gate.
+- [CLI](/apps/cli)

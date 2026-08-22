@@ -1,0 +1,69 @@
+---
+title: How Happier fits together
+description: The three moving parts, what actually travels over the socket, and what that means if you are putting a proxy in front of it.
+---
+
+Happier is three pieces, and its shape follows from where the work happens:
+**on your machine, not on a server**.
+
+- **The CLI and its daemon** run on a computer you control. This is where your
+  coding agent actually executes, with your repository and the agent's own
+  credentials.
+- **The relay** stores encrypted payloads and the sync metadata needed to route
+  them. It does not run agents, and under the default storage policy it cannot
+  read their content.
+- **The clients** — mobile, web and desktop — are how you watch and steer.
+
+Sessions sync through the relay so a phone and a laptop see the same
+conversation. That is the relay's whole job: moving ciphertext between your
+devices and the machine doing the work.
+
+## What travels over the socket
+
+This matters more than it sounds, because it is the part people get wrong when
+putting a reverse proxy in front of a self-hosted relay.
+
+**The WebSocket is the primary data path, in both directions.** It is not a
+notification channel that tells clients to go fetch something over HTTP.
+
+- **Downstream**, `new-message` carries the whole message —
+  `{ id, seq, content, … }` — not a "something changed" ping.
+- **Upstream**, clients write over the same socket: `message`,
+  `update-metadata` and `update-state` are all client-to-server events.
+
+Writes use optimistic concurrency. Versioned fields — metadata, agent state,
+artifact parts, access keys, KV — carry an `expectedVersion`, and a stale write
+comes back as `version-mismatch` with the current version attached rather than
+silently overwriting. Conflict resolution stays with the client, which is what
+lets two devices work on the same session without a lock.
+
+HTTP handles what a long-lived socket is bad at: bulk catch-up after a
+disconnect, and transfers that do not belong in a message stream.
+
+<Callout type="warn">
+  Self-hosting: size your reverse proxy for a long-lived, chatty WebSocket
+  rather than request/response traffic. The most common self-hosting failure is
+  an idle timeout shorter than the server's own heartbeat, which silently drops
+  machines offline. [Environment variables](/self-hosting/env) has the exact
+  figure.
+</Callout>
+
+## Reconnecting
+
+Clients are expected to lose the socket and recover: reconnect, fetch what they
+missed, reconcile deterministically. A device asleep for a day should end up in
+the same state as one that stayed connected, which is why messages carry a
+monotonic `seq` rather than relying on arrival order.
+
+## Where the encryption sits
+
+Content is encrypted on your device before it reaches the relay, and the keys
+stay with your account rather than the server. What that guarantees — and the
+storage policies under which it does not — is covered in
+[Security](/security) and the [Encryption model](/security/encryption).
+
+## Related
+
+- [Protocol](/self-hosting/protocol) — the event-level contract.
+- [Security](/security) — what the relay can and cannot read.
+- [Run your own relay](/self-hosting)

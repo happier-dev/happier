@@ -1,0 +1,89 @@
+---
+title: Desktop and web QA
+description: Drive a real Tauri window and a disposable web stack when you need to verify setup and control-panel changes by hand.
+---
+
+Some changes can only be judged by using them: the setup flow, the control
+panel, anything where the question is "does this feel right on a real window".
+This page is the recipe for getting one in front of you.
+
+## Quick start (web QA stack)
+
+1. Create a fresh stack:
+   - `hstack stack new codex-bootstrap-qa-<port> --repo=<repoPath> --port=<uniquePort>`
+2. Build + activate runtime:
+   - `hstack stack build codex-bootstrap-qa-<port> --activate-runtime`
+3. Prefer runtime snapshots:
+   - `hstack stack env codex-bootstrap-qa-<port> set HAPPIER_STACK_RUNTIME_MODE=prefer`
+4. Start stack (runtime):
+   - `hstack stack start codex-bootstrap-qa-<port> --runtime`
+5. Auth:
+   - `hstack stack auth codex-bootstrap-qa-<port> login --force`
+
+## Quick start (native desktop QA via Tauri)
+
+Recommended (stack-owned dev + TUI):
+- `yarn tui:with-tauri`
+
+Notes:
+- The stack launcher points the desktop app at the **existing** Expo dev server.
+- The launcher uses a `--config` file inside `apps/ui/src-tauri` plus a `-c` config override (avoids stack-dir relative-path issues).
+- If you need the resolved launch plan (devUrl/config path/identifier): `node ./apps/stack/scripts/tauri_dev.mjs --json`.
+- `yarn ui:tauri` and `yarn --cwd apps/ui tauri:qa` do **not** start Expo; run `yarn ui` (or `yarn --cwd apps/ui start`) in another terminal first, or use `yarn tui:with-tauri`.
+
+## Using `@hypothesi/tauri-mcp-server` for native manual QA
+
+We use `@hypothesi/tauri-mcp-server` to drive an actual native Tauri window (screenshot/click/type/DOM snapshot/logs).
+
+### Prereqs
+
+- The app must be running via `tauri dev` (debug assertions); the MCP bridge plugin is registered in `apps/ui/src-tauri/src/lib.rs`.
+- The public dev config enables the MCP capability:
+  - `apps/ui/src-tauri/tauri.publicdev.conf.json` includes `app.security.capabilities = ["default","mcp-dev"]`.
+  - `apps/ui/src-tauri/capabilities/mcp-dev.json` grants `mcp-bridge:default`.
+
+### Install the MCP server into Codex
+
+From the repo root:
+- `npx -y install-mcp @hypothesi/tauri-mcp-server --client codex --yes --oauth no`
+
+Restart Codex after installing (client config is loaded at startup).
+
+### Start the native app
+
+Either:
+- `yarn ui:tauri` (standalone; requires Expo dev server already running)
+- `yarn tui:with-tauri` (preferred; unified with the stack/TUI)
+- `yarn --cwd apps/ui tauri:qa` (starts the Tauri app + MCP server together for QA; requires Expo dev server already running)
+
+Optional launch-plan preview:
+- `yarn --cwd apps/ui tauri:qa --json`
+
+Raw MCP CLI helpers:
+- `yarn --cwd apps/ui tauri:mcp:cli --help`
+- `yarn --cwd apps/ui tauri:mcp:session:start`
+
+Notes:
+- By default, `yarn ui:tauri` / `yarn --cwd apps/ui tauri:qa` wait for Metro to report `packager-status:running` before launching Tauri; disable with `HAPPIER_STACK_TAURI_WAIT_FOR_EXPO=0`.
+
+### Start a driver session
+
+In the MCP client (Codex), start a session with the `driver_session` tool:
+- `driver_session` → `{ "action": "start" }`
+
+CLI fallback (if you want to run commands without an MCP client):
+- `yarn --cwd apps/ui tauri:mcp:session:start`
+
+Implementation details (for debugging connectivity):
+- The MCP bridge plugin runs a WebSocket server on **port 9223** (or next available in 9223–9322), default bind `0.0.0.0`.
+- If needed, you can target a host explicitly:
+  - `driver_session` → `{ "action": "start", "host": "127.0.0.1" }`
+
+### Useful tools during QA
+
+- `webview_screenshot` (attach evidence to issues)
+- `webview_dom_snapshot` (confirm what’s actually rendered)
+- `webview_find_element` + `webview_interact` (click buttons / toggle switches)
+- `webview_keyboard` (type into fields)
+- `read_logs` (webview + system logs)
+- `ipc_monitor` + `ipc_get_captured` (confirm `invoke(...)` calls and payloads)

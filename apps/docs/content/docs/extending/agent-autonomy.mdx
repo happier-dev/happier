@@ -1,0 +1,82 @@
+---
+title: Agent autonomy
+description: An agent working in one session can create and coordinate other sessions. What it may do by default, what it can never do, and how to narrow it.
+---
+
+An agent working inside a Happier session can start other sessions and give them work. It can hand a self-contained task to a fresh session on another machine and carry on with its own, then check back on what came out.
+
+This is on by default. It is worth knowing exactly what that means, because the useful half and the dangerous half were separated deliberately.
+
+## What an agent may do without being asked
+
+Coordination and inspection are allowed by default: creating a session, sending a message to one, listing the sessions it is permitted to see, reading their status and history, and discovering which agents, models, modes, profiles and connected services are available to it.
+
+The reasoning is in the code that sets those defaults — in-session agents may coordinate and inspect by default, while destructive, accounting and user-approval controls stay explicit opt-ins.
+
+## What it may not do unless you allow it
+
+These are switched off for in-session agents until you turn them on:
+
+- stopping, archiving or unarchiving another session
+- answering a permission request or a question that was meant for you
+- deciding an approval request
+- spending a usage-limit reset credit
+- changing which session is the primary or tracked target
+- clearing a terminal composer
+- interrupting a running turn to push a pending message through
+
+The pattern is that anything which spends your money, answers on your behalf, or destroys work requires you to say yes first.
+
+## The one thing that cannot be turned on
+
+**A child session can never have more authority than the session that created it.** If an agent asks for a permission mode above its own, the request is rejected rather than downgraded — Happier compares the requested mode against the caller's and refuses anything higher.
+
+This is not a setting. There is no toggle that grants a spawned session more freedom than its parent, which means the blast radius of an autonomous agent is bounded by the permissions you gave the session you are actually looking at.
+
+## Narrowing it
+
+Open **Settings → Actions** to find **AI session spawn policy**. It controls only what an assistant inside a session may do when it creates another one — your own session creation is unaffected.
+
+Twelve switches decide which parts of a new session the agent may choose rather than inherit. All of them are on by default:
+
+| Switch | What it lets the agent choose |
+| --- | --- |
+| Custom directory | a different working directory |
+| Cross-machine targets | creation on another available machine |
+| Backend target | a different agent or backend |
+| Model | a model instead of inheriting the parent's |
+| Permission mode | a lower or equal permission — escalation is still rejected |
+| Agent mode | an agent or session mode |
+| Config options | provider options such as thinking effort and workflows |
+| Profile | a profile by id, without exposing its secrets |
+| Environment variables | explicit environment variables on the new session |
+| Connected services | connected-service bindings, by reference |
+| MCP selection | a different set of MCP servers than the parent's |
+| Transcript storage | a compatible transcript storage mode |
+
+Turning one off does not break inheritance: the child still gets the parent's value. What changes is that an explicit override is rejected with a clear error instead of being honoured.
+
+### Permission ceiling
+
+Separately, you can set a ceiling that applies **below** the caller's own permission. By default there is none, and the caller's permission is the only limit.
+
+Setting it to **Plan** or **Read-only** is the strongest practical control here: it lets an agent delegate freely while guaranteeing that whatever it spawns cannot write. **Accept edits**, **Safe yolo**, **Bypass permissions** and **Yolo** each allow up to that level *when the caller also has it* — the ceiling can only lower, never raise.
+
+## Where you see it happen
+
+A spawned session is an ordinary Happier session. It appears in your session list, syncs to your devices, and can be read, steered and stopped by you like any other. Nothing an agent creates is hidden from you.
+
+Actions that need your decision surface as approval requests rather than proceeding silently — see [Inbox and approvals](/sessions/inbox-and-approvals).
+
+## When it goes wrong
+
+**The agent says it could not create a session.** Check the spawn policy first: if it tried to set something you have switched off — a different machine, a specific model, environment variables — the request is refused with an error naming the denied item, and the agent may report that as a general failure.
+
+**A spawned session has fewer permissions than expected.** That is the ceiling or the non-escalation rule doing its job. Raise the *parent* session's permission mode, or the ceiling, rather than looking for a setting on the child.
+
+## Related
+
+- [Happier tools and actions](/extending/happier-tools) — the full action surface an agent can reach
+- [Permissions](/sessions/permissions) — what each permission mode allows
+- [Inbox and approvals](/sessions/inbox-and-approvals) — how approval requests reach you
+- [Subagents](/extending/subagents) — an agent's *own* internal subagents, which is a different mechanism

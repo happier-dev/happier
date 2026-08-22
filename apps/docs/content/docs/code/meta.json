@@ -2,7 +2,10 @@
   "title": "Code and review",
   "pages": [
     "index",
+    "files-and-editor",
+    "diffs",
     "git",
-    "review-comments"
+    "review-comments",
+    "pull-requests"
   ]
 }

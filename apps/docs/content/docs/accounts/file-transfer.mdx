@@ -1,0 +1,63 @@
+---
+title: Moving files between machines
+description: How attachments, workspace files and handoffs travel — directly between your machines where possible, through the relay when not.
+---
+
+When you attach a screenshot from your phone to a session running on a desktop,
+that file has to get there. The same is true of workspace files you download,
+prompt assets, and the payload of a session handoff. They all use one encrypted,
+chunked transfer pipeline.
+
+Which route a transfer takes depends on what is reachable at the time, and you
+do not choose it — but it is worth knowing the difference, because it decides
+whether your file contents pass through the relay at all.
+
+## The two routes
+
+**Direct, peer to peer.** When both machines have a viable route to each other,
+contents move directly between them. The relay coordinates the handshake but
+never sees the bytes. This is the preferred path and the one you get on a normal
+home or office network.
+
+**Through the relay.** When a direct route is not available, the relay carries
+the transfer as a bounded fallback — with explicit size limits, so a transfer
+that is too large fails visibly rather than being silently truncated.
+
+Web clients are a special case: a browser cannot open a direct peer connection
+to your machine, so where a machine exposes a Tailscale Serve route, the web
+client can use that instead of falling back to the relay.
+
+<Callout type="info">
+  Both routes are encrypted. The difference is not whether your file is
+  protected in transit — it is whether the relay handles the bytes at all.
+</Callout>
+
+## What uses this
+
+The same foundation carries prompt assets, message attachments, workspace file
+downloads, session handoff payloads, and folder archives. Route selection,
+progress, cancellation and recovery are shared, so a large transfer behaves the
+same way regardless of what started it.
+
+## For self-hosters
+
+Both routes are server features, on by default, and can be turned off
+independently:
+
+| Variable | Default |
+| --- | --- |
+| `HAPPIER_FEATURE_MACHINES_TRANSFER_DIRECT_PEER__ENABLED` | `1` |
+| `HAPPIER_FEATURE_MACHINES_TRANSFER_SERVER_ROUTED__ENABLED` | `1` |
+| `HAPPIER_FEATURE_MACHINES_TRANSFER_SERVER_ROUTED__MAX_BYTES` | ceiling 8 GiB |
+| `HAPPIER_FEATURE_MACHINES_TRANSFER_SERVER_ROUTED__MAX_ACTIVE_TRANSFERS_PER_SOCKET` | `128` |
+
+Disabling the server-routed fallback means transfers only succeed where a direct
+route exists. Both depend on the `machines.transfer` control plane, so disabling
+that turns off both.
+
+## Related
+
+- [Attachments](/apps/attachments)
+- [Files and the editor](/code/files-and-editor)
+- [Session handoff](/sessions/session-handoff)
+- [Environment variables](/self-hosting/env)

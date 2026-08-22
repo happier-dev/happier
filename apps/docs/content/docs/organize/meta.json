@@ -3,8 +3,10 @@
   "pages": [
     "index",
     "projects-and-worktrees",
+    "session-organization",
     "session-read-state",
     "attention-surfaces",
+    "transcript-navigation",
     "local-memory-search",
     "tool-timeline"
   ]

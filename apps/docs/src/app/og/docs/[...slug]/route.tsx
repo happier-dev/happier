@@ -5,6 +5,8 @@ import { generate as DefaultImage } from 'fumadocs-ui/og';
 import { SITE_NAME } from '@/lib/site';
 
 export const revalidate = false;
+/** `output: 'export'` emits this as a file only if it is marked static. */
+export const dynamic = 'force-static';
 
 export async function GET(_req: Request, { params }: RouteContext<'/og/docs/[...slug]'>) {
   const { slug } = await params;

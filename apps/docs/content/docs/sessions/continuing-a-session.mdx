@@ -1,0 +1,119 @@
+---
+title: Continuing a session
+description: Pick up a conversation that already exists — one of your agent's own sessions, or a Happier session that went quiet — and decide who owns it afterwards.
+---
+
+Not every session starts in Happier. You began something in your terminal
+yesterday, or a Happier session went inactive overnight, and now you want to
+carry on. Happier can reach all of it — but *how* it reaches it changes what you
+can do afterwards, and that is the one distinction worth understanding before
+anything else.
+
+## Who owns the transcript
+
+Every session in Happier is one of two kinds, shown as the **Happier** and
+**Direct** tabs in your session list:
+
+| | Happier session | Direct session |
+| --- | --- | --- |
+| Source of truth | Happier | The agent, on your machine |
+| Visible across devices | Yes | Only while that machine is reachable |
+| If the machine goes offline | Still readable | Unavailable until it returns |
+| Transcript stored | In Happier, encrypted | Stays with the agent |
+
+Both keep durable history — "direct" does not mean unsaved. It means the agent's
+own logs remain canonical and Happier is reading them rather than owning them.
+
+Which kind new sessions start as is up to you:
+**Settings → Session → Default session type**.
+
+<Callout type="info">
+  Direct sessions are experimental. They also need the owning machine to stay
+  reachable until you import them, which is the practical difference you will
+  feel first.
+</Callout>
+
+## Finding a session the agent already has
+
+Happier can list the conversations that already exist on a connected machine, so
+you do not have to remember an identifier.
+
+In the new-session flow, choose the AI backend and the machine, then open the
+input controls and look for **Resume session**. Where the agent supports
+listing, a **Browse sessions** button appears beside it — picking a session from
+that list fills the field for you.
+
+The list is scoped to the agent and machine you already chose. For Codex it is
+scoped further still, to the Codex home implied by your authentication choice,
+so a connected-service account and your local `~/.codex` show different
+histories.
+
+If listing is not available for that agent, you can paste the agent's own
+session identifier instead. Session Info shows it for sessions you already have.
+
+## Taking over a direct session
+
+Opening someone's — or rather, your own — agent session directly lets you read
+and follow it. When you want to *drive* it from Happier, you take it over, and
+Happier asks how:
+
+- **Take over** — control the session from Happier without importing the
+  transcript. It stays a direct session, and the agent's logs stay canonical.
+- **Take over + import** — bring the transcript into Happier and continue as a
+  normal Happier session, synced across your devices.
+
+There is a third option you will only see sometimes. When Happier finds a
+trusted local process still attached to that session, it offers **Try to stop
+the local process first**, confirmed with **Stop and take over**. That is the
+one to reach for when a terminal somewhere is still holding the conversation and
+your takeover would otherwise be fighting it.
+
+Choosing between the first two is really a question about where you want the
+history to live afterwards. Import when you want the session on your phone
+tomorrow; keep it direct when the agent's own logs are the record you care about.
+
+## What controls are available
+
+A direct session Happier is only following — rather than locally controlling —
+shows the transcript and history, including provider-backed side work, but
+leaves subagent launch, steering and stop unavailable. Happier hides controls it
+cannot honour rather than offering ones that would fail.
+
+Once the session is locally controlled, the full surface returns: subagent
+launch, steering and send, stop and cancel.
+
+An inactive **Happier** session is a different case again. If it is resumable and
+its machine is reachable, Happier can resume it first and then give you those
+controls.
+
+## When the machine is offline
+
+For a **direct** session, the transcript cannot refresh, live following stops,
+and takeover waits until the machine reconnects.
+
+For a **Happier** session, the transcript is already in Happier, so it stays
+readable and stays in your list.
+
+## What each agent supports
+
+- **Codex** — browsing covers your normal Codex home plus supported
+  connected-service homes, and Happier can follow Codex transcripts directly.
+  See [Codex](/agents/codex).
+- **Claude** — Happier can browse and open Claude sessions from the machine that
+  owns them. Titles and transcript continuity depend on what the session logs
+  expose. See [Claude](/agents/claude).
+- **OpenCode** — server-backed sessions can be browsed directly, which is
+  natural when the OpenCode server is already the source of truth. See
+  [OpenCode](/agents/opencode).
+
+Which agents can resume their own sessions at all is in
+[Agent capabilities](/agents/capabilities).
+
+## Related
+
+These are the neighbouring ideas people most often confuse with this one:
+
+- [Session handoff](/sessions/session-handoff) — moving a *live* session to another machine, keeping the same session id.
+- [Session forking](/sessions/session-forking) — branching a conversation into a second one.
+- [Continue with another Agent](/sessions/continue-with-another-agent) — changing the engine without leaving the session.
+- [Resume inactive sessions](/sessions/session-resume) — waking a Happier session that stopped.

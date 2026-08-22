@@ -1,5 +1,13 @@
 import type { MetadataRoute } from 'next';
 
+/**
+ * Required by `output: 'export'`. Next does NOT infer staticness for metadata
+ * routes: without this marker the export fails to collect page data for this
+ * route rather than emitting the file. Both this and its sibling are pure
+ * functions of content known at build time, so static is also correct.
+ */
+export const dynamic = 'force-static';
+
 import { contentLastModified } from '@/lib/content-last-modified';
 import { absoluteUrl } from '@/lib/site';
 import { source } from '@/lib/source';
