@@ -10,7 +10,7 @@ import { resolveLightSqliteDatabaseUrlOptionsFromEnv } from "@/flavors/light/sql
 import { auth } from "@/app/auth/auth";
 import { initEncrypt } from "@/modules/encrypt";
 import { initFilesLocalFromEnv, loadFiles } from "@/storage/blob/files";
-import { db, initDbSqlite } from "@/storage/db";
+import { db, initDbSqlite, shutdownDbClient } from "@/storage/db";
 import { applyEnvValues, restoreEnv as restoreSnapshotEnv, snapshotEnv, type EnvValues } from "./env";
 
 export type LightSqliteHarness = {
@@ -115,7 +115,7 @@ export async function createLightSqliteHarness(options: LightSqliteHarnessOption
         };
 
         const close = async () => {
-            await db.$disconnect();
+            await shutdownDbClient();
             restoreSnapshotEnv(envBackup);
             await rm(baseDir, { recursive: true, force: true });
         };
@@ -123,7 +123,7 @@ export async function createLightSqliteHarness(options: LightSqliteHarnessOption
         return { baseDir, dbPath, envBase, restoreEnv, resetEnv, resetDbTables, close };
     } catch (error) {
         try {
-            await db.$disconnect();
+            await shutdownDbClient();
         } catch {
             // ignore cleanup disconnect errors
         }

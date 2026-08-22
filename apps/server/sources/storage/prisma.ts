@@ -431,6 +431,18 @@ export async function applySqliteRuntimePragmas(client: PrismaClientType, env: N
     await client.$queryRawUnsafe(`PRAGMA journal_size_limit=${pragmas.journalSizeLimitBytes};`);
 }
 
+export async function shutdownDbClient(): Promise<void> {
+    if (_pglite || _pgliteServer || _provider === "pglite") {
+        throw new Error("shutdownDbClient() cannot shut down PGlite; call shutdownDbPglite() instead");
+    }
+    const client = _db;
+    _db = null;
+    _provider = null;
+    if (client) {
+        await client.$disconnect();
+    }
+}
+
 export async function shutdownDbPglite(): Promise<void> {
     if (_provider !== "pglite") {
         throw new Error(`shutdownDbPglite() called when provider is ${_provider ?? "unset"}`);
