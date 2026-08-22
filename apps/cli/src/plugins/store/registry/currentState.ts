@@ -1,11 +1,25 @@
 import { randomUUID } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { realpath } from 'node:fs/promises';
+import { join, relative, sep } from 'node:path';
+
+import { isCanonicalAbsolutePathInsideRoot } from '@/utils/path/expandHomeDirPath';
+
+import {
+  normalizePluginReleaseFactsV1,
+  type PluginAvailabilityReleasePublishActionInputV1,
+  PluginInstallReviewPrincipalDigestSchema,
+  PluginInstallReviewPrincipalPresentationV1Schema,
+  type PluginMachineMaterializationV1,
+  type PluginInstallReviewPrincipalDigest,
+  type PluginInstallReviewPrincipalPresentationV1,
+} from '@happier-dev/protocol';
+import { pluginInstallReviewPrincipalPresentationMatchesDigest } from '../../daemon/installReviewPrincipal';
 
 import type { PluginAccessSelection } from '../install/accessScopeRegistry';
-import type { SupervisedPluginActivationAttempt } from '../../runtime/lifecycle/manager';
-import { ingestCanonicalPluginManifest } from '../../manifest/ingest';
+import { projectPluginFailureText } from '../../runtime/lifecycle/utils';
+import type { PreparedPluginActivationGraph } from '../../runtime/types';
 import {
+  AlgorithmQualifiedIntegritySchema,
   pluginDistributionIdentitiesEqual,
   pluginDistributionRollbackLineagesEqual,
   isPluginTrustRecordAuthorized,
@@ -18,35 +32,24 @@ import { ensurePluginStoreDirectories, resolvePluginStorePaths, type PluginStore
 import { createPluginRegistryCommitCoordinator } from './commitCoordinator';
 import {
   PluginRegistryCommitRecordSchema,
+  pluginRegistryCommitRecordsEqual,
   type PluginRegistryCommitRecord,
 } from './commitRecord';
 import {
-  createImmutablePluginGenerationRecordFromSource,
+  createDefaultPluginInstallationAvailabilityProjection,
   persistInstallationStateRevision,
-  prepareImmutablePluginGeneration,
   readPreparedImmutablePluginGeneration,
   readInstallationStateRevision,
   readPluginRegistryCommitInstallationAuthority,
-  retainProcessLocalPreparedPluginGeneration,
+  type OwnedPreparedImmutablePluginGeneration,
+  type PluginInstallationAvailabilityProjection,
   type PluginInstallationStateRevision,
+  PluginInstallationAvailabilityProjectionSchema,
 } from './generationStore';
 import {
   reconcilePluginGenerationCustodyRetirement,
   type PluginGenerationCustodyRetirementRemoteDependencies,
 } from './generationCustodyRetirement';
-import {
-  PLUGIN_GENERATION_HEALTH_POLICY_V1,
-  beginGenerationHealthObservation,
-  classifyFatalGenerationAttempt,
-  completeGenerationHealthObservation,
-  consumeGenerationTryOnce,
-  createPendingGenerationHealthRecord,
-  createQuarantinedGenerationHealthRecord,
-  markGenerationHealthyAfterStaticReconciliation,
-  recordGenerationAttemptResult,
-  resolveAutomaticGenerationRecovery,
-  resolveFailedGenerationTrial,
-} from './healthPolicy';
 import {
   createPluginRegistryReconciler,
   type PluginRegistryReconcileSurface,
@@ -66,6 +69,10 @@ function emptyState(): PluginStateFileV1 {
   });
 }
 
+function createPluginMaterializationId(): string {
+  return `materialization-${randomUUID()}`;
+}
+
 function createRevision(params: Readonly<{
   revisionId: string;
   createdAtMs: number;
@@ -80,7 +87,13 @@ function createRevision(params: Readonly<{
     if (!installation) {
       throw new Error(`Plugin '${pluginId}' must be installed through the immutable generation transaction`);
     }
-    return [pluginId, { ...installation, enabled: record.state.enabled }];
+    return [pluginId, {
+      ...installation,
+      materializationId: installation.materializationId ?? createPluginMaterializationId(),
+      availability: installation.availability
+        ?? createDefaultPluginInstallationAvailabilityProjection(installation.source.distribution),
+      enabled: record.state.enabled,
+    }];
   }));
   return {
     t: 'happier_plugin_installations_v1',
@@ -88,9 +101,10 @@ function createRevision(params: Readonly<{
     revisionId: params.revisionId,
     createdAtMs: params.createdAtMs,
     plugins,
-    health: prior?.health ?? {},
     rollbackRetention: prior?.rollbackRetention ?? [],
-    healthTombstones: prior?.healthTombstones ?? [],
+    ...(prior?.hardRevocationRevisions
+      ? { hardRevocationRevisions: prior.hardRevocationRevisions }
+      : {}),
     runtimeCatalog,
     retainedRuntimeCatalog: prior?.retainedRuntimeCatalog ?? {},
   };
@@ -98,13 +112,36 @@ function createRevision(params: Readonly<{
 
 export type CommitPluginRegistryInstallationInput = Readonly<{
   pluginId: string;
-  sourceRootPath: string;
-  manifestRelativePath: string;
   catalogRecord: PluginStateRecord;
   trust: PluginTrustRecord;
   updatePolicy: PluginUpdatePolicy;
   optionalAccess: readonly PluginAccessSelection[];
-  reviewedPackageDigest?: string;
+  /**
+   * Immutable acquisition facts retained with the installation, not an
+   * Availability snapshot or a generation identity.
+   */
+  availability?: PluginInstallationAvailabilityProjection;
+  /**
+   * Verified external acquisition SRI. Local development/path sources must
+   * omit this and use immutable generation custody identity instead.
+   */
+  admittedIntegrity?: string;
+  installReviewPrincipalDigest?: PluginInstallReviewPrincipalDigest;
+  installReviewPrincipalPresentation?: PluginInstallReviewPrincipalPresentationV1;
+  developmentChangedPaths?: readonly string[];
+  /**
+   * Exact current immutable generation whose bytes a source-only development
+   * candidate cloned. This is transient candidate currentness, never a new
+   * persisted registry field.
+   */
+  developmentBaseGenerationId?: string;
+  preparedActivationGraph?: PreparedPluginActivationGraph;
+  /**
+   * The sole daemon-custodied immutable candidate reviewed before installation.
+   * Its creator owns cleanup; this store adopts it only once the non-conflict
+   * registry outcome can reference it durably.
+   */
+  preparedGeneration: OwnedPreparedImmutablePluginGeneration;
 }>;
 
 export class PluginRegistryCandidateConflictError extends Error {
@@ -114,16 +151,32 @@ export class PluginRegistryCandidateConflictError extends Error {
   }
 }
 
+export type PluginRunningSessionDisposition =
+  | 'retainRunningSessions'
+  | 'revokeRunningSessions';
+
+export type PluginRunningSessionRevocationScope = Readonly<{
+  kind: 'immutableGeneration';
+  pluginId: string;
+  immutableGenerationId: string;
+}>;
+
 export type PluginRegistryRuntimeCandidate = Readonly<{
   mutationKind: 'state' | 'install' | 'rollback' | 'uninstall';
+  runningSessionDisposition: PluginRunningSessionDisposition;
+  runningSessionRevocationScope?: PluginRunningSessionRevocationScope;
   changedPluginIds: readonly string[];
   runtimeCatalog: PluginStateFileV1;
   installationState: PluginInstallationStateRevision;
   pluginGenerations: PluginRegistryCommitRecord['pluginGenerations'];
+  preparedActivationGraphsByPluginId?: ReadonlyMap<string, PreparedPluginActivationGraph>;
 }>;
 
 export type PreparedPluginRegistryRuntime = Readonly<{
   abort: () => Promise<void>;
+  notifyDurableRunningSessionDisposition?: (
+    record: PluginRegistryCommitRecord,
+  ) => void;
   adopt: (
     record: PluginRegistryCommitRecord,
   ) => Promise<Readonly<Record<string, string | null>> | void>;
@@ -141,10 +194,19 @@ export type PluginRegistryStateMutationResult = Readonly<{
     | Extract<PluginRegistryTransactionResult, { status: 'outcomeUnknown' }>;
 }>;
 
-type PluginGenerationHealthSupervisor = Readonly<{
-  daemonInstanceId: string;
-  daemonUptimeMs: () => number;
-  schedule: (delayMs: number, task: () => Promise<void>) => void;
+/**
+ * The install registry's complete persisted facts for one outbound
+ * Availability report. It deliberately has no Machine or server identity:
+ * the daemon boundary supplies those live transport facts without becoming a
+ * second install-state owner.
+ */
+export type PluginRegistryAvailabilityInventory = Readonly<{
+  revision: number;
+  releasePublications: readonly PluginAvailabilityReleasePublishActionInputV1[];
+  materializations: readonly Omit<
+    PluginMachineMaterializationV1,
+    'serverIdentityId' | 'machineId'
+  >[];
 }>;
 
 function resolveChangedPluginIds(
@@ -163,16 +225,15 @@ export function createPluginRegistryStateStore(params?: Readonly<{
   nowMs?: () => number;
   reconciliationSurfaces?: readonly PluginRegistryReconcileSurface[];
   generationCustodyRetirement?: PluginGenerationCustodyRetirementRemoteDependencies;
+  retainedCurrentHostGenerationIds?: readonly string[];
   runtimeLifecycle?: PluginRegistryRuntimeLifecycle;
-  prepareGeneration?: typeof prepareImmutablePluginGeneration;
-  healthSupervisor?: PluginGenerationHealthSupervisor;
   onApplied?: (record: PluginRegistryCommitRecord) => void;
   onReconciliationPending?: (diagnostic: Readonly<{
     operation: string;
     pendingSurfaces: readonly string[];
     message?: string;
   }>) => void;
-  runAutomaticCurrentnessChange?: (
+  runHardRevocationCurrentnessChange?: (
     pluginId: string,
     change: (control: Readonly<{ onApplied: () => void }>) => Promise<void>,
   ) => Promise<void>;
@@ -184,8 +245,21 @@ export function createPluginRegistryStateStore(params?: Readonly<{
     revision: number;
     state: PluginStateFileV1;
     pluginGenerations: PluginRegistryCommitRecord['pluginGenerations'];
+    /** Exact persisted installation epoch for each current plugin in this commit. */
+    materializationIdsByPluginId: Readonly<Record<string, string>>;
     rollbackAvailabilityByPluginId: Readonly<Record<string, 'available' | 'unavailable'>>;
+    admittedIntegrityByPluginId: Readonly<Record<string, string>>;
+    installReviewPrincipalDigestsByPluginId: Readonly<
+      Record<string, PluginInstallReviewPrincipalDigest>
+    >;
+    installReviewPrincipalPresentationsByPluginId: Readonly<
+      Record<string, PluginInstallReviewPrincipalPresentationV1>
+    >;
   }>>;
+  readAvailabilityInventory: () => Promise<PluginRegistryAvailabilityInventory>;
+  readAvailabilityInventoryForCommit: (
+    record: PluginRegistryCommitRecord,
+  ) => Promise<PluginRegistryAvailabilityInventory>;
   write: (next: PluginStateFileV1) => Promise<void>;
   update: (transform: StateTransform) => Promise<PluginStateFileV1>;
   updateWithResult: (transform: StateTransform) => Promise<PluginRegistryStateMutationResult>;
@@ -198,13 +272,13 @@ export function createPluginRegistryStateStore(params?: Readonly<{
   uninstall: (pluginId: string) => Promise<PluginStateFileV1>;
   uninstallWithResult: (
     pluginId: string,
-    options?: Readonly<{ clearHealthHistory?: boolean }>,
   ) => Promise<PluginRegistryStateMutationResult | null>;
-  evictQuarantinedTryOnceBytesForStoragePressure: () => Promise<Readonly<{
-    evictedGenerationIds: readonly string[];
-  }>>;
-  settleCurrentNonExecutableHealthAfterRuntimePublication: () => Promise<void>;
-  observeActivationAttempt: (attempt: SupervisedPluginActivationAttempt) => Promise<void>;
+  hardRevokeRunningSessionsForGenerationIntegrityFailure: (
+    input: Readonly<{
+      pluginId: string;
+      immutableGenerationId: string;
+    }>,
+  ) => Promise<void>;
 }> {
   const paths = resolvePluginStorePaths({ happyHomeDir: params?.happyHomeDir });
   const nowMs = params?.nowMs ?? Date.now;
@@ -213,11 +287,9 @@ export function createPluginRegistryStateStore(params?: Readonly<{
     instanceId: `plugin-registry-${process.pid}-${randomUUID()}`,
   };
   const runtimeLifecycle = params?.runtimeLifecycle;
-  const prepareGeneration = params?.prepareGeneration ?? prepareImmutablePluginGeneration;
-  const healthSupervisor = params?.healthSupervisor;
   const onApplied = params?.onApplied;
   const onReconciliationPending = params?.onReconciliationPending;
-  const runAutomaticCurrentnessChange = params?.runAutomaticCurrentnessChange;
+  const runHardRevocationCurrentnessChange = params?.runHardRevocationCurrentnessChange;
   const coordinator = createPluginRegistryCommitCoordinator({ paths, owner, nowMs });
   async function readVerifiedRollbackGeneration(
     retention: PluginInstallationStateRevision['rollbackRetention'][number],
@@ -228,8 +300,7 @@ export function createPluginRegistryStateStore(params?: Readonly<{
     });
     if (
       prepared.record.pluginId !== retention.pluginId
-      || prepared.record.packageDigest !== retention.packageDigest
-      || prepared.record.installedArtifactRecord.digest !== retention.artifactDigest
+      || prepared.record.immutableGenerationId !== retention.immutableGenerationId
     ) {
       throw new Error(
         `Plugin '${retention.pluginId}' retained identity does not match immutable generation `
@@ -240,10 +311,11 @@ export function createPluginRegistryStateStore(params?: Readonly<{
   }
   const reconciler = createPluginRegistryReconciler({
     paths,
-    readState: async (commit) => await readInstallationStateRevision({
-      paths,
-      reference: commit.installationState,
-    }),
+    readState: async (commit) => {
+      const state = await readPluginRegistryCommitInstallationAuthority(paths, commit);
+      if (!state) throw new Error('Plugin registry reconciliation cannot consume an empty installation authority');
+      return state;
+    },
     surfaces: [
       ...(params?.reconciliationSurfaces ?? []),
       {
@@ -252,6 +324,8 @@ export function createPluginRegistryStateStore(params?: Readonly<{
           const cleanup = await reconcilePluginGenerationCustodyRetirement({
             paths,
             commit,
+            retainedCurrentHostGenerationIds:
+              params?.retainedCurrentHostGenerationIds,
             isCommitCurrent: isCurrent,
             ...params?.generationCustodyRetirement,
           });
@@ -260,7 +334,9 @@ export function createPluginRegistryStateStore(params?: Readonly<{
           }
           if (cleanup.failures.length > 0) {
             throw new Error(`Immutable generation cleanup remains pending: ${cleanup.failures
-              .map((failure) => `${failure.generationId}: ${failure.message}`)
+              .map((failure) => failure.generationId
+                ? `${failure.generationId}: ${failure.message}`
+                : failure.message)
               .join('; ')}`);
           }
         },
@@ -273,17 +349,29 @@ export function createPluginRegistryStateStore(params?: Readonly<{
     status: 'reconciled' | 'retryable';
     message?: string;
   }>> {
-    const reconciliation = await reconciler.reconcile();
-    if (reconciliation.status === 'reconciled' && reconciliation.revision === record.revision) {
-      return { status: 'reconciled' };
+    try {
+      const reconciliation = await reconciler.reconcile();
+      if (
+        reconciliation.status === 'reconciled'
+        && pluginRegistryCommitRecordsEqual(reconciliation.commit, record)
+      ) {
+        return { status: 'reconciled' };
+      }
+      const failed = Object.entries(reconciliation.surfaces)
+        .filter(([, surface]) => surface.status !== 'applied')
+        .map(([name, surface]) => `${name}: ${surface.message ?? surface.status}`);
+      return {
+        status: 'retryable',
+        message: projectPluginFailureText(new Error(
+          failed.join('; ') || 'Registry reconciliation did not reach the committed revision',
+        )),
+      };
+    } catch (error) {
+      return {
+        status: 'retryable',
+        message: projectPluginFailureText(error),
+      };
     }
-    const failed = Object.entries(reconciliation.surfaces)
-      .filter(([, surface]) => surface.status !== 'applied')
-      .map(([name, surface]) => `${name}: ${surface.message ?? surface.status}`);
-    return {
-      status: 'retryable',
-      message: failed.join('; ') || 'Registry reconciliation did not reach the committed revision',
-    };
   }
 
   function reportPendingReconciliation(
@@ -292,6 +380,8 @@ export function createPluginRegistryStateStore(params?: Readonly<{
     message?: string,
   ): void {
     if (!pendingSurfaces.includes('reconciliation')) return;
+    // `reconcileRecord` is the sole state-store boundary that projects its
+    // failure text; the daemon sink receives that bounded result unchanged.
     onReconciliationPending?.({
       operation,
       pendingSurfaces,
@@ -305,7 +395,11 @@ export function createPluginRegistryStateStore(params?: Readonly<{
     catalog: PluginStateFileV1;
   }>> {
     const revision = await readPluginRegistryCommitInstallationAuthority(paths, commit)
-      ?? await readInstallationStateRevision({ paths, reference: commit.installationState });
+      ?? await readInstallationStateRevision({
+        paths,
+        reference: commit.installationState,
+        commit,
+      });
     if (!revision.runtimeCatalog) {
       throw new Error('Current plugin registry revision has no canonical runtime catalog');
     }
@@ -321,6 +415,7 @@ export function createPluginRegistryStateStore(params?: Readonly<{
       const result = await coordinator.commit({
         transactionId,
         baseRevision: null,
+        expectedCurrent: null,
         buildNext: async () => {
           const createdAtMs = nowMs();
           const revision: PluginInstallationStateRevision = {
@@ -329,9 +424,7 @@ export function createPluginRegistryStateStore(params?: Readonly<{
             revisionId: `state-${randomUUID()}`,
             createdAtMs,
             plugins: {},
-            health: {},
             rollbackRetention: [],
-            healthTombstones: [],
             runtimeCatalog: emptyState(),
             retainedRuntimeCatalog: {},
           };
@@ -352,10 +445,7 @@ export function createPluginRegistryStateStore(params?: Readonly<{
       if (result.status === 'committed') {
         // The durable record is authoritative even when a derived surface is
         // temporarily unavailable; startup will retry reconciliation.
-        const reconciliation = await reconcileRecord(result.record).catch((error: unknown) => ({
-          status: 'retryable' as const,
-          message: error instanceof Error ? error.message : String(error),
-        }));
+        const reconciliation = await reconcileRecord(result.record);
         if (reconciliation.status === 'retryable') {
           reportPendingReconciliation('startup', Object.freeze(['reconciliation']), reconciliation.message);
         }
@@ -394,6 +484,84 @@ export function createPluginRegistryStateStore(params?: Readonly<{
     return await readCommittedState(commit);
   }
 
+  function projectAvailabilityInventory(
+    current: Awaited<ReturnType<typeof readCommittedState>>,
+  ): PluginRegistryAvailabilityInventory {
+    const releasePublications: PluginAvailabilityReleasePublishActionInputV1[] = [];
+    const materializations = Object.entries(current.revision.plugins).map(([
+      pluginId,
+      installation,
+    ]) => {
+      const catalogRecord = current.catalog.plugins[pluginId];
+      if (!catalogRecord) {
+        throw new Error(
+          `Plugin '${pluginId}' availability projection has no canonical catalog record`,
+        );
+      }
+      if (!installation.materializationId || !installation.availability) {
+        throw new Error(
+          `Plugin '${pluginId}' availability projection requires migrated installation facts`,
+        );
+      }
+      const availability = installation.availability;
+      const release = availability.release
+        ? normalizePluginReleaseFactsV1(availability.release)
+        : undefined;
+      if (release) {
+        if (availability.sourceClass === 'localPath') {
+          throw new Error(
+            `Plugin '${pluginId}' local-path installation cannot publish portable release facts`,
+          );
+        }
+        releasePublications.push(Object.freeze({
+          facts: release,
+          sourceClass: availability.sourceClass,
+        }));
+      }
+      const uiArtifacts = Object.freeze((release?.uiSlots ?? []).map((slot) => (
+        Object.freeze({
+          contributionId: slot.contributionId,
+          tier: slot.tier,
+          platform: slot.platform,
+          artifactDigest: slot.artifactDigest,
+        })
+      )));
+      const trustState = isPluginTrustRecordAuthorized(installation.trust, {
+        pluginId,
+        distribution: installation.source.distribution,
+      })
+        ? 'trusted' as const
+        : catalogRecord.source.trustPolicy === 'untrusted'
+          ? 'revoked' as const
+          : 'untrusted' as const;
+      return Object.freeze({
+        materializationId: installation.materializationId,
+        pluginId,
+        version: catalogRecord.install.manifestVersion,
+        sourceClass: availability.sourceClass,
+        portableRelease: availability.portableRelease,
+        ...(release
+          ? { archiveDigestSha256: release.archiveDigestSha256 }
+          : {}),
+        uiArtifacts,
+        enabled: installation.enabled,
+        trustState,
+        observedAt: current.revision.createdAtMs,
+      });
+    });
+    return Object.freeze({
+      revision: current.commit.revision,
+      releasePublications: Object.freeze([...releasePublications].sort((left, right) => (
+        `${left.facts.ref.pluginId}\u0000${left.facts.ref.version}`.localeCompare(
+          `${right.facts.ref.pluginId}\u0000${right.facts.ref.version}`,
+        )
+      ))),
+      materializations: Object.freeze([...materializations].sort((left, right) => (
+        left.materializationId.localeCompare(right.materializationId)
+      ))),
+    });
+  }
+
   function throwPrecommitFailure(result: Exclude<
     PluginRegistryTransactionResult,
     { status: 'committed' | 'outcomeUnknown' | 'conflict' }
@@ -430,9 +598,11 @@ export function createPluginRegistryStateStore(params?: Readonly<{
       const result = await transactionService.execute({
         transactionId,
         baseRevision: current.commit.revision,
+        expectedCurrent: current.commit,
         prepare: async () => ({ revision, installationState }),
         validateAndActivate: async () => await lifecycle.prepare({
           mutationKind: 'state',
+          runningSessionDisposition: 'retainRunningSessions',
           changedPluginIds: resolveChangedPluginIds(current.catalog, nextCatalog),
           runtimeCatalog: nextCatalog,
           installationState: revision,
@@ -449,6 +619,7 @@ export function createPluginRegistryStateStore(params?: Readonly<{
           }),
         abortPrepared: async (_prepared, runtime) => await runtime?.abort(),
         adopt: async (record, runtime) => {
+          runtime.notifyDurableRunningSessionDisposition?.(record);
           const appliedGenerationsByPluginId = await runtime.adopt(record);
           onApplied?.(record);
           return appliedGenerationsByPluginId;
@@ -469,6 +640,65 @@ export function createPluginRegistryStateStore(params?: Readonly<{
     return (await updateWithResult(transform)).catalog;
   }
 
+  async function initialize(): Promise<PluginStateFileV1> {
+    while (true) {
+      const current = await readCurrent();
+      const requiresAvailabilityMigration = Object.values(current.revision.plugins).some((installation) => (
+        !installation.materializationId || !installation.availability
+      ));
+      if (!requiresAvailabilityMigration) return current.catalog;
+      if (!runtimeLifecycle) {
+        // Read-only callers must not manufacture runtime adoption just to add
+        // outbound-report facts. The daemon lifecycle performs this migration
+        // before it asks for an Availability inventory.
+        return current.catalog;
+      }
+
+      // This is a persistence-only normalization: its catalog and immutable
+      // generations are unchanged. Routing it through updateWithResult would
+      // adopt a registry with no changed plugin ids before the daemon's cold
+      // lifecycle can activate and bootstrap its external contributions.
+      const transactionId = `availability-${randomUUID()}`;
+      const createdAtMs = nowMs();
+      const revision = createRevision({
+        revisionId: `state-${randomUUID()}`,
+        createdAtMs,
+        runtimeCatalog: current.catalog,
+        prior: current.revision,
+      });
+      const installationState = await persistInstallationStateRevision({ paths, state: revision });
+      const result = await coordinator.commit({
+        transactionId,
+        baseRevision: current.commit.revision,
+        expectedCurrent: current.commit,
+        buildNext: async () => PluginRegistryCommitRecordSchema.parse({
+          ...current.commit,
+          revision: current.commit.revision + 1,
+          transactionId,
+          baseRevision: current.commit.revision,
+          installationState,
+          createdAtMs,
+          creator: owner,
+        }),
+      });
+      if (result.status === 'conflict') continue;
+      if (result.status === 'aborted') {
+        throw new Error('Plugin registry availability migration was aborted');
+      }
+      if (result.status === 'committed') {
+        const reconciliation = await reconcileRecord(result.record);
+        if (reconciliation.status === 'retryable') {
+          reportPendingReconciliation(
+            'startup',
+            Object.freeze(['reconciliation']),
+            reconciliation.message,
+          );
+        }
+      }
+      return current.catalog;
+    }
+  }
+
   async function commitRevision(params: Readonly<{
     current: Awaited<ReturnType<typeof readCurrent>>;
     revision: PluginInstallationStateRevision;
@@ -476,10 +706,13 @@ export function createPluginRegistryStateStore(params?: Readonly<{
     transactionId: string;
     createdAtMs: number;
     mutationKind: PluginRegistryRuntimeCandidate['mutationKind'];
+    runningSessionDisposition: PluginRunningSessionDisposition;
+    runningSessionRevocationScope?: PluginRunningSessionRevocationScope;
     changedPluginIds: readonly string[];
     onApplied?: () => void;
     retryRuntime?: PreparedPluginRegistryRuntime;
     retainRuntimeOnConflict?: boolean;
+    preparedActivationGraphsByPluginId?: ReadonlyMap<string, PreparedPluginActivationGraph>;
   }>): Promise<
     | PluginRegistryTransactionResult
     | (Extract<PluginRegistryTransactionResult, { status: 'conflict' }> & Readonly<{
@@ -487,18 +720,65 @@ export function createPluginRegistryStateStore(params?: Readonly<{
       }>)
   > {
     const lifecycle = requireRuntimeLifecycle();
-    const installationState = await persistInstallationStateRevision({ paths, state: params.revision });
+    if (
+      params.runningSessionRevocationScope
+      && (
+        params.runningSessionDisposition !== 'revokeRunningSessions'
+        || !params.changedPluginIds.includes(
+          params.runningSessionRevocationScope.pluginId,
+        )
+      )
+    ) {
+      throw new Error(
+        'Immutable-generation running Session revocation scope must belong to the changed plugin',
+      );
+    }
+    const hardRevocationRevisions = {
+      ...(params.current.revision.hardRevocationRevisions ?? {}),
+    };
+    for (const [pluginId, revision] of Object.entries(
+      params.revision.hardRevocationRevisions ?? {},
+    )) {
+      hardRevocationRevisions[pluginId] = Math.max(
+        hardRevocationRevisions[pluginId] ?? 0,
+        revision,
+      );
+    }
+    if (params.runningSessionDisposition === 'revokeRunningSessions') {
+      const nextRevision = params.current.commit.revision + 1;
+      for (const pluginId of params.changedPluginIds) {
+        hardRevocationRevisions[pluginId] = nextRevision;
+      }
+    }
+    const revision: PluginInstallationStateRevision = {
+      ...params.revision,
+      ...(Object.keys(hardRevocationRevisions).length > 0
+        ? { hardRevocationRevisions }
+        : {}),
+    };
+    const installationState = await persistInstallationStateRevision({ paths, state: revision });
     const result = await transactionService.execute({
       transactionId: params.transactionId,
       baseRevision: params.current.commit.revision,
+      expectedCurrent: params.current.commit,
       prepare: async () => ({ installationState }),
       validateAndActivate: async () => {
         const candidate = {
           mutationKind: params.mutationKind,
+          runningSessionDisposition: params.runningSessionDisposition,
+          ...(params.runningSessionRevocationScope
+            ? {
+                runningSessionRevocationScope:
+                  params.runningSessionRevocationScope,
+              }
+            : {}),
           changedPluginIds: params.changedPluginIds,
-          runtimeCatalog: params.revision.runtimeCatalog ?? emptyState(),
-          installationState: params.revision,
+          runtimeCatalog: revision.runtimeCatalog ?? emptyState(),
+          installationState: revision,
           pluginGenerations: params.pluginGenerations,
+          ...(params.preparedActivationGraphsByPluginId
+            ? { preparedActivationGraphsByPluginId: params.preparedActivationGraphsByPluginId }
+            : {}),
         } satisfies PluginRegistryRuntimeCandidate;
         if (!params.retryRuntime) return await lifecycle.prepare(candidate);
         if (!params.retryRuntime.rebase) {
@@ -524,6 +804,7 @@ export function createPluginRegistryStateStore(params?: Readonly<{
         }),
       abortPrepared: async (_prepared, runtime) => await runtime?.abort(),
       adopt: async (record, runtime) => {
+        runtime.notifyDurableRunningSessionDisposition?.(record);
         const appliedGenerationsByPluginId = await runtime.adopt(record);
         onApplied?.(record);
         params.onApplied?.();
@@ -545,767 +826,330 @@ export function createPluginRegistryStateStore(params?: Readonly<{
     return result;
   }
 
-  async function commitHealthMetadata(params: Readonly<{
-    current: Awaited<ReturnType<typeof readCommittedState>>;
-    revision: PluginInstallationStateRevision;
-    transactionId: string;
-    createdAtMs: number;
-  }>): Promise<
-    | Extract<PluginRegistryTransactionResult, { status: 'committed' }>
-    | Extract<PluginRegistryTransactionResult, { status: 'outcomeUnknown' }>
-    | Extract<PluginRegistryTransactionResult, { status: 'conflict' }>
-    | Extract<PluginRegistryTransactionResult, { status: 'aborted' }>
-  > {
-    const installationState = await persistInstallationStateRevision({ paths, state: params.revision });
-    const result = await coordinator.commit({
-      transactionId: params.transactionId,
-      baseRevision: params.current.commit.revision,
-      buildNext: async () => PluginRegistryCommitRecordSchema.parse({
-        ...params.current.commit,
-        revision: params.current.commit.revision + 1,
-        transactionId: params.transactionId,
-        baseRevision: params.current.commit.revision,
-        installationState,
-        createdAtMs: params.createdAtMs,
-        creator: owner,
-      }),
-    });
-    if (result.status === 'conflict' || result.status === 'aborted') return result;
-    if (result.status === 'committed_durability_pending') {
-      return {
-        status: 'outcomeUnknown',
-        record: result.record,
-        phase: 'durability',
-        message: result.message,
-      };
-    }
-    try {
-      const reconciliation = await reconcileRecord(result.record);
-      if (reconciliation.status !== 'reconciled') {
-        return {
-          status: 'committed',
-          record: result.record,
-          applied: true,
-          pendingSurfaces: Object.freeze(['reconciliation']),
-          ...(reconciliation.message ? { message: reconciliation.message } : {}),
-        };
-      }
-    } catch (error) {
-      return {
-        status: 'committed',
-        record: result.record,
-        applied: true,
-        pendingSurfaces: Object.freeze(['reconciliation']),
-        message: error instanceof Error ? error.message : String(error),
-      };
-    }
-    return {
-      status: 'committed',
-      record: result.record,
-      applied: true,
-      pendingSurfaces: Object.freeze([]),
-    };
-  }
-
-  function upsertHealthTombstone(
-    revision: PluginInstallationStateRevision,
-    record: PluginInstallationStateRevision['health'][string],
-    recordedAtMs: number,
-  ): PluginInstallationStateRevision['healthTombstones'] {
-    return [
-      ...revision.healthTombstones.filter((entry) => (
-        entry.pluginId !== record.pluginId || entry.fingerprint !== record.fingerprint
-      )),
-      {
-        pluginId: record.pluginId,
-        fingerprint: record.fingerprint,
-        state: record.tryOnce === 'consumed' ? 'consumed' as const : 'quarantined' as const,
-        recordedAtMs,
-      },
-    ];
-  }
-
-  async function persistTryOnceConsumption(params: Readonly<{
-    current: Awaited<ReturnType<typeof readCurrent>>;
-    pluginId: string;
-    immutableGenerationId: string;
-  }>): Promise<Awaited<ReturnType<typeof readCommittedState>> | null> {
-    const health = params.current.revision.health[params.immutableGenerationId];
-    if (!health || health.pluginId !== params.pluginId) {
-      throw new Error(`Plugin '${params.pluginId}' Try once health state is unavailable`);
-    }
-    const consumed = consumeGenerationTryOnce(health);
-    const createdAtMs = nowMs();
-    const revision: PluginInstallationStateRevision = {
-      ...params.current.revision,
-      revisionId: `health-try-once-${randomUUID()}`,
-      createdAtMs,
-      health: {
-        ...params.current.revision.health,
-        [params.immutableGenerationId]: consumed,
-      },
-      healthTombstones: upsertHealthTombstone(params.current.revision, consumed, createdAtMs),
-    };
-    const committed = await commitHealthMetadata({
-      current: params.current,
-      revision,
-      transactionId: `health-try-once-${randomUUID()}`,
-      createdAtMs,
-    });
-    if (committed.status === 'conflict') return null;
-    if (committed.status === 'aborted') throwPrecommitFailure(committed);
-    if (committed.status === 'outcomeUnknown') {
+  async function hardRevokeRunningSessionsForGenerationIntegrityFailure(
+    input: Readonly<{
+      pluginId: string;
+      immutableGenerationId: string;
+    }>,
+  ): Promise<void> {
+    if (!runHardRevocationCurrentnessChange) {
       throw new Error(
-        `Plugin '${params.pluginId}' Try once consumption durability is unknown; quarantined bytes were not executed`,
+        'Runner Agent generation integrity currentness requires the daemon plugin-change owner',
       );
     }
-    return await readCommittedState(committed.record);
-  }
-
-  async function completeHealthObservation(
-    pluginId: string,
-    immutableGenerationId: string,
-  ): Promise<void> {
-    if (!healthSupervisor) return;
-    while (true) {
-      const current = await readPersistedCurrent();
-      const reference = current?.commit.pluginGenerations[pluginId];
-      const health = current?.revision.health[immutableGenerationId];
-      if (!current || reference?.immutableGenerationId !== immutableGenerationId || !health) return;
-      const transition = completeGenerationHealthObservation({
-        record: health,
-        daemonInstanceId: healthSupervisor.daemonInstanceId,
-        daemonUptimeMs: healthSupervisor.daemonUptimeMs(),
-      });
-      if (transition.decision === 'restart_required') return;
-      if (transition.decision === 'monitoring') {
-        const elapsed = health.observation
-          ? Math.max(0, healthSupervisor.daemonUptimeMs() - health.observation.startedAtUptimeMs)
-          : 0;
-        healthSupervisor.schedule(
-          Math.max(1, PLUGIN_GENERATION_HEALTH_POLICY_V1.continuousHealthWindowMs - elapsed),
-          async () => await completeHealthObservation(pluginId, immutableGenerationId),
-        );
-        return;
-      }
-      const createdAtMs = nowMs();
-      const rollbackRetention = current.revision.rollbackRetention.map((entry) => (
-        entry.pluginId === pluginId && entry.role === 'lastKnownGood'
-          ? { ...entry, role: 'userRollback' as const, automaticRecoveryEligible: false }
-          : entry
-      ));
-      const revision: PluginInstallationStateRevision = {
-        ...current.revision,
-        revisionId: `health-${randomUUID()}`,
-        createdAtMs,
-        health: { ...current.revision.health, [immutableGenerationId]: transition.record },
-        rollbackRetention,
-      };
-      const committed = await commitHealthMetadata({
-        current,
-        revision,
-        transactionId: `health-${randomUUID()}`,
-        createdAtMs,
-      });
-      if (committed.status === 'committed') {
-        reportPendingReconciliation(
-          'health_observation_completion',
-          committed.pendingSurfaces,
-          committed.message,
-        );
-        return;
-      }
-      if (committed.status === 'outcomeUnknown') {
-        reportPendingReconciliation(
-          'health_observation_completion',
-          Object.freeze(['reconciliation']),
-          committed.message,
-        );
-        return;
-      }
-    }
-  }
-
-  async function observeActivationAttemptWithCurrentnessControl(
-    attempt: SupervisedPluginActivationAttempt,
-    currentnessControl?: Readonly<{ onApplied: () => void }>,
-  ): Promise<void> {
-    while (true) {
-      const current = await readPersistedCurrent();
-      const reference = current?.commit.pluginGenerations[attempt.pluginId];
-      const health = current?.revision.health[attempt.immutableGenerationId];
-      if (!current || reference?.immutableGenerationId !== attempt.immutableGenerationId || !health) return;
-
-      if (attempt.outcome === 'nonfatal') {
-        if (!healthSupervisor || health.state === 'healthy' || health.state === 'quarantined') return;
-        if (health.observation?.daemonInstanceId === healthSupervisor.daemonInstanceId) return;
-        const observed = beginGenerationHealthObservation({
-          record: health,
-          daemonInstanceId: healthSupervisor.daemonInstanceId,
-          daemonUptimeMs: healthSupervisor.daemonUptimeMs(),
-        });
+    await runHardRevocationCurrentnessChange(input.pluginId, async (control) => {
+      while (true) {
+        const current = await readCurrent();
+        const installation = current.revision.plugins[input.pluginId];
+        const catalogRecord = current.catalog.plugins[input.pluginId];
+        if (Boolean(installation) !== Boolean(catalogRecord)) {
+          throw new Error(
+            'Runner Agent generation integrity currentness has mismatched installation and catalog authority',
+          );
+        }
+        const currentReference =
+          current.commit.pluginGenerations[input.pluginId];
+        const isCurrentGeneration =
+          currentReference?.immutableGenerationId
+            === input.immutableGenerationId;
+        if (isCurrentGeneration && (!installation || !catalogRecord)) {
+          throw new Error(
+            'Runner Agent generation integrity currentness has a current generation without installation authority',
+          );
+        }
         const createdAtMs = nowMs();
+        const runtimeCatalog = isCurrentGeneration
+          ? PluginStateFileV1Schema.parse({
+              ...current.catalog,
+              plugins: {
+                ...current.catalog.plugins,
+                [input.pluginId]: {
+                  ...catalogRecord!,
+                  state: {
+                    ...catalogRecord.state,
+                    enabled: false,
+                  },
+                },
+              },
+            })
+          : current.catalog;
         const revision: PluginInstallationStateRevision = {
           ...current.revision,
-          revisionId: `health-${randomUUID()}`,
+          revisionId: `integrity-${randomUUID()}`,
           createdAtMs,
-          health: { ...current.revision.health, [attempt.immutableGenerationId]: observed },
-        };
-        const committed = await commitHealthMetadata({
-          current,
-          revision,
-          transactionId: `health-${randomUUID()}`,
-          createdAtMs,
-        });
-        if (committed.status === 'conflict') continue;
-        if (committed.status === 'committed') {
-          reportPendingReconciliation(
-            'health_observation_start',
-            committed.pendingSurfaces,
-            committed.message,
-          );
-        }
-        if (committed.status === 'outcomeUnknown') {
-          reportPendingReconciliation(
-            'health_observation_start',
-            Object.freeze(['reconciliation']),
-            committed.message,
-          );
-          return;
-        }
-        healthSupervisor.schedule(
-          PLUGIN_GENERATION_HEALTH_POLICY_V1.continuousHealthWindowMs,
-          async () => await completeHealthObservation(attempt.pluginId, attempt.immutableGenerationId),
-        );
-        return;
-      }
-
-      if (health.state === 'quarantined') return;
-      const classification = classifyFatalGenerationAttempt({
-        pluginId: attempt.pluginId,
-        attemptId: attempt.attemptId,
-        generationId: attempt.immutableGenerationId,
-        committed: true,
-        kind: attempt.phase,
-        outcome: 'fatal',
-        attributed: true,
-      });
-      const recorded = recordGenerationAttemptResult({
-        record: health,
-        classification,
-        nowMs: attempt.completedAtMs,
-      });
-      if (recorded.decision === 'excluded' || recorded.decision === 'duplicate') return;
-      const createdAtMs = nowMs();
-      if (recorded.decision === 'recorded') {
-        const revision: PluginInstallationStateRevision = {
-          ...current.revision,
-          revisionId: `health-${randomUUID()}`,
-          createdAtMs,
-          health: { ...current.revision.health, [attempt.immutableGenerationId]: recorded.record },
-        };
-        const committed = await commitHealthMetadata({
-          current,
-          revision,
-          transactionId: `health-${randomUUID()}`,
-          createdAtMs,
-        });
-        if (committed.status === 'committed') {
-          reportPendingReconciliation(
-            'health_failure_record',
-            committed.pendingSurfaces,
-            committed.message,
-          );
-          return;
-        }
-        if (committed.status === 'outcomeUnknown') {
-          reportPendingReconciliation(
-            'health_failure_record',
-            Object.freeze(['reconciliation']),
-            committed.message,
-          );
-          return;
-        }
-        continue;
-      }
-
-      if (!currentnessControl) {
-        if (!runAutomaticCurrentnessChange) {
-          throw new Error('Automatic plugin currentness recovery requires the daemon plugin-change owner');
-        }
-        await runAutomaticCurrentnessChange(attempt.pluginId, async (control) => {
-          await observeActivationAttemptWithCurrentnessControl(attempt, control);
-        });
-        return;
-      }
-
-      const lastKnownGood = current.revision.rollbackRetention.find((entry) => (
-        entry.pluginId === attempt.pluginId
-        && entry.role === 'lastKnownGood'
-        && entry.automaticRecoveryEligible
-        && entry.byteAvailability === 'available'
-      ));
-      const recovery = recorded.record.state === 'trial'
-        ? resolveFailedGenerationTrial({
-            record: recorded.record,
-            lastKnownGood: lastKnownGood ? { available: true, automaticRecoveryEligible: true } : null,
-          })
-        : resolveAutomaticGenerationRecovery({
-            record: recorded.record,
-            lastKnownGood: lastKnownGood ? { available: true, automaticRecoveryEligible: true } : null,
-          });
-      const failedCatalog = current.catalog.plugins[attempt.pluginId];
-      const installation = current.revision.plugins[attempt.pluginId];
-      if (!failedCatalog || !installation) return;
-      const nextHealth = { ...current.revision.health, [attempt.immutableGenerationId]: recovery.record };
-      const healthTombstones = upsertHealthTombstone(current.revision, recovery.record, createdAtMs);
-
-      let revision: PluginInstallationStateRevision;
-      let pluginGenerations = current.commit.pluginGenerations;
-      let mutationKind: PluginRegistryRuntimeCandidate['mutationKind'] = 'state';
-      let retainedCatalog = recovery.action === 'rollback_to_lkg' && lastKnownGood
-        ? current.revision.retainedRuntimeCatalog?.[lastKnownGood.immutableGenerationId]
-        : undefined;
-      let targetGeneration: Awaited<ReturnType<typeof readPreparedImmutablePluginGeneration>> | undefined;
-      let retainedLkgUnavailable: 'missing' | 'corrupt' | 'sourceIneligible' | null = (
-        recovery.action === 'rollback_to_lkg' && lastKnownGood !== undefined && !retainedCatalog
-      ) ? 'sourceIneligible' : null;
-      let failedGenerationUnavailable: 'missing' | 'corrupt' | null = null;
-      let failedGeneration: Awaited<ReturnType<typeof readPreparedImmutablePluginGeneration>> | undefined;
-      try {
-        failedGeneration = await readPreparedImmutablePluginGeneration({
-          paths,
-          immutableGenerationId: attempt.immutableGenerationId,
-        });
-      } catch (error) {
-        failedGenerationUnavailable = (error as NodeJS.ErrnoException | null)?.code === 'ENOENT'
-          ? 'missing'
-          : 'corrupt';
-        nextHealth[attempt.immutableGenerationId] = {
-          ...recovery.record,
-          tryOnce: 'unavailable',
-        };
-      }
-      const createDisabledRecoveryRevision = (
-        lkgActivationFailed: boolean,
-      ): PluginInstallationStateRevision => {
-        const disabledCatalog = PluginStateFileV1Schema.parse({
-          ...current.catalog,
-          plugins: {
-            ...current.catalog.plugins,
-            [attempt.pluginId]: {
-              ...failedCatalog,
-              state: { ...failedCatalog.state, enabled: false },
-            },
-          },
-        });
-        return {
-          ...current.revision,
-          revisionId: `health-${randomUUID()}`,
-          createdAtMs,
-          plugins: {
-            ...current.revision.plugins,
-            [attempt.pluginId]: { ...installation, enabled: false },
-          },
-          health: nextHealth,
-          rollbackRetention: (retainedLkgUnavailable || lkgActivationFailed) && lastKnownGood
-            ? current.revision.rollbackRetention.map((entry) => (
-                entry.immutableGenerationId === lastKnownGood.immutableGenerationId
-                  ? {
-                      ...entry,
-                      role: 'userRollback' as const,
-                      automaticRecoveryEligible: false,
-                      byteAvailability: retainedLkgUnavailable ?? entry.byteAvailability,
-                    }
-                  : entry
-              ))
-            : current.revision.rollbackRetention,
-          healthTombstones,
-          runtimeCatalog: disabledCatalog,
-        };
-      };
-      if (retainedCatalog && lastKnownGood) {
-        try {
-          targetGeneration = await readVerifiedRollbackGeneration(lastKnownGood);
-        } catch (error) {
-          retainedCatalog = undefined;
-          retainedLkgUnavailable = (error as NodeJS.ErrnoException | null)?.code === 'ENOENT'
-            ? 'missing'
-            : 'corrupt';
-        }
-      }
-      if (retainedCatalog && targetGeneration && lastKnownGood) {
-        const failedReference = current.commit.pluginGenerations[attempt.pluginId]!;
-        const rollbackRetention = current.revision.rollbackRetention
-          .filter((entry) => entry.pluginId !== attempt.pluginId)
-          .concat({
-            pluginId: attempt.pluginId,
-            immutableGenerationId: attempt.immutableGenerationId,
-            healthGenerationId: attempt.immutableGenerationId,
-            role: 'quarantined' as const,
-            automaticRecoveryEligible: false,
-            retainedAtMs: createdAtMs,
-            byteAvailability: failedGenerationUnavailable ?? 'available',
-            packageDigest: failedGeneration?.record.packageDigest ?? installation.source.admittedIntegrity,
-            artifactDigest: failedGeneration?.record.installedArtifactRecord.digest
-              ?? failedReference.installedArtifactRecord.digest,
-            pluginVersion: failedCatalog.install.manifestVersion,
-            distribution: installation.source.distribution,
-          });
-        const retainedRuntimeCatalog = Object.fromEntries(Object.entries(current.revision.retainedRuntimeCatalog ?? {})
-          .filter(([generationId]) => generationId !== lastKnownGood.immutableGenerationId));
-        retainedRuntimeCatalog[attempt.immutableGenerationId] = failedCatalog;
-        const runtimeCatalog = PluginStateFileV1Schema.parse({
-          ...current.catalog,
-          plugins: { ...current.catalog.plugins, [attempt.pluginId]: retainedCatalog },
-        });
-        revision = {
-          ...current.revision,
-          revisionId: `health-${randomUUID()}`,
-          createdAtMs,
-          plugins: {
-            ...current.revision.plugins,
-            [attempt.pluginId]: {
-              ...installation,
-              enabled: retainedCatalog.state.enabled,
-              source: { ...installation.source, admittedIntegrity: targetGeneration.record.packageDigest },
-            },
-          },
-          health: nextHealth,
-          rollbackRetention,
-          healthTombstones,
+          plugins: isCurrentGeneration
+            ? {
+                ...current.revision.plugins,
+                [input.pluginId]: {
+                  ...installation!,
+                  enabled: false,
+                },
+              }
+            : current.revision.plugins,
+          rollbackRetention: current.revision.rollbackRetention.map((entry) => (
+            entry.pluginId === input.pluginId
+              && entry.immutableGenerationId
+                === input.immutableGenerationId
+              ? {
+                  ...entry,
+                  byteAvailability: 'corrupt' as const,
+                }
+              : entry
+          )),
           runtimeCatalog,
-          retainedRuntimeCatalog,
         };
-        pluginGenerations = { ...current.commit.pluginGenerations, [attempt.pluginId]: targetGeneration.reference };
-        mutationKind = 'rollback';
-      } else {
-        revision = createDisabledRecoveryRevision(false);
-        if (failedGenerationUnavailable) {
-          const { [attempt.pluginId]: _invalid, ...remainingGenerations } = current.commit.pluginGenerations;
-          pluginGenerations = remainingGenerations;
-        }
-      }
-      let committed = await commitRevision({
-        current,
-        revision,
-        pluginGenerations,
-        transactionId: `health-recovery-${randomUUID()}`,
-        createdAtMs,
-        mutationKind,
-        changedPluginIds: Object.freeze([attempt.pluginId]),
-        onApplied: currentnessControl.onApplied,
-      });
-      if (
-        mutationKind === 'rollback'
-        && committed.status === 'precommit_failed'
-        && committed.phase === 'validateAndActivate'
-      ) {
-        const recoveryFailure = committed;
-        committed = await commitRevision({
+        const committed = await commitRevision({
           current,
-          revision: createDisabledRecoveryRevision(true),
+          revision,
           pluginGenerations: current.commit.pluginGenerations,
-          transactionId: `health-recovery-disable-${randomUUID()}`,
+          transactionId: `integrity-${randomUUID()}`,
           createdAtMs,
           mutationKind: 'state',
-          changedPluginIds: Object.freeze([attempt.pluginId]),
-          onApplied: currentnessControl.onApplied,
+          runningSessionDisposition: 'revokeRunningSessions',
+          runningSessionRevocationScope: Object.freeze({
+            kind: 'immutableGeneration',
+            pluginId: input.pluginId,
+            immutableGenerationId: input.immutableGenerationId,
+          }),
+          changedPluginIds: Object.freeze([input.pluginId]),
+          onApplied: control.onApplied,
         });
         if (committed.status === 'conflict') continue;
-        if (committed.status === 'aborted' || committed.status === 'precommit_failed') {
+        if (
+          committed.status === 'aborted'
+          || committed.status === 'precommit_failed'
+        ) {
           throwPrecommitFailure(committed);
         }
-        throwPrecommitFailure(recoveryFailure);
+        if (committed.status === 'committed') {
+          reportPendingReconciliation(
+            'runner_generation_integrity_failure',
+            committed.pendingSurfaces,
+            committed.message,
+          );
+        }
+        return;
       }
-      if (committed.status === 'conflict') continue;
-      if (committed.status === 'aborted' || committed.status === 'precommit_failed') throwPrecommitFailure(committed);
-      if (committed.status === 'committed') {
-        reportPendingReconciliation(
-          'health_recovery',
-          committed.pendingSurfaces,
-          committed.message,
-        );
-      }
-      return;
-    }
+    });
   }
 
-  async function observeActivationAttempt(attempt: SupervisedPluginActivationAttempt): Promise<void> {
-    await observeActivationAttemptWithCurrentnessControl(attempt);
-  }
-
-  async function manifestHasExecutableDaemonEntrypoint(manifestPath: string): Promise<boolean> {
-    try {
-      const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as unknown;
-      const ingested = ingestCanonicalPluginManifest(manifest, { enforceEngineCompatibility: false });
-      if (!ingested.ok) return true;
-      return Boolean(ingested.manifest.entrypoints?.daemon || ingested.manifest.entrypoints?.development);
-    } catch {
-      return true;
-    }
-  }
-
-  async function hasExecutableDaemonEntrypoint(input: CommitPluginRegistryInstallationInput): Promise<boolean> {
-    return await manifestHasExecutableDaemonEntrypoint(
-      join(input.sourceRootPath, ...input.manifestRelativePath.split('/')),
-    );
-  }
-
-  async function settleReconciledNonExecutableGenerationHealth(
-    current: Awaited<ReturnType<typeof readCommittedState>>,
-  ): Promise<void> {
-    for (const [pluginId, reference] of Object.entries(current.commit.pluginGenerations)) {
-      const health = current.revision.health[reference.immutableGenerationId];
-      const manifestPath = current.catalog.plugins[pluginId]?.source.manifestPath;
-      if (health?.state !== 'pending' || !manifestPath) continue;
-      if (await manifestHasExecutableDaemonEntrypoint(manifestPath)) continue;
-      await markNonExecutableGenerationHealthy(pluginId, reference.immutableGenerationId);
-    }
-  }
-
-  async function settleCurrentNonExecutableHealthAfterRuntimePublication(): Promise<void> {
-    const current = await readCurrent();
-    const reconciliation = await reconcileRecord(current.commit);
-    if (reconciliation.status === 'retryable') {
-      reportPendingReconciliation(
-        'static_health_reconciliation',
-        Object.freeze(['reconciliation']),
-        reconciliation.message,
+  async function readExactPreparedCandidate(
+    input: CommitPluginRegistryInstallationInput,
+  ): Promise<Awaited<ReturnType<typeof readPreparedImmutablePluginGeneration>>> {
+    const preparedGeneration = input.preparedGeneration;
+    const verifiedGeneration = await readPreparedImmutablePluginGeneration({
+      paths,
+      immutableGenerationId: preparedGeneration.reference.immutableGenerationId,
+    });
+    if (
+      verifiedGeneration.rootPath !== preparedGeneration.rootPath
+      || JSON.stringify(verifiedGeneration.record) !== JSON.stringify(preparedGeneration.record)
+      || JSON.stringify(verifiedGeneration.reference) !== JSON.stringify(preparedGeneration.reference)
+      || verifiedGeneration.record.pluginId !== input.pluginId
+    ) {
+      throw new PluginRegistryCandidateConflictError(
+        `Plugin '${input.pluginId}' prepared immutable generation identity changed before installation`,
       );
-      return;
     }
-    await settleReconciledNonExecutableGenerationHealth(current);
-  }
-
-  async function markNonExecutableGenerationHealthy(
-    pluginId: string,
-    immutableGenerationId: string,
-  ): Promise<
-    | Extract<PluginRegistryTransactionResult, { status: 'committed' }>
-    | Extract<PluginRegistryTransactionResult, { status: 'outcomeUnknown' }>
-    | null
-  > {
-    while (true) {
-      const current = await readPersistedCurrent();
-      const reference = current?.commit.pluginGenerations[pluginId];
-      const health = current?.revision.health[immutableGenerationId];
-      if (!current || reference?.immutableGenerationId !== immutableGenerationId || !health) return null;
-      if (health.state === 'healthy' || health.state === 'quarantined') return null;
-      const nextHealth = markGenerationHealthyAfterStaticReconciliation(health);
-      const createdAtMs = nowMs();
-      const revision: PluginInstallationStateRevision = {
-        ...current.revision,
-        revisionId: `health-${randomUUID()}`,
-        createdAtMs,
-        health: { ...current.revision.health, [immutableGenerationId]: nextHealth },
-        rollbackRetention: current.revision.rollbackRetention.map((entry) => (
-          entry.pluginId === pluginId && entry.role === 'lastKnownGood'
-            ? { ...entry, role: 'userRollback' as const, automaticRecoveryEligible: false }
-            : entry
-        )),
-      };
-      const committed = await commitHealthMetadata({
-        current,
-        revision,
-        transactionId: `health-static-${randomUUID()}`,
-        createdAtMs,
-      });
-      if (committed.status === 'conflict') continue;
-      if (committed.status === 'aborted') {
-        throwPrecommitFailure(committed);
-      }
-      return committed;
-    }
-  }
-
-  async function evictQuarantinedTryOnceBytesForStoragePressure(): Promise<Readonly<{
-    evictedGenerationIds: readonly string[];
-  }>> {
-    while (true) {
-      const current = await readPersistedCurrent();
-      if (!current) return Object.freeze({ evictedGenerationIds: Object.freeze([]) });
-      const evictedGenerationIds = current.revision.rollbackRetention
-        .filter((entry) => {
-          const health = current.revision.health[entry.healthGenerationId];
-          return entry.role === 'quarantined'
-            && entry.byteAvailability === 'available'
-            && health?.state === 'quarantined'
-            && health.tryOnce === 'available';
-        })
-        .map((entry) => entry.immutableGenerationId)
-        .sort();
-      if (evictedGenerationIds.length === 0) {
-        return Object.freeze({ evictedGenerationIds: Object.freeze([]) });
-      }
-      const evicted = new Set(evictedGenerationIds);
-      const createdAtMs = nowMs();
-      const revision: PluginInstallationStateRevision = {
-        ...current.revision,
-        revisionId: `health-storage-pressure-${randomUUID()}`,
-        createdAtMs,
-        rollbackRetention: current.revision.rollbackRetention.map((entry) => (
-          evicted.has(entry.immutableGenerationId)
-            ? {
-                ...entry,
-                automaticRecoveryEligible: false,
-                byteAvailability: 'evicted' as const,
-              }
-            : entry
-        )),
-      };
-      const committed = await commitHealthMetadata({
-        current,
-        revision,
-        transactionId: `health-storage-pressure-${randomUUID()}`,
-        createdAtMs,
-      });
-      if (committed.status === 'conflict') continue;
-      if (committed.status === 'aborted') {
-        throwPrecommitFailure(committed);
-      }
-      if (committed.status === 'outcomeUnknown') {
-        throw new Error(
-          `Storage-pressure quarantine eviction durability is unknown; quarantined bytes were not removed`
-          + (committed.message ? `: ${committed.message}` : ''),
-        );
-      }
-      if (committed.pendingSurfaces.length > 0) {
-        throw new Error(
-          `Storage-pressure quarantine eviction cleanup remains pending: ${committed.pendingSurfaces.join(', ')}`
-          + (committed.message ? `: ${committed.message}` : ''),
-        );
-      }
-      return Object.freeze({
-        evictedGenerationIds: Object.freeze(evictedGenerationIds),
-      });
-    }
+    return verifiedGeneration;
   }
 
   async function install(input: CommitPluginRegistryInstallationInput): Promise<PluginRegistryTransactionResult> {
     requireRuntimeLifecycle();
     const catalogRecordInput = PluginStateRecordSchema.parse(input.catalogRecord);
+    if (
+      input.updatePolicy === 'automatic'
+      && (input.trust.distribution.kind !== 'npm' || !catalogRecordInput.install.curatedUpdateSource)
+    ) {
+      throw new Error('Automatic plugin updates require a reviewed curated npm source binding');
+    }
+    if (input.updatePolicy !== 'automatic' && catalogRecordInput.install.curatedUpdateSource !== undefined) {
+      throw new Error('Only automatic plugin updates may retain a curated source binding');
+    }
+    const suppliedAvailability = input.availability === undefined
+      ? undefined
+      : PluginInstallationAvailabilityProjectionSchema.parse(input.availability);
+    const expectedAvailabilitySourceClass = createDefaultPluginInstallationAvailabilityProjection(
+      input.trust.distribution,
+    ).sourceClass;
+    if (
+      suppliedAvailability
+      && suppliedAvailability.sourceClass !== expectedAvailabilitySourceClass
+    ) {
+      throw new Error('Plugin installation availability source class differs from its reviewed distribution');
+    }
+    if (
+      suppliedAvailability?.release
+      && (
+        suppliedAvailability.release.ref.pluginId !== input.pluginId
+        || suppliedAvailability.release.ref.version !== catalogRecordInput.install.manifestVersion
+      )
+    ) {
+      throw new Error('Plugin installation availability release differs from its canonical plugin or version');
+    }
+    const admittedIntegrity = input.admittedIntegrity === undefined
+      ? undefined
+      : AlgorithmQualifiedIntegritySchema.parse(input.admittedIntegrity);
+    if (admittedIntegrity && input.trust.distribution.kind === 'localPath') {
+      throw new Error('Local path plugin installations cannot declare acquisition integrity');
+    }
+    const reviewedPrincipal = input.installReviewPrincipalDigest === undefined
+      ? undefined
+      : PluginInstallReviewPrincipalDigestSchema.parse(input.installReviewPrincipalDigest);
+    const reviewedPrincipalPresentation = input.installReviewPrincipalPresentation === undefined
+      ? undefined
+      : PluginInstallReviewPrincipalPresentationV1Schema.parse(
+          input.installReviewPrincipalPresentation,
+        );
+    if (reviewedPrincipalPresentation && !reviewedPrincipal) {
+      throw new Error('Plugin install-review principal presentation requires its digest');
+    }
+    if (
+      reviewedPrincipalPresentation
+      && reviewedPrincipal
+      && !pluginInstallReviewPrincipalPresentationMatchesDigest(
+        reviewedPrincipal,
+        reviewedPrincipalPresentation,
+      )
+    ) {
+      throw new Error('Plugin install-review principal presentation digest mismatch');
+    }
     if (input.trust.pluginId !== input.pluginId) throw new Error('Plugin installation trust identity mismatch');
     if (catalogRecordInput.install.trust && JSON.stringify(catalogRecordInput.install.trust) !== JSON.stringify(input.trust)) {
       throw new Error('Plugin installation catalog trust differs from the reviewed trust identity');
     }
     await ensurePluginStoreDirectories({ happyHomeDir: paths.happyHomeDir });
-    const executableDaemonEntrypoint = await hasExecutableDaemonEntrypoint(input);
-    const generationCreatedAtMs = nowMs();
-    const generationRecord = await createImmutablePluginGenerationRecordFromSource({
-      pluginId: input.pluginId,
-      sourceRootPath: input.sourceRootPath,
-      manifestRelativePath: input.manifestRelativePath,
-      distribution: input.trust.distribution,
-      updatePolicy: input.updatePolicy,
-      createdAtMs: generationCreatedAtMs,
-    });
-    if (input.reviewedPackageDigest && generationRecord.packageDigest !== input.reviewedPackageDigest) {
+    const preparedGeneration = input.preparedGeneration;
+    const immutableGenerationId = preparedGeneration.reference.immutableGenerationId;
+    const verifiedGeneration = await readExactPreparedCandidate(input);
+    const generationRecord = verifiedGeneration.record;
+    if (input.preparedActivationGraph) {
+      const [verifiedRootPath, graphRootPath, graphEntryPath] = await Promise.all([
+        realpath(verifiedGeneration.rootPath),
+        realpath(input.preparedActivationGraph.rootPath),
+        realpath(input.preparedActivationGraph.entryPath),
+      ]);
+      const entryRelativePath = relative(verifiedRootPath, graphEntryPath);
+      const portableEntryPath = entryRelativePath.split(sep).join('/');
+      if (
+        input.preparedActivationGraph.immutableGenerationId !== immutableGenerationId
+        || graphRootPath !== verifiedRootPath
+        || graphEntryPath === verifiedRootPath
+        || !isCanonicalAbsolutePathInsideRoot(verifiedRootPath, graphEntryPath)
+        || !generationRecord.files.some((file) => file.relativePath === portableEntryPath)
+      ) {
+        throw new PluginRegistryCandidateConflictError(
+          `Plugin '${input.pluginId}' prepared activation graph is not bound to its exact immutable generation`,
+        );
+      }
+    }
+    // A source-only candidate must name the generation it cloned before the
+    // candidate was built. Reading a base only at apply time would allow a
+    // concurrent successor to become the apparent base while this candidate's
+    // untouched files still derive from an older generation.
+    const developmentBaseGenerationId = input.developmentBaseGenerationId
+      ?? (input.developmentChangedPaths
+        ? (await readPersistedCurrent())?.commit.pluginGenerations[input.pluginId]?.immutableGenerationId
+        : undefined);
+    if (
+      (input.developmentChangedPaths || input.developmentBaseGenerationId !== undefined)
+      && !developmentBaseGenerationId
+    ) {
       throw new PluginRegistryCandidateConflictError(
-        `Plugin '${input.pluginId}' source bytes changed after installation review`,
+        `Plugin '${input.pluginId}' has no current immutable generation for a development edit`,
       );
     }
-    const generationCustody = retainProcessLocalPreparedPluginGeneration(
-      paths,
-      generationRecord.immutableGenerationId,
-    );
     let retryRuntime: PreparedPluginRegistryRuntime | undefined;
     try {
-      let prepared: Awaited<ReturnType<typeof prepareImmutablePluginGeneration>>;
-      while (true) {
-        try {
-          prepared = await prepareGeneration({
-            paths,
-            sourceRootPath: input.sourceRootPath,
-            record: generationRecord,
-          });
-          break;
-        } catch (error) {
-          const code = (error as NodeJS.ErrnoException | null)?.code;
-          if (code !== 'ENOSPC' && code !== 'EDQUOT') throw error;
-          const eviction = await evictQuarantinedTryOnceBytesForStoragePressure();
-          if (eviction.evictedGenerationIds.length === 0) throw error;
-        }
-      }
       while (true) {
         const current = await readCurrent();
+        if (
+          developmentBaseGenerationId
+          && current.commit.pluginGenerations[input.pluginId]?.immutableGenerationId
+            !== developmentBaseGenerationId
+        ) {
+          throw new PluginRegistryCandidateConflictError(
+            `Plugin '${input.pluginId}' current generation changed during development preparation`,
+          );
+        }
         const createdAtMs = nowMs();
-      const priorInstallation = current.revision.plugins[input.pluginId];
-      const priorCatalogRecord = current.catalog.plugins[input.pluginId];
-      const healthTombstone = [...current.revision.healthTombstones].reverse().find((entry) => (
-        entry.pluginId === input.pluginId && entry.fingerprint === generationRecord.fingerprint
-      ));
-      const catalogRecord = PluginStateRecordSchema.parse({
+        const priorInstallation = current.revision.plugins[input.pluginId];
+        const availability = suppliedAvailability
+          ?? (input.developmentChangedPaths ? priorInstallation?.availability : undefined)
+          ?? createDefaultPluginInstallationAvailabilityProjection(input.trust.distribution);
+        const installReviewPrincipalDigest = reviewedPrincipal
+          ?? (input.developmentChangedPaths
+            ? priorInstallation?.installReviewPrincipalDigest
+            : undefined);
+        const installReviewPrincipalPresentation = reviewedPrincipalPresentation
+          ?? (input.developmentChangedPaths
+            ? priorInstallation?.installReviewPrincipalPresentation
+            : undefined);
+        const priorCatalogRecord = current.catalog.plugins[input.pluginId];
+        const catalogRecord = PluginStateRecordSchema.parse({
         ...catalogRecordInput,
         source: {
           ...catalogRecordInput.source,
-          resolvedPath: prepared.rootPath,
-          manifestPath: join(prepared.rootPath, ...input.manifestRelativePath.split('/')),
-          resolvedDigest: generationRecord.manifestDigest,
+          resolvedPath: verifiedGeneration.rootPath,
+          manifestPath: join(verifiedGeneration.rootPath, ...generationRecord.manifestRelativePath.split('/')),
         },
         install: {
           ...catalogRecordInput.install,
           mode: 'managed_install',
-          manifestDigest: generationRecord.manifestDigest,
-          installedPath: prepared.rootPath,
+          installedPath: verifiedGeneration.rootPath,
           trust: input.trust,
           updatePolicy: input.updatePolicy,
           optionalAccess: input.optionalAccess,
         },
         state: {
           ...catalogRecordInput.state,
-          enabled: healthTombstone
-            ? false
-            : priorInstallation && priorCatalogRecord?.install.trust
-              ? priorInstallation.enabled
-              : catalogRecordInput.state.enabled,
+          enabled: priorInstallation && priorCatalogRecord?.install.trust
+            ? priorInstallation.enabled
+            : catalogRecordInput.state.enabled,
         },
-      });
-      const priorReference = current.commit.pluginGenerations[input.pluginId];
-      const retainsPriorLineage = priorInstallation !== undefined
-        && pluginDistributionRollbackLineagesEqual(priorInstallation.source.distribution, input.trust.distribution);
-      const retainsPriorDistribution = priorInstallation !== undefined
-        && pluginDistributionIdentitiesEqual(priorInstallation.source.distribution, input.trust.distribution);
-      const retainedForOtherPlugins = current.revision.rollbackRetention.filter((entry) => entry.pluginId !== input.pluginId);
-      const retainedCatalogForOtherPlugins = Object.fromEntries(Object.entries(current.revision.retainedRuntimeCatalog ?? {})
-        .filter(([generationId]) => retainedForOtherPlugins.some((entry) => entry.immutableGenerationId === generationId)));
-      const healthForOtherPlugins = Object.fromEntries(Object.entries(current.revision.health)
-        .filter(([, health]) => health.pluginId !== input.pluginId));
-      const rollbackRetention = [...retainedForOtherPlugins];
-      const retainedRuntimeCatalog: Record<string, PluginStateRecord> = { ...retainedCatalogForOtherPlugins };
-      if (priorReference && retainsPriorLineage) {
-        const priorGeneration = await readPreparedImmutablePluginGeneration({
+        });
+        const priorReference = current.commit.pluginGenerations[input.pluginId];
+        const retainsPriorLineage = priorInstallation !== undefined
+          && pluginDistributionRollbackLineagesEqual(priorInstallation.source.distribution, input.trust.distribution);
+        const retainedForOtherPlugins = current.revision.rollbackRetention.filter((entry) => entry.pluginId !== input.pluginId);
+        const retainedCatalogForOtherPlugins = Object.fromEntries(Object.entries(current.revision.retainedRuntimeCatalog ?? {})
+          .filter(([generationId]) => retainedForOtherPlugins.some((entry) => entry.immutableGenerationId === generationId)));
+        const rollbackRetention = [...retainedForOtherPlugins];
+        const retainedRuntimeCatalog: Record<string, PluginStateRecord> = { ...retainedCatalogForOtherPlugins };
+        if (priorReference && retainsPriorLineage) {
+        await readPreparedImmutablePluginGeneration({
           paths,
           immutableGenerationId: priorReference.immutableGenerationId,
         });
-        const priorHealth = current.revision.health[priorReference.immutableGenerationId];
         const priorCatalog = current.catalog.plugins[input.pluginId];
-        if (!priorHealth || !priorCatalog) throw new Error(`Current plugin '${input.pluginId}' has incomplete rollback state`);
-        healthForOtherPlugins[priorReference.immutableGenerationId] = priorHealth;
+        if (!priorCatalog) throw new Error(`Current plugin '${input.pluginId}' has incomplete rollback state`);
         rollbackRetention.push({
           pluginId: input.pluginId,
           immutableGenerationId: priorReference.immutableGenerationId,
-          healthGenerationId: priorReference.immutableGenerationId,
-          role: priorHealth.state === 'healthy' && retainsPriorDistribution
-            ? 'lastKnownGood'
-            : priorHealth.state === 'quarantined' || priorHealth.state === 'trial'
-              ? 'quarantined'
-              : 'userRollback',
-          automaticRecoveryEligible: priorHealth.state === 'healthy' && retainsPriorDistribution,
           retainedAtMs: createdAtMs,
           byteAvailability: 'available',
-          packageDigest: priorGeneration.record.packageDigest,
-          artifactDigest: priorGeneration.record.installedArtifactRecord.digest,
           pluginVersion: priorCatalog.install.manifestVersion,
           distribution: priorInstallation.source.distribution,
+          ...(priorInstallation.availability
+            ? { availability: priorInstallation.availability }
+            : {}),
+          ...(priorInstallation.source.admittedIntegrity
+            ? { admittedIntegrity: priorInstallation.source.admittedIntegrity }
+            : {}),
+          ...(priorInstallation.installReviewPrincipalDigest
+            ? { installReviewPrincipalDigest: priorInstallation.installReviewPrincipalDigest }
+            : {}),
+          ...(priorInstallation.installReviewPrincipalPresentation
+            ? { installReviewPrincipalPresentation: priorInstallation.installReviewPrincipalPresentation }
+            : {}),
         });
         retainedRuntimeCatalog[priorReference.immutableGenerationId] = priorCatalog;
-      }
-      const runtimeCatalog = PluginStateFileV1Schema.parse({
+        }
+        const runtimeCatalog = PluginStateFileV1Schema.parse({
         ...current.catalog,
         plugins: { ...current.catalog.plugins, [input.pluginId]: catalogRecord },
-      });
-      const revision: PluginInstallationStateRevision = {
+        });
+        const revision: PluginInstallationStateRevision = {
         t: 'happier_plugin_installations_v1',
         schemaVersion: 1,
         revisionId: `state-${randomUUID()}`,
@@ -1314,133 +1158,83 @@ export function createPluginRegistryStateStore(params?: Readonly<{
           ...current.revision.plugins,
           [input.pluginId]: {
             enabled: catalogRecord.state.enabled,
+            materializationId: priorInstallation?.materializationId ?? createPluginMaterializationId(),
             trust: input.trust,
-            source: { distribution: input.trust.distribution, admittedIntegrity: generationRecord.packageDigest },
+            source: {
+              distribution: input.trust.distribution,
+              ...(admittedIntegrity ? { admittedIntegrity } : {}),
+            },
             updatePolicy: input.updatePolicy,
             optionalAccess: [...input.optionalAccess],
+            availability,
+            ...(installReviewPrincipalDigest
+              ? { installReviewPrincipalDigest }
+              : {}),
+            ...(installReviewPrincipalPresentation
+              ? { installReviewPrincipalPresentation }
+              : {}),
           },
         },
-        health: {
-          ...healthForOtherPlugins,
-          [generationRecord.immutableGenerationId]: healthTombstone
-            ? createQuarantinedGenerationHealthRecord({
-                pluginId: input.pluginId,
-                immutableGenerationId: generationRecord.immutableGenerationId,
-                fingerprint: generationRecord.fingerprint,
-                tombstoneState: healthTombstone.state,
-              })
-            : createPendingGenerationHealthRecord({
-                pluginId: input.pluginId,
-                immutableGenerationId: generationRecord.immutableGenerationId,
-                fingerprint: generationRecord.fingerprint,
-              }),
-        },
         rollbackRetention,
-        healthTombstones: current.revision.healthTombstones,
         runtimeCatalog,
         retainedRuntimeCatalog,
-      };
-      const pluginGenerations = { ...current.commit.pluginGenerations, [input.pluginId]: prepared.reference };
-      const committed = await commitRevision({
+        };
+        const pluginGenerations = {
+        ...current.commit.pluginGenerations,
+        [input.pluginId]: verifiedGeneration.reference,
+        };
+        await readExactPreparedCandidate(input);
+        const committed = await commitRevision({
         current,
         revision,
         pluginGenerations,
         transactionId: `install-${randomUUID()}`,
         createdAtMs,
         mutationKind: 'install',
+        runningSessionDisposition: 'retainRunningSessions',
         changedPluginIds: Object.freeze([input.pluginId]),
         ...(retryRuntime ? { retryRuntime } : {}),
         retainRuntimeOnConflict: true,
-      });
-      retryRuntime = undefined;
-      if (committed.status === 'conflict') {
+        ...(input.preparedActivationGraph
+          ? {
+              preparedActivationGraphsByPluginId: new Map([
+                [input.pluginId, input.preparedActivationGraph],
+              ]),
+            }
+          : {}),
+        });
+        retryRuntime = undefined;
+        if (committed.status === 'conflict') {
         retryRuntime = 'retryRuntime' in committed ? committed.retryRuntime : undefined;
-        continue;
-      }
-      if (committed.status === 'aborted' || committed.status === 'precommit_failed') {
+          continue;
+        }
+        if (committed.status === 'aborted' || committed.status === 'precommit_failed') {
         throwPrecommitFailure(committed);
-      }
-      if (
-        !executableDaemonEntrypoint
-        && committed.status === 'committed'
-        && committed.applied
-        && committed.pendingSurfaces.length === 0
-      ) {
-        return await markNonExecutableGenerationHealthy(
-          input.pluginId,
-          generationRecord.immutableGenerationId,
-        ) ?? committed;
-      }
+        }
+      // `outcomeUnknown` can mean the durable commit was written but its
+      // acknowledgement failed. Preserve the candidate in either non-conflict
+      // outcome because the committed record may already reference it.
+        preparedGeneration.adopt();
         return committed;
       }
     } finally {
       await retryRuntime?.abort().catch(() => undefined);
-      generationCustody.release();
     }
   }
 
   async function rollbackWithResult(pluginId: string): Promise<PluginRegistryStateMutationResult> {
     requireRuntimeLifecycle();
     while (true) {
-      let current = await readCurrent();
-      let currentReference = current.commit.pluginGenerations[pluginId];
-      let currentCatalog = current.catalog.plugins[pluginId];
-      let installation = current.revision.plugins[pluginId];
-      let targetRetention = current.revision.rollbackRetention.find((entry) => (
+      const current = await readCurrent();
+      const currentReference = current.commit.pluginGenerations[pluginId];
+      const currentCatalog = current.catalog.plugins[pluginId];
+      const installation = current.revision.plugins[pluginId];
+      const targetRetention = current.revision.rollbackRetention.find((entry) => (
         entry.pluginId === pluginId && entry.byteAvailability === 'available'
       ));
       if (!currentReference || !currentCatalog || !installation || !targetRetention) {
         throw new Error(`Plugin '${pluginId}' has no available rollback generation`);
       }
-      let currentHealth = current.revision.health[currentReference.immutableGenerationId];
-      let targetHealth = current.revision.health[targetRetention.healthGenerationId];
-      if (!currentHealth || !targetHealth) {
-        throw new Error(`Plugin '${pluginId}' rollback health state is unavailable`);
-      }
-
-      if (targetRetention.role === 'quarantined') {
-        // A Try-once attempt begins only after the retained immutable identity
-        // and bytes are usable. Runtime preparation still happens after the
-        // consumption commit so a crash cannot silently re-arm executable bytes.
-        await readVerifiedRollbackGeneration(targetRetention);
-        const consumedCurrent = await persistTryOnceConsumption({
-          current,
-          pluginId,
-          immutableGenerationId: targetRetention.healthGenerationId,
-        });
-        if (!consumedCurrent) continue;
-        current = consumedCurrent;
-        const refreshedCurrentReference = current.commit.pluginGenerations[pluginId];
-        const refreshedCurrentCatalog = current.catalog.plugins[pluginId];
-        const refreshedInstallation = current.revision.plugins[pluginId];
-        const refreshedTargetRetention = current.revision.rollbackRetention.find((entry) => (
-          entry.pluginId === pluginId && entry.byteAvailability === 'available'
-        ));
-        const refreshedCurrentHealth = refreshedCurrentReference
-          ? current.revision.health[refreshedCurrentReference.immutableGenerationId]
-          : undefined;
-        const refreshedTargetHealth = refreshedTargetRetention
-          ? current.revision.health[refreshedTargetRetention.healthGenerationId]
-          : undefined;
-        if (
-          !refreshedCurrentReference
-          || !refreshedCurrentCatalog
-          || !refreshedInstallation
-          || !refreshedTargetRetention
-        ) {
-          throw new Error(`Plugin '${pluginId}' has no available rollback generation`);
-        }
-        if (!refreshedCurrentHealth || !refreshedTargetHealth) {
-          throw new Error(`Plugin '${pluginId}' rollback health state is unavailable`);
-        }
-        currentReference = refreshedCurrentReference;
-        currentCatalog = refreshedCurrentCatalog;
-        installation = refreshedInstallation;
-        targetRetention = refreshedTargetRetention;
-        currentHealth = refreshedCurrentHealth;
-        targetHealth = refreshedTargetHealth;
-      }
-      const nextTargetHealth = targetHealth;
       const retainedCatalog = current.revision.retainedRuntimeCatalog?.[targetRetention.immutableGenerationId];
       if (!retainedCatalog) throw new Error(`Plugin '${pluginId}' rollback catalog is unavailable`);
       const targetTrust = retainedCatalog.install.trust;
@@ -1460,17 +1254,22 @@ export function createPluginRegistryStateStore(params?: Readonly<{
       const rollbackRetention = retainedForOtherPlugins.concat({
         pluginId,
         immutableGenerationId: priorGeneration.record.immutableGenerationId,
-        healthGenerationId: priorGeneration.record.immutableGenerationId,
-        role: currentHealth.state === 'quarantined' || currentHealth.state === 'trial'
-          ? 'quarantined' as const
-          : 'userRollback' as const,
-        automaticRecoveryEligible: false,
         retainedAtMs: createdAtMs,
         byteAvailability: 'available' as const,
-        packageDigest: priorGeneration.record.packageDigest,
-        artifactDigest: priorGeneration.record.installedArtifactRecord.digest,
         pluginVersion: currentCatalog.install.manifestVersion,
         distribution: installation.source.distribution,
+        ...(installation.availability
+          ? { availability: installation.availability }
+          : {}),
+        ...(installation.source.admittedIntegrity
+          ? { admittedIntegrity: installation.source.admittedIntegrity }
+          : {}),
+        ...(installation.installReviewPrincipalDigest
+          ? { installReviewPrincipalDigest: installation.installReviewPrincipalDigest }
+          : {}),
+        ...(installation.installReviewPrincipalPresentation
+          ? { installReviewPrincipalPresentation: installation.installReviewPrincipalPresentation }
+          : {}),
       });
       const rolledBackCatalog = PluginStateRecordSchema.parse({
         ...retainedCatalog,
@@ -1481,6 +1280,11 @@ export function createPluginRegistryStateStore(params?: Readonly<{
           optionalAccess: installation.optionalAccess,
         },
       });
+      const {
+        installReviewPrincipalDigest: _currentInstallReviewPrincipalDigest,
+        installReviewPrincipalPresentation: _currentInstallReviewPrincipalPresentation,
+        ...installationWithoutInstallReviewPrincipalDigest
+      } = installation;
       const runtimeCatalog = PluginStateFileV1Schema.parse({
         ...current.catalog,
         plugins: { ...current.catalog.plugins, [pluginId]: rolledBackCatalog },
@@ -1488,16 +1292,6 @@ export function createPluginRegistryStateStore(params?: Readonly<{
       const retainedRuntimeCatalog = Object.fromEntries(Object.entries(current.revision.retainedRuntimeCatalog ?? {})
         .filter(([generationId]) => generationId !== targetRetention.immutableGenerationId));
       retainedRuntimeCatalog[priorGeneration.record.immutableGenerationId] = currentCatalog;
-      const liveHealthIds = new Set([
-        ...Object.values(current.commit.pluginGenerations)
-          .filter((reference) => reference.immutableGenerationId !== currentReference.immutableGenerationId)
-          .map((reference) => reference.immutableGenerationId),
-        targetGeneration.record.immutableGenerationId,
-        ...rollbackRetention.map((entry) => entry.immutableGenerationId),
-      ]);
-      const health = Object.fromEntries(Object.entries(current.revision.health)
-        .filter(([generationId]) => liveHealthIds.has(generationId)));
-      health[targetRetention.healthGenerationId] = nextTargetHealth;
       const revision: PluginInstallationStateRevision = {
         ...current.revision,
         revisionId: `state-${randomUUID()}`,
@@ -1505,18 +1299,26 @@ export function createPluginRegistryStateStore(params?: Readonly<{
         plugins: {
           ...current.revision.plugins,
           [pluginId]: {
-            ...installation,
+            ...installationWithoutInstallReviewPrincipalDigest,
             enabled: rolledBackCatalog.state.enabled,
             trust: targetTrust,
             source: {
               distribution: targetRetention.distribution,
-              admittedIntegrity: targetGeneration.record.packageDigest,
+              ...(targetRetention.admittedIntegrity
+                ? { admittedIntegrity: targetRetention.admittedIntegrity }
+                : {}),
             },
+            availability: targetRetention.availability
+              ?? createDefaultPluginInstallationAvailabilityProjection(targetRetention.distribution),
+            ...(targetRetention.installReviewPrincipalDigest
+              ? { installReviewPrincipalDigest: targetRetention.installReviewPrincipalDigest }
+              : {}),
+            ...(targetRetention.installReviewPrincipalPresentation
+              ? { installReviewPrincipalPresentation: targetRetention.installReviewPrincipalPresentation }
+              : {}),
           },
         },
-        health,
         rollbackRetention,
-        healthTombstones: current.revision.healthTombstones,
         runtimeCatalog,
         retainedRuntimeCatalog,
       };
@@ -1528,6 +1330,7 @@ export function createPluginRegistryStateStore(params?: Readonly<{
         transactionId: `rollback-${randomUUID()}`,
         createdAtMs,
         mutationKind: 'rollback',
+        runningSessionDisposition: 'retainRunningSessions',
         changedPluginIds: Object.freeze([pluginId]),
       });
       if (committed.status === 'conflict') continue;
@@ -1548,14 +1351,11 @@ export function createPluginRegistryStateStore(params?: Readonly<{
   ): Promise<PluginRegistryStateMutationResult | null> {
     requireRuntimeLifecycle();
     while (true) {
-      let current = await readCurrent();
-      let reference = current.commit.pluginGenerations[pluginId];
-      let catalogRecord = current.catalog.plugins[pluginId];
-      let installation = current.revision.plugins[pluginId];
-      let generationHealth = reference
-        ? current.revision.health[reference.immutableGenerationId]
-        : undefined;
-      if (!reference || !catalogRecord || !installation || !generationHealth) {
+      const current = await readCurrent();
+      const reference = current.commit.pluginGenerations[pluginId];
+      const catalogRecord = current.catalog.plugins[pluginId];
+      const installation = current.revision.plugins[pluginId];
+      if (!reference || !catalogRecord || !installation) {
         throw new Error(`Unknown plugin id: ${pluginId}`);
       }
       if (
@@ -1571,27 +1371,6 @@ export function createPluginRegistryStateStore(params?: Readonly<{
         throw new Error(`Plugin '${pluginId}' requires installation review before it can be enabled`);
       }
       if (catalogRecord.state.enabled === enabled) return null;
-
-      if (enabled && generationHealth.state === 'quarantined') {
-        const consumedCurrent = await persistTryOnceConsumption({
-          current,
-          pluginId,
-          immutableGenerationId: reference.immutableGenerationId,
-        });
-        if (!consumedCurrent) continue;
-        current = consumedCurrent;
-        reference = current.commit.pluginGenerations[pluginId];
-        catalogRecord = current.catalog.plugins[pluginId];
-        installation = current.revision.plugins[pluginId];
-        generationHealth = reference
-          ? current.revision.health[reference.immutableGenerationId]
-          : undefined;
-        if (!reference || !catalogRecord || !installation || !generationHealth) {
-          throw new Error(`Unknown plugin id: ${pluginId}`);
-        }
-      } else if (enabled && generationHealth.tryOnce === 'consumed') {
-        throw new Error('Generation Try once is unavailable or already consumed');
-      }
 
       const runtimeCatalog = PluginStateFileV1Schema.parse({
         ...current.catalog,
@@ -1612,11 +1391,6 @@ export function createPluginRegistryStateStore(params?: Readonly<{
           ...current.revision.plugins,
           [pluginId]: { ...installation, enabled },
         },
-        health: {
-          ...current.revision.health,
-          [reference.immutableGenerationId]: generationHealth,
-        },
-        healthTombstones: current.revision.healthTombstones,
         runtimeCatalog,
       };
       const committed = await commitRevision({
@@ -1626,6 +1400,9 @@ export function createPluginRegistryStateStore(params?: Readonly<{
         transactionId: `state-${randomUUID()}`,
         createdAtMs,
         mutationKind: 'state',
+        runningSessionDisposition: enabled
+          ? 'retainRunningSessions'
+          : 'revokeRunningSessions',
         changedPluginIds: Object.freeze([pluginId]),
       });
       if (committed.status === 'conflict') continue;
@@ -1684,10 +1461,6 @@ export function createPluginRegistryStateStore(params?: Readonly<{
         Object.entries(current.revision.retainedRuntimeCatalog ?? {})
           .filter(([generationId]) => !revokedRollbackGenerationIds.has(generationId)),
       );
-      const health = Object.fromEntries(Object.entries(current.revision.health)
-        .filter(([generationId, record]) => (
-          record.pluginId !== pluginId || generationId === reference.immutableGenerationId
-        )));
       const createdAtMs = nowMs();
       const revision: PluginInstallationStateRevision = {
         ...current.revision,
@@ -1700,7 +1473,6 @@ export function createPluginRegistryStateStore(params?: Readonly<{
             enabled: false,
           },
         },
-        health,
         rollbackRetention,
         runtimeCatalog,
         retainedRuntimeCatalog,
@@ -1712,6 +1484,7 @@ export function createPluginRegistryStateStore(params?: Readonly<{
         transactionId: `forget-trust-${randomUUID()}`,
         createdAtMs,
         mutationKind: 'state',
+        runningSessionDisposition: 'revokeRunningSessions',
         changedPluginIds: Object.freeze([pluginId]),
       });
       if (committed.status === 'conflict') continue;
@@ -1724,41 +1497,18 @@ export function createPluginRegistryStateStore(params?: Readonly<{
 
   async function uninstallWithResult(
     pluginId: string,
-    options?: Readonly<{ clearHealthHistory?: boolean }>,
   ): Promise<PluginRegistryStateMutationResult | null> {
     requireRuntimeLifecycle();
     while (true) {
       const current = await readCurrent();
       if (!current.revision.plugins[pluginId]) {
-        if (options?.clearHealthHistory !== true) throw new Error(`Unknown plugin id: ${pluginId}`);
-        const healthTombstones = current.revision.healthTombstones.filter((entry) => entry.pluginId !== pluginId);
-        if (healthTombstones.length === current.revision.healthTombstones.length) return null;
-        const createdAtMs = nowMs();
-        const revision: PluginInstallationStateRevision = {
-          ...current.revision,
-          revisionId: `state-${randomUUID()}`,
-          createdAtMs,
-          healthTombstones,
-        };
-        const committed = await commitHealthMetadata({
-          current,
-          revision,
-          transactionId: `clear-health-${randomUUID()}`,
-          createdAtMs,
-        });
-        if (committed.status === 'conflict') continue;
-        if (committed.status === 'aborted') {
-          throwPrecommitFailure(committed);
-        }
-        return Object.freeze({ catalog: current.catalog, transaction: committed });
+        throw new Error(`Unknown plugin id: ${pluginId}`);
       }
       const { [pluginId]: _catalog, ...catalogPlugins } = current.catalog.plugins;
       const { [pluginId]: _installation, ...plugins } = current.revision.plugins;
       const { [pluginId]: _generation, ...pluginGenerations } = current.commit.pluginGenerations;
       const rollbackRetention = current.revision.rollbackRetention.filter((entry) => entry.pluginId !== pluginId);
       const retainedIds = new Set(rollbackRetention.map((entry) => entry.immutableGenerationId));
-      const health = Object.fromEntries(Object.entries(current.revision.health)
-        .filter(([, record]) => record.pluginId !== pluginId));
       const retainedRuntimeCatalog = Object.fromEntries(Object.entries(current.revision.retainedRuntimeCatalog ?? {})
         .filter(([generationId]) => retainedIds.has(generationId)));
       const runtimeCatalog = PluginStateFileV1Schema.parse({ ...current.catalog, plugins: catalogPlugins });
@@ -1768,11 +1518,7 @@ export function createPluginRegistryStateStore(params?: Readonly<{
         revisionId: `state-${randomUUID()}`,
         createdAtMs,
         plugins,
-        health,
         rollbackRetention,
-        healthTombstones: options?.clearHealthHistory === true
-          ? current.revision.healthTombstones.filter((entry) => entry.pluginId !== pluginId)
-          : current.revision.healthTombstones,
         runtimeCatalog,
         retainedRuntimeCatalog,
       };
@@ -1783,6 +1529,7 @@ export function createPluginRegistryStateStore(params?: Readonly<{
         transactionId: `uninstall-${randomUUID()}`,
         createdAtMs,
         mutationKind: 'uninstall',
+        runningSessionDisposition: 'revokeRunningSessions',
         changedPluginIds: Object.freeze([pluginId]),
       });
       if (committed.status === 'conflict') continue;
@@ -1808,17 +1555,14 @@ export function createPluginRegistryStateStore(params?: Readonly<{
     await Promise.all(current.revision.rollbackRetention.map(async (retention) => {
       if (retention.byteAvailability !== 'available') return;
       const installation = current.revision.plugins[retention.pluginId];
-      const health = current.revision.health[retention.healthGenerationId];
       const retainedCatalog = current.revision.retainedRuntimeCatalog?.[retention.immutableGenerationId];
       const retainedTrust = retainedCatalog?.install.trust;
       if (
         !installation
-        || !health
         || !retainedCatalog
         || !retainedTrust
         || retainedTrust.pluginId !== retention.pluginId
         || !pluginDistributionIdentitiesEqual(retainedTrust.distribution, retention.distribution)
-        || (retention.role === 'quarantined' && health.tryOnce !== 'available')
       ) {
         return;
       }
@@ -1835,8 +1579,21 @@ export function createPluginRegistryStateStore(params?: Readonly<{
 
   return Object.freeze({
     paths,
-    initialize: async () => (await readCurrent()).catalog,
+    initialize,
     read: async () => (await readPersistedCurrent())?.catalog ?? emptyState(),
+    readAvailabilityInventory: async () => {
+      const current = await readPersistedCurrent();
+      return current
+        ? projectAvailabilityInventory(current)
+        : Object.freeze({
+            revision: 0,
+            releasePublications: Object.freeze([]),
+            materializations: Object.freeze([]),
+          });
+    },
+    readAvailabilityInventoryForCommit: async (record) => (
+      projectAvailabilityInventory(await readCommittedState(record))
+    ),
     readSnapshot: async () => {
       const current = await readPersistedCurrent();
       if (!current) {
@@ -1844,14 +1601,47 @@ export function createPluginRegistryStateStore(params?: Readonly<{
           revision: -1,
           state: emptyState(),
           pluginGenerations: Object.freeze({}),
+          materializationIdsByPluginId: Object.freeze({}),
           rollbackAvailabilityByPluginId: Object.freeze({}),
+          admittedIntegrityByPluginId: Object.freeze({}),
+          installReviewPrincipalDigestsByPluginId: Object.freeze({}),
+          installReviewPrincipalPresentationsByPluginId: Object.freeze({}),
         });
       }
       return Object.freeze({
         revision: current.commit.revision,
         state: current.catalog,
         pluginGenerations: current.commit.pluginGenerations,
+        materializationIdsByPluginId: Object.freeze(Object.fromEntries(
+          Object.entries(current.revision.plugins).flatMap(([pluginId, installation]) => (
+            installation.materializationId
+              ? [[pluginId, installation.materializationId] as const]
+              : []
+          )),
+        )),
         rollbackAvailabilityByPluginId: await inspectRollbackAvailability(current),
+        admittedIntegrityByPluginId: Object.freeze(Object.fromEntries(
+          Object.entries(current.revision.plugins).flatMap(([pluginId, installation]) => (
+            installation.source.distribution.kind !== 'localPath'
+              && installation.source.admittedIntegrity
+              ? [[pluginId, installation.source.admittedIntegrity] as const]
+              : []
+          )),
+        )),
+        installReviewPrincipalDigestsByPluginId: Object.freeze(Object.fromEntries(
+          Object.entries(current.revision.plugins).flatMap(([pluginId, installation]) => (
+            installation.installReviewPrincipalDigest
+              ? [[pluginId, installation.installReviewPrincipalDigest] as const]
+              : []
+          )),
+        )),
+        installReviewPrincipalPresentationsByPluginId: Object.freeze(Object.fromEntries(
+          Object.entries(current.revision.plugins).flatMap(([pluginId, installation]) => (
+            installation.installReviewPrincipalPresentation
+              ? [[pluginId, installation.installReviewPrincipalPresentation] as const]
+              : []
+          )),
+        )),
       });
     },
     write: async (next) => { await update(() => next); },
@@ -1865,8 +1655,6 @@ export function createPluginRegistryStateStore(params?: Readonly<{
     forgetTrustWithResult,
     uninstall,
     uninstallWithResult,
-    evictQuarantinedTryOnceBytesForStoragePressure,
-    settleCurrentNonExecutableHealthAfterRuntimePublication,
-    observeActivationAttempt,
+    hardRevokeRunningSessionsForGenerationIntegrityFailure,
   });
 }

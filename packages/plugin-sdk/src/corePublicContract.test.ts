@@ -73,7 +73,7 @@ import type {
 type PluginDistributionIdentityV1 = never; /* @sdk-negative-type-case-end */
 /* @sdk-negative-type-case:src-corePublicContract-test-ts-215:LS0gaG9zdCBvcHRpb25hbC1zZWxlY3Rpb24gc3RhdGUgaXMgbm90IGEgcm9vdCBhdXRob3JpbmcgY29uY2VwdC4:aW1wb3J0IHR5cGUgeyBQbHVnaW5PcHRpb25hbEFjY2Vzc1NlbGVjdGlvblYxIH0gZnJvbSAnLi9pbmRleC5qcyc7 */
 type PluginOptionalAccessSelectionV1 = never; /* @sdk-negative-type-case-end */
-import { PluginError } from './errors.js';
+import { isPluginError, PluginError } from './errors.js';
 import type { PluginErrorData } from './errors.js';
 import type {
     AgentRuntimeFactoryContext,
@@ -113,7 +113,7 @@ import type {
     InteractionTransientResultV1 as ProtocolInteractionTransientResultV1,
 } from '@happier-dev/protocol';
 import type { Disposable } from './lifecycle.js';
-import { PluginError as RootPluginError } from './index.js';
+import { isPluginError as rootIsPluginError, PluginError as RootPluginError } from './index.js';
 import type {
     Disposable as RootDisposable,
     JsonValue as RootJsonValue,
@@ -150,7 +150,7 @@ type RootPluginDiagnosticRecord = never; /* @sdk-negative-type-case-end */
 type RootPluginDiagnosticStage = never; /* @sdk-negative-type-case-end */
 /* @sdk-negative-type-case:src-corePublicContract-test-ts-222:LS0gZGlhZ25vc3RpYyBob3N0IHBsYWNlbWVudCBpcyBob3N0IGxpZmVjeWNsZSBzdGF0ZS4:aW1wb3J0IHR5cGUgeyBQbHVnaW5EaWFnbm9zdGljSG9zdCBhcyBSb290UGx1Z2luRGlhZ25vc3RpY0hvc3QgfSBmcm9tICcuL2luZGV4LmpzJzs */
 type RootPluginDiagnosticHost = never; /* @sdk-negative-type-case-end */
-import { PluginError as PublicPluginError } from './public/api.js';
+import { isPluginError as publicIsPluginError, PluginError as PublicPluginError } from './public/api.js';
 import type {
     PluginDiagnosticData as PublicPluginDiagnosticData,
     PluginErrorData as PublicPluginErrorData,
@@ -421,6 +421,7 @@ describe('CORE.T1/T5 public contract', () => {
         expectTypeOf<RootPluginDiagnosticData>().toEqualTypeOf<PluginDiagnosticData>();
         expectTypeOf<RootPluginErrorData>().toEqualTypeOf<PluginErrorData>();
         expect(RootPluginError).toBe(PluginError);
+        expect(rootIsPluginError).toBe(isPluginError);
         expectTypeOf<PluginOperationAvailability>().toMatchTypeOf<
             | { status: 'available' }
             | { status: 'unavailable'; code: string; remediation?: PluginRemediationData }
@@ -430,6 +431,7 @@ describe('CORE.T1/T5 public contract', () => {
         expectTypeOf<PublicPluginDiagnosticData>().toEqualTypeOf<PluginDiagnosticData>();
         expectTypeOf<PublicPluginErrorData>().toEqualTypeOf<PluginErrorData>();
         expect(PublicPluginError).toBe(PluginError);
+        expect(publicIsPluginError).toBe(isPluginError);
         expect(runtimePublicApi).not.toHaveProperty('PluginError');
 
         const error = new PluginError({
@@ -438,6 +440,7 @@ describe('CORE.T1/T5 public contract', () => {
             details: { service: 'http' },
         });
         expect(error).toBeInstanceOf(Error);
+        expect(isPluginError(error)).toBe(true);
         expect(error.name).toBe('PluginError');
         expect(error.data).toEqual({
             name: 'PluginError',

@@ -123,11 +123,12 @@ export type UiAuthoringInput = PluginUiContributionInput & Readonly<{
 }>;
 
 /**
- * Declares one correlated surface exactly once. The returned value is consumed
- * by `definePlugin({ ui: { surfaces: [...] } })` for cold manifest projection
- * and by {@link buildUiSurfaceTargets} for the existing build-config owner.
+ * Declares one correlated surface definition exactly once. The returned value
+ * is consumed by `definePlugin({ ui: { surfaces: [...] } })` for cold manifest
+ * projection and by {@link buildUiSurfaceTargets} for the existing build-config
+ * owner. `defineUiSurface` remains the separate React artifact entrypoint.
  */
-export function defineUiSurface<const TSurface extends UiSurfaceDefinition>(
+export function defineUiSurfaceDefinition<const TSurface extends UiSurfaceDefinition>(
     surface: TSurface,
 ): TSurface {
     return surface;
@@ -151,14 +152,14 @@ function isHostedWebUiSurface(
 }
 
 /**
- * Projects one `defineUiSurface` declaration into the existing build target
- * grammar. It does not load, register, or validate a second build catalog.
+ * Projects one `defineUiSurfaceDefinition` declaration into the existing build
+ * target grammar. It does not load, register, or validate a second build catalog.
  */
 export function buildUiSurfaceTargets(surface: UiSurfaceDefinition): readonly PluginUiBuildTarget[] {
     const rendererId = uiSurfaceRendererId(surface.id);
     if (isReactNativeUiSurface(surface)) {
         if (!('build' in surface) || surface.build === undefined) {
-            throw new TypeError(`defineUiSurface executable surface ${surface.id} requires build metadata`);
+            throw new TypeError(`defineUiSurfaceDefinition executable surface ${surface.id} requires build metadata`);
         }
         const target: Extract<PluginUiBuildTarget, Readonly<{ kind: 'reactNative' }>> = {
             kind: 'reactNative',
@@ -169,7 +170,7 @@ export function buildUiSurfaceTargets(surface: UiSurfaceDefinition): readonly Pl
     }
     if (isHostedWebUiSurface(surface)) {
         if (!('build' in surface) || surface.build === undefined) {
-            throw new TypeError(`defineUiSurface executable surface ${surface.id} requires build metadata`);
+            throw new TypeError(`defineUiSurfaceDefinition executable surface ${surface.id} requires build metadata`);
         }
         const target: Extract<PluginUiBuildTarget, Readonly<{ kind: 'hostedWeb' }>> = {
             kind: 'hostedWeb',
@@ -181,7 +182,7 @@ export function buildUiSurfaceTargets(surface: UiSurfaceDefinition): readonly Pl
     if (surface.renderer.kind === 'declarative') {
         return Object.freeze([]);
     }
-    throw new TypeError(`defineUiSurface ${surface.id} has an unsupported renderer kind`);
+    throw new TypeError(`defineUiSurfaceDefinition ${surface.id} has an unsupported renderer kind`);
 }
 
 function isUiSurfaceRecord(value: unknown): value is Readonly<Record<string, unknown>> {

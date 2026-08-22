@@ -19,6 +19,7 @@ import {
 } from './targetedContributionAuthoring.js';
 import type { ProtocolComposableSchema } from './protocol/protocolFacade.js';
 import type {
+    ContributionPointAuthorDefinition,
     DescriptorFields,
     SchemaInput,
     SchemaOutput,
@@ -39,6 +40,24 @@ describe('targeted contribution point semantics', () => {
         );
     });
 
+    it('contains none of the retired symbol or nominal carrier relays', async () => {
+        const source = await readFile(
+            new URL('./targetedContributionAuthoring.ts', import.meta.url),
+            'utf8',
+        );
+
+        for (const retiredRelay of [
+            'Symbol.for',
+            'targetedContributionPointDefinitionSemantics.v1',
+            'targetedContributionPointSemantics.v1',
+            'targetedContributionPointSemanticRefs.v1',
+            'contributionAuthoringEvidence',
+            'contributionPointRefEvidence',
+        ]) {
+            expect(source).not.toContain(retiredRelay);
+        }
+    });
+
     it('preserves public composable-schema inference for target descriptors and surface inputs', () => {
         type Descriptor = ProtocolComposableSchema<
             Readonly<{ providerId: string }>,
@@ -51,9 +70,14 @@ describe('targeted contribution point semantics', () => {
 
         expectTypeOf<SchemaInput<SurfaceInput>>().toEqualTypeOf<Readonly<{ issueId: string }>>();
         expectTypeOf<SchemaOutput<Descriptor>>().toEqualTypeOf<Readonly<{ providerId: string }>>();
+        // A protocol that declares a descriptor schema requires the field.
         expectTypeOf<DescriptorFields<Descriptor>>().toEqualTypeOf<Readonly<{
-            descriptor?: Readonly<{ providerId: string }>;
+            descriptor: Readonly<{ providerId: string }>;
         }>>();
+        expectTypeOf<DescriptorFields<undefined>>().toEqualTypeOf<Readonly<{
+            descriptor?: never;
+        }>>();
+        expectTypeOf<ContributionPointAuthorDefinition>().not.toHaveProperty('semanticCarrier');
     });
 
     it('derives a point from a symbol-free structural protocol contract', () => {
@@ -128,6 +152,42 @@ describe('targeted contribution point semantics', () => {
         }
     });
 
+    it('refuses a contribution that omits or invents a descriptor its protocol did not declare', () => {
+        const descriptorProtocol = defineContributionProtocol({
+            id: 'descriptor-required-protocol',
+            version: 1,
+            descriptor: defineProtocolObject({
+                providerId: defineProtocolString({ minLength: 1 }),
+            }, { policy: 'closed' }),
+            operations: {},
+        });
+        const descriptorFreeProtocol = defineContributionProtocol({
+            id: 'descriptor-free-protocol',
+            version: 1,
+            operations: {},
+        });
+
+        // Manual and non-TypeScript authoring reaches this same entry point, so
+        // the omission is refused at runtime rather than by types alone.
+        expect(() => descriptorProtocol.contribute({
+            operations: {},
+        } as Parameters<typeof descriptorProtocol.contribute>[0]))
+            .toThrow(/requires a descriptor/u);
+        expect(descriptorProtocol.contribute({
+            descriptor: { providerId: 'github' },
+            operations: {},
+        })).toMatchObject({ descriptor: { providerId: 'github' } });
+        // A protocol without a schema still forbids the field outright.
+        expect(() => descriptorFreeProtocol.contribute({
+            // @ts-expect-error A descriptor-free protocol forbids the field.
+            descriptor: { providerId: 'github' },
+            operations: {},
+        }))
+            .toThrow(/does not declare a descriptor schema/u);
+        expect(descriptorFreeProtocol.contribute({ operations: {} }))
+            .not.toHaveProperty('descriptor');
+    });
+
     it('projects the live target descriptor and declared surfaces without serializing executable semantics', () => {
         const descriptor = defineProtocolObject({
             providerId: defineProtocolString(),
@@ -176,10 +236,12 @@ describe('targeted contribution point semantics', () => {
             .readTargetedContributionPointSemanticRefs(target.manifest);
         expect(semanticPointRefs).toHaveLength(1);
         expect(semanticPointRefs[0]).toBe(point);
-        const targetPointCollection = target.manifest.contributes.pluginContributionPoints;
-        const semanticRefsKey = Object.getOwnPropertySymbols(targetPointCollection)[0];
-        if (!semanticRefsKey) throw new Error('Expected manifest semantic-ref sidecar');
-        expect(Object.getOwnPropertyDescriptor(targetPointCollection, semanticRefsKey)?.enumerable).toBe(false);
+        const targetPointCollection = target.manifest.contributes.pluginContributionPoints as typeof target.manifest.contributes.pluginContributionPoints & Readonly<{
+            semanticPointRefs?: readonly unknown[];
+        }>;
+        expect(targetPointCollection.semanticPointRefs).toEqual([point]);
+        expect(Object.getOwnPropertySymbols(targetPointCollection)).toEqual([]);
+        expect(targetPointCollection[0]).not.toHaveProperty('semanticCarrier');
         expect(JSON.stringify(targetPointCollection)).toBe(JSON.stringify([...targetPointCollection]));
         const result = decoder(point, {
             protocol: point.protocol,
@@ -206,16 +268,20 @@ describe('targeted contribution point semantics', () => {
         expect(Object.isFrozen(projection.operations[0])).toBe(true);
         expect(Object.isFrozen(projection.surfaces)).toBe(true);
         expect(Object.isFrozen(projection.surfaces[0])).toBe(true);
-        expect(Object.keys(point)).toEqual(['targetPluginId', 'id', 'protocol']);
-        expect(JSON.stringify(point)).toBe(JSON.stringify({
-            targetPluginId: 'happier.triage',
-            id: 'sources',
-            protocol: { id: 'triage-source', version: 1 },
-        }));
+        expect(Object.keys(point)).toEqual(['targetPluginId', 'id', 'protocol', 'semanticCarrier']);
+        expect(Object.getOwnPropertySymbols(point)).toEqual([]);
 
-        // The carrier comes only from the SDK-produced live point. A copied
-        // public shape cannot reconstruct target parser semantics.
-        const carrierlessPoint = { ...point };
+        // Carrier data is an ordinary structural value. A physical SDK copy
+        // can copy the ref without sharing hidden symbols or object identity.
+        const copiedPoint = { ...point };
+        expect(decoder(copiedPoint, {
+            protocol: point.protocol,
+            descriptor: { providerId: 'github' },
+            operations: [{ role: 'inspect' }],
+            surfaces: [{ role: 'detail', presentation: 'content' }],
+        })).toMatchObject({ ok: true });
+
+        const { semanticCarrier: _semanticCarrier, ...carrierlessPoint } = point;
         expect(decoder(carrierlessPoint, {
             protocol: point.protocol,
             descriptor: { providerId: 'github' },
@@ -258,15 +324,12 @@ describe('targeted contribution point semantics', () => {
         });
         const v1Point = target.contributionPoints.sources.protocols[0]!;
         const v2Point = target.contributionPoints.sources.protocols[1]!;
-        const carrierKey = Object.getOwnPropertySymbols(v1Point)[0];
-        if (!carrierKey) throw new Error('Expected target point semantic carrier');
-        const carrier = Object.getOwnPropertyDescriptor(v1Point, carrierKey);
-        if (!carrier) throw new Error('Expected target point semantic carrier descriptor');
-        const visibleV2PointWithV1Carrier = Object.freeze(Object.defineProperty({
+        const visibleV2PointWithV1Carrier = Object.freeze({
             targetPluginId: v2Point.targetPluginId,
             id: v2Point.id,
             protocol: v2Point.protocol,
-        }, carrierKey, carrier));
+            semanticCarrier: v1Point.semanticCarrier,
+        });
 
         expect(targetedContributionsHost.decodeTargetedContributionPointSemantics(
             visibleV2PointWithV1Carrier,
@@ -383,12 +446,6 @@ describe('targeted contribution point semantics', () => {
         const descriptor = defineProtocolObject({
             providerId: defineProtocolString(),
         }, { policy: 'closed' });
-        const point = {
-            targetPluginId: 'happier.triage',
-            id: 'sources',
-            protocol: { id: 'triage-source', version: 1 },
-        };
-        Object.setPrototypeOf(point, null);
         const carrier = {
             kind: 'happier.pluginSdk.targetedContributionPointSemantics',
             version: 1,
@@ -403,12 +460,13 @@ describe('targeted contribution point semantics', () => {
         };
         Object.setPrototypeOf(carrier, null);
         Object.setPrototypeOf(carrier.surfaces, null);
-        Object.defineProperty(
-            point,
-            Symbol.for('happier.pluginSdk.targetedContributionPointSemantics.v1'),
-            { value: carrier },
-        );
-
+        const point = {
+            targetPluginId: 'happier.triage',
+            id: 'sources',
+            protocol: { id: 'triage-source', version: 1 },
+            semanticCarrier: carrier,
+        };
+        Object.setPrototypeOf(point, null);
         expect(Object.isFrozen(point)).toBe(false);
         expect(Object.isFrozen(carrier)).toBe(false);
         expect(targetedContributionsHost.decodeTargetedContributionPointSemantics(
@@ -432,19 +490,13 @@ describe('targeted contribution point semantics', () => {
             targetPluginId: 'happier.triage',
             id: 'sources',
             protocol: { id: 'triage-source', version: 1 },
-        };
-        Object.defineProperty(
-            malformedCarrierPoint,
-            Symbol.for('happier.pluginSdk.targetedContributionPointSemantics.v1'),
-            {
-                value: {
-                    ...carrier,
-                    surfaces: {
-                        'detail View': { required: true, presentation: 'content' },
-                    },
+            semanticCarrier: {
+                ...carrier,
+                surfaces: {
+                    'detail View': { required: true, presentation: 'content' },
                 },
             },
-        );
+        };
 
         expect(targetedContributionsHost.decodeTargetedContributionPointSemantics(
             malformedCarrierPoint,
@@ -455,32 +507,6 @@ describe('targeted contribution point semantics', () => {
                 surfaces: [{ role: 'detail View', presentation: 'content' }],
             },
         )).toEqual({ ok: false, code: 'target_semantics_unavailable' });
-    });
-
-    it('does not retain accessor-error policy around a trusted semantic carrier', () => {
-        const point = {
-            targetPluginId: 'happier.triage',
-            id: 'sources',
-            protocol: { id: 'triage-source', version: 1 },
-        };
-        Object.defineProperty(
-            point,
-            Symbol.for('happier.pluginSdk.targetedContributionPointSemantics.v1'),
-            {
-                get() {
-                    throw new Error('trusted carrier accessor failed');
-                },
-            },
-        );
-
-        expect(() => targetedContributionsHost.decodeTargetedContributionPointSemantics(
-            point,
-            {
-                protocol: point.protocol,
-                operations: [],
-                surfaces: [],
-            },
-        )).toThrow('trusted carrier accessor failed');
     });
 
     it('keeps each accepted protocol epoch on its own live point ref', () => {

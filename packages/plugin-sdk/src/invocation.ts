@@ -56,7 +56,7 @@ export type MessageActionAvailableSnapshotV1 = Readonly<{
  * receive the target `plugin` surface; an origin is diagnostic caller data,
  * never a way to inherit the caller's authority.
  */
-export type PluginInvocationSurface = 'cli' | 'mcp' | 'agent' | 'ui' | 'background' | 'plugin';
+export type PluginInvocationSurface = 'cli' | 'mcp' | 'agent' | 'ui' | 'voice' | 'background' | 'plugin';
 
 export type PluginInvocationOriginSurface = Exclude<PluginInvocationSurface, 'plugin'>;
 
@@ -96,9 +96,14 @@ export interface PluginInvocationContext {
      * A bounded, host-stamped snapshot resolved immediately before a
      * whole-message Action dispatch. It is never Action input and absent for
      * ordinary invocations.
-     */
+    */
     readonly messageAction?: MessageActionAvailableSnapshotV1;
     readonly signal: AbortSignal;
+    /**
+     * Operation-scoped capabilities for this invocation. They do not own or
+     * mirror native Agent-session custody; that exact-session surface is
+     * available only through `AgentSessionRuntimeContext.session.services`.
+     */
     readonly services: PluginServices;
     readonly ui?: PresentationService;
 }

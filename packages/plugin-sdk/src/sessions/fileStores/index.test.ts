@@ -66,6 +66,7 @@ describe('sessions/file-stores SDK subpath', () => {
       readString(value: unknown): string | null;
       readTrimmedString(value: unknown): string | null;
       parseJsonLine(line: string): unknown | null;
+      parseTimestampMs(value: unknown): number | null;
       expandHomePath(raw: string, homeDir?: string): string;
       resolveHomeDirFromEnvironment(
         env: NodeJS.ProcessEnv,
@@ -83,6 +84,17 @@ describe('sessions/file-stores SDK subpath', () => {
     expect(fileStores.readTrimmedString('   ')).toBeNull();
     expect(fileStores.parseJsonLine('{"ok":true}')).toEqual({ ok: true });
     expect(fileStores.parseJsonLine('{')).toBeNull();
+    const timestampCases = [
+      [1_700_000_000, 1_700_000_000_000],
+      [1_700_000_000_000, 1_700_000_000_000],
+      [1_000_000_000_000, 1_000_000_000_000],
+    ] as const;
+    for (const [value, expected] of timestampCases) {
+      expect(fileStores.parseTimestampMs(value)).toBe(expected);
+    }
+    expect(fileStores.parseTimestampMs('2026-05-17T12:00:00.000Z'))
+      .toBe(Date.parse('2026-05-17T12:00:00.000Z'));
+    expect(fileStores.parseTimestampMs(-1)).toBeNull();
     expect(fileStores.expandHomePath('~/agent', '/home/alice')).toBe('/home/alice/agent');
     expect(fileStores.expandHomePath('~\\agent', '/home/alice')).toBe('/home/alice/agent');
     expect(fileStores.resolveHomeDirFromEnvironment({

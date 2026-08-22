@@ -7,6 +7,7 @@ import {
 } from '@happier-dev/protocol';
 
 import {
+  capabilityMatrixProvingConsumerExerciseFailure,
   deriveCapabilityMatrixMetadata,
   projectCapabilityMatrix,
   readDefinePluginCapabilityPolicy,
@@ -38,14 +39,19 @@ export function selectAvailableCapabilityMatrixProvingConsumerSourcePaths(matrix
 /**
  * The matrix's textual policy validates the public consumer corridor. This
  * filesystem boundary proves that the named current-tree consumer is still a
- * real source file rather than a stale path or a host-binder placeholder.
+ * real source file rather than a stale path or a host-binder placeholder, and
+ * that its bytes actually exercise the capability the row advertises. A path
+ * check alone cannot fail for a file that merely re-exports something else, so
+ * availability is read out of the consumer's source, never out of its
+ * existence.
  */
 export async function assertCapabilityMatrixProvingConsumerPaths({ packageRoot, matrix }) {
   const repoRoot = resolve(packageRoot, '..', '..');
   for (const { label, row } of availableRows(matrix)) {
+    const absolutePath = resolve(repoRoot, row.provingConsumer);
     let stat;
     try {
-      stat = await lstat(resolve(repoRoot, row.provingConsumer));
+      stat = await lstat(absolutePath);
     } catch (error) {
       if (error?.code === 'ENOENT') {
         throw new Error(`${label} provingConsumer path does not name a regular file: ${row.provingConsumer}`);
@@ -54,6 +60,13 @@ export async function assertCapabilityMatrixProvingConsumerPaths({ packageRoot, 
     }
     if (!stat.isFile()) {
       throw new Error(`${label} provingConsumer path does not name a regular file: ${row.provingConsumer}`);
+    }
+    const exerciseFailure = capabilityMatrixProvingConsumerExerciseFailure(
+      row,
+      await readFile(absolutePath, 'utf8'),
+    );
+    if (exerciseFailure) {
+      throw new Error(`${label} provingConsumer ${row.provingConsumer} ${exerciseFailure}`);
     }
   }
 }

@@ -130,7 +130,6 @@ describe('loadInstalledPlugins', () => {
           install: {
             mode: 'link',
             manifestVersion: '1.0.0',
-            manifestDigest: null,
             installedPath: null,
           },
           state: {
@@ -153,7 +152,6 @@ describe('loadInstalledPlugins', () => {
           install: {
             mode: 'link',
             manifestVersion: '1.0.0',
-            manifestDigest: null,
             installedPath: null,
           },
           state: {
@@ -197,7 +195,6 @@ describe('loadInstalledPlugins', () => {
           install: {
             mode: 'link',
             manifestVersion: '1.0.0',
-            manifestDigest: null,
             installedPath: null,
           },
           state: {
@@ -234,7 +231,7 @@ describe('loadInstalledPlugins', () => {
           },
           compatibility: { status: 'compatible', diagnostics: [] },
           install: {
-            mode: 'managed_install', manifestVersion: '1.0.0', manifestDigest: 'sha256:managed-dev',
+            mode: 'managed_install', manifestVersion: '1.0.0',
             installedPath: pluginRoot,
           },
           state: { enabled: true },
@@ -279,7 +276,6 @@ describe('loadInstalledPlugins', () => {
           install: {
             mode: 'managed_install',
             manifestVersion: '1.0.0',
-            manifestDigest: 'sha256:abc123',
             installedPath: installedPluginRoot,
           },
           state: {
@@ -300,6 +296,7 @@ describe('loadInstalledPlugins', () => {
         installPolicy: 'managed_install',
       },
     });
+    expect(result.loadedPlugins[0]?.sourceSpec).not.toHaveProperty('resolvedDigest');
     expect(result.diagnosticsByPluginId['acme.archived']).toEqual([]);
   });
 
@@ -330,7 +327,6 @@ describe('loadInstalledPlugins', () => {
           install: {
             mode: 'managed_install',
             manifestVersion: '1.0.0',
-            manifestDigest: 'sha256:abc123',
             installedPath: installedPluginRoot,
           },
           state: {
@@ -378,7 +374,6 @@ describe('loadInstalledPlugins', () => {
           install: {
             mode: 'link',
             manifestVersion: '1.0.0',
-            manifestDigest: null,
             installedPath: null,
           },
           state: {
@@ -429,7 +424,6 @@ describe('loadInstalledPlugins', () => {
           install: {
             mode: 'link',
             manifestVersion: '1.0.0',
-            manifestDigest: null,
             installedPath: null,
           },
           state: {
@@ -476,7 +470,6 @@ describe('loadInstalledPlugins', () => {
           install: {
             mode: 'link',
             manifestVersion: '1.0.0',
-            manifestDigest: null,
             installedPath: null,
           },
           state: {
@@ -525,7 +518,6 @@ describe('loadInstalledPlugins', () => {
           install: {
             mode: 'link',
             manifestVersion: '1.0.0',
-            manifestDigest: null,
             installedPath: null,
           },
           state: {
@@ -548,7 +540,6 @@ describe('loadInstalledPlugins', () => {
           install: {
             mode: 'link',
             manifestVersion: '1.0.0',
-            manifestDigest: null,
             installedPath: null,
           },
           state: {
@@ -628,7 +619,6 @@ describe('loadInstalledPlugins', () => {
           install: {
             mode: 'link',
             manifestVersion: '1.0.0',
-            manifestDigest: null,
             installedPath: null,
           },
           state: {
@@ -701,7 +691,6 @@ describe('loadInstalledPlugins', () => {
           install: {
             mode: 'link',
             manifestVersion: '1.0.0',
-            manifestDigest: null,
             installedPath: null,
           },
           state: {
@@ -776,7 +765,6 @@ describe('loadInstalledPlugins', () => {
           install: {
             mode: 'link',
             manifestVersion: '1.0.0',
-            manifestDigest: null,
             installedPath: null,
           },
           state: {
@@ -852,7 +840,6 @@ describe('loadInstalledPlugins', () => {
           install: {
             mode: 'link',
             manifestVersion: '1.0.0',
-            manifestDigest: null,
             installedPath: null,
           },
           state: {
@@ -899,7 +886,6 @@ describe('loadInstalledPlugins', () => {
           install: {
             mode: 'link',
             manifestVersion: '1.0.0',
-            manifestDigest: null,
             installedPath: null,
           },
           state: {
@@ -949,7 +935,6 @@ describe('loadInstalledPlugins', () => {
           install: {
             mode: 'link',
             manifestVersion: '1.0.0',
-            manifestDigest: null,
             installedPath: null,
           },
           state: {

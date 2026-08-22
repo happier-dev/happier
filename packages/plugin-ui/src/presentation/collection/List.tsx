@@ -66,8 +66,17 @@ export type HappierListSectionProps = Readonly<{
 }>;
 
 export type HappierListItemProps = Readonly<{
+  /**
+   * The row's own content. Alone it owns the whole row structurally; beside a
+   * semantic title/subtitle it is the row body, rendered after them in the
+   * label column. It is never dropped, so no caller loses content silently.
+   *
+   * Interactive trailing content belongs in `accessory` with
+   * `accessoryOutsidePressable`, because the body sits inside the row's own
+   * primary Pressable.
+   */
   children?: ReactNode;
-  /** A bounded semantic row title. Omit it to render custom children structurally. */
+  /** A bounded semantic row title. Omit it to let children own the row structurally. */
   title?: string;
   subtitle?: string;
   detail?: string;
@@ -205,7 +214,8 @@ export function HappierListSection({
  * A semantic list row shared by executable Plugin UI and declarative adapters.
  * Custom children retain the structural list-item contract; title/subtitle rows
  * acquire the one shared press/pending and accessibility mechanism instead of
- * reimplementing it in each consumer.
+ * reimplementing it in each consumer. A row given both renders both: the
+ * semantic label first, then the children as its body.
  */
 export function HappierListItem({
   children,
@@ -327,6 +337,7 @@ export function HappierListItem({
         <View style={{ flex: 1, minWidth: 0, gap: resolvedTheme.spacing.xsmall }}>
           {title ? <HappierText style={textStyle(resolvedTheme, 'label', titleColor)}>{title}</HappierText> : null}
           {subtitle ? <HappierText style={textStyle(resolvedTheme, 'body', resolvedTheme.colors.secondaryText)}>{subtitle}</HappierText> : null}
+          {customContent}
         </View>
         {detail ? <HappierText style={textStyle(resolvedTheme, 'caption', resolvedTheme.colors.secondaryText)}>{detail}</HappierText> : null}
         {includeAccessory ? accessory : null}

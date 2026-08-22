@@ -158,8 +158,8 @@ function createRealRepackExec(operationRoots: string[] = []): ManagedBundlerExec
                 throw new Error('Generated Re.Pack config did not provide the author project root');
             }
             // The managed CLI runs Re.Pack from its ephemeral operation root.
-            // Materialize the same logical author entry there so real Rspack
-            // source-map identities exercise that operation-local boundary.
+            // Materialize the same logical author entry there so the real
+            // compiler exercises that operation-local boundary.
             await mkdir(join(operationRoot, 'ui'), { recursive: true });
             await writeFile(
                 join(operationRoot, 'ui', 'nativeEntry.js'),
@@ -169,12 +169,12 @@ function createRealRepackExec(operationRoots: string[] = []): ManagedBundlerExec
             operationRoots.push(operationRoot);
             const { rspack } = await import('@rspack/core');
             // Re.Pack's bundle command supplies this default before applying
-            // the generated config. Keep the real compiler invocation aligned
-            // with the command that produces native artifact source maps.
+            // the generated config. Keep that order so the generated config
+            // remains the canonical production decision for source maps.
             const compiler = rspack({
+                devtool: 'source-map',
                 ...generatedConfigRecord,
                 context: operationRoot,
-                devtool: 'source-map',
             });
             return await new Promise<ManagedBundlerExecResult>((resolve) => {
                 compiler.run((runError, stats) => {
@@ -214,15 +214,15 @@ describe('runPluginBuildUiCli', () => {
         await symlink(pluginSdkRoot, join(packageScope, 'plugin-sdk'), 'dir');
         const workRoot = join(projectRoot, 'dist/ui');
         const emitted = [
-            ['react-native-web/voice-runtime-web/entry.mjs', 'voice web'],
+            ['react-native-web/voice-runtime-web/entry.mjs.bundle', 'voice web'],
             ['hosted-web/review-web/index.html', '<!doctype html>'],
             ['hosted-web/review-openable-web/index.html', '<!doctype html>'],
-            ['react-native-web/review-native/entry.mjs', 'review web'],
-            ['react-native/review-native/ios/ios.bundle.js', 'review ios'],
-            ['react-native/review-native/android/android.bundle.js', 'review android'],
-            ['react-native-web/review-openable-native/entry.mjs', 'review openable web'],
-            ['react-native/review-openable-native/ios/ios.bundle.js', 'review openable ios'],
-            ['react-native/review-openable-native/android/android.bundle.js', 'review openable android'],
+            ['react-native-web/review-native/entry.mjs.bundle', 'review web'],
+            ['react-native/review-native/ios/ios.bundle', 'review ios'],
+            ['react-native/review-native/android/android.bundle', 'review android'],
+            ['react-native-web/review-openable-native/entry.mjs.bundle', 'review openable web'],
+            ['react-native/review-openable-native/ios/ios.bundle', 'review openable ios'],
+            ['react-native/review-openable-native/android/android.bundle', 'review openable android'],
         ] as const;
         for (const [relativePath, contents] of emitted) {
             const absolutePath = join(workRoot, relativePath);
@@ -293,7 +293,7 @@ describe('runPluginBuildUiCli', () => {
             'reactNative:voice-runtime-web:web',
         ]);
         expect(await readFile(
-            join(projectRoot, 'dist/happier-plugin-ui/react-native/review-native/ios/ios.bundle.js'),
+            join(projectRoot, 'dist/happier-plugin-ui/react-native/review-native/ios/ios.bundle'),
             'utf8',
         )).toBe('review ios');
     }, 30_000);
@@ -318,8 +318,8 @@ describe('runPluginBuildUiCli', () => {
         await symlink(pluginSdkRoot, join(packageScope, 'plugin-sdk'), 'dir');
         const workRoot = join(projectRoot, 'dist/ui');
         for (const [relativePath, contents] of [
-            ['react-native-web/migration-native/entry.mjs', 'web'],
-            ['react-native/migration-native/ios/ios.bundle.js', 'ios'],
+            ['react-native-web/migration-native/entry.mjs.bundle', 'web'],
+            ['react-native/migration-native/ios/ios.bundle', 'ios'],
         ] as const) {
             const output = join(workRoot, relativePath);
             await mkdir(dirname(output), { recursive: true });
@@ -406,9 +406,9 @@ describe('runPluginBuildUiCli', () => {
     it('materializes standard RNW and Re.Pack configs inside one ephemeral builder work root', async () => {
         const workRoot = join(projectRoot, 'dist/ui');
         const emitted = [
-            ['react-native-web/native-panel/entry.mjs', 'web'],
-            ['react-native/native-panel/ios/ios.bundle.js', 'ios'],
-            ['react-native/native-panel/android/android.bundle.js', 'android'],
+            ['react-native-web/native-panel/entry.mjs.bundle', 'web'],
+            ['react-native/native-panel/ios/ios.bundle', 'ios'],
+            ['react-native/native-panel/android/android.bundle', 'android'],
         ] as const;
         for (const [relativePath, contents] of emitted) {
             const output = join(workRoot, relativePath);
@@ -481,7 +481,7 @@ describe('runPluginBuildUiCli', () => {
         await expect(access(operationRoot!)).rejects.toMatchObject({ code: 'ENOENT' });
     });
 
-    it('keeps real iOS Re.Pack artifacts portable across author roots, aliases, and packed dependency symlinks', async () => {
+    it('emits source-free real iOS Re.Pack maps while keeping artifacts deterministic across author roots, aliases, and packed dependency symlinks', async () => {
         const firstRootPath = join(projectRoot, 'external-author-a');
         const secondRootPath = join(projectRoot, 'external-author-b');
         const firstRootAlias = join(projectRoot, 'external-author-a-alias');
@@ -581,7 +581,16 @@ describe('runPluginBuildUiCli', () => {
             })));
             const sourceMaps = files.filter((file) => file.relativePath.endsWith('.map'));
             expect(sourceMaps).not.toHaveLength(0);
-            expect(sourceMaps.some((sourceMap) => sourceMap.bytes.toString('utf8').includes('json|'))).toBe(true);
+            for (const sourceMap of sourceMaps) {
+                const parsed = JSON.parse(sourceMap.bytes.toString('utf8')) as Readonly<{
+                    mappings?: string;
+                    sources?: readonly string[];
+                    sourcesContent?: unknown;
+                }>;
+                expect(parsed.sources).not.toHaveLength(0);
+                expect(parsed.mappings).not.toBe('');
+                expect(parsed).not.toHaveProperty('sourcesContent');
+            }
             return {
                 entry,
                 files,
@@ -783,7 +792,7 @@ describe('runPluginBuildUiCli', () => {
 
     it('wraps an advanced RNW Vite config with the canonical host-runtime and package-instance checks', async () => {
         const workRoot = join(projectRoot, 'dist/ui');
-        const emittedEntry = join(workRoot, 'react-native-web/advanced-native/entry.mjs');
+        const emittedEntry = join(workRoot, 'react-native-web/advanced-native/entry.mjs.bundle');
         const authorConfigPath = join(projectRoot, 'build/vite.advanced.config.mjs');
         await mkdir(dirname(emittedEntry), { recursive: true });
         await writeFile(emittedEntry, 'export const advanced = true;\n', 'utf8');
@@ -956,7 +965,7 @@ describe('runPluginBuildUiCli', () => {
         await expect(access(incorrectClientOutputRoot)).rejects.toMatchObject({ code: 'ENOENT' });
         expect(launches[0]?.cwd).toContain('.happier-plugin-ui-build-');
         const builtSource = await readFile(
-            join(projectRoot, 'dist/happier-plugin-ui/react-native-web/hook-guarded-native/entry.mjs'),
+            join(projectRoot, 'dist/happier-plugin-ui/react-native-web/hook-guarded-native/entry.mjs.bundle'),
             'utf8',
         );
         expect(builtSource).toContain('bundled-plugin-ui');
@@ -1196,7 +1205,7 @@ describe('runPluginBuildUiCli', () => {
                 "const { mkdirSync, writeFileSync } = require('node:fs');",
                 "const { dirname } = require('node:path');",
                 `const capture = ${JSON.stringify(viteCapture)};`,
-                `const output = ${JSON.stringify(join(projectRoot, 'work/react-native-web/native/entry.mjs'))};`,
+                `const output = ${JSON.stringify(join(projectRoot, 'work/react-native-web/native/entry.mjs.bundle'))};`,
                 "mkdirSync(dirname(capture), { recursive: true });",
                 "writeFileSync(capture, JSON.stringify({ stagedOutput: process.env.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR ?? null, stagedOutputAlias: process.env.Happier_Workspace_Dist_Output_Dir ?? null }));",
                 "mkdirSync(dirname(output), { recursive: true });",
@@ -1211,7 +1220,7 @@ describe('runPluginBuildUiCli', () => {
                 "const { dirname, join } = require('node:path');",
                 "const platform = process.argv[process.argv.indexOf('--platform') + 1];",
                 `const capture = ${JSON.stringify(capturesRoot)} + '/repack-' + platform + '.json';`,
-                `const output = join(${JSON.stringify(join(projectRoot, 'work', 'react-native', 'native'))}, platform, platform + '.bundle.js');`,
+                `const output = join(${JSON.stringify(join(projectRoot, 'work', 'react-native', 'native'))}, platform, platform + '.bundle');`,
                 "mkdirSync(dirname(capture), { recursive: true });",
                 "writeFileSync(capture, JSON.stringify({ stagedOutput: process.env.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR ?? null, stagedOutputAlias: process.env.Happier_Workspace_Dist_Output_Dir ?? null }));",
                 "mkdirSync(dirname(output), { recursive: true });",
@@ -1559,7 +1568,7 @@ describe('runPluginBuildUiCli', () => {
     });
 
     it('rejects a declared native platform when the managed bundler omits its artifact', async () => {
-        const iosOutput = join(projectRoot, 'dist/ui/react-native/native/ios/ios.bundle.js');
+        const iosOutput = join(projectRoot, 'dist/ui/react-native/native/ios/ios.bundle');
         await mkdir(dirname(iosOutput), { recursive: true });
         await writeFile(iosOutput, 'ios', 'utf8');
         const errors: string[] = [];

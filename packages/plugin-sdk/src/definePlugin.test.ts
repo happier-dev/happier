@@ -27,6 +27,8 @@ import {
 import type {
     DefinePluginInput,
     ComposerControlAuthorInteraction,
+    DefinedPluginContributes,
+    PluginActionDeclaration,
     PluginAgentDefinition,
     PluginComposerAttachmentDefinition,
     PluginDaemonDatabaseDeclaration,
@@ -118,7 +120,67 @@ const externalSessions: AgentExternalSessionsContribution = {
     readAfterTranscript: async () => ({ ok: true, value: { outcome: 'already_current' } }),
 };
 
+/* @sdk-negative-type-case:src-definePlugin-test-ts-action-input-schema:QWN0aW9uIGlucHV0IHNjaGVtYXMgYWRtaXQgb25seSBKU09OIFNjaGVtYSBkYXRhIG9yIGNvbXBsZXRlIFByb3RvY29sIGNvbXBvc2FibGVzLg:ZGVmaW5lUGx1Z2luKHsgaWQ6ICdleGFtcGxlLmFjdGlvbi1pbnZhbGlkLWlucHV0LXNjaGVtYScsIHZlcnNpb246ICcwLjEuMCcsIGFjdGlvbnM6IHsgaW52YWxpZDogeyB0aXRsZTogJ0ludmFsaWQnLCBleGVjdXRpb246IHsgdGFyZ2V0OiAnZGFlbW9uJyB9LCBzdXJmYWNlczogWydwbHVnaW4nXSwgaW5wdXRTY2hlbWE6IHsgdW5zdXBwb3J0ZWQ6IHRydWUgfSwgYXN5bmMgcnVuKCkgeyByZXR1cm4ge307IH0gfSB9IH0pOw */
+void undefined; /* @sdk-negative-type-case-end */
+/* @sdk-negative-type-case:src-definePlugin-test-ts-action-input-hints:QWN0aW9uIGlucHV0IGhpbnRzIHJldGFpbiB0aGUgUHJvdG9jb2wgQWN0aW9uIGRlY2xhcmF0aW9uIHNoYXBlLg:ZGVmaW5lUGx1Z2luKHsgaWQ6ICdleGFtcGxlLmFjdGlvbi1pbnZhbGlkLWlucHV0LWhpbnRzJywgdmVyc2lvbjogJzAuMS4wJywgYWN0aW9uczogeyBpbnZhbGlkOiB7IHRpdGxlOiAnSW52YWxpZCcsIGV4ZWN1dGlvbjogeyB0YXJnZXQ6ICdkYWVtb24nIH0sIHN1cmZhY2VzOiBbJ3BsdWdpbiddLCBpbnB1dEhpbnRzOiB7IGZpZWxkczogW3sgcGF0aDogJ3ZhbHVlJywgdGl0bGU6ICdWYWx1ZScsIHdpZGdldDogJ3Vuc3VwcG9ydGVkJyB9XSB9LCBhc3luYyBydW4oKSB7IHJldHVybiB7fTsgfSB9IH0gfSk7 */
+void undefined; /* @sdk-negative-type-case-end */
+/* @sdk-negative-type-case:src-definePlugin-test-ts-action-result-schema:QWN0aW9uIHJlc3VsdCBzY2hlbWFzIGFkbWl0IG9ubHkgSlNPTiBTY2hlbWEgZGF0YSBvciBjb21wbGV0ZSBQcm90b2NvbCBjb21wb3NhYmxlcy4:ZGVmaW5lUGx1Z2luKHsgaWQ6ICdleGFtcGxlLmFjdGlvbi1pbnZhbGlkLXJlc3VsdC1zY2hlbWEnLCB2ZXJzaW9uOiAnMC4xLjAnLCBhY3Rpb25zOiB7IGludmFsaWQ6IHsgdGl0bGU6ICdJbnZhbGlkJywgZXhlY3V0aW9uOiB7IHRhcmdldDogJ2RhZW1vbicgfSwgc3VyZmFjZXM6IFsncGx1Z2luJ10sIHJlc3VsdFNjaGVtYTogeyB1bnN1cHBvcnRlZDogdHJ1ZSB9LCBhc3luYyBydW4oKSB7IHJldHVybiB7fTsgfSB9IH0gfSk7 */
+void undefined; /* @sdk-negative-type-case-end */
+/* @sdk-negative-type-case:src-definePlugin-test-ts-action-availability:QWN0aW9uIGF2YWlsYWJpbGl0eSByZXRhaW5zIHRoZSBQcm90b2NvbCBBY3Rpb24gZGVjbGFyYXRpb24gc2hhcGUu:ZGVmaW5lUGx1Z2luKHsgaWQ6ICdleGFtcGxlLmFjdGlvbi1pbnZhbGlkLWF2YWlsYWJpbGl0eScsIHZlcnNpb246ICcwLjEuMCcsIGFjdGlvbnM6IHsgaW52YWxpZDogeyB0aXRsZTogJ0ludmFsaWQnLCBleGVjdXRpb246IHsgdGFyZ2V0OiAnZGFlbW9uJyB9LCBzdXJmYWNlczogWydwbHVnaW4nXSwgYXZhaWxhYmlsaXR5OiB7IGV4cGVyaW1lbnRhbDogdHJ1ZSB9LCBhc3luYyBydW4oKSB7IHJldHVybiB7fTsgfSB9IH0gfSk7 */
+void undefined; /* @sdk-negative-type-case-end */
+
 describe('definePlugin', () => {
+    it('omits undeclared cold defaults while retaining explicit empty declarations', () => {
+        const omitted = definePlugin({
+            id: 'acme.omitted-cold-defaults',
+            version: '1.0.0',
+        });
+        const explicit = definePlugin({
+            id: 'acme.explicit-empty-cold-defaults',
+            version: '1.0.0',
+            hostAccess: { required: [], optional: [] },
+            settings: {},
+            mcp: { servers: {} },
+        });
+
+        expect(omitted.manifest).not.toHaveProperty('hostAccess');
+        expect(omitted.manifest.contributes).toEqual({});
+        expect(omitted.manifest.contributes).not.toHaveProperty('hooks');
+        expect(omitted.manifest.contributes.hooks).toBeUndefined();
+        expect(explicit.manifest.hostAccess).toEqual({ required: [], optional: [] });
+        expect(explicit.manifest.contributes).toHaveProperty('settings', []);
+        expect(explicit.manifest.contributes.mcp).toEqual({ servers: [] });
+
+        const normalized = parsePluginManifest(omitted.manifest);
+        expect(normalized.ok).toBe(true);
+        if (!normalized.ok) throw new Error('Expected the sparse cold manifest to normalize');
+        expect(normalized.manifest.hostAccess).toEqual({ required: [], optional: [] });
+        expect(normalized.manifest.contributes.settings).toEqual([]);
+    });
+
+    it('types cold contribution facts as sparse without weakening declared family values', () => {
+        type NormalizedContributionFamilies = NonNullable<PluginManifest['contributes']>;
+
+        const sparseColdContributes: DefinedPluginContributes = {};
+        expect(sparseColdContributes).toEqual({});
+        expectTypeOf<DefinedPluginContributes['hooks']>()
+            .toEqualTypeOf<NormalizedContributionFamilies['hooks'] | undefined>();
+        expectTypeOf<NonNullable<DefinedPluginContributes['hooks']>>()
+            .toEqualTypeOf<NonNullable<NormalizedContributionFamilies['hooks']>>();
+    });
+
+    it('emits declared secrets as cold facts for canonical source ingestion', () => {
+        const secrets = [{ id: 'api-token' }] as const;
+
+        const plugin = definePlugin({
+            id: 'acme.cold-secrets',
+            version: '1.0.0',
+            secrets,
+        });
+
+        expect(plugin.manifest.secrets).toBe(secrets);
+    });
+
     it('projects and executes composable action schemas at the canonical Action boundary', async () => {
         const inputSchema = defineComposableProtocolObject({
             entryId: defineComposableProtocolString({ minLength: 1 }),
@@ -133,6 +195,7 @@ describe('definePlugin', () => {
             actions: {
                 inspect: {
                     title: 'Inspect composable input',
+                    execution: { target: 'daemon' },
                     surfaces: ['plugin'],
                     inputSchema,
                     resultSchema,
@@ -148,7 +211,7 @@ describe('definePlugin', () => {
             },
         });
 
-        const action = plugin.manifest.contributes.actions[0];
+        const action = plugin.manifest.contributes.actions?.[0];
         expect(action?.inputSchema).toEqual(inputSchema.jsonSchema);
         expect(action?.resultSchema).toEqual(resultSchema.jsonSchema);
         expect(action?.inputSchema).not.toHaveProperty('parse');
@@ -168,22 +231,70 @@ describe('definePlugin', () => {
         expect(receivedInputs).toHaveLength(1);
     });
 
-    it('keeps generic request-interception HostAccess deferred while publishing request policies', () => {
-        const untypedDefinePlugin = definePlugin as (input: unknown) => unknown;
-        expect(() => untypedDefinePlugin({
-            id: 'acme.request-policy-host-access',
+    it('projects mixed Action targets but root activation registers only daemon handlers', async () => {
+        const daemonRun = vi.fn(async () => null);
+        const plugin = definePlugin({
+            id: 'acme.mixed-action-targets',
             version: '1.0.0',
-            hostAccess: {
-                required: [{
-                    id: 'intercept-api',
-                    capability: 'network.intercept',
-                    reason: 'Apply the declared request policy to the API.',
-                    scope: { origins: ['https://intercept.example.com'] },
-                }],
-                optional: [],
+            actions: {
+                daemonAction: {
+                    title: 'Daemon action',
+                    execution: { target: 'daemon' },
+                    surfaces: ['plugin'],
+                    run: daemonRun,
+                },
+                clientAction: {
+                    title: 'Client action',
+                    execution: {
+                        target: 'client',
+                        client: {
+                            artifactId: 'action-client',
+                            modulePath: './runAction',
+                            exportName: 'activate',
+                        },
+                        platforms: ['web'],
+                    },
+                    surfaces: ['ui'],
+                },
             },
-        })).toThrow();
+        });
 
+        expect(plugin.manifest.contributes.actions).toEqual(expect.arrayContaining([
+            expect.objectContaining({ id: 'daemonAction', execution: { target: 'daemon' } }),
+            expect.objectContaining({
+                id: 'clientAction',
+                execution: expect.objectContaining({ target: 'client' }),
+            }),
+        ]));
+
+        const register = vi.fn();
+        await plugin.activate({ actions: { register } } as never);
+        expect(register).toHaveBeenCalledOnce();
+        expect(register).toHaveBeenCalledWith('daemonAction', daemonRun);
+
+        expect(() => definePlugin({
+            id: 'acme.client-action-inline-handler',
+            version: '1.0.0',
+            actions: {
+                clientAction: {
+                    title: 'Client action',
+                    execution: {
+                        target: 'client',
+                        client: {
+                            artifactId: 'action-client',
+                            modulePath: './runAction',
+                            exportName: 'activate',
+                        },
+                        platforms: ['web'],
+                    },
+                    surfaces: ['ui'],
+                    run: async () => null,
+                },
+            },
+        } as never)).toThrow(/client action.*handler/i);
+    });
+
+    it('emits request-policy declarations without adding a HostAccess parser', () => {
         expect(() => definePlugin({
             id: 'acme.request-policy-author',
             version: '1.0.0',
@@ -195,37 +306,6 @@ describe('definePlugin', () => {
                     },
                     interceptor: async (request) => ({ decision: 'continue', request }),
                 },
-            },
-        })).not.toThrow();
-
-        const deferredRequests = [
-            { capability: 'browser', scope: { operations: ['read'] } },
-            { capability: 'clipboard', scope: { access: ['read'] } },
-            { capability: 'externalLinks', scope: { origins: ['https://links.example.com'] } },
-        ] as const;
-
-        for (const request of deferredRequests) {
-            expect(() => untypedDefinePlugin({
-                id: 'acme.deferred-host-access',
-                version: '1.0.0',
-                hostAccess: {
-                    required: [{ id: 'deferred-access', reason: 'Exercise the public boundary.', ...request }],
-                    optional: [],
-                },
-            })).toThrow('deferred from public plugin authoring');
-        }
-
-        expect(() => definePlugin({
-            id: 'acme.terminal-session-path',
-            version: '1.0.0',
-            hostAccess: {
-                required: [{
-                    id: 'terminal-session-path',
-                    capability: 'terminal',
-                    reason: 'Use the Agent session terminal path.',
-                    scope: { operations: ['open'] },
-                }],
-                optional: [],
             },
         })).not.toThrow();
     });
@@ -523,7 +603,7 @@ describe('definePlugin', () => {
         })).toThrow('ui.surfaces details requires an explicit target');
     });
 
-    it('projects browser targets and browser actions through the canonical Action identity', () => {
+    it('emits raw browser target and action facts through the canonical Action identity', () => {
         expectTypeOf<DefinePluginInput>().toHaveProperty('browserTargets');
         expectTypeOf<DefinePluginInput>().toHaveProperty('browserActions');
 
@@ -533,6 +613,7 @@ describe('definePlugin', () => {
             actions: {
                 open: {
                     title: 'Open preview',
+                    execution: { target: 'daemon' },
                     surfaces: ['plugin'],
                     run: async () => null,
                 },
@@ -562,7 +643,6 @@ describe('definePlugin', () => {
             id: 'docs',
             title: 'Docs',
             url: 'https://example.com/docs',
-            launch: 'newView',
             profile: 'session',
         }]);
         expect(plugin.manifest.contributes.browserActions).toEqual([{
@@ -705,9 +785,7 @@ describe('definePlugin', () => {
             target: { realm: 'daemon' },
             rights: derivePluginDaemonContributionRegistrationRights(
                 plugin.manifest.contributes as Readonly<Record<string, unknown>>,
-            ).map((right) => right.family === 'voiceProviders'
-                ? Object.freeze({ ...right, voiceProviderDeclaration: declaration })
-                : right),
+            ),
         });
 
         const plugin = defineVoicePlugin();
@@ -780,7 +858,7 @@ describe('definePlugin', () => {
         expect(wrongKindScope.registrations()).toEqual([]);
     });
 
-    it('authors the approved staged-media display and host-preview arms without opening generic files', () => {
+    it('emits the approved staged-media display and host-preview facts', () => {
         const untypedDefinePlugin = definePlugin as (input: unknown) => unknown;
         const value = defineComposableProtocolObject({}, { policy: 'additive-open/preserve' });
 
@@ -811,36 +889,6 @@ describe('definePlugin', () => {
             })).not.toThrow();
         }
 
-        expect(() => untypedDefinePlugin({
-            id: 'example.composer-generic-file-held',
-            version: '0.1.0',
-            composer: {
-                attachments: {
-                    issue: {
-                        title: 'Issue',
-                        icon: 'error',
-                        cardinality: 'many',
-                        value,
-                        display: { kind: 'media', media: 'file' },
-                    },
-                },
-            },
-        })).toThrow();
-        expect(() => untypedDefinePlugin({
-            id: 'example.composer-generic-preview-held',
-            version: '0.1.0',
-            composer: {
-                attachments: {
-                    issue: {
-                        title: 'Issue',
-                        icon: 'error',
-                        cardinality: 'many',
-                        value,
-                        preview: { kind: 'host', presentation: 'file' },
-                    },
-                },
-            },
-        })).toThrow();
     });
 
     it('types declarative composerApply effects as canonical Composer operations', () => {
@@ -966,7 +1014,6 @@ describe('definePlugin', () => {
             id: 'issues',
             title: 'Issues',
             icon: 'error',
-            triggers: ['@'],
         }]);
         expect(plugin.manifest.contributes.composerAttachments).toEqual([{
             id: 'issue',
@@ -1045,7 +1092,6 @@ describe('definePlugin', () => {
         expect(emitted.contributes.composerAttachments).toEqual(plugin.manifest.contributes.composerAttachments);
         expect(emitted.contributes.composerControls).toEqual(plugin.manifest.contributes.composerControls);
         expect(emitted.contributes.composerRegions).toEqual(plugin.manifest.contributes.composerRegions);
-        expect(parsePluginManifest(emitted)).toMatchObject({ ok: true });
 
         const scope = createPluginRegistrationScope({
             pluginId: plugin.manifest.id,
@@ -1158,7 +1204,7 @@ describe('definePlugin', () => {
             version: '0.1.0',
             accountCollections: { tasks },
         });
-        const declarations = plugin.manifest.contributes.accountCollections;
+        const declarations = plugin.manifest.contributes.accountCollections ?? [];
         const staticTasksDeclaration = projectPluginAccountCollectionDeclaration('tasks', tasks);
         const scope = createPluginRegistrationScope({
             pluginId: plugin.manifest.id,
@@ -1177,12 +1223,9 @@ describe('definePlugin', () => {
                 { id: 'upgrade-v2-to-v3', fromSchemaVersion: 2, toSchemaVersion: 3 },
             ],
             schema: expect.any(Object),
-            rowIdField: 'id',
             identityFields: [],
             serverReadable: ['status', 'title'],
             indexes: [{ id: 'by-status', fields: [{ field: 'status', direction: 'asc' }] }],
-            uiQueries: [],
-            relations: [],
         }]);
         expect(declarations[0]).not.toHaveProperty('migrations.0.migrate');
         expect(staticTasksDeclaration).toMatchObject({
@@ -1241,6 +1284,7 @@ describe('definePlugin', () => {
             actions: {
                 inspect: {
                     title: 'Inspect',
+                    execution: { target: 'daemon' },
                     run,
                 },
             },
@@ -1255,6 +1299,7 @@ describe('definePlugin', () => {
                 actions: [{
                     id: 'inspect',
                     title: 'Inspect',
+                    execution: { target: 'daemon' },
                     scopes: ['global'],
                     surfaces: ['cli'],
                     placementBindings: ['commandPalette'],
@@ -1280,6 +1325,7 @@ describe('definePlugin', () => {
             actions: {
                 configure: {
                     title: 'Configure provider',
+                    execution: { target: 'daemon' },
                     scopes: ['settings'],
                     surfaces: ['plugin'],
                     run: async () => undefined,
@@ -1296,6 +1342,53 @@ describe('definePlugin', () => {
         expect(configure).not.toHaveProperty('placementBindings');
     });
 
+    it('does not manufacture a human placement for a programmatic Action reachable from several programmatic surfaces', () => {
+        // `voice` is discovery, not a human destination, so a plugin-and-voice
+        // Action is exactly as programmatic as a plugin-only one. Manufacturing
+        // `commandPalette` here would put a bounded programmatic read in the
+        // user's command palette, and the placement vocabulary has no empty
+        // value an author could use to take it back.
+        const plugin = definePlugin({
+            id: 'example.programmatic-action',
+            version: '0.1.0',
+            actions: {
+                list: {
+                    title: 'Read the current list window',
+                    execution: { target: 'daemon' },
+                    surfaces: ['plugin', 'voice'],
+                    run: async () => undefined,
+                },
+            },
+        });
+
+        const [list] = plugin.manifest.contributes.actions ?? [];
+        expect(list).toMatchObject({ id: 'list', surfaces: ['plugin', 'voice'] });
+        expect(list).not.toHaveProperty('placementBindings');
+    });
+
+    it('defaults a UI Action to the approved command-palette placement', () => {
+        const plugin = definePlugin({
+            id: 'example.ui-action',
+            version: '0.1.0',
+            actions: {
+                inspect: {
+                    title: 'Inspect',
+                    execution: { target: 'daemon' },
+                    surfaces: ['ui'],
+                    run: async () => undefined,
+                },
+            },
+        });
+
+        expect(plugin.manifest.contributes.actions).toEqual([
+            expect.objectContaining({
+                id: 'inspect',
+                surfaces: ['ui'],
+                placementBindings: ['commandPalette'],
+            }),
+        ]);
+    });
+
     it('projects one Action through every declared semantic Composer and message placement in order', () => {
         const plugin = definePlugin({
             id: 'example.composer-action',
@@ -1303,6 +1396,7 @@ describe('definePlugin', () => {
             actions: {
                 'open-review': {
                     title: 'Open review',
+                    execution: { target: 'daemon' },
                     icon: 'sparkles',
                     scopes: ['session', 'message'],
                     surfaces: ['ui'],
@@ -1347,6 +1441,7 @@ describe('definePlugin', () => {
             actions: {
                 'receive-github': {
                     title: 'Receive GitHub event',
+                    execution: { target: 'daemon' },
                     surfaces: ['plugin'],
                     run: async () => undefined,
                 },
@@ -1414,32 +1509,6 @@ describe('definePlugin', () => {
         }]);
     });
 
-    it('rejects a transcript Activity backed by a global dynamic Resource', () => {
-        expect(() => definePlugin({
-            id: 'example.global-transcript-activity-resource',
-            version: '0.1.0',
-            resources: {
-                'import-progress': {
-                    source: 'dynamic',
-                    kind: 'config',
-                    contentType: 'application/vnd.happier.transcript-activity+json;v=1',
-                    maxBytes: 65_536,
-                    scope: 'global',
-                    runtime: {
-                        read: async () => new Uint8Array(),
-                        observe: () => ({ dispose: () => undefined }),
-                    },
-                },
-            },
-            transcriptActivities: {
-                'import-progress-card': {
-                    resourceId: 'import-progress',
-                    actions: [],
-                },
-            },
-        })).toThrow(/must reference a session-scoped dynamic Resource/iu);
-    });
-
     it('projects an optional packaged PNG brand Resource through the canonical manifest', () => {
         const plugin = definePlugin({
             id: 'example.brand',
@@ -1462,23 +1531,6 @@ describe('definePlugin', () => {
             contentType: 'image/png',
         }]);
 
-        expect(() => definePlugin({
-            id: 'example.invalid-brand',
-            version: '0.1.0',
-            brand: { iconResourceId: 'brand-icon' },
-            resources: {
-                'brand-icon': {
-                    source: 'dynamic',
-                    kind: 'asset',
-                    contentType: 'image/png',
-                    scope: 'global',
-                    runtime: {
-                        read: async () => new Uint8Array(),
-                        observe: () => ({ dispose: () => undefined }),
-                    },
-                },
-            },
-        })).toThrow(/packaged image\/png asset/iu);
     });
 
     it('binds only declared managed Provider runtimes through the canonical registration transaction', async () => {
@@ -1532,14 +1584,18 @@ describe('definePlugin', () => {
         expect(managedRegistration).toMatchObject({
             family: 'providers',
             localId: 'gateway',
-            value: { start: expect.any(Function) },
+            value: { managedRuntime: { start: expect.any(Function) } },
         });
         if (managedRegistration?.family !== 'providers') {
             throw new Error('Expected a managed Provider registration');
         }
-        expect(managedRegistration.value).not.toBe(runtime);
-        expect(managedRegistration.value.start).not.toBe(runtime.start);
-        await managedRegistration.value.start({} as never, {} as never);
+        const managedProviderRuntime = managedRegistration.value.managedRuntime;
+        if (!managedProviderRuntime) {
+            throw new Error('Expected a managed Provider runtime field');
+        }
+        expect(managedProviderRuntime).not.toBe(runtime);
+        expect(managedProviderRuntime.start).not.toBe(runtime.start);
+        await managedProviderRuntime.start({} as never, {} as never);
         expect(runtime.start).toHaveBeenCalledOnce();
 
         const descriptorOnly = definePlugin({
@@ -1631,7 +1687,7 @@ describe('definePlugin', () => {
         } as unknown as Parameters<typeof definePlugin>[0]);
         const duplicateScope = createScope(duplicate);
         await expect(duplicate.activate(duplicateScope.api)).rejects.toThrow(
-            /duplicate contribution 'providers\/gateway'/iu,
+            /duplicate managed Provider runtime for Provider 'gateway'/iu,
         );
         expect(duplicateScope.registrations()).toEqual([]);
     });
@@ -1659,7 +1715,7 @@ describe('definePlugin', () => {
             },
         });
 
-        expect(executionOnly.manifest.contributes.agents[0]).toMatchObject({
+        expect(executionOnly.manifest.contributes.agents?.[0]).toMatchObject({
             id: 'reviewer',
             primary: 'executionRuns',
         });
@@ -1748,7 +1804,7 @@ describe('definePlugin', () => {
         expect(registerExternalSessions).toHaveBeenCalledWith('assistant', externalSessions);
     });
 
-    it('validates cold Agent declarations before executable bindings', () => {
+    it('keeps Agent executable-binding construction local to definePlugin', () => {
         expect(() => definePlugin({
             id: 'example.invalid-cold-agent-before-runtime-binding',
             version: '0.1.0',
@@ -1769,7 +1825,7 @@ describe('definePlugin', () => {
                 },
             },
         } as unknown as Parameters<typeof definePlugin>[0])).toThrow(
-            /Plugin definition is invalid/iu,
+            /requires a runtime factory/iu,
         );
     });
 
@@ -1932,6 +1988,7 @@ describe('definePlugin', () => {
             actions: {
                 action: {
                     title: 'Action',
+                    execution: { target: 'daemon' },
                     run: async () => undefined,
                 },
             },
@@ -2060,6 +2117,7 @@ describe('definePlugin', () => {
                         platforms: ['web'],
                         capabilities: {
                             turn: { cancelResponse: false, bargeIn: false },
+                            tools: { effectCalls: 'none' },
                         },
                         client: {
                             artifactId: 'browser-voice',
@@ -2234,7 +2292,7 @@ describe('definePlugin', () => {
             ],
             discoverySources: [{ id: 'catalog', title: 'Catalog' }],
         });
-        expect(plugin.manifest.hostAccess.required).toContainEqual({
+        expect(plugin.manifest.hostAccess?.required).toContainEqual({
             id: 'mcp-capabilities',
             capability: 'mcp',
             reason: 'Use the declared MCP capabilities',
@@ -2269,7 +2327,11 @@ describe('definePlugin', () => {
             id: 'example.matrix',
             version: '0.1.0',
             actions: {
-                inspect: { title: 'Inspect', run: async () => undefined },
+                inspect: {
+                    title: 'Inspect',
+                    execution: { target: 'daemon' },
+                    run: async () => undefined,
+                },
             },
             commands: {
                 'inspect-command': {
@@ -2367,28 +2429,28 @@ describe('definePlugin', () => {
             },
         });
 
-        expect(plugin.manifest.contributes.commands).toContainEqual({
+        expect(plugin.manifest.contributes.commands ?? []).toContainEqual({
             id: 'inspect-command',
             title: 'Inspect',
             path: ['inspect'],
             action: 'inspect',
         });
-        expect(plugin.manifest.contributes.resources).toContainEqual({
+        expect(plugin.manifest.contributes.resources ?? []).toContainEqual({
             id: 'readme',
             kind: 'asset',
             path: 'README.md',
             contentType: 'text/markdown',
         });
-        expect(plugin.manifest.contributes.ui.views).toHaveLength(1);
-        expect(plugin.manifest.contributes.openableContentViewers).toContainEqual({
+        expect(plugin.manifest.contributes.ui?.views ?? []).toHaveLength(1);
+        expect(plugin.manifest.contributes.openableContentViewers ?? []).toContainEqual({
             id: 'markdown-viewer',
             destination: 'summary-view',
             contentClasses: ['text'],
             mimeTypes: ['text/markdown'],
             extensions: ['.md'],
         });
-        expect(plugin.manifest.contributes.notificationChannels[0]?.id).toBe('local');
-        expect(plugin.manifest.contributes.connectedAccountDescriptors[0]?.id).toBe('account');
+        expect(plugin.manifest.contributes.notificationChannels?.[0]?.id).toBe('local');
+        expect(plugin.manifest.contributes.connectedAccountDescriptors?.[0]?.id).toBe('account');
 
         const registerChannel = vi.fn();
         const registerConnectedAccount = vi.fn();
@@ -2526,6 +2588,61 @@ void 0; /* @sdk-negative-type-case-end */
         );
     });
 
+    it('relates the declared externalSessions surface to its runtime facets at compile time', () => {
+        if (false) {
+            const externalSessionsContribution = {} as AgentExternalSessionsContribution;
+            void externalSessionsContribution;
+            /* @sdk-negative-type-case:src-definePlugin-test-ts-external-sessions-surface-without-contribution:QW4gQWdlbnQgZGVjbGFyaW5nIHRoZSBleHRlcm5hbFNlc3Npb25zIHN1cmZhY2UgcmVxdWlyZXMgaXRzIEV4dGVybmFsIFNlc3Npb25zIGNvbnRyaWJ1dGlvbi4:ZGVmaW5lUGx1Z2luKHsKICAgICAgICAgICAgICAgIGlkOiAnZXhhbXBsZS5pbnZhbGlkLWV4dGVybmFsLXNlc3Npb25zLXN1cmZhY2Utd2l0aG91dC1jb250cmlidXRpb24nLAogICAgICAgICAgICAgICAgdmVyc2lvbjogJzAuMS4wJywKICAgICAgICAgICAgICAgIGFnZW50czogewphdXhpbGlhcnk6IHsKICAgICAgICAgICAgICAgICAgICAgICAgZGVjbGFyYXRpb246IHsKICAgICAgICAgICAgICAgICAgICAgICAgICAgIHRpdGxlOiAnQXV4aWxpYXJ5IEFnZW50JywKICAgICAgICAgICAgICAgICAgICAgICAgICAgIGNhcGFiaWxpdGllczogeyBzdXJmYWNlczogWydleHRlcm5hbFNlc3Npb25zJ10gfSwKICAgICAgICAgICAgICAgICAgICAgICAgfSwKICAgICAgICAgICAgICAgICAgICB9LAogICAgICAgICAgICAgICAgfSwKICAgICAgICAgICAgfSk7 */
+void 0; /* @sdk-negative-type-case-end */
+            /* @sdk-negative-type-case:src-definePlugin-test-ts-external-sessions-contribution-without-surface:RXh0ZXJuYWwgU2Vzc2lvbnMgcnVudGltZSBmYWNldHMgcmVxdWlyZSB0aGUgZGVjbGFyZWQgZXh0ZXJuYWxTZXNzaW9ucyBzdXJmYWNlLg:ZGVmaW5lUGx1Z2luKHsKICAgICAgICAgICAgICAgIGlkOiAnZXhhbXBsZS5pbnZhbGlkLWV4dGVybmFsLXNlc3Npb25zLWNvbnRyaWJ1dGlvbi13aXRob3V0LXN1cmZhY2UnLAogICAgICAgICAgICAgICAgdmVyc2lvbjogJzAuMS4wJywKICAgICAgICAgICAgICAgIGFnZW50czogewogICAgICAgICAgICAgICAgICAgIGF1eGlsaWFyeTogewogICAgICAgICAgICAgICAgICAgICAgICBkZWNsYXJhdGlvbjogewogICAgICAgICAgICAgICAgICAgICAgICAgICAgdGl0bGU6ICdBdXhpbGlhcnkgQWdlbnQnLAogICAgICAgICAgICAgICAgICAgICAgICAgICAgY2FwYWJpbGl0aWVzOiB7IHN1cmZhY2VzOiBbJ3Rlcm1pbmFsJ10gfSwKICAgICAgICAgICAgICAgICAgICAgICAgfSwKZXh0ZXJuYWxTZXNzaW9uczogZXh0ZXJuYWxTZXNzaW9uc0NvbnRyaWJ1dGlvbiwKICAgICAgICAgICAgICAgICAgICB9LAogICAgICAgICAgICAgICAgfSwKICAgICAgICAgICAgfSk7 */
+void 0; /* @sdk-negative-type-case-end */
+        }
+    });
+
+    it('keeps the External Sessions authoring guard for capability lists no literal survives', () => {
+        // A JavaScript author, and every bundled Agent whose capability list is
+        // projected at runtime, reaches `definePlugin` with a widened surface
+        // array. The compile-time rule above cannot read one, so the runtime
+        // guard stays the owner of both directions for them.
+        const projectedSurfaces: ('terminal' | 'externalSessions')[] = ['externalSessions'];
+        expect(() => definePlugin({
+            id: 'example.widened-external-sessions-surface-without-contribution',
+            version: '0.1.0',
+            agents: {
+                auxiliary: {
+                    declaration: {
+                        title: 'Auxiliary Agent',
+                        capabilities: { surfaces: projectedSurfaces },
+                        surfaces: {
+                            externalSession: {
+                                sources: [{
+                                    sourceKind: 'fixture',
+                                    schema: { fields: [{ name: 'kind', kind: 'literal', value: 'fixture' }] },
+                                    key: { segments: [{ kind: 'literal', value: 'fixture' }] },
+                                }],
+                            },
+                        },
+                    },
+                },
+            },
+        })).toThrow(/requires an External Sessions contribution/u);
+
+        const projectedTerminalSurfaces: ('terminal' | 'externalSessions')[] = ['terminal'];
+        expect(() => definePlugin({
+            id: 'example.widened-external-sessions-contribution-without-surface',
+            version: '0.1.0',
+            agents: {
+                auxiliary: {
+                    declaration: {
+                        title: 'Auxiliary Agent',
+                        capabilities: { surfaces: projectedTerminalSurfaces },
+                    },
+                    externalSessions: {} as AgentExternalSessionsContribution,
+                },
+            },
+        })).toThrow(/without declaring the External Sessions surface/u);
+    });
+
     it('infers composable action input and result types without explicit generics', () => {
         const inputSchema = defineComposableProtocolObject({
             text: defineComposableProtocolString(),
@@ -2539,6 +2656,7 @@ void 0; /* @sdk-negative-type-case-end */
             actions: {
                 inspect: {
                     title: 'Inspect',
+                    execution: { target: 'daemon' },
                     inputSchema,
                     resultSchema,
                     async run(input) {
@@ -2555,6 +2673,7 @@ void 0; /* @sdk-negative-type-case-end */
                 actions: {
                     inspect: {
                         title: 'Inspect structural projection',
+                        execution: { target: 'daemon' },
                         inputSchema: inputSchema.jsonSchema,
                         async run(input) {
                             expectTypeOf(input).toEqualTypeOf<JsonValue>();
@@ -2652,7 +2771,13 @@ void 0; /* @sdk-negative-type-case-end */
             actions: {
                 inspect: {
                     title: 'Inspect',
-                    inputSchema: incompleteComposableSchema,
+                    execution: { target: 'daemon' },
+                    // Invalid JavaScript can still cross the author boundary;
+                    // bypass the new static contract only to exercise its
+                    // canonical runtime rejection.
+                    inputSchema: incompleteComposableSchema as unknown as NonNullable<
+                        PluginActionDeclaration['inputSchema']
+                    >,
                     run: (input) => input,
                 },
             },
@@ -2763,12 +2888,7 @@ void 0; /* @sdk-negative-type-case-end */
         const telegramContribution = protocol.contribute({
             operations: { setup: protocol.operations.setup.bind('arbitrary') },
         });
-        const contributionEvidenceSymbols = Object.getOwnPropertySymbols(telegramContribution);
-        expect(contributionEvidenceSymbols).toHaveLength(1);
-        expect(Object.getOwnPropertyDescriptor(
-            telegramContribution,
-            contributionEvidenceSymbols[0]!,
-        )?.enumerable).toBe(true);
+        expect(Object.getOwnPropertySymbols(telegramContribution)).toEqual([]);
 
         const contributor = definePlugin({
             id: 'happier.channels.telegram',
@@ -2776,6 +2896,7 @@ void 0; /* @sdk-negative-type-case-end */
             actions: {
                 arbitrary: {
                     title: 'Arbitrary',
+                    execution: { target: 'daemon' },
                     scopes: ['global'],
                     surfaces: ['plugin'],
                     dangerLevel: 'safe',
@@ -2800,6 +2921,7 @@ void 0; /* @sdk-negative-type-case-end */
             targetPluginId: 'happier.channels',
             id: 'providers',
             protocol: { id: 'channels-providers', version: 1 },
+            semanticCarrier: expect.any(Object),
         });
         type AdmittedProvider = typeof target.contributionPoints.providers extends TargetedContributionPointRef<
             infer TContribution
@@ -2830,13 +2952,14 @@ void 0; /* @sdk-negative-type-case-end */
         expectTypeOf(executeSetup).returns.toEqualTypeOf<Promise<{ accepted: boolean }>>();
         expectTypeOf<AdmittedProvider['operations']['setup']['identity']['role']>()
             .toEqualTypeOf<'setup'>();
-        expect(contributor.manifest.contributes.targetedPluginContributions).toEqual([{
+        const targetedPluginContributions = contributor.manifest.contributes.targetedPluginContributions ?? [];
+        expect(targetedPluginContributions).toEqual([{
             id: 'telegram',
             target: { pluginId: 'happier.channels', pointId: 'providers' },
             protocol: { id: 'channels-providers', version: 1 },
             operations: { setup: 'arbitrary' },
         }]);
-        const projectedContribution = contributor.manifest.contributes.targetedPluginContributions[0];
+        const projectedContribution = targetedPluginContributions[0];
         expect(projectedContribution).toBeDefined();
         expect(Object.getOwnPropertySymbols(projectedContribution!)).toEqual([]);
         expect(JSON.parse(JSON.stringify(contributor.manifest))).toEqual(contributor.manifest);
@@ -2855,7 +2978,7 @@ void 0; /* @sdk-negative-type-case-end */
 void 0; /* @sdk-negative-type-case-end */
     });
 
-    it('projects trusted accessor-backed targeted declarations while retaining strict JSON validation', () => {
+    it('projects trusted accessor-backed targeted declarations as cold facts', () => {
         const protocol = defineContributionProtocol({
             id: 'targeted-cold-projection',
             version: 1,
@@ -2877,6 +3000,7 @@ void 0; /* @sdk-negative-type-case-end */
             actions: {
                 arbitrary: {
                     title: 'Arbitrary',
+                    execution: { target: 'daemon' },
                     scopes: ['global'],
                     surfaces: ['plugin'],
                     dangerLevel: 'safe',
@@ -2909,22 +3033,6 @@ void 0; /* @sdk-negative-type-case-end */
             operations: { run: 'arbitrary' },
         }]);
 
-        class NonJsonContributionValue {}
-        for (const invalidValue of [
-            () => undefined,
-            new NonJsonContributionValue(),
-        ]) {
-            const unsafeContribution = Object.create(
-                Object.getPrototypeOf(contribution),
-                Object.getOwnPropertyDescriptors(contribution),
-            );
-            Object.defineProperty(unsafeContribution, 'unsafe', {
-                enumerable: true,
-                value: invalidValue,
-            });
-            expect(() => defineContributor(unsafeContribution))
-                .toThrow('Bundled plugin manifest must be JSON serializable.');
-        }
     });
 
     it('composes a readonly definePlugin point declaration into the manual manifest ABI without copying it', () => {
@@ -3004,6 +3112,7 @@ void 0; /* @sdk-negative-type-case-end */
             targetPluginId: 'happier.channels',
             id: 'providers',
             protocol: { id: 'channels-providers', version: 1 },
+            semanticCarrier: expect.any(Object),
         });
     });
 
@@ -3047,6 +3156,7 @@ void 0; /* @sdk-negative-type-case-end */
             actions: {
                 'arbitrary-connection-test': {
                     title: 'Arbitrary connection test',
+                    execution: { target: 'daemon' },
                     inputSchema: connectionTest.declaration.input.schema.jsonSchema,
                     resultSchema: connectionTest.declaration.resultSchema.jsonSchema,
                     surfaces: connectionTest.declaration.surfaces,
@@ -3148,6 +3258,7 @@ void 0; /* @sdk-negative-type-case-end */
             actions: {
                 inspect: {
                     title: 'Inspect source',
+                    execution: { target: 'daemon' },
                     scopes: ['global'],
                     surfaces: ['plugin'],
                     dangerLevel: 'safe',
@@ -3203,8 +3314,11 @@ void 0; /* @sdk-negative-type-case-end */
         > ? TContribution : never;
         type DetailSurface = AdmittedSource['surfaces']['detail'];
         type DetailInput = DetailSurface extends ContributionSurfaceHandle<infer TInput, string> ? TInput : never;
-        expectTypeOf<NonNullable<AdmittedSource['descriptor']>['providerId']>().toEqualTypeOf<string>();
-        expectTypeOf<undefined extends AdmittedSource['descriptor'] ? true : false>().toEqualTypeOf<true>();
+        expectTypeOf<AdmittedSource['descriptor']['providerId']>().toEqualTypeOf<string>();
+        // A declared descriptor schema makes the admitted descriptor REQUIRED:
+        // admission rejects the contribution that omits it, so a target reader
+        // must not be forced to narrow a value that cannot be absent.
+        expectTypeOf<undefined extends AdmittedSource['descriptor'] ? true : false>().toEqualTypeOf<false>();
         expectTypeOf<DetailInput['issueId']>().toEqualTypeOf<string>();
         expectTypeOf<DetailSurface['point']>().toEqualTypeOf<Readonly<{
             pointId: 'sources';
@@ -3289,7 +3403,7 @@ void 0; /* @sdk-negative-type-case-end */
     })).not.toThrow();
   });
 
-  it('leaves targeted Surface symbolic-wrapper admission to the canonical manifest parser', () => {
+  it('emits targeted Surface symbolic-wrapper facts without manifest admission', () => {
     const detailInput = defineProtocolObject({ reviewId: defineProtocolString() }, { policy: 'closed' });
     const protocol = defineContributionProtocol({
         id: 'review-detail',
@@ -3331,7 +3445,7 @@ void 0; /* @sdk-negative-type-case-end */
                 protocol: node.surface.point.protocol,
             },
         },
-    })).toThrow(/Plugin definition is invalid/iu);
+    })).not.toThrow();
   });
 
   it('rejects accessor-backed symbolic fallback data without reading it', () => {
@@ -3457,11 +3571,13 @@ void 0; /* @sdk-negative-type-case-end */
                     targetPluginId: 'example.target',
                     id: 'providers',
                     protocol: { id: 'example-providers', version: 1 },
+                    semanticCarrier: expect.any(Object),
                 },
                 {
                     targetPluginId: 'example.target',
                     id: 'providers',
                     protocol: { id: 'example-providers', version: 2 },
+                    semanticCarrier: expect.any(Object),
                 },
             ],
         });

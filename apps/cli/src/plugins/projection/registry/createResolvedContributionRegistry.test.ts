@@ -21,7 +21,7 @@ import {
 } from '@happier-dev/protocol';
 import { createPluginStateStore } from '@/plugins/store/state.testkit';
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
-import type { ResolvedActivatedHookRegistration, ResolvedReactNativeBundleContribution } from './types';
+import type { ResolvedActivatedHookRegistration } from './types';
 
 async function writeInstalledSettingsPlugin(params: Readonly<{
   happyHomeDir: string;
@@ -43,7 +43,7 @@ async function writeInstalledSettingsPlugin(params: Readonly<{
             id: params.settingsId,
             title: 'Acme settings',
             target: { kind: 'plugin' },
-            scope: 'local',
+            scope: 'daemon',
             fields: [
               {
                 id: 'endpoint',
@@ -78,7 +78,6 @@ async function writeInstalledSettingsPlugin(params: Readonly<{
         install: {
           mode: 'link',
           manifestVersion: '1.0.0',
-          manifestDigest: null,
           installedPath: null,
         },
         state: {
@@ -94,6 +93,30 @@ describe('getResolvedContributionRegistry', () => {
     const registry = createResolvedContributionRegistry({});
 
     expect(registry).not.toHaveProperty('surfaceHandlersByBackendId');
+  });
+
+  it('rejects duplicate qualified UI destination and renderer bindings before projection', () => {
+    const binding = (id: string) => ({
+      pluginId: 'acme.review',
+      definition: { id },
+    });
+    // This registry-boundary fixture supplies only the identity fields this owner
+    // reads before any UI activation or projection work begins.
+    const inputs = (value: object) => value as Parameters<typeof createResolvedContributionRegistry>[0];
+
+    expect(() => createResolvedContributionRegistry(inputs({
+      uiViewsV2: [binding('review'), binding('review')],
+    }))).toThrow("Duplicate UI destination binding 'acme.review:review'");
+    expect(() => createResolvedContributionRegistry(inputs({
+      uiSettingsPagesV2: [binding('settings'), binding('settings')],
+    }))).toThrow("Duplicate UI destination binding 'acme.review:settings'");
+    expect(() => createResolvedContributionRegistry(inputs({
+      uiViewsV2: [binding('shared')],
+      uiSettingsPagesV2: [binding('shared')],
+    }))).toThrow("Duplicate UI destination binding 'acme.review:shared'");
+    expect(() => createResolvedContributionRegistry(inputs({
+      uiRenderersV2: [binding('renderer'), binding('renderer')],
+    }))).toThrow("Duplicate UI renderer binding 'acme.review:renderer'");
   });
 
   it('preserves declarative voice model packs through the resolved registry', () => {
@@ -121,7 +144,6 @@ describe('getResolvedContributionRegistry', () => {
       source: { kind: 'path' as const },
       pluginId: 'com.acme.voice',
       manifestPath: '/plugins/com.acme.voice/plugin.json',
-      manifestDigest: 'sha256:voice',
       daemonEntryPath: '/plugins/com.acme.voice/daemon.js',
     };
     const registry = createResolvedContributionRegistry({
@@ -155,7 +177,6 @@ describe('getResolvedContributionRegistry', () => {
       source: { kind: 'path' as const },
       pluginId,
       manifestPath: `/plugins/${pluginId}/plugin.json`,
-      manifestDigest: `sha256:${pluginId}`,
       daemonEntryPath: null,
       identity: {
         pluginId,
@@ -237,7 +258,6 @@ describe('getResolvedContributionRegistry', () => {
           source: { kind: 'path' },
           pluginId: 'beta.plugin',
           manifestPath: '/plugins/beta/plugin.json',
-          manifestDigest: 'sha256:beta',
           daemonEntryPath: '/plugins/beta/daemon.mjs',
           definition: {
             kindVersion: 1,
@@ -258,7 +278,9 @@ describe('getResolvedContributionRegistry', () => {
               cli: true,
               rpc: false,
               sdk: false,
+              plugin: false,
             },
+            execution: { target: 'daemon' },
             inputHints: null,
             inputSchema: {},
           },
@@ -268,7 +290,6 @@ describe('getResolvedContributionRegistry', () => {
           source: { kind: 'path' },
           pluginId: 'alpha.plugin',
           manifestPath: '/plugins/alpha/plugin.json',
-          manifestDigest: 'sha256:alpha',
           daemonEntryPath: '/plugins/alpha/daemon.mjs',
           definition: {
             kindVersion: 1,
@@ -289,7 +310,9 @@ describe('getResolvedContributionRegistry', () => {
               cli: true,
               rpc: false,
               sdk: false,
+              plugin: false,
             },
+            execution: { target: 'daemon' },
             inputHints: null,
             inputSchema: {},
           },
@@ -301,7 +324,6 @@ describe('getResolvedContributionRegistry', () => {
           source: { kind: 'path' },
           pluginId: 'beta.plugin',
           manifestPath: '/plugins/beta/plugin.json',
-          manifestDigest: 'sha256:beta',
           daemonEntryPath: '/plugins/beta/daemon.mjs',
           definition: {
             id: 'beta.plugin/review/ready',
@@ -316,7 +338,6 @@ describe('getResolvedContributionRegistry', () => {
           source: { kind: 'path' },
           pluginId: 'alpha.plugin',
           manifestPath: '/plugins/alpha/plugin.json',
-          manifestDigest: 'sha256:alpha',
           daemonEntryPath: '/plugins/alpha/daemon.mjs',
           definition: {
             id: 'alpha.plugin/review/ready',
@@ -333,7 +354,6 @@ describe('getResolvedContributionRegistry', () => {
           source: { kind: 'path' },
           pluginId: 'beta.plugin',
           manifestPath: '/plugins/beta/plugin.json',
-          manifestDigest: 'sha256:beta',
           daemonEntryPath: '/plugins/beta/daemon.mjs',
           definition: {
             id: 'beta.policy',
@@ -346,7 +366,6 @@ describe('getResolvedContributionRegistry', () => {
           source: { kind: 'path' },
           pluginId: 'alpha.plugin',
           manifestPath: '/plugins/alpha/plugin.json',
-          manifestDigest: 'sha256:alpha',
           daemonEntryPath: '/plugins/alpha/daemon.mjs',
           definition: {
             id: 'alpha.policy',
@@ -359,7 +378,6 @@ describe('getResolvedContributionRegistry', () => {
     const actionIndexedRegistry = registry as typeof registry & Readonly<{
       actionsById: ReadonlyMap<string, unknown>;
       eventsById: ReadonlyMap<string, unknown>;
-      generationId: string;
     }>;
 
     expect(registry.actions.map((action) => [action.pluginId, action.definition.id])).toEqual([
@@ -380,7 +398,7 @@ describe('getResolvedContributionRegistry', () => {
       'alpha.policy',
       'beta.policy',
     ]);
-    expect(actionIndexedRegistry.generationId).toMatch(/^registry:/);
+    expect(registry).not.toHaveProperty('generationId');
     expect(Object.isFrozen(registry)).toBe(true);
     expect(Object.isFrozen(registry.actions)).toBe(true);
   });
@@ -394,7 +412,6 @@ describe('getResolvedContributionRegistry', () => {
           source: { kind: 'path' },
           pluginId: 'alpha.plugin',
           manifestPath: '/plugins/alpha/plugin.json',
-          manifestDigest: 'sha256:alpha',
           daemonEntryPath: '/plugins/alpha/daemon.mjs',
           definition: {
             id: 'task/complete',
@@ -409,7 +426,6 @@ describe('getResolvedContributionRegistry', () => {
           source: { kind: 'path' },
           pluginId: 'beta.plugin',
           manifestPath: '/plugins/beta/plugin.json',
-          manifestDigest: 'sha256:beta',
           daemonEntryPath: '/plugins/beta/daemon.mjs',
           definition: {
             id: 'task/complete',
@@ -430,160 +446,168 @@ describe('getResolvedContributionRegistry', () => {
     });
   });
 
-  it('builds registry identity for development RN dev-hot-reload artifacts without immutable digests', () => {
-    const registry = createResolvedContributionRegistry({
-      agents: Object.freeze([]),
-            reactNativeBundles: Object.freeze([
-        {
-          provenance: 'external',
-          source: { kind: 'path' },
-          pluginId: 'acme.preview',
-          manifestPath: '/plugins/acme/plugin.json',
-          manifestDigest: 'sha256:plugin',
-          daemonEntryPath: '/plugins/acme/daemon.mjs',
-          sourceSpec: {
-            kind: 'path',
-            locator: '/plugins/acme',
-            trustPolicy: 'local_trusted',
-            installPolicy: 'link',
-          },
-          definition: {
-            id: 'native-preview',
-            bundle: {
-              platform: 'ios',
-              channel: 'development',
-            },
-            entry: { modulePath: './renderSurface', exportName: 'renderSurface' },
-            compatibility: {
-              hostUiApiVersion: '1.0.0',
-              reactVersion: '19.0.0',
-              reactNativeVersion: '0.83.4',
-              supportedPlatforms: ['ios'],
-              supportedChannels: ['development'],
-              requiredNativeCapabilities: [],
-            },
-            hostApi: { minVersion: '1.0.0', methods: [] },
-            nativeCapabilities: [],
-            fallback: { kind: 'none' },
-            display: {
-              titleKey: 'title',
-              descriptionKey: 'description',
-              iconToken: 'preview',
-              tone: 'info',
-            },
-            policy: { allowDevHotReload: true },
-          },
-        },
-      ]),
-      uiArtifacts: Object.freeze([
-        {
-          provenance: 'external',
-          source: { kind: 'path' },
-          pluginId: 'acme.preview',
-          manifestPath: '/plugins/acme/plugin.json',
-          manifestDigest: 'sha256:plugin',
-          daemonEntryPath: '/plugins/acme/daemon.mjs',
-          sourceSpec: {
-            kind: 'path',
-            locator: '/plugins/acme',
-            trustPolicy: 'local_trusted',
-            installPolicy: 'link',
-          },
-          definition: {
-            id: 'native-preview-ios-dev',
-            contributionId: 'native-preview',
-            contributionFamily: 'reactNativeBundles',
-            artifactKind: 'reactNativeBundle',
-            platform: 'ios',
-            channel: 'development',
-            compatibility: {
-              hostAppVersion: '2.0.0',
-              hostUiApiVersion: '1.0.0',
-              reactVersion: '19.0.0',
-              reactNativeVersion: '0.83.4',
-              nativeCapabilities: [],
-            },
-            byteSize: 0,
-            contentType: 'application/javascript',
-            devUrl: 'http://127.0.0.1:8082/index.bundle?platform=ios&dev=true',
-          },
-        },
-      ]),
-    });
-
-    expect(registry.generationId).toContain('devUrl:http://127.0.0.1:8082/index.bundle?platform=ios&dev=true');
-  });
-
-  // NATIVE-PIPELINE (LEDGER DEC-6 follow-up, item 1): a `reactNative` surface
-  // is one logical `id` with an additional bundle entry per platform (mirrors
-  // the pre-existing ios+android multi-entry manifest-artifact pattern). The
-  // registry's dedupe key is `pluginId:id:platform`, not `pluginId:id`.
-  function buildReactNativeBundleContribution(platform: 'ios' | 'web'): ResolvedReactNativeBundleContribution {
-    return {
-      provenance: 'external',
-      source: { kind: 'path' },
-      pluginId: 'acme.preview',
-      manifestPath: '/plugins/acme/plugin.json',
-      manifestDigest: 'sha256:plugin',
-      daemonEntryPath: '/plugins/acme/daemon.mjs',
-      sourceSpec: {
-        kind: 'path',
-        locator: '/plugins/acme',
-        trustPolicy: 'local_trusted',
-        installPolicy: 'link',
-      },
+  it('derives only current, exact plugin Event setup Actions without activating a plugin', () => {
+    const action = (pluginId: string, id: string, title: string) => ({
+      provenance: 'external' as const,
+      source: { kind: 'path' as const },
+      pluginId,
+      manifestPath: `/plugins/${pluginId}/plugin.json`,
+      daemonEntryPath: `/plugins/${pluginId}/daemon.mjs`,
       definition: {
-        id: 'native-preview',
-        bundle: { platform, channel: 'development' },
-        entry: { modulePath: './renderSurface', exportName: 'renderSurface' },
-        compatibility: {
-          hostUiApiVersion: '1.0.0',
-          reactVersion: '19.0.0',
-          reactNativeVersion: '0.83.4',
-          supportedPlatforms: [platform],
-          supportedChannels: ['development'],
-          requiredNativeCapabilities: [],
+        kindVersion: 1 as const,
+        id,
+        title,
+        description: null,
+        safety: 'safe' as const,
+        dangerLevel: 'safe' as const,
+        placements: [],
+        slash: null,
+        bindings: null,
+        examples: null,
+        surfaces: {
+          ui: false,
+          voice: false,
+          agent: false,
+          mcp: false,
+          cli: false,
+          rpc: false,
+          sdk: false,
+          plugin: true,
         },
-        hostApi: { minVersion: '1.0.0', methods: [] },
-        nativeCapabilities: [],
-        fallback: { kind: 'none' },
-        display: {
-          titleKey: 'title',
-          descriptionKey: 'description',
-          iconToken: 'preview',
-          tone: 'info',
+        execution: { target: 'daemon' },
+        inputHints: null,
+        inputSchema: { type: 'object', additionalProperties: false },
+        outputSchema: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['v', 'sourceInstanceId', 'sourceContractVersion', 'sourceConfig', 'displayLabel'],
+          properties: {
+            v: { type: 'integer', const: 1 },
+            sourceInstanceId: { type: 'string', minLength: 1, maxLength: 512 },
+            sourceContractVersion: { type: 'integer', const: 1 },
+            sourceConfig: { type: 'object', additionalProperties: false },
+            displayLabel: { type: 'string', minLength: 1, maxLength: 256 },
+          },
         },
-        policy: { allowDevHotReload: true },
+      },
+    });
+    const event = (
+      pluginId: string,
+      localId: string,
+      setupActionLocalId?: string,
+      historyGapResetActionLocalId?: string,
+    ) => ({
+      provenance: 'external' as const,
+      source: { kind: 'path' as const },
+      pluginId,
+      manifestPath: `/plugins/${pluginId}/plugin.json`,
+      daemonEntryPath: `/plugins/${pluginId}/daemon.mjs`,
+      definition: {
+        id: `${pluginId}/${localId}`,
+        localId,
+        kind: 'event' as const,
+        title: `${pluginId} event`,
+        description: `${pluginId} description`,
+        payloadSchema: { type: 'object', additionalProperties: false },
+        automation: {
+          v: 1 as const,
+          eligible: true as const,
+          source: {
+            sourceContractVersion: 1,
+            supportedObservationTransports: ['checkpointedPull' as const],
+            sourceConfigSchema: { type: 'object', additionalProperties: false },
+            ...(setupActionLocalId
+              ? { setupActionRef: { pluginId, localId: setupActionLocalId } }
+              : {}),
+            ...(historyGapResetActionLocalId
+              ? { historyGapResetActionRef: { pluginId, localId: historyGapResetActionLocalId } }
+              : {}),
+          },
+        },
+      },
+    });
+    const inputs = {
+      agents: [],
+      actions: [
+        action('alpha.plugin', 'configure-source', 'Alpha setup'),
+        action('alpha.plugin', 'baseline-history-gap', 'Resume source'),
+        action('beta.plugin', 'configure-source', 'Beta setup'),
+      ],
+      events: [
+        event('alpha.plugin', 'repository/updated', 'configure-source', 'baseline-history-gap'),
+        event('beta.plugin', 'repository/updated', 'configure-source'),
+        event('alpha.plugin', 'valid-but-not-composer-eligible'),
+      ],
+      immutableGenerationIdsByPluginId: {
+        'alpha.plugin': 'alpha-immutable-generation',
+        'beta.plugin': 'beta-immutable-generation',
       },
     };
-  }
 
-  it('allows two reactNativeBundles contributions sharing one id when their platforms differ', () => {
-    const registry = createResolvedContributionRegistry({
-      agents: Object.freeze([]),
-            reactNativeBundles: Object.freeze([
-        buildReactNativeBundleContribution('ios'),
-        buildReactNativeBundleContribution('web'),
-      ]),
-    });
+    const registry = createResolvedContributionRegistry(inputs);
 
-    expect(registry.reactNativeBundles).toHaveLength(2);
-    expect(registry.reactNativeBundlesById?.get('acme.preview:native-preview:ios')).toMatchObject({
-      definition: { bundle: { platform: 'ios' } },
-    });
-    expect(registry.reactNativeBundlesById?.get('acme.preview:native-preview:web')).toMatchObject({
-      definition: { bundle: { platform: 'web' } },
-    });
-  });
+    expect(registry.activationTargets).toEqual([]);
+    expect(registry.automationEligibleEvents).toEqual([
+      expect.objectContaining({
+        event: expect.objectContaining({
+          id: 'alpha.plugin/repository/updated',
+          identity: { pluginId: 'alpha.plugin', localId: 'repository/updated' },
+          immutableGenerationId: 'alpha-immutable-generation',
+        }),
+        setupAction: expect.objectContaining({
+          id: 'alpha.plugin/configure-source',
+          identity: { pluginId: 'alpha.plugin', localId: 'configure-source' },
+          immutableGenerationId: 'alpha-immutable-generation',
+          title: 'Alpha setup',
+        }),
+        historyGapResetAction: expect.objectContaining({
+          id: 'alpha.plugin/baseline-history-gap',
+          identity: { pluginId: 'alpha.plugin', localId: 'baseline-history-gap' },
+          immutableGenerationId: 'alpha-immutable-generation',
+          title: 'Resume source',
+        }),
+      }),
+      expect.objectContaining({
+        event: expect.objectContaining({
+          id: 'beta.plugin/repository/updated',
+          immutableGenerationId: 'beta-immutable-generation',
+        }),
+        setupAction: expect.objectContaining({
+          id: 'beta.plugin/configure-source',
+          title: 'Beta setup',
+        }),
+      }),
+    ]);
 
-  it('rejects two reactNativeBundles contributions sharing one id AND platform', () => {
-    expect(() => createResolvedContributionRegistry({
-      agents: Object.freeze([]),
-            reactNativeBundles: Object.freeze([
-        buildReactNativeBundleContribution('ios'),
-        buildReactNativeBundleContribution('ios'),
-      ]),
-    })).toThrow(/Duplicate React Native bundle contribution 'acme\.preview:native-preview:ios'/);
+    const staleGeneration = createResolvedContributionRegistry({
+      ...inputs,
+      immutableGenerationIdsByPluginId: {
+        'alpha.plugin': 'alpha-immutable-generation',
+      },
+    });
+    expect(staleGeneration.automationEligibleEvents?.map((entry) => entry.event.id)).toEqual([
+      'alpha.plugin/repository/updated',
+    ]);
+
+    const removedAction = createResolvedContributionRegistry({
+      ...inputs,
+      actions: [action('beta.plugin', 'configure-source', 'Beta setup')],
+    });
+    expect(removedAction.automationEligibleEvents?.map((entry) => entry.event.id)).toEqual([
+      'beta.plugin/repository/updated',
+    ]);
+
+    const removedRecoveryAction = createResolvedContributionRegistry({
+      ...inputs,
+      actions: [
+        action('alpha.plugin', 'configure-source', 'Alpha setup'),
+        action('beta.plugin', 'configure-source', 'Beta setup'),
+      ],
+    });
+    expect(removedRecoveryAction.automationEligibleEvents?.[0]).toMatchObject({
+      event: { id: 'alpha.plugin/repository/updated' },
+    });
+    expect(removedRecoveryAction.automationEligibleEvents?.[0]?.historyGapResetAction).toBeUndefined();
   });
 
   it('rejects duplicate event local ids within the same plugin', () => {
@@ -595,7 +619,6 @@ describe('getResolvedContributionRegistry', () => {
           source: { kind: 'path' },
           pluginId: 'alpha.plugin',
           manifestPath: '/plugins/alpha/plugin.json',
-          manifestDigest: 'sha256:alpha-one',
           daemonEntryPath: '/plugins/alpha/daemon.mjs',
           definition: {
             id: 'alpha.plugin/task/complete',
@@ -610,7 +633,6 @@ describe('getResolvedContributionRegistry', () => {
           source: { kind: 'path' },
           pluginId: 'alpha.plugin',
           manifestPath: '/plugins/alpha/plugin.json',
-          manifestDigest: 'sha256:alpha-two',
           daemonEntryPath: '/plugins/alpha/daemon.mjs',
           definition: {
             id: 'alpha.plugin/task/done',
@@ -633,14 +655,13 @@ describe('getResolvedContributionRegistry', () => {
           source: { kind: 'path' },
           pluginId: 'alpha.plugin',
           manifestPath: '/plugins/alpha/plugin.json',
-          manifestDigest: 'sha256:alpha-one',
           daemonEntryPath: '/plugins/alpha/daemon.mjs',
           definition: {
             id: 'settings-one',
             version: 1,
             title: 'Settings one',
             target: { kind: 'plugin' },
-            scope: 'local',
+            scope: 'daemon',
             fields: [
               {
                 id: 'endpoint',
@@ -656,14 +677,13 @@ describe('getResolvedContributionRegistry', () => {
           source: { kind: 'path' },
           pluginId: 'alpha.plugin',
           manifestPath: '/plugins/alpha/plugin.json',
-          manifestDigest: 'sha256:alpha-two',
           daemonEntryPath: '/plugins/alpha/daemon.mjs',
           definition: {
             id: 'settings-two',
             version: 1,
             title: 'Settings two',
             target: { kind: 'plugin' },
-            scope: 'local',
+            scope: 'daemon',
             fields: [
               {
                 id: 'endpoint',
@@ -687,14 +707,13 @@ describe('getResolvedContributionRegistry', () => {
           source: { kind: 'path' },
           pluginId: 'alpha.plugin',
           manifestPath: '/plugins/alpha/plugin.json',
-          manifestDigest: 'sha256:alpha',
           daemonEntryPath: '/plugins/alpha/daemon.mjs',
           definition: {
             id: 'settings',
             version: 1,
             title: 'Settings',
             target: { kind: 'plugin' },
-            scope: 'local',
+            scope: 'daemon',
             fields: [
               {
                 id: 'endpoint',
@@ -710,14 +729,13 @@ describe('getResolvedContributionRegistry', () => {
           source: { kind: 'path' },
           pluginId: 'beta.plugin',
           manifestPath: '/plugins/beta/plugin.json',
-          manifestDigest: 'sha256:beta',
           daemonEntryPath: '/plugins/beta/daemon.mjs',
           definition: {
             id: 'settings',
             version: 1,
             title: 'Settings',
             target: { kind: 'plugin' },
-            scope: 'local',
+            scope: 'daemon',
             fields: [
               {
                 id: 'endpoint',
@@ -772,7 +790,7 @@ describe('getResolvedContributionRegistry', () => {
     try {
       const registry = await resolveMergedContributionRegistry({ happyHomeDir });
 
-      expect(registry.mcpDiscoveryProviders?.map((entry) => [
+      expect(registry.mcpDiscoverySources?.map((entry) => [
         entry.pluginId,
         entry.definition.id,
       ])).toEqual([
@@ -795,7 +813,6 @@ describe('getResolvedContributionRegistry', () => {
           source: { kind: 'path' },
           pluginId: 'acme.plugin',
           manifestPath: '/plugins/alpha/plugin.json',
-          manifestDigest: 'sha256:alpha',
           daemonEntryPath: '/plugins/alpha/daemon.mjs',
           definition: {
             kindVersion: 1,
@@ -816,7 +833,9 @@ describe('getResolvedContributionRegistry', () => {
               cli: true,
               rpc: false,
               sdk: false,
+              plugin: false,
             },
+            execution: { target: 'daemon' },
             inputHints: null,
             inputSchema: {},
           },
@@ -826,7 +845,6 @@ describe('getResolvedContributionRegistry', () => {
           source: { kind: 'path' },
           pluginId: 'acme.plugin',
           manifestPath: '/plugins/beta/plugin.json',
-          manifestDigest: 'sha256:beta',
           daemonEntryPath: '/plugins/beta/daemon.mjs',
           definition: {
             kindVersion: 1,
@@ -847,7 +865,9 @@ describe('getResolvedContributionRegistry', () => {
               cli: true,
               rpc: false,
               sdk: false,
+              plugin: false,
             },
+            execution: { target: 'daemon' },
             inputHints: null,
             inputSchema: {},
           },
@@ -877,7 +897,6 @@ describe('getResolvedContributionRegistry', () => {
           source: { kind: 'path' },
           pluginId: 'acme.plugin',
           manifestPath: '/plugins/acme/plugin.json',
-          manifestDigest: 'sha256:tool',
           daemonEntryPath: '/plugins/acme/daemon.mjs',
           definition: {
             kindVersion: 1,
@@ -899,7 +918,6 @@ describe('getResolvedContributionRegistry', () => {
           source: { kind: 'path' },
           pluginId: 'acme.plugin',
           manifestPath: '/plugins/acme/plugin.json',
-          manifestDigest: 'sha256:command',
           daemonEntryPath: '/plugins/acme/daemon.mjs',
           definition: {
             kindVersion: 1,
@@ -923,8 +941,7 @@ describe('getResolvedContributionRegistry', () => {
     expect(registry.commandsById?.get('acme.plugin/command')).toMatchObject({
       pluginId: 'acme.plugin',
     });
-    expect(registry.generationId).toContain('tool:external:path:acme.plugin:tool:acme_tool:sha256:tool');
-    expect(registry.generationId).toContain('command:external:path:acme.plugin:command:acme-review:sha256:command');
+    expect(registry).not.toHaveProperty('generationId');
   });
 
   it('does not admit the retired static hook-registration input', () => {
@@ -933,7 +950,6 @@ describe('getResolvedContributionRegistry', () => {
       source: { kind: 'path' },
       pluginId: 'acme.hooks',
       manifestPath: '/plugins/acme/plugin.json',
-      manifestDigest: 'sha256:hooks',
       daemonEntryPath: '/plugins/acme/daemon.mjs',
       sourceSpec: {
         kind: 'path',
@@ -999,7 +1015,6 @@ describe('getResolvedContributionRegistry', () => {
       pluginId,
       identity: createPluginContributionIdentity({ pluginId, localId: 'instructions' }),
       manifestPath: `/plugins/${pluginId}/.happier-plugin/plugin.json`,
-      manifestDigest: `sha256:${'a'.repeat(64)}`,
       daemonEntryPath: null,
       sourceSpec: { kind: 'path' as const, locator: `/plugins/${pluginId}`, trustPolicy: 'local_trusted' as const, installPolicy: 'link' as const },
       definition: {

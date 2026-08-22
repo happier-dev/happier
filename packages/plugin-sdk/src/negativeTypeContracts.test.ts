@@ -55,7 +55,7 @@ function reconstructNegativeTypeCases(
 }
 
 describe('SDK negative type contracts', () => {
-    it('retains only the approved retired-shadow and Account KV negative-contract fences', () => {
+    it('retains only the explicitly audited public-boundary and legacy negative-contract fences', () => {
         const sourceRoot = resolve(import.meta.dirname);
         const directive = ['@ts', 'expect-error'].join('-');
         const fences = sourceFilesBelow(sourceRoot).flatMap((fileName) => {
@@ -70,6 +70,36 @@ describe('SDK negative type contracts', () => {
         });
 
         expect(fences).toEqual([
+            {
+                fileName: 'actions/actionContracts.test.ts',
+                reason: 'Client Action modules are package-relative.',
+                guardedDeclaration: "modulePath: 'runAction',",
+            },
+            {
+                fileName: 'actions/actionContracts.test.ts',
+                reason: 'Authored Actions cannot infer a daemon execution target.',
+                guardedDeclaration: 'missingTarget: {',
+            },
+            {
+                fileName: 'actions/actionContracts.test.ts',
+                reason: 'Client Action handlers belong only to the client artifact activation.',
+                guardedDeclaration: 'const invalidClientAction: PluginActionDefinition<{',
+            },
+            {
+                fileName: 'actions/actionContracts.test.ts',
+                reason: 'Client Action handlers never receive daemon services.',
+                guardedDeclaration: 'void context.services;',
+            },
+            {
+                fileName: 'actions/actionContracts.test.ts',
+                reason: 'Client activation does not expose daemon Agent registration.',
+                guardedDeclaration: 'void clientApi.agents;',
+            },
+            {
+                fileName: 'actions/actionContracts.test.ts',
+                reason: 'Client activation does not expose daemon Hook registration.',
+                guardedDeclaration: 'void clientApi.hooks;',
+            },
             {
                 fileName: 'agentRuntimeSurfaceContract.ts',
                 reason: 'CORE.T2A: RuntimeCoreV1 is a retired shadow runtime ABI.',
@@ -86,6 +116,11 @@ describe('SDK negative type contracts', () => {
                 guardedDeclaration: "import type { AgentRuntimeV1 } from './agent-runtime.js';",
             },
             {
+                fileName: 'host/registration/scope.test.ts',
+                reason: 'A client registration scope does not expose daemon registrations.',
+                guardedDeclaration: 'void scope.api.hooks;',
+            },
+            {
                 fileName: 'storage.accountKv.contract.test-d.ts',
                 reason: 'Account KV writes must name their conditional version.',
                 guardedDeclaration: "void transaction.set('checkpoint', { offset: 1 });",
@@ -98,6 +133,13 @@ describe('SDK negative type contracts', () => {
         ]);
     });
 
+    // One TypeScript program over every reconstructed negative case in the
+    // package: the cost tracks the SDK source tree, not a fixed workload, and
+    // it grows with each `@sdk-negative-type-case` fence. Measured 83.9 s in
+    // isolation and >120 s inside `vitest run` for the whole package, where it
+    // shares the host with the other whole-program declaration suites. The
+    // budget is sized from that in-suite reality with headroom, so a slow
+    // shared host cannot turn a passing type contract into a red suite.
     it('rejects every data-driven negative case without source suppression fences', () => {
         const sourceRoot = resolve(import.meta.dirname);
         const reconstructedSources = new Map<string, string>();
@@ -163,12 +205,12 @@ describe('SDK negative type contracts', () => {
                 message: ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n'),
             }));
 
-        expect(cases).toHaveLength(285);
+        expect(cases).toHaveLength(294);
         expect(syntacticDiagnostics.map((diagnostic) => ({
             fileName: diagnostic.file?.fileName ?? '<global>',
             message: ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n'),
         }))).toEqual([]);
         expect(missing.map(({ id, reason }) => ({ id, reason }))).toEqual([]);
         expect(unexpectedFiles).toEqual([]);
-    }, 120_000);
+    }, 300_000);
 });

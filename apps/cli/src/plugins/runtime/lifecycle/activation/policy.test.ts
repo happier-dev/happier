@@ -18,7 +18,8 @@ describe('bundled activation policy', () => {
           title: 'Run',
           scopes: ['session'],
           surfaces: ['cli'],
-          placement: 'primary',
+          execution: { target: 'daemon' },
+          placementBindings: ['primary'],
           dangerLevel: 'safe',
         }],
       },
@@ -28,7 +29,7 @@ describe('bundled activation policy', () => {
     const policy = readBundledActivationPolicy({
       target: {
         provenance: 'first_party', source: { kind: 'bundled' }, pluginId: 'com.acme.policy',
-        manifestPath: '@acme/policy', manifestDigest: 'sha256:fixture', daemonEntryPath: '@acme/policy',
+        manifestPath: '@acme/policy', daemonEntryPath: '@acme/policy',
         sourceSpec: { kind: 'bundled', locator: '@acme/policy', trustPolicy: 'local_trusted', installPolicy: 'link' },
         manifest: ingestion.manifest,
       },
@@ -40,7 +41,7 @@ describe('bundled activation policy', () => {
     expect(diagnosticsByPluginId).toEqual({});
   });
 
-  it('projects strict host access declarations to the existing agent runtime service gates', () => {
+  it('derives agent runtime services from host access without redundant legacy permission gates', () => {
     const ingestion = ingestCanonicalPluginManifest({
       schemaVersion: 2,
       id: 'com.acme.agent-runtime-services',
@@ -87,26 +88,19 @@ describe('bundled activation policy', () => {
     const policy = buildActivationPolicy(ingestion.manifest);
 
     expect(policy.runtimeCapabilities).toEqual(expect.arrayContaining(['terminalHost', 'sessionHooks']));
-    expect(policy.permissions).toEqual(expect.arrayContaining([
-      'terminal.host.control',
-      'events.session.subscribe',
-      'session.hooks.control',
-    ]));
+    expect(policy).not.toHaveProperty('permissions');
+    expect(policy).not.toHaveProperty('permissionDeclarations');
 
     for (const expectation of [
       {
         access: ['read'] as const,
         runtimeCapability: null,
-        permission: 'events.session.subscribe',
         absentRuntimeCapability: 'sessionHooks',
-        absentPermission: 'session.hooks.control',
       },
       {
         access: ['control'] as const,
         runtimeCapability: 'sessionHooks',
-        permission: 'session.hooks.control',
         absentRuntimeCapability: null,
-        absentPermission: 'events.session.subscribe',
       },
     ]) {
       const leastPrivilegeIngestion = ingestCanonicalPluginManifest({
@@ -129,14 +123,42 @@ describe('bundled activation policy', () => {
       if (!leastPrivilegeIngestion.ok) throw new Error('Least-privilege fixture must normalize');
 
       const leastPrivilegePolicy = buildActivationPolicy(leastPrivilegeIngestion.manifest);
-      expect(leastPrivilegePolicy.permissions).toContain(expectation.permission);
-      expect(leastPrivilegePolicy.permissions).not.toContain(expectation.absentPermission);
+      expect(leastPrivilegePolicy).not.toHaveProperty('permissions');
       if (expectation.runtimeCapability === null) {
         expect(leastPrivilegePolicy.runtimeCapabilities).not.toContain(expectation.absentRuntimeCapability);
       } else {
         expect(leastPrivilegePolicy.runtimeCapabilities).toContain(expectation.runtimeCapability);
       }
     }
+  });
+
+  it('keeps filesystem disclosure out of the user-grant vocabulary', () => {
+    const ingestion = ingestCanonicalPluginManifest({
+      schemaVersion: 2,
+      id: 'com.acme.delete-files',
+      version: '1.0.0',
+      displayName: 'Delete files',
+      engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 },
+      entrypoints: { daemon: './dist/plugin.js' },
+      hostAccess: {
+        required: [{
+          id: 'workspace-cleanup',
+          capability: 'filesystem',
+          reason: 'Remove generated workspace artifacts.',
+          scope: {
+            locations: [{ root: 'workspace', pathPrefix: 'output' }],
+            access: ['delete'],
+          },
+        }],
+        optional: [],
+      },
+    });
+    if (!ingestion.ok) throw new Error('Fixture must normalize');
+
+    const policy = buildActivationPolicy(ingestion.manifest);
+
+    expect(policy).not.toHaveProperty('permissions');
+    expect(policy).not.toHaveProperty('permissionDeclarations');
   });
 
   it('keeps non-runtime contribution families out of carried runtime authority', () => {
@@ -186,7 +208,7 @@ describe('bundled activation policy', () => {
         required: [],
         optional: [{
           id: 'synced-storage',
-          capability: 'storage.synced',
+          capability: 'storage.account',
           reason: 'Synchronize plugin state when the user selects this resource.',
           scope: { enabled: true },
         }],
@@ -196,8 +218,31 @@ describe('bundled activation policy', () => {
 
     const policy = buildActivationPolicy(ingestion.manifest);
 
-    expect(policy.permissions).toEqual([]);
-    expect(policy.permissionDeclarations).toEqual([]);
+    expect(policy).not.toHaveProperty('permissions');
+    expect(policy).not.toHaveProperty('permissionDeclarations');
     expect('optionalPermissionDeclarations' in policy).toBe(false);
+  });
+
+  it('keeps request-interceptor scope with its declared policy rather than duplicating it into HostAccess', () => {
+    const ingestion = ingestCanonicalPluginManifest({
+      schemaVersion: 2,
+      id: 'com.acme.request-policy-disclosure',
+      version: '1.0.0',
+      displayName: 'Request policy disclosure',
+      engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 },
+      entrypoints: { daemon: './dist/plugin.js' },
+      hostAccess: { required: [], optional: [] },
+      contributes: {
+        requestInterceptors: [{
+          id: 'inspect-api',
+          origins: ['https://api.example.test', 'https://other.example.test'],
+        }],
+      },
+    });
+    if (!ingestion.ok) throw new Error('Fixture must normalize');
+
+    const policy = buildActivationPolicy(ingestion.manifest);
+    expect(policy).not.toHaveProperty('permissionDeclarations');
+    expect('declaredRequestInterceptors' in policy).toBe(false);
   });
 });

@@ -40,16 +40,38 @@
     "optional": []
   },
   "contributes": {
+    "agents": [
+      {
+        "id": "voice-agent",
+        "title": "Packed Voice Agent",
+        "description": "External Agent declaration used by the packed Voice realtime fixture",
+        "runtime": {
+          "kind": "custom"
+        },
+        "primary": "sessions",
+        "capabilities": {
+          "sessions": {
+            "open": ["create"],
+            "delivery": ["newTurn"],
+            "cancel": true
+          }
+        }
+      }
+    ],
     "voiceProviders": [
       {
-        "id": "conversation",
+        "id": "conversation-mediated",
         "title": "Packed Conversation",
         "kind": "conversation",
         "roles": ["conversation_stt", "conversation_tts", "realtime_conversation", "turn_control"],
         "platforms": ["web"],
         "capabilities": {
-          "readiness": { "requirements": ["credential"] },
           "turn": { "cancelResponse": true, "bargeIn": false }
+        },
+        "execution": {
+          "kind": "experimental_agent_session_realtime",
+          "agent": "voice-agent",
+          "supportedRuntimeVersions": ["1.0.0"]
         },
         "settings": {
           "schemaVersion": 2,
@@ -83,16 +105,40 @@
                 "control": "switch"
               }
             }
+          ],
+          "actions": [
+            {
+              "id": "provision-voice",
+              "title": "Provision voice",
+              "placement": { "kind": "contributionFooter" },
+              "confirmation": {
+                "kind": "required",
+                "title": "Provision voice",
+                "description": "Apply the selected profile to the fixture provider.",
+                "confirmLabel": "Provision"
+              },
+              "patchFieldIds": ["profile"]
+            }
           ]
         },
-        "accountMediation": {
-          "credentialSlots": [
-            {
-              "id": "api_key",
-              "scope": "account"
-            }
-          ],
-          "operations": [
+        "credentials": {
+          "slot": {
+            "id": "api_key",
+            "purpose": "voice.client-auth",
+            "title": "API key"
+          },
+          "requirement": { "kind": "always" },
+          "sources": [{
+            "kind": "savedSecret",
+            "secretKinds": ["apiKey"],
+            "operationProjections": [
+              { "kind": "recipientCredential", "operation": "list-voices", "phase": "settings", "format": "bearer" },
+              { "kind": "recipientCredential", "operation": "provision-voice", "phase": "settings", "format": "bearer" },
+              { "kind": "recipientCredential", "operation": "client-auth", "phase": "prepare", "format": "bearer" }
+            ]
+          }],
+          "hostMediated": {
+            "operations": [
             {
               "id": "list-voices",
               "purpose": "voice.catalog.voices",
@@ -247,12 +293,130 @@
                 "contentTypes": ["application/json"]
               }
             }
+            ]
+          }
+        },
+        "client": {
+          "artifactId": "voice-runtime-web",
+          "modulePath": "./voiceRuntime",
+          "exportName": "activate"
+        }
+      },
+      {
+        "id": "conversation-raw",
+        "title": "Packed Raw Conversation",
+        "kind": "conversation",
+        "roles": ["realtime_conversation"],
+        "platforms": ["web"],
+        "capabilities": {
+          "turn": { "cancelResponse": true, "bargeIn": true }
+        },
+        "credentials": {
+          "slot": {
+            "id": "raw_key",
+            "purpose": "voice.raw-client",
+            "title": "Raw client key"
+          },
+          "requirement": { "kind": "always" },
+          "sources": [
+            {
+              "kind": "savedSecret",
+              "secretKinds": ["apiKey"],
+              "rawGrants": [
+                {
+                  "realm": "web",
+                  "phase": "connection",
+                  "request": {
+                    "kind": "httpHeaders",
+                    "origin": "https://voice.example.test",
+                    "headerNames": ["authorization"]
+                  }
+                }
+              ]
+            },
+            {
+              "kind": "connectedAccount",
+              "service": {
+                "pluginId": "acme.connected-accounts",
+                "localId": "voice-oauth"
+              },
+              "rawGrants": [
+                {
+                  "realm": "web",
+                  "phase": "connection",
+                  "request": {
+                    "kind": "httpHeaders",
+                    "origin": "https://voice.example.test",
+                    "headerNames": ["authorization"]
+                  }
+                }
+              ]
+            }
           ]
         },
         "client": {
           "artifactId": "voice-runtime-web",
           "modulePath": "./voiceRuntime",
           "exportName": "activate"
+        }
+      },
+      {
+        "id": "speech-stt",
+        "title": "Packed Speech to Text",
+        "kind": "speech",
+        "roles": ["dictation_stt", "conversation_stt"],
+        "platforms": ["web", "ios", "android"],
+        "settings": {
+          "schemaVersion": 2,
+          "fields": [
+            {
+              "id": "model",
+              "title": "Transcription model",
+              "schema": { "type": "string", "maxLength": 512 },
+              "default": "packed-stt-v1",
+              "presentation": { "control": "select" }
+            }
+          ],
+          "readiness": [
+            { "kind": "setting_nonempty", "settingId": "model" }
+          ]
+        },
+        "catalogs": [
+          { "kind": "models", "settingFieldId": "model", "allowCustom": true }
+        ],
+        "limits": {
+          "transcribe": { "maxInputBytes": 1048576 }
+        }
+      },
+      {
+        "id": "speech-tts",
+        "title": "Packed Text to Speech",
+        "kind": "speech",
+        "roles": ["conversation_tts"],
+        "platforms": ["web", "ios", "android"],
+        "settings": {
+          "schemaVersion": 2,
+          "fields": [
+            {
+              "id": "voice",
+              "title": "Voice",
+              "schema": { "type": "string", "maxLength": 512 },
+              "default": "packed-voice-primary",
+              "presentation": { "control": "select" }
+            }
+          ],
+          "readiness": [
+            { "kind": "setting_nonempty", "settingId": "voice" }
+          ]
+        },
+        "catalogs": [
+          { "kind": "voices", "settingFieldId": "voice", "allowCustom": false }
+        ],
+        "limits": {
+          "synthesize": {
+            "maxInputCharacters": 4096,
+            "maxOutputBytes": 2097152
+          }
         }
       }
     ]

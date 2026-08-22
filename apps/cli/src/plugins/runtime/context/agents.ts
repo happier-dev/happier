@@ -1,5 +1,4 @@
-import { isAgentId, type AgentId } from '@happier-dev/agents';
-import type { PluginAgentCliReadinessService } from '@happier-dev/plugin-sdk/runtime';
+import type { AgentCliReadinessService as PluginAgentCliReadinessService } from '@happier-dev/plugin-sdk/exec';
 
 import { resolveAgentCliLaunchSpec } from '@/packagedRuntime/managedTools/requireAgentCliLaunchSpec';
 
@@ -31,6 +30,16 @@ function uniqueCandidates(candidates: readonly string[]): readonly string[] {
     return Object.freeze(normalized);
 }
 
+function hasCurrentLaunchableAgentCli(agentId: string, processEnv: NodeJS.ProcessEnv): boolean {
+    try {
+        return resolveAgentCliLaunchSpec(agentId, { processEnv }) !== null;
+    } catch {
+        // An installed Agent without current runtime metadata is not launchable. Keep
+        // the readiness boundary fail-closed instead of substituting another Agent.
+        return false;
+    }
+}
+
 export function createPluginAgentCliReadinessService(
     params: CreatePluginAgentCliReadinessServiceParams = {},
 ): PluginAgentCliReadinessService {
@@ -41,8 +50,7 @@ export function createPluginAgentCliReadinessService(
         ) {
             assertNotAborted(request.signal);
             const launchable = uniqueCandidates(request.candidates)
-                .filter((agentId): agentId is AgentId => isAgentId(agentId))
-                .filter((agentId) => resolveAgentCliLaunchSpec(agentId, { processEnv }) !== null)
+                .filter((agentId) => hasCurrentLaunchableAgentCli(agentId, processEnv))
                 .map((agentId) => Object.freeze({ agentId }));
             assertNotAborted(request.signal);
             return Object.freeze({ launchable: Object.freeze(launchable) });

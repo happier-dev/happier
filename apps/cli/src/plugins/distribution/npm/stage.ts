@@ -25,6 +25,7 @@ export type StageDownloadedNpmArtifactCandidateParams = Readonly<{
   candidate: DownloadedNpmArtifactCandidate;
   stagingParentPath: string;
   archiveLimits?: Partial<PortableArchiveLimits>;
+  manifestAuthority?: 'external' | 'bundled_first_party';
   signal?: AbortSignal;
 }>;
 
@@ -42,12 +43,14 @@ export async function stageDownloadedNpmArtifactCandidate(
     archivePath: params.candidate.artifactPath,
     byteLength: params.candidate.byteLength,
     integrity: params.candidate.source.integrity,
+    archiveDigestSha256: params.candidate.archiveDigestSha256,
     expectedPackage: {
       name: params.candidate.source.packageName,
       version: params.candidate.source.version,
     },
     stagingParentPath: params.stagingParentPath,
     archiveLimits: params.archiveLimits,
+    ...(params.manifestAuthority ? { manifestAuthority: params.manifestAuthority } : {}),
     signal: params.signal,
   });
   if (!result.ok) return result;

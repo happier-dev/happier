@@ -1,5 +1,4 @@
 import { describe, expect, it, vi } from 'vitest';
-import { readHookEventEnvelopeV1 } from '@happier-dev/protocol';
 
 import { dispatchBridgeLifecycleHookEvent } from './dispatchBridgeLifecycleHookEvent';
 
@@ -8,7 +7,6 @@ describe('dispatchBridgeLifecycleHookEvent', () => {
     const dispose = vi.fn().mockResolvedValue(undefined);
     const resolveRuntimeRegistry = vi.fn().mockResolvedValue({
       hookHandlersByHookId: new Map(),
-      readHookEventEnvelopeV1: vi.fn(),
       dispose,
     });
     const dispatchEvent = vi.fn().mockResolvedValue({
@@ -72,7 +70,6 @@ describe('dispatchBridgeLifecycleHookEvent', () => {
       source: { kind: 'path' as const },
       pluginId: 'acme.observer',
       manifestPath: '/plugins/acme.observer/plugin.json',
-      manifestDigest: 'sha256:observer',
       daemonEntryPath: '/plugins/acme.observer/daemon.mjs',
       sourceSpec: { kind: 'path' as const, locator: '/plugins/acme.observer', trustPolicy: 'local_trusted' as const, installPolicy: 'link' as const },
       definition: {
@@ -91,13 +88,11 @@ describe('dispatchBridgeLifecycleHookEvent', () => {
         priority: 0,
         registrationIndex: 0,
         manifestPath: registration.manifestPath,
-        manifestDigest: registration.manifestDigest,
         daemonEntryPath: registration.daemonEntryPath,
         exportName: 'observeStart',
         registration,
         handler,
       }]]]),
-      readHookEventEnvelopeV1,
       dispose,
     });
 

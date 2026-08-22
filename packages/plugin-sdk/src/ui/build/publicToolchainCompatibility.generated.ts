@@ -58,6 +58,11 @@ export const PUBLIC_TOOLCHAIN_COMPATIBILITY_V1: PublicToolchainCompatibilityV1 =
       "dependencySpec": "0.5.23",
       "resolvedVersion": "0.5.23"
     },
+    "typescript": {
+      "packageName": "typescript",
+      "dependencySpec": "5.9.3",
+      "resolvedVersion": "5.9.3"
+    },
     "typescriptNative": {
       "packageName": "@typescript/native",
       "dependencySpec": "npm:typescript@7.0.2",

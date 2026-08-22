@@ -12,10 +12,119 @@ vi.mock('@/plugins/projection/catalog/installed', async (importOriginal) => {
   };
 });
 
+import { derivePluginDaemonContributionRegistrationRights } from '@happier-dev/protocol';
+
+import type { PluginCatalogEntry } from '@/plugins/projection/catalog/installed';
+import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
+import { projectPluginCatalogEntryIntrospection } from '@/plugins/projection/introspection/catalogEntry';
 import type { PluginReloadController } from '@/plugins/runtime/reload/controller';
 import { readCurrentDaemonPluginCatalogSnapshot } from './currentCatalog';
 
+function buildManagedProviderCatalogEntry() {
+  const manifest = normalizePluginManifestV2({
+    schemaVersion: 2,
+    id: 'acme.vertical-a',
+    version: '1.0.0',
+    displayName: 'Vertical A',
+    engines: { happier: '^1.0.0' },
+    runtime: { apiVersion: 1 },
+    entrypoints: { daemon: './dist/plugin.js' },
+    contributes: {
+      providers: [{
+        v: 1,
+        id: 'packed-managed-provider',
+        name: 'Packed managed provider',
+        kind: 'aggregator',
+        endpointTemplates: [{
+          id: 'packed-openai-responses',
+          protocol: 'openai-responses',
+          baseUrl: 'https://example.test/v1',
+          capabilities: {
+            streaming: 'supported', toolRoundTrips: 'supported',
+            statefulResponses: 'unknown', reasoningControls: 'supported',
+          },
+        }],
+        catalog: {
+          source: 'static',
+          manualModelPolicy: 'allowed',
+          staticModels: [{
+            id: 'packed-model',
+            name: 'Packed model',
+            capabilities: { toolRoundTrips: 'supported', reasoningControls: 'supported' },
+          }],
+        },
+        managedRuntime: { kind: 'managed', endpointTemplateIds: ['packed-openai-responses'] },
+      }],
+    },
+  });
+  const source = {
+    kind: 'path', locator: '/plugins/acme.vertical-a', trustPolicy: 'local_trusted',
+    installPolicy: 'link', resolvedPath: '/plugins/acme.vertical-a',
+    manifestPath: '/plugins/acme.vertical-a/plugin.json',
+  } as const;
+  const entry = {
+    pluginId: 'acme.vertical-a', title: 'Vertical A', description: null, version: '1.0.0',
+    enabled: true, desiredGeneration: 'generation-1', appliedGeneration: null, admittedIntegrity: null,
+    source,
+    install: { mode: 'link', manifestVersion: '1.0.0' },
+    compatibility: { status: 'compatible', diagnostics: [] },
+    manifestPath: '/plugins/acme.vertical-a/plugin.json', manifest,
+    diagnostics: [],
+    contributionIntrospection: projectPluginCatalogEntryIntrospection({
+      pluginId: 'acme.vertical-a', pluginVersion: '1.0.0', source, manifest,
+      generation: 0, host: 'cli', platform: 'darwin', occurredAtMs: 1, diagnostics: [],
+    }),
+  } satisfies PluginCatalogEntry;
+  return { entry, contributes: manifest.contributes as unknown as Readonly<Record<string, unknown>> };
+}
+
 describe('readCurrentDaemonPluginCatalogSnapshot', () => {
+  it('projects the whole catalog when an installed plugin declares a registration-required managed provider', async () => {
+    const { entry, contributes } = buildManagedProviderCatalogEntry();
+    // The daemon derives its activation facts from the catalog's registration
+    // rights, so the read side must agree with that exact producer rather than
+    // a hand-written ref.
+    const registrationRefs = derivePluginDaemonContributionRegistrationRights(contributes)
+      .map(({ family, localId }) => ({ family, localId }));
+    expect(registrationRefs).toEqual([{ family: 'providers', localId: 'packed-managed-provider' }]);
+    installedBoundary.readInstalledPluginCatalog.mockResolvedValueOnce([entry] as never);
+    const reloadController = {
+      tryAcquireRuntimeRegistry: () => ({
+        registry: {
+          contributes: { tools: [], actionsById: new Map() },
+          generation: 4,
+          targetActivationFacts: [{
+            pluginId: 'acme.vertical-a', pluginVersion: '1.0.0', source: 'localPath',
+            generation: '4', host: 'daemon', platform: 'darwin', occurredAtMs: 10,
+            status: 'active',
+            required: registrationRefs,
+            bound: registrationRefs,
+            diagnostics: [],
+          }],
+        },
+        source: 'active',
+        release: async () => {},
+      }),
+    } as unknown as PluginReloadController;
+
+    const snapshot = await readCurrentDaemonPluginCatalogSnapshot({ reloadController });
+
+    expect(snapshot.plugins.map((plugin) => plugin.pluginId)).toEqual(['acme.vertical-a']);
+    expect(snapshot.plugins[0]?.contributionIntrospection.contributions).toEqual([
+      expect.objectContaining({
+        contribution: expect.objectContaining({
+          family: 'providers',
+          kind: 'delegatedDomain',
+          domainId: 'packed-managed-provider',
+          qualifiedId: 'acme.vertical-a/providers/packed-managed-provider',
+        }),
+        registration: { requirement: 'required', state: 'bound', generation: '4' },
+        activation: { state: 'active', generation: '4' },
+      }),
+    ]);
+  });
+
+
   it('fails tool projection closed when no current runtime lease is available', async () => {
     const reloadController = {
       tryAcquireRuntimeRegistry: () => null,
@@ -54,6 +163,56 @@ describe('readCurrentDaemonPluginCatalogSnapshot', () => {
     })).resolves.toEqual({
       plugins: [],
       tools: [],
+    });
+    expect(release).toHaveBeenCalledOnce();
+  });
+
+  it('binds each daemon-published tool to the exact contributor generation in its runtime lease', async () => {
+    const release = vi.fn(async () => {});
+    const reloadController = {
+      tryAcquireRuntimeRegistry: () => ({
+        registry: {
+          contributes: {
+            immutableGenerationIdsByPluginId: {
+              'acme.review.plugin': 'generation-g',
+            },
+            tools: [{
+              provenance: 'external',
+              pluginId: 'acme.review.plugin',
+              definition: {
+                id: 'review-tool',
+                actionId: 'acme.review.plugin/review-start',
+                name: 'acme_review_start',
+                title: 'Acme Review Start',
+                description: 'Start an Acme review.',
+                inputSchema: { type: 'object', additionalProperties: false },
+                surfaces: ['agent', 'mcp', 'cli'],
+              },
+            }],
+            actionsById: new Map([[
+              'acme.review.plugin/review-start',
+              {
+                provenance: 'external',
+                pluginId: 'acme.review.plugin',
+                definition: { id: 'review-start' },
+              },
+            ]]),
+          },
+          targetActionInvocations: {
+            evaluateCatalogPolicy: () => ({ outcome: 'visible' as const }),
+          },
+        },
+        source: 'active',
+        release,
+      }),
+    } as unknown as PluginReloadController;
+
+    await expect(readCurrentDaemonPluginCatalogSnapshot({ reloadController })).resolves.toMatchObject({
+      tools: [{
+        toolId: 'acme.review.plugin/review-tool',
+        actionId: 'acme.review.plugin/review-start',
+        expectedContributorImmutableGenerationId: 'generation-g',
+      }],
     });
     expect(release).toHaveBeenCalledOnce();
   });

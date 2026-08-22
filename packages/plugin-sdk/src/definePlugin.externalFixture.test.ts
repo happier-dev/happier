@@ -7,6 +7,7 @@ import {
     readFile,
     rm,
     symlink,
+    writeFile,
 } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
@@ -69,6 +70,7 @@ type ExternalTargetedPackageBuild = Readonly<{
     targetDeclaration: string;
     targetSurfaceDeclaration: string;
     targetSelectionDeclaration: string;
+    targetDeclarativeAuthoringDeclaration: string;
     contributorDeclaration: string;
 }>;
 
@@ -183,6 +185,17 @@ async function requireBuiltSdkArtifact(path: string, description: string): Promi
     }
 }
 
+async function readSdkBundledDependencyNames(): Promise<readonly string[]> {
+    const packageJson = JSON.parse(
+        await readFile(join(packageRoot, 'package.json'), 'utf8'),
+    ) as Readonly<{ bundledDependencies?: readonly string[] }>;
+    const bundled = packageJson.bundledDependencies ?? [];
+    if (bundled.length === 0) {
+        throw new Error('Real built Plugin SDK closure declares no bundledDependencies');
+    }
+    return bundled;
+}
+
 async function copyBuiltSdkArtifact(targetRoot: string): Promise<void> {
     await Promise.all([
         requireBuiltSdkArtifact(join(packageRoot, 'package.json'), 'package.json'),
@@ -191,6 +204,15 @@ async function copyBuiltSdkArtifact(targetRoot: string): Promise<void> {
     await mkdir(dirname(targetRoot), { recursive: true });
     await cp(join(packageRoot, 'package.json'), join(targetRoot, 'package.json'), { force: true });
     await cp(join(packageRoot, 'dist'), join(targetRoot, 'dist'), { force: true, recursive: true });
+    // `bundledDependencies` ship inside the SDK tarball, so npm unpacks them
+    // under the installed SDK and never at the author's own root. Nesting them
+    // the same way here is what makes this fixture able to observe the author's
+    // real inference surface: a declaration the SDK reaches through a bundled
+    // package is unnameable from the author's package, and TypeScript stops the
+    // author's declaration build with TS2883 instead of emitting a specifier
+    // their own consumers cannot resolve. Hoisting them to the shared closure
+    // silently makes every such reference resolvable and hides the defect.
+    await linkInstalledPackages(targetRoot, packageRoot, await readSdkBundledDependencyNames());
 }
 
 async function copyBuiltPluginUiArtifact(targetRoot: string): Promise<void> {
@@ -242,7 +264,15 @@ async function linkBuiltRuntimeDependencyClosure(
     // its direct, installed dependencies instead of recursively dereferencing
     // every workspace package and its transient build directories. Node then
     // resolves each package's own real closure from its installed location.
-    await Promise.all(Object.keys(packageJson.dependencies ?? {}).sort().map(async (packageName) => {
+    //
+    // `bundledDependencies` are deliberately excluded: npm unpacks those inside
+    // the installed SDK, not at the author's root, and `copyBuiltSdkArtifact`
+    // nests them there. Hoisting them here would make Protocol resolvable from
+    // the author's own package and defeat the portability assertions below.
+    const bundledDependencyNames = new Set(await readSdkBundledDependencyNames());
+    const hoistedDependencyNames = Object.keys(packageJson.dependencies ?? {})
+        .filter((packageName) => !bundledDependencyNames.has(packageName));
+    await Promise.all(hoistedDependencyNames.sort().map(async (packageName) => {
         const sourceDependencyRoot = await findInstalledDependencyRoot(sourcePackageRoot, packageName);
         const targetDependencyRoot = join(closureRoot, 'node_modules', ...packagePathParts(packageName));
         await mkdir(dirname(targetDependencyRoot), { recursive: true });
@@ -269,6 +299,44 @@ async function linkInstalledPackages(
             process.platform === 'win32' ? 'junction' : 'dir',
         );
     }));
+}
+
+/**
+ * Reads the author's own emitted `.d.ts` the way their downstream consumer
+ * does. A declaration build can succeed while emitting a module specifier that
+ * only the SDK's own resolution reaches — a deep path outside the published
+ * `exports` map, for instance — and `skipLibCheck` then degrades the whole
+ * vocabulary to `any` in the consumer's build with no diagnostic at all. This
+ * step compiles the emitted declarations alone with `skipLibCheck` off, so an
+ * unresolvable specifier surfaces as TS2307 instead of silent erasure.
+ */
+async function typecheckEmittedAuthorDeclarations(
+    label: string,
+    authorRoot: string,
+): Promise<void> {
+    const configPath = join(authorRoot, 'tsconfig.emitted-declarations.json');
+    await writeFile(
+        configPath,
+        `${JSON.stringify({
+            compilerOptions: {
+                target: 'ES2022',
+                module: 'NodeNext',
+                moduleResolution: 'NodeNext',
+                lib: ['ES2022', 'DOM'],
+                types: [],
+                strict: true,
+                noEmit: true,
+                skipLibCheck: false,
+            },
+            include: ['dist/**/*.d.ts'],
+        }, undefined, 2)}\n`,
+        'utf8',
+    );
+    await runBoundedFixtureCommand(`external ${label} emitted-declaration consumer typecheck`, authorRoot, [
+        join(repoRoot, 'scripts', 'workspaces', 'runTypeScriptCli.mjs'),
+        '-p',
+        configPath,
+    ]);
 }
 
 async function prepareExternalTargetedPackageBuild(): Promise<ExternalTargetedPackageBuild> {
@@ -343,6 +411,10 @@ async function prepareExternalTargetedPackageBuild(): Promise<ExternalTargetedPa
             '-p',
             join(contributorRoot, 'tsconfig.json'),
         ]);
+        await Promise.all([
+            typecheckEmittedAuthorDeclarations('target', targetRoot),
+            typecheckEmittedAuthorDeclarations('contributor', contributorRoot),
+        ]);
         return Object.freeze({
             root,
             targetRoot,
@@ -354,6 +426,10 @@ async function prepareExternalTargetedPackageBuild(): Promise<ExternalTargetedPa
             targetSurfaceDeclaration: await readFile(join(targetRoot, 'dist', 'surface.d.ts'), 'utf8'),
             targetSelectionDeclaration: await readFile(
                 join(targetRoot, 'dist', 'targetedSurfaceSelection.d.ts'),
+                'utf8',
+            ),
+            targetDeclarativeAuthoringDeclaration: await readFile(
+                join(targetRoot, 'dist', 'declarativeAuthoring.d.ts'),
                 'utf8',
             ),
             contributorDeclaration: await readFile(join(contributorRoot, 'dist', 'index.d.ts'), 'utf8'),
@@ -428,6 +504,13 @@ function requireFixtureBuild(): ExternalAuthoringFixtureBuild {
     return fixtureBuild;
 }
 
+/**
+ * Asserts an EXTERNAL AUTHOR's own emitted declaration, not the SDK's. Protocol
+ * ships inside the SDK tarball and dozens of the SDK's own shipped `.d.ts`
+ * name it and resolve fine, so naming Protocol is only a defect here: from the
+ * author's package that declaration site is unreachable, and every consumer of
+ * what they publish inherits a broken or silently-`any` type.
+ */
 function expectPortableExternalDeclaration(declaration: string): void {
     expect(declaration).not.toMatch(/@happier-dev\/protocol(?:["/])/u);
     expect(declaration).not.toMatch(/\bPluginJsonSchemaV2\b/u);
@@ -436,6 +519,16 @@ function expectPortableExternalDeclaration(declaration: string): void {
 }
 
 builtArtifactDescribe('installed public Plugin SDK author declarations', () => {
+    /**
+     * A tripwire, not the contract. The contract — no Protocol declaration site
+     * is reachable by name through the author-facing inference surface — is
+     * proven by compiling real external packages below and reading what THEY
+     * emit. This check is deliberately narrower than "no shipped `.d.ts` names
+     * Protocol" (36 of 286 do, and they resolve), and deliberately cheaper:
+     * these are the roots an author's inference actually starts from, so a
+     * Protocol declaration site appearing here is the earliest and most
+     * legible signal of the same regression.
+     */
     it('keeps the public author declaration roots free of Protocol-only imports', async () => {
         for (const relativePath of builtAuthorDeclarationRoots) {
             const declaration = await readFile(join(packageRoot, 'dist', relativePath), 'utf8');
@@ -489,7 +582,27 @@ builtArtifactDescribe('external physical target and contributor packages', { tim
         expect(existsSync(join(build.contributorSdkRoot, 'dist', 'index.js'))).toBe(true);
         expectPortableExternalDeclaration(build.targetDeclaration);
         expectPortableExternalDeclaration(build.targetSurfaceDeclaration);
+        expectPortableExternalDeclaration(build.targetDeclarativeAuthoringDeclaration);
         expectPortableExternalDeclaration(build.contributorDeclaration);
+        // The declarative author exports INFERRED values, so these names are
+        // the ones TypeScript had to reach for. Asserting they resolve through
+        // published SDK subpaths is what distinguishes a portable vocabulary
+        // from one that merely compiles inside this repository.
+        expect(build.targetDeclarativeAuthoringDeclaration)
+            .toMatch(/declarativeCollectionListNode: import\("@happier-dev\/plugin-sdk\/manifest"\)\.PluginDeclarativeCollectionListNodeV2/u);
+        expect(build.targetDeclarativeAuthoringDeclaration)
+            .toMatch(/declarativeComposerApplyEffect: import\("@happier-dev\/plugin-sdk\/manifest"\)\.PluginDeclarativeComposerApplyEffectV1/u);
+        expect(build.targetDeclarativeAuthoringDeclaration)
+            .toMatch(/declarativeItemInput: import\("@happier-dev\/plugin-sdk"\)\.PluginJsonValueV2/u);
+        for (const specifier of build.targetDeclarativeAuthoringDeclaration.matchAll(
+            /(?:from |import\()["']([^"']+)["']/gu,
+        )) {
+            const moduleSpecifier = specifier[1] ?? '';
+            expect(
+                moduleSpecifier.startsWith('.') || moduleSpecifier.startsWith('@happier-dev/plugin-sdk'),
+                `emitted author declaration reached ${moduleSpecifier}`,
+            ).toBe(true);
+        }
         expect(build.targetSelectionDeclaration).not.toMatch(
             /export\s+(?:declare\s+)?type\s+PhysicalCopyDetailSurface\b/u,
         );
@@ -504,6 +617,7 @@ builtArtifactDescribe('external physical target and contributor packages', { tim
             join(externalTargetedPackageFixtureRoot, 'target', 'src', 'pluginUiBuild.ts'),
             join(externalTargetedPackageFixtureRoot, 'target', 'src', 'surface.tsx'),
             join(externalTargetedPackageFixtureRoot, 'target', 'src', 'targetedSurfaceSelection.ts'),
+            join(externalTargetedPackageFixtureRoot, 'target', 'src', 'declarativeAuthoring.ts'),
             join(externalTargetedPackageFixtureRoot, 'contributor', 'src', 'index.ts'),
         ]) {
             const source = await readFile(sourcePath, 'utf8');

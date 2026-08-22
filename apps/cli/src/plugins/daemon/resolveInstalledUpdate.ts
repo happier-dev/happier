@@ -1,3 +1,5 @@
+import semver from 'semver';
+
 import type { PluginUpdatePolicy } from '@/plugins/store/install/trustIdentity';
 import type { PluginStateRecord } from '@/plugins/store/state';
 
@@ -16,6 +18,25 @@ export type ResolvedInstalledPluginUpdate =
     }>
   | Readonly<{ kind: 'archive'; request: InstallArchiveRequest }>
   | Readonly<{ kind: 'path'; request: InstallPathRequest }>;
+
+function installedNpmUpdateSelector(version: string): string {
+  const canonicalVersion = semver.valid(version);
+  if (canonicalVersion !== version) {
+    throw new DaemonPluginChangePreparationError(
+      'plugin_update_trust_unavailable',
+      `Installed plugin version '${version}' is not a canonical release version`,
+    );
+  }
+  if (semver.prerelease(version) === null) return `>=${version}`;
+  const parsed = semver.parse(version);
+  if (!parsed) {
+    throw new DaemonPluginChangePreparationError(
+      'plugin_update_trust_unavailable',
+      `Installed plugin version '${version}' is not a canonical release version`,
+    );
+  }
+  return `>=${version} <${parsed.major}.${parsed.minor}.${parsed.patch}`;
+}
 
 export function resolveInstalledPluginUpdate(
   pluginId: string,
@@ -44,11 +65,18 @@ export function resolveInstalledPluginUpdate(
 
   switch (trust.distribution.kind) {
     case 'npm':
+      if (updatePolicy === 'automatic' && !record.install.curatedUpdateSource) {
+        throw new DaemonPluginChangePreparationError(
+          'plugin_update_trust_unavailable',
+          `Plugin '${pluginId}' has no reviewed curated source binding for automatic updates`,
+        );
+      }
       return {
         kind: 'npm',
         request: {
           kind: 'installNpm',
           packageName: trust.distribution.packageName,
+          selector: installedNpmUpdateSelector(record.install.manifestVersion),
           registryOrigin: trust.distribution.registryOrigin,
           ...(trust.distribution.registryProfileId
             ? { registryProfileId: trust.distribution.registryProfileId }

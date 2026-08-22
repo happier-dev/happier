@@ -7,7 +7,9 @@ import { reclaimJsonOwnerFileLockSnapshot } from '@/utils/fs/jsonOwnerFileLock';
 
 import type { PluginStorePaths } from '../paths';
 import {
+  PluginRegistryCommitCurrentConflictError,
   PluginRegistryCommitRecordSchema,
+  pluginRegistryCommitRecordsEqual,
   readPluginRegistryCommitRecord,
   replacePluginRegistryCommitRecord,
   type PluginRegistryCommitRecord,
@@ -161,6 +163,7 @@ export function createPluginRegistryCommitCoordinator(dependencies: CoordinatorD
   commit: (input: Readonly<{
     transactionId: string;
     baseRevision: number | null;
+    expectedCurrent: PluginRegistryCommitRecord | null;
     signal?: AbortSignal;
     buildNext: (current: PluginRegistryCommitRecord | null) => PluginRegistryCommitRecord | Promise<PluginRegistryCommitRecord>;
   }>) => Promise<PluginRegistryCommitResult>;
@@ -172,6 +175,7 @@ export function createPluginRegistryCommitCoordinator(dependencies: CoordinatorD
   function commit(input: Readonly<{
     transactionId: string;
     baseRevision: number | null;
+    expectedCurrent: PluginRegistryCommitRecord | null;
     signal?: AbortSignal;
     buildNext: (current: PluginRegistryCommitRecord | null) => PluginRegistryCommitRecord | Promise<PluginRegistryCommitRecord>;
   }>): Promise<PluginRegistryCommitResult> {
@@ -189,32 +193,51 @@ export function createPluginRegistryCommitCoordinator(dependencies: CoordinatorD
         if (input.signal?.aborted) return { status: 'aborted', reason: 'signal' };
         const current = await readPluginRegistryCommitRecord(dependencies.paths);
         const actualRevision = current?.revision ?? null;
-        if (actualRevision !== input.baseRevision) {
+        if (
+          actualRevision !== input.baseRevision
+          || !pluginRegistryCommitRecordsEqual(current, input.expectedCurrent)
+        ) {
           return { status: 'conflict', expectedRevision: input.baseRevision, actualRevision };
         }
         const next = PluginRegistryCommitRecordSchema.parse(await input.buildNext(current));
         if (next.transactionId !== input.transactionId) {
           throw new Error(`Plugin registry commit transaction id '${next.transactionId}' does not match operation '${input.transactionId}'`);
         }
-        await verifyPluginRegistryCommitGenerationReferences(dependencies.paths, next, {
-          allowInvalidUnchangedReferencesFrom: current,
-        });
         if (input.signal?.aborted) return { status: 'aborted', reason: 'signal' };
         await dependencies.beforeReplace?.();
         await fence.assertOwned();
+        const currentBeforePublication = await readPluginRegistryCommitRecord(dependencies.paths);
+        const actualRevisionBeforePublication = currentBeforePublication?.revision ?? null;
+        if (
+          actualRevisionBeforePublication !== input.baseRevision
+          || !pluginRegistryCommitRecordsEqual(currentBeforePublication, input.expectedCurrent)
+        ) {
+          return {
+            status: 'conflict',
+            expectedRevision: input.baseRevision,
+            actualRevision: actualRevisionBeforePublication,
+          };
+        }
         await verifyPluginRegistryCommitGenerationReferences(dependencies.paths, next, {
           allowInvalidUnchangedReferencesFrom: current,
         });
         try {
           await replacePluginRegistryCommitRecord({
             paths: dependencies.paths,
-            expectedRevision: input.baseRevision,
+            expectedCurrent: input.expectedCurrent,
             next,
             ...(dependencies.flushCommit ? { flushDurable: dependencies.flushCommit } : {}),
           });
         } catch (error) {
+          if (error instanceof PluginRegistryCommitCurrentConflictError) {
+            return {
+              status: 'conflict',
+              expectedRevision: input.baseRevision,
+              actualRevision: error.actualRevision,
+            };
+          }
           const observed = await readPluginRegistryCommitRecord(dependencies.paths).catch(() => null);
-          if (!observed || JSON.stringify(observed) !== JSON.stringify(next)) throw error;
+          if (!pluginRegistryCommitRecordsEqual(observed, next)) throw error;
           return {
             status: 'committed_durability_pending',
             record: next,

@@ -2,16 +2,32 @@ import { describe, expect, expectTypeOf, it } from 'vitest';
 
 import { definePlugin } from '../definePlugin.js';
 import { defineBuildConfig } from './build/config.js';
-import { buildUiSurfaceTargets, defineUiSurface } from './surface.js';
+import {
+    buildUiSurfaceTargets,
+    defineUiSurfaceDefinition,
+} from './surface.js';
+/* @sdk-negative-type-case:src-ui-surface-test-ts-legacy-declaration-helper:dGhlIFNESyBkZWNsYXJhdGlvbiBoZWxwZXIgd2FzIHJlbmFtZWQgYmVmb3JlIHB1YmxpY2F0aW9uOyB0aGUgYXJ0aWZhY3QgZW50cnkgb3ducyBkZWZpbmVVaVN1cmZhY2Uu:aW1wb3J0IHsgZGVmaW5lVWlTdXJmYWNlIH0gZnJvbSAnLi9zdXJmYWNlLmpzJzs= */
+void undefined; /* @sdk-negative-type-case-end */
 
 if (false) {
-    /* @sdk-negative-type-case:src-ui-surface-test-ts-right-pane-app:cmlnaHRQYW5lIGhhcyBubyBhcHAgdGFyZ2V0IGJpbmRpbmc7IHRoZSBzaG9ydGhhbmQgbXVzdCBwcmVzZXJ2ZSB0aGUgUHJvdG9jb2wgcmVsYXRpb24u:ZGVmaW5lVWlTdXJmYWNlKHsKICAgICAgICBpZDogJ2ludmFsaWQtYXBwLXBhbmUnLAogICAgICAgIHBsYWNlbWVudDogJ3JpZ2h0UGFuZScsCiAgICAgICAgdGFyZ2V0OiB7IGtpbmQ6ICdhcHAnIH0sCiAgICAgICAgcmVuZGVyZXI6IHsga2luZDogJ2hvc3RlZFdlYicgfSwKICAgICAgICBidWlsZDogeyBlbnRyeTogJ3VpL2ludmFsaWQudHMnIH0sCiAgICB9KTs */
+    /* @sdk-negative-type-case:src-ui-surface-test-ts-right-pane-app:cmlnaHRQYW5lIGhhcyBubyBhcHAgdGFyZ2V0IGJpbmRpbmc7IHRoZSBzaG9ydGhhbmQgbXVzdCBwcmVzZXJ2ZSB0aGUgUHJvdG9jb2wgcmVsYXRpb24u:ZGVmaW5lVWlTdXJmYWNlRGVmaW5pdGlvbih7CiAgICAgICAgaWQ6ICdpbnZhbGlkLWFwcC1wYW5lJywKICAgICAgICBwbGFjZW1lbnQ6ICdyaWdodFBhbmUnLAogICAgICAgIHRhcmdldDogeyBraW5kOiAnYXBwJyB9LAogICAgICAgIHJlbmRlcmVyOiB7IGtpbmQ6ICdob3N0ZWRXZWInIH0sCiAgICAgICAgYnVpbGQ6IHsgZW50cnk6ICd1aS9pbnZhbGlkLnRzJyB9LAogICAgfSk7 */
     void undefined; /* @sdk-negative-type-case-end */
 }
 
-describe('defineUiSurface', () => {
+describe('defineUiSurfaceDefinition', () => {
+    it('publishes the unambiguous declaration helper', () => {
+        const surface = defineUiSurfaceDefinition({
+            id: 'declaration-name',
+            placement: 'appPage',
+            title: 'Declaration name',
+            renderer: { kind: 'declarative', root: { kind: 'text', text: 'Ready' } },
+        });
+
+        expect(surface.id).toBe('declaration-name');
+    });
+
     it('projects one executable surface declaration into matching cold manifest and build targets', () => {
-        const app = defineUiSurface({
+        const app = defineUiSurfaceDefinition({
             id: 'home',
             placement: 'appPage',
             title: 'Home',
@@ -29,7 +45,7 @@ describe('defineUiSurface', () => {
                 },
             },
         });
-        const settings = defineUiSurface({
+        const settings = defineUiSurfaceDefinition({
             id: 'settings',
             placement: 'settingsPage',
             group: { kind: 'host', id: 'general' },
@@ -42,7 +58,7 @@ describe('defineUiSurface', () => {
                 entry: 'ui/settings.ts',
             },
         });
-        const project = defineUiSurface({
+        const project = defineUiSurfaceDefinition({
             id: 'project-review',
             placement: 'rightSidebarTab',
             target: { kind: 'project' },
@@ -54,7 +70,7 @@ describe('defineUiSurface', () => {
                 entry: 'ui/projectReview.ts',
             },
         });
-        const session = defineUiSurface({
+        const session = defineUiSurfaceDefinition({
             id: 'session-details',
             placement: 'detailsTab',
             target: { kind: 'session' },
@@ -168,6 +184,6 @@ describe('defineUiSurface', () => {
             id: 'missing-build',
             placement: 'appPage',
             renderer: { kind: 'reactNative' },
-        } as never)).toThrow('defineUiSurface executable surface missing-build requires build metadata');
+        } as never)).toThrow('defineUiSurfaceDefinition executable surface missing-build requires build metadata');
     });
 });

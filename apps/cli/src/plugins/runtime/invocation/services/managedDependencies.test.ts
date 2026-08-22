@@ -1,10 +1,19 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { PluginManagedDependencyContributionV2 } from '@happier-dev/protocol';
+import type {
+    PluginHostAccessRequestV2,
+    PluginManagedDependencyContributionV2,
+} from '@happier-dev/protocol';
 import { resolveInstallablesRegistry, type InstallableDependencyDescriptor } from '@happier-dev/protocol/installables';
 import { PluginError } from '@happier-dev/plugin-sdk';
 import type { RuntimeInstallableAdapter } from '@/packagedRuntime/installables/registry';
+import {
+    resolveExecutableManagedDependenciesRegistry,
+} from '@/plugins/projection/registry/managedDependencyExecutables';
 import type { ResolvedInstallableContribution } from '@/plugins/projection/registry/types';
+import {
+    createAgentSessionRunnerFactoryBinding,
+} from '@/plugins/runtime/runner/agentSessionRunnerFactoryBinding';
 
 import { createStablePluginManagedDependenciesHost } from './managedDependencies';
 import { createV2ManagedDependencySourceModel } from './managedDependencySourceModel';
@@ -79,7 +88,7 @@ function v2Contribution(
 ): ResolvedInstallableContribution {
     return {
         provenance: 'external', source: { kind: 'path' }, pluginId,
-        manifestPath: `/plugins/${pluginId}/.happier-plugin/plugin.json`, manifestDigest: `sha256:${pluginId}`, daemonEntryPath: null,
+        manifestPath: `/plugins/${pluginId}/.happier-plugin/plugin.json`, daemonEntryPath: null,
         sourceSpec: { kind: 'path', locator: `/plugins/${pluginId}`, trustPolicy: 'local_trusted', installPolicy: 'link' },
         definition: { id, title: `${pluginId} ${id}`, sources, executable: id },
     };
@@ -105,19 +114,38 @@ function v2Host(params: Readonly<{
     resolveSourceAdapter: NonNullable<Parameters<typeof createStablePluginManagedDependenciesHost>[0]['resolveSourceAdapter']>;
     removeManagedSource?: NonNullable<Parameters<typeof createStablePluginManagedDependenciesHost>[0]['removeManagedSource']>;
     legacyDescriptors?: readonly InstallableDependencyDescriptor[];
+    immutableGenerationIdsByPluginId?: ReadonlyMap<string, string>;
 }>) {
+    const legacyContributions = (params.legacyDescriptors ?? []).map((value) => ({
+        provenance: 'external' as const,
+        source: { kind: 'path' as const },
+        pluginId: 'acme.plugin',
+        manifestPath: '/plugins/acme.plugin/.happier-plugin/plugin.json',
+        daemonEntryPath: null,
+        sourceSpec: {
+            kind: 'path' as const,
+            locator: '/plugins/acme.plugin',
+            trustPolicy: 'local_trusted' as const,
+            installPolicy: 'link' as const,
+        },
+        definition: value,
+    })) satisfies readonly ResolvedInstallableContribution[];
     const sourceModel = createV2ManagedDependencySourceModel({
-        generationId: 'registry:generation-v2', platform: 'linux', architecture: 'x64',
+        platform: 'linux', architecture: 'x64',
         contributions: params.contributions,
     });
     return createStablePluginManagedDependenciesHost({
-        installablesRegistry: resolveInstallablesRegistry({
-            externalPlugins: (params.legacyDescriptors ?? []).map((value) => ({
-                owner: { provenance: 'external_plugin', ownerId: `owner:${value.key}`, pluginId: 'acme.plugin' },
-                descriptor: value,
-            })),
-        }),
+        installablesRegistry: resolveExecutableManagedDependenciesRegistry(
+            [...params.contributions, ...legacyContributions],
+            { platform: 'linux', architecture: 'x64' },
+        ),
         sourceModel,
+        ...(params.immutableGenerationIdsByPluginId
+            ? {
+                immutableGenerationIdsByPluginId:
+                    params.immutableGenerationIdsByPluginId,
+            }
+            : {}),
         getSettings: () => ({}),
         resolveAdapter: async () => { throw new Error('legacy adapter must not be used'); },
         resolveSourceAdapter: params.resolveSourceAdapter,
@@ -126,7 +154,236 @@ function v2Host(params: Readonly<{
     });
 }
 
+function retainedRunnerInputs(params: Readonly<{
+    pluginId: string;
+    immutableGenerationId: string;
+    executableIds: readonly (
+        | string
+        | Readonly<{ pluginId: string; localId: string }>
+    )[];
+}>) {
+    const binding = createAgentSessionRunnerFactoryBinding({
+        v: 1,
+        pluginId: params.pluginId,
+        pluginVersion: '1.0.0',
+        agentId: 'runner',
+        localAgentId: 'runner',
+        immutableGenerationId:
+            params.immutableGenerationId,
+        locator: {
+            module: './runtime.mjs',
+            export: 'createRuntime',
+            runtimeApiVersion: 1,
+        },
+        normalizedModulePath: 'runtime.mjs',
+        loadMode: 'immutable-js',
+    });
+    const hostAccessRequests: readonly Readonly<{
+        request: PluginHostAccessRequestV2;
+        required: boolean;
+    }>[] = [{
+            required: true,
+            request: {
+                id: 'runner-process',
+                capability: 'process',
+                reason: 'Run exact managed dependencies',
+                scope: {
+                    executables: params.executableIds.map((id) => ({
+                        kind: 'managedDependency' as const,
+                        id,
+                    })),
+                },
+            },
+        }];
+    return Object.freeze({ binding, hostAccessRequests });
+}
+
 describe('stable plugin managed dependencies host', () => {
+    it('pins only exact G-approved dependencies using committed immutable owner generations, never process-local ordinal aliases', () => {
+        const daemonA = v2Host({
+            contributions: [
+                v2Contribution('acme.dependency', 'managed-tool', [
+                    { kind: 'system', executableNames: ['managed-tool'] },
+                    managedPypiSource('dep.acme.managed-tool'),
+                ]),
+                v2Contribution('acme.unrelated', 'unrelated-tool', [
+                    managedPypiSource('dep.acme.unrelated-tool'),
+                ]),
+            ],
+            resolveSourceAdapter: async () => adapter('unused'),
+            immutableGenerationIdsByPluginId: new Map([
+                ['acme.dependency', 'immutable-dependency-g'],
+                ['acme.unrelated', 'immutable-unrelated-a'],
+            ]),
+        });
+        const retainedG = retainedRunnerInputs({
+            pluginId: 'acme.agent',
+            immutableGenerationId: 'immutable-agent-g',
+            executableIds: [{
+                pluginId: 'acme.dependency',
+                localId: 'managed-tool',
+            }],
+        });
+
+        expect(daemonA.snapshotRunnerRetention(
+            retainedG.binding,
+            retainedG.hostAccessRequests,
+        )).toEqual({
+            v: 1,
+            sourceGenerationIds: ['immutable-dependency-g'],
+            qualifiedDependencyIds: ['acme.dependency/managed-tool'],
+            sourceCandidates: [{
+                qualifiedDependencyId:
+                    'acme.dependency/managed-tool',
+                immutableGenerationId:
+                    'immutable-dependency-g',
+                manifestAuthority: 'external',
+            }],
+        });
+
+        const daemonB = v2Host({
+            // Both daemons independently use the process-local source-model
+            // ordinal `registry:generation-v2`; only immutable H may cross
+            // the marker boundary.
+            contributions: [v2Contribution(
+                'acme.dependency',
+                'managed-tool',
+                [managedPypiSource('dep.acme.managed-tool-h')],
+            )],
+            resolveSourceAdapter: async () => adapter('unused'),
+            immutableGenerationIdsByPluginId: new Map([
+                ['acme.dependency', 'immutable-dependency-h'],
+            ]),
+        });
+        const retainedH = retainedRunnerInputs({
+            pluginId: 'acme.agent',
+            immutableGenerationId: 'immutable-agent-h',
+            executableIds: [{
+                pluginId: 'acme.dependency',
+                localId: 'managed-tool',
+            }],
+        });
+        expect(daemonB.snapshotRunnerRetention(
+            retainedH.binding,
+            retainedH.hostAccessRequests,
+        )).toEqual({
+            v: 1,
+            sourceGenerationIds: ['immutable-dependency-h'],
+            qualifiedDependencyIds: ['acme.dependency/managed-tool'],
+            sourceCandidates: [{
+                qualifiedDependencyId:
+                    'acme.dependency/managed-tool',
+                immutableGenerationId:
+                    'immutable-dependency-h',
+                manifestAuthority: 'external',
+            }],
+        });
+    });
+
+    it('blocks destructive removal and source-generation retirement while an exact live runner retains them', async () => {
+        let retained = {
+            v: 1 as const,
+            sourceGenerationIds: ['immutable-plugin-g'],
+            qualifiedDependencyIds: ['acme.plugin/tool'],
+        };
+        const removeManagedSource = vi.fn(async () => {});
+        const contributions = [
+            v2Contribution('acme.plugin', 'tool', [
+                managedPypiSource('dep.acme.tool'),
+            ]),
+        ];
+        const sourceModel = createV2ManagedDependencySourceModel({
+            platform: 'linux',
+            architecture: 'x64',
+            contributions,
+        });
+        const host = createStablePluginManagedDependenciesHost({
+            installablesRegistry: resolveExecutableManagedDependenciesRegistry(
+                contributions,
+                { platform: 'linux', architecture: 'x64' },
+            ),
+            sourceModel,
+            immutableGenerationIdsByPluginId: new Map([
+                ['acme.plugin', 'immutable-plugin-g'],
+            ]),
+            getSettings: () => ({}),
+            resolveAdapter: async () => {
+                throw new Error('legacy adapter must not be used');
+            },
+            resolveSourceAdapter: async () => adapter('tool'),
+            removeManagedInstall: async () => {},
+            removeManagedSource,
+            readLiveRunnerRetention: async () => retained,
+        });
+
+        await expect(
+            host.bind('acme.plugin').remove('tool'),
+        ).rejects.toMatchObject({
+            code: 'plugin_managed_dependency_in_use',
+        });
+        await expect(
+            host.retireGeneration('registry:generation-v2'),
+        ).rejects.toMatchObject({
+            code: 'plugin_managed_dependency_in_use',
+        });
+        expect(removeManagedSource).not.toHaveBeenCalled();
+
+        retained = {
+            v: 1,
+            sourceGenerationIds: [],
+            qualifiedDependencyIds: [],
+        };
+        await expect(
+            host.bind('acme.plugin').remove('tool'),
+        ).resolves.toBeUndefined();
+        await expect(
+            host.retireGeneration('registry:generation-v2'),
+        ).resolves.toBeUndefined();
+        expect(removeManagedSource).toHaveBeenCalledOnce();
+    });
+
+    it('reserves runner retention before durable marker publication can race destructive work', async () => {
+        const removeManagedSource = vi.fn(async () => {});
+        const host = v2Host({
+            contributions: [
+                v2Contribution('acme.plugin', 'tool', [
+                    managedPypiSource('dep.acme.tool'),
+                ]),
+            ],
+            resolveSourceAdapter: async () => adapter('tool'),
+            removeManagedSource,
+            immutableGenerationIdsByPluginId: new Map([
+                ['acme.plugin', 'immutable-agent-g'],
+            ]),
+        });
+        const retained = retainedRunnerInputs({
+            pluginId: 'acme.plugin',
+            immutableGenerationId: 'immutable-agent-g',
+            executableIds: ['tool'],
+        });
+        const reservation = host.reserveRunnerRetention(
+            retained.binding,
+            retained.hostAccessRequests,
+        );
+
+        await expect(
+            host.bind('acme.plugin').remove('tool'),
+        ).rejects.toMatchObject({
+            code: 'plugin_managed_dependency_in_use',
+        });
+        await expect(
+            host.retireGeneration('registry:generation-v2'),
+        ).rejects.toMatchObject({
+            code: 'plugin_managed_dependency_in_use',
+        });
+        reservation.release();
+
+        await expect(
+            host.bind('acme.plugin').remove('tool'),
+        ).resolves.toBeUndefined();
+        expect(removeManagedSource).toHaveBeenCalledOnce();
+    });
+
     it('preserves an exact production source rejection when no declared source is executable', async () => {
         const host = v2Host({
             contributions: [v2Contribution('acme.plugin', 'tool', [
@@ -155,12 +412,11 @@ describe('stable plugin managed dependencies host', () => {
 
     it('consumes V2 sources directly without adding them to the legacy installables registry', async () => {
         const sourceModel = createV2ManagedDependencySourceModel({
-            generationId: 'registry:generation-v2',
             platform: 'linux',
             architecture: 'x64',
             contributions: [{
                 provenance: 'external', source: { kind: 'path' }, pluginId: 'acme.plugin',
-                manifestPath: '/plugins/acme/.happier-plugin/plugin.json', manifestDigest: 'sha256:acme', daemonEntryPath: null,
+                manifestPath: '/plugins/acme/.happier-plugin/plugin.json', daemonEntryPath: null,
                 sourceSpec: { kind: 'path', locator: '/plugins/acme', trustPolicy: 'local_trusted', installPolicy: 'link' },
                 definition: { id: 'tool', title: 'Tool', sources: [{ kind: 'system', executableNames: ['tool'] }], executable: 'tool' },
             }],
@@ -193,20 +449,21 @@ describe('stable plugin managed dependencies host', () => {
     });
 
     it('falls back from a missing system source to the first declared managed source', async () => {
+        const contributions: readonly ResolvedInstallableContribution[] = [{
+            provenance: 'external', source: { kind: 'path' }, pluginId: 'acme.plugin',
+            manifestPath: '/plugins/acme/.happier-plugin/plugin.json', daemonEntryPath: null,
+            sourceSpec: { kind: 'path', locator: '/plugins/acme', trustPolicy: 'local_trusted', installPolicy: 'link' },
+            definition: {
+                id: 'tool', title: 'Tool', executable: 'tool',
+                sources: [
+                    managedPypiSource('dep.acme.tool'),
+                    { kind: 'system', executableNames: ['tool'] },
+                ],
+            },
+        }];
         const sourceModel = createV2ManagedDependencySourceModel({
-            generationId: 'registry:generation-v2', platform: 'linux', architecture: 'x64',
-            contributions: [{
-                provenance: 'external', source: { kind: 'path' }, pluginId: 'acme.plugin',
-                manifestPath: '/plugins/acme/.happier-plugin/plugin.json', manifestDigest: 'sha256:acme', daemonEntryPath: null,
-                sourceSpec: { kind: 'path', locator: '/plugins/acme', trustPolicy: 'local_trusted', installPolicy: 'link' },
-                definition: {
-                    id: 'tool', title: 'Tool', executable: 'tool',
-                    sources: [
-                        managedPypiSource('dep.acme.tool'),
-                        { kind: 'system', executableNames: ['tool'] },
-                    ],
-                },
-            }],
+            platform: 'linux', architecture: 'x64',
+            contributions,
         });
         const resolveSourceAdapter = vi.fn(async ({ source }: Parameters<NonNullable<Parameters<typeof createStablePluginManagedDependenciesHost>[0]['resolveSourceAdapter']>>[0]) => (
             source.kind === 'system'
@@ -223,7 +480,10 @@ describe('stable plugin managed dependencies host', () => {
                 })
         ));
         const host = createStablePluginManagedDependenciesHost({
-            installablesRegistry: resolveInstallablesRegistry({}), sourceModel, getSettings: () => ({}),
+            installablesRegistry: resolveExecutableManagedDependenciesRegistry(
+                contributions,
+                { platform: 'linux', architecture: 'x64' },
+            ), sourceModel, getSettings: () => ({}),
             resolveAdapter: async () => { throw new Error('legacy adapter must not be used'); },
             resolveSourceAdapter,
             removeManagedInstall: async () => {}, removeManagedSource: async () => {},
@@ -237,6 +497,19 @@ describe('stable plugin managed dependencies host', () => {
         expect(resolveSourceAdapter.mock.calls.map(([input]) => input.source.kind)).toEqual([
             'system', 'managedPypiWheelAsset', 'system', 'managedPypiWheelAsset',
         ]);
+        expect(resolveSourceAdapter.mock.calls
+            .map(([input]) => input)
+            .filter(({ source }) => source.kind === 'managedPypiWheelAsset'),
+        ).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                sourceInstallable: expect.objectContaining({
+                    key: 'dep.acme.tool',
+                    source: expect.objectContaining({
+                        kind: 'managed_pypi_wheel_asset',
+                    }),
+                }),
+            }),
+        ]));
         executable.release();
     });
 
@@ -268,6 +541,188 @@ describe('stable plugin managed dependencies host', () => {
             code: 'plugin_managed_dependency_consent_required',
         });
         expect(installOrUpgrade).not.toHaveBeenCalled();
+    });
+
+    it('keeps a losing external V2 wheel source out of status, mutation, removal, and executable resolution', async () => {
+        const installId = 'dep.antigravity.localharness';
+        const sharedDefinition = Object.freeze({
+            id: 'localharness',
+            title: 'Antigravity localharness',
+            description: 'Shared descriptor facts must not grant shared ownership.',
+            sources: [Object.freeze({
+                ...managedPypiSource(installId),
+                distribution: 'google-antigravity',
+                assetPathByPlatform: {
+                    'linux-x64': 'google/antigravity/bin/localharness',
+                },
+                compatibilityProbe: 'antigravity-localharness-v1',
+            })],
+            executable: 'localharness',
+        }) satisfies PluginManagedDependencyContributionV2;
+        const bundled = Object.freeze({
+            ...v2Contribution('happier.antigravity', 'localharness', [
+                ...sharedDefinition.sources,
+            ]),
+            provenance: 'first_party' as const,
+            source: Object.freeze({ kind: 'bundled' as const }),
+            sourceSpec: Object.freeze({
+                kind: 'bundled' as const,
+                locator: 'happier.antigravity',
+                trustPolicy: 'local_trusted' as const,
+                installPolicy: 'link' as const,
+            }),
+            definition: sharedDefinition,
+        }) satisfies ResolvedInstallableContribution;
+        const external = Object.freeze({
+            ...v2Contribution('acme.collision', 'localharness', [
+                ...sharedDefinition.sources,
+            ]),
+            definition: sharedDefinition,
+        }) satisfies ResolvedInstallableContribution;
+        const contributions = [bundled, external];
+        const installablesRegistry = resolveExecutableManagedDependenciesRegistry(
+            contributions,
+            { platform: 'linux', architecture: 'x64' },
+        );
+        const sourceModel = createV2ManagedDependencySourceModel({
+            platform: 'linux',
+            architecture: 'x64',
+            contributions,
+        });
+        const installOrUpgrade = vi.fn(async () => ({
+            ok: true as const,
+            logPath: '/redacted/collision.log',
+        }));
+        const resolveSourceAdapter = vi.fn(async () => adapter('collision', {
+            installOrUpgrade,
+        }));
+        const removeManagedSource = vi.fn(async () => {});
+        const host = createStablePluginManagedDependenciesHost({
+            installablesRegistry,
+            sourceModel,
+            immutableGenerationIdsByPluginId: new Map([
+                ['happier.antigravity', 'immutable-bundled-winner-g'],
+                ['acme.collision', 'immutable-external-loser-g'],
+            ]),
+            getSettings: () => ({}),
+            resolveAdapter: async () => {
+                throw new Error('legacy adapter must not be used');
+            },
+            resolveSourceAdapter,
+            removeManagedInstall: async () => {},
+            removeManagedSource,
+        });
+        const service = host.bind('acme.collision');
+
+        expect(installablesRegistry.descriptorsByKey[installId]?.owner.pluginId)
+            .toBe('happier.antigravity');
+        const retained = retainedRunnerInputs({
+            pluginId: 'acme.agent',
+            immutableGenerationId: 'immutable-agent-g',
+            executableIds: [{
+                pluginId: 'acme.collision',
+                localId: 'localharness',
+            }],
+        });
+        expect(host.snapshotRunnerRetention(
+            retained.binding,
+            retained.hostAccessRequests,
+        )).toEqual({
+            v: 1,
+            sourceGenerationIds: [
+                'immutable-bundled-winner-g',
+                'immutable-external-loser-g',
+            ],
+            qualifiedDependencyIds: [
+                'acme.collision/localharness',
+            ],
+            sourceCandidates: [{
+                qualifiedDependencyId:
+                    'acme.collision/localharness',
+                immutableGenerationId:
+                    'immutable-external-loser-g',
+                manifestAuthority: 'external',
+            }, {
+                qualifiedDependencyId:
+                    'happier.antigravity/localharness',
+                immutableGenerationId:
+                    'immutable-bundled-winner-g',
+                manifestAuthority: 'bundled_first_party',
+            }],
+        });
+        await expect(service.status('localharness')).resolves.toEqual({
+            state: 'unsupported',
+            id: 'localharness',
+            code: 'plugin_managed_dependency_source_conflict',
+        });
+        await expect(service.update('localharness')).rejects.toMatchObject({
+            code: 'plugin_managed_dependency_source_conflict',
+        });
+        await expect(service.remove('localharness')).rejects.toMatchObject({
+            code: 'plugin_managed_dependency_source_conflict',
+        });
+        await expect(host.resolveExecutable(
+            { kind: 'managedDependency', id: 'localharness' },
+            'acme.collision',
+        )).rejects.toMatchObject({
+            code: 'plugin_managed_dependency_source_conflict',
+        });
+        expect(resolveSourceAdapter).not.toHaveBeenCalled();
+        expect(installOrUpgrade).not.toHaveBeenCalled();
+        expect(removeManagedSource).not.toHaveBeenCalled();
+    });
+
+    it('exposes one V2 lifecycle identity for a projected wheel and rejects its installId alias while the local id is leased', async () => {
+        const installId = 'dep.acme.tool';
+        const contribution = v2Contribution('acme.plugin', 'tool', [
+            managedPypiSource(installId),
+        ]);
+        const sourceModel = createV2ManagedDependencySourceModel({
+            platform: 'linux',
+            architecture: 'x64',
+            contributions: [contribution],
+        });
+        const removeManagedInstall = vi.fn(async () => {});
+        const removeManagedSource = vi.fn(async () => {});
+        const host = createStablePluginManagedDependenciesHost({
+            installablesRegistry: resolveExecutableManagedDependenciesRegistry(
+                [contribution],
+                { platform: 'linux', architecture: 'x64' },
+            ),
+            sourceModel,
+            getSettings: () => ({}),
+            resolveAdapter: async () => adapter('legacy-alias'),
+            resolveSourceAdapter: async () => adapter('v2-owner'),
+            removeManagedInstall,
+            removeManagedSource,
+        });
+        const service = host.bind('acme.plugin');
+        const lease = await host.resolveExecutable(
+            { kind: 'managedDependency', id: 'tool' },
+            'acme.plugin',
+        );
+
+        await expect(service.status(installId)).resolves.toEqual({
+            state: 'unsupported',
+            id: installId,
+            code: 'plugin_managed_dependency_undeclared',
+        });
+        await expect(service.remove(installId)).rejects.toMatchObject({
+            code: 'plugin_managed_dependency_undeclared',
+        });
+        await expect(host.resolveExecutable(
+            { kind: 'managedDependency', id: installId },
+            'acme.plugin',
+        )).rejects.toMatchObject({
+            code: 'plugin_managed_dependency_undeclared',
+        });
+        expect(removeManagedInstall).not.toHaveBeenCalled();
+        expect(removeManagedSource).not.toHaveBeenCalled();
+
+        lease.release();
+        await service.remove('tool');
+        expect(removeManagedSource).toHaveBeenCalledOnce();
+        expect(removeManagedInstall).not.toHaveBeenCalled();
     });
 
     it('reports the first declared manual fallback when executable sources are missing', async () => {
@@ -392,12 +847,12 @@ describe('stable plugin managed dependencies host', () => {
         executable.release();
     });
 
-    it('retires the V2 generation only after executable leases are released', async () => {
+    it('retires the direct V2 model only after executable leases are released', async () => {
         const sourceModel = createV2ManagedDependencySourceModel({
-            generationId: 'registry:generation-v2', platform: 'linux', architecture: 'x64',
+            platform: 'linux', architecture: 'x64',
             contributions: [{
                 provenance: 'external', source: { kind: 'path' }, pluginId: 'acme.plugin',
-                manifestPath: '/plugins/acme/.happier-plugin/plugin.json', manifestDigest: 'sha256:acme', daemonEntryPath: null,
+                manifestPath: '/plugins/acme/.happier-plugin/plugin.json', daemonEntryPath: null,
                 sourceSpec: { kind: 'path', locator: '/plugins/acme', trustPolicy: 'local_trusted', installPolicy: 'link' },
                 definition: { id: 'tool', title: 'Tool', sources: [{ kind: 'system', executableNames: ['tool'] }], executable: 'tool' },
             }],
@@ -418,9 +873,9 @@ describe('stable plugin managed dependencies host', () => {
         });
     });
 
-    it('rejects retirement requests for a different registry generation', async () => {
+    it('retires its direct source model without comparing a registry-wide identity', async () => {
         const sourceModel = createV2ManagedDependencySourceModel({
-            generationId: 'registry:generation-v2', platform: 'linux', architecture: 'x64', contributions: [],
+            platform: 'linux', architecture: 'x64', contributions: [],
         });
         const host = createStablePluginManagedDependenciesHost({
             installablesRegistry: resolveInstallablesRegistry({}), sourceModel, getSettings: () => ({}),
@@ -428,9 +883,7 @@ describe('stable plugin managed dependencies host', () => {
             removeManagedInstall: async () => {},
         });
 
-        await expect(host.retireGeneration('registry:wrong-generation')).rejects.toMatchObject({
-            code: 'plugin_managed_dependency_generation_mismatch',
-        });
+        await expect(host.retireGeneration('registry:retire-this-instance')).resolves.toBeUndefined();
     });
 
     it('uses one descriptor and source-preference owner for status and executable resolution', async () => {

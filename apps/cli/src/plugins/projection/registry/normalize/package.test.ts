@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { PluginUiArtifactsManifestV1Schema } from '@happier-dev/protocol/plugins/ui';
 
 import { buildPluginContributionRegistry } from './package';
 import type { LoadedPlugin } from '@/plugins/discovery/load/installed';
@@ -14,7 +15,6 @@ function loaded(
     pluginId,
     pluginRootPath: `/plugins/${pluginId}`,
     manifestPath: `/plugins/${pluginId}/.happier-plugin/plugin.json`,
-    manifestDigest: 'digest',
     daemonEntryPath: `/plugins/${pluginId}/dist/plugin.js`,
     devDaemonEntryPath: null,
     sourceSpec: { kind: 'path', locator: `/plugins/${pluginId}`, trustPolicy: 'local_trusted', installPolicy: 'link' },
@@ -91,14 +91,50 @@ describe('target package contribution projection', () => {
     expect(registry.uiTranslationsV2[0]).not.toHaveProperty('identity');
   });
 
+  it('materializes a declared composer reference with its Protocol-owned presentation', () => {
+    const registry = buildPluginContributionRegistry({
+      loadedPlugins: [loaded('com.acme.issues', {
+        composerReferences: [{
+          id: 'issues',
+          title: 'Issues',
+          description: 'Search project issues',
+          icon: 'search',
+          triggers: ['$'],
+        }],
+      })],
+    });
+
+    expect(registry.composerReferences).toMatchObject([{
+      pluginId: 'com.acme.issues',
+      identity: { pluginId: 'com.acme.issues', localId: 'issues' },
+      definition: {
+        id: 'issues',
+        title: 'Issues',
+        description: 'Search project issues',
+        icon: 'search',
+        triggers: ['$'],
+      },
+    }]);
+  });
+
   it('qualifies action presentation references and preserves exact declarations', () => {
+    const resultSchema = {
+      type: 'object',
+      properties: {
+        summary: { type: 'string' },
+      },
+      required: ['summary'],
+      additionalProperties: false,
+    } as const;
     const registry = buildPluginContributionRegistry({ loadedPlugins: [loaded('com.acme.plugin', {
       actions: [{
         id: 'run',
         title: 'Run',
         scopes: ['session'],
         surfaces: ['cli'],
-        placement: 'primary',
+        execution: { target: 'daemon' },
+        placementBindings: ['primary'],
+        resultSchema,
         dangerLevel: 'writesRemote',
         confirmation: {
           title: { key: 'actions.run.title', fallback: 'Run remotely?' },
@@ -111,6 +147,7 @@ describe('target package contribution projection', () => {
     expect(registry.tools[0]?.definition.actionId).toBe('com.acme.plugin/run');
     expect(registry.commands[0]?.definition.actionId).toBe('com.acme.plugin/run');
     expect(registry.actions[0]?.definition).toMatchObject({
+      outputSchema: resultSchema,
       dangerLevel: 'writesRemote',
       confirmation: {
         title: { key: 'actions.run.title', fallback: 'Run remotely?' },
@@ -121,7 +158,16 @@ describe('target package contribution projection', () => {
 
   it('preserves UI as an explicit action surface without aliasing CLI', () => {
     const registry = buildPluginContributionRegistry({ loadedPlugins: [loaded('com.acme.plugin', {
-      actions: [{ id: 'open', title: 'Open', scopes: ['session'], surfaces: ['ui'], placement: 'detailsPanel', dangerLevel: 'safe' }],
+      actions: [{
+        id: 'open',
+        title: 'Open',
+        icon: 'arrow-up-right',
+        scopes: ['session'],
+        surfaces: ['ui'],
+        execution: { target: 'daemon' },
+        placementBindings: ['detailsPanel'],
+        dangerLevel: 'safe',
+      }],
     })] });
 
     expect(registry.actions[0]?.definition.surfaces).toMatchObject({
@@ -131,6 +177,171 @@ describe('target package contribution projection', () => {
       agent: false,
     });
     expect(registry.actions[0]?.definition.contributionSurfaces).toEqual(['ui']);
+    expect(registry.actions[0]?.definition).toMatchObject({ icon: 'arrow-up-right' });
+  });
+
+  it('preserves the exact client execution target and Voice surface through the canonical Action projection', () => {
+    const registry = buildPluginContributionRegistry({ loadedPlugins: [loaded('com.acme.voice', {
+      actions: [{
+        id: 'start-voice-note',
+        title: 'Start voice note',
+        scopes: ['session'],
+        surfaces: ['voice'],
+        execution: {
+          target: 'client',
+          client: {
+            artifactId: 'voice-client',
+            modulePath: './voiceClient',
+            exportName: 'registerVoiceAction',
+          },
+          platforms: ['web', 'ios'],
+        },
+        dangerLevel: 'safe',
+      }],
+    })] });
+
+    expect(registry.actions[0]?.definition).toMatchObject({
+      execution: {
+        target: 'client',
+        client: {
+          artifactId: 'voice-client',
+          modulePath: './voiceClient',
+          exportName: 'registerVoiceAction',
+        },
+        platforms: ['web', 'ios'],
+      },
+      surfaces: { voice: true, cli: false, ui: false },
+      contributionSurfaces: ['voice'],
+    });
+  });
+
+  it('retains generated Artifact custody on the exact client Action that declares it', () => {
+    const generatedUiArtifactsManifest = PluginUiArtifactsManifestV1Schema.parse({
+      version: 1 as const,
+      entries: [{
+        contributionId: 'action-client-artifact',
+        tier: 'reactNative' as const,
+        platform: 'web' as const,
+        entry: 'react-native/action-client/index.js',
+        files: [{
+          relativePath: 'react-native/action-client/index.js',
+          digest: `sha256:${'2'.repeat(64)}`,
+          byteSize: 1,
+        }],
+        digest: `sha256:${'1'.repeat(64)}`,
+        builtWith: { bundler: 'vite' as const, version: '7.0.0' },
+        hostUiApiVersion: '1.0.0',
+        compat: { react: '19.2.0', reactNative: '0.83.4' },
+      }],
+    });
+    const registry = buildPluginContributionRegistry({
+      loadedPlugins: [loaded('com.acme.client-action', {
+        actions: [{
+          id: 'open-preview',
+          title: 'Open preview',
+          scopes: ['session'],
+          surfaces: ['ui'],
+          execution: {
+            target: 'client',
+            client: {
+              artifactId: 'action-client-artifact',
+              modulePath: './actionClient',
+              exportName: 'activate',
+            },
+            platforms: ['web'],
+          },
+          placementBindings: ['detailsPanel'],
+          dangerLevel: 'safe',
+        }],
+      }, generatedUiArtifactsManifest)],
+    });
+
+    expect(registry.actions[0]).toMatchObject({
+      pluginId: 'com.acme.client-action',
+      identity: { pluginId: 'com.acme.client-action', localId: 'open-preview' },
+      pluginRootPath: '/plugins/com.acme.client-action',
+      generatedUiArtifactsManifest,
+    });
+  });
+
+  it('normalizes plugin-only Actions without creating a human placement or confirmation', () => {
+    const registry = buildPluginContributionRegistry({ loadedPlugins: [loaded('com.acme.provider', {
+      actions: [{
+        id: 'refresh-provider-state',
+        title: 'Refresh provider state',
+        scopes: ['session'],
+        surfaces: ['plugin'],
+        execution: { target: 'daemon' },
+        dangerLevel: 'writesRemote',
+      }],
+    })] });
+
+    expect(registry.actions[0]?.definition).toMatchObject({
+      surfaces: {
+        plugin: true,
+        ui: false,
+        cli: false,
+        mcp: false,
+        agent: false,
+      },
+      contributionSurfaces: ['plugin'],
+      dangerLevel: 'writesRemote',
+    });
+    expect(registry.actions[0]?.definition).not.toHaveProperty('placement');
+    expect(registry.actions[0]?.definition).not.toHaveProperty('confirmation');
+  });
+
+  it('normalizes contributed Action input hints through the shared presentation descriptor', () => {
+    const registry = buildPluginContributionRegistry({ loadedPlugins: [loaded('com.acme.provider', {
+      actions: [{
+        id: 'configure',
+        title: 'Configure provider',
+        scopes: ['settings'],
+        surfaces: ['ui', 'plugin'],
+        execution: { target: 'daemon' },
+        placementBindings: ['detailsPanel'],
+        dangerLevel: 'safe',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            provider: { type: 'string' },
+            enabled: { type: 'boolean' },
+          },
+          additionalProperties: false,
+        },
+        inputHints: {
+          title: { key: 'configure.title', fallback: 'Configure provider' },
+          submitLabel: { key: 'configure.submit', fallback: 'Save provider' },
+          fields: [{
+            path: 'provider',
+            title: { key: 'configure.provider', fallback: 'Provider' },
+            placeholder: { key: 'configure.provider.placeholder', fallback: 'Choose a provider' },
+            widget: 'select',
+            options: [{ value: 'acme', label: { key: 'configure.provider.acme', fallback: 'Acme' } }],
+          }, {
+            path: 'enabled',
+            title: { key: 'configure.enabled', fallback: 'Enabled' },
+            widget: 'boolean',
+          }],
+        },
+      }],
+    })] });
+
+    expect(registry.actions[0]?.definition.inputHints).toEqual({
+      title: 'Configure provider',
+      submitLabel: 'Save provider',
+      fields: [{
+        path: 'provider',
+        title: 'Provider',
+        placeholder: 'Choose a provider',
+        widget: 'select',
+        options: [{ value: 'acme', label: 'Acme' }],
+      }, {
+        path: 'enabled',
+        title: 'Enabled',
+        widget: 'boolean',
+      }],
+    });
   });
 
   it('resolves foreign structured references against all loaded manifests', () => {
@@ -228,7 +439,8 @@ describe('target package contribution projection', () => {
           title: 'Run',
           scopes: ['global'],
           surfaces: ['ui'],
-          placement: 'commandPalette',
+          execution: { target: 'daemon' },
+          placementBindings: ['commandPalette'],
           dangerLevel: 'safe',
           hostAccess: ['claude-account'],
         }],
@@ -269,6 +481,68 @@ describe('target package contribution projection', () => {
     expect(registry.semanticContributionsByFamily.get('connectedAccountDescriptors')).toBeUndefined();
   });
 
+  it('resolves split MCP HostAccess references against bundled contributions without granting provenance privileges', () => {
+    const bundledProducer = {
+      ...loaded('happier.mcp.catalog', {
+        mcp: {
+          servers: [{ id: 'tools', title: 'Tools', kind: 'dynamic' }],
+          discoverySources: [{ id: 'catalog', title: 'Catalog' }],
+        },
+      }),
+      sourceSpec: {
+        kind: 'bundled' as const,
+        locator: '@happier-dev/plugin-mcp-catalog',
+        trustPolicy: 'local_trusted' as const,
+        installPolicy: 'link' as const,
+      },
+    };
+    const externalConsumer = loaded(
+      'com.acme.mcp-consumer',
+      {
+        actions: [{
+          id: 'run',
+          title: 'Run',
+          scopes: ['global'],
+          surfaces: ['ui'],
+          execution: { target: 'daemon' },
+          placementBindings: ['commandPalette'],
+          dangerLevel: 'safe',
+          hostAccess: ['mcp'],
+        }],
+      },
+      undefined,
+      {
+        hostAccess: {
+          required: [{
+            id: 'mcp',
+            capability: 'mcp',
+            reason: 'Use selected MCP capabilities',
+            scope: {
+              serverRefs: [{ pluginId: bundledProducer.pluginId, localId: 'tools' }],
+              discoverySourceRefs: [{ pluginId: bundledProducer.pluginId, localId: 'catalog' }],
+              operations: ['listTools', 'discover'],
+            },
+          }],
+          optional: [],
+        },
+      },
+    );
+
+    const registry = buildPluginContributionRegistry({
+      loadedPlugins: [externalConsumer],
+      referencePlugins: [bundledProducer],
+    });
+
+    expect(registry.actions).toMatchObject([{
+      pluginId: externalConsumer.pluginId,
+      definition: { id: 'run', hostAccess: ['mcp'] },
+    }]);
+    expect(registry.mcpServers).toEqual([]);
+    expect(registry.mcpDiscoverySources).toEqual([]);
+    expect(registry.semanticContributionsByFamily.get('mcp.servers')).toBeUndefined();
+    expect(registry.semanticContributionsByFamily.get('mcp.discoverySources')).toBeUndefined();
+  });
+
   it('rejects a connected-account reference when the validation universe only has the same local id in the wrong family', () => {
     const wrongFamilyProducer = loaded('happier.agent.claude', {
       actions: [{
@@ -276,7 +550,8 @@ describe('target package contribution projection', () => {
         title: 'Not an account descriptor',
         scopes: ['global'],
         surfaces: ['ui'],
-        placement: 'commandPalette',
+        execution: { target: 'daemon' },
+        placementBindings: ['commandPalette'],
         dangerLevel: 'safe',
       }],
     });
@@ -323,7 +598,8 @@ describe('target package contribution projection', () => {
             title: 'Run',
             scopes: ['session'],
             surfaces: ['agent'],
-            placement: 'secondary',
+            execution: { target: 'daemon' },
+            placementBindings: ['secondary'],
             dangerLevel: 'safe',
           }],
         }),
@@ -449,8 +725,12 @@ describe('target package contribution projection', () => {
     const definition = {
       id: 'conversation', title: 'Conversation', kind: 'conversation' as const,
       roles: ['realtime_conversation', 'turn_control'] as const, platforms: ['web'] as const,
-      capabilities: { readiness: { requirements: [] }, turn: { cancelResponse: true, bargeIn: true } },
-      execution: { kind: 'experimental_agent_session_realtime' as const, agent: 'codex' },
+      capabilities: { turn: { cancelResponse: true, bargeIn: true } },
+      execution: {
+        kind: 'experimental_agent_session_realtime' as const,
+        agent: 'codex',
+        supportedRuntimeVersions: ['1.2.3'],
+      },
       settings: {
         schemaVersion: 2 as const,
         fields: [],
@@ -463,7 +743,7 @@ describe('target package contribution projection', () => {
       },
       client: { artifactId: 'voice-runtime', modulePath: './voiceRuntime', exportName: 'activate' as const },
     };
-    const generatedUiArtifactsManifest = {
+    const generatedUiArtifactsManifest = PluginUiArtifactsManifestV1Schema.parse({
       version: 1 as const,
       entries: [{
         contributionId: 'voice-runtime',
@@ -480,7 +760,7 @@ describe('target package contribution projection', () => {
         hostUiApiVersion: '1.0.0',
         compat: { react: '19.2.0', reactNative: '0.83.4' },
       }],
-    };
+    });
     const registry = buildPluginContributionRegistry({
       loadedPlugins: [loaded('com.acme.voice', { voiceProviders: [definition] }, generatedUiArtifactsManifest)],
     });
@@ -494,19 +774,81 @@ describe('target package contribution projection', () => {
         execution: {
           kind: 'experimental_agent_session_realtime',
           agent: { pluginId: 'com.acme.voice', localId: 'codex' },
+          supportedRuntimeVersions: ['1.2.3'],
+        },
+        settings: {
+          ...definition.settings,
+          connectedServicesBinding: {
+            ...definition.settings.connectedServicesBinding,
+            agent: { pluginId: 'com.acme.voice', localId: 'codex' },
+          },
         },
       },
     });
+  });
+
+  it('rejects a Connected Services binding for a different Agent than the Voice execution declaration', () => {
+    const definition = {
+      id: 'conversation', title: 'Conversation', kind: 'conversation' as const,
+      roles: ['realtime_conversation'] as const, platforms: ['web'] as const,
+      capabilities: { turn: { cancelResponse: true, bargeIn: true } },
+      execution: {
+        kind: 'experimental_agent_session_realtime' as const,
+        agent: 'codex',
+        supportedRuntimeVersions: ['1.2.3'],
+      },
+      settings: {
+        schemaVersion: 2 as const,
+        fields: [],
+        connectedServicesBinding: {
+          id: 'globalConnectedServices',
+          title: 'Different Agent account',
+          agent: 'other-agent',
+          serviceIds: ['openai-codex'] as const,
+        },
+      },
+      client: { artifactId: 'voice-runtime', modulePath: './voiceRuntime', exportName: 'activate' as const },
+    };
+
+    expect(() => buildPluginContributionRegistry({
+      loadedPlugins: [loaded('com.acme.voice', { voiceProviders: [definition] })],
+    })).toThrow('Voice Connected Services binding Agent must match its Agent-session realtime execution Agent');
   });
 
   it('preserves canonical nested UI views, renderers, and translations with qualified identities', () => {
     const registry = buildPluginContributionRegistry({
       loadedPlugins: [loaded('com.acme.ui', {
         ui: {
-          views: [{ id: 'panel', placement: 'app.sidePanel', renderer: 'panel-renderer', title: 'Acme' }],
+          views: [{
+            id: 'panel',
+            container: 'rightPane',
+            target: { kind: 'session' },
+            renderer: 'panel-renderer',
+            title: 'Acme',
+          }, {
+            id: 'file-details',
+            container: 'detailsTab',
+            target: { kind: 'session' },
+            renderer: 'panel-renderer',
+            title: 'File',
+          }],
           renderers: [{ id: 'panel-renderer', kind: 'declarative', root: { kind: 'text', text: 'Hello' } }],
+          settingsGroups: [{ id: 'review', title: 'Review' }],
+          settingsPages: [{
+            id: 'review-settings',
+            group: { kind: 'plugin', localId: 'review' },
+            title: 'Review settings',
+            renderer: 'panel-renderer',
+          }],
           translations: [{ locale: 'en', messages: { title: 'Acme' } }],
         },
+        openableContentViewers: [{
+          id: 'markdown',
+          destination: 'file-details',
+          contentClasses: ['text'],
+          mimeTypes: ['text/markdown'],
+          extensions: ['.md'],
+        }],
       })],
     });
 
@@ -517,10 +859,92 @@ describe('target package contribution projection', () => {
     expect(registry.uiRenderersV2[0]).toMatchObject({
       identity: { pluginId: 'com.acme.ui', localId: 'panel-renderer' },
     });
+    expect(registry.uiSettingsGroupsV2[0]).toMatchObject({
+      identity: { pluginId: 'com.acme.ui', localId: 'review' },
+      definition: { id: 'review' },
+    });
+    expect(registry.uiSettingsPagesV2[0]).toMatchObject({
+      identity: { pluginId: 'com.acme.ui', localId: 'review-settings' },
+      definition: { id: 'review-settings', renderer: 'panel-renderer' },
+    });
     expect(registry.uiTranslationsV2[0]).toMatchObject({
       localeIdentity: { pluginId: 'com.acme.ui', locale: 'en' },
       definition: { locale: 'en' },
     });
     expect(registry.uiTranslationsV2[0]).not.toHaveProperty('identity');
+    expect(registry.openableContentViewers[0]).toMatchObject({
+      identity: { pluginId: 'com.acme.ui', localId: 'markdown' },
+      definition: {
+        id: 'markdown',
+        destination: 'file-details',
+        contentClasses: ['text'],
+        mimeTypes: ['text/markdown'],
+        extensions: ['.md'],
+      },
+    });
+  });
+
+  it('rejects a multiple-instance details destination for an openable-content viewer before UI projection', () => {
+    expect(() => buildPluginContributionRegistry({
+      loadedPlugins: [loaded('com.acme.viewer', {
+        ui: {
+          renderers: [{ id: 'viewer-renderer', kind: 'declarative', root: { kind: 'text', text: 'Viewer' } }],
+          views: [{
+            id: 'file-details',
+            container: 'detailsTab',
+            target: { kind: 'session' },
+            renderer: 'viewer-renderer',
+            instancePolicy: 'multiple',
+          }],
+        },
+        openableContentViewers: [{
+          id: 'markdown',
+          destination: 'file-details',
+          contentClasses: ['text'],
+        }],
+      })],
+    })).toThrow(/Openable-content viewer destinations must use singleton instance policy/u);
+  });
+
+  it('retains a session-scoped transcript Activity descriptor with its canonical plugin identity', () => {
+    const pluginId = 'com.acme.activity';
+    const registry = buildPluginContributionRegistry({
+      loadedPlugins: [loaded(pluginId, {
+        resources: [{
+          id: 'live-activity',
+          source: 'dynamic',
+          kind: 'config',
+          scope: 'session',
+          contentType: 'application/vnd.happier.transcript-activity+json;v=1',
+          maxBytes: 64 * 1024,
+          hostAccess: ['account-storage'],
+        }],
+        transcriptActivities: [{
+          id: 'delivery-status',
+          resourceId: 'live-activity',
+          actions: [],
+        }],
+      }, undefined, {
+        hostAccess: {
+          required: [{
+            id: 'account-storage',
+            capability: 'storage.account',
+            reason: 'Read the current activity status.',
+            scope: { enabled: true },
+          }],
+          optional: [],
+        },
+      })],
+    });
+
+    expect(registry.transcriptActivities).toMatchObject([{
+      pluginId,
+      identity: { pluginId, localId: 'delivery-status' },
+      definition: {
+        id: 'delivery-status',
+        resourceId: 'live-activity',
+        actions: [],
+      },
+    }]);
   });
 });

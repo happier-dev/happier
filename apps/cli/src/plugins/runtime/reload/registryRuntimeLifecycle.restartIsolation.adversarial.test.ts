@@ -5,7 +5,11 @@ import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
-import { createPluginRegistryStateStore } from '@/plugins/store/registry/currentState';
+import {
+  createPluginRegistryStateStore,
+  type CommitPluginRegistryInstallationInput,
+} from '@/plugins/store/registry/currentState';
+import { prepareOwnedImmutablePluginGeneration } from '@/plugins/store/registry/generationStore';
 import {
   createLocalPathPluginDistributionIdentity,
   createPluginTrustRecord,
@@ -21,6 +25,32 @@ vi.mock('@/plugins/projection/registry/resolveBuiltInContributions', () => ({
         providers: Object.freeze([]),
   }),
 }));
+
+type FixtureInstallInput = Omit<CommitPluginRegistryInstallationInput, 'preparedGeneration'> & Readonly<{
+  sourceRootPath: string;
+  manifestRelativePath: string;
+}>;
+
+async function installFixtureCandidate(
+  store: ReturnType<typeof createPluginRegistryStateStore>,
+  input: FixtureInstallInput,
+) {
+  const { sourceRootPath, manifestRelativePath, ...installation } = input;
+  const preparedGeneration = await prepareOwnedImmutablePluginGeneration({
+    paths: store.paths,
+    pluginId: input.pluginId,
+    sourceRootPath,
+    manifestRelativePath,
+    distribution: input.trust.distribution,
+    updatePolicy: input.updatePolicy,
+    createdAtMs: Date.now(),
+  });
+  try {
+    return await store.install({ ...installation, preparedGeneration });
+  } finally {
+    await preparedGeneration.cleanup();
+  }
+}
 
 async function createPluginFixture(
   happyHomeDir: string,
@@ -50,7 +80,8 @@ async function createPluginFixture(
             title: actionId,
             scopes: ['global'],
             surfaces: ['cli'],
-            placement: 'commandPalette',
+            execution: { target: 'daemon' },
+            placementBindings: ['commandPalette'],
             dangerLevel: 'safe',
           }],
         },
@@ -119,9 +150,9 @@ describe('daemon plugin restart isolation', () => {
       }),
     });
     await firstStore.initialize();
-    await expect(firstStore.install(first.createInput('1.0.0')))
+    await expect(installFixtureCandidate(firstStore, first.createInput('1.0.0')))
       .resolves.toMatchObject({ status: 'committed' });
-    await expect(firstStore.install(peer.createInput('1.0.0')))
+    await expect(installFixtureCandidate(firstStore, peer.createInput('1.0.0')))
       .resolves.toMatchObject({ status: 'committed' });
     await firstController.shutdown();
 
@@ -151,7 +182,7 @@ describe('daemon plugin restart isolation', () => {
     expect(await count(peer.counterPath, 'activate')).toBe(2);
 
     await first.writeManifest('2.0.0');
-    await expect(restartedStore.install(first.createInput('2.0.0')))
+    await expect(installFixtureCandidate(restartedStore, first.createInput('2.0.0')))
       .resolves.toMatchObject({ status: 'committed' });
 
     expect(await count(first.counterPath, 'activate')).toBe(3);
@@ -194,9 +225,9 @@ describe('daemon plugin restart isolation', () => {
       }),
     });
     await firstStore.initialize();
-    await expect(firstStore.install(first.createInput('1.0.0')))
+    await expect(installFixtureCandidate(firstStore, first.createInput('1.0.0')))
       .resolves.toMatchObject({ status: 'committed' });
-    await expect(firstStore.install(peer.createInput('1.0.0')))
+    await expect(installFixtureCandidate(firstStore, peer.createInput('1.0.0')))
       .resolves.toMatchObject({ status: 'committed' });
     await firstController.shutdown();
 
@@ -237,7 +268,7 @@ describe('daemon plugin restart isolation', () => {
     expect(await count(peer.counterPath, 'cleanup')).toBe(1);
 
     await first.writeManifest('2.0.0');
-    await expect(restartedStore.install(first.createInput('2.0.0')))
+    await expect(installFixtureCandidate(restartedStore, first.createInput('2.0.0')))
       .resolves.toMatchObject({ status: 'committed' });
 
     expect(await count(peer.counterPath, 'activate')).toBe(2);

@@ -3,7 +3,10 @@ import type {
     AgentRuntimeFactory,
     AgentRuntimeRegistrationOptions,
 } from './agentRuntime/index.js';
-import type { ActionHandler } from './actions/service.js';
+import type {
+    ActionHandler,
+    PluginClientActionHandler,
+} from './actions/service.js';
 import type {
     JsonValue,
     PluginContributionLocalId,
@@ -327,8 +330,14 @@ export interface ResourcesRegistrationApi {
 
 export type PluginCleanup = () => void | Promise<void>;
 
+/** The daemon/root activation API. */
 export interface PluginApi {
-    readonly actions: { register<I extends JsonValue = JsonValue, O extends JsonValue | void = JsonValue | void>(id: string, handler: ActionHandler<I, O>): void };
+    readonly actions: {
+        register<I extends JsonValue = JsonValue, O extends JsonValue | void = JsonValue | void>(
+            id: string,
+            handler: ActionHandler<I, O>,
+        ): void;
+    };
     readonly hooks: { register(id: string, handler: HookHandler): void };
     readonly events: { register<TPayload extends JsonValue = JsonValue>(subscriptionId: string, handler: PluginEventHandler<TPayload>): void };
     readonly agents: {
@@ -364,7 +373,32 @@ export interface PluginApi {
     readonly backgroundServices: BackgroundServicesRegistrationApi;
 }
 
+/**
+ * The client-artifact activation API. Client targets may register only the
+ * two manifest families the catalog authorizes in a client realm.
+ * @realm client
+ */
+export interface PluginClientApi {
+    readonly actions: {
+        register<I extends JsonValue = JsonValue, O extends JsonValue | void = JsonValue | void>(
+            id: string,
+            handler: PluginClientActionHandler<I, O>,
+        ): void;
+    };
+    readonly voiceProviders: VoiceProvidersRegistrationApi;
+}
+
 /** @realm any */
 export type PluginActivationModule = Readonly<{
     activate(api: PluginApi): void | PluginCleanup | Promise<void | PluginCleanup>;
+}>;
+
+/**
+ * The ordinary activation ABI for one exact client artifact/module target.
+ * It names only `PluginClientApi`, so it shares that owner's client realm
+ * rather than this module's daemon default.
+ * @realm client
+ */
+export type PluginClientActivationModule = Readonly<{
+    activate(api: PluginClientApi): void | PluginCleanup | Promise<void | PluginCleanup>;
 }>;

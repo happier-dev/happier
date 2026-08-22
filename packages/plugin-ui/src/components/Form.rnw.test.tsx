@@ -48,6 +48,31 @@ function mountForm(element: React.ReactElement, context = createSurfaceContext()
 }
 
 describe('canonical Action Form presentation', () => {
+  it('resolves direct field chrome through the plugin catalog', () => {
+    const context = createSurfaceContext({
+      translations: {
+        'acme.search': 'Rechercher',
+        'acme.filter': 'Filtrer par titre',
+      },
+    });
+    const mount = mountThroughReactNativeWeb(
+      <PluginUiProvider hostApi={createHostApiStub(context)} context={context}>
+        <Form.TextField
+          label="Search"
+          labelKey="acme.search"
+          placeholder="Filter by title"
+          placeholderKey="acme.filter"
+          value=""
+          onChange={() => undefined}
+        />
+      </PluginUiProvider>,
+    );
+
+    expect(mount.container.querySelector('input')?.getAttribute('aria-label')).toBe('Rechercher');
+    expect(mount.container.querySelector('input')?.getAttribute('placeholder')).toBe('Filtrer par titre');
+    mount.unmount();
+  });
+
   it('accepts only host-pre-resolved field options and exposes no option-loading callback', () => {
     expectTypeOf<FormProps>().not.toHaveProperty('resolveOptions');
   });

@@ -1,32 +1,83 @@
 import { describe, expect, it } from 'vitest';
 
+import { listDeclaredPluginContributionFamilies } from '@happier-dev/protocol';
+
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { resolveBuiltInContributions } from '@/plugins/projection/registry/resolveBuiltInContributions';
 import { BUNDLED_FIRST_PARTY_PLUGIN_PACKAGE_NAMES } from '@/plugins/projection/registry/sources/generatedBundledPlugins';
 import { createBundledActivationSourceResolver } from '@/plugins/runtime/bundledActivationSource';
 
 import { shouldActivateTargetAtStartup } from './activation/targets';
+import type { TargetInvocationServiceOwner } from './contributions/targetHooks';
 import { activatePluginRuntimeRegistry } from './manager';
 
 describe('bundled PluginApi parity', () => {
     it('keeps ordinary bundled Agents cold and activates one exactly once on first Agent demand', async () => {
         const contributes = createResolvedContributionRegistry(resolveBuiltInContributions());
+        const resolveBundledActivationSource = createBundledActivationSourceResolver({
+            bundledPackageNames: BUNDLED_FIRST_PARTY_PLUGIN_PACKAGE_NAMES,
+        });
+        let auggiePrepareCalls = 0;
         const activated = await activatePluginRuntimeRegistry({
             contributes,
             generation: 1,
-            resolveActivationSource: createBundledActivationSourceResolver({
-                bundledPackageNames: BUNDLED_FIRST_PARTY_PLUGIN_PACKAGE_NAMES,
-            }),
+            invocationServices: {
+                createOrdinaryServiceBinding() {
+                    throw new Error('Bundled activation parity does not invoke services');
+                },
+                createServices() {
+                    throw new Error('Bundled activation parity does not invoke services');
+                },
+                resolveInvocationHostPolicy() {
+                    throw new Error('Bundled activation parity does not invoke services');
+                },
+            } satisfies TargetInvocationServiceOwner,
+            resolveActivationSource(target) {
+                const source = resolveBundledActivationSource(target);
+                if (!source) return source;
+                if (target.pluginId !== 'happier.agent.auggie') return source;
+                return {
+                    ...source,
+                    async prepare() {
+                        auggiePrepareCalls += 1;
+                        if (auggiePrepareCalls === 1) {
+                            throw new Error('aggregate source-dev preparation selected package isolation');
+                        }
+                        await source.prepare?.();
+                    },
+                };
+            },
         });
 
         const diagnostics = Object.fromEntries(Object.entries(activated.pluginDiagnosticsByPluginId)
             .filter(([, entries]) => entries.length > 0));
         expect(diagnostics).toEqual({});
-        const expectedStartupPluginIds = new Set(contributes.activationTargets
-            .filter(shouldActivateTargetAtStartup)
-            .map((target) => target.pluginId));
-        expect([...expectedStartupPluginIds]).toEqual([]);
+        // Daemon cold start activates a bundled plugin only for a declared
+        // machine-runtime service. Every other contribution family this
+        // product ships is demand-ready, so a plugin that starts activating
+        // here for another reason is a cold-start regression: decide its
+        // demand boundary rather than widening this list.
+        const startupTargets = contributes.activationTargets.filter(shouldActivateTargetAtStartup);
+        const expectedStartupPluginIds = new Set(startupTargets.map((target) => target.pluginId));
+        expect([...expectedStartupPluginIds]).toEqual([
+            'happier.channels',
+            'happier.scm.forge.github',
+        ]);
+        for (const target of startupTargets) {
+            expect(listDeclaredPluginContributionFamilies(
+                target.manifest.contributes as unknown as Readonly<Record<string, unknown>>,
+            ), target.pluginId).toContain('backgroundServices');
+        }
         expect(activated.activatedPluginIds).toEqual(expectedStartupPluginIds);
+        expect(activated.targetRegistrations).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                pluginId: 'happier.channels',
+                registration: expect.objectContaining({
+                    family: 'resources',
+                    localId: 'connections-v1',
+                }),
+            }),
+        ]));
         expect(activated.pluginDiagnosticsByPluginId['happier.voice.google'] ?? []).toEqual([]);
         expect(activated.activatedPluginIds.has('happier.voice.google')).toBe(false);
 
@@ -49,8 +100,8 @@ describe('bundled PluginApi parity', () => {
             localId: agent.identity.localId,
         }];
         await activated.activateContributionsOnDemand(agentDemand);
-        await activated.activateContributionsOnDemand(agentDemand);
 
+        expect(auggiePrepareCalls).toBe(2);
         expect(activated.activatedPluginIds.has(agent.pluginId)).toBe(true);
         expect(activated.targetActivationFacts.filter((fact) => (
             fact.pluginId === agent.pluginId && fact.status === 'active'
@@ -89,7 +140,11 @@ describe('bundled PluginApi parity', () => {
         ];
         const scmPluginIds = new Set(scmDemands.map((demand) => demand.pluginId));
         expect(scmPluginIds.size).toBeGreaterThan(0);
-        for (const pluginId of scmPluginIds) {
+        const coldScmPluginIds = new Set([...scmPluginIds].filter((pluginId) => (
+            !expectedStartupPluginIds.has(pluginId)
+        )));
+        expect(coldScmPluginIds.size).toBeGreaterThan(0);
+        for (const pluginId of coldScmPluginIds) {
             expect(activated.activatedPluginIds.has(pluginId)).toBe(false);
         }
 
@@ -99,6 +154,26 @@ describe('bundled PluginApi parity', () => {
             expect(activated.activatedPluginIds.has(pluginId)).toBe(true);
             expect(activated.pluginDiagnosticsByPluginId[pluginId] ?? []).toEqual([]);
         }
+
+        // A bundled Composer attachment is reached the same way: its plugin is
+        // cold until the exact staged attachment is demanded.
+        const attachment = (contributes.composerAttachments ?? []).find((entry) => (
+            entry.definition.runtime !== undefined
+        ));
+        expect(attachment?.pluginId).toBeDefined();
+        if (!attachment?.pluginId) {
+            throw new Error('Expected a bundled Composer attachment contribution with a runtime role');
+        }
+        expect(activated.activatedPluginIds.has(attachment.pluginId)).toBe(false);
+
+        await activated.activateContributionsOnDemand([{
+            pluginId: attachment.pluginId,
+            family: 'composerAttachments',
+            localId: attachment.identity.localId,
+        }]);
+
+        expect(activated.activatedPluginIds.has(attachment.pluginId)).toBe(true);
+        expect(activated.pluginDiagnosticsByPluginId[attachment.pluginId] ?? []).toEqual([]);
 
         await activated.dispose();
     });

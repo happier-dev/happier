@@ -335,7 +335,11 @@ describe('PluginUiProvider', () => {
 
   it('resolves translations through one owner shared with the shared presentation layer', async () => {
     const context = createSurfaceContext({ translations: { 'acme.ready': 'Bereit' } });
-    let translate: ((key: string, fallback?: string) => string) | undefined;
+    let translate: ((
+      key: string,
+      fallback?: string,
+      values?: Readonly<Record<string, string | number>>,
+    ) => string) | undefined;
 
     function Probe() {
       translate = usePluginTranslation();
@@ -349,6 +353,7 @@ describe('PluginUiProvider', () => {
     );
 
     expect(translate?.('acme.ready', 'Ready')).toBe('Bereit');
+    expect(translate?.('acme.count', '{count} items', { count: 3 })).toBe('3 items');
     expect(translate?.('acme.absent', 'Ready')).toBe('Ready');
     expect(translate?.('toString', 'Readable fallback')).toBe('Readable fallback');
     mount.unmount();

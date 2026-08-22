@@ -1,4 +1,4 @@
-import { PluginError, type Disposable } from '@happier-dev/plugin-sdk';
+import { isPluginError, PluginError, type Disposable } from '@happier-dev/plugin-sdk';
 import {
   useCallback,
   useEffect,
@@ -58,7 +58,7 @@ function observedComposerResult(snapshot: ComposerSnapshotV1): ComposerReadResul
 }
 
 function asPluginError(error: unknown): PluginError {
-  if (error instanceof PluginError) return error;
+  if (isPluginError(error)) return error;
   const candidate = error !== null && typeof error === 'object'
     ? error as Readonly<{ code?: unknown; message?: unknown; retryable?: unknown }>
     : null;

@@ -1,19 +1,13 @@
 import * as agents from '@happier-dev/agents';
 import {
-  CLAUDE_EFFORT_LEVELS as canonicalClaudeEffortLevels,
-  buildClaudeModelOptions as canonicalBuildClaudeModelOptions,
-  formatClaudeEffortLevelLabel as canonicalFormatClaudeEffortLevelLabel,
-  normalizeClaudeEffortLevel as canonicalNormalizeClaudeEffortLevel,
-} from '@happier-dev/agents/providers/claude-model-options';
-import {
   buildShellCommand as canonicalBuildShellCommand,
 } from '@happier-dev/agents/process/shellCommand';
 import { createAgentSessionPreAdmissionBuffer as canonicalCreateAgentSessionPreAdmissionBuffer } from '@happier-dev/agents/runtime/session/preAdmissionBuffer';
 import * as protocol from '@happier-dev/protocol';
+import { readFile } from 'node:fs/promises';
 import { describe, expect, it } from 'vitest';
 
 import * as agentDeclarations from './agents.js';
-import * as agentAuthoring from './agents/index.js';
 import * as agentRuntime from './agentRuntime/index.js';
 import * as agentRuntimeAuthoring from './agents/runtime/index.js';
 import { assertExperimentalAgentSessionRealtimeRuntime } from './experimental/agentRuntime/realtime.js';
@@ -44,26 +38,19 @@ describe('final Agent SDK projections', () => {
       .toBe(protocol.buildBackendTargetKeyV2);
   });
 
-  it('projects the shared Claude Agent policy through the public Agent author seam', () => {
-    expect(agentDeclarations.CURRENT_FLAGSHIP_CLAUDE_MODEL_ID)
-      .toBe(protocol.CURRENT_FLAGSHIP_CLAUDE_MODEL_ID);
-    expect(agentDeclarations.CLAUDE_UNIFIED_TERMINAL_DIALOG_CHOICE_REQUEST_SOURCE)
-      .toBe(protocol.CLAUDE_UNIFIED_TERMINAL_DIALOG_CHOICE_REQUEST_SOURCE);
-    expect(agentAuthoring.CURRENT_FLAGSHIP_CLAUDE_MODEL_ID)
-      .toBe(protocol.CURRENT_FLAGSHIP_CLAUDE_MODEL_ID);
-    expect(agentAuthoring.CLAUDE_UNIFIED_TERMINAL_DIALOG_CHOICE_REQUEST_SOURCE)
-      .toBe(protocol.CLAUDE_UNIFIED_TERMINAL_DIALOG_CHOICE_REQUEST_SOURCE);
-  });
-
-  it('projects the shared Claude Agent model-option helpers without wrapping them', () => {
-    expect(agentDeclarations.CLAUDE_EFFORT_LEVELS).toBe(canonicalClaudeEffortLevels);
-    expect(agentDeclarations.buildClaudeModelOptions).toBe(canonicalBuildClaudeModelOptions);
-    expect(agentDeclarations.formatClaudeEffortLevelLabel).toBe(canonicalFormatClaudeEffortLevelLabel);
-    expect(agentDeclarations.normalizeClaudeEffortLevel).toBe(canonicalNormalizeClaudeEffortLevel);
-    expect(agentAuthoring.CLAUDE_EFFORT_LEVELS).toBe(canonicalClaudeEffortLevels);
-    expect(agentAuthoring.buildClaudeModelOptions).toBe(canonicalBuildClaudeModelOptions);
-    expect(agentAuthoring.formatClaudeEffortLevelLabel).toBe(canonicalFormatClaudeEffortLevelLabel);
-    expect(agentAuthoring.normalizeClaudeEffortLevel).toBe(canonicalNormalizeClaudeEffortLevel);
+  it('keeps Claude-only policy out of the generic Agent author seam', async () => {
+    const publicSpec = await readFile(new URL('./agents/index.public.ts', import.meta.url), 'utf8');
+    for (const name of [
+      'CLAUDE_EFFORT_LEVELS',
+      'CLAUDE_UNIFIED_TERMINAL_DIALOG_CHOICE_REQUEST_SOURCE',
+      'ClaudeEffortLevel',
+      'buildClaudeModelOptions',
+      'formatClaudeEffortLevelLabel',
+      'normalizeClaudeEffortLevel',
+    ] as const) {
+      expect(agentDeclarations, name).not.toHaveProperty(name);
+      expect(publicSpec).not.toContain(name);
+    }
   });
 
   it('keeps Agent helper values as exact canonical Agents identities', () => {

@@ -1,11 +1,12 @@
-import { lstat, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { delimiter, join } from 'node:path';
+import { delimiter, dirname, join } from 'node:path';
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { accountSettingsParse, buildConnectedServiceCredentialRecord } from '@happier-dev/protocol';
-import type { PluginExecService } from '@happier-dev/plugin-sdk/runtime';
+import type { ExecService } from '@happier-dev/plugin-sdk/exec';
+import type { Authenticator, AuthenticatorContext } from '@happier-dev/plugin-sdk/connected-accounts';
 import { CLAUDE_AGENT_RUNTIME_CONTRIBUTION } from '@happier-dev/plugins-claude/agent/contributions/runtime';
 import { PLUGIN_MANIFEST as CLAUDE_PLUGIN_MANIFEST } from '@happier-dev/plugins-claude/manifest';
 import { CODEX_AGENT_RUNTIME_CONTRIBUTION } from '@happier-dev/plugins-codex/agent/contributions/runtime';
@@ -20,7 +21,10 @@ import { PLUGIN_MANIFEST as PI_PLUGIN_MANIFEST } from '@happier-dev/plugins-pi/m
 
 import type { ApiClient } from '@/api/api';
 import type { TrackedSession } from '@/daemon/types';
-import { resolveConnectedServiceGroupHomeDir } from '@/daemon/connectedServices/homes/resolveConnectedServiceHomeDir';
+import {
+    resolveConnectedServiceGroupHomeDir,
+    resolveConnectedServiceHomeDir,
+} from '@/daemon/connectedServices/homes/resolveConnectedServiceHomeDir';
 import type { Credentials } from '@/persistence';
 import { writeExecutableShimSync } from '@/testkit/fs/executableShim';
 import { openBrowser } from '@/ui/openBrowser';
@@ -33,6 +37,7 @@ import {
 const runBackendSessionCliCommandMock = vi.hoisted(() =>
     vi.fn(async (_params: unknown) => undefined),
 );
+const promptInputMock = vi.hoisted(() => vi.fn());
 
 vi.mock('@/ui/openBrowser', () => ({
     openBrowser: vi.fn(async () => true),
@@ -40,6 +45,11 @@ vi.mock('@/ui/openBrowser', () => ({
 
 vi.mock('@/cli/runBackendSessionCliCommand', () => ({
     runBackendSessionCliCommand: runBackendSessionCliCommandMock,
+}));
+
+vi.mock('@/terminal/prompts/promptInput', () => ({
+    promptInput: promptInputMock,
+    promptSecretInput: promptInputMock,
 }));
 
 function writeFakeClaudeBinary(dir: string, helpText: string): string {
@@ -71,11 +81,16 @@ function writeFakeClaudeBinary(dir: string, helpText: string): string {
     return writeExecutableShimSync({ dir, fileName, contents });
 }
 
+const LEGACY_UNFENCED_ONE_SHOT_MATERIALIZATION_AUTHORITY = {
+    kind: 'legacy_unfenced_one_shot',
+} as const;
+
 describe('createAgentRuntimeCatalogEntryHooks', () => {
     beforeEach(() => {
         vi.mocked(openBrowser).mockReset();
         vi.mocked(openBrowser).mockResolvedValue(true);
         runBackendSessionCliCommandMock.mockClear();
+        promptInputMock.mockReset();
     });
 
     it.each([
@@ -334,7 +349,7 @@ describe('createAgentRuntimeCatalogEntryHooks', () => {
         expect(contribution).not.toHaveProperty('implicitResumeDelegation');
     });
 
-    it('threads the canonical external Agent id as runtime authority without defaulting Profile or alias identities', async () => {
+    it('threads the canonical external Agent id as runtime authority and Profile owner without defaulting alias identities', async () => {
         const hooks = createAgentRuntimeCatalogEntryHooks({
             agentId: 'acme.external' as never,
             packageName: '@acme/happier-agent-external',
@@ -357,12 +372,12 @@ describe('createAgentRuntimeCatalogEntryHooks', () => {
             expect.objectContaining({
                 backendIdForSessionRuntime: 'acme.external.backend',
                 runtimeAuthorityAgentId: 'acme.external',
+                agentIdForAccountSettings: 'acme.external',
             }),
         );
         const call = runBackendSessionCliCommandMock.mock.calls[0]?.[0] as
             | Record<string, unknown>
             | undefined;
-        expect(call).not.toHaveProperty('agentIdForAccountSettings');
         expect(call).not.toHaveProperty('agentIdForDeprecatedAliases');
     });
 
@@ -552,7 +567,7 @@ describe('createAgentRuntimeCatalogEntryHooks', () => {
         expect(capturedContext).toEqual(expect.objectContaining({
             signal: expect.any(AbortSignal),
             now: expect.any(Function),
-            fetch: expect.any(Function),
+            fetch: expect.objectContaining({ request: expect.any(Function) }),
             browser: expect.objectContaining({ open: expect.any(Function) }),
             prompt: expect.objectContaining({ requestText: expect.any(Function) }),
             oauth: expect.objectContaining({
@@ -569,6 +584,79 @@ describe('createAgentRuntimeCatalogEntryHooks', () => {
             openBrowser: expect.any(Function),
             promptInput: expect.any(Function),
         }));
+    });
+
+    it('cancels the terminal paste prompt when a mediated OAuth callback times out', async () => {
+        vi.useFakeTimers();
+        let promptSignal: AbortSignal | undefined;
+        let aborts = 0;
+        const captured: { context: AuthenticatorContext | null } = { context: null };
+        const authenticate: Authenticator = async (_opts, context) => {
+            captured.context = context;
+            return { ok: true };
+        };
+        promptInputMock.mockImplementation((_label: string, options?: Readonly<{ signal?: AbortSignal }>) => (
+            new Promise<string>((_resolve, reject) => {
+                promptSignal = options?.signal;
+                promptSignal?.addEventListener('abort', () => {
+                    aborts += 1;
+                    const error = new Error('Terminal prompt aborted');
+                    error.name = 'AbortError';
+                    reject(error);
+                }, { once: true });
+            })
+        ));
+
+        try {
+            const hooks = createAgentRuntimeCatalogEntryHooks({
+                agentId: 'codex',
+                packageName: '@happier-dev/plugins-test',
+                contribution: {
+                    cloudConnect: {
+                        displayName: 'Codex',
+                        vendorDisplayName: 'OpenAI Codex',
+                        vendorKey: 'openai',
+                        status: 'wired',
+                        customAuthenticator: {
+                            authenticate,
+                        },
+                    },
+                },
+            })();
+            const target = await hooks.getCloudConnectTarget?.();
+            if (!target) throw new Error('Expected cloud connect target');
+
+            await expect(target.authenticate({ noOpen: true })).resolves.toMatchObject({ ok: true });
+            const context = captured.context;
+            if (!context) throw new Error('Expected mediated custom-auth context');
+
+            const created = await context.oauth.callback.create({
+                mode: 'paste',
+                callbackPath: '/auth/callback',
+                preferredPort: 1455,
+                timeoutMs: 10,
+            });
+            expect(created.ok).toBe(true);
+            if (!created.ok) return;
+
+            const wait = created.session.wait();
+            expect(promptInputMock).toHaveBeenCalledWith(
+                'Paste redirect URL:',
+                { signal: expect.any(AbortSignal) },
+            );
+
+            await vi.advanceTimersByTimeAsync(10);
+
+            await expect(wait).resolves.toEqual({
+                ok: false,
+                code: 'timeout',
+                diagnostics: [{ code: 'authentication_timeout' }],
+            });
+            expect(promptSignal?.aborted).toBe(true);
+            expect(aborts).toBe(1);
+        } finally {
+            vi.useRealTimers();
+        }
     });
 
     it('cancels mediated custom-auth credential writes when the provided signal is already aborted', async () => {
@@ -664,6 +752,75 @@ describe('createAgentRuntimeCatalogEntryHooks', () => {
         expect(openBrowser).toHaveBeenCalledWith('https://auth.example.test/login');
     });
 
+    it('aborts a timed-out legacy OAuth paste prompt before a late answer can affect a following prompt', async () => {
+        vi.useFakeTimers();
+        const stdoutWrite = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+        let firstResolve: ((value: string) => void) | undefined;
+        let secondResolve: ((value: string) => void) | undefined;
+        let aborted = 0;
+        promptInputMock
+            .mockImplementationOnce((_prompt: string, options?: Readonly<{ signal?: AbortSignal }>) => new Promise<string>((resolve, reject) => {
+                firstResolve = resolve;
+                options?.signal?.addEventListener('abort', () => {
+                    aborted += 1;
+                    const error = new Error('Terminal prompt aborted');
+                    error.name = 'AbortError';
+                    reject(error);
+                }, { once: true });
+            }))
+            .mockImplementationOnce(() => new Promise<string>((resolve) => {
+                secondResolve = resolve;
+            }));
+
+        try {
+            const hooks = createAgentRuntimeCatalogEntryHooks({
+                agentId: 'codex',
+                packageName: '@happier-dev/plugins-test',
+                contribution: {
+                    cloudConnect: {
+                        displayName: 'Codex',
+                        vendorDisplayName: 'OpenAI Codex',
+                        vendorKey: 'openai',
+                        status: 'wired',
+                        oauthAuthorizationCode: {
+                            clientId: 'client-id',
+                            authorizeUrl: 'https://auth.example.test/authorize',
+                            tokenUrl: 'https://auth.example.test/token',
+                            redirectUri: 'https://app.example.test/oauth/callback',
+                            scope: 'profile',
+                        },
+                    },
+                },
+            })();
+            const target = await hooks.getCloudConnectTarget?.();
+            if (!target) throw new Error('Expected legacy OAuth target');
+
+            const authentication = target.authenticate({ noOpen: true, timeoutSeconds: 1 });
+            expect(promptInputMock).toHaveBeenCalledTimes(1);
+            const authenticationRejection = expect(authentication).rejects.toThrow('Authentication timed out');
+            await vi.advanceTimersByTimeAsync(1_000);
+            await authenticationRejection;
+            expect(aborted).toBe(1);
+
+            const followingPrompt = promptInputMock('Next prompt: ');
+            if (!firstResolve || !secondResolve) throw new Error('Expected both prompt callbacks');
+            firstResolve('late answer');
+            await Promise.resolve();
+            let followingSettled = false;
+            void followingPrompt.then(() => {
+                followingSettled = true;
+            });
+            await Promise.resolve();
+            expect(followingSettled).toBe(false);
+
+            secondResolve('next answer');
+            await expect(followingPrompt).resolves.toBe('next answer');
+        } finally {
+            stdoutWrite.mockRestore();
+            vi.useRealTimers();
+        }
+    });
+
     it('rejects cloud connect contributions with unknown vendor keys', async () => {
         const hooks = createAgentRuntimeCatalogEntryHooks({
             agentId: 'codex',
@@ -693,6 +850,7 @@ describe('createAgentRuntimeCatalogEntryHooks', () => {
             packageName: '@happier-dev/plugins-test',
             contribution: {
                 preflightSessionControls: {
+                    connectedServiceAuth: 'materialized-env',
                     failureCacheStrategy: 'retry',
                     needsAccountSettings: true,
                     resolveProbeVariant: (input: Readonly<{
@@ -734,6 +892,7 @@ describe('createAgentRuntimeCatalogEntryHooks', () => {
         expect(variantInputs[0]).toEqual(expect.objectContaining({ probeKind: 'models' }));
 
         const adapter = await hooks.getPreflightSessionControlsProbeAdapter?.();
+        expect(adapter?.connectedServiceAuth).toBe('materialized-env');
         expect(adapter?.failureCacheStrategy).toBe('retry');
         await expect(adapter?.probeModelsRaw?.({
             cwd: '/workspace',
@@ -772,101 +931,74 @@ describe('createAgentRuntimeCatalogEntryHooks', () => {
         expect(probeInputs[2]?.[0]).toEqual(expect.objectContaining({ probeKind: 'configOptions' }));
     });
 
-    it('runs handoff export and import through an exact declared system tool in the stable exec projection', async () => {
-        const root = await mkdtemp(join(tmpdir(), 'happier-agent-handoff-stable-exec-'));
-        const previousPath = process.env.PATH;
+    it('uses the declared system-tool resolver for externally contributed Agent preflight probes', async () => {
+        const toolRoot = await mkdtemp(join(tmpdir(), 'happier-external-agent-tool-'));
+        const executable = writeExecutableShimSync({
+            dir: toolRoot,
+            fileName: process.platform === 'win32' ? 'external-agent.cmd' : 'external-agent',
+            contents: process.platform === 'win32'
+                ? '@echo off\r\nexit /b 0\r\n'
+                : '#!/bin/sh\nexit 0\n',
+        });
+        const resolvedExecutables: string[] = [];
+
         try {
-            const canonicalRoot = await realpath(root);
-            const executableName = process.platform === 'win32'
-                ? 'handoff-fixture.cmd'
-                : 'handoff-fixture';
-            writeExecutableShimSync({
-                dir: root,
-                fileName: executableName,
-                contents: process.platform === 'win32'
-                    ? '@echo off\r\ncd\r\n'
-                    : '#!/bin/sh\nprintf "%s" "$PWD"\n',
-            });
-            process.env.PATH = `${root}${delimiter}${previousPath ?? ''}`;
-            const runInWorkspace = async (
-                exec: PluginExecService,
-                workspaceRelativePath?: string,
-            ): Promise<string> => {
-                const resolved = await exec.systemTools.resolve({
-                    toolId: 'handoff-fixture',
-                    purpose: 'Verify the handoff stable exec projection',
-                });
-                const result = await exec.run({
-                    executable: resolved.executable,
-                    ...(workspaceRelativePath !== undefined
-                        ? { cwd: { root: 'workspace' as const, relativePath: workspaceRelativePath } }
-                        : {}),
-                });
-                expect(result.termination.observed).toEqual({ kind: 'exit', exitCode: 0 });
-                return Buffer.from(result.stdout).toString('utf8').trim();
-            };
             const hooks = createAgentRuntimeCatalogEntryHooks({
-                agentId: 'opencode',
+                agentId: 'acme.external-agent',
                 packageName: '@happier-dev/plugins-test',
                 systemTools: [{
-                    id: 'handoff-fixture',
-                    title: 'Handoff fixture',
-                    executableNames: [executableName],
+                    id: 'external-agent-cli',
+                    title: 'External Agent CLI',
+                    executableNames: [executable],
                 }],
                 contribution: {
-                    sessionHandoff: {
-                        surface: ({ exec }: Readonly<{ exec: PluginExecService }>) => ({
-                            exportBundle: async () => ({
-                                ok: true,
-                                value: { bundle: { cwd: await runInWorkspace(exec) } },
-                            }),
-                            importBundle: async ({ targetDirectory }: Readonly<{ targetDirectory: string }>) => ({
-                                ok: true,
-                                value: {
-                                    providerSessionId: 'provider-session-1',
-                                    launch: {
-                                        directory: targetDirectory,
-                                        environmentVariables: {
-                                            HAPPIER_HANDOFF_EXEC_CWD: await runInWorkspace(exec, ''),
-                                        },
-                                    },
-                                },
-                            }),
-                        }),
-                    },
-                },
-            })();
-            const handoff = await hooks.getHandoffSurface?.();
-
-            await expect(handoff?.exportBundle({
-                sessionId: 'provider-session-1',
-                metadata: {},
-                directory: root,
-            })).resolves.toMatchObject({
-                ok: true,
-                value: { bundle: { cwd: expect.any(String) } },
-            });
-            await expect(handoff?.importBundle({
-                bundle: {},
-                targetDirectory: root,
-            })).resolves.toMatchObject({
-                ok: true,
-                value: {
-                    launch: {
-                        environmentVariables: {
-                            HAPPIER_HANDOFF_EXEC_CWD: canonicalRoot,
+                    agentCliSystemTool: { toolId: 'external-agent-cli' },
+                    preflightSessionControls: {
+                        probeModelsRaw: async ({ exec }: { exec: ExecService }) => {
+                            const resolved = await exec.systemTools.resolve({
+                                toolId: 'external-agent-cli',
+                                purpose: 'Probe external Agent models',
+                                cwd: toolRoot,
+                            });
+                            resolvedExecutables.push(resolved.executablePath);
+                            return [];
                         },
                     },
                 },
-            });
+            })();
+            const adapter = await hooks.getPreflightSessionControlsProbeAdapter?.();
+
+            await expect(adapter?.probeModelsRaw?.({
+                cwd: toolRoot,
+                timeoutMs: 1_500,
+                backendTarget: undefined,
+                accountSettings: null,
+                env: { PATH: toolRoot },
+            })).resolves.toEqual([]);
+            expect(resolvedExecutables).toEqual([executable]);
         } finally {
-            if (previousPath === undefined) {
-                delete process.env.PATH;
-            } else {
-                process.env.PATH = previousPath;
-            }
-            await rm(root, { recursive: true, force: true });
+            await rm(toolRoot, { recursive: true, force: true });
         }
+    });
+
+    it('keeps catalog handoff projection to metadata leaves rather than runtime operations', async () => {
+        const extract = vi.fn(() => []);
+        const build = vi.fn(() => ({ opencodeSessionId: 'provider-session-1' }));
+        const hooks = createAgentRuntimeCatalogEntryHooks({
+            agentId: 'opencode',
+            packageName: '@happier-dev/plugins-test',
+            contribution: {
+                sessionHandoff: {
+                    agentBundleRecords: { extract },
+                    runtimeLocalMetadata: { build },
+                },
+            },
+        })();
+
+        await expect(hooks.getSessionHandoffAgentBundleRecordExtractor?.()).resolves.toBe(extract);
+        expect(hooks.buildRuntimeLocalHandoffMetadata).toBe(build);
+        expect(hooks).not.toHaveProperty('getHandoffSurface');
+        expect(hooks).not.toHaveProperty('resolveReplayChildLaunch');
     });
 
     it('projects Codex account-settings-aware preflight hooks from the plugin runtime contribution', async () => {
@@ -891,6 +1023,7 @@ describe('createAgentRuntimeCatalogEntryHooks', () => {
             })).toBe('codex:acp');
 
             const adapter = await hooks.getPreflightSessionControlsProbeAdapter?.();
+            expect(adapter?.connectedServiceAuth).toBe('materialized-env');
             expect(adapter?.failureCacheStrategy).toBe('retry');
             expect(adapter?.probeModelsRaw).toBeTypeOf('function');
             expect(adapter?.probeModesRaw).toBeTypeOf('function');
@@ -911,7 +1044,7 @@ describe('createAgentRuntimeCatalogEntryHooks', () => {
             contribution: CODEX_AGENT_RUNTIME_CONTRIBUTION,
             systemTools: CODEX_PLUGIN_MANIFEST.contributes.systemTools,
         })() as ReturnType<ReturnType<typeof createAgentRuntimeCatalogEntryHooks>> & {
-            getConnectedServiceDaemonAuthBridgeRefresh?: () => Promise<((input: Readonly<{
+            getConnectedServiceDaemonAuthBridgeRefresh?: (serviceId: string) => Promise<((input: Readonly<{
                 serviceId: string;
                 request: Readonly<Record<string, unknown>>;
                 refreshCoordinator: {
@@ -926,7 +1059,8 @@ describe('createAgentRuntimeCatalogEntryHooks', () => {
             credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS',
         }));
 
-        const refresh = await hooks.getConnectedServiceDaemonAuthBridgeRefresh?.();
+        await expect(hooks.getConnectedServiceDaemonAuthBridgeRefresh?.('openai')).resolves.toBeNull();
+        const refresh = await hooks.getConnectedServiceDaemonAuthBridgeRefresh?.('openai-codex');
 
         await expect(refresh?.({
             serviceId: 'openai-codex',
@@ -1070,8 +1204,11 @@ describe('createAgentRuntimeCatalogEntryHooks', () => {
             expect(transform?.(['--foo'])).toEqual(['--foo', '--happy-starting-mode', 'remote']);
 
             const promptSubmitVerification = await hooks.getTerminalPromptSubmitVerificationPolicy?.();
-            expect(promptSubmitVerification?.shouldVerifyBeforeSubmit('first\nsecond')).toBe(false);
             expect(promptSubmitVerification?.shouldVerifyAfterSubmit('first\nsecond')).toBe(true);
+            expect(promptSubmitVerification?.verifyBeforeSubmitStaging?.({
+                promptText: 'full prompt text',
+                screenText: '❯ partial prompt',
+            })).toBe(false);
             expect(promptSubmitVerification?.verifyAfterSubmit({
                 promptText: 'first\nsecond',
                 screenText: '❯ [Pasted text #1 +1 line]',
@@ -1098,34 +1235,7 @@ describe('createAgentRuntimeCatalogEntryHooks', () => {
                 },
             })).resolves.toBeUndefined();
 
-            const adapter = await hooks.getPreflightSessionControlsProbeAdapter?.();
-            expect(adapter?.failureCacheStrategy).toBe('cooldown');
-            expect(adapter?.probeModelsRaw).toBeTypeOf('function');
-
-            const models = await adapter?.probeModelsRaw?.({
-                cwd: root,
-                timeoutMs: 1_500,
-                backendTarget: undefined,
-                accountSettings: null,
-                env: {
-                    ...process.env,
-                    PATH: `${root}${delimiter}${process.env.PATH ?? ''}`,
-                },
-            });
-            expect(models).toEqual(expect.arrayContaining([
-                expect.objectContaining({
-                    id: 'claude-fable-5',
-                    modelOptions: expect.arrayContaining([
-                        expect.objectContaining({ id: 'reasoning_effort' }),
-                    ]),
-                }),
-                expect.objectContaining({
-                    id: 'claude-opus-4-8',
-                    modelOptions: expect.arrayContaining([
-                        expect.objectContaining({ id: 'reasoning_effort' }),
-                    ]),
-                }),
-            ]));
+            expect(hooks.getPreflightSessionControlsProbeAdapter).toBeUndefined();
         } finally {
             if (previousClaudePath === undefined) {
                 delete process.env.HAPPIER_CLAUDE_PATH;
@@ -1168,7 +1278,7 @@ describe('createAgentRuntimeCatalogEntryHooks', () => {
             contribution: CLAUDE_AGENT_RUNTIME_CONTRIBUTION,
             systemTools: CLAUDE_PLUGIN_MANIFEST.contributes.systemTools,
         })() as ReturnType<ReturnType<typeof createAgentRuntimeCatalogEntryHooks>> & {
-            getConnectedServiceDaemonAuthBridgeRefresh?: () => Promise<((input: Readonly<{
+            getConnectedServiceDaemonAuthBridgeRefresh?: (serviceId: string) => Promise<((input: Readonly<{
                 serviceId: string;
                 request: Readonly<Record<string, unknown>>;
                 refreshCoordinator: {
@@ -1182,7 +1292,8 @@ describe('createAgentRuntimeCatalogEntryHooks', () => {
             expiresAt: null,
         }));
 
-        const refresh = await hooks.getConnectedServiceDaemonAuthBridgeRefresh?.();
+        await expect(hooks.getConnectedServiceDaemonAuthBridgeRefresh?.('anthropic')).resolves.toBeNull();
+        const refresh = await hooks.getConnectedServiceDaemonAuthBridgeRefresh?.('claude-subscription');
 
         await expect(refresh?.({
             serviceId: 'claude-subscription',
@@ -1274,6 +1385,75 @@ describe('createAgentRuntimeCatalogEntryHooks', () => {
         })).resolves.toEqual({ status: 'available', via: 'plugin' });
     });
 
+    it('rechecks shared-home target currency inside the destination lock before provider mutation', async () => {
+        const destinationHome = await mkdtemp(join(tmpdir(), 'happier-runtime-auth-currentness-'));
+        const hotApply = vi.fn(async () => ({ applied: true, via: 'plugin' }));
+        try {
+            const hooks = createAgentRuntimeCatalogEntryHooks({
+                agentId: 'claude',
+                packageName: '@happier-dev/plugins-test',
+                contribution: {
+                    connectedServices: {
+                        serviceIds: ['claude-subscription'],
+                        readConnectedServiceId: () => 'claude-subscription',
+                        createAuthMaterializationInput: () => ({}),
+                        materializeAuthEnvironment: () => ({ env: {} }),
+                        stateSharingDescriptor: {
+                            agentId: 'claude',
+                            providerSupportStatus: 'supported',
+                            config: { supported: true, modes: ['isolated'], entries: [] },
+                            state: {
+                                supported: true,
+                                modes: ['isolated'],
+                                entries: [],
+                                symlinkUnavailableDegradePolicy: 'block_continuity',
+                            },
+                            authIsolation: { mode: 'materialized_home', secretEntries: [] },
+                        },
+                        shouldRestartForServiceSwitch: () => false,
+                        classifyUsageLimitError: () => null,
+                        runtimeAuthAdapter: {
+                            resolveDestinationHome: () => destinationHome,
+                            classifyRuntimeAuthFailure: () => null,
+                            materializeActiveProfile: async () => ({ supported: true }),
+                            canHotApply: () => ({ supported: true }),
+                            hotApply,
+                            recoverAfterRuntimeAuthSwitch: async () => ({ recovered: true }),
+                            probeQuota: async () => ({ status: 'available' }),
+                            refreshActiveProfile: async () => ({ status: 'available' }),
+                        },
+                    },
+                },
+            })();
+            const adapter = await hooks.getConnectedServiceRuntimeAuthAdapter?.();
+
+            await expect(adapter?.hotApply({
+                target: { agentId: 'claude' },
+                selection: null,
+                validateCurrentBeforeMutation: async () => ({
+                    current: false,
+                    reason: 'credential_revision_superseded',
+                    authoritativeTarget: {
+                        profileId: 'profile-current',
+                        generation: 7,
+                        credentialRevision: 'csr_2123456789ABCDEFGHJKMNPQRS',
+                    },
+                }),
+            } as never)).resolves.toEqual({
+                applied: false,
+                status: 'superseded_after_apply',
+                activeProfileId: 'profile-current',
+                generation: 7,
+                credentialRevision: 'csr_2123456789ABCDEFGHJKMNPQRS',
+                reason: 'credential_revision_superseded',
+                recovery: 'none',
+            });
+            expect(hotApply).not.toHaveBeenCalled();
+        } finally {
+            await rm(destinationHome, { recursive: true, force: true });
+        }
+    });
+
     it('projects Pi connected-service hooks from the plugin runtime contribution', async () => {
         expect(PI_AGENT_RUNTIME_CONTRIBUTION.connectedServices.usageLimitRecovery).toMatchObject({
             agentId: 'pi',
@@ -1289,7 +1469,7 @@ describe('createAgentRuntimeCatalogEntryHooks', () => {
         })();
 
         expect(hooks.getConnectedServicesMaterializer).toBeTypeOf('function');
-        expect(hooks.materializeConnectedServiceRuntimeAuthSelection).toBeTypeOf('function');
+        expect(hooks).not.toHaveProperty('materializeConnectedServiceRuntimeAuthSelection');
         expect(hooks.getConnectedServiceRuntimeAuthAdapter).toBeTypeOf('function');
         expect(hooks.getConnectedServiceStateSharingDescriptor).toBeTypeOf('function');
         expect(hooks.getConnectedServiceRecoveryCapabilities).toBeTypeOf('function');
@@ -1331,6 +1511,31 @@ describe('createAgentRuntimeCatalogEntryHooks', () => {
         expect(hooks.getConnectedServiceRecoveryCapabilities).toBeTypeOf('function');
     });
 
+    it('projects OpenCode attach through the canonical Agent attach surface contract', async () => {
+        const hooks = createAgentRuntimeCatalogEntryHooks({
+            agentId: 'opencode',
+            packageName: '@happier-dev/plugins-opencode',
+            contribution: OPENCODE_AGENT_RUNTIME_CONTRIBUTION as Parameters<
+                typeof createAgentRuntimeCatalogEntryHooks
+            >[0]['contribution'],
+            systemTools: OPENCODE_PLUGIN_MANIFEST.contributes.systemTools,
+        })();
+
+        const attach = (await hooks.resolveHostAgentRuntimeSurfaces?.())?.attach;
+        await expect(attach?.evaluateAvailability?.({
+            operation: 'attach',
+            sessionId: 'session-1',
+            metadata: {
+                path: '/repo',
+                opencodeSessionId: 'opencode-session-1',
+                opencodeBackendMode: 'server',
+                opencodeServerBaseUrl: 'https://opencode.example.test',
+                opencodeServerBaseUrlExplicit: true,
+            },
+            depth: 'metadata',
+        })).resolves.toEqual({ available: true });
+    });
+
     it('projects OhMyPi connected-service hooks from the plugin runtime contribution', async () => {
         const hooks = createAgentRuntimeCatalogEntryHooks({
             agentId: 'ohMyPi',
@@ -1341,7 +1546,7 @@ describe('createAgentRuntimeCatalogEntryHooks', () => {
         })();
 
         expect(hooks.getConnectedServicesMaterializer).toBeTypeOf('function');
-        expect(hooks.materializeConnectedServiceRuntimeAuthSelection).toBeTypeOf('function');
+        expect(hooks).not.toHaveProperty('materializeConnectedServiceRuntimeAuthSelection');
         expect(hooks.getConnectedServiceRuntimeAuthAdapter).toBeTypeOf('function');
         expect(hooks.getConnectedServiceStateSharingDescriptor).toBeTypeOf('function');
         expect(hooks.resolveConnectedServiceSwitchContinuity).toBeTypeOf('function');
@@ -1385,6 +1590,8 @@ describe('createAgentRuntimeCatalogEntryHooks', () => {
             activeServerDir: '/tmp/happier-active',
             baseDir: '/tmp/happier-base',
             rootDir: '/tmp/happier-root',
+            connectedAccountMaterializationAuthority:
+                LEGACY_UNFENCED_ONE_SHOT_MATERIALIZATION_AUTHORITY,
             recordsByServiceId: new Map([['openai', record]]),
             processEnv: { HOME: '/tmp/home' },
         });
@@ -1663,7 +1870,6 @@ describe('createAgentRuntimeCatalogEntryHooks', () => {
                 connectedServices: {
                     serviceIds: ['openai-codex'],
                     runtimeAuthAdapter: false,
-                    materializeRuntimeAuthSelection: false,
                     readConnectedServiceId: (selection: unknown) => selection === 'openai-codex' ? 'openai-codex' : null,
                     createAuthMaterializationInput: (_serviceId: string, record: unknown) => ({ openaiCodex: record }),
                     materializeAuthEnvironment: () => ({ env: { CODEX_HOME: '/tmp/codex-home' } }),
@@ -1684,14 +1890,13 @@ describe('createAgentRuntimeCatalogEntryHooks', () => {
         })();
 
         expect(hooks.getConnectedServicesMaterializer).toBeTypeOf('function');
-        expect(hooks.materializeConnectedServiceRuntimeAuthSelection).toBeUndefined();
         expect(hooks.getConnectedServiceRuntimeAuthAdapter).toBeUndefined();
         expect(hooks.resolveConnectedServiceSwitchContinuity).toBeUndefined();
         expect(hooks.verifyResumeReachable).toBeUndefined();
         expect(hooks).not.toHaveProperty('getSessionUsageLimitRecoveryControlAdapter');
     });
 
-    it('passes host materialization context to plugin-owned connected-service materializers', async () => {
+    it('passes only the host-stamped state-sharing effect to plugin-owned connected-service materializers', async () => {
         const inputs: Readonly<Record<string, unknown>>[] = [];
         const hooks = createAgentRuntimeCatalogEntryHooks({
             agentId: 'claude',
@@ -1756,8 +1961,15 @@ describe('createAgentRuntimeCatalogEntryHooks', () => {
             baseDir: '/tmp/happier-base',
             rootDir: '/tmp/happier-root',
             sessionDirectory: '/tmp/workspace',
+            connectedAccountMaterializationAuthority:
+                LEGACY_UNFENCED_ONE_SHOT_MATERIALIZATION_AUTHORITY,
             recordsByServiceId: new Map([['anthropic', record]]),
-            accountSettings: { connectedServicesProviderStateSharingSettingsV1: {} },
+            accountSettings: {
+                connectedServicesProviderStateSharingSettingsV1: {
+                    v: 1,
+                    defaults: { configMode: 'copied', stateMode: 'shared' },
+                },
+            },
             processEnv: { HOME: '/tmp/home' },
         });
 
@@ -1766,7 +1978,7 @@ describe('createAgentRuntimeCatalogEntryHooks', () => {
             materializationId: 'mat-1',
             rootDir: expect.stringContaining('claude-config'),
             sessionDirectory: '/tmp/workspace',
-            accountSettings: { connectedServicesProviderStateSharingSettingsV1: {} },
+            connectedServicesSessionStateSharingRequested: true,
             processEnv: { HOME: '/tmp/home' },
             exec: expect.objectContaining({
                 run: expect.any(Function),
@@ -1775,6 +1987,7 @@ describe('createAgentRuntimeCatalogEntryHooks', () => {
                 }),
             }),
         });
+        expect(inputs[0]).not.toHaveProperty('accountSettings');
         expect(inputs[0]).not.toHaveProperty('daemonControlToken');
     });
 
@@ -1852,7 +2065,11 @@ describe('createAgentRuntimeCatalogEntryHooks', () => {
             baseDir: '/tmp/happier-base',
             rootDir: '/tmp/happier-root',
             recordsByServiceId: new Map([['openai-codex', record]]),
-            requestAuthPurposeBindings: purposeBindings,
+            connectedAccountMaterializationAuthority: {
+                kind: 'qualified',
+                purposeBindings,
+                requestAuthPurposeBindings: purposeBindings,
+            },
         });
 
         expect(inputs).toHaveLength(1);
@@ -1864,7 +2081,139 @@ describe('createAgentRuntimeCatalogEntryHooks', () => {
         });
     });
 
-    it('does not pass a legacy Gemini credential to the plugin materializer when the session has its qualified purpose binding', async () => {
+    it.each([
+        'symlink',
+        'foreign-owner',
+    ] as const)('refuses a pre-planted %s stable target before plugin materialization effects', async (unsafeKind) => {
+        if (
+            process.platform === 'win32'
+            || (
+                unsafeKind === 'foreign-owner'
+                && typeof process.getuid !== 'function'
+            )
+        ) {
+            return;
+        }
+        const activeServerDir = await mkdtemp(
+            join(tmpdir(), 'happier-catalog-private-root-'),
+        );
+        const outside = await mkdtemp(
+            join(tmpdir(), 'happier-catalog-private-root-outside-'),
+        );
+        const stableRoot = resolveConnectedServiceHomeDir({
+            activeServerDir,
+            serviceId: 'openai-codex',
+            profileId: 'codex-work',
+            agentId: 'opencode',
+        });
+        const effectPath = join(
+            unsafeKind === 'symlink' ? outside : stableRoot,
+            'materializer-effect.txt',
+        );
+        const materializeEffects: string[] = [];
+        const hooks = createAgentRuntimeCatalogEntryHooks({
+            agentId: 'opencode',
+            packageName: '@happier-dev/plugins-test',
+            contribution: {
+                connectedServices: {
+                    serviceIds: ['openai-codex'],
+                    readConnectedServiceId: () => null,
+                    createAuthMaterializationInput: () => ({}),
+                    materializeAuthEnvironment: async (input: Readonly<Record<string, unknown>>) => {
+                        const rootDir = String(input.rootDir);
+                        materializeEffects.push(rootDir);
+                        await writeFile(join(rootDir, 'materializer-effect.txt'), 'effect', 'utf8');
+                        return { env: {} };
+                    },
+                    stateSharingDescriptor: {
+                        agentId: 'opencode',
+                        providerSupportStatus: 'supported',
+                        config: { supported: false, modes: ['isolated'], entries: [] },
+                        state: {
+                            supported: false,
+                            modes: ['isolated'],
+                            entries: [],
+                            symlinkUnavailableDegradePolicy: 'block_continuity',
+                        },
+                        authIsolation: { mode: 'materialized_home', secretEntries: [] },
+                    },
+                },
+            },
+        })();
+        const materializer = await hooks.getConnectedServicesMaterializer?.();
+        const record = buildConnectedServiceCredentialRecord({
+            now: 1,
+            serviceId: 'openai-codex',
+            profileId: 'codex-work',
+            kind: 'oauth',
+            expiresAt: 10_000,
+            oauth: {
+                accessToken: 'access',
+                refreshToken: 'refresh',
+                idToken: null,
+                scope: null,
+                tokenType: 'Bearer',
+                providerAccountId: 'account',
+                providerEmail: null,
+            },
+        });
+        let restoreGetuid: (() => void) | null = null;
+        try {
+            await mkdir(dirname(stableRoot), { recursive: true });
+            if (unsafeKind === 'symlink') {
+                await symlink(outside, stableRoot, 'dir');
+            } else {
+                await mkdir(stableRoot, { recursive: true });
+                await chmod(stableRoot, 0o755);
+                const originalGetuid = process.getuid;
+                if (typeof originalGetuid !== 'function') {
+                    throw new Error('process.getuid is required for the POSIX ownership test');
+                }
+                const actualUid = originalGetuid();
+                Object.defineProperty(process, 'getuid', {
+                    configurable: true,
+                    value: () => actualUid + 1,
+                });
+                restoreGetuid = () => {
+                    Object.defineProperty(process, 'getuid', {
+                        configurable: true,
+                        value: originalGetuid,
+                    });
+                };
+            }
+
+            let failure: unknown = null;
+            try {
+                await materializer?.({
+                    materializationKey: 'mat-opencode-private-root',
+                    activeServerDir,
+                    baseDir: join(activeServerDir, 'materialized'),
+                    rootDir: join(activeServerDir, 'unused-staging-root'),
+                    connectedAccountMaterializationAuthority:
+                        LEGACY_UNFENCED_ONE_SHOT_MATERIALIZATION_AUTHORITY,
+                    recordsByServiceId: new Map([['openai-codex', record]]),
+                });
+            } catch (error) {
+                failure = error;
+            }
+
+            expect(failure).toMatchObject({
+                message: 'connected_service_materialization_root_unsafe',
+            });
+            expect(materializeEffects).toEqual([]);
+            await expect(lstat(effectPath)).rejects.toMatchObject({
+                code: 'ENOENT',
+            });
+        } finally {
+            restoreGetuid?.();
+            await Promise.all([
+                rm(activeServerDir, { recursive: true, force: true }),
+                rm(outside, { recursive: true, force: true }),
+            ]);
+        }
+    });
+
+    it('does not pass a revisioned Gemini credential to the private materializer when the session has a non-request-auth qualified purpose', async () => {
         const inputs: Readonly<Record<string, unknown>>[] = [];
         const hooks = createAgentRuntimeCatalogEntryHooks({
             agentId: 'gemini',
@@ -1931,14 +2280,20 @@ describe('createAgentRuntimeCatalogEntryHooks', () => {
             baseDir: '/tmp/happier-base',
             rootDir: '/tmp/happier-root',
             recordsByServiceId: new Map([['gemini', record]]),
-            requestAuthPurposeBindings: purposeBindings,
+            connectedAccountMaterializationAuthority: {
+                kind: 'qualified',
+                purposeBindings,
+                requestAuthPurposeBindings: [],
+            },
         });
 
         expect(inputs).toHaveLength(1);
         expect(inputs[0]).not.toHaveProperty('gemini');
-        expect(inputs[0]?.requestAuth).toEqual(expect.objectContaining({
-            purposeBindings,
-        }));
+        expect(inputs[0]).toMatchObject({
+            connectedAccountMaterializationAuthority: 'qualified',
+            rootDir: expect.any(String),
+        });
+        expect(inputs[0]).not.toHaveProperty('requestAuth');
     });
 
     // Group-bound selections thread their groupId to plugin materializers so runtime-auth
@@ -1988,6 +2343,8 @@ describe('createAgentRuntimeCatalogEntryHooks', () => {
             activeServerDir: '/tmp/happier-active',
             baseDir: '/tmp/happier-base',
             rootDir: '/tmp/happier-root',
+            connectedAccountMaterializationAuthority:
+                LEGACY_UNFENCED_ONE_SHOT_MATERIALIZATION_AUTHORITY,
             recordsByServiceId: new Map([['anthropic', record]]),
             selectionsByServiceId: new Map([['anthropic', {
                 kind: 'group' as const,
@@ -2008,6 +2365,8 @@ describe('createAgentRuntimeCatalogEntryHooks', () => {
             activeServerDir: '/tmp/happier-active',
             baseDir: '/tmp/happier-base',
             rootDir: '/tmp/happier-root',
+            connectedAccountMaterializationAuthority:
+                LEGACY_UNFENCED_ONE_SHOT_MATERIALIZATION_AUTHORITY,
             recordsByServiceId: new Map([['anthropic', record]]),
             selectionsByServiceId: new Map([['anthropic', {
                 kind: 'profile' as const,
@@ -2102,6 +2461,8 @@ describe('createAgentRuntimeCatalogEntryHooks', () => {
             activeServerDir: '/tmp/happier-active',
             baseDir: '/tmp/happier-base',
             rootDir: '/tmp/happier-root',
+            connectedAccountMaterializationAuthority:
+                LEGACY_UNFENCED_ONE_SHOT_MATERIALIZATION_AUTHORITY,
             recordsByServiceId: new Map([['anthropic', record]]),
         });
 
@@ -2453,791 +2814,6 @@ describe('createAgentRuntimeCatalogEntryHooks', () => {
         });
     });
 
-    it('applies provider state-sharing descriptors when materializing runtime auth selections', async () => {
-        const root = await mkdtemp(join(tmpdir(), 'happier-provider-runtime-selection-'));
-        try {
-            const materializationInputs: Readonly<Record<string, unknown>>[] = [];
-            const activeServerDir = join(root, 'active-server');
-            const nativeConfigRoot = join(root, 'native-config');
-            const sessionDirectory = join(root, 'workspace');
-            await mkdir(nativeConfigRoot, { recursive: true });
-            await mkdir(sessionDirectory, { recursive: true });
-            await writeFile(join(nativeConfigRoot, 'settings.json'), '{"theme":"dark"}\n');
-
-            const hooks = createAgentRuntimeCatalogEntryHooks({
-                agentId: 'claude',
-                packageName: '@happier-dev/plugins-test',
-                contribution: {
-                    connectedServices: {
-                        serviceIds: ['anthropic'],
-                        materializedRootSubdir: 'claude-config',
-                        resolveStateSharingSourceRoot: () => nativeConfigRoot,
-                        readConnectedServiceId: (selection: unknown) => selection === 'anthropic' ? 'anthropic' : null,
-                        createAuthMaterializationInput: (_serviceId: string, record: unknown) => ({ anthropic: record }),
-                        materializeAuthEnvironment: (input: Readonly<Record<string, unknown>>) => {
-                            materializationInputs.push(input);
-                            return { env: {
-                                ANTHROPIC_API_KEY: 'sk-test',
-                                CLAUDE_CONFIG_DIR: String(input.rootDir),
-                            },
-                        }; },
-                        stateSharingDescriptor: {
-                            agentId: 'claude',
-                            providerSupportStatus: 'supported',
-                            config: {
-                                supported: true,
-                                modes: ['linked', 'copied', 'isolated'],
-                                entries: [{ path: 'settings.json', mode: 'linked_or_copied' }],
-                            },
-                            state: {
-                                supported: true,
-                                modes: ['isolated', 'shared'],
-                                entries: [],
-                                symlinkUnavailableDegradePolicy: 'block_continuity',
-                            },
-                            authIsolation: { mode: 'materialized_home', secretEntries: [] },
-                        },
-                        shouldRestartForServiceSwitch: (serviceId: unknown) => serviceId === 'anthropic',
-                        restartRematerializeRequiredReason: 'claude_session_state_sharing_required',
-                        resolveResumeReachabilityUnsupported: async () => ({ ok: false, reason: 'unsupported' }),
-                        classifyUsageLimitError: () => null,
-                        usageLimitRecovery: {
-                            agentId: 'claude',
-                            fallbackBackoffEnvKey: 'HAPPIER_TEST_BACKOFF_MS',
-                            maxAttemptsEnvKey: 'HAPPIER_TEST_MAX_ATTEMPTS',
-                            defaultFallbackBackoffMs: 1,
-                            defaultMaxAttempts: 1,
-                        },
-                    },
-                },
-            })();
-
-            const record = buildConnectedServiceCredentialRecord({
-                now: 1,
-                serviceId: 'anthropic',
-                profileId: 'work',
-                kind: 'token',
-                token: {
-                    token: 'sk-test',
-                    providerAccountId: null,
-                    providerEmail: null,
-                },
-            });
-            const materialized = await hooks.materializeConnectedServiceRuntimeAuthSelection?.({
-                activeServerDir,
-                // ApiClient and Credentials are not read by the retained runtime selection materializer.
-                api: {} as unknown as ApiClient,
-                credentials: {} as Credentials,
-                processEnv: { HOME: join(root, 'home') },
-                accountSettings: accountSettingsParse({
-                    connectedServicesProviderStateSharingSettingsV1: {
-                        v: 1,
-                        defaults: { configMode: 'copied', stateMode: 'isolated' },
-                    },
-                }),
-                baseSelection: {
-                    serviceId: 'anthropic',
-                    binding: { selection: 'profile' },
-                    profileId: 'work',
-                    record,
-                },
-                input: {
-                    mode: 'apply',
-                    tracked: {
-                        startedBy: 'daemon',
-                        happySessionId: 'session-1',
-                        pid: 123,
-                        spawnOptions: {
-                            directory: sessionDirectory,
-                            backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
-                            connectedServices: { v: 1, bindingsByServiceId: {} },
-                            connectedServiceMaterializationIdentityV1: { v: 1, id: 'mat-runtime', createdAt: 1 },
-                            environmentVariables: {},
-                        },
-                    } satisfies TrackedSession,
-                    sessionId: 'session-1',
-                    agentId: 'claude',
-                    serviceId: 'anthropic',
-                    previous: null,
-                    next: {
-                        source: 'connected',
-                        selection: 'profile',
-                        serviceId: 'anthropic',
-                        profileId: 'work',
-                        groupId: null,
-                    },
-                    previousBindings: { v: 1, bindingsByServiceId: {} },
-                    normalizedBindings: { v: 1, bindingsByServiceId: {} },
-                },
-            });
-
-            const targetRoot = (materialized as { targetMaterializedRoot?: unknown }).targetMaterializedRoot;
-            expect(typeof targetRoot).toBe('string');
-            await expect(readFile(join(String(targetRoot), 'settings.json'), 'utf8')).resolves.toBe('{"theme":"dark"}\n');
-            expect((materialized as { materializationDiagnostics?: unknown }).materializationDiagnostics).toEqual([]);
-            expect(
-                (materialized as { applyConnectedServiceAuthGeneration?: unknown })
-                    .applyConnectedServiceAuthGeneration,
-            ).toEqual(expect.any(Function));
-            expect(materializationInputs[0]).toMatchObject({
-                materializationId: 'mat-runtime',
-                connectedServicesSessionStateSharingEffectiveMode: 'isolated',
-            });
-        } finally {
-            await rm(root, { recursive: true, force: true });
-        }
-    });
-
-    it('preflights shared group runtime-auth selections without materializing provider state', async () => {
-        const root = await mkdtemp(join(tmpdir(), 'happier-provider-runtime-selection-preflight-'));
-        try {
-            const activeServerDir = join(root, 'active-server');
-            const nativeConfigRoot = join(root, 'native-config');
-            const sessionDirectory = join(root, 'workspace');
-            await mkdir(nativeConfigRoot, { recursive: true });
-            await mkdir(sessionDirectory, { recursive: true });
-            const resolveStateSharingSourceRoot = vi.fn(() => nativeConfigRoot);
-            const materializeAuthEnvironment = vi.fn(() => {
-                throw new Error('preflight must not materialize provider auth');
-            });
-            const hooks = createAgentRuntimeCatalogEntryHooks({
-                agentId: 'claude',
-                packageName: '@happier-dev/plugins-test',
-                contribution: {
-                    connectedServices: {
-                        serviceIds: ['claude-subscription'],
-                        materializedRootSubdir: 'claude-config',
-                        resolveStateSharingSourceRoot,
-                        readConnectedServiceId: (selection: unknown) =>
-                            selection === 'claude-subscription' ? 'claude-subscription' : null,
-                        createAuthMaterializationInput: (_serviceId: string, record: unknown) => ({ claude: record }),
-                        materializeAuthEnvironment,
-                        stateSharingDescriptor: {
-                            agentId: 'claude',
-                            providerSupportStatus: 'supported',
-                            config: {
-                                supported: true,
-                                modes: ['linked', 'copied', 'isolated'],
-                                entries: [{ path: 'settings.json', mode: 'linked_or_copied' }],
-                            },
-                            state: {
-                                supported: true,
-                                modes: ['isolated', 'shared'],
-                                entries: [],
-                                symlinkUnavailableDegradePolicy: 'block_continuity',
-                            },
-                            authIsolation: { mode: 'materialized_home', secretEntries: [] },
-                        },
-                        recoveryCapabilities: {
-                            predictiveSoftSwitch: {
-                                mode: 'supported',
-                                liveSessionRequirement: {
-                                    kind: 'shared_group_auth_surface',
-                                    serviceIds: ['claude-subscription'],
-                                    authEnvKey: 'CLAUDE_CONFIG_DIR',
-                                    authEnvSubpath: ['claude-config'],
-                                },
-                            },
-                            sameAccountFanoutStrategy: 'shared_group_auth_surface',
-                        },
-                    },
-                },
-            })();
-            const record = buildConnectedServiceCredentialRecord({
-                now: 1,
-                serviceId: 'claude-subscription',
-                profileId: 'work',
-                kind: 'token',
-                token: {
-                    token: 'sk-test',
-                    providerAccountId: null,
-                    providerEmail: null,
-                },
-            });
-            const expectedRoot = join(resolveConnectedServiceGroupHomeDir({
-                activeServerDir,
-                serviceId: 'claude-subscription',
-                groupId: 'anthropic-cloud',
-                agentId: 'claude',
-            }), 'claude-config');
-
-            const materialized = await hooks.materializeConnectedServiceRuntimeAuthSelection?.({
-                activeServerDir,
-                api: {} as unknown as ApiClient,
-                credentials: {} as Credentials,
-                processEnv: { HOME: join(root, 'home') },
-                accountSettings: accountSettingsParse({
-                    connectedServicesProviderStateSharingSettingsV1: {
-                        v: 1,
-                        defaults: { configMode: 'copied', stateMode: 'shared' },
-                    },
-                }),
-                baseSelection: {
-                    serviceId: 'claude-subscription',
-                    binding: { selection: 'group' },
-                    profileId: 'new-profile',
-                    groupId: 'anthropic-cloud',
-                    activeProfileId: 'new-profile',
-                    fallbackProfileId: 'previous-profile',
-                    record,
-                },
-                input: {
-                    mode: 'preflight',
-                    tracked: {
-                        startedBy: 'daemon',
-                        happySessionId: 'session-1',
-                        pid: 123,
-                        spawnOptions: {
-                            directory: sessionDirectory,
-                            backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
-                            connectedServices: { v: 1, bindingsByServiceId: {} },
-                            environmentVariables: { CLAUDE_CONFIG_DIR: expectedRoot },
-                        },
-                    } satisfies TrackedSession,
-                    sessionId: 'session-1',
-                    agentId: 'claude',
-                    serviceId: 'claude-subscription',
-                    previous: null,
-                    next: {
-                        source: 'connected',
-                        selection: 'group',
-                        serviceId: 'claude-subscription',
-                        profileId: 'new-profile',
-                        groupId: 'anthropic-cloud',
-                    },
-                    previousBindings: { v: 1, bindingsByServiceId: {} },
-                    normalizedBindings: { v: 1, bindingsByServiceId: {} },
-                },
-            });
-
-            expect((materialized as { targetMaterializedRoot?: unknown }).targetMaterializedRoot).toBe(expectedRoot);
-            expect((materialized as { targetMaterializedEnv?: unknown }).targetMaterializedEnv).toEqual({
-                CLAUDE_CONFIG_DIR: expectedRoot,
-            });
-            expect((materialized as { materializationDiagnostics?: unknown }).materializationDiagnostics).toEqual([]);
-            expect(resolveStateSharingSourceRoot).not.toHaveBeenCalled();
-            expect(materializeAuthEnvironment).not.toHaveBeenCalled();
-            await expect(readFile(join(expectedRoot, '.credentials.json'), 'utf8')).rejects.toThrow();
-        } finally {
-            await rm(root, { recursive: true, force: true });
-        }
-    });
-
-    it('does not expose shared group hot-apply selection when the live Claude runtime is on another config dir', async () => {
-        const root = await mkdtemp(join(tmpdir(), 'happier-provider-runtime-selection-profile-'));
-        try {
-            const activeServerDir = join(root, 'active-server');
-            const sessionDirectory = join(root, 'workspace');
-            await mkdir(sessionDirectory, { recursive: true });
-            const materializeAuthEnvironment = vi.fn(() => {
-                throw new Error('preflight must not materialize provider auth');
-            });
-            const hooks = createAgentRuntimeCatalogEntryHooks({
-                agentId: 'claude',
-                packageName: '@happier-dev/plugins-test',
-                contribution: {
-                    connectedServices: {
-                        serviceIds: ['claude-subscription'],
-                        materializedRootSubdir: 'claude-config',
-                        readConnectedServiceId: (selection: unknown) =>
-                            selection === 'claude-subscription' ? 'claude-subscription' : null,
-                        createAuthMaterializationInput: (_serviceId: string, record: unknown) => ({ claude: record }),
-                        materializeAuthEnvironment,
-                        stateSharingDescriptor: {
-                            agentId: 'claude',
-                            providerSupportStatus: 'supported',
-                            config: {
-                                supported: true,
-                                modes: ['linked', 'copied', 'isolated'],
-                                entries: [],
-                            },
-                            state: {
-                                supported: true,
-                                modes: ['isolated', 'shared'],
-                                entries: [],
-                            },
-                            authIsolation: { mode: 'materialized_home', secretEntries: [] },
-                        },
-                        recoveryCapabilities: {
-                            predictiveSoftSwitch: {
-                                mode: 'supported',
-                                liveSessionRequirement: {
-                                    kind: 'shared_group_auth_surface',
-                                    serviceIds: ['claude-subscription'],
-                                    authEnvKey: 'CLAUDE_CONFIG_DIR',
-                                    authEnvSubpath: ['claude-config'],
-                                },
-                            },
-                            sameAccountFanoutStrategy: 'shared_group_auth_surface',
-                        },
-                    },
-                },
-            })();
-            const record = buildConnectedServiceCredentialRecord({
-                now: 1,
-                serviceId: 'claude-subscription',
-                profileId: 'new-profile',
-                kind: 'token',
-                token: {
-                    token: 'sk-test',
-                    providerAccountId: null,
-                    providerEmail: null,
-                },
-            });
-
-            const materialized = await hooks.materializeConnectedServiceRuntimeAuthSelection?.({
-                activeServerDir,
-                api: {} as unknown as ApiClient,
-                credentials: {} as Credentials,
-                processEnv: { HOME: join(root, 'home') },
-                baseSelection: {
-                    serviceId: 'claude-subscription',
-                    binding: { selection: 'group' },
-                    profileId: 'new-profile',
-                    groupId: 'anthropic-cloud',
-                    activeProfileId: 'new-profile',
-                    fallbackProfileId: 'previous-profile',
-                    record,
-                },
-                input: {
-                    mode: 'preflight',
-                    tracked: {
-                        startedBy: 'daemon',
-                        happySessionId: 'session-1',
-                        pid: 123,
-                        spawnOptions: {
-                            directory: sessionDirectory,
-                            backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
-                            connectedServices: { v: 1, bindingsByServiceId: {} },
-                            environmentVariables: { CLAUDE_CONFIG_DIR: join(root, 'profile-home', 'claude-config') },
-                        },
-                    } satisfies TrackedSession,
-                    sessionId: 'session-1',
-                    agentId: 'claude',
-                    serviceId: 'claude-subscription',
-                    previous: null,
-                    next: {
-                        source: 'connected',
-                        selection: 'group',
-                        serviceId: 'claude-subscription',
-                        profileId: 'new-profile',
-                        groupId: 'anthropic-cloud',
-                    },
-                    previousBindings: { v: 1, bindingsByServiceId: {} },
-                    normalizedBindings: { v: 1, bindingsByServiceId: {} },
-                },
-            });
-
-            expect((materialized as { targetMaterializedRoot?: unknown }).targetMaterializedRoot).toBeUndefined();
-            expect((materialized as { targetMaterializedEnv?: unknown }).targetMaterializedEnv).toBeUndefined();
-            expect(materializeAuthEnvironment).not.toHaveBeenCalled();
-        } finally {
-            await rm(root, { recursive: true, force: true });
-        }
-    });
-
-    it('returns shared group runtime-auth metadata in apply mode without rewriting the live group home', async () => {
-        const root = await mkdtemp(join(tmpdir(), 'happier-provider-runtime-selection-live-'));
-        try {
-            const activeServerDir = join(root, 'active-server');
-            const sessionDirectory = join(root, 'workspace');
-            await mkdir(sessionDirectory, { recursive: true });
-            const materializeAuthEnvironment = vi.fn(() => {
-                throw new Error('shared-surface hot apply must own credential writes');
-            });
-            const hooks = createAgentRuntimeCatalogEntryHooks({
-                agentId: 'claude',
-                packageName: '@happier-dev/plugins-test',
-                contribution: {
-                    connectedServices: {
-                        serviceIds: ['claude-subscription'],
-                        materializedRootSubdir: 'claude-config',
-                        readConnectedServiceId: (selection: unknown) =>
-                            selection === 'claude-subscription' ? 'claude-subscription' : null,
-                        createAuthMaterializationInput: (_serviceId: string, record: unknown) => ({ claude: record }),
-                        materializeAuthEnvironment,
-                        stateSharingDescriptor: {
-                            agentId: 'claude',
-                            providerSupportStatus: 'supported',
-                            config: {
-                                supported: true,
-                                modes: ['linked', 'copied', 'isolated'],
-                                entries: [],
-                            },
-                            state: {
-                                supported: true,
-                                modes: ['isolated', 'shared'],
-                                entries: [],
-                            },
-                            authIsolation: { mode: 'materialized_home', secretEntries: [] },
-                        },
-                        recoveryCapabilities: {
-                            predictiveSoftSwitch: {
-                                mode: 'supported',
-                                liveSessionRequirement: {
-                                    kind: 'shared_group_auth_surface',
-                                    serviceIds: ['claude-subscription'],
-                                    authEnvKey: 'CLAUDE_CONFIG_DIR',
-                                    authEnvSubpath: ['claude-config'],
-                                },
-                            },
-                            sameAccountFanoutStrategy: 'shared_group_auth_surface',
-                        },
-                    },
-                },
-            })();
-            const record = buildConnectedServiceCredentialRecord({
-                now: 1,
-                serviceId: 'claude-subscription',
-                profileId: 'new-profile',
-                kind: 'token',
-                token: {
-                    token: 'sk-test',
-                    providerAccountId: null,
-                    providerEmail: null,
-                },
-            });
-            const expectedRoot = join(resolveConnectedServiceGroupHomeDir({
-                activeServerDir,
-                serviceId: 'claude-subscription',
-                groupId: 'anthropic-cloud',
-                agentId: 'claude',
-            }), 'claude-config');
-
-            const materialized = await hooks.materializeConnectedServiceRuntimeAuthSelection?.({
-                activeServerDir,
-                api: {} as unknown as ApiClient,
-                credentials: {} as Credentials,
-                processEnv: { HOME: join(root, 'home') },
-                baseSelection: {
-                    serviceId: 'claude-subscription',
-                    binding: { selection: 'group' },
-                    profileId: 'new-profile',
-                    groupId: 'anthropic-cloud',
-                    activeProfileId: 'new-profile',
-                    fallbackProfileId: 'previous-profile',
-                    record,
-                },
-                input: {
-                    mode: 'apply',
-                    tracked: {
-                        startedBy: 'daemon',
-                        happySessionId: 'session-1',
-                        pid: 123,
-                        spawnOptions: {
-                            directory: sessionDirectory,
-                            backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
-                            connectedServices: { v: 1, bindingsByServiceId: {} },
-                            environmentVariables: { CLAUDE_CONFIG_DIR: expectedRoot },
-                        },
-                    } satisfies TrackedSession,
-                    sessionId: 'session-1',
-                    agentId: 'claude',
-                    serviceId: 'claude-subscription',
-                    previous: null,
-                    next: {
-                        source: 'connected',
-                        selection: 'group',
-                        serviceId: 'claude-subscription',
-                        profileId: 'new-profile',
-                        groupId: 'anthropic-cloud',
-                    },
-                    previousBindings: { v: 1, bindingsByServiceId: {} },
-                    normalizedBindings: { v: 1, bindingsByServiceId: {} },
-                },
-            });
-
-            expect((materialized as { targetMaterializedRoot?: unknown }).targetMaterializedRoot).toBe(expectedRoot);
-            expect((materialized as { targetMaterializedEnv?: unknown }).targetMaterializedEnv).toEqual({
-                CLAUDE_CONFIG_DIR: expectedRoot,
-            });
-            expect(materializeAuthEnvironment).not.toHaveBeenCalled();
-            await expect(readFile(join(expectedRoot, '.credentials.json'), 'utf8')).rejects.toThrow();
-        } finally {
-            await rm(root, { recursive: true, force: true });
-        }
-    });
-
-    it('carries Claude shared project state from the previous materialized profile during runtime auth selection switches', async () => {
-        const root = await mkdtemp(join(tmpdir(), 'happier-claude-runtime-selection-shared-state-'));
-        try {
-            const activeServerDir = join(root, 'active-server');
-            const previousClaudeConfigDir = join(root, 'previous-profile-claude-config');
-            const sessionDirectory = join(root, 'workspace');
-            const vendorResumeId = 'f55b3644-befc-406a-90ac-b8fbcc33cbf6';
-            await mkdir(join(previousClaudeConfigDir, 'projects', 'workspace'), { recursive: true });
-            await mkdir(sessionDirectory, { recursive: true });
-            await writeFile(
-                join(previousClaudeConfigDir, 'projects', 'workspace', `${vendorResumeId}.jsonl`),
-                '{"session":"previous-profile"}\n',
-            );
-            await writeFile(
-                join(previousClaudeConfigDir, '.credentials.json'),
-                '{"claudeAiOauth":{"accessToken":"old-access-token","refreshToken":"old-refresh-token","scopes":[]}}\n',
-            );
-            const securityExecutable = writeExecutableShimSync({
-                dir: root,
-                fileName: process.platform === 'win32' ? 'security.cmd' : 'security',
-                contents: process.platform === 'win32'
-                    ? '@echo off\r\nexit /b 0\r\n'
-                    : '#!/bin/sh\nexit 0\n',
-            });
-
-            const hooks = createAgentRuntimeCatalogEntryHooks({
-                agentId: 'claude',
-                packageName: '@happier-dev/plugins-claude',
-                contribution: CLAUDE_AGENT_RUNTIME_CONTRIBUTION,
-                systemTools: [
-                    {
-                        id: 'claude-cli',
-                        title: 'Claude Code CLI',
-                        executableNames: ['claude'],
-                    },
-                    {
-                        id: 'macos-security',
-                        title: 'macOS Keychain security',
-                        executableNames: [securityExecutable],
-                    },
-                ],
-            })();
-            const record = buildConnectedServiceCredentialRecord({
-                now: 1,
-                serviceId: 'claude-subscription',
-                profileId: 'new-profile',
-                kind: 'oauth',
-                expiresAt: 2_000,
-                oauth: {
-                    accessToken: 'new-access-token',
-                    refreshToken: 'new-refresh-token',
-                    idToken: null,
-                    providerAccountId: null,
-                    providerEmail: null,
-                    scope: 'user:profile user:inference user:sessions:claude_code',
-                    tokenType: 'Bearer',
-                },
-            });
-
-            const materialized = await hooks.materializeConnectedServiceRuntimeAuthSelection?.({
-                activeServerDir,
-                api: {} as unknown as ApiClient,
-                credentials: {} as Credentials,
-                processEnv: {
-                    HOME: join(root, 'home'),
-                    PATH: `${root}${delimiter}${process.env.PATH ?? ''}`,
-                },
-                accountSettings: accountSettingsParse({
-                    connectedServicesProviderStateSharingSettingsV1: {
-                        v: 1,
-                        defaults: { configMode: 'isolated', stateMode: 'isolated' },
-                        byAgentId: {
-                            claude: { configMode: 'isolated', stateMode: 'shared' },
-                        },
-                    },
-                }),
-                baseSelection: {
-                    serviceId: 'claude-subscription',
-                    binding: { selection: 'group' },
-                    profileId: 'new-profile',
-                    groupId: 'anthropic-cloud',
-                    activeProfileId: 'new-profile',
-                    fallbackProfileId: 'previous-profile',
-                    record,
-                },
-                input: {
-                    mode: 'apply',
-                    tracked: {
-                        startedBy: 'daemon',
-                        happySessionId: 'session-1',
-                        pid: 123,
-                        vendorResumeId,
-                        spawnOptions: {
-                            directory: sessionDirectory,
-                            backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
-                            connectedServices: { v: 1, bindingsByServiceId: {} },
-                            environmentVariables: {
-                                CLAUDE_CONFIG_DIR: previousClaudeConfigDir,
-                                HAPPIER_CONNECTED_SERVICE_MATERIALIZED_ENV_KEYS_JSON: JSON.stringify(['CLAUDE_CONFIG_DIR']),
-                            },
-                        },
-                    } satisfies TrackedSession,
-                    sessionId: 'session-1',
-                    agentId: 'claude',
-                    serviceId: 'claude-subscription',
-                    previous: {
-                        source: 'connected',
-                        selection: 'profile',
-                        serviceId: 'claude-subscription',
-                        profileId: 'previous-profile',
-                        groupId: 'anthropic-cloud',
-                    },
-                    next: {
-                        source: 'connected',
-                        selection: 'group',
-                        serviceId: 'claude-subscription',
-                        profileId: 'new-profile',
-                        groupId: 'anthropic-cloud',
-                    },
-                    previousBindings: { v: 1, bindingsByServiceId: {} },
-                    normalizedBindings: { v: 1, bindingsByServiceId: {} },
-                },
-            });
-
-            const targetRoot = (materialized as { targetMaterializedRoot?: unknown }).targetMaterializedRoot;
-            expect(typeof targetRoot).toBe('string');
-            expect((materialized as { materializationDiagnostics?: unknown }).materializationDiagnostics).toEqual([]);
-            await expect(readFile(
-                join(String(targetRoot), 'projects', 'workspace', `${vendorResumeId}.jsonl`),
-                'utf8',
-            )).resolves.toBe('{"session":"previous-profile"}\n');
-            const targetCredential = await readFile(join(String(targetRoot), '.credentials.json'), 'utf8');
-            expect(targetCredential).toContain('new-access-token');
-            expect(targetCredential).not.toContain('old-access-token');
-            const exec = (materialized as { exec?: unknown }).exec;
-            expect(exec).toEqual(expect.objectContaining({
-                run: expect.any(Function),
-                systemTools: expect.objectContaining({
-                    resolve: expect.any(Function),
-                }),
-            }));
-        } finally {
-            await rm(root, { recursive: true, force: true });
-        }
-    });
-
-    it('keeps isolated Claude runtime-auth materialization fail-closed instead of importing source session files', async () => {
-        const root = await mkdtemp(join(tmpdir(), 'happier-claude-runtime-selection-isolated-state-'));
-        try {
-            const activeServerDir = join(root, 'active-server');
-            const previousClaudeConfigDir = join(root, 'previous-profile-claude-config');
-            const sessionDirectory = join(root, 'workspace');
-            const vendorResumeId = 'f55b3644-befc-406a-90ac-b8fbcc33cbf6';
-            await mkdir(join(previousClaudeConfigDir, 'projects', 'workspace'), { recursive: true });
-            await mkdir(sessionDirectory, { recursive: true });
-            await writeFile(
-                join(previousClaudeConfigDir, 'projects', 'workspace', `${vendorResumeId}.jsonl`),
-                '{"session":"previous-profile"}\n',
-            );
-            const securityExecutable = writeExecutableShimSync({
-                dir: root,
-                fileName: process.platform === 'win32' ? 'security.cmd' : 'security',
-                contents: process.platform === 'win32'
-                    ? '@echo off\r\nexit /b 0\r\n'
-                    : '#!/bin/sh\nexit 0\n',
-            });
-
-            const hooks = createAgentRuntimeCatalogEntryHooks({
-                agentId: 'claude',
-                packageName: '@happier-dev/plugins-claude',
-                contribution: CLAUDE_AGENT_RUNTIME_CONTRIBUTION,
-                systemTools: [
-                    {
-                        id: 'claude-cli',
-                        title: 'Claude Code CLI',
-                        executableNames: ['claude'],
-                    },
-                    {
-                        id: 'macos-security',
-                        title: 'macOS Keychain security',
-                        executableNames: [securityExecutable],
-                    },
-                ],
-            })();
-            const record = buildConnectedServiceCredentialRecord({
-                now: 1,
-                serviceId: 'claude-subscription',
-                profileId: 'new-profile',
-                kind: 'oauth',
-                expiresAt: 2_000,
-                oauth: {
-                    accessToken: 'new-access-token',
-                    refreshToken: 'new-refresh-token',
-                    idToken: null,
-                    providerAccountId: null,
-                    providerEmail: null,
-                    scope: 'user:profile user:inference user:sessions:claude_code',
-                    tokenType: 'Bearer',
-                },
-            });
-
-            const materialized = await hooks.materializeConnectedServiceRuntimeAuthSelection?.({
-                activeServerDir,
-                api: {} as unknown as ApiClient,
-                credentials: {} as Credentials,
-                processEnv: {
-                    HOME: join(root, 'home'),
-                    PATH: `${root}${delimiter}${process.env.PATH ?? ''}`,
-                },
-                accountSettings: accountSettingsParse({
-                    connectedServicesProviderStateSharingSettingsV1: {
-                        v: 1,
-                        defaults: { configMode: 'isolated', stateMode: 'isolated' },
-                        byAgentId: {
-                            claude: { configMode: 'isolated', stateMode: 'isolated' },
-                        },
-                    },
-                }),
-                baseSelection: {
-                    serviceId: 'claude-subscription',
-                    binding: { selection: 'group' },
-                    profileId: 'new-profile',
-                    groupId: 'anthropic-cloud',
-                    activeProfileId: 'new-profile',
-                    fallbackProfileId: 'previous-profile',
-                    record,
-                },
-                input: {
-                    mode: 'apply',
-                    tracked: {
-                        startedBy: 'daemon',
-                        happySessionId: 'session-1',
-                        pid: 123,
-                        vendorResumeId,
-                        spawnOptions: {
-                            directory: sessionDirectory,
-                            backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
-                            connectedServices: { v: 1, bindingsByServiceId: {} },
-                            environmentVariables: {
-                                CLAUDE_CONFIG_DIR: previousClaudeConfigDir,
-                                HAPPIER_CONNECTED_SERVICE_MATERIALIZED_ENV_KEYS_JSON: JSON.stringify(['CLAUDE_CONFIG_DIR']),
-                            },
-                        },
-                    } satisfies TrackedSession,
-                    sessionId: 'session-1',
-                    agentId: 'claude',
-                    serviceId: 'claude-subscription',
-                    previous: {
-                        source: 'connected',
-                        selection: 'profile',
-                        serviceId: 'claude-subscription',
-                        profileId: 'previous-profile',
-                        groupId: 'anthropic-cloud',
-                    },
-                    next: {
-                        source: 'connected',
-                        selection: 'group',
-                        serviceId: 'claude-subscription',
-                        profileId: 'new-profile',
-                        groupId: 'anthropic-cloud',
-                    },
-                    previousBindings: { v: 1, bindingsByServiceId: {} },
-                    normalizedBindings: { v: 1, bindingsByServiceId: {} },
-                },
-            });
-
-            const targetRoot = (materialized as { targetMaterializedRoot?: unknown }).targetMaterializedRoot;
-            expect(typeof targetRoot).toBe('string');
-            expect((materialized as { materializationDiagnostics?: unknown }).materializationDiagnostics).toEqual([]);
-            await expect(readFile(
-                join(String(targetRoot), 'projects', 'workspace', `${vendorResumeId}.jsonl`),
-                'utf8',
-            )).rejects.toThrow();
-            const targetCredential = await readFile(join(String(targetRoot), '.credentials.json'), 'utf8');
-            expect(targetCredential).toContain('new-access-token');
-        } finally {
-            await rm(root, { recursive: true, force: true });
-        }
-    });
-
     it('shares Codex SQLite state through one source home instead of linking database files', async () => {
         const root = await mkdtemp(join(tmpdir(), 'happier-codex-runtime-contribution-state-'));
         try {
@@ -3276,6 +2852,8 @@ describe('createAgentRuntimeCatalogEntryHooks', () => {
                 activeServerDir: root,
                 baseDir: root,
                 rootDir: root,
+                connectedAccountMaterializationAuthority:
+                    LEGACY_UNFENCED_ONE_SHOT_MATERIALIZATION_AUTHORITY,
                 recordsByServiceId: new Map([['openai-codex', record]]),
                 accountSettings: accountSettingsParse({
                     connectedServicesProviderStateSharingSettingsV1: {
@@ -3342,6 +2920,8 @@ describe('createAgentRuntimeCatalogEntryHooks', () => {
                 activeServerDir: root,
                 baseDir: root,
                 rootDir: root,
+                connectedAccountMaterializationAuthority:
+                    LEGACY_UNFENCED_ONE_SHOT_MATERIALIZATION_AUTHORITY,
                 recordsByServiceId: new Map([['openai-codex', record]]),
                 accountSettings: sharedAccountSettings,
                 processEnv: {
@@ -3363,6 +2943,8 @@ describe('createAgentRuntimeCatalogEntryHooks', () => {
                 activeServerDir: root,
                 baseDir: root,
                 rootDir: root,
+                connectedAccountMaterializationAuthority:
+                    LEGACY_UNFENCED_ONE_SHOT_MATERIALIZATION_AUTHORITY,
                 recordsByServiceId: new Map([['openai-codex', record]]),
                 accountSettings: sharedAccountSettings,
                 processEnv: {

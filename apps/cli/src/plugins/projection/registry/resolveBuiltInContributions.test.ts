@@ -64,7 +64,7 @@ describe('resolveBuiltInContributions', () => {
       'BUNDLED_FIRST_PARTY_PROVIDER_CONTRIBUTIONS',
       'BUNDLED_FIRST_PARTY_SCM_HOSTING_PROVIDER_CONTRIBUTIONS',
       'BUNDLED_FIRST_PARTY_INSTALLABLE_CONTRIBUTIONS',
-      'BUNDLED_FIRST_PARTY_MCP_DISCOVERY_PROVIDER_CONTRIBUTIONS',
+      'BUNDLED_FIRST_PARTY_MCP_DISCOVERY_SOURCE_CONTRIBUTIONS',
       'BUNDLED_FIRST_PARTY_SCM_BACKEND_CONTRIBUTIONS',
       'BUNDLED_FIRST_PARTY_CONNECTED_ACCOUNT_DESCRIPTOR_CONTRIBUTIONS',
       'BUNDLED_FIRST_PARTY_AGENT_RUNTIME_CONTRIBUTIONS',
@@ -80,10 +80,10 @@ describe('resolveBuiltInContributions', () => {
     }
   });
 
-  it('projects manifest-owned MCP discovery providers into the built-in contribution registry', () => {
+  it('projects manifest-owned MCP discovery sources into the built-in contribution registry', () => {
     const contributes = resolveBuiltInContributions();
 
-    expect(contributes.mcpDiscoveryProviders?.map((entry) => ({
+    expect(contributes.mcpDiscoverySources?.map((entry) => ({
       pluginId: entry.pluginId,
       id: entry.definition.id,
       agentId: entry.definition.metadata?.agentId,
@@ -130,41 +130,41 @@ describe('resolveBuiltInContributions', () => {
     expect(cliProxyApi).toMatchObject({
       provenance: 'first_party',
       source: { kind: 'bundled' },
-      managed: {
-        managedEndpoint: {
-          protocols: ['openai-chat', 'openai-responses', 'anthropic'],
+      definition: {
+        managedRuntime: {
+          kind: 'managed',
+          endpointTemplateIds: [
+            'cliproxyapi-openai-responses',
+            'cliproxyapi-openai-chat',
+            'cliproxyapi-anthropic',
+          ],
+          connectedAccounts: [{
+            purpose: 'openai-upstream',
+            materializationKinds: ['httpHeaders'],
+          }, {
+            purpose: 'anthropic-upstream',
+            materializationKinds: ['httpHeaders'],
+          }],
+          requestAuthUses: [{
+            purpose: 'openai-upstream',
+            materialization: {
+              kind: 'httpHeaders',
+              origin: 'https://chatgpt.com',
+              headerNames: ['authorization', 'chatgpt-account-id'],
+            },
+          }, {
+            purpose: 'anthropic-upstream',
+            materialization: {
+              kind: 'httpHeaders',
+              origin: 'https://api.anthropic.com',
+              headerNames: ['authorization'],
+            },
+          }],
         },
-        connectedAccounts: [{
-          purpose: 'openai-upstream',
-          materializationKinds: ['httpHeaders'],
-        }, {
-          purpose: 'anthropic-upstream',
-          materializationKinds: ['httpHeaders'],
-        }],
-        requestAuthUses: [{
-          purpose: 'openai-upstream',
-          materialization: {
-            kind: 'httpHeaders',
-            origin: 'https://chatgpt.com',
-            headerNames: ['authorization', 'chatgpt-account-id'],
-          },
-        }, {
-          purpose: 'anthropic-upstream',
-          materialization: {
-            kind: 'httpHeaders',
-            origin: 'https://api.anthropic.com',
-            headerNames: ['authorization'],
-          },
-        }],
-      },
-      managedRuntimeAdapter: {
-        v: 1,
-        prepare: expect.any(Function),
-        inspectRecovery: expect.any(Function),
-        verifyRecoveryHealth: expect.any(Function),
-        resolveAgentEndpoint: expect.any(Function),
       },
     });
+    expect(cliProxyApi).not.toHaveProperty('managed');
+    expect(cliProxyApi).not.toHaveProperty('managedRuntimeAdapter');
     expect(generatedBundledPlugins.BUNDLED_FIRST_PARTY_PLUGIN_PACKAGE_NAMES)
       .toContain('@happier-dev/plugins-cliproxyapi');
   });
@@ -212,8 +212,8 @@ describe('resolveBuiltInContributions', () => {
     }
 
     const opencodeAgent = contributes.agents.find((agent) => agent.id === 'opencode');
-    expect(opencodeAgent?.catalogEntry?.getManagedServerShutdownCleanup).toBeTypeOf('function');
-    expect(opencodeAgent?.catalogEntry?.getProviderAttachOps).toBeTypeOf('function');
+    expect(opencodeAgent?.catalogEntry).not.toHaveProperty('getManagedServerShutdownCleanup');
+    expect(opencodeAgent?.catalogEntry?.resolveHostAgentRuntimeSurfaces).toBeTypeOf('function');
     expect(opencodeAgent?.catalogEntry?.resolveSessionRuntimePreferences).toBeTypeOf('function');
     expect(opencodeAgent?.catalogEntry?.getSessionHandoffAgentBundleRecordExtractor).toBeTypeOf('function');
     const opencodeRecordExtractor = await opencodeAgent?.catalogEntry?.getSessionHandoffAgentBundleRecordExtractor?.();
@@ -267,7 +267,7 @@ describe('resolveBuiltInContributions', () => {
         );
 
         expect(activationEventsByPluginId.get('happier.agent.codex')).toEqual([]);
-        expect(activationEventsByPluginId.get('happier.scm.hosting.github')).toEqual([]);
+        expect(activationEventsByPluginId.get('happier.scm.forge.github')).toEqual([]);
         expect(activationEventsByPluginId.get('happier.scm.backend.git')).toEqual([]);
         expect(activationEventsByPluginId.get('happier.review.coderabbit')).toEqual([]);
     });
@@ -307,7 +307,7 @@ describe('resolveBuiltInContributions', () => {
             expect(codexAgent?.catalogEntry?.getConnectedServicesMaterializer).toBeTypeOf('function');
             expect(codexAgent?.catalogEntry?.getConnectedServiceStateSharingDescriptor).toBeTypeOf('function');
             expect(codexAgent?.catalogEntry?.getConnectedServiceRuntimeAuthAdapter).toBeTypeOf('function');
-            expect(codexAgent?.catalogEntry?.materializeConnectedServiceRuntimeAuthSelection).toBeTypeOf('function');
+            expect(codexAgent?.catalogEntry).not.toHaveProperty('materializeConnectedServiceRuntimeAuthSelection');
             expect(codexAgent?.catalogEntry?.resolveConnectedServiceSwitchContinuity).toBeTypeOf('function');
             expect(codexAgent?.catalogEntry?.verifyResumeReachable).toBeTypeOf('function');
             expect(codexAgent?.catalogEntry?.resolveConnectedServiceCandidatePersistedSessionFile).toBeTypeOf('function');
@@ -331,6 +331,9 @@ describe('resolveBuiltInContributions', () => {
                 activeServerDir: root,
                 baseDir: root,
                 rootDir: root,
+                connectedAccountMaterializationAuthority: {
+                    kind: 'legacy_unfenced_one_shot',
+                },
                 recordsByServiceId: new Map([['openai-codex', codexOauthRecord]]),
                 processEnv: { HOME: join(root, 'home') },
             });
@@ -342,6 +345,9 @@ describe('resolveBuiltInContributions', () => {
                 activeServerDir: root,
                 baseDir: root,
                 rootDir: root,
+                connectedAccountMaterializationAuthority: {
+                    kind: 'legacy_unfenced_one_shot',
+                },
                 recordsByServiceId: new Map([['openai', openAiTokenRecord]]),
                 processEnv: { HOME: join(root, 'home') },
             });
@@ -478,10 +484,10 @@ describe('resolveBuiltInContributions', () => {
             provider.definition.kind,
             provider.definition.capabilities,
         ]).sort()).toEqual([
-            ['azure-devops', 'happier.scm.hosting.azure-devops', 'azure-devops', ['detect', 'clone', 'fetch', 'push', 'pullRequest']],
-            ['bitbucket', 'happier.scm.hosting.bitbucket', 'bitbucket', ['detect', 'clone', 'fetch', 'push', 'pullRequest']],
-            ['github', 'happier.scm.hosting.github', 'github', ['detect', 'clone', 'fetch', 'push', 'pullRequest']],
-            ['gitlab', 'happier.scm.hosting.gitlab', 'gitlab', ['detect', 'clone', 'fetch', 'push', 'pullRequest']],
+            ['azure-devops', 'happier.scm.forge.azure-devops', 'azure-devops', ['detect', 'clone', 'fetch', 'push', 'pullRequest']],
+            ['bitbucket', 'happier.scm.forge.bitbucket', 'bitbucket', ['detect', 'clone', 'fetch', 'push', 'pullRequest']],
+            ['github', 'happier.scm.forge.github', 'github', ['detect', 'clone', 'fetch', 'push', 'pullRequest']],
+            ['gitlab', 'happier.scm.forge.gitlab', 'gitlab', ['detect', 'clone', 'fetch', 'push', 'pullRequest']],
         ]);
     });
 
@@ -495,7 +501,7 @@ describe('resolveBuiltInContributions', () => {
             descriptor.definition.authentication.defaultModeId,
             descriptor.definition.authentication.modes.map(({ id, kind }) => [id, kind]),
         ])).toEqual(expect.arrayContaining([
-            ['happier.agent.codex', 'openai-codex', 'oauth', [['oauth', 'oauthAuthorizationCode']]],
+            ['happier.agent.codex', 'openai-codex', 'oauth', [['oauth', 'oauthAuthorizationCode'], ['device', 'oauthDeviceCode']]],
             ['happier.agent.claude', 'anthropic', 'api-key', [['api-key', 'manual']]],
             ['happier.voice.openai', 'openai', 'api-key', [['api-key', 'manual']]],
         ]));
@@ -911,6 +917,35 @@ describe('resolveBuiltInContributions', () => {
     }));
   });
 
+  it('routes every bundled Agent session command through one projected builder carrying runtime authority and account-settings identity', async () => {
+    const contributes = resolveBuiltInContributions();
+    const bundledAgentIds = getAllAgentDefinitionContracts().map((definition) => definition.id);
+
+    expect(bundledAgentIds.length).toBeGreaterThanOrEqual(17);
+
+    for (const agentId of bundledAgentIds) {
+      runBackendSessionCliCommandMock.mockClear();
+      const agent = contributes.agents.find((entry) => entry.id === agentId);
+      const handler = await agent?.catalogEntry?.getCliCommandHandler?.();
+
+      expect(handler, `expected a session command handler for bundled Agent '${agentId}'`).toBeTypeOf('function');
+      await handler?.({
+        args: [agentId],
+        rawArgv: ['happier', agentId],
+        terminalRuntime: null,
+      });
+
+      expect(
+        runBackendSessionCliCommandMock,
+        `expected bundled Agent '${agentId}' to keep its session command identity`,
+      ).toHaveBeenCalledWith(expect.objectContaining({
+        backendIdForSessionRuntime: agentId,
+        runtimeAuthorityAgentId: agentId,
+        agentIdForAccountSettings: agentId,
+      }));
+    }
+  });
+
   it('projects Kilo preflight and Copilot auth hooks from plugin runtime contributions', async () => {
     const contributes = resolveBuiltInContributions();
     const kiloAgent = contributes.agents.find((entry) => entry.id === 'kilo');
@@ -923,6 +958,20 @@ describe('resolveBuiltInContributions', () => {
 
     const copilotAuthSpec = await copilotAgent?.catalogEntry?.getCliAuthSpec?.();
     expect(copilotAuthSpec?.detectAuthStatus).toBeTypeOf('function');
+  });
+
+  it('projects selected-account materialized environments only for declaring preflight plugins', async () => {
+    const contributes = resolveBuiltInContributions();
+    const adapters = await Promise.all(['codex', 'opencode', 'pi'].map(async (agentId) => {
+      const agent = contributes.agents.find((entry) => entry.id === agentId);
+      return await agent?.catalogEntry?.getPreflightSessionControlsProbeAdapter?.();
+    }));
+
+    expect(adapters).toEqual([
+      expect.objectContaining({ connectedServiceAuth: 'materialized-env' }),
+      expect.objectContaining({ connectedServiceAuth: 'materialized-env' }),
+      expect.objectContaining({ connectedServiceAuth: 'materialized-env' }),
+    ]);
   });
 
   it('projects Pi through bundled plugin metadata without ACP or MCP ownership', () => {

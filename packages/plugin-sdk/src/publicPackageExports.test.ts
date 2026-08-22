@@ -59,10 +59,8 @@ type ApiSurfaceInventory = Readonly<{
         sourceModule: string;
         sourceExport: string;
         realm: 'any' | 'browser' | 'react-native' | 'client' | 'daemon' | 'build';
-        // The source publisher emits `preview` or structured `deprecated` for
-        // authors. Existing generated rows can still carry legacy status until
-        // that sole publisher rematerializes them in place.
-        stability: 'preview' | 'deprecated' | 'stable' | 'experimental' | 'host-internal';
+        replacement?: string;
+        removalCondition?: string;
     }>[];
 }>;
 type PluginSdkPackageJson = Readonly<{
@@ -390,10 +388,15 @@ describe('CORE-A curated package exports', () => {
             externalPublicationRequiresApproval: true,
         });
         expect(readme).toContain('## Public SDK release posture');
-        expect(readme).toContain('Every public path is\n**Developer Preview** until 1.0');
         expect(readme).toContain(
-            'a documented 0.x minor may include breaking changes with migration notes',
+            'one package-level **Developer Preview** source contract',
         );
+        expect(readme).toContain('Developer Preview is not a per-symbol stability tier.');
+        // `prepublish_hold` means no released version exists yet, so the
+        // posture must not name an approved first public version or a
+        // released-semver policy the source tree cannot honour.
+        expect(readme).not.toContain('approved first public version');
+        expect(readme).not.toContain('0.x minor');
     });
 
     inventoryIt('keeps root source and declared browser conditions aligned with the inventory', async () => {
@@ -456,7 +459,6 @@ describe('CORE-A curated package exports', () => {
                 exportName: symbol.exportName,
                 sourceExport: symbol.sourceExport,
                 realm: symbol.realm,
-                stability: symbol.stability,
             }));
 
         expect(candidateValues).toEqual([
@@ -464,13 +466,11 @@ describe('CORE-A curated package exports', () => {
                 exportName: 'compareExternalSessionCandidatePrecedence',
                 sourceExport: 'compareExternalSessionCandidatePrecedence',
                 realm: 'daemon',
-                stability: 'preview',
             },
             {
                 exportName: 'resolveExternalSessionCandidateIdentityKey',
                 sourceExport: 'resolveExternalSessionCandidateIdentityKey',
                 realm: 'daemon',
-                stability: 'preview',
             },
         ]);
     });
@@ -730,7 +730,13 @@ describe('CORE-A curated package exports', () => {
 
     inventoryIt('keeps manifest signature dependencies in the generated author inventory', async () => {
         await expectCanonicalInventoryBarrelClosure('./manifest', [
+            'PluginCollectionProjectedScalarFieldRefV1',
+            'PluginCollectionRowCommandV1',
+            'PluginDeclarativeActionVariantV2',
             'PluginDeclarativeCollectionListNodeV2',
+            'PluginDeclarativeMetadataEntryV2',
+            'PluginDeclarativeRowNodeV2',
+            'PluginDeclarativeStateV2',
             'PluginJsonSchemaValidator',
         ]);
     });

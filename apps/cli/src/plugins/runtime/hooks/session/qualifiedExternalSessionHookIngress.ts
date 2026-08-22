@@ -1,5 +1,6 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 
+import type { JsonValue } from '@happier-dev/plugin-sdk';
 import {
     AGENT_EXTERNAL_SESSION_HOOK_LIMITS,
     validateAgentExternalSessionHookMapEventRequest,
@@ -7,10 +8,10 @@ import {
     type AgentExternalSessionLinkData,
     type AgentExternalSessionHookMapEventValue,
     type AgentExternalSessionHooksContribution,
-    type AgentExternalSessionSource,
-    type AgentExternalSessionsContribution,
-    type StrictJsonValue,
-} from '@happier-dev/plugin-sdk/experimental/sessions';
+} from '@happier-dev/plugin-sdk/sessions/external';
+import type {
+    AgentExternalSessionSource,
+} from '@happier-dev/plugin-sdk/sessions/external';
 import {
     buildLinkedExternalSessionQualifiedIdentityV1,
     type ExternalAgentObservationLeafFactV1,
@@ -20,10 +21,15 @@ import {
 } from '@happier-dev/protocol';
 import { AgentRuntimeJsonValueV1Schema } from '@happier-dev/protocol/runtime';
 
-import { deepEqual } from '@/utils/deterministicJson';
 import type {
     ExternalSessionIndexedTagLookupProof,
 } from '@/api/session/external/linking/ensureExternalSessionLink';
+import {
+    preservesExternalSessionSourceIdentity,
+} from '@/session/external/sourceIdentity';
+import type {
+    BoundedAgentExternalSessionsContribution,
+} from '@/session/external/agentExternalSessionsInvocation';
 
 const TOTAL_FORWARDING_DEADLINE_MS =
     AGENT_EXTERNAL_SESSION_HOOK_LIMITS.totalHookDeadlineMs;
@@ -31,7 +37,13 @@ const MAP_EVENT_MAX_SERIALIZED_BYTES =
     AGENT_EXTERNAL_SESSION_HOOK_LIMITS.callbacks.mapHookEvent.maxEnvelopeUtf8Bytes;
 const EXTERNAL_SESSION_MAX_SERIALIZED_BYTES = 262_144;
 
-type PrincipalState = 'disabled' | 'enabled' | 'revoked' | 'generation_retired';
+export type QualifiedExternalSessionHookPrincipalState =
+    | 'disabled'
+    | 'enabled'
+    | 'revoked'
+    | 'generation_retired';
+
+type PrincipalState = QualifiedExternalSessionHookPrincipalState;
 
 type Principal = {
     principalRef: string;
@@ -52,7 +64,7 @@ type Principal = {
 
 export type QualifiedExternalSessionHookRuntimeLease = Readonly<{
     hooks: AgentExternalSessionHooksContribution;
-    externalSessions: AgentExternalSessionsContribution;
+    externalSessions: BoundedAgentExternalSessionsContribution;
     generation: string;
     retirementSignal: AbortSignal;
     isCurrent(): boolean;
@@ -171,7 +183,7 @@ export type QualifiedExternalSessionHookDeliveryInput = Readonly<{
     eventId: string;
     observedAtMs: number;
     forwardingStartedAtMs: number;
-    nativePayload: StrictJsonValue;
+    nativePayload: JsonValue;
     signal: AbortSignal;
 }>;
 
@@ -351,16 +363,6 @@ function parseResolvedIdentity(value: unknown): Readonly<{
             ...(linkData.data as Record<string, unknown>),
         }) as AgentExternalSessionLinkData,
     };
-}
-
-function preservesResolvedSource(
-    source: AgentExternalSessionSource,
-    resolvedIdentitySource: AgentExternalSessionSource,
-): boolean {
-    return Object.entries(source).every(([key, value]) => (
-        Object.prototype.hasOwnProperty.call(resolvedIdentitySource, key)
-        && deepEqual(value, resolvedIdentitySource[key])
-    ));
 }
 
 export function createQualifiedExternalSessionHookIngress(
@@ -713,7 +715,7 @@ export function createQualifiedExternalSessionHookIngress(
                 );
                 if (
                     !resolvedIdentity
-                    || !preservesResolvedSource(
+                    || !preservesExternalSessionSourceIdentity(
                         resolvedSource,
                         resolvedIdentity.source,
                     )

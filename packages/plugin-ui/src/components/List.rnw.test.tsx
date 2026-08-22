@@ -25,6 +25,28 @@ function listTree(context: ReturnType<typeof createSurfaceContext>, children: Re
 }
 
 describe('plugin-ui List item presentation', () => {
+  it('resolves collection and group accessible names through the plugin catalog', () => {
+    const context = createSurfaceContext({
+      translations: {
+        'acme.repositories': 'Dépôts',
+        'acme.actions': 'Actions du dépôt',
+      },
+    });
+    const mount = mountThroughReactNativeWeb(
+      <PluginUiProvider hostApi={createHostApiStub(context)} context={context}>
+        <List accessibilityLabel="Repositories" accessibilityLabelKey="acme.repositories">
+          <ItemGroup accessibilityLabel="Repository actions" accessibilityLabelKey="acme.actions">
+            <List.Item title="happier" />
+          </ItemGroup>
+        </List>
+      </PluginUiProvider>,
+    );
+
+    expect(mount.container.querySelector('[role="list"]')?.getAttribute('aria-label')).toBe('Dépôts');
+    expect(mount.container.querySelector('[role="group"]')?.getAttribute('aria-label')).toBe('Actions du dépôt');
+    mount.unmount();
+  });
+
   it('renders a semantic actionable row through the shared pressable owner', async () => {
     const onPress = vi.fn();
     const mount = mountList(
@@ -94,6 +116,40 @@ describe('plugin-ui List item presentation', () => {
     expect(busyControl?.getAttribute('aria-busy')).toBe('true');
     expect(busyControl?.getAttribute('aria-disabled')).toBe('true');
     expect(document.activeElement).toBe(busyControl);
+    mount.unmount();
+  });
+
+  it('renders custom children as the row body beneath its semantic label', async () => {
+    const onPress = vi.fn();
+    const mount = mountList(
+      <List.Item title="happier" subtitle="Main repository" onPress={onPress}>
+        <Text value="3 open pull requests" />
+      </List.Item>,
+    );
+
+    const row = mount.container.querySelector<HTMLElement>('[role="listitem"]');
+    const text = row?.textContent ?? '';
+    expect(text).toContain('happier');
+    expect(text).toContain('Main repository');
+    expect(text, 'a row given both a title and children must render both').toContain('3 open pull requests');
+    expect(text.indexOf('3 open pull requests')).toBeGreaterThan(text.indexOf('Main repository'));
+
+    const control = row?.querySelector<HTMLElement>('[role="button"]');
+    await act(async () => { control?.click(); });
+    expect(onPress).toHaveBeenCalledOnce();
+
+    mount.unmount();
+  });
+
+  it('sends a primitive row body through the canonical text owner beside a title', () => {
+    const mount = mountList(<List.Item title="happier">plain body text</List.Item>);
+
+    const row = mount.container.querySelector<HTMLElement>('[role="listitem"]');
+    const wrapped = Array.from(row?.querySelectorAll<HTMLElement>('*') ?? []).some(
+      (element) => element.children.length === 0 && element.textContent === 'plain body text',
+    );
+    expect(wrapped, 'a primitive body must not reach the row as a bare text node').toBe(true);
+
     mount.unmount();
   });
 

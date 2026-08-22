@@ -5,7 +5,7 @@ import {
 } from '@happier-dev/protocol';
 
 import type { ResolvedSettingsContribution } from '@/plugins/projection/registry/types';
-import { isValidPluginJsonSchemaValue } from '@/plugins/runtime/invocation/services/jsonSchemaValidation';
+import { isValidPluginJsonSchemaValue } from '@happier-dev/protocol';
 import {
     evaluateContributionAvailability,
     type ContributionPolicyFacts,

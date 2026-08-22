@@ -3,12 +3,13 @@ import {
     PluginConnectedAccountDescriptorContributionV2Schema,
     PluginHostAccessRequestV2Schema,
 } from '@happier-dev/protocol';
-import type { PluginContributionRef } from '@happier-dev/plugin-sdk/runtime';
+import type { PluginContributionRef } from '@happier-dev/plugin-sdk';
 
 import { createUnavailablePluginInvocationServiceBinding } from '@/plugins/runtime/invocation/services/factory';
 import {
     bindConnectedAccountConfiguredOrigins,
     matchesConnectedAccountOriginTarget,
+    resolveHostOwnedConnectedAccountConfiguredEndpoints,
     resolveHostOwnedConnectedAccountConfiguredOrigins,
     resolveConnectedAccountConfiguredOrigins,
 } from './configuredOrigins';
@@ -49,6 +50,33 @@ function networkRequest(input: Readonly<{
         required: true,
         status: 'available' as const,
     };
+}
+
+function baseDescriptor() {
+    return PluginConnectedAccountDescriptorContributionV2Schema.parse({
+        id: service.localId,
+        title: 'Acme Work',
+        authentication: {
+            defaultModeId: 'oauth',
+            modes: [{
+                id: 'oauth',
+                kind: 'oauthAuthorizationCode',
+                pkce: 'required',
+                outcomeReconciliation: 'none',
+                configuration: {
+                    scope: 'service',
+                    changeBehavior: 'refresh',
+                    fields: [{
+                        id: 'service-base',
+                        title: 'Service base',
+                        schema: { type: 'string', minLength: 1 },
+                        required: true,
+                        semantic: 'connectedAccountBase',
+                    }],
+                },
+            }],
+        },
+    });
 }
 
 describe('connected-account configured origins', () => {
@@ -138,6 +166,156 @@ describe('connected-account configured origins', () => {
         })).toEqual(['https://api.example.test']);
     });
 
+    it('derives one declared fixed origin from a closed configuration choice', () => {
+        const descriptor = PluginConnectedAccountDescriptorContributionV2Schema.parse({
+            id: service.localId,
+            title: 'Acme Work',
+            authentication: {
+                defaultModeId: 'manual',
+                modes: [{
+                    id: 'manual',
+                    kind: 'manual',
+                    outcomeReconciliation: 'none',
+                    fields: [{
+                        id: 'token',
+                        title: 'Token',
+                        secret: true,
+                        schema: { type: 'string', minLength: 1 },
+                    }],
+                    configuration: {
+                        scope: 'account',
+                        changeBehavior: 'reconnect',
+                        fields: [{
+                            id: 'region',
+                            title: 'Region',
+                            semantic: 'connectedAccountFixedOrigin',
+                            required: true,
+                            schema: { type: 'string', enum: ['us', 'de'] },
+                            originByValue: {
+                                us: 'https://us.example.test',
+                                de: 'https://de.example.test',
+                            },
+                        }],
+                    },
+                }],
+            },
+        });
+        const account = Object.freeze({
+            kind: 'account' as const,
+            account: Object.freeze({ service, accountId: 'account-1' }),
+            modeId: 'manual',
+        });
+        const configured = (region: string) => Object.freeze({
+            ...configuration,
+            target: account,
+            values: Object.freeze({ region }),
+        });
+
+        expect(resolveHostOwnedConnectedAccountConfiguredOrigins({
+            service,
+            descriptor,
+            configuration: configured('de'),
+        })).toEqual(['https://de.example.test']);
+        expect(resolveHostOwnedConnectedAccountConfiguredOrigins({
+            service,
+            descriptor,
+            configuration: configured('us'),
+        })).toEqual(['https://us.example.test']);
+        // The choice is never the route: an unpublished choice resolves to no
+        // origin at all rather than to a value a caller could reach.
+        expect(() => resolveHostOwnedConnectedAccountConfiguredOrigins({
+            service,
+            descriptor,
+            configuration: configured('jp'),
+        })).toThrow(/region/u);
+        expect(() => resolveHostOwnedConnectedAccountConfiguredOrigins({
+            service,
+            descriptor,
+            configuration: configured('https://attacker.invalid'),
+        })).toThrow(/region/u);
+    });
+
+    it('projects both the network origin and the configured service base from a path-prefixed base field', () => {
+        const configured = (value: string) => Object.freeze({
+            ...configuration,
+            values: Object.freeze({ 'service-base': value }),
+        });
+
+        expect(resolveHostOwnedConnectedAccountConfiguredEndpoints({
+            service,
+            descriptor: baseDescriptor(),
+            configuration: configured('https://dev.azure.test/acme'),
+        })).toEqual([{
+            origin: 'https://dev.azure.test',
+            base: 'https://dev.azure.test/acme',
+            privateNetwork: false,
+        }]);
+        // A trailing slash is normalization, not a different deployment, and the
+        // path case is preserved because a collection segment is case-bearing.
+        expect(resolveHostOwnedConnectedAccountConfiguredEndpoints({
+            service,
+            descriptor: baseDescriptor(),
+            configuration: configured('https://server.example.test/tfs/DefaultCollection/'),
+        })).toEqual([{
+            origin: 'https://server.example.test',
+            base: 'https://server.example.test/tfs/DefaultCollection',
+            privateNetwork: false,
+        }]);
+        // HostAccess keeps governing by the origin alone: the base never widens
+        // or narrows the admitted network target.
+        expect(resolveHostOwnedConnectedAccountConfiguredOrigins({
+            service,
+            descriptor: baseDescriptor(),
+            configuration: configured('https://dev.azure.test/acme'),
+        })).toEqual(['https://dev.azure.test']);
+    });
+
+    it('derives the private-network decision of a configured base from its origin', () => {
+        const configured = (value: string) => Object.freeze({
+            ...configuration,
+            values: Object.freeze({ 'service-base': value }),
+        });
+
+        expect(resolveHostOwnedConnectedAccountConfiguredEndpoints({
+            service,
+            descriptor: baseDescriptor(),
+            configuration: configured('https://192.168.4.7/tfs/DefaultCollection'),
+        })).toEqual([{
+            origin: 'https://192.168.4.7',
+            base: 'https://192.168.4.7/tfs/DefaultCollection',
+            privateNetwork: true,
+        }]);
+        // The path is routing, never a network-policy input.
+        expect(resolveHostOwnedConnectedAccountConfiguredEndpoints({
+            service,
+            descriptor: baseDescriptor(),
+            configuration: configured('https://dev.azure.test/127.0.0.1'),
+        })).toEqual([{
+            origin: 'https://dev.azure.test',
+            base: 'https://dev.azure.test/127.0.0.1',
+            privateNetwork: false,
+        }]);
+    });
+
+    it.each([
+        'https://user:secret@dev.azure.test/acme',
+        'http://dev.azure.test/acme',
+        'https://dev.azure.test/acme?project=secret',
+        'https://dev.azure.test/acme#fragment',
+        'https://dev.azure.test/acme/../elsewhere',
+        'https://DEV.azure.test/acme',
+        'dev.azure.test/acme',
+    ])('rejects a configured base that is not an exact credential-free HTTPS service base (%s)', (value) => {
+        expect(() => resolveHostOwnedConnectedAccountConfiguredEndpoints({
+            service,
+            descriptor: baseDescriptor(),
+            configuration: Object.freeze({
+                ...configuration,
+                values: Object.freeze({ 'service-base': value }),
+            }),
+        })).toThrow(/configured base/iu);
+    });
+
     it('deterministically unions every exact same-plugin network request and binds one currentness fence', async () => {
         let configurationCurrent = true;
         let generationCurrent = true;
@@ -178,6 +356,7 @@ describe('connected-account configured origins', () => {
         ]);
         expect(binding.networkScopes).toEqual([
             {
+                authority: 'selectedResource',
                 accessId: 'write',
                 required: true,
                 origins: ['https://api.example.test', 'https://static.example.test'],
@@ -186,6 +365,7 @@ describe('connected-account configured origins', () => {
                 connectedAccountService: service,
             },
             {
+                authority: 'selectedResource',
                 accessId: 'read',
                 required: true,
                 origins: ['https://api.example.test'],
@@ -219,9 +399,10 @@ describe('connected-account configured origins', () => {
         })).rejects.toThrow(/configured origin/i);
     });
 
-    it('fails closed when only consumer or cross-service authority exists', async () => {
+    it('projects a current same-plugin network.client origin only into the exact websocket binding', async () => {
         const resolveHostOwnedConfiguredOrigins = vi.fn(() => ['https://api.example.test']);
-        await expect(resolveConnectedAccountConfiguredOrigins({
+        const configurationRevocation = new AbortController();
+        const resolution = await resolveConnectedAccountConfiguredOrigins({
             pluginId: 'acme.accounts',
             service,
             generation: 'process-4',
@@ -242,7 +423,64 @@ describe('connected-account configured origins', () => {
             resolveHostOwnedConfiguredOrigins,
             isConfigurationCurrent: () => true,
             isGenerationCurrent: () => true,
-        })).rejects.toThrow(/unavailable/i);
-        expect(resolveHostOwnedConfiguredOrigins).not.toHaveBeenCalled();
+            configurationRevocationSignal: configurationRevocation.signal,
+        });
+        const binding = bindConnectedAccountConfiguredOrigins(
+            createUnavailablePluginInvocationServiceBinding('process-4', 'producer'),
+            resolution,
+        );
+
+        expect(resolveHostOwnedConfiguredOrigins).toHaveBeenCalledOnce();
+        expect(binding.networkScopes).toBeUndefined();
+        expect(binding.networkClientScopes).toEqual([{
+            authority: 'selectedResource',
+            accessId: 'client',
+            required: true,
+            origins: ['https://api.example.test'],
+            transports: ['websocket'],
+            privateNetwork: false,
+            connectedAccountService: service,
+        }]);
+        expect(await binding.networkCurrentness?.()).toBe(true);
+        expect((binding as typeof binding & Readonly<{
+            networkRevocationSignal?: AbortSignal;
+        }>).networkRevocationSignal).toBe(configurationRevocation.signal);
+    });
+
+    it('projects a private configured WebSocket origin only with explicit network.client private-network intent', async () => {
+        const request = (privateNetwork: boolean) => PluginHostAccessRequestV2Schema.parse({
+            id: privateNetwork ? 'private-client-allowed' : 'private-client-denied',
+            capability: 'network.client',
+            reason: 'Maintain a configured private gateway connection',
+            scope: {
+                targets: [{ kind: 'connectedAccountOrigin', service }],
+                transports: ['websocket'],
+                ...(privateNetwork ? { privateNetwork: true } : {}),
+            },
+        });
+        const resolve = async (privateNetwork: boolean) => await resolveConnectedAccountConfiguredOrigins({
+            pluginId: 'acme.accounts',
+            service,
+            generation: 'process-private-client',
+            configuration,
+            hostAccessRequests: [{
+                request: request(privateNetwork),
+                required: true,
+                status: 'available' as const,
+            }],
+            resolveHostOwnedConfiguredOrigins: () => ['https://localhost:4311'],
+            isConfigurationCurrent: () => true,
+            isGenerationCurrent: () => true,
+        });
+
+        await expect(resolve(true)).resolves.toMatchObject({
+            networkClientScopes: [{
+                accessId: 'private-client-allowed',
+                origins: ['https://localhost:4311'],
+                transports: ['websocket'],
+                privateNetwork: true,
+            }],
+        });
+        await expect(resolve(false)).rejects.toThrow(/no allowed origin/i);
     });
 });

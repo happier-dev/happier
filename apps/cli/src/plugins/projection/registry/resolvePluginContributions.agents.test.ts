@@ -19,7 +19,6 @@ function loadedAgentPlugin(): LoadedPlugin {
         pluginId,
         pluginRootPath: `/plugins/${pluginId}`,
         manifestPath: `/plugins/${pluginId}/.happier-plugin/plugin.json`,
-        manifestDigest: 'sha256:agent',
         daemonEntryPath: `/plugins/${pluginId}/daemon.mjs`,
         devDaemonEntryPath: null,
         sourceSpec: {
@@ -102,7 +101,6 @@ function loadedAgentPlugin(): LoadedPlugin {
                             sources: [{
                                 sourceKind: 'acmeConfig',
                                 schema: {
-                                    passthrough: true,
                                     fields: [{ name: 'kind', kind: 'literal', value: 'acmeConfig' }],
                                 },
                                 key: { segments: [{ kind: 'literal', value: 'acmeConfig' }] },

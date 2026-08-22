@@ -28,14 +28,6 @@ function readMember(receiver: object, key: PropertyKey): unknown {
     return Reflect.get(receiver, key);
 }
 
-const VOICE_SPEECH_RUNTIME_FIELDS = Object.freeze([
-    'kind',
-    'catalog',
-    'transcribe',
-    'synthesize',
-    'settingsActions',
-] as const);
-
 const VOICE_CONVERSATION_OPTIONAL_METHODS = Object.freeze([
     'beforeToolContinuation',
     'beforeInterrupt',
@@ -46,84 +38,18 @@ const VOICE_CONVERSATION_OPTIONAL_METHODS = Object.freeze([
     'setInputMuted',
 ] as const);
 
-const VOICE_CONVERSATION_RUNTIME_FIELDS = Object.freeze([
-    'kind',
-    'protocol',
-    'settingsOperations',
-    'createConnection',
-    'encodeToolResults',
-    'encodeToolContinuation',
-    'encodeContextUpdate',
-    'encodeTextTurn',
-    'microphoneMode',
-    'outputLevelMeter',
-    'settingsActions',
-    ...VOICE_CONVERSATION_OPTIONAL_METHODS,
-] as const);
+const requireObject = requireStaticRegistrationObject;
 
-const VOICE_RUNTIME_FIELDS = Object.freeze([
-    ...VOICE_SPEECH_RUNTIME_FIELDS,
-    ...VOICE_CONVERSATION_RUNTIME_FIELDS,
-] as const);
-
-function requireVoiceRuntimeObject(
-    value: unknown,
-    label: string,
-    allowedFields: readonly string[],
-): object {
-    if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-        throw new TypeError(`${label} must be a plain object`);
-    }
-    const prototype = Object.getPrototypeOf(value);
-    if (prototype !== Object.prototype && prototype !== null) {
-        throw new TypeError(`${label} must be a plain object`);
-    }
-    const allowed = new Set(allowedFields);
-    for (const key of Reflect.ownKeys(value)) {
-        if (typeof key !== 'string' || !allowed.has(key)) {
-            throw new TypeError(`${label} has an undeclared field`);
-        }
-        const descriptor = Object.getOwnPropertyDescriptor(value, key);
-        if (!descriptor || descriptor.enumerable !== true || !Object.hasOwn(descriptor, 'value')) {
-            throw new TypeError(`${label}.${key} must be an own enumerable data property`);
-        }
-    }
-    return value;
-}
-
-function readVoiceRuntimeDataMember(
+function readVoiceRuntimeMember(
     receiver: object,
     key: string,
     label: string,
     required: boolean,
 ): unknown {
-    const descriptor = Object.getOwnPropertyDescriptor(receiver, key);
-    if (!descriptor) {
-        if (required) throw new TypeError(`${label} is required`);
-        return undefined;
-    }
-    if (descriptor.enumerable !== true || !Object.hasOwn(descriptor, 'value')) {
-        throw new TypeError(`${label} must be an own enumerable data property`);
-    }
-    return descriptor.value;
+    const value = readMember(receiver, key);
+    if (value === undefined && required) throw new TypeError(`${label} is required`);
+    return value;
 }
-
-function captureVoiceRuntimeMethod<TMethod>(
-    receiver: object,
-    key: string,
-    label: string,
-    required: boolean,
-): TMethod | undefined {
-    const method = readVoiceRuntimeDataMember(receiver, key, label, required);
-    if (method === undefined && !required) return undefined;
-    if (typeof method !== 'function') {
-        throw new TypeError(`${label} must be a function`);
-    }
-    const captured = method;
-    return Object.freeze((...args: unknown[]) => Reflect.apply(captured, receiver, args)) as TMethod;
-}
-
-const requireObject = requireStaticRegistrationObject;
 
 function captureRequiredStaticDataMember(
     receiver: object,
@@ -203,12 +129,8 @@ function snapshotMethodGroup(
 export function captureVoiceProviderRuntimeKind(
     runtime: VoiceProviderRuntime,
 ): VoiceProviderRuntime['kind'] {
-    const receiver = requireVoiceRuntimeObject(
-        runtime,
-        'Voice provider runtime',
-        VOICE_RUNTIME_FIELDS,
-    );
-    const kind = readVoiceRuntimeDataMember(receiver, 'kind', 'Voice provider runtime.kind', true);
+    const receiver = requireObject(runtime, 'Voice provider runtime');
+    const kind = readVoiceRuntimeMember(receiver, 'kind', 'Voice provider runtime.kind', true);
     if (kind !== 'speech' && kind !== 'conversation') {
         throw new TypeError('Voice provider runtime.kind is invalid');
     }
@@ -218,13 +140,9 @@ export function captureVoiceProviderRuntimeKind(
 function snapshotSettingsActions(
     value: NonNullable<VoiceProviderRuntime['settingsActions']>,
 ): NonNullable<VoiceProviderRuntime['settingsActions']> {
-    const receiver = requireVoiceRuntimeObject(
-        value,
-        'Voice settings-action runtime',
-        ['execute'],
-    );
+    const receiver = requireObject(value, 'Voice settings-action runtime');
     return Object.freeze({
-        execute: captureVoiceRuntimeMethod<
+        execute: captureStaticRegistrationMethod<
             NonNullable<VoiceProviderRuntime['settingsActions']>['execute']
         >(receiver, 'execute', 'Voice settings-action runtime.execute', true)!,
     });
@@ -239,12 +157,8 @@ export function snapshotVoiceProviderRuntime(
         throw new TypeError('Voice provider runtime.kind is invalid');
     }
     const kind = capturedKind ?? actualKind;
-    const receiver = requireVoiceRuntimeObject(
-        runtime,
-        'Voice provider runtime',
-        kind === 'speech' ? VOICE_SPEECH_RUNTIME_FIELDS : VOICE_CONVERSATION_RUNTIME_FIELDS,
-    );
-    const settingsActionsValue = readVoiceRuntimeDataMember(
+    const receiver = requireObject(runtime, 'Voice provider runtime');
+    const settingsActionsValue = readVoiceRuntimeMember(
         receiver,
         'settingsActions',
         'Voice provider runtime.settingsActions',
@@ -257,7 +171,7 @@ export function snapshotVoiceProviderRuntime(
         );
 
     if (kind === 'speech') {
-        const catalogValue = readVoiceRuntimeDataMember(
+        const catalogValue = readVoiceRuntimeMember(
             receiver,
             'catalog',
             'Voice speech runtime.catalog',
@@ -266,13 +180,9 @@ export function snapshotVoiceProviderRuntime(
         const catalog = catalogValue === undefined
             ? undefined
             : (() => {
-                const catalogReceiver = requireVoiceRuntimeObject(
-                    catalogValue,
-                    'Voice speech catalog runtime',
-                    ['list'],
-                );
+                const catalogReceiver = requireObject(catalogValue, 'Voice speech catalog runtime');
                 return Object.freeze({
-                    list: captureVoiceRuntimeMethod<NonNullable<Extract<
+                    list: captureStaticRegistrationMethod<NonNullable<Extract<
                         VoiceProviderRuntime,
                         Readonly<{ kind: 'speech' }>
                     >['catalog']>['list']>(
@@ -283,13 +193,13 @@ export function snapshotVoiceProviderRuntime(
                     )!,
                 });
             })();
-        const transcribe = captureVoiceRuntimeMethod(
+        const transcribe = captureStaticRegistrationMethod(
             receiver,
             'transcribe',
             'Voice speech runtime.transcribe',
             false,
         );
-        const synthesize = captureVoiceRuntimeMethod(
+        const synthesize = captureStaticRegistrationMethod(
             receiver,
             'synthesize',
             'Voice speech runtime.synthesize',
@@ -304,42 +214,41 @@ export function snapshotVoiceProviderRuntime(
         }) as VoiceProviderRuntime;
     }
 
-    const protocolReceiver = requireVoiceRuntimeObject(
-        readVoiceRuntimeDataMember(receiver, 'protocol', 'Voice conversation runtime.protocol', true),
+    const protocolReceiver = requireObject(
+        readVoiceRuntimeMember(receiver, 'protocol', 'Voice conversation runtime.protocol', true),
         'Voice conversation protocol',
-        ['preflight', 'prepare', 'decodeControl', 'encodeTurnControl', 'refreshAuth', 'releasePrepared'],
     );
-    const preflight = captureVoiceRuntimeMethod(
+    const preflight = captureStaticRegistrationMethod(
         protocolReceiver,
         'preflight',
         'Voice conversation protocol.preflight',
         false,
     );
-    const prepare = captureVoiceRuntimeMethod(
+    const prepare = captureStaticRegistrationMethod(
         protocolReceiver,
         'prepare',
         'Voice conversation protocol.prepare',
         true,
     );
-    const decodeControl = captureVoiceRuntimeMethod(
+    const decodeControl = captureStaticRegistrationMethod(
         protocolReceiver,
         'decodeControl',
         'Voice conversation protocol.decodeControl',
         true,
     );
-    const encodeTurnControl = captureVoiceRuntimeMethod(
+    const encodeTurnControl = captureStaticRegistrationMethod(
         protocolReceiver,
         'encodeTurnControl',
         'Voice conversation protocol.encodeTurnControl',
         true,
     );
-    const refreshAuth = captureVoiceRuntimeMethod(
+    const refreshAuth = captureStaticRegistrationMethod(
         protocolReceiver,
         'refreshAuth',
         'Voice conversation protocol.refreshAuth',
         false,
     );
-    const releasePrepared = captureVoiceRuntimeMethod(
+    const releasePrepared = captureStaticRegistrationMethod(
         protocolReceiver,
         'releasePrepared',
         'Voice conversation protocol.releasePrepared',
@@ -353,7 +262,7 @@ export function snapshotVoiceProviderRuntime(
         ...(refreshAuth ? { refreshAuth } : {}),
         ...(releasePrepared ? { releasePrepared } : {}),
     });
-    const settingsOperationsValue = readVoiceRuntimeDataMember(
+    const settingsOperationsValue = readVoiceRuntimeMember(
         receiver,
         'settingsOperations',
         'Voice conversation runtime.settingsOperations',
@@ -362,12 +271,11 @@ export function snapshotVoiceProviderRuntime(
     const settingsOperations = settingsOperationsValue === undefined
         ? undefined
         : (() => {
-            const settingsReceiver = requireVoiceRuntimeObject(
+            const settingsReceiver = requireObject(
                 settingsOperationsValue,
                 'Voice conversation settings runtime',
-                ['listCatalog'],
             );
-            const listCatalog = captureVoiceRuntimeMethod(
+            const listCatalog = captureStaticRegistrationMethod(
                 settingsReceiver,
                 'listCatalog',
                 'Voice conversation settings runtime.listCatalog',
@@ -377,7 +285,7 @@ export function snapshotVoiceProviderRuntime(
         })();
     const optionalMethods: Record<string, unknown> = {};
     for (const methodName of VOICE_CONVERSATION_OPTIONAL_METHODS) {
-        const method = captureVoiceRuntimeMethod(
+        const method = captureStaticRegistrationMethod(
             receiver,
             methodName,
             `Voice conversation runtime.${methodName}`,
@@ -385,13 +293,13 @@ export function snapshotVoiceProviderRuntime(
         );
         if (method !== undefined) optionalMethods[methodName] = method;
     }
-    const microphoneMode = readVoiceRuntimeDataMember(
+    const microphoneMode = readVoiceRuntimeMember(
         receiver,
         'microphoneMode',
         'Voice conversation runtime.microphoneMode',
         true,
     );
-    const outputLevelMeter = readVoiceRuntimeDataMember(
+    const outputLevelMeter = readVoiceRuntimeMember(
         receiver,
         'outputLevelMeter',
         'Voice conversation runtime.outputLevelMeter',
@@ -415,31 +323,31 @@ export function snapshotVoiceProviderRuntime(
         kind: 'conversation' as const,
         protocol,
         ...(settingsOperations ? { settingsOperations } : {}),
-        createConnection: captureVoiceRuntimeMethod(
+        createConnection: captureStaticRegistrationMethod(
             receiver,
             'createConnection',
             'Voice conversation runtime.createConnection',
             true,
         )!,
-        encodeToolResults: captureVoiceRuntimeMethod(
+        encodeToolResults: captureStaticRegistrationMethod(
             receiver,
             'encodeToolResults',
             'Voice conversation runtime.encodeToolResults',
             true,
         )!,
-        encodeToolContinuation: captureVoiceRuntimeMethod(
+        encodeToolContinuation: captureStaticRegistrationMethod(
             receiver,
             'encodeToolContinuation',
             'Voice conversation runtime.encodeToolContinuation',
             true,
         )!,
-        encodeContextUpdate: captureVoiceRuntimeMethod(
+        encodeContextUpdate: captureStaticRegistrationMethod(
             receiver,
             'encodeContextUpdate',
             'Voice conversation runtime.encodeContextUpdate',
             true,
         )!,
-        encodeTextTurn: captureVoiceRuntimeMethod(
+        encodeTextTurn: captureStaticRegistrationMethod(
             receiver,
             'encodeTextTurn',
             'Voice conversation runtime.encodeTextTurn',
@@ -903,9 +811,10 @@ export function snapshotStaticRegistrationValue<
                 value as PluginConnectedAccountRuntime,
             ) as PluginRegistrationValueByFamily[TFamily];
         case 'providers':
-            return snapshotManagedProviderRuntime(
-                value as ManagedProviderRuntime,
-            ) as PluginRegistrationValueByFamily[TFamily];
+            // Like Agents, a Provider registration is a composite the scope
+            // assembles from several subregistrations; it is captured
+            // field-by-field at commit.
+            throw new TypeError('Provider registrations must be captured field-by-field');
         case 'scmHostingProviders':
             return snapshotScmHostingProviderRuntime(
                 value as HostingProviderRuntime,

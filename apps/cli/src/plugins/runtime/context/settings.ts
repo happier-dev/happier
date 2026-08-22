@@ -1,19 +1,20 @@
-import type { ValidateFunction } from 'ajv';
-
-import type { PluginSettingFieldV2 } from '@happier-dev/protocol';
+import type {
+    PluginJsonSchemaValidator,
+    PluginSettingFieldV2,
+} from '@happier-dev/protocol';
 
 import {
     compilePluginSettingFieldSchema,
     PluginSettingFieldSchemaCompilationError,
 } from '@/plugins/settings/fieldSchemaValidation';
-import { isValidPluginJsonSchemaValue } from '@/plugins/runtime/invocation/services/jsonSchemaValidation';
+import { isValidPluginJsonSchemaValue } from '@happier-dev/protocol';
 import { PluginContextServiceError } from './errors';
 
 function settingsError(code: string, message: string): PluginContextServiceError {
     return new PluginContextServiceError(code, message);
 }
 
-function validatorForField(pluginId: string, field: PluginSettingFieldV2): ValidateFunction {
+function validatorForField(pluginId: string, field: PluginSettingFieldV2): PluginJsonSchemaValidator {
     try {
         return compilePluginSettingFieldSchema(field);
     } catch (error) {

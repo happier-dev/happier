@@ -7,10 +7,13 @@ import {
 import type {
     AgentExternalSessionLinkData,
     AgentExternalSessionSource,
-    AgentExternalSessionsFailureCode,
     AgentExternalSessionsInvocationBounds,
     AgentExternalSessionsResult,
 } from '../externalSessions.js';
+import {
+    isAgentExternalSessionsFailureCode,
+    type AgentExternalSessionsFailureCode,
+} from './external/failureCodes.js';
 import {
     captureStaticRegistrationMethod,
     requireStaticRegistrationObject,
@@ -66,20 +69,6 @@ export type AgentExternalSessionTakeoverResolveLaunchCallback = (
 export type AgentExternalSessionTakeoverContribution = Readonly<{
     resolveLaunch: AgentExternalSessionTakeoverResolveLaunchCallback;
 }>;
-
-const FAILURE_CODES = new Set([
-    'source_invalid',
-    'source_unreachable',
-    'candidate_not_found',
-    'agent_unavailable',
-    'unsupported',
-    'unavailable',
-    'not_authorized',
-    'invalid_request',
-    'cancelled',
-    'agent_error',
-    'timeout',
-]);
 
 function invalid(label: string, reason: string): never {
     throw new TypeError(`External Session takeover ${label}: ${reason}`);
@@ -349,7 +338,7 @@ function snapshotFailure(
     record: Readonly<Record<string, unknown>>,
 ): AgentExternalSessionTakeoverResolveLaunchResult {
     if (record.ok !== false || typeof record.code !== 'string'
-        || !FAILURE_CODES.has(record.code)) {
+        || !isAgentExternalSessionsFailureCode(record.code)) {
         return invalid('resolveLaunch result', 'has an invalid failure code');
     }
     if (record.retryable !== undefined && typeof record.retryable !== 'boolean') {

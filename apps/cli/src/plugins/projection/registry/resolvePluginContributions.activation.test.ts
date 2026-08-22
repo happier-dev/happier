@@ -11,7 +11,6 @@ describe('resolved plugin activation projection', () => {
       pluginId: 'com.acme.claude-consumer',
       pluginRootPath: '/plugins/com.acme.claude-consumer',
       manifestPath: '/plugins/com.acme.claude-consumer/.happier-plugin/plugin.json',
-      manifestDigest: 'sha256:claude-consumer',
       daemonEntryPath: '/plugins/com.acme.claude-consumer/dist/plugin.js',
       devDaemonEntryPath: null,
       sourceSpec: {
@@ -49,7 +48,8 @@ describe('resolved plugin activation projection', () => {
             title: 'Run',
             scopes: ['global'],
             surfaces: ['ui'],
-            placement: 'commandPalette',
+            execution: { target: 'daemon' },
+            placementBindings: ['commandPalette'],
             dangerLevel: 'safe',
             hostAccess: ['claude-account'],
           }],
@@ -96,7 +96,6 @@ describe('resolved plugin activation projection', () => {
       pluginId: 'com.acme.unknown-consumer',
       pluginRootPath: '/plugins/com.acme.unknown-consumer',
       manifestPath: '/plugins/com.acme.unknown-consumer/.happier-plugin/plugin.json',
-      manifestDigest: 'sha256:unknown-consumer',
       daemonEntryPath: null,
       devDaemonEntryPath: null,
       sourceSpec: {
@@ -148,7 +147,6 @@ describe('resolved plugin activation projection', () => {
       pluginId: 'happier.agent.claude',
       pluginRootPath: '/plugins/spoofed-claude',
       manifestPath: '/plugins/spoofed-claude/.happier-plugin/plugin.json',
-      manifestDigest: 'sha256:spoofed-claude',
       daemonEntryPath: null,
       devDaemonEntryPath: null,
       sourceSpec: {
@@ -181,7 +179,7 @@ describe('resolved plugin activation projection', () => {
   it('carries an executable Voice declaration through the canonical resolved registry', () => {
     const plugin: LoadedPlugin = {
       pluginId: 'com.acme.voice', pluginRootPath: '/plugins/com.acme.voice',
-      manifestPath: '/plugins/com.acme.voice/.happier-plugin/plugin.json', manifestDigest: 'sha256:voice',
+      manifestPath: '/plugins/com.acme.voice/.happier-plugin/plugin.json',
       daemonEntryPath: null, devDaemonEntryPath: null,
       generatedUiArtifactsManifest: {
         version: 1,
@@ -204,7 +202,7 @@ describe('resolved plugin activation projection', () => {
         contributes: { voiceProviders: [{
           id: 'conversation', title: 'Conversation', kind: 'conversation',
           roles: ['realtime_conversation', 'turn_control'], platforms: ['web'],
-          capabilities: { readiness: { requirements: [] }, turn: { cancelResponse: true, bargeIn: true } },
+          capabilities: { turn: { cancelResponse: true, bargeIn: true } },
           client: { artifactId: 'voice-runtime', modulePath: './voiceRuntime', exportName: 'activate' },
         }] },
       }),
@@ -226,7 +224,6 @@ describe('resolved plugin activation projection', () => {
       pluginId: 'com.acme.development-only',
       pluginRootPath: '/plugins/com.acme.development-only',
       manifestPath: '/plugins/com.acme.development-only/.happier-plugin/plugin.json',
-      manifestDigest: 'sha256:development-only',
       daemonEntryPath: null,
       devDaemonEntryPath: '/plugins/com.acme.development-only/src/daemon.ts',
       sourceSpec: {

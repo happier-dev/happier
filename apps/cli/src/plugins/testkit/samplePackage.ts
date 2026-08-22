@@ -22,8 +22,17 @@ export const SAMPLE_PLUGIN_DAEMON_PATH = join(
     'daemon.mjs',
 );
 
+export const SAMPLE_PLUGIN_AGENT_RUNTIME_PATH = join(
+    SAMPLE_PLUGIN_FIXTURE_ROOT,
+    'agentRuntime.mjs',
+);
+
 export async function materializeSamplePluginFixture(targetRoot: string): Promise<void> {
     await mkdir(join(targetRoot, '.happier-plugin'), { recursive: true });
     await copyFile(SAMPLE_PLUGIN_DAEMON_PATH, join(targetRoot, 'daemon.mjs'));
+    await copyFile(
+        SAMPLE_PLUGIN_AGENT_RUNTIME_PATH,
+        join(targetRoot, 'agentRuntime.mjs'),
+    );
     await copyFile(SAMPLE_PLUGIN_MANIFEST_PATH, join(targetRoot, '.happier-plugin', 'plugin.json'));
 }

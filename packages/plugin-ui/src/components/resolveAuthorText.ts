@@ -1,4 +1,4 @@
-import type { PluginTranslate } from './PluginUiProvider.js';
+import type { PluginTranslate, PluginTranslationValues } from './PluginUiProvider.js';
 
 /**
  * The one rule for turning an author's `value` / `valueKey` pair into text.
@@ -14,7 +14,8 @@ export function resolveAuthorText(
   value: string | undefined,
   valueKey: string | undefined,
   fallback?: string,
+  values?: PluginTranslationValues,
 ): string | undefined {
   if (valueKey === undefined) return value;
-  return translate(valueKey, fallback ?? value);
+  return translate(valueKey, fallback ?? value, values);
 }

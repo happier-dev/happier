@@ -27,7 +27,7 @@ describe('React Native web (react-native-web federation) build SDK helper', () =
             sourceEntry: 'ui/surface.tsx',
             output: {
                 root: 'dist/happier-plugin-ui/react-native-web/native-preview',
-                entry: 'react-native-web/native-preview/entry.mjs',
+                entry: 'react-native-web/native-preview/entry.mjs.bundle',
             },
             vite: {
                 version: '7.3.1',
@@ -97,9 +97,9 @@ describe('React Native web (react-native-web federation) build SDK helper', () =
     it('defines a reactNative/web manifest artifact entry built with Vite', () => {
         const entry = defineReactNativeWebViteBuildArtifact({
             contributionId: 'native-preview',
-            entry: 'react-native-web/native-preview/entry.mjs',
+            entry: 'react-native-web/native-preview/entry.mjs.bundle',
             files: [{
-                relativePath: 'react-native-web/native-preview/entry.mjs',
+                relativePath: 'react-native-web/native-preview/entry.mjs.bundle',
                 digest: `sha256:${'a'.repeat(64)}`,
                 byteSize: 1,
             }],
@@ -113,9 +113,9 @@ describe('React Native web (react-native-web federation) build SDK helper', () =
             contributionId: 'native-preview',
             tier: 'reactNative',
             platform: 'web',
-            entry: 'react-native-web/native-preview/entry.mjs',
+            entry: 'react-native-web/native-preview/entry.mjs.bundle',
             files: [{
-                relativePath: 'react-native-web/native-preview/entry.mjs',
+                relativePath: 'react-native-web/native-preview/entry.mjs.bundle',
                 digest: `sha256:${'a'.repeat(64)}`,
                 byteSize: 1,
             }],
@@ -129,9 +129,9 @@ describe('React Native web (react-native-web federation) build SDK helper', () =
     it('carries a candidate migration export through web without invented Re.Pack fields', () => {
         const entry = defineReactNativeWebViteBuildArtifact({
             contributionId: 'native-preview',
-            entry: 'react-native-web/native-preview/entry.mjs',
+            entry: 'react-native-web/native-preview/entry.mjs.bundle',
             files: [{
-                relativePath: 'react-native-web/native-preview/entry.mjs',
+                relativePath: 'react-native-web/native-preview/entry.mjs.bundle',
                 digest: `sha256:${'a'.repeat(64)}`,
                 byteSize: 1,
             }],

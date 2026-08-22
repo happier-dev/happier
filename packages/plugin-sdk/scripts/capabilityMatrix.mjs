@@ -362,6 +362,19 @@ export function projectCapabilityMatrix({
   if (!isRecord(metadata)) diagnostics.push('metadata must be an object');
 
   const catalogByFamily = indexedBy(catalog, 'manifestKey', 'contributionCatalog', diagnostics);
+  // Family availability has exactly one owner: this matrix. The contribution
+  // catalog previously carried a second per-family `stability` posture that
+  // disagreed with the matrix on 12 of its 36 shared families and reached the
+  // daemon introspection wire. This is the only point where both owners are in
+  // scope, so a reintroduced catalog posture is rejected here.
+  for (const [family, entry] of catalogByFamily) {
+    if (Object.hasOwn(entry, 'stability')) {
+      diagnostics.push(
+        `contribution catalog family '${family}' uses retired family stability metadata`
+        + '; capability-matrix.json owns family availability',
+      );
+    }
+  }
   const accessByCapability = indexedBy(hostAccess, 'capability', 'hostAccessCatalog', diagnostics);
   const servicesById = indexedBy(serviceEntries, 'id', 'services', diagnostics);
   const authorEntrypointRows = isRecord(apiInventory) && Array.isArray(apiInventory.entrypoints)
@@ -535,6 +548,120 @@ export function projectCapabilityMatrix({
     hostAccess: normalizedHostAccess.sort((left, right) => compareCodePoints(left.capability, right.capability)),
     subpaths: normalizedSubpaths.sort((left, right) => compareCodePoints(left.specifier, right.specifier)),
   });
+}
+
+const PUBLIC_SDK_PACKAGE_NAME = '@happier-dev/plugin-sdk';
+
+function escapeForRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function containsQuotedLiteral(source, value) {
+  return source.includes(`'${value}'`) || source.includes(`"${value}"`);
+}
+
+function containsIdentifier(source, value) {
+  return new RegExp(`(^|[^A-Za-z0-9_$])${escapeForRegExp(value)}([^A-Za-z0-9_$]|$)`).test(source);
+}
+
+function containsNamedImportedCall(source, moduleSpecifier, importedName) {
+  const sourceFile = ts.createSourceFile(
+    'capability-matrix-proving-consumer.ts',
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS,
+  );
+  const importedLocalNames = new Set();
+  for (const statement of sourceFile.statements) {
+    if (
+      !ts.isImportDeclaration(statement)
+      || !ts.isStringLiteral(statement.moduleSpecifier)
+      || statement.moduleSpecifier.text !== moduleSpecifier
+      || statement.importClause?.isTypeOnly === true
+    ) continue;
+    const bindings = statement.importClause?.namedBindings;
+    if (!bindings || !ts.isNamedImports(bindings)) continue;
+    for (const element of bindings.elements) {
+      if (element.isTypeOnly) continue;
+      const imported = element.propertyName?.text ?? element.name.text;
+      if (imported === importedName) importedLocalNames.add(element.name.text);
+    }
+  }
+  if (importedLocalNames.size === 0) return false;
+
+  let found = false;
+  const visit = (node) => {
+    if (found) return;
+    if (
+      ts.isCallExpression(node)
+      && ts.isIdentifier(node.expression)
+      && importedLocalNames.has(node.expression.text)
+    ) {
+      found = true;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return found;
+}
+
+/**
+ * A row's proving consumer must EXERCISE the capability it proves, not merely
+ * exist. Every token below is derived from the row itself — the published
+ * subpath specifier, the `services.<id>` invocation, the hostAccess capability
+ * literal, the definePlugin author key and dotted family leaf — so the bar
+ * cannot drift from the capability it guards. Returns null when the source
+ * carries the evidence, otherwise the diagnostic clause naming what is absent.
+ */
+export function capabilityMatrixProvingConsumerExerciseFailure(row, source) {
+  if (typeof source !== 'string') return 'could not be read as source text';
+  if (typeof row?.specifier === 'string') {
+    const specifier = row.specifier === '.'
+      ? PUBLIC_SDK_PACKAGE_NAME
+      : `${PUBLIC_SDK_PACKAGE_NAME}/${row.specifier.replace(/^\.\//, '')}`;
+    return containsQuotedLiteral(source, specifier)
+      ? null
+      : `does not import ${specifier}`;
+  }
+  if (typeof row?.serviceId === 'string') {
+    if (
+      row.serviceId === 'storage'
+      && containsNamedImportedCall(
+        source,
+        `${PUBLIC_SDK_PACKAGE_NAME}/storage`,
+        'requireAccountStorage',
+      )
+    ) {
+      return null;
+    }
+    return source.includes(`services.${row.serviceId}`)
+      ? null
+      : `does not invoke services.${row.serviceId}`;
+  }
+  if (typeof row?.capability === 'string') {
+    return containsQuotedLiteral(source, row.capability)
+      ? null
+      : `does not declare the '${row.capability}' hostAccess capability`;
+  }
+  if (typeof row?.manifestFamily === 'string') {
+    const authorKey = row.definePluginAuthorKey;
+    if (typeof authorKey !== 'string' || authorKey === '') {
+      return 'has no definePlugin author key to prove';
+    }
+    if (!containsIdentifier(source, authorKey)) {
+      return `does not declare the '${authorKey}' definePlugin contribution key`;
+    }
+    const leaf = row.manifestFamily.includes('.')
+      ? row.manifestFamily.slice(row.manifestFamily.lastIndexOf('.') + 1)
+      : null;
+    if (leaf && !containsIdentifier(source, leaf)) {
+      return `declares '${authorKey}' but not '${row.manifestFamily}'`;
+    }
+    return null;
+  }
+  return 'does not belong to a known capability matrix dimension';
 }
 
 export function renderCapabilityMatrix(matrix) {

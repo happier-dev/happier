@@ -5,6 +5,7 @@ import {
 } from '@happier-dev/protocol';
 
 import { definePluginProjectionFamilyV2 } from '@/plugins/projection/families';
+import { hasUnusablePluginDeclarationDiagnostic } from '@/plugins/validation/diagnostics/declarationUsability';
 
 function referencesConnectedAccountDescriptor(input: Readonly<{
   reference: string | Readonly<{ pluginId: string; localId: string }> | undefined;
@@ -29,7 +30,8 @@ function connectedAccountProjectionKey(pluginId: string | undefined, descriptorI
 
 export const connectedAccountProjectionFamily = definePluginProjectionFamilyV2({
   family: 'connectedAccounts',
-  project({ registry }) {
+  project({ registry, pluginDiagnosticsByPluginId }) {
+    const diagnosticsByPluginId = pluginDiagnosticsByPluginId ?? registry.pluginDiagnosticsByPluginId;
     return {
       family: 'connectedAccounts',
       entriesById: Object.fromEntries((registry.connectedAccountDescriptors ?? []).flatMap((contribution) => {
@@ -44,7 +46,7 @@ export const connectedAccountProjectionFamily = definePluginProjectionFamilyV2({
         const pluginId = contribution.pluginId?.trim() || undefined;
         const diagnostics = [
           ...(pluginId
-            ? (registry.pluginDiagnosticsByPluginId?.[pluginId] ?? []).map((diagnostic) => diagnostic.code)
+            ? (diagnosticsByPluginId?.[pluginId] ?? []).map((diagnostic) => diagnostic.code)
             : []),
         ];
         const entry = ConnectedAccountUiProjectionEntryV1Schema.parse({
@@ -53,7 +55,14 @@ export const connectedAccountProjectionFamily = definePluginProjectionFamilyV2({
           title: descriptor.title, ...(descriptor.description ? { description: descriptor.description } : {}),
           authentication: descriptor.authentication,
           capabilities: descriptor.capabilities ?? [],
-          availability: { state: diagnostics.length === 0 ? 'available' : 'blocked', reason: diagnostics.length === 0 ? 'resolved' : 'plugin_diagnostics' },
+          // UI-T28: Connected Account setup is host-rendered from the STATIC
+          // descriptor, so it is blocked only when that declaration is itself
+          // unusable (missing/invalid manifest or unapproved trust). A runtime
+          // diagnostic — a failed daemon activation above all — is disclosed but
+          // must not remove the very flow that repairs the configuration.
+          availability: hasUnusablePluginDeclarationDiagnostic(diagnostics)
+            ? { state: 'blocked', reason: 'plugin_declaration_unusable' }
+            : { state: 'available', reason: 'resolved' },
           diagnostics,
         });
         return [[connectedAccountProjectionKey(pluginId, entry.id), entry] as const];

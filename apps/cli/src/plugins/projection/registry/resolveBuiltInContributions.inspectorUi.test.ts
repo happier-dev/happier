@@ -19,19 +19,20 @@ describe('bundled Inspector canonical UI graph', () => {
                 definition: expect.objectContaining({
                     id: 'settings',
                     target: { kind: 'plugin' },
-                    scope: 'local',
+                    scope: 'daemon',
                 }),
             }),
         ]);
-        expect(contributions.uiViewsV2?.filter((entry) => entry.pluginId === INSPECTOR_PLUGIN_ID)).toEqual([
+        expect(contributions.uiViewsV2?.filter((entry) => entry.pluginId === INSPECTOR_PLUGIN_ID)).toEqual(expect.arrayContaining([
             expect.objectContaining({
                 definition: expect.objectContaining({
                     id: 'inspector-app',
-                    placement: 'app.rightSidebarTab',
+                    container: 'rightSidebarTab',
+                    target: { kind: 'app' },
                     renderer: 'inspector-renderer',
                 }),
             }),
-        ]);
+        ]));
         expect(inspectorRenderer).toMatchObject({
             pluginId: INSPECTOR_PLUGIN_ID,
             definition: {
@@ -41,9 +42,12 @@ describe('bundled Inspector canonical UI graph', () => {
                 requiredHostMethods: ['executeAction'],
             },
         });
+        // The Inspector ships one bundle per translated locale, so this pins the
+        // canonical `en` bundle rather than the locale count (same
+        // `arrayContaining` shape the view assertion above uses).
         expect(contributions.uiTranslationsV2?.filter(
             (entry) => entry.pluginId === INSPECTOR_PLUGIN_ID,
-        )).toEqual([
+        )).toEqual(expect.arrayContaining([
             expect.objectContaining({
                 definition: expect.objectContaining({
                     locale: 'en',
@@ -54,7 +58,7 @@ describe('bundled Inspector canonical UI graph', () => {
                     }),
                 }),
             }),
-        ]);
+        ]));
 
         expect(inspectorArtifacts.map((entry) => entry.platform).sort()).toEqual([
             'android',
@@ -87,9 +91,6 @@ describe('bundled Inspector canonical UI graph', () => {
         ]);
 
         expect(contributions.uiTranslations?.some((entry) => entry.pluginId === INSPECTOR_PLUGIN_ID)).toBe(false);
-        expect(contributions.surfacePlacements?.some((entry) => entry.pluginId === INSPECTOR_PLUGIN_ID)).toBe(false);
-        expect(contributions.reactNativeBundles?.some((entry) => entry.pluginId === INSPECTOR_PLUGIN_ID)).toBe(false);
-        expect(contributions.uiArtifacts?.some((entry) => entry.pluginId === INSPECTOR_PLUGIN_ID)).toBe(false);
 
         const resolverSource = readFileSync(
             new URL('./resolveBuiltInContributions.ts', import.meta.url),

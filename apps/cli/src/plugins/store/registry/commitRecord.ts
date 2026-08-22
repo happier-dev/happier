@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 
 import { z } from 'zod';
 
@@ -7,14 +8,10 @@ import { PluginIdSchema } from '@happier-dev/protocol';
 import { readPortablePathSegmentViolation } from '@happier-dev/protocol/filesystem/portablePathSegment';
 
 import { writeJsonAtomic } from '@/utils/fs/writeJsonAtomic';
+import { asHostProtocolZod } from '@/plugins/runtime/protocolComposableZodAdapter';
 import { flushDirectoryDurably, flushFileDurably } from './durability';
 
 import type { PluginStorePaths } from '../paths';
-
-const AlgorithmQualifiedDigestSchema = z.string().regex(
-  /^(?:sha256:[a-f0-9]{64}|sha384:[a-f0-9]{96}|sha512:[a-f0-9]{128})$/u,
-  'Expected an algorithm-qualified hexadecimal digest',
-);
 
 function isPortableSegment(segment: string): boolean {
   return readPortablePathSegmentViolation(segment) === null;
@@ -36,18 +33,14 @@ export const PortableRelativePathSchema = z.string().min(1).max(512).superRefine
 
 export const PluginRegistryGenerationReferenceSchema = z.object({
   immutableGenerationId: PortableStorageIdSchema,
-  generationRecordDigest: AlgorithmQualifiedDigestSchema,
-  installedArtifactRecord: z.object({
-    relativePath: PortableRelativePathSchema,
-    digest: AlgorithmQualifiedDigestSchema,
-  }).strict(),
 }).strict();
 export type PluginRegistryGenerationReference = z.infer<typeof PluginRegistryGenerationReferenceSchema>;
 
-const CanonicalPluginGenerationMapSchema = z.record(PluginIdSchema, PluginRegistryGenerationReferenceSchema)
+const CanonicalPluginGenerationMapSchema = z.record(asHostProtocolZod(PluginIdSchema), PluginRegistryGenerationReferenceSchema)
   .superRefine((value, context) => {
     for (const pluginId of Object.keys(value)) {
-      if (PluginIdSchema.safeParse(pluginId).data !== pluginId) {
+      const parsedPluginId = PluginIdSchema.safeParse(pluginId);
+      if (!parsedPluginId.success || parsedPluginId.data !== pluginId) {
         context.addIssue({ code: 'custom', path: [pluginId], message: 'Expected a canonical plugin id' });
       }
     }
@@ -61,7 +54,6 @@ export const PluginRegistryCommitRecordSchema = z.object({
   baseRevision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).nullable(),
   installationState: z.object({
     revisionId: PortableStorageIdSchema,
-    digest: AlgorithmQualifiedDigestSchema,
   }).strict(),
   pluginGenerations: CanonicalPluginGenerationMapSchema,
   createdAtMs: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
@@ -81,6 +73,46 @@ export const PluginRegistryCommitRecordSchema = z.object({
 });
 export type PluginRegistryCommitRecord = z.infer<typeof PluginRegistryCommitRecordSchema>;
 
+function parsePluginRegistryCommitRecordFromDisk(value: unknown): PluginRegistryCommitRecord {
+  const parsed = PluginRegistryCommitRecordSchema.safeParse(value);
+  if (parsed.success) return parsed.data;
+  throw invalidCommitRecord(parsed.error);
+}
+
+export function pluginRegistryCommitRecordsEqual(
+  left: PluginRegistryCommitRecord | null,
+  right: PluginRegistryCommitRecord | null,
+): boolean {
+  if (left === right) return true;
+  if (!left || !right) return false;
+  return isDeepStrictEqual(left, right);
+}
+
+/**
+ * The coordinator owns cross-process serialization, while this record owner
+ * supplies its one durable current-record fence. Keep the exact observed
+ * record on the error so the coordinator can distinguish a stale writer from
+ * a post-write durability-report failure without reinterpreting either.
+ */
+export class PluginRegistryCommitCurrentConflictError extends Error {
+  readonly expectedRevision: number | null;
+  readonly actualRevision: number | null;
+
+  constructor(
+    expectedCurrent: PluginRegistryCommitRecord | null,
+    actualCurrent: PluginRegistryCommitRecord | null,
+  ) {
+    const expectedRevision = expectedCurrent?.revision ?? null;
+    const actualRevision = actualCurrent?.revision ?? null;
+    super(
+      `Plugin registry current-record identity conflict: expected revision ${String(expectedRevision)}, found ${String(actualRevision)}`,
+    );
+    this.name = 'PluginRegistryCommitCurrentConflictError';
+    this.expectedRevision = expectedRevision;
+    this.actualRevision = actualRevision;
+  }
+}
+
 function invalidCommitRecord(cause?: unknown): Error {
   return new Error('Invalid plugin registry commit record', cause === undefined ? undefined : { cause });
 }
@@ -99,7 +131,6 @@ export function createEmptyPluginRegistryCommitRecord(input: Readonly<{
     baseRevision: null,
     installationState: {
       revisionId: 'state-0',
-      digest: `sha256:${'0'.repeat(64)}`,
     },
     pluginGenerations: {},
     createdAtMs: input.createdAtMs,
@@ -112,9 +143,7 @@ export async function readPluginRegistryCommitRecord(
 ): Promise<PluginRegistryCommitRecord | null> {
   try {
     const raw = await readFile(paths.registryCurrentFilePath, 'utf8');
-    const parsed = PluginRegistryCommitRecordSchema.safeParse(JSON.parse(raw) as unknown);
-    if (!parsed.success) throw invalidCommitRecord(parsed.error);
-    return parsed.data;
+    return parsePluginRegistryCommitRecordFromDisk(JSON.parse(raw) as unknown);
   } catch (error) {
     if ((error as NodeJS.ErrnoException | null)?.code === 'ENOENT') return null;
     if (error instanceof SyntaxError) throw invalidCommitRecord(error);
@@ -124,18 +153,18 @@ export async function readPluginRegistryCommitRecord(
 
 export async function replacePluginRegistryCommitRecord(input: Readonly<{
   paths: PluginStorePaths;
-  expectedRevision: number | null;
+  expectedCurrent: PluginRegistryCommitRecord | null;
   next: PluginRegistryCommitRecord;
   flushDurable?: (path: string) => Promise<void>;
 }>): Promise<void> {
   const next = PluginRegistryCommitRecordSchema.parse(input.next);
   const current = await readPluginRegistryCommitRecord(input.paths);
-  const actualRevision = current?.revision ?? null;
-  if (actualRevision !== input.expectedRevision) {
-    throw new Error(`Plugin registry base revision conflict: expected ${String(input.expectedRevision)}, found ${String(actualRevision)}`);
+  if (!pluginRegistryCommitRecordsEqual(current, input.expectedCurrent)) {
+    throw new PluginRegistryCommitCurrentConflictError(input.expectedCurrent, current);
   }
-  const expectedNextRevision = input.expectedRevision === null ? 0 : input.expectedRevision + 1;
-  if (next.revision !== expectedNextRevision || next.baseRevision !== input.expectedRevision) {
+  const expectedRevision = input.expectedCurrent?.revision ?? null;
+  const expectedNextRevision = expectedRevision === null ? 0 : expectedRevision + 1;
+  if (next.revision !== expectedNextRevision || next.baseRevision !== expectedRevision) {
     throw new Error(`Plugin registry revision must advance monotonically to ${expectedNextRevision}`);
   }
   // Cross-process serialization belongs to PluginRegistryCommitCoordinator. A callback check here
@@ -149,5 +178,3 @@ export async function flushPluginRegistryCommitRecord(path: string): Promise<voi
   await flushFileDurably(path);
   await flushDirectoryDurably(dirname(path));
 }
-
-export { AlgorithmQualifiedDigestSchema };

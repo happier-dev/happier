@@ -14,8 +14,10 @@ Before selecting an authoring family, read the installed
 `capability-matrix.json`; it is the sole availability authority. The Composer
 references, attachments, controls, and regions; `openableContentViewers`;
 tools; commands; and Session-header actions in this broad companion are
-deferred, conformance-only surfaces. They intentionally remain here to exercise
-their declared SDK shape, not to claim a supported product lifecycle.
+deferred, conformance-only surfaces. They intentionally remain here to
+exercise their declared SDK shape and source wiring, not to claim packed or
+public availability. Tools and Commands require exact packed external
+lifecycle proof before publication metadata can advertise them as usable.
 
 The React Native artifact is one package graph for web, iOS, Android, and
 desktop. The hosted-web artifact is a declared multi-file graph: its entry
@@ -23,6 +25,25 @@ waits for the host-issued ready/bootstrap lifecycle through the public
 `createPluginUiRenderContext()` API, reads the package's `review-guide`
 Resource through `hostApi.readResource`, and never parses launch facts from a
 URL or reaches into a parent frame.
+
+The mounted React Native review overview demonstrates the source-complete
+Developer Preview current-UI contract: it publishes bounded semantic data and
+an opaque Action command with `publishCurrentUiContext(...)`, then clears it on
+unmount through that same Host API. `currentUiContextMode: 'off'` exposes no
+current-UI read or command tool and sends no updates; `'on_demand'` permits an
+explicit read; and `'automatic'` adds metadata-only transitions. A read may
+disclose opaque command descriptors, but command invocation is a separate
+effectful capability:
+the provider must declare stable effect-call custody. The `open-review-status`
+Action has one declaration with `ui` and `voice` invocation surfaces, one web
+client target, and one handler registered once by the existing
+`voiceProvider.activate(api)` entry. It runs only in the invoking client and
+uses `context.ui.openSurface(...)`; it never falls back to the daemon. This
+companion's current `effectCalls: 'none'` Voice leaves can expose the explicit
+read but do not advertise that effectful invocation path. This is
+source-complete Developer Preview documentation only. The generated
+publisher/no-drift and source/package checks are green; exact packed and loaded
+web/iOS/Android parity remains open, so it is not shipped availability.
 
 The Composer portion of `definition.ts` uses the one nested `composer` map and
 all four public helper families. `references.review-references` returns one

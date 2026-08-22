@@ -5,25 +5,24 @@ import {
     createPluginContributionIdentity,
 } from '@happier-dev/protocol';
 import {
+    isPluginError,
     PluginError,
     type Disposable,
     type JsonValue,
     type PluginApi,
 } from '@happier-dev/plugin-sdk';
 import {
-    type PluginContributionRef,
-    type PluginNotificationPreferences,
-    type PluginNotificationsService,
-} from '@happier-dev/plugin-sdk/runtime';
+    type PluginContributionRef } from '@happier-dev/plugin-sdk';
+import {
+    type NotificationPreferences as PluginNotificationPreferences,
+    type NotificationsService as PluginNotificationsService,
+} from '@happier-dev/plugin-sdk/notifications';
 
 import type {
     ResolvedNotificationCategoryContribution,
     ResolvedNotificationChannelContribution,
 } from '@/plugins/projection/registry/types';
-import {
-    clonePluginPlainData,
-    PLUGIN_RUNTIME_JSON_VALUE_LIMITS,
-} from '@/plugins/runtime/plainData';
+import { clonePluginPlainData } from '@/plugins/runtime/plainData';
 import {
     evaluateContributionAvailability,
     resolveInvocationContributionPolicyFacts,
@@ -64,7 +63,7 @@ export type PluginNotificationSenderBinding = Readonly<{
 }>;
 
 export type StablePluginNotificationsHost = Readonly<{
-    categories: readonly ResolvedNotificationCategoryContribution[];
+    categories: readonly NotificationCategoryDeclaration[];
     channels: readonly ResolvedNotificationChannelContribution[];
     activateChannel(ref: PluginContributionRef): Promise<void>;
     readChannel(ref: PluginContributionRef, seed: PluginInvocationServicesSeed): PluginNotificationSenderBinding | null;
@@ -277,9 +276,7 @@ function readRequest(request: Parameters<PluginNotificationsService['send']>[0])
             ? undefined
             : clonePluginPlainData(rawData, {
                 path: 'notification data',
-                limits: PLUGIN_RUNTIME_JSON_VALUE_LIMITS,
                 invalid: (message) => notificationError('plugin_notification_invalid_request', message),
-                limitExceeded: (message) => notificationError('plugin_notification_invalid_request', message),
             }) as JsonValue;
         if (data !== undefined && Buffer.byteLength(canonicalJson(data), 'utf8') > MAX_NOTIFICATION_DATA_BYTES) {
             throw notificationError('plugin_notification_invalid_request', 'Notification data exceeds the encoded byte limit');
@@ -293,7 +290,7 @@ function readRequest(request: Parameters<PluginNotificationsService['send']>[0])
             ...(data === undefined ? {} : { data }),
         });
     } catch (error) {
-        if (error instanceof PluginError) throw error;
+        if (isPluginError(error)) throw error;
         throw notificationError('plugin_notification_invalid_request', 'Notification request is invalid');
     }
 }
@@ -409,8 +406,18 @@ async function waitForNotificationSender(
 }
 
 export type StablePluginNotificationsOwner = Readonly<{
-    bind(seed: PluginInvocationServicesSeed): PluginNotificationsService;
+    bind(
+        seed: PluginInvocationServicesSeed,
+        options?: Readonly<{
+            categories?: readonly NotificationCategoryDeclaration[];
+        }>,
+    ): PluginNotificationsService;
 }>;
+
+export type NotificationCategoryDeclaration = Readonly<Pick<
+    ResolvedNotificationCategoryContribution,
+    'pluginId' | 'definition'
+>>;
 
 export function createStablePluginNotificationsOwner(host: StablePluginNotificationsHost): StablePluginNotificationsOwner {
     const now = host.now ?? Date.now;
@@ -444,15 +451,15 @@ export function createStablePluginNotificationsOwner(host: StablePluginNotificat
     }
 
     return Object.freeze({
-        bind(seed) {
-            const categories = host.categories
+        bind(seed, options) {
+            const categories = (options?.categories ?? host.categories)
                 .filter((entry) => entry.pluginId === seed.plugin.id)
                 .sort((left, right) => left.definition.id.localeCompare(right.definition.id));
             const policyFacts = resolveInvocationContributionPolicyFacts({
                 ...(seed.session ? { sessionId: seed.session.id } : {}),
             });
             const readAvailability = (
-                contribution: ResolvedNotificationCategoryContribution | ResolvedNotificationChannelContribution,
+                contribution: NotificationCategoryDeclaration | ResolvedNotificationChannelContribution,
             ) => evaluateContributionAvailability({
                 availability: contribution.definition.availability,
                 facts: policyFacts,
@@ -490,7 +497,7 @@ export function createStablePluginNotificationsOwner(host: StablePluginNotificat
             };
 
             const resolveSelectedChannels = (
-                category: ResolvedNotificationCategoryContribution,
+                category: NotificationCategoryDeclaration,
                 requestedIds: readonly string[] | undefined,
             ): readonly Readonly<{ key: string; ref: QualifiedRef; channel: ResolvedNotificationChannelContribution }>[] => {
                 const allowed = new Map<string, Readonly<{ key: string; ref: QualifiedRef; channel: ResolvedNotificationChannelContribution }>>();
@@ -536,7 +543,7 @@ export function createStablePluginNotificationsOwner(host: StablePluginNotificat
                 return Object.freeze(selected);
             };
             const readChannelPreference = (
-                category: ResolvedNotificationCategoryContribution,
+                category: NotificationCategoryDeclaration,
                 selectedChannel: Readonly<{
                     key: string;
                     channel: ResolvedNotificationChannelContribution;
@@ -566,7 +573,7 @@ export function createStablePluginNotificationsOwner(host: StablePluginNotificat
                 }));
             };
             const buildPreferences = (
-                category: ResolvedNotificationCategoryContribution,
+                category: NotificationCategoryDeclaration,
             ): PluginNotificationPreferences => {
                 const selected = resolveSelectedChannels(category, undefined);
                 const decisions = selected.map((entry) => Object.freeze({

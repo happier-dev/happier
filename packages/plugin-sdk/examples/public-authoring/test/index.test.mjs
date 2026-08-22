@@ -91,7 +91,7 @@ test('retains the portable production reference package contract', async () => {
   assert.deepEqual(openProjectCompanionDashboard, {
     id: 'open-project-companion-dashboard',
     title: 'Open Project Companion',
-    command: {
+    action: {
       kind: 'openSurface',
       destination: 'project-companion-dashboard',
     },
@@ -126,7 +126,7 @@ test('retains the portable production reference package contract', async () => {
   assert.deepEqual(openProjectCompanionActivity, {
     id: 'open-project-companion-activity',
     title: 'Open Project Companion activity',
-    command: {
+    action: {
       kind: 'openSurface',
       destination: 'project-companion-activity-log',
     },

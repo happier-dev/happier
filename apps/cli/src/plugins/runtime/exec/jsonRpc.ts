@@ -74,9 +74,12 @@ function createFrameSizeError(maxFrameBytes: number, stderrPreview?: string): Pl
     );
 }
 
-function readTopLevelJsonRpcIdFromLineStartSample(sample: string): string | number | null {
+function readTopLevelJsonRpcResponseIdFromLineStartSample(sample: string): string | number | null {
     let objectDepth = 0;
     let arrayDepth = 0;
+    let responseId: string | number | null = null;
+    let hasResponsePayload = false;
+    let hasMethod = false;
     const readStringEnd = (start: number): number => {
         let escaped = false;
         for (let index = start + 1; index < sample.length; index += 1) {
@@ -95,14 +98,18 @@ function readTopLevelJsonRpcIdFromLineStartSample(sample: string): string | numb
         const char = sample[index];
         if (char === '"') {
             const end = readStringEnd(index);
-            if (end < 0) return null;
+            if (end < 0) break;
             if (objectDepth === 1 && arrayDepth === 0) {
                 let cursor = end + 1;
                 while (/\s/.test(sample[cursor] ?? '')) cursor += 1;
                 if (sample[cursor] === ':') {
                     let key: unknown;
                     try { key = JSON.parse(sample.slice(index, end + 1)); } catch { return null; }
-                    if (key === 'id') {
+                    if (key === 'method') {
+                        hasMethod = true;
+                    } else if (key === 'result' || key === 'error') {
+                        hasResponsePayload = true;
+                    } else if (key === 'id') {
                         cursor += 1;
                         while (/\s/.test(sample[cursor] ?? '')) cursor += 1;
                         if (sample[cursor] === '"') {
@@ -110,15 +117,16 @@ function readTopLevelJsonRpcIdFromLineStartSample(sample: string): string | numb
                             if (valueEnd < 0) return null;
                             try {
                                 const value: unknown = JSON.parse(sample.slice(cursor, valueEnd + 1));
-                                return typeof value === 'string' ? value : null;
+                                responseId = typeof value === 'string' ? value : null;
                             } catch {
                                 return null;
                             }
+                        } else {
+                            const numberMatch = /^-?\d+/.exec(sample.slice(cursor));
+                            if (!numberMatch) return null;
+                            const value = Number(numberMatch[0]);
+                            responseId = Number.isSafeInteger(value) ? value : null;
                         }
-                        const numberMatch = /^-?\d+/.exec(sample.slice(cursor));
-                        if (!numberMatch) return null;
-                        const value = Number(numberMatch[0]);
-                        return Number.isSafeInteger(value) ? value : null;
                     }
                 }
             }
@@ -128,7 +136,7 @@ function readTopLevelJsonRpcIdFromLineStartSample(sample: string): string | numb
         else if (char === '[') arrayDepth += 1;
         else if (char === ']') arrayDepth -= 1;
     }
-    return null;
+    return hasResponsePayload && !hasMethod ? responseId : null;
 }
 
 function readJsonRpcErrorCode(value: unknown): number | string | undefined {
@@ -399,17 +407,22 @@ export function createJsonRpcProcessClient(params: CreateJsonRpcProcessClientPar
         await handleNotification(jsonMessage, method);
     }
 
-    function rejectOversizedFrame(sample: string, maxBytes: number): void {
-        const error = createFrameSizeError(maxBytes, readStderrPreview());
-        const id = readTopLevelJsonRpcIdFromLineStartSample(sample);
+    function rejectCorrelatedFrame(sample: string, error: Error): boolean {
+        const id = readTopLevelJsonRpcResponseIdFromLineStartSample(sample);
         if (id !== null) {
             const requestId = String(id);
             if (pendingRequestMethods.has(requestId)) {
                 pendingRequestMethods.delete(requestId);
                 correlator.reject(requestId, error);
-                return;
+                return true;
             }
         }
+        return false;
+    }
+
+    function rejectOversizedFrame(sample: string, maxBytes: number): void {
+        const error = createFrameSizeError(maxBytes, readStderrPreview());
+        if (rejectCorrelatedFrame(sample, error)) return;
         failClient(error);
     }
 
@@ -434,7 +447,9 @@ export function createJsonRpcProcessClient(params: CreateJsonRpcProcessClientPar
                 failClient(createProtocolError('JSON-RPC message hook failed', error, readStderrPreview()));
             });
         } catch (error) {
-            failClient(createProtocolError('Invalid JSON-RPC frame', error, readStderrPreview()));
+            const failure = createProtocolError('Invalid JSON-RPC frame', error, readStderrPreview());
+            if (rejectCorrelatedFrame(line, failure)) return;
+            failClient(failure);
         }
     }
 
@@ -484,7 +499,9 @@ export function createJsonRpcProcessClient(params: CreateJsonRpcProcessClientPar
                 );
             }
             const id = nextId++;
-            const requestTimeoutMs = options?.timeoutMs ?? params.requestTimeoutMs;
+            const requestTimeoutMs = options?.timeoutMs === null
+                ? undefined
+                : options?.timeoutMs ?? params.requestTimeoutMs;
             const abortSignal = options?.signal;
             const requestId = String(id);
             let timeout: NodeJS.Timeout | null = null;

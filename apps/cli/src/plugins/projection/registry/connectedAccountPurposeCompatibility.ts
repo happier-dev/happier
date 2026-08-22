@@ -15,6 +15,19 @@ function matchesService(
 }
 
 /**
+ * V2 runtime reports name only the legacy scalar service. Translate that ingress
+ * to the canonical V4 identity before selecting a V4-owned group operation.
+ */
+export function resolveFirstPartyQualifiedConnectedAccountServiceForLegacyServiceId(
+    serviceId: ConnectedServiceId,
+): QualifiedConnectedAccountRef['service'] | null {
+    const compatibility = Object.entries(
+        BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID,
+    ).find(([legacyServiceId]) => legacyServiceId === serviceId)?.[1];
+    return compatibility?.service ?? null;
+}
+
+/**
  * Sole closed-enum launch-ingress resolver. Eligibility is generated from the first-party
  * manifests and immutable peer evidence; SCM-only identities are deliberately excluded.
  */

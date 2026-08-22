@@ -7,6 +7,7 @@ import test from 'node:test';
 import {
   ApiSurfaceValidationError,
   createApiSurfaceGenerationPlan,
+  projectPublishedApiSurfaceInventory,
   projectApiSurfaceInventory,
   readValidatedApiSurfaceInventory,
   validateApiSurfaceInventory,
@@ -71,7 +72,6 @@ const AUTHOR_SYMBOL = Object.freeze({
   sourceModule: 'src/actions/service.ts',
   sourceExport: 'ActionsService',
   realm: 'any',
-  stability: 'preview',
 });
 
 const HOST_REGISTRATION_SYMBOL = Object.freeze({
@@ -81,7 +81,6 @@ const HOST_REGISTRATION_SYMBOL = Object.freeze({
   sourceModule: 'src/host/registration/scope.ts',
   sourceExport: 'createPluginRegistrationScope',
   realm: 'any',
-  stability: 'host-internal',
 });
 
 const HOST_REGISTRATION_TYPE_SYMBOLS = Object.freeze([
@@ -102,7 +101,6 @@ const HOST_FILE_LOCK_RECLAIM_SYMBOL = Object.freeze({
   sourceModule: 'src/host/fs/jsonOwnerFileLock.ts',
   sourceExport: 'reclaimJsonOwnerFileLockSnapshot',
   realm: 'daemon',
-  stability: 'host-internal',
 });
 
 const HOST_FILE_LOCK_SYMBOL = Object.freeze({
@@ -112,7 +110,6 @@ const HOST_FILE_LOCK_SYMBOL = Object.freeze({
   sourceModule: 'src/host/fs/jsonOwnerFileLock.ts',
   sourceExport: 'withJsonOwnerFileLock',
   realm: 'daemon',
-  stability: 'host-internal',
 });
 
 const HOST_TARGETED_CONTRIBUTIONS_SYMBOL = Object.freeze({
@@ -122,7 +119,6 @@ const HOST_TARGETED_CONTRIBUTIONS_SYMBOL = Object.freeze({
   sourceModule: 'src/targetedContributionAuthoring.ts',
   sourceExport: 'decodeTargetedContributionPointSemantics',
   realm: 'daemon',
-  stability: 'host-internal',
 });
 
 const HOST_TARGETED_CONTRIBUTIONS_SEMANTIC_REFS_SYMBOL = Object.freeze({
@@ -194,6 +190,46 @@ test('validated inventory file reading rejects duplicate author and host specifi
   }
 });
 
+test('validated inventory file reading rejects retired per-symbol posture metadata', async () => {
+  const fixtureRoot = await mkdtemp(join(tmpdir(), 'happier-api-surface-reader-'));
+  const fixturePath = join(fixtureRoot, 'api-surface.json');
+  try {
+    await writeFile(fixturePath, JSON.stringify(validInventory({
+      symbols: [
+        { ...AUTHOR_SYMBOL, stability: 'stable' },
+        ...HOST_SYMBOLS.map((symbol) => ({ ...symbol, stability: 'host-internal' })),
+      ],
+    })));
+
+    await assert.rejects(
+      readValidatedApiSurfaceInventory(fixturePath),
+      (error) => error instanceof ApiSurfaceValidationError
+        && error.diagnostics.includes('symbols[0] has unknown property stability'),
+    );
+  } finally {
+    await rm(fixtureRoot, { recursive: true, force: true });
+  }
+});
+
+test('generic Agent publication source excludes Claude-specific policy', async () => {
+  const [publicSpec, declarations] = await Promise.all([
+    readFile(new URL('../src/agents/index.public.ts', import.meta.url), 'utf8'),
+    readFile(new URL('../src/agents.ts', import.meta.url), 'utf8'),
+  ]);
+  for (const name of [
+    'CLAUDE_EFFORT_LEVELS',
+    'CLAUDE_UNIFIED_TERMINAL_DIALOG_CHOICE_REQUEST_SOURCE',
+    'ClaudeEffortLevel',
+    'buildClaudeModelOptions',
+    'formatClaudeEffortLevelLabel',
+    'normalizeClaudeEffortLevel',
+  ]) {
+    const pattern = new RegExp(`\\b${name}\\b`, 'u');
+    assert.doesNotMatch(publicSpec, pattern);
+    assert.doesNotMatch(declarations, pattern);
+  }
+});
+
 test('checked schema fixes the approved package-owned inventory vocabulary', async () => {
   const schema = JSON.parse(await readFile(new URL('../api-surface.schema.json', import.meta.url), 'utf8'));
 
@@ -205,13 +241,15 @@ test('checked schema fixes the approved package-owned inventory vocabulary', asy
     ['any', 'browser', 'react-native', 'client', 'daemon', 'build'],
   );
   assert.deepEqual(schema.$defs.symbol.properties.kind.enum, ['type', 'value']);
-  assert.deepEqual(schema.$defs.symbol.properties.stability.enum, [
-    'preview',
-    'deprecated',
-    'stable',
-    'experimental',
-    'host-internal',
-  ]);
+  assert.equal(schema.$defs.symbol.properties.stability, undefined);
+  assert.deepEqual(schema.$defs.symbol.properties.since, {
+    type: 'string',
+    pattern: '^[0-9A-Za-z][0-9A-Za-z.+-]*$',
+  });
+  assert.deepEqual(schema.$defs.symbol.dependentRequired, {
+    replacement: ['removalCondition'],
+    removalCondition: ['replacement'],
+  });
   assert.equal(schema.additionalProperties, false);
   assert.equal(schema.$defs.entrypoint.additionalProperties, false);
   assert.equal(schema.$defs.symbol.additionalProperties, false);
@@ -234,6 +272,158 @@ test('checked schema fixes the approved package-owned inventory vocabulary', asy
   assert.equal(
     schema.$defs.entrypoint.allOf[3].then.properties.realm.const,
     'daemon',
+  );
+});
+
+test('projects structured deprecation without per-symbol posture metadata', () => {
+  const inventory = validateApiSurfaceInventory(validInventory({
+    symbols: [
+      {
+        ...AUTHOR_SYMBOL,
+        replacement: 'CurrentActionsService',
+        removalCondition: 'the documented migration completes',
+      },
+      ...HOST_SYMBOLS,
+    ],
+  }));
+  const generated = createApiSurfaceGenerationPlan(inventory);
+
+  assert.equal(Object.hasOwn(inventory.symbols[0], 'stability'), false);
+  assert.equal(inventory.symbols[0].replacement, 'CurrentActionsService');
+  assert.equal(inventory.symbols[0].removalCondition, 'the documented migration completes');
+  assert.doesNotMatch(generated.sourceBarrels['src/actions/index.ts'], /@preview|@experimental|@stable/u);
+  assert.match(
+    generated.sourceBarrels['src/actions/index.ts'],
+    /@deprecated CurrentActionsService; remove when the documented migration completes/u,
+  );
+  assert.match(generated.authorApiMarkdown, /> This package is Developer Preview\./u);
+  assert.doesNotMatch(generated.authorApiMarkdown, /\| Stability \||\| preview \|/u);
+});
+
+test('derives symbol @since from the immediately previous retained published inventory', () => {
+  const firstPublished = projectPublishedApiSurfaceInventory({
+    inventory: validInventory(),
+    publishedVersion: '0.1.0',
+  });
+  const newlyPublishedSymbol = {
+    ...AUTHOR_SYMBOL,
+    exportName: 'CurrentActionsService',
+    sourceExport: 'CurrentActionsService',
+  };
+
+  const nextPublished = projectPublishedApiSurfaceInventory({
+    inventory: validInventory({
+      symbols: [
+        AUTHOR_SYMBOL,
+        newlyPublishedSymbol,
+        ...HOST_SYMBOLS,
+      ],
+    }),
+    publishedVersion: '0.2.0',
+    previousPublishedInventory: firstPublished,
+  });
+
+  assert.equal(
+    nextPublished.symbols.find((symbol) => symbol.exportName === 'ActionsService')?.since,
+    '0.1.0',
+  );
+  assert.equal(
+    nextPublished.symbols.find((symbol) => symbol.exportName === 'CurrentActionsService')?.since,
+    '0.2.0',
+  );
+
+  const generated = createApiSurfaceGenerationPlan(nextPublished);
+  assert.match(
+    generated.sourceBarrels['src/actions/index.ts'],
+    /\/\*\* @since 0\.1\.0 \*\/\nexport type \{ ActionsService \}/u,
+  );
+  assert.match(
+    generated.authorApiMarkdown,
+    /\| Specifier \| Export \| Kind \| Realm \| Since \|/u,
+  );
+  assert.match(
+    generated.authorApiMarkdown,
+    /\| `\.\/actions` \| `CurrentActionsService` \| type \| any \| 0\.2\.0 \|/u,
+  );
+});
+
+test('composes publication-derived @since with structured deprecation', () => {
+  const published = projectPublishedApiSurfaceInventory({
+    inventory: validInventory({
+      symbols: [
+        {
+          ...AUTHOR_SYMBOL,
+          replacement: 'CurrentActionsService',
+          removalCondition: 'the documented migration completes',
+        },
+        ...HOST_SYMBOLS,
+      ],
+    }),
+    publishedVersion: '0.1.0',
+  });
+
+  assert.match(
+    createApiSurfaceGenerationPlan(published).sourceBarrels['src/actions/index.ts'],
+    /\/\*\*\n \* @since 0\.1\.0\n \* @deprecated CurrentActionsService; remove when the documented migration completes\n \*\/\nexport type \{ ActionsService \}/u,
+  );
+});
+
+test('rejects author-supplied @since and incomplete prior published provenance', () => {
+  assert.throws(
+    () => projectPublishedApiSurfaceInventory({
+      inventory: validInventory({
+        symbols: [
+          { ...AUTHOR_SYMBOL, since: '0.1.0' },
+          ...HOST_SYMBOLS,
+        ],
+      }),
+      publishedVersion: '0.2.0',
+    }),
+    /current source inventory symbol \.\/actions:ActionsService must not declare publisher-owned @since/u,
+  );
+
+  assert.throws(
+    () => projectPublishedApiSurfaceInventory({
+      inventory: validInventory(),
+      publishedVersion: '0.2.0',
+      previousPublishedInventory: validInventory(),
+    }),
+    /previous published inventory symbol \.\/actions:ActionsService is missing @since/u,
+  );
+
+  assert.throws(
+    () => projectPublishedApiSurfaceInventory({
+      inventory: validInventory(),
+      publishedVersion: '0.2.0 */',
+    }),
+    /publishedVersion must be exact canonical semver/u,
+  );
+});
+
+test('publication inventory requires exact canonical semver and forbids future prior provenance', () => {
+  for (const publishedVersion of ['1.2', 'v1.2.3', '1.2.3+build.1']) {
+    assert.throws(
+      () => projectPublishedApiSurfaceInventory({
+        inventory: validInventory(),
+        publishedVersion,
+      }),
+      /publishedVersion must be exact canonical semver/u,
+    );
+  }
+
+  const futurePreviousInventory = validInventory({
+    symbols: [AUTHOR_SYMBOL, ...HOST_SYMBOLS].map((symbol) => ({
+      ...symbol,
+      since: '2.0.0',
+    })),
+  });
+  assert.throws(
+    () => projectPublishedApiSurfaceInventory({
+      inventory: validInventory(),
+      publishedVersion: '1.2.3-preview.1',
+      previousPublishedInventory: futurePreviousInventory,
+    }),
+    /previous published inventory symbol \.\/actions:ActionsService has @since 2\.0\.0 after publishedVersion 1\.2\.3-preview\.1/u,
   );
 });
 
@@ -270,7 +460,7 @@ test('admits the daemon-only targeted-contribution semantic-ref carrier', () => 
   )));
 });
 
-test('projects every prepublication author export as Preview while preserving structured deprecations', () => {
+test('projects symbols without posture metadata while preserving structured deprecations', () => {
   const inventory = projectApiSurfaceInventory({
     entrypoints: [
       {
@@ -282,7 +472,6 @@ test('projects every prepublication author export as Preview while preserving st
             sourceModule: 'src/actions/service.ts',
             sourceExport: 'LegacyExperimentalAuthorContract',
             realm: 'any',
-            stability: 'experimental',
           },
           {
             exportName: 'LegacyStableAuthorContract',
@@ -290,7 +479,6 @@ test('projects every prepublication author export as Preview while preserving st
             sourceModule: 'src/actions/service.ts',
             sourceExport: 'LegacyStableAuthorContract',
             realm: 'any',
-            stability: 'stable',
           },
           {
             exportName: 'RetiringAuthorContract',
@@ -298,7 +486,6 @@ test('projects every prepublication author export as Preview while preserving st
             sourceModule: 'src/actions/service.ts',
             sourceExport: 'RetiringAuthorContract',
             realm: 'any',
-            stability: 'deprecated',
             replacement: 'CurrentAuthorContract',
             removalCondition: 'the documented migration completes',
           },
@@ -313,19 +500,16 @@ test('projects every prepublication author export as Preview while preserving st
             sourceModule: 'src/host/registration/scope.ts',
             sourceExport: 'createPluginRegistrationScope',
             realm: 'any',
-            stability: 'experimental',
           },
           ...HOST_REGISTRATION_TYPE_SYMBOLS.map((symbol) => ({
             ...symbol,
-            stability: 'stable',
           })),
         ],
       },
       {
         specifier: './host/fs/json-owner-file-lock',
         symbols: HOST_SYMBOLS
-          .filter((symbol) => symbol.specifier === './host/fs/json-owner-file-lock')
-          .map((symbol) => ({ ...symbol, stability: 'experimental' })),
+          .filter((symbol) => symbol.specifier === './host/fs/json-owner-file-lock'),
       },
       {
         specifier: './host/targeted-contributions',
@@ -333,104 +517,88 @@ test('projects every prepublication author export as Preview while preserving st
           HOST_TARGETED_CONTRIBUTIONS_SYMBOL,
           HOST_TARGETED_CONTRIBUTIONS_SEMANTIC_REFS_SYMBOL,
           ...HOST_TARGETED_CONTRIBUTIONS_TYPE_SYMBOLS,
-        ].map((symbol) => ({ ...symbol, stability: 'experimental' })),
+        ],
       },
     ],
   });
 
   assert.deepEqual(inventory.symbols.map((symbol) => ({
     exportName: symbol.exportName,
-    stability: symbol.stability,
     replacement: symbol.replacement,
     removalCondition: symbol.removalCondition,
   })), [
     {
       exportName: 'LegacyExperimentalAuthorContract',
-      stability: 'preview',
       replacement: undefined,
       removalCondition: undefined,
     },
     {
       exportName: 'LegacyStableAuthorContract',
-      stability: 'preview',
       replacement: undefined,
       removalCondition: undefined,
     },
     {
       exportName: 'RetiringAuthorContract',
-      stability: 'deprecated',
       replacement: 'CurrentAuthorContract',
       removalCondition: 'the documented migration completes',
     },
     {
       exportName: 'reclaimJsonOwnerFileLockSnapshot',
-      stability: 'host-internal',
       replacement: undefined,
       removalCondition: undefined,
     },
     {
       exportName: 'withJsonOwnerFileLock',
-      stability: 'host-internal',
       replacement: undefined,
       removalCondition: undefined,
     },
     {
       exportName: 'PluginAgentRuntimeRegistration',
-      stability: 'host-internal',
       replacement: undefined,
       removalCondition: undefined,
     },
     {
       exportName: 'PluginRegistrationRight',
-      stability: 'host-internal',
       replacement: undefined,
       removalCondition: undefined,
     },
     {
       exportName: 'PluginRuntimeRegistration',
-      stability: 'host-internal',
       replacement: undefined,
       removalCondition: undefined,
     },
     {
       exportName: 'createPluginRegistrationScope',
-      stability: 'host-internal',
       replacement: undefined,
       removalCondition: undefined,
     },
     {
       exportName: 'TargetedContributionPointSemanticInput',
-      stability: 'host-internal',
       replacement: undefined,
       removalCondition: undefined,
     },
     {
       exportName: 'TargetedContributionPointSemanticOperation',
-      stability: 'host-internal',
       replacement: undefined,
       removalCondition: undefined,
     },
     {
       exportName: 'TargetedContributionPointSemanticProjection',
-      stability: 'host-internal',
       replacement: undefined,
       removalCondition: undefined,
     },
     {
       exportName: 'TargetedContributionPointSemanticSurface',
-      stability: 'host-internal',
       replacement: undefined,
       removalCondition: undefined,
     },
     {
       exportName: 'decodeTargetedContributionPointSemantics',
-      stability: 'host-internal',
       replacement: undefined,
       removalCondition: undefined,
     },
     {
       exportName: 'readTargetedContributionPointSemanticRefs',
-      stability: 'host-internal',
       replacement: undefined,
       removalCondition: undefined,
     },
@@ -462,7 +630,7 @@ test('client inventory entrypoints require browser, React Native, and default ou
   }
 });
 
-test('inventory validation owns uniqueness, audience, stability, and canonical source rules', () => {
+test('inventory validation owns uniqueness, audience, deprecation, and canonical source rules', () => {
   assert.throws(
     () => validateApiSurfaceInventory(validInventory({
       entrypoints: [
@@ -495,25 +663,13 @@ test('inventory validation owns uniqueness, audience, stability, and canonical s
   assert.throws(
     () => validateApiSurfaceInventory(validInventory({
       symbols: [
-        { ...AUTHOR_SYMBOL, stability: 'host-internal' },
+        { ...AUTHOR_SYMBOL, stability: 'preview' },
         ...HOST_SYMBOLS,
       ],
     })),
     (error) => error instanceof ApiSurfaceValidationError
-      && error.diagnostics.some((diagnostic) => diagnostic.includes('author symbol')),
+      && error.diagnostics.some((diagnostic) => diagnostic.includes('unknown property stability')),
   );
-
-  for (const legacyStability of ['stable', 'experimental']) {
-    assert.doesNotThrow(
-      () => validateApiSurfaceInventory(validInventory({
-        symbols: [
-          { ...AUTHOR_SYMBOL, stability: legacyStability },
-          ...HOST_SYMBOLS,
-        ],
-      })),
-      `existing generated inventory with legacy ${legacyStability} rows stays readable until the sole publisher rematerializes it`,
-    );
-  }
 
   assert.throws(
     () => validateApiSurfaceInventory(validInventory({
@@ -715,7 +871,7 @@ test('one generation plan includes host package seams but excludes them from aut
     './host/registration',
     './host/targeted-contributions',
   ]);
-  assert.match(generated.sourceBarrels['src/actions/index.ts'], /@preview/u);
+  assert.doesNotMatch(generated.sourceBarrels['src/actions/index.ts'], /@preview|@experimental|@stable/u);
   assert.match(
     generated.sourceBarrels['src/actions/index.ts'],
     /export type \{ ActionsService \} from '\.\/service\.js';/u,
@@ -732,7 +888,7 @@ test('one generation plan includes host package seams but excludes them from aut
   });
   assert.match(
     generated.authorApiMarkdown,
-    /`preview` is the package-level Developer Preview posture, not a per-symbol maturity claim\./u,
+    /> This package is Developer Preview\./u,
   );
   assert.match(
     generated.authorApiMarkdown,

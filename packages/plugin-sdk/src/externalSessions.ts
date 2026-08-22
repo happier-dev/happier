@@ -6,6 +6,10 @@ import {
     HAPPIER_BASE_SYSTEM_PROMPT_OPTIONS_V1 as canonicalHappierBaseSystemPromptOptionsV1,
     HAPPIER_BASE_SYSTEM_PROMPT_SESSION_TITLE_INITIAL_V1 as canonicalHappierBaseSystemPromptSessionTitleInitialV1,
 } from '@happier-dev/protocol';
+import {
+    isAgentExternalSessionsFailureCode,
+    type AgentExternalSessionsFailureCode,
+} from './sessions/external/failureCodes.js';
 
 export const HAPPIER_BASE_SYSTEM_PROMPT_ATTACHMENTS_V1: string =
     canonicalHappierBaseSystemPromptAttachmentsV1;
@@ -61,18 +65,8 @@ export const AgentExternalSessionTranscriptRawRecordSchema: SessionSchema<
     AgentExternalSessionTranscriptRawRecord
 > = canonicalAgentExternalSessionTranscriptRawRecordSchema;
 
-export type AgentExternalSessionsFailureCode =
-    | 'source_invalid'
-    | 'source_unreachable'
-    | 'candidate_not_found'
-    | 'agent_unavailable'
-    | 'unsupported'
-    | 'unavailable'
-    | 'not_authorized'
-    | 'invalid_request'
-    | 'cancelled'
-    | 'agent_error'
-    | 'timeout';
+export { isAgentExternalSessionsFailureCode };
+export type { AgentExternalSessionsFailureCode };
 
 export type AgentExternalSessionsResult<T> =
     | Readonly<{ ok: true; value: T }>

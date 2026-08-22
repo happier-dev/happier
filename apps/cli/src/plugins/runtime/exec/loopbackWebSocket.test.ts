@@ -363,7 +363,10 @@ function createSpec(
                 response: {
                     byteOrder,
                     maxFrameBytes: 4096,
-                    timeoutMs: 500,
+                    // The fixture spawns a fresh Node process; leave startup
+                    // scheduling headroom while dedicated timeout cases retain
+                    // their explicit short deadlines below.
+                    timeoutMs: 1_500,
                 },
             },
             connect: {
@@ -518,6 +521,31 @@ describe('A.13p.10 spawned loopback WebSocket client transport', () => {
             await expect.poll(() => received).toEqual([
                 expect.objectContaining({ echo: { kind: 'fragmented-ping' } }),
             ]);
+        } finally {
+            await handle.dispose();
+        }
+    });
+
+    it('aborts a live child loopback connection after its handshake has completed', async () => {
+        const controller = new AbortController();
+        const fixture = await createFixtureBinary();
+        const exec = createPluginExecService({
+            allowedExecutablePaths: [process.execPath],
+            allowPathRuntimeNames: ['node'],
+        });
+        const handle = await exec.spawnClient(createSpec(fixture, {}), { signal: controller.signal });
+        try {
+            controller.abort();
+            const result = await Promise.race([
+                handle.client.closed.then(
+                    () => ({ status: 'resolved' as const }),
+                    (error: unknown) => error,
+                ),
+                new Promise<Readonly<{ status: 'pending' }>>((resolve) => {
+                    setTimeout(() => resolve(Object.freeze({ status: 'pending' as const })), 100);
+                }),
+            ]);
+            expect(result).toMatchObject({ code: 'PLUGIN_EXEC_CLIENT_ABORTED' });
         } finally {
             await handle.dispose();
         }

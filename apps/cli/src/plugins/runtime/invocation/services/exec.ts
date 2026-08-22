@@ -1,6 +1,9 @@
 import type { JsonValue } from '@happier-dev/plugin-sdk';
-import type { ManagedExecutableRef, PluginAgentCliReadinessService, PluginExecService, PluginFramedBytesClient, PluginJsonRpcClient, PluginJsonStreamClient, PluginLoopbackWebSocketJsonClient, PluginPath, PluginProcessHandle, PluginProtocolClientHandle, PluginProtocolClientSpec, PluginProtocolClientSpecByKind, PluginProtocolClientsService, PluginSystemToolsService } from '@happier-dev/plugin-sdk/runtime';
-import { PluginError } from '@happier-dev/plugin-sdk';
+import type { ManagedExecutableRef } from '@happier-dev/plugin-sdk/managed-services';
+import type { AgentCliReadinessService as PluginAgentCliReadinessService, ExecService, PluginProcessHandle, SystemToolsService as PluginSystemToolsService } from '@happier-dev/plugin-sdk/exec';
+import type { PluginFramedBytesClient, PluginJsonRpcClient, PluginJsonStreamClient, PluginLoopbackWebSocketJsonClient, PluginProtocolClientHandle, PluginProtocolClientSpec, PluginProtocolClientSpecByKind, ProtocolClientsService } from '@happier-dev/plugin-sdk/exec/protocol-clients';
+import type { PluginPath } from '@happier-dev/plugin-sdk';
+import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
 import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process';
 import type {
     ExecProcessHandleV1,
@@ -19,20 +22,52 @@ import {
     spawnSupervisedPluginProcess,
     type SupervisedPluginProcess,
 } from '../../exec/processSupervisor';
-import { PluginExecClientError } from '../../exec/errors';
 import {
-    isPluginPathAuthorizedByScope,
+    PluginExecClientError,
+    createPluginExecClientExitError,
+    sanitizeExecDiagnosticText,
+} from '../../exec/errors';
+import {
+    isPluginPathCoveredByDisclosure,
     type PluginFileSystemScope,
 } from './filesystem';
 import type { HostRuntimeLimitMeasurementRecorder } from '@/agent/runtime/state/runtimeLimitMeasurement';
+import { validateEnvVarRecordStrict } from '@/terminal/runtime/envVarSanitization';
 
-type ResolvedPluginExecutable = Readonly<{
+export type ResolvedPluginExecutable = Readonly<{
     command: string;
     args?: readonly string[];
     env?: Readonly<Record<string, string>>;
     allowedArguments?: readonly string[];
     release?: () => void;
 }>;
+
+const INTERNAL_PREAUTHORIZED_SPAWNS = new WeakMap<
+    object,
+    WeakMap<object, ResolvedPluginExecutable>
+>();
+
+export function installPreauthorizedPluginExecSpawnForHost(
+    service: Pick<ExecService, 'spawn' | 'run'>,
+    request: Parameters<ExecService['spawn']>[0],
+    launch: ResolvedPluginExecutable,
+): Readonly<{ dispose(): void }> {
+    const authorizations = INTERNAL_PREAUTHORIZED_SPAWNS.get(service);
+    if (!authorizations || authorizations.has(request)) {
+        fail(
+            'plugin_exec_preauthorization_unavailable',
+            'Exact process launch preauthorization is unavailable',
+        );
+    }
+    authorizations.set(request, launch);
+    return Object.freeze({
+        dispose() {
+            if (authorizations.get(request) === launch) {
+                authorizations.delete(request);
+            }
+        },
+    });
+}
 
 export type HostResolvedManagedDependencyExecutable = Readonly<{
     command: string;
@@ -48,8 +83,139 @@ export type HostResolvedSystemToolExecutable = Readonly<{
     env?: Readonly<Record<string, string>>;
 }>;
 
+export type HostAuthorizedPluginExecLaunch = Readonly<{
+    command: string;
+    args: readonly string[];
+    env: Readonly<Record<string, string>>;
+    cwd?: string;
+    stdin?: Uint8Array;
+    timeoutMs?: number;
+    maxStdoutBytes?: number;
+    maxStderrBytes?: number;
+    windowsVerbatimArguments?: boolean;
+    release(): void;
+}>;
+
+export type PluginExecDisclosureMismatch =
+    | Readonly<{ capability: 'process'; executable: ManagedExecutableRef }>
+    | Readonly<{ capability: 'environment'; keys: readonly string[] }>
+    | Readonly<{ capability: 'filesystem'; path: PluginPath; access: 'read' }>;
+
+const INTERNAL_LAUNCH_AUTHORIZERS = new WeakMap<
+    ExecService,
+    (
+        request: Parameters<ExecService['spawn']>[0]
+            & Readonly<{ timeoutMs?: number }>,
+        options?: Readonly<{ signal?: AbortSignal }>,
+    ) => Promise<HostAuthorizedPluginExecLaunch>
+>();
+
+export async function authorizePluginExecLaunchForHost(
+    service: ExecService,
+    request: Parameters<ExecService['spawn']>[0]
+        & Readonly<{ timeoutMs?: number }>,
+    options?: Readonly<{ signal?: AbortSignal }>,
+): Promise<HostAuthorizedPluginExecLaunch> {
+    const authorize = INTERNAL_LAUNCH_AUTHORIZERS.get(service);
+    if (!authorize) {
+        return fail(
+            'plugin_exec_launch_authorization_unavailable',
+            'Exact process launch authorization is unavailable in this invocation host',
+        );
+    }
+    return await authorize(request, options);
+}
+
+export function createStableRunnerPluginExecService(
+    params: Readonly<{
+        signal: AbortSignal;
+        isGenerationCurrent(): boolean;
+        agentCli: PluginAgentCliReadinessService;
+        resolveSystemTool(
+            request: Parameters<
+                PluginSystemToolsService['resolve']
+            >[0],
+        ): Promise<Readonly<{
+            result: Awaited<ReturnType<
+                PluginSystemToolsService['resolve']
+            >>;
+            resolutionId: string;
+        }>>;
+        authorizeLaunch(
+            request: Parameters<ExecService['spawn']>[0]
+                & Readonly<{ timeoutMs?: number }>,
+            options?: Readonly<{ signal?: AbortSignal }>,
+            systemToolResolutionId?: string,
+        ): Promise<HostAuthorizedPluginExecLaunch>;
+        transformAgentChildLaunchEnvironment?(
+            environment: Readonly<Record<string, string>>,
+        ): Readonly<Record<string, string>>;
+        recordRuntimeLimitMeasurement?:
+            HostRuntimeLimitMeasurementRecorder;
+    }>,
+): ExecService {
+    const systemToolResolutionIds = new WeakMap<object, string>();
+    const base = createStablePluginExecService({
+        allowedExecutables: [],
+        signal: params.signal,
+        isGenerationCurrent: params.isGenerationCurrent,
+        authorizeLaunch: (request, options) =>
+            params.authorizeLaunch(
+                request,
+                options,
+                systemToolResolutionIds.get(
+                    request.executable,
+                ),
+            ),
+        ...(params.transformAgentChildLaunchEnvironment
+            ? {
+                transformAgentChildLaunchEnvironment:
+                    params.transformAgentChildLaunchEnvironment,
+            }
+            : {}),
+        async resolveExecutable() {
+            return fail(
+                'plugin_exec_runner_local_resolution_forbidden',
+                'Runner executable resolution must remain daemon-owned',
+            );
+        },
+        async resolvePath() {
+            return fail(
+                'plugin_exec_runner_local_path_resolution_forbidden',
+                'Runner path resolution must remain daemon-owned',
+            );
+        },
+        ...(params.recordRuntimeLimitMeasurement
+            ? {
+                recordRuntimeLimitMeasurement:
+                    params.recordRuntimeLimitMeasurement,
+            }
+            : {}),
+    });
+    const systemTools: PluginSystemToolsService = Object.freeze({
+        async resolve(
+            request: Parameters<
+                PluginSystemToolsService['resolve']
+            >[0],
+        ) {
+            const resolved =
+                await params.resolveSystemTool(request);
+            systemToolResolutionIds.set(
+                resolved.result.executable,
+                resolved.resolutionId,
+            );
+            return resolved.result;
+        },
+    });
+    return Object.freeze({
+        ...base,
+        agentCli: params.agentCli,
+        systemTools,
+    });
+}
+
 const INTERNAL_EXECUTABLE_RESOLVERS = new WeakMap<
-    PluginExecService,
+    ExecService,
     (
         executable: ManagedExecutableRef,
         options?: Readonly<{ signal?: AbortSignal }>,
@@ -57,14 +223,14 @@ const INTERNAL_EXECUTABLE_RESOLVERS = new WeakMap<
 >();
 
 const INTERNAL_SYSTEM_TOOL_RESOLVERS = new WeakMap<
-    PluginExecService,
+    ExecService,
     (
         request: Parameters<PluginSystemToolsService['resolve']>[0],
     ) => Promise<HostResolvedSystemToolExecutable>
 >();
 
 export async function resolvePluginExecSystemToolForHost(
-    service: PluginExecService,
+    service: ExecService,
     request: Parameters<PluginSystemToolsService['resolve']>[0],
 ): Promise<HostResolvedSystemToolExecutable> {
     const resolveSystemTool = INTERNAL_SYSTEM_TOOL_RESOLVERS.get(service);
@@ -78,7 +244,7 @@ export async function resolvePluginExecSystemToolForHost(
 }
 
 export async function resolvePluginExecManagedDependencyForHost(
-    service: PluginExecService,
+    service: ExecService,
     dependencyId: string,
     options?: Readonly<{ signal?: AbortSignal }>,
 ): Promise<HostResolvedManagedDependencyExecutable> {
@@ -112,6 +278,9 @@ export function resolveStablePluginExecInvocation(input: Readonly<{
 }
 
 function executableKey(executable: ManagedExecutableRef): string {
+    if (executable.kind === 'packaged-runtime-binary') {
+        return `${executable.kind}:${JSON.stringify(executable.directorySegments)}:${JSON.stringify(executable.executableBaseName)}`;
+    }
     const id = typeof executable.id === 'string'
         ? executable.id
         : `${executable.id.pluginId}:${executable.id.localId}`;
@@ -144,7 +313,7 @@ export function adaptStablePluginExecLegacyProcessHandle(
     // `exit`; own the rejection immediately while preserving it for callers that do await it.
     void exit.catch(() => undefined);
     return Object.freeze({
-        pid: supervised.handle.pid,
+        pid: supervised.child.pid ?? null,
         exit,
         writeStdin: async (data) => supervised.handle.write(
             typeof data === 'string' ? new Uint8Array(Buffer.from(data, 'utf8')) : data,
@@ -167,13 +336,24 @@ export function createStablePluginExecService(params: Readonly<{
     resolvePath(path: PluginPath): Promise<string>;
     agentCli?: PluginAgentCliReadinessService;
     systemTools?: ExecSystemToolServiceV1;
+    authorizeLaunch?(
+        request: Parameters<ExecService['spawn']>[0]
+            & Readonly<{ timeoutMs?: number }>,
+        options?: Readonly<{ signal?: AbortSignal }>,
+    ): Promise<HostAuthorizedPluginExecLaunch>;
+    transformAgentChildLaunchEnvironment?(
+        environment: Readonly<Record<string, string>>,
+    ): Readonly<Record<string, string>>;
+    recordDisclosureMismatch?(mismatch: PluginExecDisclosureMismatch): void;
     recordRuntimeLimitMeasurement?: HostRuntimeLimitMeasurementRecorder;
-}>): PluginExecService {
+}>): ExecService {
     const allowedExecutables = new Set(params.allowedExecutables.map(executableKey));
     const preResolvedSystemTools = new WeakMap<object, Readonly<{
         launch: ResolvedPluginExecutable;
         expiresAt: number | null;
     }>>();
+    const preauthorizedSpawns =
+        new WeakMap<object, ResolvedPluginExecutable>();
     const allowedEnvKeys = new Set(params.allowedEnvKeys ?? []);
     const admittedEnvironment = Object.freeze(Object.fromEntries(
         Object.entries(params.environment ?? {}).filter(([key]) => allowedEnvKeys.has(key)),
@@ -188,12 +368,26 @@ export function createStablePluginExecService(params: Readonly<{
         }
     }
 
-    function authorize(request: Readonly<{ executable: ManagedExecutableRef; env?: Readonly<Record<string, string>> }>): void {
-        if (!allowedExecutables.has(executableKey(request.executable))) {
-            fail('plugin_exec_access_denied', 'Executable is not authorized for this plugin invocation');
+    function recordDisclosureMismatch(mismatch: Parameters<NonNullable<typeof params.recordDisclosureMismatch>>[0]): void {
+        try {
+            params.recordDisclosureMismatch?.(mismatch);
+        } catch {
+            // Cooperative-disclosure diagnostics cannot alter process semantics.
         }
-        if (Object.keys(request.env ?? {}).some((key) => !allowedEnvKeys.has(key))) {
-            fail('plugin_exec_environment_denied', 'Environment key is not authorized for this plugin invocation');
+    }
+
+    function diagnoseDeclarationMismatches(
+        request: Readonly<{ executable: ManagedExecutableRef; env?: Readonly<Record<string, string>> }>,
+    ): void {
+        if (!allowedExecutables.has(executableKey(request.executable))) {
+            recordDisclosureMismatch({ capability: 'process', executable: request.executable });
+        }
+        const undeclaredEnvKeys = Object.keys(request.env ?? {}).filter((key) => !allowedEnvKeys.has(key));
+        if (undeclaredEnvKeys.length > 0) {
+            recordDisclosureMismatch({
+                capability: 'environment',
+                keys: Object.freeze(undeclaredEnvKeys.sort()),
+            });
         }
     }
 
@@ -216,7 +410,7 @@ export function createStablePluginExecService(params: Readonly<{
                 kind: 'systemTool' as const,
                 id: request.toolId,
             });
-            authorize({ executable });
+            diagnoseDeclarationMismatches({ executable });
             if (params.systemTools === undefined) {
                 fail('plugin_exec_system_tool_resolution_unavailable', 'System-tool resolution is unavailable in this invocation host');
             }
@@ -262,7 +456,7 @@ export function createStablePluginExecService(params: Readonly<{
         }
     }
 
-    function validateSpawnRequest(request: Parameters<PluginExecService['spawn']>[0] & { timeoutMs?: number }): void {
+    function validateSpawnRequest(request: Parameters<ExecService['spawn']>[0] & { timeoutMs?: number }): void {
         validateOptionalByteLimit(request.maxStdoutBytes, 'maxStdoutBytes');
         validateOptionalByteLimit(request.maxStderrBytes, 'maxStderrBytes');
         if (request.timeoutMs !== undefined && (!Number.isSafeInteger(request.timeoutMs) || request.timeoutMs < 0)) {
@@ -273,30 +467,50 @@ export function createStablePluginExecService(params: Readonly<{
         }
     }
 
-    async function launchProcess(
-        request: Parameters<PluginExecService['spawn']>[0] & Readonly<{ timeoutMs?: number }>,
+    async function authorizeLaunch(
+        request: Parameters<ExecService['spawn']>[0] & Readonly<{ timeoutMs?: number }>,
         options?: { signal?: AbortSignal },
-    ): Promise<SupervisedPluginProcess> {
+    ): Promise<HostAuthorizedPluginExecLaunch> {
         guard(options?.signal);
-        authorize(request);
         validateSpawnRequest(request);
-        if (request.cwd && !isPluginPathAuthorizedByScope(request.cwd, params.allowedCwdScopes ?? [], 'read')) {
-            fail('plugin_exec_cwd_denied', 'Process working directory is not authorized for this plugin invocation');
+        if (params.authorizeLaunch) {
+            const launch = await params.authorizeLaunch(
+                request,
+                options,
+            );
+            try {
+                guard(options?.signal);
+                return launch;
+            } catch (error) {
+                launch.release();
+                throw error;
+            }
         }
+        const environmentValidation = validateEnvVarRecordStrict(request.env);
+        if (!environmentValidation.ok) {
+            fail('plugin_exec_invalid_environment', environmentValidation.error);
+        }
+        diagnoseDeclarationMismatches(request);
         let resolved: ResolvedPluginExecutable;
-        const preResolved = preResolvedSystemTools.get(request.executable);
-        if (preResolved) {
+        const preauthorized = preauthorizedSpawns.get(request);
+        if (preauthorized) {
+            preauthorizedSpawns.delete(request);
+            resolved = preauthorized;
+        } else {
+            const preResolved = preResolvedSystemTools.get(request.executable);
+            if (preResolved) {
             if (preResolved.expiresAt !== null && preResolved.expiresAt <= Date.now()) {
                 preResolvedSystemTools.delete(request.executable);
                 return fail('plugin_exec_system_tool_resolution_expired', 'Pre-resolved system-tool launch has expired');
             }
             resolved = preResolved.launch;
-        } else {
-            try {
-                resolved = await params.resolveExecutable(request.executable);
-            } catch (error) {
-                if (error instanceof PluginError) throw error;
-                return fail('plugin_exec_resolve_failed', 'Executable could not be resolved', error);
+            } else {
+                try {
+                    resolved = await params.resolveExecutable(request.executable);
+                } catch (error) {
+                    if (isPluginError(error)) throw error;
+                    return fail('plugin_exec_resolve_failed', 'Executable could not be resolved', error);
+                }
             }
         }
         let released = false;
@@ -327,8 +541,18 @@ export function createStablePluginExecService(params: Readonly<{
             cwd = request.cwd ? await params.resolvePath(request.cwd) : undefined;
         } catch (error) {
             releaseExecutable();
-            if (error instanceof PluginError) throw error;
+            if (isPluginError(error)) throw error;
             return fail('plugin_exec_cwd_unavailable', 'Process working directory could not be resolved', error);
+        }
+        if (
+            request.cwd
+            && !isPluginPathCoveredByDisclosure(request.cwd, params.allowedCwdScopes ?? [], 'read')
+        ) {
+            recordDisclosureMismatch({
+                capability: 'filesystem',
+                path: request.cwd,
+                access: 'read',
+            });
         }
         try {
             guard(options?.signal);
@@ -336,27 +560,72 @@ export function createStablePluginExecService(params: Readonly<{
             releaseExecutable();
             throw error;
         }
+        const environment = {
+            ...admittedEnvironment,
+            ...(resolved.env ?? {}),
+            ...(request.env ?? {}),
+        };
+        const invocation = resolveStablePluginExecInvocation({
+            command: resolved.command,
+            args: [
+                ...(resolved.args ?? []),
+                ...(request.args ?? []),
+            ],
+            env: environment,
+        });
+        return Object.freeze({
+            command: invocation.command,
+            args: Object.freeze([...invocation.args]),
+            env: Object.freeze({ ...environment }),
+            ...(cwd ? { cwd } : {}),
+            ...(request.stdin
+                ? { stdin: new Uint8Array(request.stdin) }
+                : {}),
+            ...(request.timeoutMs === undefined
+                ? {}
+                : { timeoutMs: request.timeoutMs }),
+            ...(request.maxStdoutBytes === undefined
+                ? {}
+                : {
+                    maxStdoutBytes:
+                        request.maxStdoutBytes,
+                }),
+            ...(request.maxStderrBytes === undefined
+                ? {}
+                : {
+                    maxStderrBytes:
+                        request.maxStderrBytes,
+                }),
+            ...(invocation.windowsVerbatimArguments
+                ? { windowsVerbatimArguments: true }
+                : {}),
+            release: releaseExecutable,
+        });
+    }
+
+    async function launchProcess(
+        request: Parameters<ExecService['spawn']>[0] & Readonly<{ timeoutMs?: number }>,
+        options?: { signal?: AbortSignal },
+        transformProtocolClientEnvironment = false,
+    ): Promise<SupervisedPluginProcess> {
+        const launch = await authorizeLaunch(request, options);
         let supervised: ReturnType<typeof spawnSupervisedPluginProcess>;
         try {
-            const environment = {
-                ...admittedEnvironment,
-                ...(resolved.env ?? {}),
-                ...(request.env ?? {}),
-            };
-            const invocation = resolveStablePluginExecInvocation({
-                command: resolved.command,
-                args: [...(resolved.args ?? []), ...(request.args ?? [])],
-                env: environment,
-            });
+            const environment = transformProtocolClientEnvironment
+                && params.transformAgentChildLaunchEnvironment
+                ? params.transformAgentChildLaunchEnvironment(
+                    launch.env,
+                )
+                : launch.env;
             supervised = spawnSupervisedPluginProcess({
-                command: invocation.command,
-                args: invocation.args,
-                ...(cwd ? { cwd } : {}),
+                command: launch.command,
+                args: launch.args,
+                ...(launch.cwd ? { cwd: launch.cwd } : {}),
                 env: environment,
-                ...(request.stdin ? { stdin: request.stdin } : {}),
-                ...(request.timeoutMs === undefined ? {} : { timeoutMs: request.timeoutMs }),
-                ...(request.maxStdoutBytes === undefined ? {} : { maxStdoutBytes: request.maxStdoutBytes }),
-                ...(request.maxStderrBytes === undefined ? {} : { maxStderrBytes: request.maxStderrBytes }),
+                ...(launch.stdin ? { stdin: launch.stdin } : {}),
+                ...(launch.timeoutMs === undefined ? {} : { timeoutMs: launch.timeoutMs }),
+                ...(launch.maxStdoutBytes === undefined ? {} : { maxStdoutBytes: launch.maxStdoutBytes }),
+                ...(launch.maxStderrBytes === undefined ? {} : { maxStderrBytes: launch.maxStderrBytes }),
                 signals: options?.signal ? [options.signal] : [],
                 spawnOptions: {
                     // A dedicated POSIX process group lets the canonical supervisor
@@ -364,14 +633,15 @@ export function createStablePluginExecService(params: Readonly<{
                     // enumerating every process on the host. Windows remains attached
                     // and uses taskkill's tree semantics.
                     detached: process.platform !== 'win32',
-                    windowsVerbatimArguments: invocation.windowsVerbatimArguments,
+                    windowsVerbatimArguments:
+                        launch.windowsVerbatimArguments,
                 },
                 ...(params.recordRuntimeLimitMeasurement
                     ? { recordRuntimeLimitMeasurement: params.recordRuntimeLimitMeasurement }
                     : {}),
             });
         } catch (error) {
-            releaseExecutable();
+            launch.release();
             return fail('plugin_exec_spawn_failed', 'Process could not be started', error);
         }
         const retire = () => {
@@ -380,23 +650,23 @@ export function createStablePluginExecService(params: Readonly<{
         params.signal.addEventListener('abort', retire, { once: true });
         void supervised.handle.wait().finally(() => {
             params.signal.removeEventListener('abort', retire);
-            releaseExecutable();
+            launch.release();
         });
         return supervised;
     }
 
     async function spawnProcess(
-        request: Parameters<PluginExecService['spawn']>[0],
+        request: Parameters<ExecService['spawn']>[0],
         options?: { signal?: AbortSignal },
     ): Promise<PluginProcessHandle> {
-        return (await launchProcess(request, options)).handle;
+        return (await launchProcess(request, options, true)).handle;
     }
 
     async function spawnJsonRpcClient(
-        spec: Extract<Parameters<PluginExecService['clients']['spawn']>[0], { kind: 'jsonRpc' }>,
+        spec: Extract<Parameters<ExecService['clients']['spawn']>[0], { kind: 'jsonRpc' }>,
         options?: { signal?: AbortSignal },
     ): Promise<PluginProtocolClientHandle<'jsonRpc'>> {
-        const supervised = await launchProcess(spec.launch, options);
+        const supervised = await launchProcess(spec.launch, options, true);
         const legacyProcess = adaptStablePluginExecLegacyProcessHandle(supervised);
         const protocol = createJsonRpcProcessClient({
             process: legacyProcess,
@@ -417,7 +687,7 @@ export function createStablePluginExecService(params: Readonly<{
         });
         const requestMethods = new Set<string>();
         const client: PluginJsonRpcClient = Object.freeze({
-            async request(method: string, requestParams?: JsonValue, requestOptions?: { signal?: AbortSignal; timeoutMs?: number }) {
+            async request(method: string, requestParams?: JsonValue, requestOptions?: { signal?: AbortSignal; timeoutMs?: number | null }) {
                 return await protocol.client.request<JsonValue | undefined, JsonValue>(method, requestParams, requestOptions);
             },
             notify: (method: string, notificationParams?: JsonValue) => protocol.client.notify(method, notificationParams),
@@ -473,16 +743,20 @@ export function createStablePluginExecService(params: Readonly<{
     }
 
     async function spawnJsonStreamClient(
-        spec: Extract<Parameters<PluginExecService['clients']['spawn']>[0], { kind: 'jsonStream' }>,
+        spec: Extract<Parameters<ExecService['clients']['spawn']>[0], { kind: 'jsonStream' }>,
         options?: { signal?: AbortSignal },
     ): Promise<PluginProtocolClientHandle<'jsonStream'>> {
-        const supervised = await launchProcess(spec.launch, options);
+        const supervised = await launchProcess(spec.launch, options, true);
+        const readStderrPreview = () => sanitizeExecDiagnosticText(
+            Buffer.from(supervised.readBufferedStderr()).toString('utf8'),
+            spec.launch.maxStderrBytes ?? 4_096,
+        );
         const protocol = createJsonStreamProcessClient({
             process: adaptStablePluginExecLegacyProcessHandle(supervised),
             stdout: supervised.child.stdout,
             write: async (data) => supervised.handle.write(new Uint8Array(Buffer.from(data, 'utf8'))),
             maxFrameBytes: spec.maxFrameBytes,
-            readStderrPreview: () => Buffer.from(supervised.readBufferedStderr()).toString('utf8'),
+            readStderrPreview,
             ...(params.recordRuntimeLimitMeasurement
                 ? { recordRuntimeLimitMeasurement: params.recordRuntimeLimitMeasurement }
                 : {}),
@@ -491,16 +765,23 @@ export function createStablePluginExecService(params: Readonly<{
             async write(value: JsonValue) {
                 const outcome = await protocol.client.writeRecord(value);
                 if (outcome.kind !== 'written') {
-                    const code = outcome.error instanceof PluginExecClientError
-                        ? outcome.error.code
-                        : 'PLUGIN_EXEC_CLIENT_WRITE_FAILED';
-                    throw new PluginError({
-                        code,
-                        message: outcome.error.message,
-                        details: {
-                            jsonStreamWriteOutcome: outcome.kind,
+                    // Stay in the exec-client vocabulary: an exec-client rejection keeps its own
+                    // code and diagnostics, and only a raw stream write failure is named here.
+                    const rejected = outcome.error instanceof PluginExecClientError ? outcome.error : null;
+                    throw new PluginExecClientError(
+                        rejected?.code ?? 'PLUGIN_EXEC_CLIENT_WRITE_FAILED',
+                        outcome.error.message,
+                        {
+                            cause: outcome.error,
+                            details: { jsonStreamWriteOutcome: outcome.kind },
+                            ...(rejected?.stderrPreview === undefined
+                                ? {}
+                                : { stderrPreview: rejected.stderrPreview }),
+                            ...(rejected?.cleanProcessExit === undefined
+                                ? {}
+                                : { cleanProcessExit: rejected.cleanProcessExit }),
                         },
-                    }, { cause: outcome.error });
+                    );
                 }
             },
             subscribe(listener: Parameters<PluginJsonStreamClient['subscribe']>[0]) {
@@ -517,17 +798,24 @@ export function createStablePluginExecService(params: Readonly<{
             })();
             return disposePromise;
         };
-        void supervised.handle.wait().then(() => {
-            protocol.settleExit(new PluginExecClientError('PLUGIN_EXEC_CLIENT_EXITED', 'Plugin process terminated'));
+        void supervised.handle.wait().then((result) => {
+            const observed = result.termination.observed;
+            protocol.settleExit(createPluginExecClientExitError({
+                exitCode: observed.kind === 'exit' ? observed.exitCode : null,
+                signal: observed.kind === 'signal' ? observed.signal : null,
+                ...(observed.kind === 'failed'
+                    ? { diagnostic: observed.diagnostic.message ?? observed.diagnostic.code }
+                    : {}),
+            }, readStderrPreview()));
         });
         return Object.freeze({ client, process: supervised.handle, wait: () => supervised.handle.wait(), dispose });
     }
 
     async function spawnFramedBytesClient(
-        spec: Extract<Parameters<PluginExecService['clients']['spawn']>[0], { kind: 'framedBytes' }>,
+        spec: Extract<Parameters<ExecService['clients']['spawn']>[0], { kind: 'framedBytes' }>,
         options?: { signal?: AbortSignal },
     ): Promise<PluginProtocolClientHandle<'framedBytes'>> {
-        const supervised = await launchProcess(spec.launch, options);
+        const supervised = await launchProcess(spec.launch, options, true);
         const protocol = createFramedBytesProcessClient({
             process: adaptStablePluginExecLegacyProcessHandle(supervised),
             stdout: supervised.child.stdout,
@@ -562,10 +850,10 @@ export function createStablePluginExecService(params: Readonly<{
     }
 
     async function spawnLoopbackWebSocketClient(
-        spec: Extract<Parameters<PluginExecService['clients']['spawn']>[0], { kind: 'loopbackWebSocketJson' }>,
+        spec: Extract<Parameters<ExecService['clients']['spawn']>[0], { kind: 'loopbackWebSocketJson' }>,
         options?: { signal?: AbortSignal },
     ): Promise<PluginProtocolClientHandle<'loopbackWebSocketJson'>> {
-        const supervised = await launchProcess(spec.launch, options);
+        const supervised = await launchProcess(spec.launch, options, true);
         let protocol: Awaited<ReturnType<typeof createLoopbackWebSocketJsonClient>>;
         try {
             if (spec.handshake) {
@@ -615,7 +903,7 @@ export function createStablePluginExecService(params: Readonly<{
             }
         } catch (error) {
             await supervised.dispose('caller');
-            if (error instanceof PluginError) throw error;
+            if (isPluginError(error)) throw error;
             return fail('plugin_exec_client_create_failed', 'Protocol client could not be created', error);
         }
         const client: PluginLoopbackWebSocketJsonClient = Object.freeze({
@@ -673,7 +961,7 @@ export function createStablePluginExecService(params: Readonly<{
         }
     }
 
-    const clients: PluginProtocolClientsService = Object.freeze({
+    const clients: ProtocolClientsService = Object.freeze({
         async spawn<K extends ProtocolClientKind>(
             spec: PluginProtocolClientSpecByKind<K>,
             options?: { signal?: AbortSignal },
@@ -682,12 +970,12 @@ export function createStablePluginExecService(params: Readonly<{
         },
     });
 
-    const service: PluginExecService = Object.freeze({
+    const service: ExecService = Object.freeze({
         agentCli,
         systemTools,
         async run(
-            request: Parameters<PluginExecService['run']>[0],
-            options?: Parameters<PluginExecService['run']>[1],
+            request: Parameters<ExecService['run']>[0],
+            options?: Parameters<ExecService['run']>[1],
         ) {
             const handle = (await launchProcess(
                 request.stdin === undefined
@@ -704,9 +992,11 @@ export function createStablePluginExecService(params: Readonly<{
         spawn: spawnProcess,
         clients,
     });
+    INTERNAL_PREAUTHORIZED_SPAWNS.set(service, preauthorizedSpawns);
+    INTERNAL_LAUNCH_AUTHORIZERS.set(service, authorizeLaunch);
     INTERNAL_EXECUTABLE_RESOLVERS.set(service, async (executable, options) => {
         guard(options?.signal);
-        authorize({ executable });
+        diagnoseDeclarationMismatches({ executable });
         const resolved = await params.resolveExecutable(executable);
         try {
             guard(options?.signal);

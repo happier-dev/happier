@@ -20,7 +20,6 @@ import {
   verifyPluginRegistryCommitGenerationReferences,
   type PluginInstallationStateRevision,
 } from './generationStore';
-import { createPendingGenerationHealthRecord } from './healthPolicy';
 
 /**
  * Seeds the current durable registry for process-boundary tests that start the
@@ -77,7 +76,6 @@ export async function seedCurrentLocalPathPluginFixture(input: Readonly<{
       resolvedPath: prepared.rootPath,
       manifestPath: join(prepared.rootPath, PLUGIN_MANIFEST_RELATIVE_PATH),
       resolvedVersion: input.manifestVersion,
-      resolvedDigest: generationRecord.manifestDigest,
       ...(input.devWatch === undefined ? {} : { devWatch: input.devWatch }),
     },
     compatibility: {
@@ -87,7 +85,6 @@ export async function seedCurrentLocalPathPluginFixture(input: Readonly<{
     install: {
       mode: 'managed_install',
       manifestVersion: input.manifestVersion,
-      manifestDigest: generationRecord.manifestDigest,
       installedPath: prepared.rootPath,
       trust,
       updatePolicy: 'manual',
@@ -116,22 +113,14 @@ export async function seedCurrentLocalPathPluginFixture(input: Readonly<{
       ...currentRevision.plugins,
       [input.pluginId]: {
         enabled: true,
+        materializationId: `materialization-${randomUUID()}`,
         trust,
         source: {
           distribution,
-          admittedIntegrity: generationRecord.packageDigest,
         },
         updatePolicy: 'manual',
         optionalAccess: [],
       },
-    },
-    health: {
-      ...currentRevision.health,
-      [generationRecord.immutableGenerationId]: createPendingGenerationHealthRecord({
-        pluginId: input.pluginId,
-        immutableGenerationId: generationRecord.immutableGenerationId,
-        fingerprint: generationRecord.fingerprint,
-      }),
     },
     runtimeCatalog,
   };
@@ -151,7 +140,7 @@ export async function seedCurrentLocalPathPluginFixture(input: Readonly<{
   };
   await replacePluginRegistryCommitRecord({
     paths,
-    expectedRevision: currentCommit.revision,
+    expectedCurrent: currentCommit,
     next: nextCommit,
   });
   await verifyPluginRegistryCommitGenerationReferences(paths, nextCommit);

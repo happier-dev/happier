@@ -1,8 +1,33 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { spawnSupervisedPluginProcess } from './processSupervisor';
+import {
+    readSupervisedPluginProcessIdForHost,
+    spawnSupervisedPluginProcess,
+} from './processSupervisor';
 
 describe('spawnSupervisedPluginProcess', () => {
+    it('keeps process identity host-private without narrowing semantic handle operations', async () => {
+        const supervised = spawnSupervisedPluginProcess({
+            command: process.execPath,
+            args: ['-e', 'process.exit(0)'],
+            env: {},
+        });
+
+        expect(supervised.handle).not.toHaveProperty('pid');
+        expect(readSupervisedPluginProcessIdForHost(supervised.handle))
+            .toBe(supervised.child.pid);
+        expect(supervised.handle).toEqual(expect.objectContaining({
+            write: expect.any(Function),
+            closeStdin: expect.any(Function),
+            wait: expect.any(Function),
+            onOutput: expect.any(Function),
+            dispose: expect.any(Function),
+        }));
+        await expect(supervised.handle.wait()).resolves.toMatchObject({
+            termination: { observed: { kind: 'exit', exitCode: 0 } },
+        });
+    });
+
     it('bounds retained output when a plugin omits author-selected byte limits', async () => {
         const retainedOutputSamples: Array<{
             family: 'plugin-process-stdout' | 'plugin-process-stderr';

@@ -343,7 +343,6 @@ function canonicalizeBuiltInScopeInput(capability: string, value: unknown): unkn
         targets: canonicalizeStructuredSetInput(scope.targets, canonicalizeNetworkTargetInput),
         ...(scope.methods !== undefined ? { methods: canonicalizeStringSetInput(scope.methods) } : {}),
       };
-    case 'network.intercept':
     case 'externalLinks':
       return { ...scope, origins: canonicalizeStructuredSetInput(scope.origins, canonicalizeHttpOriginInput) };
     case 'network.client':
@@ -374,8 +373,6 @@ function canonicalizeBuiltInScopeInput(capability: string, value: unknown): unkn
       };
     case 'environment':
       return { ...scope, keys: canonicalizeStringSetInput(scope.keys) };
-    case 'secrets':
-      return { ...scope, secretIds: canonicalizeStringSetInput(scope.secretIds), access: canonicalizeStringSetInput(scope.access) };
     case 'connectedAccounts':
       return {
         ...scope,
@@ -403,12 +400,13 @@ function canonicalizeBuiltInScopeInput(capability: string, value: unknown): unkn
       };
     case 'clipboard':
       return { ...scope, access: canonicalizeStringSetInput(scope.access) };
-    case 'storage.synced':
+    case 'storage.account':
       return value;
     case 'mcp':
       return {
         ...scope,
         serverRefs: canonicalizeStructuredSetInput(scope.serverRefs),
+        discoverySourceRefs: canonicalizeStructuredSetInput(scope.discoverySourceRefs),
         operations: canonicalizeStringSetInput(scope.operations),
       };
     default:
@@ -426,13 +424,13 @@ function canonicalizeBuiltInScope(capability: string, value: unknown): unknown {
         ...(scope.privateNetwork === true ? { privateNetwork: true } : {}),
       };
     }
-    case 'network.intercept': {
-      const scope = value as Extract<PluginHostAccessRequestV2, { capability: 'network.intercept' }>['scope'];
-      return { origins: sortStrings(scope.origins) };
-    }
     case 'network.client': {
       const scope = value as Extract<PluginHostAccessRequestV2, { capability: 'network.client' }>['scope'];
-      return { targets: sortStructured(scope.targets), transports: sortStrings(scope.transports) };
+      return {
+        targets: sortStructured(scope.targets),
+        transports: sortStrings(scope.transports),
+        privateNetwork: scope.privateNetwork,
+      };
     }
     case 'filesystem': {
       const scope = value as Extract<PluginHostAccessRequestV2, { capability: 'filesystem' }>['scope'];
@@ -445,10 +443,6 @@ function canonicalizeBuiltInScope(capability: string, value: unknown): unknown {
     case 'environment': {
       const scope = value as Extract<PluginHostAccessRequestV2, { capability: 'environment' }>['scope'];
       return { keys: sortStrings(scope.keys) };
-    }
-    case 'secrets': {
-      const scope = value as Extract<PluginHostAccessRequestV2, { capability: 'secrets' }>['scope'];
-      return { secretIds: sortStrings(scope.secretIds), access: sortStrings(scope.access) };
     }
     case 'connectedAccounts': {
       const scope = value as Extract<PluginHostAccessRequestV2, { capability: 'connectedAccounts' }>['scope'];
@@ -481,11 +475,15 @@ function canonicalizeBuiltInScope(capability: string, value: unknown): unknown {
       const scope = value as Extract<PluginHostAccessRequestV2, { capability: 'externalLinks' }>['scope'];
       return { origins: sortStrings(scope.origins) };
     }
-    case 'storage.synced':
+    case 'storage.account':
       return { enabled: true };
     case 'mcp': {
       const scope = value as Extract<PluginHostAccessRequestV2, { capability: 'mcp' }>['scope'];
-      return { serverRefs: sortStructured(scope.serverRefs), operations: sortStrings(scope.operations) };
+      return {
+        serverRefs: sortStructured(scope.serverRefs),
+        discoverySourceRefs: sortStructured(scope.discoverySourceRefs),
+        operations: sortStrings(scope.operations),
+      };
     }
     default:
       throw new Error(`Unknown built-in plugin host access capability '${capability}'`);
@@ -527,13 +525,6 @@ function builtInSubsetComparator(capability: string): ((candidate: unknown, prev
           && optionalStringSetIsSubset(candidateScope.methods, previousScope.methods)
           && (candidateScope.privateNetwork !== true || previousScope.privateNetwork === true);
       };
-    case 'secrets':
-      return (candidate, previous) => {
-        const candidateScope = candidate as Extract<PluginHostAccessRequestV2, { capability: 'secrets' }>['scope'];
-        const previousScope = previous as Extract<PluginHostAccessRequestV2, { capability: 'secrets' }>['scope'];
-        return stringSetIsSubset(candidateScope.secretIds, previousScope.secretIds)
-          && stringSetIsSubset(candidateScope.access, previousScope.access);
-      };
     case 'connectedAccounts':
       return (candidate, previous) => {
         const candidateScope = candidate as Extract<PluginHostAccessRequestV2, { capability: 'connectedAccounts' }>['scope'];
@@ -554,13 +545,17 @@ function builtInSubsetComparator(capability: string): ((candidate: unknown, prev
           && optionalStringSetIsSubset(candidateScope.machineIds, previousScope.machineIds)
           && optionalStringSetIsSubset(candidateScope.projectIds, previousScope.projectIds);
       };
-    case 'storage.synced':
+    case 'storage.account':
       return () => true;
     case 'mcp':
       return (candidate, previous) => {
         const candidateScope = candidate as Extract<PluginHostAccessRequestV2, { capability: 'mcp' }>['scope'];
         const previousScope = previous as Extract<PluginHostAccessRequestV2, { capability: 'mcp' }>['scope'];
         return structuredSetIsSubset(candidateScope.serverRefs, previousScope.serverRefs)
+          && structuredSetIsSubset(
+            candidateScope.discoverySourceRefs,
+            previousScope.discoverySourceRefs,
+          )
           && stringSetIsSubset(candidateScope.operations, previousScope.operations);
       };
     default:
@@ -580,29 +575,4 @@ export function createDefaultPluginAccessScopeRegistry(): PluginAccessScopeRegis
       ? { isSubset: builtInSubsetComparator(entry.capability) }
       : {}),
   })));
-}
-
-/**
- * Final mediated fetch effects need to prove that one concrete request is within
- * its declared cooperative network scope. This is deliberately separate from
- * the optional-resource selection registry: ambient network power is never a
- * persisted selectable grant.
- */
-export function createPluginNetworkEffectScopeRegistry(): PluginAccessScopeRegistry {
-  const entry = PLUGIN_HOST_ACCESS_CAPABILITY_CATALOG_V2.find(
-    (candidate) => candidate.capability === 'network',
-  );
-  const isSubset = builtInSubsetComparator('network');
-  if (!entry || !isSubset) {
-    throw new Error('Canonical plugin network scope policy is unavailable');
-  }
-  return createPluginAccessScopeRegistry([{
-    capability: entry.capability,
-    scopeSchema: z.preprocess(
-      (scope) => canonicalizeBuiltInScopeInput(entry.capability, scope),
-      entry.schema.shape.scope,
-    ),
-    canonicalize: (scope: unknown) => canonicalizeBuiltInScope(entry.capability, scope),
-    isSubset,
-  }]);
 }

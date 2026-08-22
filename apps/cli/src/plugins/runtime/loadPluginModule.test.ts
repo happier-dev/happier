@@ -1,11 +1,20 @@
-import { mkdir, mkdtemp, stat, utimes, writeFile } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { mkdir, mkdtemp, rm, stat, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { promisify } from 'node:util';
 
 import { describe, expect, it } from 'vitest';
 
 import type { PluginModuleNamespace } from './loadPluginModule';
-import { loadPluginModule } from './loadPluginModule';
+import {
+    loadPluginModule,
+    resolveNativePluginModuleUrl,
+    resolvePluginModuleCandidatePaths,
+    resolvePluginModuleLoadMode,
+} from './loadPluginModule';
+
+const execFileAsync = promisify(execFile);
 
 const remoteDistribution = {
     kind: 'archive' as const,
@@ -20,14 +29,17 @@ async function writeDaemonModule(params: Readonly<{ extension: string; contents:
     return daemonEntryPath;
 }
 
-function createCommittedAuthorization(entryPath: string) {
+function createCommittedAuthorization(
+    entryPath: string,
+    immutableGenerationId = `generation:${entryPath}`,
+) {
     const distribution = {
         kind: 'localPath' as const,
         canonicalPath: entryPath,
     };
     return {
         pluginId: 'acme.fixture',
-        immutableGenerationId: `generation:${entryPath}`,
+        immutableGenerationId,
         distribution,
         trust: {
             pluginId: 'acme.fixture',
@@ -35,13 +47,40 @@ function createCommittedAuthorization(entryPath: string) {
             state: 'trusted' as const,
             approvedAtMs: 1,
         },
-        admittedIntegrity: 'sha256:fixture',
-        packageDigest: 'sha256:fixture',
         isCurrent: async () => true,
     };
 }
 
 describe('loadPluginModule', () => {
+    it('uses canonical native ESM identity for JavaScript development leaves and a scoped Jiti graph only for TypeScript', () => {
+        expect(resolvePluginModuleLoadMode({
+            entryPath: '/plugins/acme/src/factory.mjs',
+            useDevelopmentEntry: true,
+        })).toBe('immutable-js');
+        expect(resolvePluginModuleLoadMode({
+            entryPath: '/plugins/acme/src/factory.ts',
+            useDevelopmentEntry: true,
+        })).toBe('source-ts');
+        expect(resolvePluginModuleLoadMode({
+            entryPath: '/plugins/acme/generations/g1/factory.mjs',
+            useDevelopmentEntry: false,
+        })).toBe('immutable-js');
+    });
+
+    it('maps NodeNext JavaScript specifiers to their TypeScript authoring leaves only in source mode', () => {
+        expect(resolvePluginModuleCandidatePaths({
+            candidateBase: '/plugins/acme/src/agent/runtime.js',
+            loadMode: 'source-ts',
+        })).toEqual([
+            '/plugins/acme/src/agent/runtime.js',
+            '/plugins/acme/src/agent/runtime.ts',
+        ]);
+        expect(resolvePluginModuleCandidatePaths({
+            candidateBase: '/plugins/acme/src/agent/runtime.js',
+            loadMode: 'immutable-js',
+        })).toEqual(['/plugins/acme/src/agent/runtime.js']);
+    });
+
     it('does not treat local source provenance as executable authorization', async () => {
         const entryPath = await writeDaemonModule({
             extension: 'mjs',
@@ -55,7 +94,7 @@ describe('loadPluginModule', () => {
         });
     });
 
-    it('loads a trusted file-backed daemon entry and caches repeated loads by entry path + fingerprint', async () => {
+    it('loads a trusted file-backed daemon entry and caches repeated loads by opaque generation identity', async () => {
         const entryPath = await writeDaemonModule({
             extension: 'mjs',
             contents: 'export async function resolveTranscriptBinding() { return "loaded"; }\n',
@@ -70,6 +109,113 @@ describe('loadPluginModule', () => {
 
         expect(typeof (first as PluginModuleNamespace).resolveTranscriptBinding).toBe('function');
         expect(second).toBe(first);
+    });
+
+    it('does not treat acquisition integrity as executable authorization', async () => {
+        const entryPath = await writeDaemonModule({
+            extension: 'mjs',
+            contents: 'export const version = "direct-custody";\n',
+        });
+        const authorization = {
+            ...createCommittedAuthorization(entryPath),
+            admittedIntegrity: 'sha256:stale-source-copy',
+        };
+
+        await expect(loadPluginModule({
+            source: {
+                kind: 'file_backed',
+                entryPath,
+                committedAuthorization: authorization,
+            },
+        })).resolves.toMatchObject({ version: 'direct-custody' });
+    });
+
+    it('preserves strict factory identity for a committed external ESM activation entry and its distinct runner leaf', async () => {
+        const rootDir = await mkdtemp(join(tmpdir(), 'happier-plugin-committed-esm-factory-'));
+        const entryPath = join(rootDir, 'daemon.mjs');
+        const factoryPath = join(rootDir, 'factory.mjs');
+        const pluginId = 'acme.committed-esm-factory';
+        const authorization = Object.freeze({
+            pluginId,
+            immutableGenerationId: 'generation-committed-esm-factory',
+            distribution: remoteDistribution,
+            trust: {
+                pluginId,
+                distribution: remoteDistribution,
+                state: 'trusted' as const,
+                approvedAtMs: 1,
+            },
+            isCurrent: async () => true,
+        });
+        await writeFile(
+            factoryPath,
+            'export const factory = () => ({ sessions: { open() { throw new Error("unused"); } } });\n',
+            'utf8',
+        );
+        await writeFile(
+            entryPath,
+            [
+                'import { factory } from "./factory.mjs";',
+                'export { factory as registeredFactory };',
+                'export function activate(api) {',
+                '  api.agents.register("runner", factory, {',
+                '    sessionRunnerFactory: {',
+                '      module: "./factory.mjs",',
+                '      export: "factory",',
+                '      runtimeApiVersion: 1',
+                '    }',
+                '  });',
+                '}',
+                '',
+            ].join('\n'),
+            'utf8',
+        );
+
+        try {
+            const entryModule = await loadPluginModule({
+                source: {
+                    kind: 'file_backed',
+                    entryPath,
+                    committedAuthorization: authorization,
+                },
+                cacheKey: 'committed-esm-entry',
+            });
+            const leafModule = await loadPluginModule({
+                source: {
+                    kind: 'file_backed',
+                    entryPath: factoryPath,
+                    committedAuthorization: authorization,
+                },
+                cacheKey: 'committed-esm-runner-leaf',
+                nativeFileUrlMode: 'canonical',
+            });
+
+            expect(entryModule.activate).toEqual(expect.any(Function));
+            expect(leafModule.factory).toBe(entryModule.registeredFactory);
+            await execFileAsync(process.execPath, [
+                '--input-type=module',
+                '-e',
+                [
+                    'import assert from "node:assert/strict";',
+                    'const [entryUrl, leafUrl] = process.argv.slice(1);',
+                    'const entry = await import(entryUrl);',
+                    'const leaf = await import(leafUrl);',
+                    'assert.strictEqual(leaf.factory, entry.registeredFactory);',
+                ].join('\n'),
+                resolveNativePluginModuleUrl({
+                    resolvedEntryPath: entryPath,
+                    cacheKey: 'committed-esm-entry',
+                    mode: 'generation-keyed',
+                }),
+                resolveNativePluginModuleUrl({
+                    resolvedEntryPath: factoryPath,
+                    cacheKey: 'committed-esm-runner-leaf',
+                    mode: 'canonical',
+                }),
+            ]);
+        } finally {
+            await rm(rootDir, { recursive: true, force: true });
+        }
     });
 
     it('fails clearly when a file-backed daemon entry path does not exist', async () => {
@@ -90,6 +236,28 @@ describe('loadPluginModule', () => {
         await expect(loadPluginModule({
             source: { kind: 'file_backed', entryPath, committedAuthorization: createCommittedAuthorization(entryPath) },
         })).rejects.toThrow(/Unsupported .* daemon entry extension/i);
+    });
+
+    it('rejects TSX development modules because daemon executable leaves are non-UI source', async () => {
+        const rootDir = await mkdtemp(join(tmpdir(), 'happier-plugin-daemon-dev-tsx-'));
+        const entryPath = join(rootDir, 'dist', 'daemon.mjs');
+        const devEntryPath = join(rootDir, 'src', 'daemon.tsx');
+        await mkdir(join(rootDir, 'dist'), { recursive: true });
+        await mkdir(join(rootDir, 'src'), { recursive: true });
+        await writeFile(entryPath, 'export const version = "compiled-main";\n', 'utf8');
+        await writeFile(devEntryPath, 'export const version: string = "tsx-dev";\n', 'utf8');
+
+        await expect(loadPluginModule({
+            source: {
+                kind: 'file_backed',
+                entryPath,
+                devEntryPath,
+                useDevelopmentEntry: true,
+                committedAuthorization: createCommittedAuthorization(entryPath),
+            },
+        })).rejects.toMatchObject({
+            code: 'PLUGIN_DAEMON_ENTRY_KIND_UNSUPPORTED',
+        });
     });
 
     it('loads an explicitly selected committed TypeScript development entry instead of the compiled daemon entry', async () => {
@@ -140,8 +308,6 @@ describe('loadPluginModule', () => {
                 state: 'trusted' as const,
                 approvedAtMs: 1,
             },
-            admittedIntegrity: 'sha256:package',
-            packageDigest: 'sha256:package',
             isCurrent: async () => true,
         };
 
@@ -180,14 +346,21 @@ describe('loadPluginModule', () => {
             },
             cacheKey: 'development-generation-1',
         });
-        await writeFile(dependencyPath, 'export const version: string = "generation-two";\n', 'utf8');
+        const secondRootDir = await mkdtemp(join(tmpdir(), 'happier-plugin-daemon-dev-graph-2-'));
+        const secondEntryPath = join(secondRootDir, 'dist', 'daemon.mjs');
+        const secondDevEntryPath = join(secondRootDir, 'src', 'daemon.ts');
+        await mkdir(join(secondRootDir, 'dist'), { recursive: true });
+        await mkdir(join(secondRootDir, 'src'), { recursive: true });
+        await writeFile(secondEntryPath, 'export const version = "compiled-main";\n', 'utf8');
+        await writeFile(secondDevEntryPath, 'export { version } from "./value";\n', 'utf8');
+        await writeFile(join(secondRootDir, 'src', 'value.ts'), 'export const version: string = "generation-two";\n', 'utf8');
         const second = await loadPluginModule({
             source: {
                 kind: 'file_backed',
-                entryPath,
-                devEntryPath,
+                entryPath: secondEntryPath,
+                devEntryPath: secondDevEntryPath,
                 useDevelopmentEntry: true,
-                committedAuthorization: createCommittedAuthorization(entryPath),
+                committedAuthorization: createCommittedAuthorization(secondEntryPath),
             },
             cacheKey: 'development-generation-2',
         });
@@ -250,13 +423,34 @@ describe('loadPluginModule', () => {
                 },
                 cacheKey: 'diamond-generation-1',
             });
+            const secondRootDir = await mkdtemp(join(tmpdir(), 'happier-plugin-daemon-dev-diamond-2-'));
+            const secondEntryPath = join(secondRootDir, 'dist', 'daemon.mjs');
+            const secondSourceRoot = join(secondRootDir, 'src');
+            const secondDevEntryPath = join(secondSourceRoot, 'daemon.ts');
+            await mkdir(join(secondRootDir, 'dist'), { recursive: true });
+            await mkdir(secondSourceRoot, { recursive: true });
+            await writeFile(secondEntryPath, 'export const version = "compiled-main";\n', 'utf8');
+            await writeFile(join(secondSourceRoot, 'shared.ts'), [
+                `const counterKey = ${JSON.stringify(counterKey)};`,
+                'const counters = globalThis as typeof globalThis & Record<string, number | undefined>;',
+                'counters[counterKey] = (counters[counterKey] ?? 0) + 1;',
+                'export const loadCount = counters[counterKey];',
+                '',
+            ].join('\n'), 'utf8');
+            await writeFile(join(secondSourceRoot, 'left.ts'), 'export { loadCount as leftLoadCount } from "./shared";\n', 'utf8');
+            await writeFile(join(secondSourceRoot, 'right.ts'), 'export { loadCount as rightLoadCount } from "./shared";\n', 'utf8');
+            await writeFile(secondDevEntryPath, [
+                'export { leftLoadCount } from "./left";',
+                'export { rightLoadCount } from "./right";',
+                '',
+            ].join('\n'), 'utf8');
             const second = await loadPluginModule({
                 source: {
                     kind: 'file_backed',
-                    entryPath,
-                    devEntryPath,
+                    entryPath: secondEntryPath,
+                    devEntryPath: secondDevEntryPath,
                     useDevelopmentEntry: true,
-                    committedAuthorization: createCommittedAuthorization(entryPath),
+                    committedAuthorization: createCommittedAuthorization(secondEntryPath),
                 },
                 cacheKey: 'diamond-generation-2',
             });
@@ -268,6 +462,81 @@ describe('loadPluginModule', () => {
         } finally {
             delete counters[counterKey];
         }
+    });
+
+    it('keeps a TypeScript development entry and locator leaf in the same authorization-scoped graph', async () => {
+        const rootDir = await mkdtemp(join(tmpdir(), 'happier-plugin-daemon-dev-factory-'));
+        const entryPath = join(rootDir, 'dist', 'daemon.mjs');
+        const sourceRoot = join(rootDir, 'src');
+        const devEntryPath = join(sourceRoot, 'daemon.ts');
+        const factoryPath = join(sourceRoot, 'factory.ts');
+        await mkdir(join(rootDir, 'dist'), { recursive: true });
+        await mkdir(sourceRoot, { recursive: true });
+        await writeFile(entryPath, 'export const version = "compiled-main";\n', 'utf8');
+        await writeFile(factoryPath, 'export const factory = () => ({ generation: Symbol() });\n', 'utf8');
+        await writeFile(
+            devEntryPath,
+            'export { factory as registeredFactory } from "./factory";\n',
+            'utf8',
+        );
+
+        const firstAuthorization = createCommittedAuthorization(entryPath);
+        const firstEntry = await loadPluginModule({
+            source: {
+                kind: 'file_backed',
+                entryPath,
+                devEntryPath,
+                useDevelopmentEntry: true,
+                committedAuthorization: firstAuthorization,
+            },
+            cacheKey: 'factory-entry-generation-1',
+        });
+        const firstLeaf = await loadPluginModule({
+            source: {
+                kind: 'file_backed',
+                entryPath: factoryPath,
+                devEntryPath: factoryPath,
+                useDevelopmentEntry: true,
+                committedAuthorization: firstAuthorization,
+            },
+            cacheKey: 'factory-leaf',
+        });
+        expect(firstLeaf.factory).toBe(firstEntry.registeredFactory);
+
+        const secondRootDir = await mkdtemp(join(tmpdir(), 'happier-plugin-daemon-dev-factory-2-'));
+        const secondEntryPath = join(secondRootDir, 'dist', 'daemon.mjs');
+        const secondSourceRoot = join(secondRootDir, 'src');
+        const secondDevEntryPath = join(secondSourceRoot, 'daemon.ts');
+        const secondFactoryPath = join(secondSourceRoot, 'factory.ts');
+        await mkdir(join(secondRootDir, 'dist'), { recursive: true });
+        await mkdir(secondSourceRoot, { recursive: true });
+        await writeFile(secondEntryPath, 'export const version = "compiled-main";\n', 'utf8');
+        await writeFile(secondFactoryPath, 'export const factory = () => ({ generation: Symbol() });\n', 'utf8');
+        await writeFile(secondDevEntryPath, 'export { factory as registeredFactory } from "./factory";\n', 'utf8');
+        const secondAuthorization = createCommittedAuthorization(secondEntryPath);
+        const secondEntry = await loadPluginModule({
+            source: {
+                kind: 'file_backed',
+                entryPath: secondEntryPath,
+                devEntryPath: secondDevEntryPath,
+                useDevelopmentEntry: true,
+                committedAuthorization: secondAuthorization,
+            },
+            cacheKey: 'factory-entry-generation-2',
+        });
+        const secondLeaf = await loadPluginModule({
+            source: {
+                kind: 'file_backed',
+                entryPath: secondFactoryPath,
+                devEntryPath: secondFactoryPath,
+                useDevelopmentEntry: true,
+                committedAuthorization: secondAuthorization,
+            },
+            cacheKey: 'factory-leaf',
+        });
+
+        expect(secondLeaf.factory).toBe(secondEntry.registeredFactory);
+        expect(secondEntry.registeredFactory).not.toBe(firstEntry.registeredFactory);
     });
 
     it('does not load a TypeScript dev entry unless the file-backed source is locally trusted', async () => {
@@ -299,8 +568,6 @@ describe('loadPluginModule', () => {
             immutableGenerationId: 'generation-remote',
             distribution: remoteDistribution,
             trust: { pluginId: 'acme.remote', distribution: remoteDistribution, state: 'trusted' as const, approvedAtMs: 1 },
-            admittedIntegrity: 'sha256:package',
-            packageDigest: 'sha256:package',
             isCurrent: async () => true,
         };
 
@@ -349,8 +616,6 @@ describe('loadPluginModule', () => {
                 state: 'trusted' as const,
                 approvedAtMs: 1,
             },
-            admittedIntegrity: 'sha256:package',
-            packageDigest: 'sha256:package',
             isCurrent: async () => false,
         };
 
@@ -375,7 +640,7 @@ describe('loadPluginModule', () => {
         })).rejects.toThrow(/requires a reviewed, committed, current/i);
     });
 
-    it('invalidates cached file-backed daemon modules when the on-disk fingerprint changes', async () => {
+    it('does not derive a second runtime identity from mutations within an admitted generation', async () => {
         const entryPath = await writeDaemonModule({
             extension: 'mjs',
             contents: 'export const version = 1;\n',
@@ -392,11 +657,11 @@ describe('loadPluginModule', () => {
         const second = await loadPluginModule({
             source: { kind: 'file_backed', entryPath, committedAuthorization: createCommittedAuthorization(entryPath) },
         });
-        expect((second as { version?: number }).version).toBe(2);
-        expect(second).not.toBe(first);
+        expect((second as { version?: number }).version).toBe(1);
+        expect(second).toBe(first);
     });
 
-    it('invalidates cached file-backed daemon modules even when size and mtime are preserved (archive reinstall)', async () => {
+    it('loads replacement bytes only under a fresh opaque generation even when size and mtime are preserved', async () => {
         const entryPath = await writeDaemonModule({
             extension: 'mjs',
             contents: 'export const version = 1;\n',
@@ -415,7 +680,14 @@ describe('loadPluginModule', () => {
         await utimes(entryPath, preservedAtime, preservedMtime);
 
         const second = await loadPluginModule({
-            source: { kind: 'file_backed', entryPath, committedAuthorization: createCommittedAuthorization(entryPath) },
+            source: {
+                kind: 'file_backed',
+                entryPath,
+                committedAuthorization: createCommittedAuthorization(
+                    entryPath,
+                    `replacement:${entryPath}`,
+                ),
+            },
         });
         expect((second as { version?: number }).version).toBe(2);
         expect(second).not.toBe(first);

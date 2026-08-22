@@ -1,7 +1,8 @@
 import type {
-    PluginConnectedAccountRuntimeConfiguration,
+    ConnectedAccountRuntimeConfiguration as PluginConnectedAccountRuntimeConfiguration } from '@happier-dev/plugin-sdk/connected-accounts';
+import type {
     PluginContributionRef,
-} from '@happier-dev/plugin-sdk/runtime';
+} from '@happier-dev/plugin-sdk';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import type {
     PluginConnectedAccountAuthenticationModeV2,
@@ -10,7 +11,7 @@ import type {
 import {
     compilePluginJsonSchema,
     isValidPluginJsonSchemaValue,
-} from '@/plugins/runtime/invocation/services/jsonSchemaValidation';
+} from '@happier-dev/protocol';
 
 import type { ConnectedAccountAttemptConfigurationAdmission } from './authenticationAttemptOwner';
 import { normalizeConnectedAccountConfiguredOrigin } from './configuredOrigins';
@@ -133,9 +134,15 @@ type SnapshotMetadata = Readonly<{
     generation: GenerationIdentity;
     target: ConnectedAccountConfigurationTarget;
     revision: string;
+    currentnessSignal: AbortSignal;
     secretRefs: Readonly<Record<string, string>>;
     secretValues: Readonly<Record<string, string>>;
     unconfigured: boolean;
+}>;
+
+type ConfigurationCurrentnessFence = Readonly<{
+    revision: string;
+    controller: AbortController;
 }>;
 
 export class ConnectedAccountConfigurationError extends Error {
@@ -423,6 +430,8 @@ export type ConnectedAccountConfigurationOwner = Readonly<{
         }>
     >;
     isCurrent(snapshot: PluginConnectedAccountRuntimeConfiguration): Promise<boolean>;
+    /** Host-owned revocation signal for this exact configuration snapshot. */
+    currentnessSignal(snapshot: PluginConnectedAccountRuntimeConfiguration): AbortSignal;
     destroyAttempt(attemptId: string): Promise<void>;
 }>;
 
@@ -462,6 +471,59 @@ export function createConnectedAccountConfigurationOwner(params: Readonly<{
     }>): MaybePromise<boolean>;
 }>): ConnectedAccountConfigurationOwner {
     const snapshotMetadata = new WeakMap<PluginConnectedAccountRuntimeConfiguration, SnapshotMetadata>();
+    // One in-memory fence per exact target/revision. Successful CAS replacement
+    // revokes the old fence so bound network clients do not need to poll.
+    const currentnessFences = new Map<string, ConfigurationCurrentnessFence>();
+
+    function targetCurrentnessKey(target: ConnectedAccountConfigurationTarget): string {
+        if (target.kind === 'service') {
+            return JSON.stringify(['service', target.service.pluginId, target.service.localId, target.modeId]);
+        }
+        if (target.kind === 'attempt') {
+            return JSON.stringify([
+                'attempt',
+                target.attemptId,
+                target.service.pluginId,
+                target.service.localId,
+                target.modeId,
+            ]);
+        }
+        return JSON.stringify([
+            'account',
+            target.account.service.pluginId,
+            target.account.service.localId,
+            target.account.accountId,
+            target.modeId,
+        ]);
+    }
+
+    function revokeCurrentnessFence(
+        target: ConnectedAccountConfigurationTarget,
+        revision?: string,
+    ): void {
+        const key = targetCurrentnessKey(target);
+        const fence = currentnessFences.get(key);
+        if (!fence || (revision !== undefined && fence.revision !== revision)) return;
+        currentnessFences.delete(key);
+        if (!fence.controller.signal.aborted) {
+            fence.controller.abort(Object.freeze({ kind: 'configurationReplaced' as const }));
+        }
+    }
+
+    function currentnessSignalFor(
+        target: ConnectedAccountConfigurationTarget,
+        revision: string,
+    ): AbortSignal {
+        const key = targetCurrentnessKey(target);
+        const existing = currentnessFences.get(key);
+        if (existing?.revision === revision) return existing.controller.signal;
+        if (existing && !existing.controller.signal.aborted) {
+            existing.controller.abort(Object.freeze({ kind: 'configurationReplaced' as const }));
+        }
+        const controller = new AbortController();
+        currentnessFences.set(key, Object.freeze({ revision, controller }));
+        return controller.signal;
+    }
 
     async function assertGenerationCurrent(
         service: PluginContributionRef,
@@ -623,6 +685,7 @@ export function createConnectedAccountConfigurationOwner(params: Readonly<{
         secretValues?: Readonly<Record<string, string>>;
         unconfigured?: boolean;
     }>): PluginConnectedAccountRuntimeConfiguration {
+        const currentnessSignal = currentnessSignalFor(input.target, input.revision);
         const secretFields = new Set(
             descriptorFields(input.mode)
                 .filter((field) => field.secret === true)
@@ -675,6 +738,7 @@ export function createConnectedAccountConfigurationOwner(params: Readonly<{
             generation: input.generation,
             target: input.target,
             revision: input.revision,
+            currentnessSignal,
             secretRefs: input.secretRefs,
             secretValues: input.secretValues ?? Object.freeze({}),
             unconfigured: input.unconfigured === true,
@@ -849,6 +913,7 @@ export function createConnectedAccountConfigurationOwner(params: Readonly<{
                     ),
                 });
             }
+            revokeCurrentnessFence(target);
             await assertGenerationCurrent(service, generationIdentity);
             const committed = await normalize({
                 target,
@@ -1036,6 +1101,7 @@ export function createConnectedAccountConfigurationOwner(params: Readonly<{
                     ),
                 });
             }
+            revokeCurrentnessFence(target);
             const committed = await normalize({ target, mode: input.mode, record: result.record });
             if (committed.revision === null || committed.missingFieldIds.length > 0) {
                 throw new ConnectedAccountConfigurationError(
@@ -1072,18 +1138,30 @@ export function createConnectedAccountConfigurationOwner(params: Readonly<{
             const service = serviceForTarget(metadata.target);
             try {
                 if (!await params.isGenerationCurrent({ pluginId: service.pluginId, ...metadata.generation })) {
+                    revokeCurrentnessFence(metadata.target, metadata.revision);
                     return false;
                 }
                 if (metadata.unconfigured) return true;
-                return await isTargetRevisionCurrent(
+                const current = await isTargetRevisionCurrent(
                     service,
                     metadata.generation,
                     metadata.target,
                     metadata.revision,
                 );
+                if (!current) revokeCurrentnessFence(metadata.target, metadata.revision);
+                return current;
             } catch {
+                revokeCurrentnessFence(metadata.target, metadata.revision);
                 return false;
             }
+        },
+
+        currentnessSignal(snapshot: PluginConnectedAccountRuntimeConfiguration): AbortSignal {
+            const metadata = snapshotMetadata.get(snapshot);
+            if (metadata) return metadata.currentnessSignal;
+            const controller = new AbortController();
+            controller.abort(Object.freeze({ kind: 'configurationUnknown' as const }));
+            return controller.signal;
         },
 
         async destroyAttempt(attemptId: string): Promise<void> {

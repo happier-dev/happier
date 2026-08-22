@@ -9,6 +9,50 @@ import {
 } from './managedDependencyExecutables';
 
 describe('selectExecutableManagedDependencies', () => {
+    it('projects a retained structural generation without a copied manifest digest', () => {
+        const retained = {
+            provenance: 'external',
+            source: { kind: 'path' },
+            pluginId: 'acme.retained',
+            manifestPath: '/immutable/acme.retained/.happier-plugin/plugin.json',
+            sourceSpec: {
+                kind: 'path',
+                locator: '/immutable/acme.retained',
+                trustPolicy: 'local_trusted',
+                installPolicy: 'link',
+            },
+            definition: {
+                id: 'tool',
+                title: 'Retained tool',
+                executable: 'retained-tool',
+                sources: [{
+                    kind: 'managedPypiWheelAsset',
+                    installId: 'dep.retained.tool',
+                    distribution: 'retained-tool',
+                    versionSpecifier: '>=1,<2',
+                    assetPathByPlatform: {
+                        'linux-x64': 'retained/bin/tool',
+                    },
+                    executable: true,
+                    installConsent: 'host_managed_required',
+                    autoUpdateMode: 'notify',
+                }],
+            },
+        } satisfies ResolvedInstallableContribution;
+
+        expect(resolveExecutableManagedDependenciesRegistry(
+            [retained],
+            { platform: 'linux', architecture: 'x64' },
+        ).descriptors).toMatchObject([{
+            owner: {
+                provenance: 'external_plugin',
+                pluginId: 'acme.retained',
+                manifestPath: retained.manifestPath,
+            },
+            descriptor: { key: 'dep.retained.tool' },
+        }]);
+    });
+
     it('admits complete executable descriptors and excludes unsupported declarative V2 dependency requests', () => {
         const executable = {
             provenance: 'first_party',
@@ -31,13 +75,12 @@ describe('selectExecutableManagedDependencies', () => {
         expect(selectExecutableManagedDependencies([declarative, executable])).toEqual([executable]);
     });
 
-    it('projects a complete bundled V2 managed PyPI source into the canonical installables registry', () => {
+    it('projects complete bundled and installed external managed PyPI sources through the same canonical descriptor', () => {
         const managedPypi = {
             provenance: 'first_party',
             source: { kind: 'bundled' },
             pluginId: 'happier.agent.antigravity',
             manifestPath: 'bundled:happier.agent.antigravity',
-            manifestDigest: 'sha256:antigravity',
             daemonEntryPath: '@happier-dev/plugins-antigravity',
             sourceSpec: {
                 kind: 'bundled',
@@ -48,6 +91,7 @@ describe('selectExecutableManagedDependencies', () => {
             definition: {
                 id: 'localharness',
                 title: 'Antigravity localharness',
+                description: 'Managed Antigravity localharness runtime',
                 executable: 'localharness',
                 platforms: ['macos', 'linux', 'windows'],
                 sources: [{
@@ -70,11 +114,31 @@ describe('selectExecutableManagedDependencies', () => {
                 }],
             },
         } satisfies ResolvedInstallableContribution;
+        const installedExternal = {
+            ...managedPypi,
+            provenance: 'external',
+            source: { kind: 'package' },
+            pluginId: 'com.acme.antigravity',
+            manifestPath: '/immutable/generations/com.acme.antigravity/.happier-plugin/plugin.json',
+            sourceSpec: {
+                kind: 'package',
+                locator: '@acme/antigravity',
+                trustPolicy: 'prompt',
+                installPolicy: 'managed_install',
+                resolvedVersion: '1.0.0',
+            },
+        } satisfies ResolvedInstallableContribution;
 
-        expect(resolveExecutableManagedDependenciesRegistry(
+        const bundledRegistry = resolveExecutableManagedDependenciesRegistry(
             [managedPypi],
             { platform: 'linux', architecture: 'x64' },
-        )).toMatchObject({
+        );
+        const externalRegistry = resolveExecutableManagedDependenciesRegistry(
+            [installedExternal],
+            { platform: 'linux', architecture: 'x64' },
+        );
+
+        expect(bundledRegistry).toMatchObject({
             descriptors: [{
                 owner: {
                     provenance: 'bundled_first_party_plugin',
@@ -101,6 +165,20 @@ describe('selectExecutableManagedDependencies', () => {
             }],
             diagnostics: [],
         });
+        expect(externalRegistry).toMatchObject({
+            descriptors: [{
+                owner: {
+                    provenance: 'external_plugin',
+                    pluginId: 'com.acme.antigravity',
+                    manifestPath: '/immutable/generations/com.acme.antigravity/.happier-plugin/plugin.json',
+                },
+            }],
+            diagnostics: [],
+        });
+        expect(externalRegistry.descriptors[0]?.owner).not.toHaveProperty('manifestDigest');
+        expect(externalRegistry.descriptors[0]?.descriptor).toEqual(
+            bundledRegistry.descriptors[0]?.descriptor,
+        );
     });
 
     it('preserves executable contribution ownership in the installables registry', () => {
@@ -109,7 +187,6 @@ describe('selectExecutableManagedDependencies', () => {
             source: { kind: 'bundled' },
             pluginId: 'happier.agent.fixture',
             manifestPath: 'bundled:happier.agent.fixture',
-            manifestDigest: 'sha256:fixture',
             definition: GH_INSTALLABLE_DESCRIPTOR,
         } satisfies ResolvedInstallableContribution;
 
@@ -120,7 +197,6 @@ describe('selectExecutableManagedDependencies', () => {
                     ownerId: 'happier.agent.fixture',
                     pluginId: 'happier.agent.fixture',
                     manifestPath: 'bundled:happier.agent.fixture',
-                    manifestDigest: 'sha256:fixture',
                 },
                 descriptor: GH_INSTALLABLE_DESCRIPTOR,
             }],
@@ -128,13 +204,12 @@ describe('selectExecutableManagedDependencies', () => {
         });
     });
 
-    it('fails closed for incomplete, unsupported-platform, and non-bundled V2 sources without coercing other source kinds', () => {
+    it('fails closed for incomplete and unsupported-platform V2 sources without coercing other source kinds', () => {
         const complete = {
             provenance: 'first_party',
             source: { kind: 'bundled' },
             pluginId: 'happier.agent.fixture',
             manifestPath: 'bundled:happier.agent.fixture',
-            manifestDigest: 'sha256:fixture',
             daemonEntryPath: '@happier-dev/plugins-fixture',
             sourceSpec: {
                 kind: 'bundled',
@@ -164,17 +239,6 @@ describe('selectExecutableManagedDependencies', () => {
             [complete],
             { platform: 'darwin', architecture: 'arm64' },
         );
-        const nonBundled = resolveExecutableManagedDependenciesRegistry([{
-            ...complete,
-            provenance: 'external',
-            source: { kind: 'path' },
-            sourceSpec: {
-                kind: 'path',
-                locator: '/plugins/fixture',
-                trustPolicy: 'local_trusted',
-                installPolicy: 'link',
-            },
-        }], { platform: 'linux', architecture: 'x64' });
         const otherSourceKinds = resolveExecutableManagedDependenciesRegistry([{
             ...complete,
             definition: {
@@ -197,7 +261,6 @@ describe('selectExecutableManagedDependencies', () => {
         } as unknown as ResolvedInstallableContribution], { platform: 'linux', architecture: 'x64' });
 
         expect(unsupportedPlatform.descriptors).toEqual([]);
-        expect(nonBundled.descriptors).toEqual([]);
         expect(otherSourceKinds.descriptors).toEqual([]);
         expect(incomplete.descriptors).toEqual([]);
     });

@@ -1,7 +1,6 @@
 import type {
     PluginRequestInterceptorContributionV1,
 } from '@happier-dev/protocol';
-import type { PluginRequestInterceptor } from '@happier-dev/plugin-sdk/runtime';
 
 import type { ContributionRuntimeRegistration } from '@/plugins/runtime/api/registrationRightsHost';
 
@@ -13,12 +12,26 @@ type TargetRegistration = Readonly<{
     registration: ContributionRuntimeRegistration;
 }>;
 
+/** The target activation owner carries the public interceptor ABI to fetch. */
+export type TargetPluginRequestInterceptor = Extract<
+    ContributionRuntimeRegistration,
+    Readonly<{ family: 'requestInterceptors' }>
+>['value'];
+
+export type TargetPluginInterceptedRequest = Parameters<
+    TargetPluginRequestInterceptor
+>[0];
+
+export type TargetPluginInterceptorResult = Awaited<ReturnType<
+    TargetPluginRequestInterceptor
+>>;
+
 export type TargetRequestInterceptorBinding = Readonly<{
     pluginId: string;
     pluginVersion: string;
     generation: string;
     contribution: PluginRequestInterceptorContributionV1;
-    handler: PluginRequestInterceptor;
+    handler: TargetPluginRequestInterceptor;
 }>;
 
 export function createTargetRequestInterceptorBindings(params: Readonly<{
@@ -48,7 +61,7 @@ export function createTargetRequestInterceptorBindings(params: Readonly<{
         }
         identities.add(identity);
         const handler = entry.registration.value;
-        const fencedHandler: PluginRequestInterceptor = function (this: unknown, request, context) {
+        const fencedHandler: TargetPluginRequestInterceptor = function (this: unknown, request, context) {
             if (!params.isGenerationActive()) {
                 throw new Error(`Plugin '${entry.pluginId}' request interceptor '${entry.registration.localId}' is no longer active`);
             }

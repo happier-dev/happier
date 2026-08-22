@@ -41,7 +41,21 @@ export {
 } from '../errors.js';
 export type { PluginActionHandlerInvocation } from '../errors.js';
 
-export type { ActionContract, ActionHandler } from './contracts.js';
+export type {
+  ActionContract,
+  ActionHandler,
+  PluginActionInvocationSurfaceV2,
+  PluginClientActionUi,
+} from './contracts.js';
+/**
+ * Client-targeted Action invocation types are only available in a client
+ * runtime artifact.
+ * @realm client
+ */
+export type {
+  PluginClientActionContext,
+  PluginClientActionHandler,
+} from './contracts.js';
 export type {
   AdmittedTargetedOperationExecutionHandle,
   AdmittedTargetedOperationIdentity,

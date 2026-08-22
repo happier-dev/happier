@@ -1,10 +1,31 @@
 import { logger } from '@/ui/logger';
+import type {
+    PluginRunningSessionDisposition,
+    PluginRunningSessionRevocationScope,
+} from '@/plugins/store/registry/currentState';
 
 import type { ResolvedExecutablePluginRuntimeRegistry } from '../resolveExecutablePluginRuntimeRegistry';
+import type { ResourceSessionAccessWitness } from '../invocation/services/resources';
+import { projectPluginFailureText } from '../lifecycle/utils';
+import {
+    createReloadControllerTargetedContributionsService,
+    type StableTargetedContributionsOwner,
+} from '../invocation/services/targetedContributions';
 
 export type PluginRuntimeRegistryLease = Readonly<{
     registry: ResolvedExecutablePluginRuntimeRegistry;
     source: 'active' | 'ephemeral';
+    /**
+     * Revalidates a mounted caller against the controller's currently published
+     * runtime without transferring ownership of the retained registry snapshot.
+     */
+    resolveCurrentPluginMaterializationRef?: NonNullable<
+        ResolvedExecutablePluginRuntimeRegistry['resolveCurrentPluginMaterializationRef']
+    >;
+    /** Revalidates an exact mediator contribution against the live registry. */
+    resolveCurrentMediatorContributionMaterializationRef?: NonNullable<
+        ResolvedExecutablePluginRuntimeRegistry['resolveCurrentMediatorContributionMaterializationRef']
+    >;
     release: () => Promise<void>;
 }>;
 
@@ -30,6 +51,7 @@ export type PluginReloadResult = Readonly<
         requestedPluginIds: readonly string[];
         changedPluginIds: readonly string[];
         affectedPluginIds: readonly string[];
+        runningSessionDisposition: PluginRunningSessionDisposition | null;
         activeGenerationId: string;
         registryStatus: 'active';
         diagnostics: readonly PluginReloadDiagnostic[];
@@ -43,6 +65,7 @@ export type PluginReloadResult = Readonly<
         requestedPluginIds: readonly string[];
         changedPluginIds: readonly string[];
         affectedPluginIds: readonly string[];
+        runningSessionDisposition: PluginRunningSessionDisposition | null;
         activeGenerationId: null;
         registryStatus: 'unavailable';
         diagnostics: readonly PluginReloadDiagnostic[];
@@ -59,11 +82,42 @@ export type PluginReloadState = Readonly<{
 
 export type PluginReloadListener = (result: PluginReloadResult) => void;
 
+export type PluginRunningSessionDispositionEvent = Readonly<{
+    durableRevision: number;
+    changedPluginIds: readonly string[];
+    runningSessionDisposition: PluginRunningSessionDisposition;
+    runningSessionRevocationScope?: PluginRunningSessionRevocationScope;
+}>;
+
+export function isPluginRunningSessionDispositionTarget(
+    event: PluginRunningSessionDispositionEvent,
+    target: Readonly<{
+        pluginId: string;
+        immutableGenerationId: string;
+    }>,
+): boolean {
+    if (event.runningSessionDisposition !== 'revokeRunningSessions') {
+        return false;
+    }
+    const scope = event.runningSessionRevocationScope;
+    if (scope) {
+        return scope.pluginId === target.pluginId
+            && scope.immutableGenerationId
+                === target.immutableGenerationId;
+    }
+    return event.changedPluginIds.includes(target.pluginId);
+}
+
+export type PluginRunningSessionDispositionListener = (
+    event: PluginRunningSessionDispositionEvent,
+) => void;
+
 export type PluginReloadController = Readonly<{
     adoptPreparedRuntimeRegistry: (params: Readonly<{
         registry: ResolvedExecutablePluginRuntimeRegistry;
         changedPluginIds: readonly string[];
         durableRevision: number;
+        runningSessionDisposition: PluginRunningSessionDisposition;
         beforePublish?: PluginRuntimeRegistryBeforePublish;
     }>) => Promise<PluginReloadResult>;
     acquireRuntimeRegistry: (params?: Readonly<{
@@ -72,10 +126,27 @@ export type PluginReloadController = Readonly<{
     }>) => Promise<PluginRuntimeRegistryLease>;
     tryAcquireRuntimeRegistry?: () => PluginRuntimeRegistryLease | null;
     isRuntimeRegistryCurrent: (registry: ResolvedExecutablePluginRuntimeRegistry) => boolean;
+    /** Refreshes projections derived from the current registry without replacing its generation. */
+    invalidateRuntimeProjection?: () => void;
+    /** Applies the Account change carrier's current Session-access proof to every live Resource owner. */
+    applyResourceSessionAccessWitness: (params: ResourceSessionAccessWitness) => void;
     shutdown: (params?: Readonly<{ timeoutMs?: number }>) => Promise<void>;
     getState: () => PluginReloadState;
     /** Notified after cold initialization or prepared-registry adoption settles. */
     subscribe: (listener: PluginReloadListener) => () => void;
+    /**
+     * The controller-lifetime target-local contribution owner. Optional only
+     * for narrow pre-existing controller fixtures; real controllers always
+     * expose it and runtime construction must consume that one owner.
+     */
+    getTargetedContributionsOwner?: () => StableTargetedContributionsOwner;
+    /** Publishes the authenticated mutation cause immediately after its durable commit. */
+    publishDurableRunningSessionDisposition: (
+        event: PluginRunningSessionDispositionEvent,
+    ) => void;
+    subscribeRunningSessionDisposition: (
+        listener: PluginRunningSessionDispositionListener,
+    ) => () => void;
 }>;
 
 function collectRegistryPluginIds(registry: ResolvedExecutablePluginRuntimeRegistry): readonly string[] {
@@ -105,11 +176,8 @@ function normalizePluginIds(pluginIds: readonly string[]): readonly string[] {
     return Object.freeze([...new Set(pluginIds.map((pluginId) => pluginId.trim()).filter(Boolean))].sort());
 }
 
-function resolveActiveGenerationId(
-    registry: ResolvedExecutablePluginRuntimeRegistry,
-    generation: number,
-): string {
-    return registry.contributes.generationId ?? `reload:${generation}`;
+function resolveActiveGenerationId(generation: number): string {
+    return String(generation);
 }
 
 const BLOCKING_PLUGIN_RELOAD_DIAGNOSTIC_CODES = new Set([
@@ -121,21 +189,13 @@ const BLOCKING_PLUGIN_RELOAD_DIAGNOSTIC_CODES = new Set([
     'plugin_untrusted',
 ]);
 
-const TRUST_POLICY_PLUGIN_RELOAD_DIAGNOSTIC_CODES = new Set([
-    'plugin_trust_approval_required',
-    'plugin_untrusted',
-]);
-
 export function hasBlockingPluginReloadDiagnostic(
     registry: ResolvedExecutablePluginRuntimeRegistry,
     scopedPluginIds: readonly string[],
-    options?: Readonly<{ ignoreTrustPolicyDiagnostics?: boolean }>,
 ): boolean {
     return scopedPluginIds.some((pluginId) => (
         (registry.pluginDiagnosticsByPluginId[pluginId] ?? []).some((diagnostic) => (
             BLOCKING_PLUGIN_RELOAD_DIAGNOSTIC_CODES.has(diagnostic.code)
-            && !(options?.ignoreTrustPolicyDiagnostics === true
-                && TRUST_POLICY_PLUGIN_RELOAD_DIAGNOSTIC_CODES.has(diagnostic.code))
         ))
     ));
 }
@@ -162,6 +222,8 @@ export function createPluginReloadController(params?: Readonly<{
     resolveRuntimeRegistry?: () => Promise<ResolvedExecutablePluginRuntimeRegistry>;
     invalidateCaches?: (generation: number) => void;
 }>): PluginReloadController {
+    let controller!: PluginReloadController;
+    let targetedContributionsOwner: StableTargetedContributionsOwner | null = null;
     let generation = 0;
     let activeRegistry: ResolvedExecutablePluginRuntimeRegistry | null = null;
     let lastResult: PluginReloadResult | null = null;
@@ -172,15 +234,54 @@ export function createPluginReloadController(params?: Readonly<{
     let shutdownTimeoutMs = normalizeShutdownTimeoutMs(undefined);
     const outstandingLeaseCounts = new Map<ResolvedExecutablePluginRuntimeRegistry, number>();
     const pendingDisposal = new Set<ResolvedExecutablePluginRuntimeRegistry>();
+    let currentResourceSessionAccessWitness: ResourceSessionAccessWitness | null = null;
     const leaseDrainListeners = new Set<() => void>();
     const reloadListeners = new Set<PluginReloadListener>();
+    const runningSessionDispositionListeners =
+        new Set<PluginRunningSessionDispositionListener>();
+
+    /**
+     * Session Resource contexts remain owned by their registry generations.
+     * The controller forwards the Account carrier to every lease-held owner;
+     * it never reconstructs a Session or Resource inventory.
+     */
+    function resourceSessionRegistries(): ReadonlySet<ResolvedExecutablePluginRuntimeRegistry> {
+        const registries = new Set<ResolvedExecutablePluginRuntimeRegistry>();
+        if (activeRegistry) registries.add(activeRegistry);
+        for (const registry of pendingDisposal) registries.add(registry);
+        return registries;
+    }
+
+    function applyCurrentResourceSessionAccessWitness(
+        registry: ResolvedExecutablePluginRuntimeRegistry,
+    ): void {
+        if (!currentResourceSessionAccessWitness) return;
+        registry.applyResourceSessionAccessWitness?.(currentResourceSessionAccessWitness);
+    }
 
     function notifyReloadListeners(result: PluginReloadResult): void {
         for (const listener of reloadListeners) {
             try {
                 listener(result);
             } catch (error) {
-                logger.debug('[PLUGIN RUNTIME] Plugin runtime registry listener threw', error);
+                logger.debug('[PLUGIN RUNTIME] Plugin runtime registry listener threw', {
+                    error: projectPluginFailureText(error),
+                });
+            }
+        }
+    }
+
+    function notifyRunningSessionDispositionListeners(
+        event: PluginRunningSessionDispositionEvent,
+    ): void {
+        for (const listener of runningSessionDispositionListeners) {
+            try {
+                listener(event);
+            } catch (error) {
+                logger.debug(
+                    '[PLUGIN RUNTIME] Running Session disposition listener threw',
+                    { error: projectPluginFailureText(error) },
+                );
             }
         }
     }
@@ -219,6 +320,14 @@ export function createPluginReloadController(params?: Readonly<{
         return {
             registry,
             source: 'active',
+            resolveCurrentPluginMaterializationRef: (pluginId) => {
+                if (shutdownStarted) return null;
+                return activeRegistry?.resolveCurrentPluginMaterializationRef?.(pluginId) ?? null;
+            },
+            resolveCurrentMediatorContributionMaterializationRef: (mediator) => {
+                if (shutdownStarted) return null;
+                return activeRegistry?.resolveCurrentMediatorContributionMaterializationRef?.(mediator) ?? null;
+            },
             release: async () => {
                 if (released) return;
                 released = true;
@@ -264,7 +373,7 @@ export function createPluginReloadController(params?: Readonly<{
     function disposeRegistryWhenSafeInBackground(registry: ResolvedExecutablePluginRuntimeRegistry): void {
         void disposeRegistryWhenSafe(registry).catch((error: unknown) => {
             logger.warn('[PLUGIN RUNTIME] Retiring plugin runtime registry cleanup failed', {
-                error: error instanceof Error ? error.message : String(error),
+                error: projectPluginFailureText(error),
             });
         });
     }
@@ -280,14 +389,14 @@ export function createPluginReloadController(params?: Readonly<{
                 logger.warn('[PLUGIN RUNTIME] Plugin cleanup failed during daemon shutdown', {
                     pluginId: event.pluginId,
                     phase: event.phase,
-                    error: event.error instanceof Error ? event.error.message : String(event.error),
+                    error: projectPluginFailureText(event.error),
                 });
             },
         }).then(
             () => 'disposed' as const,
             (error: unknown) => {
                 logger.warn('[PLUGIN RUNTIME] Plugin runtime registry disposal failed during daemon shutdown', {
-                    error: error instanceof Error ? error.message : String(error),
+                    error: projectPluginFailureText(error),
                 });
                 return 'failed' as const;
             },
@@ -317,12 +426,23 @@ export function createPluginReloadController(params?: Readonly<{
         return await resolveExecutablePluginRuntimeRegistry({
             happyHomeDir: await resolveHappyHomeDir(),
             generation: attemptedGeneration,
+            targetedContributions: getTargetedContributionsOwner(),
         });
+    }
+
+    function getTargetedContributionsOwner(): StableTargetedContributionsOwner {
+        if (!targetedContributionsOwner) {
+            targetedContributionsOwner = createReloadControllerTargetedContributionsService({
+                reloadController: controller,
+            });
+        }
+        return targetedContributionsOwner;
     }
 
     function createActiveResult(
         registry: ResolvedExecutablePluginRuntimeRegistry,
         changedPluginIds: readonly string[],
+        runningSessionDisposition: PluginRunningSessionDisposition | null = null,
     ): Extract<PluginReloadResult, { ok: true }> {
         return {
             ok: true,
@@ -331,7 +451,8 @@ export function createPluginReloadController(params?: Readonly<{
             requestedPluginIds: changedPluginIds,
             changedPluginIds,
             affectedPluginIds: changedPluginIds,
-            activeGenerationId: resolveActiveGenerationId(registry, generation),
+            runningSessionDisposition,
+            activeGenerationId: resolveActiveGenerationId(generation),
             registryStatus: 'active',
             diagnostics: Object.freeze([]),
             diagnosticsByPluginId: registry.pluginDiagnosticsByPluginId,
@@ -350,7 +471,7 @@ export function createPluginReloadController(params?: Readonly<{
         } catch (error) {
             const diagnostic = Object.freeze({
                 code: 'plugin_reload_failed' as const,
-                message: error instanceof Error ? error.message : 'Plugin runtime registry initialization failed',
+                message: projectPluginFailureText(error),
             });
             lastResult = {
                 ok: false,
@@ -359,6 +480,7 @@ export function createPluginReloadController(params?: Readonly<{
                 requestedPluginIds: Object.freeze([]),
                 changedPluginIds: Object.freeze([]),
                 affectedPluginIds: Object.freeze([]),
+                runningSessionDisposition: null,
                 activeGenerationId: null,
                 registryStatus: 'unavailable',
                 diagnostics: Object.freeze([diagnostic]),
@@ -376,9 +498,7 @@ export function createPluginReloadController(params?: Readonly<{
 
         const changedPluginIds = collectRegistryPluginIds(registry);
         const isolatedFailurePluginIds = changedPluginIds.filter((pluginId) => (
-            hasBlockingPluginReloadDiagnostic(registry, [pluginId], {
-                ignoreTrustPolicyDiagnostics: true,
-            })
+            hasBlockingPluginReloadDiagnostic(registry, [pluginId])
         ));
         if (isolatedFailurePluginIds.length > 0) {
             logger.warn('[PLUGIN RUNTIME] Cold startup isolated unavailable plugin activations', {
@@ -393,6 +513,8 @@ export function createPluginReloadController(params?: Readonly<{
             if (activeRegistry) throw new ColdInitializationSupersededError();
             published = true;
             generation = attemptedGeneration;
+            applyCurrentResourceSessionAccessWitness(registry);
+            registry.publishDeclaredEventSubscriptions?.();
             activeRegistry = registry;
         };
         try {
@@ -405,7 +527,7 @@ export function createPluginReloadController(params?: Readonly<{
             }
             const diagnostic = Object.freeze({
                 code: 'plugin_reload_failed' as const,
-                message: error instanceof Error ? error.message : 'Plugin runtime registry publication failed',
+                message: projectPluginFailureText(error),
             });
             lastResult = {
                 ok: false,
@@ -414,6 +536,7 @@ export function createPluginReloadController(params?: Readonly<{
                 requestedPluginIds: Object.freeze([]),
                 changedPluginIds: Object.freeze([]),
                 affectedPluginIds: Object.freeze([]),
+                runningSessionDisposition: null,
                 activeGenerationId: null,
                 registryStatus: 'unavailable',
                 diagnostics: Object.freeze([diagnostic]),
@@ -426,6 +549,14 @@ export function createPluginReloadController(params?: Readonly<{
         if (!published) {
             await disposeRegistryForShutdown(registry, shutdownTimeoutMs);
             throw new Error('Plugin runtime registry pre-publication owner returned without publishing');
+        }
+        if (shutdownStarted) throw createShutdownError();
+        try {
+            registry.startAdoptedBackgroundServices?.();
+        } catch (error) {
+            logger.warn('[PLUGIN RUNTIME] Adopted background-service start failed', {
+                error: projectPluginFailureText(error),
+            });
         }
         params?.invalidateCaches?.(generation);
         lastResult = createActiveResult(registry, changedPluginIds);
@@ -454,7 +585,7 @@ export function createPluginReloadController(params?: Readonly<{
         return initialization;
     }
 
-    return {
+    controller = {
         async adoptPreparedRuntimeRegistry(adoption) {
             if (shutdownStarted) {
                 await adoption.registry.dispose();
@@ -506,6 +637,9 @@ export function createPluginReloadController(params?: Readonly<{
                 }
                 published = true;
                 generation += 1;
+                previousRegistry?.retireLiveSubscriptionConsumers?.();
+                applyCurrentResourceSessionAccessWitness(adoption.registry);
+                adoption.registry.publishDeclaredEventSubscriptions?.();
                 activeRegistry = adoption.registry;
             };
             try {
@@ -523,6 +657,7 @@ export function createPluginReloadController(params?: Readonly<{
                 // any candidate validation or awaited publication work, so every
                 // post-commit failure remains fail-closed without disturbing peers.
                 previousRegistry?.retirePluginConsumers?.(changedPluginIds);
+                await previousRegistry?.settleRetiredBackgroundServices?.(changedPluginIds);
                 if (hasBlockingPluginReloadDiagnostic(adoption.registry, changedPluginIds)) {
                     throw new Error(
                         'Prepared plugin runtime registry contains a blocking activation diagnostic',
@@ -543,8 +678,20 @@ export function createPluginReloadController(params?: Readonly<{
                 await adoption.registry.dispose();
                 throw new Error('Plugin runtime registry pre-publication owner returned without publishing');
             }
+            if (shutdownStarted) throw createShutdownError();
+            try {
+                adoption.registry.startAdoptedBackgroundServices?.();
+            } catch (error) {
+                logger.warn('[PLUGIN RUNTIME] Adopted background-service start failed', {
+                    error: projectPluginFailureText(error),
+                });
+            }
             params?.invalidateCaches?.(generation);
-            lastResult = createActiveResult(adoption.registry, changedPluginIds);
+            lastResult = createActiveResult(
+                adoption.registry,
+                changedPluginIds,
+                adoption.runningSessionDisposition,
+            );
             notifyReloadListeners(lastResult);
             if (previousRegistry && previousRegistry !== adoption.registry) {
                 disposeRegistryWhenSafeInBackground(previousRegistry);
@@ -579,11 +726,40 @@ export function createPluginReloadController(params?: Readonly<{
                 && activeRegistry === registry
             );
         },
+        invalidateRuntimeProjection() {
+            if (!shutdownStarted && activeRegistry) {
+                params?.invalidateCaches?.(generation);
+            }
+        },
+        applyResourceSessionAccessWitness(input) {
+            const nextWitness: ResourceSessionAccessWitness = input.witness === undefined
+                ? Object.freeze({ accountId: input.accountId })
+                : Object.freeze({ accountId: input.accountId, witness: input.witness });
+            const currentWitness = currentResourceSessionAccessWitness;
+            if (
+                currentWitness
+                && currentWitness.accountId === nextWitness.accountId
+                && currentWitness.witness !== undefined
+                && nextWitness.witness !== undefined
+                && nextWitness.witness.throughCursor
+                    < currentWitness.witness.throughCursor
+            ) {
+                // A live Resource owner already rejects stale pages. Preserve
+                // that same current carrier for a replacement, which begins
+                // with no prior page state to compare itself.
+                return;
+            }
+            currentResourceSessionAccessWitness = nextWitness;
+            for (const registry of resourceSessionRegistries()) {
+                registry.applyResourceSessionAccessWitness?.(currentResourceSessionAccessWitness);
+            }
+        },
         async shutdown(shutdownParams) {
             if (shutdownPromise) return await shutdownPromise;
             shutdownPromise = (async () => {
                 shutdownStarted = true;
                 shutdownTimeoutMs = normalizeShutdownTimeoutMs(shutdownParams?.timeoutMs);
+                activeRegistry?.retireLiveSubscriptionConsumers?.();
                 const registriesToDispose = new Set<ResolvedExecutablePluginRuntimeRegistry>();
                 if (activeRegistry) registriesToDispose.add(activeRegistry);
                 for (const registry of pendingDisposal) registriesToDispose.add(registry);
@@ -607,5 +783,30 @@ export function createPluginReloadController(params?: Readonly<{
                 reloadListeners.delete(listener);
             };
         },
+        getTargetedContributionsOwner,
+        publishDurableRunningSessionDisposition(event) {
+            notifyRunningSessionDispositionListeners(Object.freeze({
+                durableRevision: event.durableRevision,
+                changedPluginIds: normalizePluginIds(
+                    event.changedPluginIds,
+                ),
+                runningSessionDisposition:
+                    event.runningSessionDisposition,
+                ...(event.runningSessionRevocationScope
+                    ? {
+                        runningSessionRevocationScope: Object.freeze({
+                            ...event.runningSessionRevocationScope,
+                        }),
+                    }
+                    : {}),
+            }));
+        },
+        subscribeRunningSessionDisposition(listener) {
+            runningSessionDispositionListeners.add(listener);
+            return () => {
+                runningSessionDispositionListeners.delete(listener);
+            };
+        },
     };
+    return controller;
 }

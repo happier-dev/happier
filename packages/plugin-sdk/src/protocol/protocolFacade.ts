@@ -15,7 +15,7 @@ import {
     defineProtocolUtf8String as canonicalDefineProtocolUtf8String,
     pluginJsonValuesEqual as canonicalPluginJsonValuesEqual,
     ProtocolValidationError as canonicalProtocolValidationError,
-} from '@happier-dev/protocol/plugins/actions/json-schema-validation';
+} from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
 /**
  * Declaration-neutral SDK projection of Protocol's mutable structural JSON
  * (`PluginJsonValueV2`): data as authored into declarations and carried on

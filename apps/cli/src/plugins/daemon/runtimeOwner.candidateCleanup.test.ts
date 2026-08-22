@@ -9,7 +9,6 @@ import type { PluginReloadController } from '@/plugins/runtime/reload/controller
 
 const ownerMocks = vi.hoisted(() => ({
   initializeStore: vi.fn(async () => undefined),
-  settleCurrentNonExecutableHealthAfterRuntimePublication: vi.fn(async () => undefined),
   releaseInitialLease: vi.fn(async () => undefined),
 }));
 
@@ -20,7 +19,7 @@ vi.mock('@/plugins/daemon/changeService', () => ({
   createDaemonPluginChangeService: () => Object.freeze({
     requestPluginChange: vi.fn(),
     decidePluginChange: vi.fn(),
-    runAutomaticCurrentnessChange: vi.fn(),
+    runHardRevocationCurrentnessChange: vi.fn(),
     quiesceForHandoff: vi.fn(),
     shutdown: vi.fn(),
   }),
@@ -45,9 +44,6 @@ vi.mock('@/plugins/runtime/resolveExecutablePluginRuntimeRegistry', () => ({
 vi.mock('@/plugins/store/registry/currentState', () => ({
   createPluginRegistryStateStore: () => Object.freeze({
     initialize: ownerMocks.initializeStore,
-    settleCurrentNonExecutableHealthAfterRuntimePublication:
-      ownerMocks.settleCurrentNonExecutableHealthAfterRuntimePublication,
-    observeActivationAttempt: vi.fn(),
   }),
 }));
 vi.mock('@/ui/logger', () => ({
@@ -81,6 +77,12 @@ function createUnusedConnectedAccountsOwner(): StablePluginConnectedAccountsOwne
     materialize: vi.fn(async () => {
       throw new Error('unexpected connected-account materialization');
     }),
+    listAccounts: async () => {
+        throw new Error('Connected Account listing is outside this fixture');
+    },
+    materializeListedAccount: async () => {
+        throw new Error('Exact-listed Connected Account materialization is outside this fixture');
+    },
     watch: vi.fn(() => Object.freeze({ dispose() {} })),
   });
 }
@@ -90,13 +92,18 @@ function createReloadController(): PluginReloadController {
     adoptPreparedRuntimeRegistry: vi.fn(async () => {
       throw new Error('unexpected prepared-registry adoption');
     }),
-    acquireRuntimeRegistry: vi.fn(async (params = {}) => Object.freeze({
-      registry: await params.resolveRuntimeRegistry?.(),
-      source: 'active' as const,
-      release: ownerMocks.releaseInitialLease,
-    })),
+    acquireRuntimeRegistry: vi.fn(async (params = {}) => {
+      const registry = await params.resolveRuntimeRegistry?.();
+      if (!registry) throw new Error('missing initial registry');
+      return Object.freeze({
+        registry,
+        source: 'active' as const,
+        release: ownerMocks.releaseInitialLease,
+      });
+    }),
     tryAcquireRuntimeRegistry: vi.fn(() => null),
     isRuntimeRegistryCurrent: vi.fn(() => false),
+    applyResourceSessionAccessWitness: vi.fn(),
     shutdown: vi.fn(async () => undefined),
     getState: () => Object.freeze({
       generation: 0,
@@ -104,7 +111,9 @@ function createReloadController(): PluginReloadController {
       lastResult: null,
     }),
     subscribe: vi.fn(() => () => undefined),
-  } as PluginReloadController;
+    publishDurableRunningSessionDisposition: vi.fn(),
+    subscribeRunningSessionDisposition: vi.fn(() => () => undefined),
+  };
 }
 
 async function createRuntimeOwnerHome(): Promise<Readonly<{
@@ -249,8 +258,6 @@ describe('createDaemonPluginRuntimeOwner candidate crash cleanup', () => {
     const owner = createDaemonPluginRuntimeOwner({
       happyHomeDir: fixture.happyHomeDir,
       staleCandidateCleanup: 'exclusiveHome',
-      daemonInstanceId: 'daemon-test',
-      daemonUptimeMs: () => 1,
       reloadController: createReloadController(),
       connectedAccounts: createUnusedConnectedAccountsOwner(),
     });
@@ -271,8 +278,6 @@ describe('createDaemonPluginRuntimeOwner candidate crash cleanup', () => {
     const owner = createDaemonPluginRuntimeOwner({
       happyHomeDir: fixture.happyHomeDir,
       staleCandidateCleanup: 'disabled',
-      daemonInstanceId: 'daemon-test',
-      daemonUptimeMs: () => 1,
       reloadController: createReloadController(),
       connectedAccounts: createUnusedConnectedAccountsOwner(),
     });
@@ -293,8 +298,6 @@ describe('createDaemonPluginRuntimeOwner candidate crash cleanup', () => {
     const owner = createDaemonPluginRuntimeOwner({
       happyHomeDir: fixture.happyHomeDir,
       staleCandidateCleanup: 'exclusiveHome',
-      daemonInstanceId: 'daemon-test',
-      daemonUptimeMs: () => 1,
       reloadController: createReloadController(),
       connectedAccounts: createUnusedConnectedAccountsOwner(),
     });

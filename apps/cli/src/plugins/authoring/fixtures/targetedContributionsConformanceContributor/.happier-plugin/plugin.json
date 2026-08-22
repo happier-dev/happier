@@ -1,0 +1,61 @@
+{
+  "schemaVersion": 2,
+  "id": "acme.targeted-contributions-conformance-contributor",
+  "version": "1.0.0",
+  "displayName": "Targeted Contributions Conformance Contributor",
+  "description": "Packed public contributor for the target-owned provider point.",
+  "engines": {
+    "happier": "^0.2.0"
+  },
+  "runtime": {
+    "apiVersion": 1
+  },
+  "entrypoints": {
+    "daemon": "./daemon.mjs"
+  },
+  "hostAccess": {
+    "required": [],
+    "optional": []
+  },
+  "contributes": {
+    "actions": [
+      {
+        "id": "verify-provider",
+        "title": "Verify Provider",
+        "description": "Supports the target-owned provider protocol.",
+        "scopes": [
+          "global"
+        ],
+        "surfaces": [
+          "plugin"
+        ],
+        "dangerLevel": "safe",
+        "execution": {
+          "target": "daemon"
+        },
+        "inputSchema": {
+          "type": "object"
+        },
+        "resultSchema": {
+          "type": "object"
+        }
+      }
+    ],
+    "targetedPluginContributions": [
+      {
+        "id": "provider-a",
+        "target": {
+          "pluginId": "acme.targeted-contributions-conformance-target",
+          "pointId": "providers"
+        },
+        "protocol": {
+          "id": "packed-targeted-provider",
+          "version": 1
+        },
+        "operations": {
+          "verify": "verify-provider"
+        }
+      }
+    ]
+  }
+}

@@ -4,8 +4,12 @@ import type { PluginStateRecord } from '@/plugins/store/state';
 
 import { resolveInstalledPluginUpdate } from './resolveInstalledUpdate';
 
-function npmRecord(updatePolicy: 'automatic' | 'manual' | 'pinned'): PluginStateRecord {
-  return {
+function npmRecord(
+  updatePolicy: 'automatic' | 'manual' | 'pinned',
+  hasCuratedUpdateSource = false,
+  manifestVersion = '1.0.0',
+): PluginStateRecord {
+  const record: PluginStateRecord = {
     source: {
       kind: 'package',
       locator: '@acme/example',
@@ -17,7 +21,7 @@ function npmRecord(updatePolicy: 'automatic' | 'manual' | 'pinned'): PluginState
     compatibility: { status: 'compatible', diagnostics: [] },
     install: {
       mode: 'managed_install',
-      manifestVersion: '1.0.0',
+      manifestVersion,
       updatePolicy,
       trust: {
         pluginId: 'acme.example',
@@ -33,15 +37,26 @@ function npmRecord(updatePolicy: 'automatic' | 'manual' | 'pinned'): PluginState
     },
     state: { enabled: true },
   };
+  if (hasCuratedUpdateSource) {
+    Object.assign(record.install, {
+      curatedUpdateSource: {
+        id: 'marketplace:curated',
+        sourceUrl: 'https://marketplace.example.test/catalog.json',
+        registryProfileId: 'registry_private',
+      },
+    });
+  }
+  return record;
 }
 
 describe('resolveInstalledPluginUpdate', () => {
   it('preserves the daemon-owned npm channel and policy while leaving version resolution open', () => {
-    expect(resolveInstalledPluginUpdate('acme.example', npmRecord('automatic'))).toEqual({
+    expect(resolveInstalledPluginUpdate('acme.example', npmRecord('automatic', true))).toEqual({
       kind: 'npm',
       request: {
         kind: 'installNpm',
         packageName: '@acme/example',
+        selector: '>=1.0.0',
         registryOrigin: 'https://registry.example.test',
         registryProfileId: 'registry_private',
       },
@@ -49,9 +64,26 @@ describe('resolveInstalledPluginUpdate', () => {
     });
   });
 
+  it('keeps preview updates on the same prerelease line and above the installed version', () => {
+    expect(resolveInstalledPluginUpdate(
+      'acme.example',
+      npmRecord('automatic', true, '2.0.0-beta.1'),
+    )).toMatchObject({
+      kind: 'npm',
+      request: {
+        selector: '>=2.0.0-beta.1 <2.0.0',
+      },
+    });
+  });
+
   it('rejects pinned channels instead of reinstalling or advancing them', () => {
     expect(() => resolveInstalledPluginUpdate('acme.example', npmRecord('pinned')))
       .toThrowError(expect.objectContaining({ code: 'plugin_update_pinned' }));
+  });
+
+  it('fails closed when an automatic npm record has no reviewed curated-source binding', () => {
+    expect(() => resolveInstalledPluginUpdate('acme.example', npmRecord('automatic')))
+      .toThrowError(expect.objectContaining({ code: 'plugin_update_trust_unavailable' }));
   });
 
   it('uses the trusted canonical local path for development updates', () => {

@@ -170,4 +170,29 @@ describe('terminal breadcrumb resolver', () => {
     expect(resolver({ cwd, terminalId: '../sessions/workspace/1710000000000_remote-123.jsonl' })).toBeUndefined();
     expect(readPaths).toEqual([]);
   });
+
+  it('allows terminal ids whose names begin with two dots', async () => {
+    const fileStores = await loadFileStores();
+    const root = resolve('/tmp/happier-terminal-breadcrumb-sdk-test');
+    const agentDir = join(root, 'agent');
+    const cwd = join(root, 'workspace');
+    const sessionFilePath = join(agentDir, 'sessions', 'workspace', '1710000000000_remote-123.jsonl');
+    const terminalId = '..build';
+    const readPaths: string[] = [];
+
+    const resolver = fileStores.createTerminalBreadcrumbResolver(createConfig({
+      readTextFile: (path) => {
+        readPaths.push(path);
+        return `${cwd}\n${sessionFilePath}\n`;
+      },
+    }));
+
+    expect(resolver({ cwd, terminalId })).toEqual({
+      agentDir,
+      remoteSessionId: 'remote-123',
+      sessionFilePath,
+      terminalId,
+    });
+    expect(readPaths).toEqual([join(agentDir, 'terminal-sessions', terminalId)]);
+  });
 });

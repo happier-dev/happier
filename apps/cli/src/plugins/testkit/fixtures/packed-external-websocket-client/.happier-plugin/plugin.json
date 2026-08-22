@@ -1,0 +1,57 @@
+{
+  "schemaVersion": 2,
+  "id": "acme.packed-websocket",
+  "version": "1.0.0",
+  "displayName": "Packed WebSocket Fixture",
+  "description": "Dependency-closed external WebSocket client fixture",
+  "engines": {
+    "happier": "^0.2.0"
+  },
+  "runtime": {
+    "apiVersion": 1
+  },
+  "activation": {
+    "events": [
+      {
+        "kind": "startup"
+      }
+    ]
+  },
+  "entrypoints": {
+    "daemon": "./dist/daemon.js"
+  },
+  "hostAccess": {
+    "required": [
+      {
+        "id": "gateway",
+        "capability": "network.client",
+        "reason": "Maintain the declared gateway connection",
+        "scope": {
+          "targets": [
+            {
+              "kind": "fixedOrigin",
+              "origin": "https://gateway.example.test"
+            }
+          ],
+          "transports": ["websocket"]
+        }
+      }
+    ],
+    "optional": []
+  },
+  "contributes": {
+    "actions": [
+      {
+        "id": "connect",
+        "title": "Connect fixture gateway",
+        "scopes": ["global"],
+        "surfaces": ["cli"],
+        "dangerLevel": "safe",
+        "execution": {
+          "target": "daemon"
+        },
+        "hostAccess": ["gateway"]
+      }
+    ]
+  }
+}

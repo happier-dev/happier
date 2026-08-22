@@ -4,6 +4,7 @@ import { MarketplaceIndexQueryResultV1Schema, MarketplaceIndexQueryV1Schema, typ
 
 import { createMarketplaceSourceRegistryStore } from './sources/store';
 import { createNpmRegistryProfileService } from '@/plugins/distribution/npm/profiles/service';
+import { projectPluginFailureText } from '@/plugins/runtime/lifecycle/utils';
 import { normalizeNpmArtifactRequest } from '@/plugins/distribution/npm/normalize';
 import { createMarketplaceIndex } from './index';
 import { loadMarketplaceIndexSource } from './indexSourceLoader';
@@ -108,7 +109,7 @@ export function createMarketplaceIndexService(params?: Readonly<{
           try {
             return await (params?.loadSource ?? loadMarketplaceIndexSource)({ happyHomeDir: params?.happyHomeDir, source: { id: source.id, title: source.title, sourceUrl: source.sourceUrl, kind: source.origin } });
           } catch (error) {
-            diagnostics.push({ code: 'marketplace_source_invalid', message: error instanceof Error ? error.message : 'Marketplace source is invalid' });
+            diagnostics.push({ code: 'marketplace_source_invalid', message: projectPluginFailureText(error) });
             return null;
           }
         }));

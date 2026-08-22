@@ -76,6 +76,9 @@ function createIngressHarness() {
     );
     const ingress = {
         createPrincipal,
+        readPrincipal: (principalRef: string) => ({
+            state: principals.get(principalRef)?.state ?? 'revoked' as const,
+        }),
         enable: (principalRef: string) => transition(principalRef, 'enabled'),
         disable: (principalRef: string) => transition(principalRef, 'disabled'),
         revoke,
@@ -391,6 +394,12 @@ describe('qualified External Session hook transport', () => {
         });
         listener.enable(first.eventPrincipalRef);
         listener.enable(second.eventPrincipalRef);
+        expect(listener.readCredentialState({
+            qualifiedContributionId: credentialInput.qualifiedContributionId,
+            hostInstallationId: credentialInput.hostInstallationId,
+            installationPrincipalRef: first.installationPrincipalRef,
+            eventId: first.eventId,
+        })).toEqual({ state: 'enabled' });
 
         const firstResult = await runForwarder({
             port: listener.port,
@@ -413,6 +422,13 @@ describe('qualified External Session hook transport', () => {
                 ([delivery]) => delivery.eventId,
             ),
         )).toEqual(new Set(['session-stop', 'session-start']));
+        listener.disable(first.eventPrincipalRef);
+        expect(listener.readCredentialState({
+            qualifiedContributionId: credentialInput.qualifiedContributionId,
+            hostInstallationId: credentialInput.hostInstallationId,
+            installationPrincipalRef: first.installationPrincipalRef,
+            eventId: first.eventId,
+        })).toEqual({ state: 'disabled' });
     });
 
     it('reuses on ordinary restart, rotates on verified replacement, and rejects the predecessor secret', async () => {

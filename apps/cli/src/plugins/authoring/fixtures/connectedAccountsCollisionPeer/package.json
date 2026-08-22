@@ -1,0 +1,15 @@
+{
+  "name": "acme-connected-accounts-collision-peer",
+  "version": "1.0.0",
+  "private": true,
+  "keywords": [
+    "happier-plugin"
+  ],
+  "files": [
+    ".happier-plugin",
+    "daemon.mjs"
+  ],
+  "happier": {
+    "manifest": ".happier-plugin/plugin.json"
+  }
+}

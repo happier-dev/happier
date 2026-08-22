@@ -34,6 +34,7 @@ import {
   usePluginUiFocusTargetBindingInternal,
 } from './Focus.js';
 import { usePluginTheme, usePluginTranslation } from './PluginUiProvider.js';
+import { resolveAuthorText } from './resolveAuthorText.js';
 import { Stack } from './Layout.js';
 import { Text } from './Text.js';
 
@@ -202,9 +203,11 @@ export function Field(props: FieldProps): ReactElement {
 
 export type TextFieldProps = Readonly<{
   label: string;
+  labelKey?: string;
   value: string;
   onChange: (value: string) => void;
   placeholder?: string;
+  placeholderKey?: string;
   disabled?: boolean;
   required?: boolean;
   secure?: boolean;
@@ -216,9 +219,19 @@ export type TextFieldProps = Readonly<{
 }>;
 
 export function TextField(props: TextFieldProps): ReactElement {
-  const { onChange, focusTarget, ...rest } = props;
+  const { onChange, focusTarget, label, labelKey, placeholder, placeholderKey, ...rest } = props;
+  const translate = usePluginTranslation();
   const focusBinding = usePluginUiFocusTargetBindingInternal(focusTarget);
-  return <HappierTextField {...rest} onChangeText={onChange} controlRef={focusBinding} theme={usePluginTheme()} />;
+  return (
+    <HappierTextField
+      {...rest}
+      label={resolveAuthorText(translate, label, labelKey) ?? label}
+      placeholder={resolveAuthorText(translate, placeholder, placeholderKey)}
+      onChangeText={onChange}
+      controlRef={focusBinding}
+      theme={usePluginTheme()}
+    />
+  );
 }
 
 export type ToggleProps = Readonly<{

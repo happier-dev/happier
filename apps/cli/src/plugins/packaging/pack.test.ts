@@ -1,7 +1,9 @@
 import { execFile } from 'node:child_process';
-import { chmod, copyFile, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { watch } from 'node:fs';
+import { chmod, copyFile, cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 import { promisify } from 'node:util';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -9,18 +11,20 @@ import * as tar from 'tar';
 import { describe, expect, it } from 'vitest';
 
 import { resolveJavaScriptRuntimeExecutable } from '@/packagedRuntime/js/resolveJavaScriptRuntimeExecutable';
-import { readGeneratedPluginUiArtifactsManifest } from '@/plugins/install/ui/generatedArtifacts';
-import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
-import { buildPluginProjectionV2 } from '@/plugins/projection/registry/projection/v2';
-import { projectLoadedPluginContributes } from '@/plugins/projection/registry/resolvePluginContributions';
 
-import { bundlePluginDaemonRuntime } from '../authoring/bundleDaemonRuntime';
+import { evaluatePluginAuthorSource } from '../authoring/sourceModule';
+import { PLUGIN_DAEMON_OUTPUT_MANIFEST_RELATIVE_PATH } from '../authoring/daemonOutputManifest';
 import {
   cleanupStagedNpmArtifactCandidate,
   stageDownloadedNpmArtifactCandidate,
 } from '../distribution/npm/stage';
-import { sriSha512 } from '../distribution/testkit/npmTarball';
+import { createTestNpmTarball, sriSha512 } from '../distribution/testkit/npmTarball';
+import { createTestPluginSdkTarball } from '../distribution/testkit/pluginSdkTarball';
 import { scaffoldLocalPlugin } from '../scaffold/scaffold';
+import { createPluginManifestV2Fixture } from '../testkit/manifestV2Fixture';
+import {
+  startCandidateRegistry,
+} from '../../../../../packages/tests/scripts/plugin-platform/run-packed-author-ui-compat.mjs';
 import { packLocalPlugin } from './pack';
 
 const execFileAsync = promisify(execFile);
@@ -30,12 +34,30 @@ async function writeSelectedPackage(root: string): Promise<void> {
     targetDir: root,
     pluginId: 'acme.selected-plugin',
     displayName: 'Selected Plugin',
-    pluginSdkVersion: '0.1.0-wave1.fixture',
   });
   if (!scaffold.ok) {
     throw new Error(scaffold.diagnostics.map((diagnostic) => diagnostic.message).join('; '));
   }
-  await bundlePluginDaemonRuntime(root);
+  await writeFile(scaffold.sourceEntryPath, [
+    'export const manifest = {',
+    "  schemaVersion: 2, id: 'acme.selected-plugin', version: '0.1.0',",
+    "  displayName: 'Selected Plugin', engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 },",
+    "  entrypoints: { daemon: './dist/index.js' }, hostAccess: { required: [], optional: [] },",
+    '  contributes: {},',
+    '};',
+    'export function activate() {}',
+    '',
+  ].join('\n'), 'utf8');
+  const packageJsonPath = join(root, 'package.json');
+  const packageJson = JSON.parse(await readFile(packageJsonPath, 'utf8')) as Record<string, unknown>;
+  packageJson.files = ['README.md'];
+  // This fixture rewrites the scaffold source to have no SDK imports. Its
+  // package contract therefore needs no registry dependency when pack prepares
+  // the operation-local author copy.
+  delete packageJson.dependencies;
+  delete packageJson.devDependencies;
+  await writeFile(packageJsonPath, JSON.stringify(packageJson, null, 2), 'utf8');
+  await writeFile(join(root, 'README.md'), '# Selected plugin\n', 'utf8');
   await writeFile(join(root, 'private-token.txt'), 'must-not-ship\n', 'utf8');
 }
 
@@ -59,8 +81,874 @@ async function writeManagedRuntimeFixture(homeDir: string): Promise<string> {
   return wrapperPath;
 }
 
+async function startCandidateSdkRegistry(params: Readonly<{
+  sdkTarball: Buffer;
+}>): Promise<Readonly<{
+  origin: string;
+  close(): Promise<void>;
+}>> {
+  const registry = await startCandidateRegistry({
+    packages: [{
+      packageName: '@happier-dev/plugin-sdk',
+      version: '0.0.0',
+      integrity: sriSha512(params.sdkTarball),
+      bytes: params.sdkTarball,
+    }],
+  });
+  return Object.freeze({
+    origin: registry.origin,
+    close: async () => await registry.close(),
+  });
+}
+
+async function writeSdkRegistryPackFixture(
+  root: string,
+  options?: Readonly<{ sdkVersion?: string }>,
+): Promise<void> {
+  await mkdir(root, { recursive: true });
+  await writeFile(join(root, 'package.json'), JSON.stringify({
+    name: 'happier-plugin-sdk-registry-pack-fixture',
+    version: '1.0.0',
+    type: 'module',
+    keywords: ['happier-plugin'],
+    happier: { manifest: '.happier-plugin/plugin.json' },
+    files: ['index.ts'],
+    dependencies: { '@happier-dev/plugin-sdk': options?.sdkVersion ?? '0.0.0' },
+  }, null, 2), 'utf8');
+  await writeFile(join(root, 'index.ts'), [
+    "import { definePlugin } from '@happier-dev/plugin-sdk';",
+    'export const { manifest, activate } = definePlugin({',
+    "  id: 'acme.sdk-registry-pack', version: '1.0.0',",
+    "  displayName: 'SDK registry pack', engines: { happier: '>=0.0.0' }, runtime: { apiVersion: 1 },",
+    "  entrypoints: { daemon: './dist/index.js' }, hostAccess: { required: [], optional: [] },",
+    '});',
+    '',
+  ].join('\n'), 'utf8');
+}
+
+async function createCandidateChannelsProtocolTarball(): Promise<Buffer> {
+  return await createTestNpmTarball([
+    {
+      name: 'package/package.json',
+      body: JSON.stringify({
+        name: '@happier-dev/channels-protocol',
+        version: '0.0.0',
+        type: 'module',
+        exports: {
+          '.': './index.js',
+          './v1': './v1/index.js',
+          './testing/v1': './testing/v1/index.js',
+        },
+      }),
+    },
+    {
+      name: 'package/index.js',
+      body: "export const CONVERSATION_PROVIDERS_CONTRIBUTION_PROTOCOL_ID_V1 = 'happier.channels/providers';\n",
+    },
+    {
+      name: 'package/v1/index.js',
+      body: "export const CONVERSATION_PROVIDERS_CONTRIBUTION_PROTOCOL_ID_V1 = 'happier.channels/providers';\n",
+    },
+    {
+      name: 'package/testing/v1/index.js',
+      body: 'export function createConversationProviderSetupResultV1Fixture() { return {}; }\n',
+    },
+  ]);
+}
+
+async function writeBundledFirstPartyPackFixture(repoRoot: string): Promise<Readonly<{
+  packageRoot: string;
+  packageJsonPath: string;
+}>> {
+  const packageRoot = join(repoRoot, 'packages', 'plugins', 'channel-telegram');
+  const packageJsonPath = join(packageRoot, 'package.json');
+  await mkdir(join(repoRoot, 'apps', 'cli'), { recursive: true });
+  await mkdir(join(repoRoot, 'packages', 'plugin-sdk'), { recursive: true });
+  await mkdir(join(repoRoot, 'packages', 'channels-protocol'), { recursive: true });
+  await mkdir(join(packageRoot, 'src'), { recursive: true });
+  await mkdir(join(packageRoot, 'dist'), { recursive: true });
+  await Promise.all([
+    writeFile(join(repoRoot, 'package.json'), JSON.stringify({ private: true }), 'utf8'),
+    writeFile(join(repoRoot, 'yarn.lock'), '', 'utf8'),
+    writeFile(join(repoRoot, 'apps', 'cli', 'package.json'), JSON.stringify({
+      name: '@happier-dev/cli',
+      version: '0.0.0',
+      bundledDependencies: [
+        '@happier-dev/channels-protocol',
+        '@happier-dev/plugin-sdk',
+        '@happier-dev/plugins-channel-telegram',
+      ],
+    }, null, 2), 'utf8'),
+    writeFile(join(repoRoot, 'packages', 'plugin-sdk', 'package.json'), JSON.stringify({
+      name: '@happier-dev/plugin-sdk',
+      version: '0.0.0',
+    }), 'utf8'),
+    writeFile(join(repoRoot, 'packages', 'channels-protocol', 'package.json'), JSON.stringify({
+      name: '@happier-dev/channels-protocol',
+      version: '0.0.0',
+    }), 'utf8'),
+    writeFile(packageJsonPath, JSON.stringify({
+      name: '@happier-dev/plugins-channel-telegram',
+      version: '0.0.0',
+      private: true,
+      type: 'module',
+      main: './dist/index.js',
+      types: './dist/index.d.ts',
+      exports: {
+        '.': {
+          types: './dist/index.d.ts',
+          default: './dist/index.js',
+        },
+      },
+      files: ['dist', 'package.json'],
+      dependencies: {
+        '@happier-dev/channels-protocol': '0.0.0',
+        '@happier-dev/plugin-sdk': '0.0.0',
+      },
+    }, null, 2), 'utf8'),
+    writeFile(join(packageRoot, 'dist', 'index.js'), 'export const stale = true;\n', 'utf8'),
+    writeFile(join(packageRoot, 'dist', 'index.d.ts'), 'export declare const stale: true;\n', 'utf8'),
+    writeFile(join(packageRoot, 'src', 'index.ts'), [
+      "import { CONVERSATION_PROVIDERS_CONTRIBUTION_PROTOCOL_ID_V1 } from '@happier-dev/channels-protocol';",
+      "import { definePlugin } from '@happier-dev/plugin-sdk';",
+      '',
+      'export const { manifest, activate } = definePlugin({',
+      "  id: 'happier.channel.telegram', version: '0.0.0',",
+      '  displayName: CONVERSATION_PROVIDERS_CONTRIBUTION_PROTOCOL_ID_V1, engines: { happier: \'>=0.0.0\' }, runtime: { apiVersion: 1 },',
+      "  entrypoints: { daemon: './dist/index.js' }, hostAccess: { required: [], optional: [] },",
+      '});',
+      '',
+    ].join('\n'), 'utf8'),
+  ]);
+  return Object.freeze({ packageRoot, packageJsonPath });
+}
+
+async function writeBundledFirstPartyDescriptorPackFixture(repoRoot: string): Promise<Readonly<{
+  packageRoot: string;
+}>> {
+  const packageRoot = join(repoRoot, 'packages', 'plugins', 'channels');
+  await mkdir(join(repoRoot, 'apps', 'cli'), { recursive: true });
+  await mkdir(join(packageRoot, '.happier-plugin'), { recursive: true });
+  await mkdir(join(packageRoot, 'dist'), { recursive: true });
+  await Promise.all([
+    writeFile(join(repoRoot, 'package.json'), JSON.stringify({ private: true }), 'utf8'),
+    writeFile(join(repoRoot, 'yarn.lock'), '', 'utf8'),
+    writeFile(join(repoRoot, 'apps', 'cli', 'package.json'), JSON.stringify({
+      name: '@happier-dev/cli',
+      version: '0.0.0',
+      bundledDependencies: ['@happier-dev/plugins-channels'],
+    }, null, 2), 'utf8'),
+    writeFile(join(packageRoot, 'package.json'), JSON.stringify({
+      name: '@happier-dev/plugins-channels',
+      version: '0.0.0',
+      private: true,
+      type: 'module',
+      main: './dist/index.js',
+      files: ['dist', '.happier-plugin', 'package.json'],
+    }, null, 2), 'utf8'),
+    writeFile(join(packageRoot, 'dist', 'index.js'), 'export const bundled = true;\n', 'utf8'),
+    writeFile(join(packageRoot, '.happier-plugin', 'daemon.js'), 'export function activate() {}\n', 'utf8'),
+    writeFile(
+      join(packageRoot, '.happier-plugin', 'plugin.json'),
+      `${JSON.stringify(createPluginManifestV2Fixture({
+        id: 'happier.channels',
+        version: '0.0.0',
+        displayName: 'Channels',
+        // The bundled release stamp, exactly as the shipped descriptor carries
+        // it: a range the running development CLI never satisfies.
+        engines: { happier: '^0.0.0' },
+        entrypoints: { daemon: './.happier-plugin/daemon.js' },
+      }))}\n`,
+      'utf8',
+    ),
+  ]);
+  return Object.freeze({ packageRoot });
+}
+
 describe('packLocalPlugin', () => {
-  it('packs a dependency-closed external Voice provider that calls the public activate(api) ABI', async () => {
+  it('removes only manifest-owned outputs from a descriptor-only pack copy before archive traversal', async () => {
+    const parent = await mkdtemp(join(tmpdir(), 'happier-descriptor-transition-pack-'));
+    const root = join(parent, 'plugin');
+    const archivePath = join(parent, 'descriptor-transition.tgz');
+    try {
+      await mkdir(join(root, '.happier-plugin'), { recursive: true });
+      await mkdir(join(root, 'dist', '.happier-chunks'), { recursive: true });
+      await mkdir(join(root, 'dist', 'actions'), { recursive: true });
+      await writeFile(join(root, 'package.json'), JSON.stringify({
+        name: 'happier-plugin-descriptor-transition',
+        version: '1.0.0',
+        type: 'module',
+        keywords: ['happier-plugin'],
+        happier: { manifest: '.happier-plugin/plugin.json' },
+        files: ['.happier-plugin/plugin.json', 'dist'],
+      }, null, 2), 'utf8');
+      await writeFile(
+        join(root, '.happier-plugin', 'plugin.json'),
+        `${JSON.stringify(createPluginManifestV2Fixture({
+          id: 'acme.descriptor-transition',
+          entrypoints: undefined,
+        }))}\n`,
+        'utf8',
+      );
+      await writeFile(join(root, 'dist', 'daemon.js'), 'stale daemon output\n', 'utf8');
+      await writeFile(join(root, 'dist', 'source-owned.js'), 'stale custom daemon output\n', 'utf8');
+      await writeFile(join(root, 'dist', 'index.js'), 'fresh descriptor output\n', 'utf8');
+      await writeFile(join(root, 'dist', '.happier-chunks', 'chunk-stale.js'), 'stale chunk output\n', 'utf8');
+      await writeFile(
+        join(root, 'dist', 'actions', 'index.js'),
+        'export const authorOwned = true;\n',
+        'utf8',
+      );
+      await writeFile(
+        join(root, PLUGIN_DAEMON_OUTPUT_MANIFEST_RELATIVE_PATH),
+        `${JSON.stringify({ version: 1, outputs: ['dist/source-owned.js'] })}\n`,
+        'utf8',
+      );
+
+      const result = await packLocalPlugin({ locator: root, outPath: archivePath });
+
+      expect(result, result.ok ? '' : result.diagnostics.map((entry) => entry.message).join('\n'))
+        .toMatchObject({ ok: true, pluginId: 'acme.descriptor-transition' });
+      const archiveEntries: string[] = [];
+      await tar.t({
+        file: archivePath,
+        onentry(entry) {
+          archiveEntries.push(entry.path);
+        },
+      });
+      expect(archiveEntries).toContain('package/dist/daemon.js');
+      expect(archiveEntries).not.toContain('package/dist/source-owned.js');
+      expect(archiveEntries).toContain('package/dist/index.js');
+      expect(archiveEntries).toContain('package/dist/.happier-chunks/chunk-stale.js');
+      expect(archiveEntries).toContain('package/dist/actions/index.js');
+      await expect(readFile(join(root, 'dist', 'index.js'), 'utf8'))
+        .resolves.toBe('fresh descriptor output\n');
+      await expect(readFile(join(root, 'dist', 'source-owned.js'), 'utf8'))
+        .resolves.toBe('stale custom daemon output\n');
+      await expect(readFile(join(root, PLUGIN_DAEMON_OUTPUT_MANIFEST_RELATIVE_PATH), 'utf8'))
+        .resolves.toMatch(/source-owned\.js/u);
+    } finally {
+      await rm(parent, { recursive: true, force: true });
+    }
+  });
+
+  it('does not publish the authoring daemon-output marker from a code-defined whole metadata selection', async () => {
+    const parent = await mkdtemp(join(tmpdir(), 'happier-code-defined-pack-marker-'));
+    const root = join(parent, 'plugin');
+    const archivePath = join(parent, 'marker.tgz');
+    try {
+      await mkdir(join(root, '.happier-plugin'), { recursive: true });
+      await writeFile(join(root, 'package.json'), JSON.stringify({
+        name: 'happier-plugin-marker-filter',
+        version: '1.0.0',
+        type: 'module',
+        keywords: ['happier-plugin'],
+        happier: { manifest: '.happier-plugin/plugin.json' },
+        files: ['.happier-plugin', 'index.ts'],
+      }, null, 2), 'utf8');
+      await writeFile(
+        join(root, PLUGIN_DAEMON_OUTPUT_MANIFEST_RELATIVE_PATH),
+        `${JSON.stringify({ version: 1, outputs: ['dist/source-owned.js'] })}\n`,
+        'utf8',
+      );
+      await writeFile(join(root, 'index.ts'), [
+        'export const manifest = {',
+        "  version: '1.0.0', id: 'acme.marker-filter', schemaVersion: 2,",
+        "  displayName: 'Marker Filter', engines: { happier: '>=0.0.0' }, runtime: { apiVersion: 1 },",
+        "  entrypoints: { daemon: './dist/index.js' }, hostAccess: { required: [], optional: [] },",
+        '  contributes: {},',
+        '};',
+        'export function activate() {}',
+        '',
+      ].join('\n'), 'utf8');
+
+      const result = await packLocalPlugin({ locator: root, outPath: archivePath });
+
+      expect(result, result.ok ? '' : result.diagnostics.map((entry) => entry.message).join('\n'))
+        .toMatchObject({ ok: true, pluginId: 'acme.marker-filter' });
+      const archiveEntries: string[] = [];
+      await tar.t({
+        file: archivePath,
+        onentry(entry) {
+          archiveEntries.push(entry.path);
+        },
+      });
+      expect(archiveEntries).toContain('package/.happier-plugin/plugin.json');
+      expect(archiveEntries).not.toContain(
+        `package/${PLUGIN_DAEMON_OUTPUT_MANIFEST_RELATIVE_PATH}`,
+      );
+      await expect(readFile(join(root, PLUGIN_DAEMON_OUTPUT_MANIFEST_RELATIVE_PATH), 'utf8'))
+        .resolves.toMatch(/source-owned\.js/u);
+    } finally {
+      await rm(parent, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects and redacts a credential-bearing SDK registry override before author preparation', async () => {
+    const secret = 'sdk-registry-secret';
+    const result = await packLocalPlugin({
+      locator: '/fixture/plugin',
+      sdkRegistryOrigin: `https://author:${secret}@registry.example.test`,
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      diagnostics: [expect.objectContaining({
+        message: 'Plugin SDK registry must be a credential-free HTTPS origin or loopback HTTP origin',
+      })],
+    });
+    expect(JSON.stringify(result)).not.toContain(secret);
+  });
+
+  it('statically evaluates, canonicalizes, and bundles a code-defined plugin without mutating its source tree', async () => {
+    const parent = await mkdtemp(join(tmpdir(), 'happier-code-defined-pack-'));
+    const root = join(parent, 'plugin');
+    const archivePath = join(parent, 'code-defined.tgz');
+    const extractedRoot = join(parent, 'extracted');
+    try {
+      await mkdir(root, { recursive: true });
+      await writeFile(join(root, 'package.json'), JSON.stringify({
+        name: 'happier-plugin-acme-code-defined',
+        version: '1.0.0',
+        type: 'module',
+        keywords: ['happier-plugin'],
+        happier: {
+          manifest: '.happier-plugin/plugin.json',
+          compatibilityProjection: {
+            version: 1,
+            manifest: {
+              schemaVersion: 2,
+              id: 'acme.author-supplied-projection',
+              version: '9.9.9',
+              displayName: 'Forged projection',
+              runtime: { apiVersion: 1 },
+              contributes: {},
+            },
+            uiArtifacts: { version: 1, entries: [] },
+            builtWith: { pluginSdk: '9999.0.0' },
+          },
+          marketplaceDiscovery: {
+            version: 1,
+            pluginId: 'acme.author-supplied-projection',
+            manifestDigest: `sha256:${'a'.repeat(64)}`,
+            display: { title: 'Forged projection', description: null },
+            summary: {
+              contributions: [],
+              requiredHostAccess: [],
+              optionalHostAccess: [],
+              executableRealms: [],
+            },
+          },
+        },
+        files: ['a-note.txt', 'Z-note.txt', 'index.ts'],
+      }, null, 2), 'utf8');
+      await writeFile(join(root, 'a-note.txt'), 'a\n', 'utf8');
+      await writeFile(join(root, 'Z-note.txt'), 'z\n', 'utf8');
+      await writeFile(join(root, 'index.ts'), [
+        "export const manifest = {",
+        "  version: '1.0.0', id: 'acme.code-defined', schemaVersion: 2,",
+        "  displayName: 'Code Defined', engines: { happier: '>=0.0.0' }, runtime: { apiVersion: 1 },",
+        "  entrypoints: { daemon: './dist/index.js' }, hostAccess: { required: [], optional: [] },",
+        "  contributes: {},",
+        "};",
+        "export function activate() {}",
+        '',
+      ].join('\n'), 'utf8');
+
+      const result = await packLocalPlugin({ locator: root, outPath: archivePath });
+
+      expect(result, result.ok ? '' : result.diagnostics.map((entry) => entry.message).join('\n'))
+        .toMatchObject({ ok: true, pluginId: 'acme.code-defined' });
+      await mkdir(extractedRoot);
+      await tar.x({ file: archivePath, cwd: extractedRoot });
+      const packagedRoot = join(extractedRoot, 'package');
+      const manifestBytes = await readFile(join(packagedRoot, '.happier-plugin', 'plugin.json'), 'utf8');
+      const evaluated = await evaluatePluginAuthorSource({ locator: root });
+      expect(manifestBytes).toBe(evaluated.canonicalManifestJson);
+      expect(JSON.parse(manifestBytes)).toMatchObject({
+        id: 'acme.code-defined',
+        entrypoints: { daemon: './dist/index.js' },
+      });
+      const packagedPackageJson = JSON.parse(
+        await readFile(join(packagedRoot, 'package.json'), 'utf8'),
+      ) as {
+        files?: unknown;
+        happier?: Readonly<{
+          compatibilityProjection?: unknown;
+          marketplaceDiscovery?: unknown;
+        }>;
+      };
+      expect(packagedPackageJson.files).toEqual([
+        '.happier-plugin/plugin.json',
+        'Z-note.txt',
+        'a-note.txt',
+        'dist/index.js',
+        'index.ts',
+      ]);
+      expect(packagedPackageJson.happier?.compatibilityProjection).toMatchObject({
+        version: 1,
+        manifest: { id: 'acme.code-defined', version: '1.0.0' },
+        uiArtifacts: { version: 1, entries: [] },
+      });
+      expect(packagedPackageJson.happier?.compatibilityProjection).not.toHaveProperty('builtWith');
+      expect(packagedPackageJson.happier?.marketplaceDiscovery).toEqual({
+        version: 1,
+        pluginId: 'acme.code-defined',
+        manifestDigest: `sha256:${createHash('sha256').update(manifestBytes).digest('hex')}`,
+        display: { title: 'Code Defined', description: null },
+        summary: {
+          contributions: [],
+          requiredHostAccess: [],
+          optionalHostAccess: [],
+          executableRealms: ['daemon'],
+        },
+      });
+      const archiveEntries: string[] = [];
+      await tar.t({
+        file: archivePath,
+        onentry(entry) {
+          archiveEntries.push(entry.path);
+        },
+      });
+      expect(archiveEntries).toEqual([
+        'package/',
+        'package/.happier-plugin/',
+        'package/.happier-plugin/plugin.json',
+        'package/Z-note.txt',
+        'package/a-note.txt',
+        'package/dist/',
+        'package/dist/index.js',
+        'package/index.ts',
+        'package/package.json',
+      ]);
+      expect(await readFile(join(packagedRoot, 'dist', 'index.js'), 'utf8')).toContain('activate');
+      await expect(readFile(join(root, '.happier-plugin', 'plugin.json'), 'utf8'))
+        .rejects.toMatchObject({ code: 'ENOENT' });
+      await expect(readFile(join(root, 'dist', 'index.js'), 'utf8'))
+        .rejects.toMatchObject({ code: 'ENOENT' });
+    } finally {
+      await rm(parent, { recursive: true, force: true });
+    }
+  });
+
+  it('returns the canonical manifest it already evaluated for a code-defined plugin', async () => {
+    // `manifestPath` is the author entry for a code-defined plugin, so it is not
+    // readable as manifest JSON. Consumers that need the manifest — the packed
+    // author test selects its empty-input CLI action from it — must take the
+    // canonical manifest from this owner instead of re-reading that path.
+    const parent = await mkdtemp(join(tmpdir(), 'happier-code-defined-pack-manifest-'));
+    const root = join(parent, 'plugin');
+    const archivePath = join(parent, 'code-defined.tgz');
+    try {
+      await mkdir(root, { recursive: true });
+      await writeFile(join(root, 'package.json'), JSON.stringify({
+        name: 'happier-plugin-acme-code-defined',
+        version: '1.0.0',
+        type: 'module',
+        keywords: ['happier-plugin'],
+        happier: { manifest: '.happier-plugin/plugin.json' },
+        files: ['index.ts'],
+      }, null, 2), 'utf8');
+      await writeFile(join(root, 'index.ts'), [
+        "export const manifest = {",
+        "  version: '1.0.0', id: 'acme.code-defined', schemaVersion: 2,",
+        "  displayName: 'Code Defined', engines: { happier: '>=0.0.0' }, runtime: { apiVersion: 1 },",
+        "  entrypoints: { daemon: './dist/index.js' }, hostAccess: { required: [], optional: [] },",
+        "  contributes: {},",
+        "};",
+        "export function activate() {}",
+        '',
+      ].join('\n'), 'utf8');
+
+      const result = await packLocalPlugin({ locator: root, outPath: archivePath });
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.manifestPath.endsWith(`${sep}index.ts`)).toBe(true);
+      expect(result.manifest).toMatchObject({
+        id: 'acme.code-defined',
+        version: '1.0.0',
+        contributes: expect.anything(),
+      });
+    } finally {
+      await rm(parent, { recursive: true, force: true });
+    }
+  });
+
+  it('packs every code-defined phase from one isolated source copy after author evaluation mutates the live tree', async () => {
+    const parent = await mkdtemp(join(tmpdir(), 'happier-isolated-pack-'));
+    const root = join(parent, 'plugin');
+    const archivePath = join(parent, 'isolated.tgz');
+    const extractedRoot = join(parent, 'extracted');
+    const notePath = join(root, 'note.txt');
+    try {
+      await mkdir(root, { recursive: true });
+      await writeFile(join(root, 'package.json'), JSON.stringify({
+        name: 'happier-plugin-acme-isolated-pack',
+        version: '1.0.0',
+        type: 'module',
+        keywords: ['happier-plugin'],
+        happier: { manifest: '.happier-plugin/plugin.json' },
+        files: ['index.ts', 'note.txt'],
+      }, null, 2), 'utf8');
+      await writeFile(notePath, 'copied-before-evaluation\n', 'utf8');
+      await writeFile(join(root, 'index.ts'), [
+        "import { writeFileSync } from 'node:fs';",
+        `writeFileSync(${JSON.stringify(notePath)}, 'mutated-after-copy\\n', 'utf8');`,
+        'export const manifest = {',
+        "  version: '1.0.0', id: 'acme.isolated-pack', schemaVersion: 2,",
+        "  displayName: 'Isolated pack', engines: { happier: '>=0.0.0' }, runtime: { apiVersion: 1 },",
+        "  entrypoints: { daemon: './dist/index.js' }, hostAccess: { required: [], optional: [] },",
+        '  contributes: {},',
+        '};',
+        'export function activate() {}',
+        '',
+      ].join('\n'), 'utf8');
+
+      const result = await packLocalPlugin({ locator: root, outPath: archivePath });
+
+      expect(result, result.ok ? '' : result.diagnostics.map((entry) => entry.message).join('\n'))
+        .toMatchObject({ ok: true, pluginId: 'acme.isolated-pack' });
+      expect(await readFile(notePath, 'utf8')).toBe('mutated-after-copy\n');
+      await mkdir(extractedRoot);
+      await tar.x({ file: archivePath, cwd: extractedRoot });
+      await expect(readFile(join(extractedRoot, 'package', 'note.txt'), 'utf8'))
+        .resolves.toBe('copied-before-evaluation\n');
+    } finally {
+      await rm(parent, { recursive: true, force: true });
+    }
+  });
+
+  it('packs an unpublished-SDK author project through bundled prepublication materialization without a registry override', async () => {
+    const parent = await mkdtemp(join(tmpdir(), 'happier-sdk-prepublication-pack-'));
+    const root = join(parent, 'plugin');
+    try {
+      await writeSdkRegistryPackFixture(root);
+      const result = await packLocalPlugin({
+        locator: root,
+        outPath: join(parent, 'prepublication-sdk.tgz'),
+      });
+
+      // The author declares the prepublication SDK version, so the toolchain
+      // materializes the bundled SDK instead of failing the install. That makes
+      // this the one pack case evaluated against the real `definePlugin`.
+      expect(result, result.ok ? '' : result.diagnostics.map((entry) => entry.message).join('\n'))
+        .toMatchObject({ ok: true, pluginId: 'acme.sdk-registry-pack' });
+      await expect(readFile(join(root, 'node_modules', '@happier-dev', 'plugin-sdk', 'package.json'), 'utf8'))
+        .rejects.toMatchObject({ code: 'ENOENT' });
+    } finally {
+      await rm(parent, { recursive: true, force: true });
+    }
+  }, 120_000);
+
+  it('returns the managed author-install failure when the supplied SDK registry cannot serve the declared version', async () => {
+    const parent = await mkdtemp(join(tmpdir(), 'happier-sdk-registry-pack-missing-'));
+    const root = join(parent, 'plugin');
+    const registry = await startCandidateSdkRegistry({ sdkTarball: await createTestPluginSdkTarball() });
+    try {
+      await writeSdkRegistryPackFixture(root, { sdkVersion: '9999.0.0' });
+      const result = await packLocalPlugin({
+        locator: root,
+        outPath: join(parent, 'missing-sdk.tgz'),
+        sdkRegistryOrigin: registry.origin,
+      });
+
+      expect(result).toMatchObject({
+        ok: false,
+        diagnostics: [expect.objectContaining({ message: expect.stringContaining('Plugin author install failed') })],
+      });
+    } finally {
+      await registry.close();
+      await rm(parent, { recursive: true, force: true });
+    }
+  });
+
+  it('packs a bundled first-party provider through the canonical candidate registry without changing its source metadata', async () => {
+    const parent = await mkdtemp(join(tmpdir(), 'happier-bundled-first-party-pack-'));
+    const fixture = await writeBundledFirstPartyPackFixture(parent);
+    const [sdkTarball, channelsProtocolTarball] = await Promise.all([
+      createTestPluginSdkTarball(),
+      createCandidateChannelsProtocolTarball(),
+    ]);
+    const registry = await startCandidateRegistry({
+      packages: [
+        {
+          packageName: '@happier-dev/plugin-sdk',
+          version: '0.0.0',
+          integrity: sriSha512(sdkTarball),
+          bytes: sdkTarball,
+        },
+        {
+          packageName: '@happier-dev/channels-protocol',
+          version: '0.0.0',
+          integrity: sriSha512(channelsProtocolTarball),
+          bytes: channelsProtocolTarball,
+        },
+      ],
+    });
+    try {
+      const result = await packLocalPlugin({
+        locator: fixture.packageRoot,
+        outPath: join(parent, 'bundled-first-party.tgz'),
+        sdkRegistryOrigin: registry.origin,
+      });
+
+      expect(result, result.ok ? '' : result.diagnostics.map((entry) => entry.message).join('\n'))
+        .toMatchObject({ ok: true, pluginId: 'happier.channel.telegram' });
+      const sourcePackageJson = JSON.parse(await readFile(fixture.packageJsonPath, 'utf8')) as Record<string, unknown>;
+      expect(sourcePackageJson).not.toHaveProperty('keywords');
+      expect(sourcePackageJson).not.toHaveProperty('happier');
+
+      const extractedRoot = join(parent, 'bundled-first-party-extracted');
+      await mkdir(extractedRoot);
+      await tar.x({ file: join(parent, 'bundled-first-party.tgz'), cwd: extractedRoot });
+      const packedPackageJson = JSON.parse(
+        await readFile(join(extractedRoot, 'package', 'package.json'), 'utf8'),
+      ) as Record<string, unknown>;
+      expect(packedPackageJson).toMatchObject({
+        name: '@happier-dev/plugins-channel-telegram',
+        version: '0.0.0',
+      });
+      expect(packedPackageJson).not.toHaveProperty('keywords');
+      expect(packedPackageJson).not.toHaveProperty('happier');
+    } finally {
+      await registry.close();
+      await rm(parent, { recursive: true, force: true });
+    }
+  });
+
+  it('does not infer bundled first-party authority from a package name outside the canonical workspace', async () => {
+    const parent = await mkdtemp(join(tmpdir(), 'happier-noncanonical-first-party-pack-'));
+    const fixture = await writeBundledFirstPartyPackFixture(parent);
+    const outsidePackageRoot = join(parent, 'outside-package');
+    await cp(fixture.packageRoot, outsidePackageRoot, { recursive: true });
+    const [sdkTarball, channelsProtocolTarball] = await Promise.all([
+      createTestPluginSdkTarball(),
+      createCandidateChannelsProtocolTarball(),
+    ]);
+    const registry = await startCandidateRegistry({
+      packages: [
+        {
+          packageName: '@happier-dev/plugin-sdk',
+          version: '0.0.0',
+          integrity: sriSha512(sdkTarball),
+          bytes: sdkTarball,
+        },
+        {
+          packageName: '@happier-dev/channels-protocol',
+          version: '0.0.0',
+          integrity: sriSha512(channelsProtocolTarball),
+          bytes: channelsProtocolTarball,
+        },
+      ],
+    });
+    try {
+      const result = await packLocalPlugin({
+        locator: outsidePackageRoot,
+        outPath: join(parent, 'noncanonical-first-party.tgz'),
+        sdkRegistryOrigin: registry.origin,
+      });
+
+      expect(result).toMatchObject({
+        ok: false,
+        diagnostics: [expect.objectContaining({ message: expect.stringContaining('happier-plugin keyword') })],
+      });
+    } finally {
+      await registry.close();
+      await rm(parent, { recursive: true, force: true });
+    }
+  });
+
+  it('packs a bundled first-party descriptor package whose canonical manifest is read before staging', async () => {
+    const parent = await mkdtemp(join(tmpdir(), 'happier-bundled-first-party-descriptor-pack-'));
+    const fixture = await writeBundledFirstPartyDescriptorPackFixture(parent);
+    try {
+      const result = await packLocalPlugin({
+        locator: fixture.packageRoot,
+        outPath: join(parent, 'bundled-first-party-descriptor.tgz'),
+      });
+
+      expect(result, result.ok ? '' : result.diagnostics.map((entry) => entry.message).join('\n'))
+        .toMatchObject({ ok: true, pluginId: 'happier.channels', version: '0.0.0' });
+    } finally {
+      await rm(parent, { recursive: true, force: true });
+    }
+  });
+
+  it('still rejects a reserved-namespace descriptor package outside the canonical bundled workspace', async () => {
+    const parent = await mkdtemp(join(tmpdir(), 'happier-noncanonical-descriptor-pack-'));
+    const fixture = await writeBundledFirstPartyDescriptorPackFixture(parent);
+    const outsidePackageRoot = join(parent, 'outside-package');
+    await cp(fixture.packageRoot, outsidePackageRoot, { recursive: true });
+    try {
+      const result = await packLocalPlugin({
+        locator: outsidePackageRoot,
+        outPath: join(parent, 'noncanonical-descriptor.tgz'),
+      });
+
+      expect(result).toMatchObject({
+        ok: false,
+        diagnostics: [
+          expect.objectContaining({ message: expect.stringContaining("reserved happier.* namespace") }),
+          expect.objectContaining({ message: expect.stringContaining('compatible Happier CLI version') }),
+        ],
+      });
+    } finally {
+      await rm(parent, { recursive: true, force: true });
+    }
+  });
+
+  it('packs an isolated package-root author project through its supplied SDK registry', async () => {
+    const parent = await mkdtemp(join(tmpdir(), 'happier-sdk-registry-pack-success-'));
+    const root = join(parent, 'plugin');
+    const registry = await startCandidateSdkRegistry({ sdkTarball: await createTestPluginSdkTarball() });
+    try {
+      await writeSdkRegistryPackFixture(root);
+      const result = await packLocalPlugin({
+        locator: root,
+        outPath: join(parent, 'candidate-sdk.tgz'),
+        sdkRegistryOrigin: registry.origin,
+      });
+
+      expect(result, result.ok ? '' : result.diagnostics.map((diagnostic) => diagnostic.message).join('\n'))
+        .toMatchObject({ ok: true, pluginId: 'acme.sdk-registry-pack' });
+      await expect(readFile(join(root, 'node_modules', '@happier-dev', 'plugin-sdk', 'index.js'), 'utf8'))
+        .rejects.toMatchObject({ code: 'ENOENT' });
+    } finally {
+      await registry.close();
+      await rm(parent, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps the operation source outside an author parent whose replica removes remote-created pack directories', async () => {
+    const parent = await mkdtemp(join(tmpdir(), 'happier-replica-managed-pack-source-'));
+    const root = join(parent, 'plugin');
+    const sourceTreeOperationEntries: string[] = [];
+    const watcher = watch(parent, (_event, entryName) => {
+      const entry = entryName?.toString();
+      if (entry?.startsWith('.happier-plugin-pack-source-')) {
+        sourceTreeOperationEntries.push(entry);
+      }
+    });
+    try {
+      await writeSelectedPackage(root);
+
+      const result = await packLocalPlugin({
+        locator: root,
+        outPath: join(parent, 'replica-managed.tgz'),
+      });
+
+      expect(result, result.ok ? '' : result.diagnostics.map((diagnostic) => diagnostic.message).join('\n'))
+        .toMatchObject({ ok: true, pluginId: 'acme.selected-plugin' });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(sourceTreeOperationEntries).toEqual([]);
+    } finally {
+      watcher.close();
+      await rm(parent, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps one-file authoring simple and packs a package-root Session Agent with a distinct named runner leaf', async () => {
+    const parent = await mkdtemp(join(tmpdir(), 'happier-code-defined-session-agent-pack-'));
+    const root = join(parent, 'plugin');
+    const archivePath = join(parent, 'session-agent.tgz');
+    const extractedRoot = join(parent, 'extracted');
+    try {
+      await mkdir(join(root, 'agent'), { recursive: true });
+      await writeFile(join(root, 'package.json'), JSON.stringify({
+        name: 'happier-plugin-acme-session-agent',
+        version: '1.0.0',
+        type: 'module',
+        keywords: ['happier-plugin'],
+        happier: { manifest: '.happier-plugin/plugin.json' },
+        files: ['index.ts', 'agent/runtime.ts'],
+      }, null, 2), 'utf8');
+      await writeFile(join(root, 'agent', 'runtime.ts'), [
+        'export const createSessionAgentRuntime = () => ({',
+        '  sessions: { open() { throw new Error("unused"); } },',
+        '});',
+        '',
+      ].join('\n'), 'utf8');
+      const activationSource = [
+        "import { createSessionAgentRuntime } from './agent/runtime.js';",
+        'export const manifest = {',
+        "  version: '1.0.0', id: 'acme.session-agent', schemaVersion: 2,",
+        "  displayName: 'Session Agent', engines: { happier: '>=0.0.0' }, runtime: { apiVersion: 1 },",
+        "  entrypoints: { daemon: './dist/index.js' }, hostAccess: { required: [], optional: [] },",
+        '  contributes: { agents: [{',
+        "    id: 'session-agent', title: 'Session Agent', runtime: { kind: 'custom' }, primary: 'sessions',",
+        "    capabilities: { sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } },",
+        '  }] },',
+        '};',
+        'export function activate(api) {',
+        "  api.agents.register('session-agent', createSessionAgentRuntime, {",
+        '    sessionRunnerFactory: {',
+        "      module: './agent/runtime.js', export: 'createSessionAgentRuntime', runtimeApiVersion: 1,",
+        '    },',
+        '  });',
+        '}',
+        '',
+      ].join('\n');
+      await writeFile(join(root, 'index.ts'), activationSource, 'utf8');
+
+      const singleFileResult = await packLocalPlugin({
+        locator: join(root, 'index.ts'),
+        outPath: join(parent, 'single-file-session-agent.tgz'),
+      });
+      expect(singleFileResult).toMatchObject({ ok: false });
+
+      const wrongExportRoot = join(parent, 'wrong-export-plugin');
+      await cp(root, wrongExportRoot, { recursive: true });
+      await writeFile(
+        join(wrongExportRoot, 'index.ts'),
+        activationSource.replace(
+          "export: 'createSessionAgentRuntime'",
+          "export: 'missingSessionAgentRuntime'",
+        ),
+        'utf8',
+      );
+      const wrongExportResult = await packLocalPlugin({
+        locator: wrongExportRoot,
+        outPath: join(parent, 'wrong-export-session-agent.tgz'),
+      });
+      expect(wrongExportResult).toMatchObject({
+        ok: false,
+        diagnostics: [expect.objectContaining({
+          message: expect.stringMatching(/runner factory export.*does not match/u),
+        })],
+      });
+      const result = await packLocalPlugin({ locator: root, outPath: archivePath });
+
+      expect(result, result.ok ? '' : result.diagnostics.map((entry) => entry.message).join('\n'))
+        .toMatchObject({ ok: true, pluginId: 'acme.session-agent' });
+      await mkdir(extractedRoot);
+      await tar.x({ file: archivePath, cwd: extractedRoot });
+      const packagedRoot = join(extractedRoot, 'package');
+      const activationModule = await import(pathToFileURL(join(packagedRoot, 'dist', 'index.js')).href) as Readonly<{
+        activate(api: Readonly<{ agents: Readonly<{ register(id: string, factory: unknown): void }> }>): void;
+      }>;
+      const runnerModule = await import(pathToFileURL(join(packagedRoot, 'dist', 'agent', 'runtime.js')).href) as Readonly<{
+        createSessionAgentRuntime: unknown;
+      }>;
+      let registeredFactory: unknown;
+      activationModule.activate({
+        agents: {
+          register(_id, factory) {
+            registeredFactory = factory;
+          },
+        },
+      });
+      expect(registeredFactory).toBe(runnerModule.createSessionAgentRuntime);
+      const packagedPackageJson = JSON.parse(
+        await readFile(join(packagedRoot, 'package.json'), 'utf8'),
+      ) as { files?: unknown };
+      expect(packagedPackageJson.files).toContain('dist/agent/runtime.js');
+    } finally {
+      await rm(parent, { recursive: true, force: true });
+    }
+  });
+
+  it('packs and stages a dependency-closed external Voice provider artifact', async () => {
     const parent = await mkdtemp(join(tmpdir(), 'happier-packed-voice-'));
     const archivePath = join(parent, 'packed-voice.tgz');
     const installRoot = join(parent, 'installed');
@@ -70,6 +958,7 @@ describe('packLocalPlugin', () => {
       const packed = await packLocalPlugin({ locator: fixtureRoot, outPath: archivePath });
       expect(packed, packed.ok ? '' : packed.diagnostics.map((entry) => entry.message).join('\n')).toMatchObject({ ok: true });
       if (!packed.ok) return;
+      expect(packed).not.toHaveProperty('manifestDigest');
       const archiveBytes = await readFile(archivePath);
       await mkdir(installRoot);
       staged = await stageDownloadedNpmArtifactCandidate({
@@ -81,6 +970,7 @@ describe('packLocalPlugin', () => {
           },
           artifactPath: archivePath,
           byteLength: archiveBytes.byteLength,
+          archiveDigestSha256: `sha256:${createHash('sha256').update(archiveBytes).digest('hex')}`,
           registrySignature: { status: 'absent' },
           provenance: { status: 'absent' },
         },
@@ -88,132 +978,23 @@ describe('packLocalPlugin', () => {
       });
       expect(staged.ok).toBe(true);
       if (!staged.ok) return;
-      expect(staged.candidate.generatedUiArtifacts.contributionIds).toEqual(['voice-runtime-web']);
-      const generatedUiArtifactsManifest = await readGeneratedPluginUiArtifactsManifest(staged.candidate.rootPath);
-      expect(generatedUiArtifactsManifest?.entries).toHaveLength(1);
-      const resolved = createResolvedContributionRegistry(projectLoadedPluginContributes({
-        loadResult: {
-          loadedPlugins: [{
-            pluginId: staged.candidate.manifest.id,
-            pluginRootPath: staged.candidate.rootPath,
-            manifestPath: join(staged.candidate.rootPath, '.happier-plugin', 'plugin.json'),
-            manifestDigest: staged.candidate.manifest.digest,
-            daemonEntryPath: join(staged.candidate.rootPath, 'dist', 'daemon.js'),
-            devDaemonEntryPath: null,
-            ...(generatedUiArtifactsManifest ? { generatedUiArtifactsManifest } : {}),
-            manifest: staged.candidate.manifest.value,
-            sourceSpec: {
-              kind: 'path', locator: staged.candidate.rootPath,
-              trustPolicy: 'local_trusted', installPolicy: 'link',
-            },
-          }],
-          diagnosticsByPluginId: { [staged.candidate.manifest.id]: [] },
-        },
-        provenance: 'external',
-      }));
-      const projection = buildPluginProjectionV2({
-        registry: resolved,
-        generation: 7,
-        pluginUiHostRuntime: {
-          reactNativeBundles: {
-            featureEnabled: true,
-            loaderBackendAvailable: true,
-            hostRuntime: {
-              platform: 'web', channel: 'internal', hostAppVersion: '0.2.10',
-              hostUiApiVersion: '1.0.0', reactVersion: '19.2.0', reactNativeVersion: '0.83.4',
-              availableNativeCapabilities: [],
-            },
-          },
-        },
-      });
-      const packedVoiceProjection =
-        projection.familiesById.voiceProviders?.entriesById['acme.packed-voice/conversation'];
-      expect(packedVoiceProjection).toMatchObject({
-        definition: { client: { artifactId: 'voice-runtime-web' } },
-        recipientContract: {
-          credentialSlot: { id: 'api_key', scope: 'account' },
-          operations: expect.arrayContaining([
-            expect.objectContaining({ id: 'list-voices', effect: 'read' }),
-            expect.objectContaining({ id: 'provision-voice', effect: 'mutation' }),
-            expect.objectContaining({ id: 'client-auth', effect: 'read' }),
-          ]),
-        },
-        recipientContractDigest: expect.stringMatching(/^sha256:[0-9a-f]{64}$/u),
-      });
-      expect(projection.familiesById.pluginUi?.entriesById['reactNativeBundle:acme.packed-voice:conversation'])
-        .toMatchObject({
-          artifactGraph: { contributionId: 'voice-runtime-web', platform: 'web' },
-          runtime: {
-            decision: { state: 'load' },
-            loadPolicy: { source: 'installedArtifact' },
-            cacheIdentity: { pluginId: 'acme.packed-voice', contributionId: 'conversation', projectionGeneration: 7 },
-          },
-        });
       expect(staged.candidate.manifest.value.entrypoints).toEqual({
         daemon: './dist/daemon.js',
       });
-      expect(staged.candidate.inventory.some((entry) => entry.path === 'dist/daemon.js')).toBe(true);
-      expect(staged.candidate.manifest.value.contributes.actions).toEqual([]);
-      expect(staged.candidate.manifest.value.contributes.tools).toEqual([]);
-      expect(staged.candidate.manifest.value.contributes.commands).toEqual([]);
-      expect(staged.candidate.manifest.value.contributes.ui).toEqual({
-        views: [],
-        renderers: [],
-        translations: [],
-      });
-      expect(staged.candidate.manifest.value.contributes.voiceProviders[0])
-        .toMatchObject({
-          platforms: ['web'],
-          settings: {
-            schemaVersion: 2,
-            fields: [
-              expect.objectContaining({
-                id: 'profile',
-                default: 'balanced',
-                presentation: expect.objectContaining({ control: 'select' }),
-              }),
-              expect.objectContaining({
-                id: 'enableProvisioning',
-                default: true,
-                presentation: expect.objectContaining({ control: 'switch' }),
-              }),
-            ],
-          },
-          accountMediation: {
-            operations: [
-              expect.objectContaining({
-                id: 'list-voices',
-                purpose: 'voice.catalog.voices',
-                effect: 'read',
-                request: expect.objectContaining({
-                  origin: 'https://voice.example.test',
-                  pathTemplate: '/v1/voices',
-                  method: 'GET',
-                }),
-              }),
-              expect.objectContaining({
-                id: 'provision-voice',
-                purpose: 'voice.provision.selected',
-                effect: 'mutation',
-                request: expect.objectContaining({
-                  origin: 'https://voice.example.test',
-                  pathTemplate: '/v1/voices/{voiceId}',
-                  method: 'PATCH',
-                }),
-              }),
-              expect.objectContaining({
-                id: 'client-auth',
-                purpose: 'voice.client-auth',
-                effect: 'read',
-                request: expect.objectContaining({
-                  origin: 'https://voice.example.test',
-                  pathTemplate: '/v1/session',
-                  method: 'POST',
-                }),
-              }),
-            ],
-          },
-        });
+      expect(staged.candidate.inventory.map(({ path }) => path)).toEqual(expect.arrayContaining([
+        'dist/daemon.js',
+        'dist/happier-plugin-ui/react-native/voice-runtime-web/index.js',
+      ]));
+      const packedExecutableSources = await Promise.all([
+        readFile(join(staged.candidate.rootPath, 'dist/daemon.js'), 'utf8'),
+        readFile(join(
+          staged.candidate.rootPath,
+          'dist/happier-plugin-ui/react-native/voice-runtime-web/index.js',
+        ), 'utf8'),
+      ]);
+      expect(packedExecutableSources.join('\n')).not.toMatch(
+        /@happier-dev\/plugin-sdk\/(?:runtime|ui\/client)|registerSpeech|speechProviderIds|catalogProviders|accountMediation|PluginVoice|providerId/u,
+      );
     } finally {
       if (staged?.ok) await cleanupStagedNpmArtifactCandidate(staged.candidate).catch(() => undefined);
       await rm(parent, { recursive: true, force: true });
@@ -243,6 +1024,7 @@ describe('packLocalPlugin', () => {
       expect(entries).toContain('package/dist/index.js');
       expect(entries).not.toContain('package/src/index.ts');
       expect(entries).not.toContain('package/private-token.txt');
+      expect(result).not.toHaveProperty('manifestDigest');
       expect(await readFile(`${archivePath}.sha256`, 'utf8')).toMatch(/^sha256:[a-f0-9]{64}  selected-plugin\.tgz\n$/u);
     } finally {
       await rm(parent, { recursive: true, force: true });
@@ -258,7 +1040,7 @@ describe('packLocalPlugin', () => {
 
     try {
       await writeSelectedPackage(root);
-      const dependencyRoot = join(root, 'node_modules', 'fixture-runtime-dependency');
+      const dependencyRoot = join(root, 'fixture-runtime-dependency');
       await mkdir(dependencyRoot, { recursive: true });
       await writeFile(join(dependencyRoot, 'package.json'), JSON.stringify({
         name: 'fixture-runtime-dependency',
@@ -269,16 +1051,17 @@ describe('packLocalPlugin', () => {
       await writeFile(join(dependencyRoot, 'index.js'), "export const suffix = 'bundled-runtime-dependency';\n", 'utf8');
       await writeFile(join(root, 'src', 'index.ts'), [
         "import { suffix } from 'fixture-runtime-dependency';",
-        "import type { PluginApi } from '@happier-dev/plugin-sdk';",
-        "import type { ActionHandler } from '@happier-dev/plugin-sdk/runtime';",
         '',
-        'export const saveNote: ActionHandler = async (input) => {',
-        "  const note = typeof input === 'object' && input !== null && 'note' in input",
-        "    && typeof input.note === 'string' ? input.note : '';",
-        '  return { note: `${note}:${suffix}` };',
+        'export const manifest = {',
+        "  schemaVersion: 2, id: 'acme.selected-plugin', version: '0.1.0',",
+        "  displayName: 'Selected Plugin', engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 },",
+        "  entrypoints: { daemon: './dist/index.js' }, hostAccess: { required: [], optional: [] },",
+        "  contributes: { actions: [{ id: 'save-note', title: 'Save note', scopes: ['session'], surfaces: ['cli'], execution: { target: 'daemon' }, placementBindings: ['primary'], dangerLevel: 'safe' }] },",
         '};',
-        '',
-        'export function activate(api: PluginApi): void {',
+        'export async function saveNote(input) {',
+        '  return { note: `${input.note}:${suffix}` };',
+        '}',
+        'export function activate(api) {',
         "  api.actions.register('save-note', saveNote);",
         '}',
         '',
@@ -291,15 +1074,18 @@ describe('packLocalPlugin', () => {
       };
       packageJson.dependencies = {
         ...(packageJson.dependencies as Record<string, string>),
-        'fixture-runtime-dependency': '1.0.0',
+        'fixture-runtime-dependency': 'file:./fixture-runtime-dependency',
       };
       await writeFile(packageJsonPath, JSON.stringify(packageJson, null, 2), 'utf8');
-      await bundlePluginDaemonRuntime(root);
-      await rm(join(root, 'node_modules'), { recursive: true, force: true });
-
       const packed = await packLocalPlugin({ locator: root, outPath: archivePath });
-      expect(packed.ok).toBe(true);
+      expect(packed, packed.ok ? '' : packed.diagnostics.map((entry) => entry.message).join('\n'))
+        .toMatchObject({ ok: true });
       if (!packed.ok) return;
+      await expect(readFile(
+        join(root, 'node_modules', 'fixture-runtime-dependency', 'index.js'),
+        'utf8',
+      )).rejects.toMatchObject({ code: 'ENOENT' });
+      await rm(join(root, 'node_modules'), { recursive: true, force: true });
       const archiveBytes = await readFile(archivePath);
       const stagingParentPath = join(parent, 'installed');
       await mkdir(stagingParentPath);
@@ -315,6 +1101,7 @@ describe('packLocalPlugin', () => {
           },
           artifactPath: archivePath,
           byteLength: archiveBytes.byteLength,
+          archiveDigestSha256: `sha256:${createHash('sha256').update(archiveBytes).digest('hex')}`,
           registrySignature: { status: 'absent' },
           provenance: { status: 'absent' },
         },
@@ -395,7 +1182,7 @@ describe('packLocalPlugin', () => {
     await writeFile(join(outside, 'secret.js'), 'export const secret = true;\n', 'utf8');
     await symlink(outside, join(root, 'linked'), process.platform === 'win32' ? 'junction' : 'dir');
     const packageJson = JSON.parse(await readFile(join(root, 'package.json'), 'utf8')) as Record<string, unknown>;
-    packageJson.files = ['.happier-plugin', 'dist', 'linked/secret.js'];
+    packageJson.files = ['linked/secret.js'];
     await writeFile(join(root, 'package.json'), JSON.stringify(packageJson), 'utf8');
 
     try {
@@ -431,4 +1218,26 @@ describe('packLocalPlugin', () => {
       await rm(parent, { recursive: true, force: true });
     }
   });
+
+  it('rejects an output path inside the package when its name begins with two dots', async () => {
+    const parent = await mkdtemp(join(tmpdir(), 'happier-dot-prefixed-output-pack-'));
+    const root = join(parent, 'plugin');
+    await writeSelectedPackage(root);
+
+    try {
+      const result = await packLocalPlugin({
+        locator: root,
+        outPath: join(root, '..build-output.tgz'),
+      });
+      expect(result).toMatchObject({
+        ok: false,
+        diagnostics: [expect.objectContaining({
+          message: 'Plugin pack output must be outside the plugin package root',
+        })],
+      });
+    } finally {
+      await rm(parent, { recursive: true, force: true });
+    }
+  });
+
 });

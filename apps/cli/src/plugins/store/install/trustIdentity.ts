@@ -2,7 +2,7 @@ import { realpath } from 'node:fs/promises';
 import { posix, resolve, win32 } from 'node:path';
 
 import { z } from 'zod';
-import { PluginIdSchema } from '@happier-dev/protocol';
+import { normalizeMarketplaceSourceUrlV1, PluginIdSchema } from '@happier-dev/protocol';
 import { NpmRegistryProfileIdV1Schema } from '@happier-dev/protocol/rpc';
 
 import { normalizeNpmPackageName, normalizeNpmRegistryOrigin } from '@/plugins/distribution/npm/normalize';
@@ -20,7 +20,7 @@ function isCanonicalBase64(value: string): boolean {
   }
 }
 
-const AlgorithmQualifiedIntegritySchema = z.string().min(3).max(1024).superRefine((value, context) => {
+export const AlgorithmQualifiedIntegritySchema = z.string().min(3).max(1024).superRefine((value, context) => {
   const match = /^(sha256|sha384|sha512)-([A-Za-z0-9+/]+={0,2})$/u.exec(value);
   const expectedBytes = match?.[1] === 'sha256' ? 32 : match?.[1] === 'sha384' ? 48 : match?.[1] === 'sha512' ? 64 : 0;
   if (
@@ -60,6 +60,16 @@ const CanonicalNpmRegistryProfileIdSchema = z.string().superRefine((value, conte
   const parsed = NpmRegistryProfileIdV1Schema.safeParse(value);
   if (!parsed.success || parsed.data !== value) {
     context.addIssue({ code: 'custom', message: 'Expected a canonical npm registry profile id' });
+  }
+});
+
+const CanonicalMarketplaceSourceIdSchema = z.string().trim().min(1).max(256)
+  .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/u);
+const CanonicalMarketplaceSourceUrlSchema = z.string().superRefine((value, context) => {
+  try {
+    if (normalizeMarketplaceSourceUrlV1(value) !== value) throw new Error();
+  } catch {
+    context.addIssue({ code: 'custom', message: 'Expected a canonical curated marketplace source URL' });
   }
 });
 
@@ -131,6 +141,29 @@ export const PluginTrustRecordSchema: z.ZodType<PluginTrustRecord> = z.object({
 
 export const PluginUpdatePolicySchema = z.enum(['automatic', 'manual', 'pinned']);
 export type PluginUpdatePolicy = z.infer<typeof PluginUpdatePolicySchema>;
+
+/**
+ * The only durable authority for a curated automatic update. Publisher data is
+ * review presentation only and intentionally does not participate here.
+ */
+export const PluginCuratedUpdateSourceBindingSchema = z.object({
+  id: CanonicalMarketplaceSourceIdSchema,
+  sourceUrl: CanonicalMarketplaceSourceUrlSchema,
+  registryProfileId: CanonicalNpmRegistryProfileIdSchema.optional(),
+}).strict();
+export type PluginCuratedUpdateSourceBinding = z.infer<typeof PluginCuratedUpdateSourceBindingSchema>;
+
+export function createPluginCuratedUpdateSourceBinding(input: Readonly<{
+  id: string;
+  sourceUrl: string;
+  registryProfileId?: string;
+}>): PluginCuratedUpdateSourceBinding {
+  return PluginCuratedUpdateSourceBindingSchema.parse({
+    id: input.id,
+    sourceUrl: normalizeMarketplaceSourceUrlV1(input.sourceUrl),
+    ...(input.registryProfileId ? { registryProfileId: input.registryProfileId } : {}),
+  });
+}
 
 export function createNpmPluginDistributionIdentity(params: Readonly<{
   registryOrigin: string;

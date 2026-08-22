@@ -34,6 +34,8 @@ type ButtonCommonProps = Readonly<{
   title?: string;
   /** A key from this plugin's declared translation bundle; `title` is its fallback. */
   titleKey?: string;
+  /** A translation key for an explicit accessible-name override. */
+  accessibilityLabelKey?: string;
   variant?: ButtonVariant;
   disabled?: boolean;
   /**
@@ -87,6 +89,7 @@ function requireAccessibleButtonName(
 export function Button({
   title,
   titleKey,
+  accessibilityLabelKey,
   variant = 'primary',
   disabled,
   busy,
@@ -100,7 +103,12 @@ export function Button({
   const theme = usePluginTheme();
   const translate = usePluginTranslation();
   const label = resolveAuthorText(translate, title, titleKey);
-  const accessibleName = requireAccessibleButtonName(accessibilityLabel, label);
+  const resolvedAccessibilityLabel = resolveAuthorText(
+    translate,
+    accessibilityLabel,
+    accessibilityLabelKey,
+  );
+  const accessibleName = requireAccessibleButtonName(resolvedAccessibilityLabel, label);
   const focusBinding = usePluginUiFocusTargetBindingInternal(focusTarget);
 
   const foreground = variant === 'primary'
@@ -173,6 +181,7 @@ export function Button({
 export type IconButtonProps = Readonly<{
   /** Icon-only controls always require an accessible action name. */
   accessibilityLabel: string;
+  accessibilityLabelKey?: string;
   icon: ReactNode;
   disabled?: boolean;
   busy?: boolean;
@@ -186,6 +195,7 @@ export type IconButtonProps = Readonly<{
 /** The public icon-only adapter over the same press/pending owner as core. */
 export function IconButton({
   accessibilityLabel,
+  accessibilityLabelKey,
   icon,
   disabled,
   busy,
@@ -195,7 +205,10 @@ export function IconButton({
   onPress,
 }: IconButtonProps): ReactElement {
   const theme = usePluginTheme();
-  const accessibleName = requireAccessibleButtonName(accessibilityLabel, undefined);
+  const accessibleName = requireAccessibleButtonName(
+    resolveAuthorText(usePluginTranslation(), accessibilityLabel, accessibilityLabelKey),
+    undefined,
+  );
   const size = Math.max(
     HAPPIER_DEFAULT_MINIMUM_INTERACTIVE_TARGET_SIZE,
     theme.typography.label.lineHeight + theme.spacing.large * 2,

@@ -1,18 +1,4 @@
-export type RuntimeErrorKindV1 =
-    | 'abort'
-    | 'timeout'
-    | 'permission'
-    | 'network'
-    | 'transient'
-    | 'unsupported'
-    | 'unknown';
-
-export type ClassifiedRuntimeErrorV1 = Readonly<{
-    kind: RuntimeErrorKindV1;
-    code: string | null;
-    message: string;
-    retryable: boolean;
-}>;
+import { isPluginError as isCanonicalPluginError } from '@happier-dev/protocol/plugins/errors';
 
 import type { PluginRemediationData } from './availability.js';
 import type { PluginDiagnosticData } from './diagnostics.js';
@@ -49,7 +35,16 @@ export class PluginError extends Error {
 
     constructor(data: Omit<PluginErrorData, 'name'>, options?: ErrorOptions) {
         super(data.message ?? data.code, options);
-        this.name = 'PluginError';
+        // The recognizer proves the contract from this name, so a subclass that
+        // reassigns it would silently stop being a PluginError everywhere. A
+        // non-writable own property turns that mistake into a loud TypeError
+        // while keeping the enumerability a plain assignment produced.
+        Object.defineProperty(this, 'name', {
+            value: 'PluginError',
+            enumerable: true,
+            writable: false,
+            configurable: false,
+        });
         this.code = data.code;
         this.retryable = data.retryable ?? false;
         this.details = data.details;
@@ -76,6 +71,20 @@ export class PluginError extends Error {
                 : { actionHandlerInvocation: data.actionHandlerInvocation }),
         };
     }
+}
+
+/**
+ * Recognizes the canonical public PluginError contract across separately
+ * bundled SDK copies in the same JavaScript realm.
+ *
+ * Protocol owns the one structural decision, because the Action invocation
+ * owner has to classify a handler rejection without importing the SDK. This
+ * republishes it under the SDK's author-facing narrowing so a recognized error
+ * still carries the author vocabulary (`details`, `remediation`,
+ * `diagnostics`) that only the SDK declares.
+ */
+export function isPluginError(value: unknown): value is PluginError {
+    return isCanonicalPluginError(value);
 }
 
 /**

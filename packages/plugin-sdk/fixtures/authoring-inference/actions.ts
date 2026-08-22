@@ -202,6 +202,7 @@ const targetPlugin = definePlugin({
   actions: {
     publish: {
       title: 'Publish',
+      execution: { target: 'daemon' },
       surfaces: ['plugin'],
       inputSchema: targetInputSchema,
       resultSchema: targetResultSchema,
@@ -217,6 +218,7 @@ const { manifest, activate } = definePlugin({
   actions: {
     exercise: {
       title: 'Exercise ActionsService',
+      execution: { target: 'daemon' },
       inputSchema,
       resultSchema,
       async run(input, context) {

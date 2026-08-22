@@ -38,6 +38,9 @@
         ],
         "placement": "commandPalette",
         "dangerLevel": "safe",
+        "execution": {
+          "target": "daemon"
+        },
         "resultSchema": {
           "type": "object",
           "required": [

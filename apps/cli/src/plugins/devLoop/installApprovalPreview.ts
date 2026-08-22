@@ -1,9 +1,8 @@
 import { resolve } from 'node:path';
-import type { PluginHostAccessRequestV2, PluginPermissionDeclarationV1 } from '@happier-dev/protocol';
 
+import { projectPluginInstallationReviewHostAccess } from '@/plugins/daemon/installationReview';
 import { resolveLocalPathPluginSource } from '@/plugins/discovery/sources/localPath';
 import { resolveLocalPluginInstallTrust } from '@/plugins/store/install/trustPolicy';
-import { buildActivationPolicy } from '@/plugins/runtime/lifecycle/activation/policy';
 
 type PluginInstallApprovalInput = Readonly<Record<string, unknown>>;
 
@@ -25,24 +24,6 @@ function readString(input: PluginInstallApprovalInput, key: string): string {
 
 function readBoolean(input: PluginInstallApprovalInput, key: string): boolean {
   return input[key] === true;
-}
-
-function summarizePermission(permission: PluginPermissionDeclarationV1): string {
-  if (typeof permission === 'string') return permission;
-  const capability = typeof permission.capability === 'string' ? permission.capability.trim() : '';
-  const scope = typeof permission.scope === 'string' ? permission.scope.trim() : '';
-  if (!capability) return '';
-  return scope ? `${capability}:${scope}` : capability;
-}
-
-function summarizePermissions(permissions: readonly PluginPermissionDeclarationV1[] | undefined): readonly string[] {
-  return Object.freeze((permissions ?? [])
-    .map((permission) => summarizePermission(permission))
-    .filter((permission): permission is string => permission.length > 0));
-}
-
-function summarizeOptionalHostAccess(requests: readonly PluginHostAccessRequestV2[]): readonly string[] {
-  return Object.freeze(requests.map((request) => request.capability));
 }
 
 function withDefaultPreview(defaultPreview: unknown, pluginInstall: unknown): unknown {
@@ -81,7 +62,6 @@ export async function buildPluginInstallApprovalPreview(params: PluginInstallApp
     defaultTrustPolicy: resolved.sourceSpec.trustPolicy,
     defaultInstallPolicy: resolved.sourceSpec.installPolicy,
   });
-  const activationPolicy = buildActivationPolicy(resolved.manifest);
   const title = typeof resolved.manifest.displayName === 'string'
     ? resolved.manifest.displayName
     : resolved.manifest.displayName.fallback;
@@ -112,11 +92,16 @@ export async function buildPluginInstallApprovalPreview(params: PluginInstallApp
       locator,
       resolvedLocator: resolve(locator),
       manifestPath: resolved.manifestPath,
-      manifestDigest: resolved.manifestDigest,
     },
     permissions: {
-      required: summarizePermissions(activationPolicy.permissionDeclarations),
-      optional: summarizeOptionalHostAccess(resolved.manifest.hostAccess.optional),
+      required: projectPluginInstallationReviewHostAccess({
+        pluginId: resolved.manifest.id,
+        requests: resolved.manifest.hostAccess.required,
+      }),
+      optional: projectPluginInstallationReviewHostAccess({
+        pluginId: resolved.manifest.id,
+        requests: resolved.manifest.hostAccess.optional,
+      }),
     },
   });
 }

@@ -26,7 +26,6 @@ export type InspectPluginSourceResult =
       source: PluginSourceSpecV1;
       manifestVersion: string;
       manifestPath: string;
-      manifestDigest: string;
       installedPath: string | null;
     }>
   | Readonly<{
@@ -64,23 +63,17 @@ function isRemoteArchiveLocator(locator: string): boolean {
   }
 }
 
-function verifyExpectedManifestDigest(actualDigest: string, expectedDigest?: string | null): void {
-  const normalizedExpected = typeof expectedDigest === 'string' ? expectedDigest.trim() : '';
-  if (!normalizedExpected) {
-    return;
-  }
-  if (actualDigest !== normalizedExpected) {
-    throw new Error(`Marketplace descriptor digest mismatch: expected ${normalizedExpected}, received ${actualDigest}`);
-  }
-}
-
 function normalizeInspectedTrustPolicy(
   trustPolicy: PluginSourceSpecV1['trustPolicy'],
 ): PluginSourceSpecV1['trustPolicy'] {
   return trustPolicy === 'untrusted' ? 'untrusted' : 'prompt';
 }
 
-async function hashArchive(path: string): Promise<Readonly<{ byteLength: number; integrity: string }>> {
+async function hashArchive(path: string): Promise<Readonly<{
+  byteLength: number;
+  integrity: string;
+  archiveDigestSha256: `sha256:${string}`;
+}>> {
   const hash = createHash('sha256');
   let byteLength = 0;
   for await (const chunk of createReadStream(path)) {
@@ -88,9 +81,11 @@ async function hashArchive(path: string): Promise<Readonly<{ byteLength: number;
     byteLength += bytes.byteLength;
     hash.update(bytes);
   }
+  const digest = hash.digest();
   return Object.freeze({
     byteLength,
-    integrity: `sha256-${hash.digest('base64')}`,
+    integrity: `sha256-${digest.toString('base64')}`,
+    archiveDigestSha256: `sha256:${digest.toString('hex')}`,
   });
 }
 
@@ -104,6 +99,7 @@ async function stageArchivePluginSource(params: Readonly<{
     archivePath: params.archivePath,
     byteLength: facts.byteLength,
     integrity: facts.integrity,
+    archiveDigestSha256: facts.archiveDigestSha256,
     stagingParentPath: store.paths.cacheDir,
   });
   if (!staged.ok) {
@@ -120,7 +116,6 @@ export async function inspectPluginSource(params: Readonly<{
   skipIfInstalled?: boolean;
   dev?: boolean;
   workspaceRoot?: string;
-  expectedManifestDigest?: string | null;
 }>): Promise<InspectPluginSourceResult> {
   const sourceKind = params.sourceKind ?? inferPluginSourceInspectionKind(params.locator);
   const stateStore = createPluginRegistryStateStore({ happyHomeDir: params.happyHomeDir });
@@ -141,8 +136,6 @@ export async function inspectPluginSource(params: Readonly<{
       if (params.skipIfInstalled && initialState.plugins[pluginId]) {
         const existingRecord = initialState.plugins[pluginId]!;
         const installedPath = existingRecord.install.installedPath ?? null;
-        const manifestDigest = existingRecord.install.manifestDigest ?? resolvedSource.manifestDigest ?? null;
-        verifyExpectedManifestDigest(manifestDigest, params.expectedManifestDigest);
         return {
           ok: true,
           alreadyInstalled: true,
@@ -151,7 +144,6 @@ export async function inspectPluginSource(params: Readonly<{
           source: existingRecord.source,
           manifestVersion: existingRecord.install.manifestVersion,
           manifestPath: existingRecord.source.manifestPath,
-          manifestDigest,
           installedPath,
         };
       }
@@ -175,11 +167,9 @@ export async function inspectPluginSource(params: Readonly<{
         resolvedPath: resolvedSource.pluginRootPath,
         manifestPath: resolvedSource.manifestPath,
         resolvedVersion: resolvedSource.manifest.version,
-        resolvedDigest: resolvedSource.manifestDigest,
         installedAt: Date.now(),
         ...(trust.devWatch ? { devWatch: true } : {}),
       };
-      verifyExpectedManifestDigest(resolvedSource.manifestDigest, params.expectedManifestDigest);
 
       return {
         ok: true,
@@ -189,7 +179,6 @@ export async function inspectPluginSource(params: Readonly<{
         source,
         manifestVersion: resolvedSource.manifest.version,
         manifestPath: resolvedSource.manifestPath,
-        manifestDigest: resolvedSource.manifestDigest,
         installedPath: null,
       };
     }
@@ -256,8 +245,6 @@ export async function inspectPluginSource(params: Readonly<{
       if (params.skipIfInstalled && initialState.plugins[pluginId]) {
         const existingRecord = initialState.plugins[pluginId]!;
         const installedPath = existingRecord.install.installedPath ?? null;
-        const manifestDigest = existingRecord.install.manifestDigest ?? resolvedSource.manifestDigest ?? null;
-        verifyExpectedManifestDigest(manifestDigest, params.expectedManifestDigest);
         return {
           ok: true,
           alreadyInstalled: true,
@@ -266,7 +253,6 @@ export async function inspectPluginSource(params: Readonly<{
           source: existingRecord.source,
           manifestVersion: existingRecord.install.manifestVersion,
           manifestPath: existingRecord.source.manifestPath,
-          manifestDigest,
           installedPath,
         };
       }
@@ -281,7 +267,6 @@ export async function inspectPluginSource(params: Readonly<{
       const trustPolicy = normalizeInspectedTrustPolicy(
         remoteArchive ? 'prompt' : archiveSourceOverride?.trustPolicy ?? 'prompt',
       );
-      verifyExpectedManifestDigest(resolvedSource.manifestDigest, params.expectedManifestDigest);
 
       const source: PluginSourceSpecV1 = {
         ...resolvedSource.sourceSpec,
@@ -294,7 +279,6 @@ export async function inspectPluginSource(params: Readonly<{
         resolvedPath: resolvedSource.pluginRootPath,
         manifestPath: resolvedSource.manifestPath,
         resolvedVersion: resolvedSource.manifest.version,
-        resolvedDigest: resolvedSource.manifestDigest,
         installedAt: Date.now(),
       };
 
@@ -306,7 +290,6 @@ export async function inspectPluginSource(params: Readonly<{
         source,
         manifestVersion: resolvedSource.manifest.version,
         manifestPath: resolvedSource.manifestPath,
-        manifestDigest: resolvedSource.manifestDigest,
         installedPath: null,
       };
     } finally {

@@ -1,5 +1,5 @@
 import { readFile, readdir, writeFile } from 'node:fs/promises';
-import { dirname, resolve } from 'node:path';
+import { basename, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { assertCoherentPublicToolchainCompatibilityV1 } from '@happier-dev/protocol';
@@ -11,6 +11,7 @@ const GENERATED_CONSUMER_PACKAGE_ROOTS = Object.freeze([
   'packages/plugin-sdk/examples',
   'packages/plugin-ui/fixtures/external-authoring',
   'packages/tests/fixtures/plugin-platform/composer-external-dogfood',
+  'packages/tests/fixtures/plugin-platform/packed-targeted-contribution-projection',
 ]);
 const GENERATED_CONSUMER_SOURCE_ROOTS = Object.freeze([
   'packages/plugin-sdk/examples',
@@ -180,6 +181,7 @@ function publicAuthoringDependencyVersions(packet) {
     '@swc/helpers': packet.authoringDependencies.swcHelpers.dependencySpec,
     '@types/node': packet.authoringDependencies.nodeTypes.dependencySpec,
     '@types/react': packet.authoringDependencies.reactTypes.dependencySpec,
+    typescript: packet.authoringDependencies.typescript.dependencySpec,
     '@typescript/native': packet.authoringDependencies.typescriptNative.dependencySpec,
     '@vitejs/plugin-react': packet.authoringDependencies.viteReactPlugin.dependencySpec,
     react: packet.framework.react,
@@ -204,9 +206,12 @@ function sourceImportSpecifiers(source) {
 function managedAuthoringDependenciesForSources(sourcePaths) {
   const source = sourcePaths.map(({ source: current }) => current).join('\n');
   const imports = sourceImportSpecifiers(source);
-  return MANAGED_AUTHORING_IMPORTS.filter(({ packageName }) => imports.some((specifier) => (
+  const managedImports = MANAGED_AUTHORING_IMPORTS.filter(({ packageName }) => imports.some((specifier) => (
     specifier === packageName || specifier.startsWith(`${packageName}/`)
   )));
+  return sourcePaths.some(({ path }) => basename(path) === 'pluginUiBuild.ts')
+    ? [...managedImports, Object.freeze({ group: 'devDependencies', packageName: 'typescript' })]
+    : managedImports;
 }
 
 function dependencyGroupFor(manifest, packageName, fallbackGroup) {
@@ -444,7 +449,8 @@ function renderGeneratedDocumentationBlock(documentation, packet) {
       '        "description": "Returns the supplied note from one minimal plugin action.",',
       '        "scopes": ["global"],',
       '        "surfaces": ["agent", "cli", "mcp"],',
-      '        "placement": "commandPalette",',
+      '        "execution": { "target": "daemon" },',
+      '        "placementBindings": ["commandPalette"],',
       '        "dangerLevel": "safe",',
       '        "inputSchema": {',
       '          "type": "object",',
@@ -608,6 +614,8 @@ export async function derivePublicToolchainCompatibilityV1({ repoRoot = DEFAULT_
   const rspackVersion = readResolvedVersion(lockEntries, '@rspack/core', rspackSpec, 'Plugin SDK package manifest');
   const swcHelpersSpec = readDependency(sdkPackage, '@swc/helpers', 'Plugin SDK package manifest');
   const swcHelpersVersion = readResolvedVersion(lockEntries, '@swc/helpers', swcHelpersSpec, 'Plugin SDK package manifest');
+  const typescriptSpec = readDependency(rootPackage, 'typescript', 'root package manifest');
+  const typescriptVersion = readResolvedVersion(lockEntries, 'typescript', typescriptSpec, 'root package manifest');
   const typescriptNativeSpec = readDependency(rootPackage, '@typescript/native', 'root package manifest');
   const typescriptNativeVersion = readResolvedVersion(lockEntries, '@typescript/native', typescriptNativeSpec, 'root package manifest');
   const viteReactPluginSpec = readDependency(sdkPackage, '@vitejs/plugin-react', 'Plugin SDK package manifest');
@@ -651,6 +659,7 @@ export async function derivePublicToolchainCompatibilityV1({ repoRoot = DEFAULT_
       reactNativeCommunityCli: authoringDependency('@react-native-community/cli', cliResolvedVersion, cliResolvedVersion),
       rspack: authoringDependency('@rspack/core', rspackVersion, rspackVersion),
       swcHelpers: authoringDependency('@swc/helpers', swcHelpersSpec, swcHelpersVersion),
+      typescript: authoringDependency('typescript', typescriptSpec, typescriptVersion),
       typescriptNative: authoringDependency('@typescript/native', typescriptNativeSpec, typescriptNativeVersion),
       viteReactPlugin: authoringDependency('@vitejs/plugin-react', viteReactPluginVersion, viteReactPluginVersion),
     }),

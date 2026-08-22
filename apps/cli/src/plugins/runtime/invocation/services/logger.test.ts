@@ -1,10 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
+import { redactBugReportSensitiveText } from '@happier-dev/protocol';
 
 import type { PluginInvocationServicesSeed } from './types';
 import {
     createPluginInvocationLogger,
     createPluginInvocationSecretRedactor,
     PLUGIN_LOG_MAX_RECORD_BYTES,
+    PLUGIN_LOG_MAX_SECRET_COMPONENT_BYTES,
     type PluginInvocationLogRecord,
 } from './logger';
 
@@ -30,7 +32,69 @@ function capture() {
 }
 
 describe('stable invocation logger service', () => {
-    it('redacts exact secret values registered by the stable secrets owner until generation retirement', () => {
+    it('isolates exact secret values to one invocation and releases them on completion', () => {
+        const secretRedactor = createPluginInvocationSecretRedactor();
+        const invocationSeed = seed();
+        const scope = {
+            pluginId: invocationSeed.plugin.id,
+            generation: invocationSeed.generation,
+            correlationId: invocationSeed.correlationId,
+        };
+        secretRedactor.beginInvocation(scope, invocationSeed.signal);
+        const firstCapture = capture();
+        const logger = createPluginInvocationLogger({
+            seed: invocationSeed,
+            sink: firstCapture.sink,
+            secretRedactor,
+        });
+        const rawValue = 'provider "value"\nwithout a sensitive shape';
+        secretRedactor.registerRaw(scope, rawValue);
+
+        logger.info('provider "value"\nwithout a sensitive shape', {
+            ordinary: 'prefix provider "value"\nwithout a sensitive shape suffix',
+            jsonEscaped: JSON.stringify('provider "value"\nwithout a sensitive shape').slice(1, -1),
+            urlEncoded: encodeURIComponent('provider "value"\nwithout a sensitive shape'),
+            formEncoded: new URLSearchParams({
+                value: rawValue,
+            }).toString().slice('value='.length),
+            base64: Buffer.from(rawValue).toString('base64'),
+            base64url: Buffer.from(rawValue).toString('base64url'),
+            hex: Buffer.from(rawValue).toString('hex'),
+        });
+
+        const serialized = JSON.stringify(firstCapture.records);
+        expect(serialized).not.toContain('provider \\"value\\"\\nwithout a sensitive shape');
+        expect(serialized).not.toContain('provider%20%22value%22%0Awithout%20a%20sensitive%20shape');
+        expect(serialized).not.toContain('provider+%22value%22%0Awithout+a+sensitive+shape');
+        expect(JSON.stringify(firstCapture.records)).toContain('[REDACTED]');
+        expect(redactBugReportSensitiveText(
+            `support=${encodeURIComponent('provider "value"\nwithout a sensitive shape')}`,
+        )).toBe(`support=${encodeURIComponent('provider "value"\nwithout a sensitive shape')}`);
+
+        secretRedactor.completeInvocation(scope);
+        const secondCapture = capture();
+        const afterRetirement = createPluginInvocationLogger({
+            seed: invocationSeed,
+            sink: secondCapture.sink,
+            secretRedactor,
+        });
+        afterRetirement.info('provider "value"\nwithout a sensitive shape');
+        expect(JSON.stringify(secondCapture.records)).toContain('provider \\"value\\"\\nwithout a sensitive shape');
+
+        const revokedController = new AbortController();
+        const revokedScope = {
+            pluginId: invocationSeed.plugin.id,
+            generation: invocationSeed.generation,
+            correlationId: 'revoked-correlation',
+        };
+        secretRedactor.beginInvocation(revokedScope, revokedController.signal);
+        secretRedactor.registerRaw(revokedScope, 'revoked ordinary value');
+        revokedController.abort();
+        expect(secretRedactor.redact(revokedScope, 'revoked ordinary value'))
+            .toBe('revoked ordinary value');
+    });
+
+    it('prefers the longest overlapping registered credential and fails closed at the registration ceiling', () => {
         const secretRedactor = createPluginInvocationSecretRedactor();
         const invocationSeed = seed();
         const firstCapture = capture();
@@ -39,27 +103,48 @@ describe('stable invocation logger service', () => {
             sink: firstCapture.sink,
             secretRedactor,
         });
-        secretRedactor.register({
+        const scope = {
             pluginId: invocationSeed.plugin.id,
             generation: invocationSeed.generation,
-        }, 'provider-value-without-a-sensitive-shape');
+            correlationId: invocationSeed.correlationId,
+        };
+        const siblingScope = {
+            pluginId: invocationSeed.plugin.id,
+            generation: invocationSeed.generation,
+            correlationId: 'concurrent-sibling',
+        };
+        secretRedactor.beginInvocation(scope, invocationSeed.signal);
+        secretRedactor.beginInvocation(siblingScope, invocationSeed.signal);
+        secretRedactor.registerRaw(scope, 'Bearer overlapping-credential');
+        secretRedactor.registerRaw(scope, 'overlapping-credential');
 
-        logger.info('provider-value-without-a-sensitive-shape', {
-            ordinary: 'prefix provider-value-without-a-sensitive-shape suffix',
-        });
+        logger.info('Bearer overlapping-credential');
+        expect(firstCapture.records[0]?.message).toBe('[REDACTED]');
 
-        expect(JSON.stringify(firstCapture.records)).not.toContain('provider-value-without-a-sensitive-shape');
-        expect(JSON.stringify(firstCapture.records)).toContain('[REDACTED]');
-
+        secretRedactor.registerRaw(scope, 'x'.repeat(PLUGIN_LOG_MAX_SECRET_COMPONENT_BYTES + 1));
+        logger.info('ordinary status after an unsafe registration volume');
+        expect(firstCapture.records[1]?.message).toBe('[REDACTED]');
+        expect(secretRedactor.redact(siblingScope, 'ordinary status after sibling saturation'))
+            .toBe('ordinary status after sibling saturation');
+        secretRedactor.completeInvocation(scope);
+        secretRedactor.registerRaw(scope, 'late-registration-must-not-recreate');
+        expect(secretRedactor.redact(scope, 'overlapping-credential')).toBe('overlapping-credential');
+        expect(secretRedactor.redact(scope, 'late-registration-must-not-recreate'))
+            .toBe('late-registration-must-not-recreate');
+        secretRedactor.completeInvocation(siblingScope);
+        const retiredScope = {
+            pluginId: invocationSeed.plugin.id,
+            generation: invocationSeed.generation,
+            correlationId: 'retired-generation',
+        };
+        secretRedactor.beginInvocation(retiredScope, invocationSeed.signal);
+        secretRedactor.registerRaw(retiredScope, 'registered-before-retirement');
         secretRedactor.retireGeneration(invocationSeed.generation, invocationSeed.plugin.id);
-        const secondCapture = capture();
-        const afterRetirement = createPluginInvocationLogger({
-            seed: invocationSeed,
-            sink: secondCapture.sink,
-            secretRedactor,
-        });
-        afterRetirement.info('provider-value-without-a-sensitive-shape');
-        expect(JSON.stringify(secondCapture.records)).toContain('provider-value-without-a-sensitive-shape');
+        secretRedactor.registerRaw(retiredScope, 'late-after-generation-retirement');
+        expect(secretRedactor.redact(retiredScope, 'registered-before-retirement'))
+            .toBe('registered-before-retirement');
+        expect(secretRedactor.redact(retiredScope, 'late-after-generation-retirement'))
+            .toBe('late-after-generation-retirement');
     });
 
     it('injects immutable host identity and preserves every severity exactly', () => {
@@ -147,6 +232,125 @@ describe('stable invocation logger service', () => {
         expect(serialized).not.toContain('KEY-SECRET-123');
         expect(serialized).not.toContain('PASS-SECRET-123');
         expect(serialized.match(/\[REDACTED\]/g)).toHaveLength(4);
+    });
+
+    it('keeps the head of an individual structured failure record while dropping its tail', () => {
+        const { records, sink } = capture();
+        const logger = createPluginInvocationLogger({ seed: seed(), sink, now: () => 123 });
+
+        logger.error([
+            'BEGIN_FAILURE client_secret=log-secret',
+            '🙂'.repeat(3_000),
+            'END_STACK',
+        ].join(' '));
+
+        const message = records[0]?.message ?? '';
+        expect(message).toMatch(/^BEGIN_FAILURE/u);
+        expect(message).not.toContain('log-secret');
+        expect(message).not.toContain('END_STACK');
+        expect(message).toMatch(/\[TRUNCATED\]$/u);
+    });
+
+    it('keeps the sanitized head of an oversized diagnostic record while dropping its details tail', () => {
+        const { records, sink } = capture();
+        const invocationSeed = seed();
+        const secretRedactor = createPluginInvocationSecretRedactor();
+        const scope = {
+            pluginId: invocationSeed.plugin.id,
+            generation: invocationSeed.generation,
+            correlationId: invocationSeed.correlationId,
+        };
+        secretRedactor.beginInvocation(scope, invocationSeed.signal);
+        secretRedactor.registerRaw(scope, 'opaque-diagnostic-secret');
+        const logger = createPluginInvocationLogger({
+            seed: invocationSeed,
+            sink,
+            now: () => 123,
+            secretRedactor,
+        });
+
+        logger.diagnostic({
+            code: 'plugin_failure',
+            severity: 'error',
+            message: [
+                'BEGIN_FAILURE client_secret=diagnostic-secret opaque-diagnostic-secret',
+                '🙂'.repeat(3_000),
+                'END_STACK',
+            ].join(' '),
+            details: Object.fromEntries(Array.from({ length: 64 }, (_, index) => [
+                `detail_${index}`,
+                'x'.repeat(4 * 1024),
+            ])),
+        });
+
+        const message = records[0]?.diagnostic?.message;
+        if (typeof message !== 'string') {
+            throw new Error('Expected a diagnostic message');
+        }
+        expect(message).toMatch(/^BEGIN_FAILURE/u);
+        expect(message).not.toContain('diagnostic-secret');
+        expect(message).not.toContain('opaque-diagnostic-secret');
+        expect(message).not.toContain('END_STACK');
+        expect(message).toMatch(/\[TRUNCATED\]$/u);
+        expect(message.match(/\[TRUNCATED\]/gu)).toHaveLength(1);
+        expect(Buffer.byteLength(JSON.stringify(records[0]), 'utf8'))
+            .toBeLessThanOrEqual(PLUGIN_LOG_MAX_RECORD_BYTES);
+    });
+
+    it('redacts a quoted credential before applying the individual-record head bound', () => {
+        const { records, sink } = capture();
+        const logger = createPluginInvocationLogger({ seed: seed(), sink, now: () => 123 });
+        const leakedTail = 'credential-tail-must-not-survive';
+
+        logger.error(
+            `BEGIN_FAILURE client_secret="first-word ${leakedTail} ${'padding '.repeat(20_000)}" END_STACK`,
+        );
+
+        const message = records[0]?.message ?? '';
+        expect(message).toMatch(/^BEGIN_FAILURE/u);
+        expect(message).not.toContain('first-word');
+        expect(message).not.toContain(leakedTail);
+        expect(Buffer.byteLength(message, 'utf8')).toBeLessThanOrEqual(4 * 1024);
+    });
+
+    it('redacts segment-aware credential keys without treating counts and prose as credentials', () => {
+        const { records, sink } = capture();
+        const logger = createPluginInvocationLogger({ seed: seed(), sink, now: () => 123 });
+
+        logger.info('credential fields', {
+            authorization: 'authorization-secret',
+            accessToken: 'access-token-secret',
+            refresh_token: 'refresh-token-secret',
+            apiKey: 'api-key-secret',
+            client_secret: 'client-secret-value',
+            password: 'password-secret',
+            cookie: 'cookie-secret',
+            jwt: 'jwt-secret',
+            privateKey: 'private-key-secret',
+            passphrase: 'passphrase-secret',
+            sessionCount: 'seven-sessions',
+            tokenCount: 'eight-tokens',
+            secretary: 'meeting-notes',
+        });
+
+        const serialized = JSON.stringify(records[0]);
+        for (const secret of [
+            'authorization-secret',
+            'access-token-secret',
+            'refresh-token-secret',
+            'api-key-secret',
+            'client-secret-value',
+            'password-secret',
+            'cookie-secret',
+            'jwt-secret',
+            'private-key-secret',
+            'passphrase-secret',
+        ]) {
+            expect(serialized).not.toContain(secret);
+        }
+        expect(serialized).toContain('seven-sessions');
+        expect(serialized).toContain('eight-tokens');
+        expect(serialized).toContain('meeting-notes');
     });
 
     it('isolates sink exceptions and fences aborted or stale generations', () => {

@@ -11,18 +11,34 @@ export type PluginContributionActivationDemand = Readonly<{
     localId: string;
 }>;
 
+/**
+ * Registration families whose host consumer owns a positive asynchronous
+ * demand boundary, so a plugin contributing only these stays dormant through
+ * daemon cold start. Every entry names a consumer that calls
+ * `activateContributionsOnDemand` for the exact contribution before it reads
+ * the live registration; adding a family without that boundary silently
+ * deletes registrations the consumer still reads synchronously.
+ *
+ * Everything else is deliberately eager: `backgroundServices` is a declared
+ * machine-runtime service, and `resources`, `events`, `promptAssets` and
+ * `composerReferences` are still read synchronously by their hosts.
+ */
 const PRODUCT_DEMAND_READY_REGISTRATION_FAMILIES = new Set([
     'actions',
     'hooks',
     'mcp.servers',
-    'mcp.discoveryProviders',
+    'mcp.discoverySources',
     'scmBackends',
     'scmHostingProviders',
     'requestInterceptors',
     'notificationChannels',
     'connectedAccountDescriptors',
     'agents',
-    'voiceProviders.speech',
+    'providers',
+    'voiceProviders',
+    // Reached only when a composer stages that exact attachment, through
+    // `createTargetComposerAttachmentRegistry`'s own demand boundary.
+    'composerAttachments',
 ]);
 
 /**
@@ -38,14 +54,13 @@ export function addActivationTarget(targets: Map<string, ActivationTarget>, raw:
     source?: ResolvedContributionSource;
     pluginId?: string;
     manifestPath?: string;
-    manifestDigest?: string;
     daemonEntryPath?: string | null;
     devDaemonEntryPath?: string | null;
     sourceSpec?: ActivationTarget['sourceSpec'];
     activationEvents?: readonly string[];
     manifest?: ActivationTarget['manifest'];
 }>): void {
-    if (!raw.pluginId || !raw.manifestPath || !raw.manifestDigest
+    if (!raw.pluginId || !raw.manifestPath
         || (!raw.daemonEntryPath && !raw.devDaemonEntryPath) || !raw.sourceSpec || !raw.manifest) {
         return;
     }
@@ -58,7 +73,6 @@ export function addActivationTarget(targets: Map<string, ActivationTarget>, raw:
         source: raw.source ?? { kind: raw.sourceSpec?.kind ?? 'path' },
         pluginId: raw.pluginId,
         manifestPath: raw.manifestPath,
-        manifestDigest: raw.manifestDigest,
         daemonEntryPath: raw.daemonEntryPath ?? null,
         devDaemonEntryPath: raw.devDaemonEntryPath ?? null,
         sourceSpec: raw.sourceSpec,

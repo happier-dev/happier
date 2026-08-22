@@ -1,6 +1,9 @@
 import type {
+    ConnectedServiceId,
+    PluginAgentContributionV2,
     PluginAgentCliMetadata,
     PluginAgentCliAuthProbeMetadata,
+    QualifiedConnectedAccountRef,
 } from '@happier-dev/protocol';
 import type { AgentCliRuntimeDescriptor } from '@happier-dev/cli-common/agents';
 
@@ -11,9 +14,16 @@ import {
     runCliCommandBestEffort,
 } from '@/capabilities/cliAuth/shared';
 import { expandHomeDirPath } from '@/utils/path/expandHomeDirPath';
+import { readAgentSessionCapabilities } from './agentContributionDefinition';
+import { resolveFirstPartyLegacyAgentConnectedAccountServiceId } from './connectedAccountPurposeCompatibility';
 import type { ResolvedCatalogEntry } from './types';
 
-function readLocalizedTitle(title: unknown, fallback: string): string {
+/**
+ * Read a declared manifest title, accepting both the plain-string and the
+ * localized `{ key, fallback }` authoring shapes. Returns null when the
+ * declaration carries no usable text, so callers decide their own fallback.
+ */
+export function readDeclaredAgentTitle(title: unknown): string | null {
     if (typeof title === 'string' && title.trim().length > 0) return title.trim();
     if (title && typeof title === 'object' && !Array.isArray(title)) {
         const localizedFallback = Reflect.get(title, 'fallback');
@@ -21,7 +31,11 @@ function readLocalizedTitle(title: unknown, fallback: string): string {
             return localizedFallback.trim();
         }
     }
-    return fallback;
+    return null;
+}
+
+export function readAgentDisplayTitle(title: unknown, fallback: string): string {
+    return readDeclaredAgentTitle(title) ?? fallback;
 }
 
 export function projectNativeAgentCliRuntimeDescriptor(params: Readonly<{
@@ -35,7 +49,7 @@ export function projectNativeAgentCliRuntimeDescriptor(params: Readonly<{
         : (install.manual.recipes ?? null);
     return Object.freeze({
         id: params.agentId,
-        title: params.cli.displayName ?? readLocalizedTitle(params.title, params.agentId),
+        title: params.cli.displayName ?? readAgentDisplayTitle(params.title, params.agentId),
         binaryName: executable.binaryName,
         ...(executable.alternativeBinaryNames
             ? { alternativeBinaryNames: Object.freeze([...executable.alternativeBinaryNames]) }
@@ -321,18 +335,52 @@ export function createNativeAgentCliAuthSpec(cli: PluginAgentCliMetadata): CliAu
     };
 }
 
-export function createNativeAgentCliCatalogEntry(params: Readonly<{
+function resolveManifestAgentConnectedServiceIds(params: Readonly<{
+    definition: PluginAgentContributionV2;
+    pluginId: string;
+}>): readonly ConnectedServiceId[] {
+    const ids = new Set<ConnectedServiceId>();
+    for (const declaration of params.definition.connectedAccounts ?? []) {
+        const service: QualifiedConnectedAccountRef['service'] =
+            typeof declaration.service === 'string'
+                ? { pluginId: params.pluginId, localId: declaration.service }
+                : declaration.service;
+        const legacyServiceId =
+            resolveFirstPartyLegacyAgentConnectedAccountServiceId(service);
+        if (legacyServiceId) ids.add(legacyServiceId);
+    }
+    return Object.freeze([...ids]);
+}
+
+export function createManifestAgentCatalogEntry(params: Readonly<{
     agentId: string;
-    cli: PluginAgentCliMetadata;
-}>): ResolvedCatalogEntry {
+    pluginId: string;
+    definition: PluginAgentContributionV2;
+    cli: PluginAgentCliMetadata | null;
+}>): ResolvedCatalogEntry | null {
+    const sessionCapabilities = readAgentSessionCapabilities(params.definition);
+    if (!sessionCapabilities) return null;
+    const cli = params.cli;
+    const connectedServiceIds = resolveManifestAgentConnectedServiceIds(params);
+
     return Object.freeze({
         id: params.agentId,
         cliSubcommand: params.agentId,
-        vendorResumeSupport: 'unsupported',
-        getCliDetect: async () => ({
-            versionArgsToTry: [['--version'], ['version'], ['-v']],
-            loginStatusArgs: params.cli.auth.probe.statusArgs ?? null,
-        }),
-        getCliAuthSpec: async () => createNativeAgentCliAuthSpec(params.cli),
+        // Inferred default only. An Agent that declares `catalog.vendorResume`
+        // overrides this through the catalog-entry hook family, which is the
+        // only way to express `experimental`.
+        vendorResumeSupport: sessionCapabilities.open.includes('resume')
+            ? 'supported'
+            : 'unsupported',
+        ...(connectedServiceIds.length > 0 ? { connectedServiceIds } : {}),
+        ...(cli
+            ? {
+                getCliDetect: async () => ({
+                    versionArgsToTry: [['--version'], ['version'], ['-v']],
+                    loginStatusArgs: cli.auth.probe.statusArgs ?? null,
+                }),
+                getCliAuthSpec: async () => createNativeAgentCliAuthSpec(cli),
+            }
+            : {}),
     });
 }

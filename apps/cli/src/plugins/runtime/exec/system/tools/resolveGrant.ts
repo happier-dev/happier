@@ -3,6 +3,8 @@ import { constants } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { basename, delimiter, isAbsolute, join } from 'node:path';
 
+import { PluginError, type PluginDiagnosticData } from '@happier-dev/plugin-sdk';
+
 import type {
     SystemToolDiagnosticV1,
     SystemToolLaunchGrantV1,
@@ -25,29 +27,13 @@ import {
 } from './diagnostics';
 import { isDeniedPathOnlyRuntimeName, normalizePathOnlyRuntimeName } from './runtimeDeny';
 
-export type PluginExecSystemToolErrorCode =
-    | 'PLUGIN_EXEC_SYSTEM_TOOL_ABORTED'
-    | 'PLUGIN_EXEC_SYSTEM_TOOL_DENIED'
-    | 'PLUGIN_EXEC_SYSTEM_TOOL_UNDECLARED'
-    | 'PLUGIN_EXEC_SYSTEM_TOOL_UNAVAILABLE'
-    | 'PLUGIN_EXEC_SYSTEM_TOOL_INVALID_PATH'
-    | 'PLUGIN_EXEC_SYSTEM_TOOL_INVALID_COMMAND'
-    | 'PLUGIN_EXEC_SYSTEM_TOOL_PLATFORM_UNSUPPORTED';
-
-export class PluginExecSystemToolError extends Error {
-    readonly code: PluginExecSystemToolErrorCode;
-    readonly diagnostics: readonly SystemToolDiagnosticV1[];
-
-    constructor(
-        code: PluginExecSystemToolErrorCode,
-        message: string,
-        diagnostics: readonly SystemToolDiagnosticV1[] = [],
-    ) {
-        super(message);
-        this.name = 'PluginExecSystemToolError';
-        this.code = code;
-        this.diagnostics = diagnostics;
-    }
+function projectSystemToolDiagnostics(
+    diagnostics: readonly SystemToolDiagnosticV1[],
+): readonly PluginDiagnosticData[] {
+    return Object.freeze(diagnostics.map((diagnostic) => Object.freeze({
+        code: diagnostic.code,
+        severity: diagnostic.severity,
+    })));
 }
 
 export type CreatePluginExecSystemToolResolverParams = Readonly<{
@@ -62,27 +48,27 @@ export type CreatePluginExecSystemToolResolverParams = Readonly<{
     now?: () => number;
 }>;
 
-function createAbortError(): PluginExecSystemToolError {
-    return new PluginExecSystemToolError(
-        'PLUGIN_EXEC_SYSTEM_TOOL_ABORTED',
-        'System tool resolution was aborted',
-        [createSystemToolDiagnostic({
+function createAbortError(): PluginError {
+    return new PluginError({
+        code: 'plugin_exec_system_tool_aborted',
+        message: 'System tool resolution was aborted',
+        diagnostics: projectSystemToolDiagnostics([createSystemToolDiagnostic({
             code: 'system_tool_aborted',
             severity: 'warning',
             messageKey: 'plugins.exec.systemTools.aborted',
-        })],
-    );
+        })]),
+    });
 }
 
 function createDeniedSystemToolError(params: Readonly<{
     definition: PluginExecSystemToolDefinition;
     executablePath: string;
-}>): PluginExecSystemToolError {
+}>): PluginError {
     const executableName = basename(params.executablePath);
-    return new PluginExecSystemToolError(
-        'PLUGIN_EXEC_SYSTEM_TOOL_DENIED',
-        `System tool '${params.definition.displayName}' resolves to a managed runtime/package-manager executable`,
-        [createSystemToolDiagnostic({
+    return new PluginError({
+        code: 'plugin_exec_system_tool_denied',
+        message: `System tool '${params.definition.displayName}' resolves to a managed runtime/package-manager executable`,
+        diagnostics: projectSystemToolDiagnostics([createSystemToolDiagnostic({
             code: 'system_tool_denied',
             severity: 'error',
             messageKey: 'plugins.exec.systemTools.denied',
@@ -92,8 +78,8 @@ function createDeniedSystemToolError(params: Readonly<{
                 executableName,
                 normalizedName: normalizePathOnlyRuntimeName(executableName),
             },
-        })],
-    );
+        })]),
+    });
 }
 
 async function isExecutableFile(path: string): Promise<boolean> {
@@ -228,10 +214,10 @@ function validatePreferredCommand(
     }
     const declaredLookupNames = new Set((definition.lookupNames ?? []).filter(isCommandName));
     if (!isCommandName(preferredCommand) || !declaredLookupNames.has(preferredCommand)) {
-        throw new PluginExecSystemToolError(
-            'PLUGIN_EXEC_SYSTEM_TOOL_INVALID_COMMAND',
-            `System tool '${request.toolId}' preferred command must be a declared lookup name`,
-            [createSystemToolDiagnostic({
+        throw new PluginError({
+            code: 'plugin_exec_system_tool_invalid_command',
+            message: `System tool '${request.toolId}' preferred command must be a declared lookup name`,
+            diagnostics: projectSystemToolDiagnostics([createSystemToolDiagnostic({
                 code: 'system_tool_invalid_command',
                 severity: 'error',
                 messageKey: 'plugins.exec.systemTools.invalidCommand',
@@ -240,8 +226,8 @@ function validatePreferredCommand(
                     displayName: definition.displayName,
                     preferredCommand,
                 },
-            })],
-        );
+            })]),
+        });
     }
 }
 
@@ -262,22 +248,22 @@ export function createPluginExecSystemToolResolver(params: CreatePluginExecSyste
             assertNotAborted(request.signal);
             const definition = definitions.get(request.toolId);
             if (!definition) {
-                throw new PluginExecSystemToolError(
-                    'PLUGIN_EXEC_SYSTEM_TOOL_UNDECLARED',
-                    `System tool '${request.toolId}' is not declared for this plugin runtime`,
-                    [createSystemToolDiagnostic({
+                throw new PluginError({
+                    code: 'plugin_exec_system_tool_undeclared',
+                    message: `System tool '${request.toolId}' is not declared for this plugin runtime`,
+                    diagnostics: projectSystemToolDiagnostics([createSystemToolDiagnostic({
                         code: 'system_tool_undeclared',
                         severity: 'error',
                         messageKey: 'plugins.exec.systemTools.undeclared',
                         detail: { toolId: request.toolId },
-                    })],
-                );
+                    })]),
+                });
             }
             if (!isPluginExecSystemToolSupportedOnHost(definition, process.platform)) {
-                throw new PluginExecSystemToolError(
-                    'PLUGIN_EXEC_SYSTEM_TOOL_PLATFORM_UNSUPPORTED',
-                    `System tool '${definition.displayName}' is not supported on this host platform`,
-                    [createSystemToolDiagnostic({
+                throw new PluginError({
+                    code: 'plugin_exec_system_tool_platform_unsupported',
+                    message: `System tool '${definition.displayName}' is not supported on this host platform`,
+                    diagnostics: projectSystemToolDiagnostics([createSystemToolDiagnostic({
                         code: 'system_tool_platform_unsupported',
                         severity: 'error',
                         messageKey: 'plugins.exec.systemTools.platformUnsupported',
@@ -286,8 +272,8 @@ export function createPluginExecSystemToolResolver(params: CreatePluginExecSyste
                             displayName: definition.displayName,
                             platform: process.platform,
                         },
-                    })],
-                );
+                    })]),
+                });
             }
 
             const env = buildSystemToolLookupEnv(params.baseEnv);
@@ -295,10 +281,10 @@ export function createPluginExecSystemToolResolver(params: CreatePluginExecSyste
                 && request.preferredPath.trim().length > 0
                 && !isAbsolute(request.preferredPath.trim());
             if (invalidPreferredPath) {
-                throw new PluginExecSystemToolError(
-                    'PLUGIN_EXEC_SYSTEM_TOOL_INVALID_PATH',
-                    `System tool '${request.toolId}' preferred path must be absolute`,
-                    [createSystemToolDiagnostic({
+                throw new PluginError({
+                    code: 'plugin_exec_system_tool_invalid_path',
+                    message: `System tool '${request.toolId}' preferred path must be absolute`,
+                    diagnostics: projectSystemToolDiagnostics([createSystemToolDiagnostic({
                         code: 'system_tool_invalid_path',
                         severity: 'error',
                         messageKey: 'plugins.exec.systemTools.invalidPath',
@@ -307,8 +293,8 @@ export function createPluginExecSystemToolResolver(params: CreatePluginExecSyste
                             displayName: definition.displayName,
                             preferredPath: request.preferredPath,
                         },
-                    })],
-                );
+                    })]),
+                });
             }
             validatePreferredCommand(definition, request);
             const candidates = normalizeLookupCandidates(definition, request, env);
@@ -389,11 +375,11 @@ export function createPluginExecSystemToolResolver(params: CreatePluginExecSyste
                 executablePath: request.preferredPath ?? definition.executablePath,
                 lookupNames: definition.lookupNames,
             });
-            throw new PluginExecSystemToolError(
-                'PLUGIN_EXEC_SYSTEM_TOOL_UNAVAILABLE',
-                `System tool '${definition.displayName}' is not available`,
-                [diagnostic],
-            );
+            throw new PluginError({
+                code: 'plugin_exec_system_tool_unavailable',
+                message: `System tool '${definition.displayName}' is not available`,
+                diagnostics: projectSystemToolDiagnostics([diagnostic]),
+            });
         },
     });
 }

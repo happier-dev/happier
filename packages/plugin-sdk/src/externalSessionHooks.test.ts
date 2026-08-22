@@ -781,14 +781,33 @@ describe('External Session hooks public contract', () => {
             fields: [{ fieldId: 'session-id', value: 'native-17' }],
         }));
 
-        let tooDeep: Record<string, unknown> = { leaf: true };
-        for (let depth = 0; depth <= AGENT_EXTERNAL_SESSION_HOOK_LIMITS.maxJsonDepth; depth += 1) {
-            tooDeep = { nested: tooDeep };
-        }
+        const nestedPayload = (depth: number): unknown => {
+            let payload: unknown = true;
+            for (let index = 0; index < depth; index += 1) {
+                payload = { nested: payload };
+            }
+            return payload;
+        };
+        expect(validateAgentExternalSessionHookMapEventRequest({
+            ...mapRequest,
+            nativePayload: nestedPayload(AGENT_EXTERNAL_SESSION_HOOK_LIMITS.maxJsonDepth),
+        }).nativePayload).toEqual(
+            nestedPayload(AGENT_EXTERNAL_SESSION_HOOK_LIMITS.maxJsonDepth),
+        );
         rejected(() => validateAgentExternalSessionHookMapEventRequest({
             ...mapRequest,
-            nativePayload: tooDeep,
+            nativePayload: nestedPayload(AGENT_EXTERNAL_SESSION_HOOK_LIMITS.maxJsonDepth + 1),
         }));
+        const atNodeLimit = Object.fromEntries(
+            Array.from(
+                { length: AGENT_EXTERNAL_SESSION_HOOK_LIMITS.maxJsonNodes },
+                (_, index) => [`k${index}`, index],
+            ),
+        );
+        expect(validateAgentExternalSessionHookMapEventRequest({
+            ...mapRequest,
+            nativePayload: atNodeLimit,
+        }).nativePayload).toEqual(atNodeLimit);
         rejected(() => validateAgentExternalSessionHookMapEventRequest({
             ...mapRequest,
             nativePayload: Object.fromEntries(
@@ -798,9 +817,81 @@ describe('External Session hooks public contract', () => {
                 ),
             ),
         }));
+
+        expect(validateAgentExternalSessionHookMapEventRequest({
+            ...mapRequest,
+            nativePayload: '\uD800',
+        }).nativePayload).toBe('\uD800');
+
+        class ExtendedArray extends Array<unknown> {}
+        const accessorPayload = {} as Record<string, unknown>;
+        Object.defineProperty(accessorPayload, 'value', {
+            enumerable: true,
+            get: () => 'must-not-run',
+        });
+        const cyclicPayload = { nested: null as unknown };
+        cyclicPayload.nested = cyclicPayload;
+        for (const nativePayload of [
+            new ExtendedArray('value'),
+            accessorPayload,
+            Object.defineProperty({}, Symbol('hidden'), { enumerable: true, value: true }),
+            cyclicPayload,
+        ]) {
+            rejected(() => validateAgentExternalSessionHookMapEventRequest({
+                ...mapRequest,
+                nativePayload,
+            }));
+        }
     });
 
     it('validates mapped identity/facts and normalizes remoteSessionId', () => {
+        const qualifiedFactVariants = [
+            {
+                kind: 'liveness',
+                value: 'running',
+                evidenceClass: 'qualified_hook',
+                observedAtMs: 100,
+                expiresAtMs: 100,
+            },
+            {
+                kind: 'turn_phase',
+                value: 'idle',
+                evidenceClass: 'qualified_hook',
+                observedAtMs: 100,
+                expiresAtMs: 100,
+            },
+            {
+                kind: 'recent_activity',
+                evidenceClass: 'qualified_hook',
+                observedAtMs: 100,
+                expiresAtMs: 100,
+            },
+            {
+                kind: 'completed_boundary',
+                boundaryId: 'boundary-1',
+                evidenceClass: 'qualified_hook',
+                observedAtMs: 100,
+            },
+            {
+                kind: 'successful_empty',
+                emptyTurnPhase: 'idle',
+                evidenceClass: 'qualified_hook',
+                observedAtMs: 100,
+                expiresAtMs: 100,
+            },
+            {
+                kind: 'retrieval_failed',
+                axis: 'liveness',
+                evidenceClass: 'qualified_hook',
+                observedAtMs: 100,
+            },
+            {
+                kind: 'unsupported',
+                axis: 'turn_phase',
+                evidenceClass: 'qualified_hook',
+                observedAtMs: 100,
+            },
+        ] as const;
         expect(validateAgentExternalSessionHookMapEventResult({
             ok: true,
             value: { kind: 'ignored' },
@@ -823,6 +914,19 @@ describe('External Session hooks public contract', () => {
                 facts: [],
             },
         });
+        const qualifiedResult = validateAgentExternalSessionHookMapEventResult({
+            ...mapResult,
+            value: {
+                ...mapResult.value,
+                facts: qualifiedFactVariants,
+            },
+        });
+        expect(qualifiedResult.ok).toBe(true);
+        if (!qualifiedResult.ok) throw new Error('Expected a successful qualified hook result');
+        expect(qualifiedResult.value).toEqual({
+            ...mapResult.value,
+            facts: qualifiedFactVariants,
+        });
         rejected(() => validateAgentExternalSessionHookMapEventResult({
             ...mapResult,
             value: {
@@ -836,6 +940,23 @@ describe('External Session hooks public contract', () => {
                         observedAtMs: 100,
                     }),
                 ),
+            },
+        }));
+        rejected(() => validateAgentExternalSessionHookMapEventResult({
+            ...mapResult,
+            value: {
+                ...mapResult.value,
+                sourceInput: { rootIdentity: 'root-1' },
+            },
+        }));
+        rejected(() => validateAgentExternalSessionHookMapEventResult({
+            ...mapResult,
+            value: {
+                ...mapResult.value,
+                facts: [{
+                    ...mapResult.value.facts[0],
+                    unexpected: true,
+                }],
             },
         }));
         rejected(() => validateAgentExternalSessionHookMapEventResult({

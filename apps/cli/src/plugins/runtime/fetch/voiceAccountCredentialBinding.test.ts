@@ -1,20 +1,23 @@
 import { readFile } from 'node:fs/promises';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import * as protocol from '@happier-dev/protocol';
 import {
+    createRecipientContractDigestV1,
+    createVoiceProviderRecipientContractFromCredentialsV1,
     materializeRecipientOperationRequestV1FromOperation,
     PluginContributesV2Schema,
     type PluginRequestInterceptorContributionV1,
+    type VoiceCredentialBindingIdentityV1,
     type VoiceRealtimeJsonValue,
 } from '@happier-dev/protocol';
 import type {
-    FetchRuntimeRequestV1,
-    FetchRuntimeResponseV1,
-} from '@/plugins/runtime/exec/privateContract';
+    HttpService,
+} from '@happier-dev/plugin-sdk/http';
 import type {
-    PluginInterceptedRequest,
-    PluginInterceptorResult,
-} from '@happier-dev/plugin-sdk/runtime';
+    TargetPluginInterceptedRequest as PluginInterceptedRequest,
+    TargetPluginInterceptorResult as PluginInterceptorResult,
+} from '../lifecycle/contributions/targetRequestInterceptors';
 
 import {
     resetActiveAccountSettingsSnapshotForTests,
@@ -27,8 +30,35 @@ import {
 import {
     createLoggerAndEventsAvailablePluginInvocationServiceBinding,
 } from '@/plugins/runtime/invocation/services/factory';
-import { createStablePluginFetchHost } from './service';
-import { createVoiceAccountPluginFetchCredentialBindingHost } from './voiceAccountCredentialBinding';
+import { createStablePluginHttpHost as createProductionStablePluginHttpHost } from './service';
+import { createVoiceAccountPluginHttpCredentialBindingHost } from './voiceAccountCredentialBinding';
+
+type TestFetchRequest = Parameters<HttpService['request']>[0] & Readonly<{
+    signal?: AbortSignal;
+}>;
+type TestFetchResponse = Awaited<ReturnType<HttpService['request']>>;
+
+function createStablePluginHttpHost(
+    params: Omit<Parameters<typeof createProductionStablePluginHttpHost>[0], 'adapter'> & Readonly<{
+        adapter: (request: TestFetchRequest) => Promise<TestFetchResponse>;
+    }>,
+) {
+    return createProductionStablePluginHttpHost({
+        ...params,
+        adapter: Object.freeze({
+            request: async (
+                request: Parameters<HttpService['request']>[0],
+                options: Parameters<HttpService['request']>[1] = {},
+            ) => await params.adapter({
+                ...request,
+                signal: options.signal,
+            }),
+            async openWebSocket(): Promise<never> {
+                throw new Error('WebSocket is unavailable in this HTTP request fixture');
+            },
+        }),
+    });
+}
 
 const parsedDefinition = PluginContributesV2Schema.parse({
     voiceProviders: [{
@@ -38,12 +68,21 @@ const parsedDefinition = PluginContributesV2Schema.parse({
         roles: ['realtime_conversation'],
         platforms: ['web'],
         capabilities: {
-            readiness: { requirements: ['credential'] },
             turn: { cancelResponse: true, bargeIn: false },
         },
-        accountMediation: {
-            credentialSlots: [{ id: 'api_key', scope: 'account' }],
-            operations: [{
+        credentials: {
+            slot: { id: 'api_key', purpose: 'voice.client-auth', title: 'API key' },
+            requirement: { kind: 'always' },
+            sources: [{
+                kind: 'savedSecret',
+                secretKinds: ['apiKey'],
+                operationProjections: [{
+                    kind: 'recipientCredential', operation: 'client-auth', phase: 'prepare', format: 'bearer',
+                }, {
+                    kind: 'recipientCredential', operation: 'list-voices', phase: 'prepare', format: 'bearer',
+                }],
+            }],
+            hostMediated: { operations: [{
                     id: 'client-auth',
                     purpose: 'voice.client-auth',
                     credentialSlotId: 'api_key',
@@ -87,7 +126,7 @@ const parsedDefinition = PluginContributesV2Schema.parse({
                         mapping: [],
                     },
                     response: { maxBytes: 2 * 1024 * 1024, contentTypes: ['application/json'] },
-                }],
+                }] },
         },
         client: {
             artifactId: 'voice-runtime-web',
@@ -99,8 +138,38 @@ const parsedDefinition = PluginContributesV2Schema.parse({
 if (parsedDefinition.kind !== 'conversation') throw new Error('expected conversation Voice provider');
 const definition = parsedDefinition;
 
+function definitionWithClientAuthCredentialHeaderName(headerName: string) {
+    const parsed = PluginContributesV2Schema.parse({
+        voiceProviders: [{
+            ...definition,
+            credentials: {
+                ...definition.credentials!,
+                hostMediated: {
+                    ...definition.credentials!.hostMediated!,
+                    operations: definition.credentials!.hostMediated!.operations.map((operation) => (
+                        operation.id === 'client-auth' && operation.request.credential.kind === 'httpHeader'
+                            ? {
+                                ...operation,
+                                request: {
+                                    ...operation.request,
+                                    credential: {
+                                        ...operation.request.credential,
+                                        name: headerName,
+                                    },
+                                },
+                            }
+                            : operation
+                    )),
+                },
+            },
+        }],
+    }).voiceProviders[0]!;
+    if (parsed.kind !== 'conversation') throw new Error('expected conversation Voice provider');
+    return parsed;
+}
+
 function response(
-    request: FetchRuntimeRequestV1,
+    request: TestFetchRequest,
     artifact: Readonly<Record<string, unknown>> = {
         kind: 'bearer_token',
         value: 'short-lived-artifact',
@@ -108,25 +177,57 @@ function response(
         placement: 'authorization_header',
     },
     headers: Readonly<Record<string, string>> = { 'content-type': 'application/json' },
-): FetchRuntimeResponseV1 {
+): TestFetchResponse {
     const body = new TextEncoder().encode(JSON.stringify(artifact));
     return Object.freeze({
-        ok: true,
         status: 200,
-        statusText: 'OK',
         finalUrl: request.url,
         headers: Object.freeze({ ...headers }),
         body,
-        text: async () => new TextDecoder().decode(body),
-        json: async () => JSON.parse(new TextDecoder().decode(body)),
-        arrayBuffer: async () => body.slice().buffer,
     });
+}
+
+/** Mirrors the daemon's path-sourced recipient contract digest for a fixture binding. */
+function pathSourcedRecipientContractDigest(
+    contribution: Readonly<{ pluginId: string; localId: string }>,
+    definitionForContract: typeof definition,
+): string {
+    return createRecipientContractDigestV1(
+        createVoiceProviderRecipientContractFromCredentialsV1({
+            package: {
+                pluginId: contribution.pluginId,
+                source: { kind: 'path', locator: contribution.pluginId },
+            },
+            publisher: {
+                trust: 'verified',
+                identity: `path:${contribution.pluginId}:committed-registry`,
+            },
+            contribution,
+            credentials: {
+                slot: definitionForContract.credentials!.slot,
+                hostMediated: definitionForContract.credentials!.hostMediated!,
+            },
+            presentation: { title: definitionForContract.title },
+        }),
+    );
 }
 
 function publishCredential(
     providerId = 'acme.voice/conversation',
     settingsVersion = 1,
+    approvedRecipientContractDigest?: string,
+    definitionForContract = definition,
 ): void {
+    const separator = providerId.lastIndexOf('/');
+    if (separator <= 0 || separator === providerId.length - 1) throw new Error('qualified provider identity required');
+    const contribution = {
+        pluginId: providerId.slice(0, separator),
+        localId: providerId.slice(separator + 1),
+    };
+    const defaultRecipientContractDigest = pathSourcedRecipientContractDigest(
+        contribution,
+        definitionForContract,
+    );
     setActiveAccountSettingsSnapshot({
         source: 'network',
         scopeKey: 'account-scope',
@@ -136,11 +237,17 @@ function publishCredential(
         settings: {
             secrets: [{
                 id: 'account-voice-key',
+                name: 'Account voice key',
+                kind: 'apiKey',
                 encryptedValue: { _isSecretValue: true, value: 'long-lived-account-secret' },
             }],
-            voice: {
+            voiceSettingsV1: {
                 credentialBindings: [{
-                    providerId,
+                    contribution,
+                    credentialSlotId: 'api_key',
+                    credentialSource: { kind: 'savedSecret' },
+                    approvedRecipientContractDigest:
+                        approvedRecipientContractDigest ?? defaultRecipientContractDigest,
                     credentialBindings: {
                         account: { api_key: 'account-voice-key' },
                         byMachineId: {
@@ -151,6 +258,102 @@ function publishCredential(
             },
         } as never,
     });
+}
+
+function publishDormantCredentialSelection(
+    selection: 'connectedAccount' | 'none',
+    settingsVersion = 1,
+): void {
+    const contribution = {
+        pluginId: 'acme.voice',
+        localId: 'conversation',
+    };
+    setActiveAccountSettingsSnapshot({
+        source: 'network',
+        scopeKey: 'account-scope',
+        settingsVersion,
+        loadedAtMs: 1,
+        settingsSecretsReadKeys: [],
+        settings: {
+            secrets: [{
+                id: 'account-voice-key',
+                name: 'Account voice key',
+                kind: 'apiKey',
+                encryptedValue: { _isSecretValue: true, value: 'long-lived-account-secret' },
+            }],
+            voiceSettingsV1: {
+                credentialBindings: [{
+                    contribution,
+                    credentialSlotId: 'api_key',
+                    credentialSource: { kind: selection },
+                    // A valid approved digest keeps the deselected-source
+                    // assertion from passing on a recipient-contract mismatch.
+                    approvedRecipientContractDigest: pathSourcedRecipientContractDigest(
+                        contribution,
+                        definitionWithConnectedAccountSource(),
+                    ),
+                    credentialBindings: {
+                        account: { api_key: 'account-voice-key' },
+                    },
+                }],
+            },
+            connectedAccountPurposeBindingsV1: {
+                v: 1,
+                bindings: selection === 'connectedAccount'
+                    ? [{
+                        purpose: {
+                            consumer: contribution,
+                            purpose: 'voice.client-auth',
+                        },
+                        target: {
+                            kind: 'account',
+                            account: {
+                                service: {
+                                    pluginId: 'happier.agent.openai',
+                                    localId: 'openai',
+                                },
+                                accountId: 'openai-account',
+                            },
+                        },
+                    }]
+                    : [],
+            },
+        } as never,
+    });
+}
+
+function definitionWithConnectedAccountSource() {
+    const parsed = PluginContributesV2Schema.parse({
+        voiceProviders: [{
+            ...definition,
+            credentials: {
+                ...definition.credentials!,
+                sources: [
+                    ...definition.credentials!.sources,
+                    {
+                        kind: 'connectedAccount',
+                        service: {
+                            pluginId: 'happier.agent.openai',
+                            localId: 'openai',
+                        },
+                        operationProjections: [{
+                            kind: 'materializedHttpHeaders',
+                            operation: 'client-auth',
+                            phase: 'prepare',
+                            request: {
+                                kind: 'httpHeaders',
+                                origin: 'https://voice.example.test',
+                                headerNames: ['authorization'],
+                            },
+                            allowedHeaderNames: ['authorization'],
+                        }],
+                    },
+                ],
+            },
+        }],
+    }).voiceProviders[0]!;
+    if (parsed.kind !== 'conversation') throw new Error('expected conversation Voice provider');
+    return parsed;
 }
 
 function networkBinding() {
@@ -191,13 +394,18 @@ function catalogNetworkBinding() {
     );
 }
 
-function catalogRequest() {
+function catalogRequest(
+    provider: Readonly<{ pluginId: string; localId: string }> = {
+        pluginId: 'acme.voice',
+        localId: 'conversation',
+    },
+) {
     return {
         url: 'https://voice.example.test/v1/voices',
         method: 'GET' as const,
         credentialBinding: {
             kind: 'voiceAccountOperation' as const,
-            provider: { pluginId: 'acme.voice', localId: 'conversation' },
+            provider,
             operation: 'list-voices' as const,
             parameters: {},
         },
@@ -206,7 +414,7 @@ function catalogRequest() {
 }
 
 function createCatalogService(
-    adapter: (request: FetchRuntimeRequestV1) => Promise<FetchRuntimeResponseV1>,
+    adapter: (request: TestFetchRequest) => Promise<TestFetchResponse>,
     lifecycle: Readonly<{
         signal: AbortSignal;
         isGenerationCurrent: () => boolean;
@@ -214,20 +422,27 @@ function createCatalogService(
         signal: new AbortController().signal,
         isGenerationCurrent: () => true,
     },
+    voiceProviders: Parameters<
+        typeof createVoiceAccountPluginHttpCredentialBindingHost
+    >[0]['voiceProviders'] = [{
+        pluginId: 'acme.voice',
+        identity: { pluginId: 'acme.voice', localId: 'conversation' },
+        definition,
+    }],
+    invocationPluginId = 'acme.voice',
 ) {
-    return createStablePluginFetchHost({
+    return createStablePluginHttpHost({
         adapter,
-        credentialBindingHost: createVoiceAccountPluginFetchCredentialBindingHost({
-            voiceProviders: [{
-                pluginId: 'acme.voice',
-                identity: { pluginId: 'acme.voice', localId: 'conversation' },
-                definition,
-            }],
+        credentialBindingHost: createVoiceAccountPluginHttpCredentialBindingHost({
+            voiceProviders,
             credentialResolver: createVoiceCredentialResolver({ machineId: null }),
         }),
     }).bind({
-        plugin: { id: 'acme.voice', version: '1.0.0' },
-        contribution: { id: 'list-voices', qualifiedId: 'acme.voice/actions/list-voices' },
+        plugin: { id: invocationPluginId, version: '1.0.0' },
+        contribution: {
+            id: 'list-voices',
+            qualifiedId: `${invocationPluginId}/actions/list-voices`,
+        },
         generation: 'generation-7',
         correlationId: 'voice-catalog-operation',
         surface: 'ui',
@@ -241,9 +456,61 @@ describe('Voice account Plugin fetch credential binding', () => {
         resetActiveAccountSettingsSnapshotForTests();
     });
 
+    it('resolves the exact qualified ElevenLabs binding by the canonical recipient contract digest', async () => {
+        const identity = {
+            pluginId: 'happier.voice.elevenlabs',
+            localId: 'realtime-elevenlabs',
+        } as const;
+        const elevenLabsDefinition = {
+            ...definition,
+            id: identity.localId,
+            title: 'ElevenLabs Voice',
+        };
+        const recipientContract = createVoiceProviderRecipientContractFromCredentialsV1({
+            package: {
+                pluginId: identity.pluginId,
+                source: { kind: 'bundled', locator: identity.pluginId },
+            },
+            publisher: {
+                trust: 'bundled',
+                identity: 'happier.dev:first-party-bundle',
+            },
+            contribution: identity,
+            credentials: {
+                slot: elevenLabsDefinition.credentials!.slot,
+                hostMediated: elevenLabsDefinition.credentials!.hostMediated!,
+            },
+            presentation: { title: elevenLabsDefinition.title },
+        });
+        const recipientContractDigest =
+            createRecipientContractDigestV1(recipientContract);
+        publishCredential(
+            'happier.voice.elevenlabs/realtime-elevenlabs',
+            1,
+            recipientContractDigest,
+        );
+        const adapter = vi.fn(async (request: TestFetchRequest) =>
+            response(request, { voices: [] }));
+        const service = createCatalogService(adapter, {
+            signal: new AbortController().signal,
+            isGenerationCurrent: () => true,
+        }, [{
+            pluginId: identity.pluginId,
+            identity,
+            definition: elevenLabsDefinition,
+            provenance: 'first_party',
+            source: { kind: 'bundled' },
+        }], identity.pluginId);
+
+        await expect(service.request(catalogRequest(identity))).resolves.toMatchObject({
+            status: 200,
+        });
+        expect(adapter).toHaveBeenCalledOnce();
+    });
+
     it('materializes the declared account slot only inside the exact action request', async () => {
         publishCredential();
-        const adapter = vi.fn(async (request: FetchRuntimeRequestV1) => (
+        const adapter = vi.fn(async (request: TestFetchRequest) => (
             request.url.endsWith('/v1/voices')
                 ? response(request, {
                     voices: [{
@@ -262,7 +529,7 @@ describe('Voice account Plugin fetch credential binding', () => {
                     provider_only: true,
                 })
         ));
-        const credentialBindingHost = createVoiceAccountPluginFetchCredentialBindingHost({
+        const credentialBindingHost = createVoiceAccountPluginHttpCredentialBindingHost({
             voiceProviders: [{
                 pluginId: 'acme.voice',
                 identity: { pluginId: 'acme.voice', localId: 'conversation' },
@@ -270,7 +537,7 @@ describe('Voice account Plugin fetch credential binding', () => {
             }],
             credentialResolver: createVoiceCredentialResolver({ machineId: null }),
         });
-        const host = createStablePluginFetchHost({
+        const host = createStablePluginHttpHost({
             adapter,
             credentialBindingHost,
         });
@@ -316,17 +583,41 @@ describe('Voice account Plugin fetch credential binding', () => {
         expect(JSON.stringify(pluginRequest)).not.toContain('long-lived-account-secret');
     });
 
+    it.each(['connectedAccount', 'none'] as const)(
+        'does not use a dormant SavedSecret when the selected source is %s',
+        async (selection) => {
+            publishDormantCredentialSelection(selection);
+            const decrypt = vi.spyOn(protocol, 'decryptSecretValueWithKeysV1');
+            const adapter = vi.fn(async (request: TestFetchRequest) => response(request, { voices: [] }));
+            try {
+                const service = createCatalogService(adapter, undefined, [{
+                    pluginId: 'acme.voice',
+                    identity: { pluginId: 'acme.voice', localId: 'conversation' },
+                    definition: definitionWithConnectedAccountSource(),
+                }]);
+
+                await expect(service.request(catalogRequest())).rejects.toMatchObject({
+                    code: 'plugin_voice_credential_unavailable',
+                });
+                expect(adapter).not.toHaveBeenCalled();
+                expect(decrypt).not.toHaveBeenCalled();
+            } finally {
+                decrypt.mockRestore();
+            }
+        },
+    );
+
     it('fails closed for an unknown operation, different target, or caller cancellation', async () => {
         publishCredential();
-        const adapter = vi.fn(async (request: FetchRuntimeRequestV1) => response(request, {
+        const adapter = vi.fn(async (request: TestFetchRequest) => response(request, {
             client_secret: {
                 value: 'short-lived-artifact',
                 expires_at_ms: Date.now() + 60_000,
             },
         }));
-        const host = createStablePluginFetchHost({
+        const host = createStablePluginHttpHost({
             adapter,
-            credentialBindingHost: createVoiceAccountPluginFetchCredentialBindingHost({
+            credentialBindingHost: createVoiceAccountPluginHttpCredentialBindingHost({
                 voiceProviders: [{
                     pluginId: 'acme.voice',
                     identity: { pluginId: 'acme.voice', localId: 'conversation' },
@@ -392,13 +683,13 @@ describe('Voice account Plugin fetch credential binding', () => {
 
     it('rechecks the exact declared origin after secret resolution and before execute', async () => {
         const mutableDefinition = structuredClone(definition);
-        const operation = mutableDefinition.accountMediation!.operations[0]!;
-        const adapter = vi.fn(async (request: FetchRuntimeRequestV1) => response(request));
+        const operation = mutableDefinition.credentials!.hostMediated!.operations[0]!;
+        const adapter = vi.fn(async (request: TestFetchRequest) => response(request));
         const credentialResolver: VoiceCredentialResolver = Object.freeze({
             status: () => ({ available: true, source: 'account' as const }),
             async withSecret<T>(input: Readonly<{
-                providerId: string;
-                credentialSlotId: string;
+                identity: VoiceCredentialBindingIdentityV1;
+                recipientContractDigest?: string;
                 use: (secret: string) => Promise<T>;
             }>): Promise<T> {
                 Object.defineProperty(operation.request, 'origin', {
@@ -408,9 +699,9 @@ describe('Voice account Plugin fetch credential binding', () => {
                 return await input.use('long-lived-account-secret');
             },
         });
-        const service = createStablePluginFetchHost({
+        const service = createStablePluginHttpHost({
             adapter,
-            credentialBindingHost: createVoiceAccountPluginFetchCredentialBindingHost({
+            credentialBindingHost: createVoiceAccountPluginHttpCredentialBindingHost({
                 voiceProviders: [{
                     pluginId: 'acme.voice',
                     identity: { pluginId: 'acme.voice', localId: 'conversation' },
@@ -446,10 +737,10 @@ describe('Voice account Plugin fetch credential binding', () => {
 
     it('does not return reflected source credentials in response headers or client artifacts', async () => {
         publishCredential();
-        const createService = (adapter: (request: FetchRuntimeRequestV1) => Promise<FetchRuntimeResponseV1>) => (
-            createStablePluginFetchHost({
+        const createService = (adapter: (request: TestFetchRequest) => Promise<TestFetchResponse>) => (
+            createStablePluginHttpHost({
                 adapter,
-                credentialBindingHost: createVoiceAccountPluginFetchCredentialBindingHost({
+                credentialBindingHost: createVoiceAccountPluginHttpCredentialBindingHost({
                     voiceProviders: [{
                         pluginId: 'acme.voice',
                         identity: { pluginId: 'acme.voice', localId: 'conversation' },
@@ -513,6 +804,68 @@ describe('Voice account Plugin fetch credential binding', () => {
         });
     });
 
+    it('refuses an external provider when its declared recipient operations changed after approval', async () => {
+        const sourceSpec = {
+            kind: 'path',
+            locator: '/plugins/acme.voice',
+            trustPolicy: 'local_trusted',
+        } as const;
+        const recipientContract = createVoiceProviderRecipientContractFromCredentialsV1({
+            package: {
+                pluginId: 'acme.voice',
+                source: { kind: sourceSpec.kind, locator: sourceSpec.locator },
+            },
+            publisher: {
+                trust: 'verified',
+                identity: `${sourceSpec.kind}:${sourceSpec.locator}:${sourceSpec.trustPolicy}`,
+            },
+            contribution: { pluginId: 'acme.voice', localId: 'conversation' },
+            credentials: {
+                slot: definition.credentials!.slot,
+                hostMediated: definition.credentials!.hostMediated!,
+            },
+            presentation: { title: definition.title },
+        });
+        publishCredential(
+            'acme.voice/conversation',
+            1,
+            createRecipientContractDigestV1(recipientContract),
+        );
+        const changedDefinition = {
+            ...definition,
+            credentials: {
+                ...definition.credentials!,
+                hostMediated: {
+                    operations: [
+                        ...definition.credentials!.hostMediated!.operations,
+                        {
+                            ...definition.credentials!.hostMediated!.operations[0]!,
+                            id: 'new-operation',
+                            purpose: 'voice.new-operation',
+                        },
+                    ],
+                },
+            },
+        };
+        const adapter = vi.fn(async (request: TestFetchRequest) => response(request, { voices: [] }));
+        const service = createCatalogService(adapter, {
+            signal: new AbortController().signal,
+            isGenerationCurrent: () => true,
+        }, [{
+            pluginId: 'acme.voice',
+            identity: { pluginId: 'acme.voice', localId: 'conversation' },
+            definition: changedDefinition,
+            provenance: 'external',
+            source: { kind: sourceSpec.kind },
+            sourceSpec,
+        }]);
+
+        await expect(service.request(catalogRequest())).rejects.toMatchObject({
+            code: 'plugin_voice_credential_unavailable',
+        });
+        expect(adapter).not.toHaveBeenCalled();
+    });
+
     it('redacts the materialized credential from interceptors and sanitizes adapter failures', async () => {
         publishCredential();
         const observedRequest = vi.fn(async (
@@ -533,8 +886,8 @@ describe('Voice account Plugin fetch credential binding', () => {
             },
         };
         const createService = (
-            adapter: (request: FetchRuntimeRequestV1) => Promise<FetchRuntimeResponseV1>,
-        ) => createStablePluginFetchHost({
+            adapter: (request: TestFetchRequest) => Promise<TestFetchResponse>,
+        ) => createStablePluginHttpHost({
             adapter,
             interceptorRegistry: {
                 declarations: [declaration],
@@ -544,7 +897,7 @@ describe('Voice account Plugin fetch credential binding', () => {
                     invoke: observedRequest,
                 }],
             },
-            credentialBindingHost: createVoiceAccountPluginFetchCredentialBindingHost({
+            credentialBindingHost: createVoiceAccountPluginHttpCredentialBindingHost({
                 voiceProviders: [{
                     pluginId: 'acme.voice',
                     identity: { pluginId: 'acme.voice', localId: 'conversation' },
@@ -572,7 +925,7 @@ describe('Voice account Plugin fetch credential binding', () => {
             },
             redirect: 'error' as const,
         };
-        const successfulAdapter = vi.fn(async (input: FetchRuntimeRequestV1) => response(input));
+        const successfulAdapter = vi.fn(async (input: TestFetchRequest) => response(input));
 
         await expect(createService(successfulAdapter).request(request)).resolves.toMatchObject({
             status: 200,
@@ -585,7 +938,7 @@ describe('Voice account Plugin fetch credential binding', () => {
             headers: { authorization: 'Bearer long-lived-account-secret' },
         }));
 
-        const failingAdapter = vi.fn(async (input: FetchRuntimeRequestV1): Promise<FetchRuntimeResponseV1> => {
+        const failingAdapter = vi.fn(async (input: TestFetchRequest): Promise<TestFetchResponse> => {
             throw new Error(`provider echoed ${input.headers?.authorization}`);
         });
         const failure = await createService(failingAdapter).request(request).catch((error: unknown) => error);
@@ -596,9 +949,115 @@ describe('Voice account Plugin fetch credential binding', () => {
         expect(String(failure)).not.toContain('long-lived-account-secret');
     });
 
+    it('keeps a host-materialized credential header redacted and immutable regardless of its spelling', async () => {
+        const dynamicDefinition = definitionWithClientAuthCredentialHeaderName('x-license-key');
+        publishCredential('acme.voice/conversation', 1, undefined, dynamicDefinition);
+        const declaration: Readonly<{
+            pluginId: string;
+            contribution: PluginRequestInterceptorContributionV1;
+        }> = {
+            pluginId: 'acme.policy',
+            contribution: {
+                id: 'protect-api',
+                origins: ['https://voice.example.test'],
+                methods: ['POST'],
+            },
+        };
+        const request = {
+            url: 'https://voice.example.test/v1/session',
+            method: 'POST' as const,
+            credentialBinding: {
+                kind: 'voiceAccountOperation' as const,
+                provider: { pluginId: 'acme.voice', localId: 'conversation' },
+                operation: 'client-auth' as const,
+                parameters: {},
+            },
+            redirect: 'error' as const,
+        };
+        const createService = (
+            invoke: (request: PluginInterceptedRequest) => Promise<PluginInterceptorResult>,
+            adapter: (request: TestFetchRequest) => Promise<TestFetchResponse>,
+        ) => createStablePluginHttpHost({
+            adapter,
+            interceptorRegistry: {
+                declarations: [declaration],
+                activateContributionsOnDemand: async () => Object.freeze([]),
+                readBindings: () => [{
+                    ...declaration,
+                    invoke: async (interceptedRequest) => await invoke(interceptedRequest),
+                }],
+            },
+            credentialBindingHost: createVoiceAccountPluginHttpCredentialBindingHost({
+                voiceProviders: [{
+                    pluginId: 'acme.voice',
+                    identity: { pluginId: 'acme.voice', localId: 'conversation' },
+                    definition: dynamicDefinition,
+                }],
+                credentialResolver: createVoiceCredentialResolver({ machineId: null }),
+            }),
+        }).bind({
+            plugin: { id: 'acme.voice', version: '1.0.0' },
+            contribution: { id: 'mint-session', qualifiedId: 'acme.voice/actions/mint-session' },
+            generation: 'generation-7',
+            correlationId: 'voice-account-dynamic-credential-header',
+            surface: 'ui',
+            signal: new AbortController().signal,
+            isGenerationCurrent: () => true,
+        }, networkBinding());
+
+        const observed = vi.fn(async (
+            interceptedRequest: PluginInterceptedRequest,
+        ): Promise<PluginInterceptorResult> => ({
+            decision: 'continue',
+            request: interceptedRequest,
+        }));
+        const successfulAdapter = vi.fn(async (input: TestFetchRequest) => response(input));
+        const successfulService = createService(observed, successfulAdapter);
+
+        const successfulResponse = await successfulService.request(request);
+        expect(successfulResponse).toMatchObject({
+            status: 200,
+        });
+        expect(observed).toHaveBeenCalledWith(expect.objectContaining({
+            headers: { 'x-license-key': '[redacted]' },
+        }));
+        expect(JSON.stringify(observed.mock.calls)).not.toContain('long-lived-account-secret');
+        expect(successfulAdapter).toHaveBeenCalledWith(expect.objectContaining({
+            headers: { 'x-license-key': 'Bearer long-lived-account-secret' },
+        }));
+
+        await successfulService.request({
+            url: 'https://voice.example.test/v1/session',
+            method: 'POST',
+            headers: { 'x-license-key': 'caller-visible-value' },
+            redirect: 'error',
+        });
+        expect(observed).toHaveBeenLastCalledWith(expect.objectContaining({
+            headers: { 'x-license-key': 'caller-visible-value' },
+        }));
+        expect(successfulAdapter).toHaveBeenLastCalledWith(expect.objectContaining({
+            headers: { 'x-license-key': 'caller-visible-value' },
+        }));
+
+        const mutatingAdapter = vi.fn(async (input: TestFetchRequest) => response(input));
+        await expect(createService(async (interceptedRequest) => ({
+            decision: 'continue',
+            request: {
+                ...interceptedRequest,
+                headers: {
+                    ...interceptedRequest.headers,
+                    'x-license-key': 'interceptor-replacement',
+                },
+            },
+        }), mutatingAdapter).request(request)).rejects.toMatchObject({
+            code: 'plugin_fetch_voice_account_operation_failed',
+        });
+        expect(mutatingAdapter).not.toHaveBeenCalled();
+    });
+
     it('reconstructs the public result without provider response fields or helper methods', async () => {
         publishCredential();
-        const credentialBindingHost = createVoiceAccountPluginFetchCredentialBindingHost({
+        const credentialBindingHost = createVoiceAccountPluginHttpCredentialBindingHost({
             voiceProviders: [{
                 pluginId: 'acme.voice',
                 identity: { pluginId: 'acme.voice', localId: 'conversation' },
@@ -640,16 +1099,16 @@ describe('Voice account Plugin fetch credential binding', () => {
                 redirect: 'error',
             },
             signal: undefined,
-            execute: async (headers) => Object.assign({
+            execute: async (injection) => Object.assign({
                 status: 200,
                 finalUrl: 'https://voice.example.test/v1/session',
                 headers: { 'content-type': 'application/json' },
                 body,
             }, {
-                statusText: `provider echoed ${headers.authorization}`,
-                text: async () => headers.authorization,
-                json: async () => ({ reflected: headers.authorization }),
-                arrayBuffer: async () => new TextEncoder().encode(headers.authorization).buffer,
+                statusText: `provider echoed ${injection.headers.authorization}`,
+                text: async () => injection.headers.authorization,
+                json: async () => ({ reflected: injection.headers.authorization }),
+                arrayBuffer: async () => new TextEncoder().encode(injection.headers.authorization).buffer,
             }),
         });
         expect(Object.keys(result).sort()).toEqual([
@@ -665,9 +1124,85 @@ describe('Voice account Plugin fetch credential binding', () => {
         expect(result).not.toHaveProperty('arrayBuffer');
     });
 
+    it('diagnoses a rejected provider response without retaining response-derived or secret text', async () => {
+        publishCredential();
+        const recordResponseDiagnostic = vi.fn(() => {
+            throw new Error('diagnostic sink unavailable');
+        });
+        const credentialBindingHost = createVoiceAccountPluginHttpCredentialBindingHost({
+            voiceProviders: [{
+                pluginId: 'acme.voice',
+                identity: { pluginId: 'acme.voice', localId: 'conversation' },
+                definition,
+            }],
+            credentialResolver: createVoiceCredentialResolver({ machineId: null }),
+            recordResponseDiagnostic,
+        });
+        const rejectedBody = new TextEncoder().encode(JSON.stringify({
+            detail: 'provider-only rejection',
+            reflected: 'long-lived-account-secret',
+        }));
+
+        await expect(credentialBindingHost.request({
+            seed: {
+                plugin: { id: 'acme.voice', version: '1.0.0' },
+                contribution: {
+                    id: 'list-voices',
+                    qualifiedId: 'acme.voice/actions/list-voices',
+                },
+                generation: 'generation-7',
+                correlationId: 'voice-account-operation-rejected-response',
+                surface: 'ui',
+                signal: new AbortController().signal,
+                isGenerationCurrent: () => true,
+            },
+            serviceBinding: catalogNetworkBinding(),
+            credentialBinding: catalogRequest().credentialBinding,
+            request: {
+                url: 'https://voice.example.test/v1/voices',
+                method: 'GET',
+                redirect: 'error',
+            },
+            signal: undefined,
+            execute: async () => ({
+                status: 422,
+                finalUrl: 'https://voice.example.test/v1/voices',
+                headers: {
+                    'content-type': 'application/problem+json; boundary=provider-only',
+                    'x-provider-error': 'provider-only rejection',
+                },
+                body: rejectedBody,
+            }),
+        })).rejects.toMatchObject({
+            code: 'plugin_fetch_voice_account_operation_failed',
+        });
+
+        expect(recordResponseDiagnostic).toHaveBeenCalledOnce();
+        expect(recordResponseDiagnostic).toHaveBeenCalledWith(
+            expect.objectContaining({
+                correlationId: 'voice-account-operation-rejected-response',
+            }),
+            {
+                operationPurpose: 'voice.catalog.voices',
+                status: 422,
+                contentType: 'undeclared',
+                responseBodyBytes: rejectedBody.byteLength,
+                finalUrlMatches: true,
+                responseContractMatches: false,
+                bodyPolicyAccepted: null,
+            },
+        );
+        const serializedDiagnostic = JSON.stringify(recordResponseDiagnostic.mock.calls);
+        expect(serializedDiagnostic).not.toContain('long-lived-account-secret');
+        expect(serializedDiagnostic).not.toContain('provider-only');
+        expect(serializedDiagnostic).not.toContain('application/problem+json');
+        expect(serializedDiagnostic).not.toContain('boundary=');
+        expect(serializedDiagnostic).not.toContain('https://');
+    });
+
     it('returns bounded provider-shaped catalog material only through the exact declared GET action', async () => {
         publishCredential();
-        const adapter = vi.fn(async (request: FetchRuntimeRequestV1) => response(request, {
+        const adapter = vi.fn(async (request: TestFetchRequest) => response(request, {
             voices: [{
                 voice_id: 'fixture-voice',
                 name: 'Fixture Voice',
@@ -710,7 +1245,7 @@ describe('Voice account Plugin fetch credential binding', () => {
         ];
 
         for (const body of invalidBodies) {
-            const adapter = vi.fn(async (request: FetchRuntimeRequestV1) => {
+            const adapter = vi.fn(async (request: TestFetchRequest) => {
                 const base = response(request, { ok: true, items: [] });
                 return Object.freeze({
                     ...base,
@@ -742,7 +1277,7 @@ describe('Voice account Plugin fetch credential binding', () => {
             const waiting = new Promise<void>((resolve) => {
                 release = resolve;
             });
-            const adapter = vi.fn(async (request: FetchRuntimeRequestV1) => {
+            const adapter = vi.fn(async (request: TestFetchRequest) => {
                 markStarted();
                 await waiting;
                 return response(request, {
@@ -769,13 +1304,12 @@ describe('Voice account Plugin fetch credential binding', () => {
         await runInFlightChange(({ caller }) => caller.abort(), 'plugin_fetch_voice_account_operation_cancelled');
         await runInFlightChange(({ retire }) => retire(), 'plugin_final_generation_retired');
         await runInFlightChange(
-            () => publishCredential('acme.voice/conversation', 2),
+            () => publishDormantCredentialSelection('none', 2),
             'plugin_voice_credential_unavailable',
         );
     });
 
     it('materializes every packed public recipient operation without a daemon action bypass', async () => {
-        publishCredential('acme.packed-voice/conversation');
         const fixtureRoot = new URL(
             '../../testkit/fixtures/packed-external-voice-provider/',
             import.meta.url,
@@ -785,11 +1319,39 @@ describe('Voice account Plugin fetch credential binding', () => {
             'utf8',
         )) as Readonly<{ contributes?: unknown }>;
         const contributes = PluginContributesV2Schema.parse(manifest.contributes);
-        const packedDefinition = contributes.voiceProviders[0]!;
-        if (packedDefinition.kind !== 'conversation') {
+        const packedDefinition = contributes.voiceProviders.find(
+            (candidate) => candidate.id === 'conversation-mediated',
+        );
+        if (packedDefinition?.kind !== 'conversation') {
             throw new Error('packed_voice_conversation_declaration_required');
         }
-        const adapter = vi.fn(async (request: FetchRuntimeRequestV1) => (
+        const packedIdentity = {
+            pluginId: 'acme.packed-voice',
+            localId: packedDefinition.id,
+        } as const;
+        publishCredential(
+            `acme.packed-voice/${packedDefinition.id}`,
+            1,
+            createRecipientContractDigestV1(
+                createVoiceProviderRecipientContractFromCredentialsV1({
+                    package: {
+                        pluginId: packedIdentity.pluginId,
+                        source: { kind: 'path', locator: packedIdentity.pluginId },
+                    },
+                    publisher: {
+                        trust: 'verified',
+                        identity: `path:${packedIdentity.pluginId}:committed-registry`,
+                    },
+                    contribution: packedIdentity,
+                    credentials: {
+                        slot: packedDefinition.credentials!.slot,
+                        hostMediated: packedDefinition.credentials!.hostMediated!,
+                    },
+                    presentation: { title: packedDefinition.title },
+                }),
+            ),
+        );
+        const adapter = vi.fn(async (request: TestFetchRequest) => (
             request.method === 'GET'
                 ? response(request, {
                     voices: [{
@@ -813,12 +1375,12 @@ describe('Voice account Plugin fetch credential binding', () => {
                     provider_only: true,
                 })
         ));
-        const fetch = createStablePluginFetchHost({
+        const fetch = createStablePluginHttpHost({
             adapter,
-            credentialBindingHost: createVoiceAccountPluginFetchCredentialBindingHost({
+            credentialBindingHost: createVoiceAccountPluginHttpCredentialBindingHost({
                 voiceProviders: [{
                     pluginId: 'acme.packed-voice',
-                    identity: { pluginId: 'acme.packed-voice', localId: 'conversation' },
+                    identity: { pluginId: 'acme.packed-voice', localId: packedDefinition.id },
                     definition: packedDefinition,
                 }],
                 credentialResolver: createVoiceCredentialResolver({ machineId: null }),
@@ -828,8 +1390,8 @@ describe('Voice account Plugin fetch credential binding', () => {
         const service = fetch.bind({
             plugin: { id: 'acme.packed-voice', version: '1.0.0' },
             contribution: {
-                id: 'conversation',
-                qualifiedId: 'acme.packed-voice/voiceProviders/conversation',
+                id: packedDefinition.id,
+                qualifiedId: `acme.packed-voice/voiceProviders/${packedDefinition.id}`,
             },
             generation: 'generation-7',
             correlationId: 'packed-voice-account-operation',
@@ -856,7 +1418,7 @@ describe('Voice account Plugin fetch credential binding', () => {
             operation: 'list-voices' | 'provision-voice' | 'client-auth',
             parameters: Readonly<Record<string, VoiceRealtimeJsonValue>>,
         ) => {
-            const declaration = packedDefinition.accountMediation?.operations.find(
+            const declaration = packedDefinition.credentials?.hostMediated?.operations.find(
                 (candidate) => candidate.id === operation,
             );
             if (!declaration) throw new Error(`missing packed operation ${operation}`);
@@ -871,7 +1433,7 @@ describe('Voice account Plugin fetch credential binding', () => {
                 ...(materialized.body ? { body: materialized.body } : {}),
                 credentialBinding: {
                     kind: 'voiceAccountOperation',
-                    provider: { pluginId: 'acme.packed-voice', localId: 'conversation' },
+                    provider: { pluginId: 'acme.packed-voice', localId: packedDefinition.id },
                     operation,
                     parameters,
                 },

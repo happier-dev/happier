@@ -122,4 +122,71 @@ describe('native BrandMark presentation', () => {
       borderRadius: context.theme.radii.control,
     });
   });
+
+  it('does not re-encode a digest-equal reread that arrives as fresh bytes', async () => {
+    const context = createSurfaceContext({ colorScheme: 'light', contrast: 'normal' });
+    const digest = `sha256:${'c'.repeat(64)}`;
+    // A length divisible by three makes indexed reads exactly one per byte
+    // per conversion, with no read past the final triple.
+    const brandBytes = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 0]);
+    let reads = 0;
+    // Every read hands back a DISTINCT array with the same admitted digest,
+    // which is what a real transport does. Counting indexed reads measures
+    // conversions without instrumenting the presentation module.
+    let indexedReads = 0;
+    const readResource = async () => {
+      reads += 1;
+      const fresh = new Uint8Array(brandBytes);
+      const counted = new Proxy(fresh, {
+        get(target, key) {
+          if (typeof key === 'string' && /^\d+$/u.test(key)) indexedReads += 1;
+          return Reflect.get(target, key, target) as unknown;
+        },
+      }) as Uint8Array;
+      return { contentType: 'image/png' as const, digest, bytes: counted };
+    };
+
+    const host = createHostApiStub(context, { readResource });
+    const tree = (mounted: boolean) => (
+      <PluginUiProvider hostApi={host} context={context}>
+        <PluginUiPresentationHostProviderInternal host={{
+          brand: {
+            displayName: 'GitHub',
+            resource: { pluginId: 'happier.scm.forge.github', localId: 'brand-icon' },
+          },
+          renderMarkdown: () => null,
+          renderCodeBlock: () => null,
+          renderPopover: () => null,
+          renderIcon: () => null,
+        }}>
+          {mounted ? <BrandMark /> : null}
+        </PluginUiPresentationHostProviderInternal>
+      </PluginUiProvider>
+    );
+
+    await act(async () => {
+      renderer = create(tree(true));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const firstSource = renderer!.root.findByType('Image').props.source;
+    const conversionsAfterFirstMount = indexedReads / brandBytes.byteLength;
+
+    // Remount through the same provider: the store rereads canonically and the
+    // reread lands on the same digest with a brand-new array.
+    await act(async () => {
+      renderer!.update(tree(false));
+      await Promise.resolve();
+    });
+    await act(async () => {
+      renderer!.update(tree(true));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(reads).toBeGreaterThan(1);
+    expect(conversionsAfterFirstMount).toBe(1);
+    expect(indexedReads / brandBytes.byteLength).toBe(1);
+    expect(renderer!.root.findByType('Image').props.source).toBe(firstSource);
+  });
 });

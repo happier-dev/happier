@@ -22,17 +22,15 @@ function readJsonResponse(response, errorCode) {
 function readProviderConfig(value) {
   const config = readRecord(value);
   if (
-    config?.mode !== 'default'
-    || (config.profile !== 'balanced' && config.profile !== 'expressive')
+    (config?.profile !== 'balanced' && config?.profile !== 'expressive')
     || typeof config.enableProvisioning !== 'boolean'
     || Object.keys(config).some((key) => (
-      key !== 'mode' && key !== 'profile' && key !== 'enableProvisioning'
+      key !== 'profile' && key !== 'enableProvisioning'
     ))
   ) {
     throw new Error('invalid_provider_config');
   }
   return {
-    mode: config.mode,
     profile: config.profile,
     enableProvisioning: config.enableProvisioning,
   };
@@ -94,14 +92,16 @@ function readClientAuth(response) {
 
 export function activate(api) {
   fixtureEvents.push({ kind: 'activated' });
-  api.voiceProviders.register('conversation', {
+  api.voiceProviders.register('conversation-mediated', {
+    kind: 'conversation',
     settingsOperations: {
       async listCatalog(input) {
         readProviderConfig(input.providerConfig);
         if (input.catalog !== 'voices') {
           throw new Error('unsupported_voice_catalog');
         }
-        const catalog = readCatalog(await input.accountOperations.request({
+        if (!input.credentials.mediated) throw new Error('voice_mediated_credentials_required');
+        const catalog = readCatalog(await input.credentials.mediated.request({
           operationId: 'list-voices',
           parameters: {},
           signal: input.signal,
@@ -112,44 +112,36 @@ export function activate(api) {
         });
         return catalog;
       },
-      async provision(input) {
-        const providerConfig = readProviderConfig(input.providerConfig);
-        const request = readRecord(input.request);
-        if (
-          request?.kind !== 'provision_selected_voice'
-          || typeof request.voiceId !== 'string'
-          || request.voiceId.length < 1
-          || request.voiceId.length > 256
-        ) {
-          throw new Error('invalid_voice_provisioning_request');
+    },
+    settingsActions: {
+      async execute(input, context) {
+        if (input.actionId !== 'provision-voice') {
+          throw new Error('unsupported_voice_settings_action');
         }
-        if (!providerConfig.enableProvisioning) {
-          throw new Error('voice_provisioning_disabled');
-        }
+        const providerConfig = readProviderConfig(input.settings);
+        if (!providerConfig.enableProvisioning) throw new Error('voice_provisioning_disabled');
+        if (!context.credentials.mediated) throw new Error('voice_mediated_credentials_required');
         const provisioning = readProvisioning(
-          await input.accountOperations.request({
+          await context.credentials.mediated.request({
             operationId: 'provision-voice',
             parameters: {
-              voiceId: request.voiceId,
+              voiceId: FIXTURE_VOICE_ID,
               body: { profile: providerConfig.profile },
             },
-            signal: input.signal,
+            signal: context.signal,
           }),
-          request.voiceId,
+          FIXTURE_VOICE_ID,
           providerConfig.profile,
         );
         fixtureEvents.push({ kind: 'provisioned', ...provisioning });
-        return {
-          ...provisioning,
-          disabledActionIds: [...input.disabledActionIds],
-          extraSystemAppendBlockCount: input.extraSystemAppendBlocks.length,
-        };
+        return { patch: { profile: 'expressive' } };
       },
     },
     protocol: {
       async prepare(input) {
         const providerConfig = readProviderConfig(input.providerConfig);
-        const clientAuth = readClientAuth(await input.accountOperations.request({
+        if (!input.credentials.mediated) throw new Error('voice_mediated_credentials_required');
+        const clientAuth = readClientAuth(await input.credentials.mediated.request({
           operationId: 'client-auth',
           parameters: {
             body: {
@@ -284,6 +276,61 @@ export function activate(api) {
     async dispose() {
       fixtureEvents.push({ kind: 'runtime_disposed' });
     },
-    requiresMicForConnection: false,
+    microphoneMode: 'provider_managed',
+  });
+  api.voiceProviders.register('conversation-raw', {
+    kind: 'conversation',
+    protocol: {
+      async prepare(input) {
+        input.signal.throwIfAborted();
+        return {
+          kind: 'prepared',
+          session: { config: {}, safeMetadata: {} },
+        };
+      },
+      decodeControl() {
+        return [];
+      },
+      encodeTurnControl() {
+        return null;
+      },
+    },
+    async createConnection(input) {
+      if (!input.credentials.raw) throw new Error('voice_raw_credentials_required');
+      await input.credentials.raw.materialize({
+        kind: 'httpHeaders',
+        origin: 'https://voice.example.test',
+        headerNames: ['authorization'],
+      }, { signal: input.signal });
+      input.signal.throwIfAborted();
+      fixtureEvents.push({ kind: 'raw_connection_authorized' });
+      return input.media.createSdkHandleConnection({
+        driver: {
+          async open() {
+            fixtureEvents.push({ kind: 'raw_connection_opened' });
+          },
+          async sendControl(event) {
+            fixtureEvents.push({ kind: 'raw_sent', event });
+          },
+          async close(reason) {
+            fixtureEvents.push({ kind: 'raw_closed', reason });
+          },
+        },
+      });
+    },
+    encodeToolResults() {
+      return [];
+    },
+    encodeToolContinuation() {
+      return {};
+    },
+    encodeContextUpdate() {
+      return [];
+    },
+    encodeTextTurn() {
+      return [];
+    },
+    outputLevelMeter: 'unavailable',
+    microphoneMode: 'provider_managed',
   });
 }

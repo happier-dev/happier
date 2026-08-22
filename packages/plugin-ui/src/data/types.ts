@@ -10,12 +10,17 @@ import type {
  * The direct Account Collection operations that an executable plugin surface
  * may use. AccountChange remains owned by the Data UI-query pager; this
  * carrier deliberately does not manufacture a second synchronous watch API.
+ *
+ * `limits` and `measureBatch` are carried because a surface that writes a large
+ * set must size its batches against the deployment policy actually in force and
+ * the real sealed wire cost. Without them a plugin UI would have to guess the
+ * private-envelope expansion, which is exactly the guess the host owns.
  */
 export type PluginUiAccountCollectionForDefinition<
   TDefinition extends PluginAccountCollectionDefinition,
 > = Pick<
   PluginAccountCollectionForDefinition<TDefinition>,
-  'get' | 'put' | 'delete' | 'query' | 'batch'
+  'get' | 'put' | 'delete' | 'query' | 'batch' | 'limits' | 'measureBatch'
 >;
 
 export type PluginUiCollectionQueryInput = Readonly<{

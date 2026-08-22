@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { lstat, readFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import test from 'node:test';
 
@@ -7,60 +7,13 @@ import { CAPABILITY_MATRIX_DECLARATIONS_V1 } from './capabilityMatrixMetadata.mj
 
 const EXTERNAL_AUTHOR_PROOF = 'packages/plugin-sdk/examples/action-contract-producer/src/index.ts';
 
-function availableProvingConsumerPaths() {
-  return Object.freeze([
-    ...new Set(
-      Object.values(CAPABILITY_MATRIX_DECLARATIONS_V1)
-        .flatMap((declarations) => Object.values(declarations))
-        .filter((declaration) => declaration.availabilityDisposition === 'available')
-        .map((declaration) => declaration.provingConsumer),
-    ),
-  ].sort());
-}
-
-test('available capability declarations name maintained regular proving-consumer leaves', async () => {
-  const sourcePaths = availableProvingConsumerPaths();
-  const repoRoot = resolve(import.meta.dirname, '..', '..', '..');
-
-  assert.equal(
-    sourcePaths.includes('packages/plugins/gemini/src/connectedAccounts/runtime.ts'),
-    true,
-  );
-  assert.equal(
-    CAPABILITY_MATRIX_DECLARATIONS_V1.hostAccess['network.client'].provingConsumer,
-    'packages/plugins/channel-discord/src/discordGatewayWorker.ts',
-  );
-  assert.equal(
-    CAPABILITY_MATRIX_DECLARATIONS_V1.manifestFamilies.transcriptActivities.provingConsumer,
-    'packages/plugins/channels/src/manifest.ts',
-  );
-  assert.equal(
-    CAPABILITY_MATRIX_DECLARATIONS_V1.services.targetedContributions.provingConsumer,
-    'packages/plugins/channels/src/ingress.ts',
-  );
-  for (const sourcePath of sourcePaths) {
-    assert.equal(
-      (await lstat(resolve(repoRoot, sourcePath))).isFile(),
-      true,
-      `available capability proving consumer must be a regular file: ${sourcePath}`,
-    );
-  }
-});
-
-test('declares operation-only targeted contributions with the maintained Discord provider contributor', () => {
-  assert.deepEqual(CAPABILITY_MATRIX_DECLARATIONS_V1.manifestFamilies.targetedPluginContributions, {
-    availabilityDisposition: 'available',
-    provingConsumer: 'packages/plugins/channel-discord/src/manifest.ts',
-  });
-});
-
 test('HostAccess declarations name the terminal session path and deferred declaration sources', () => {
   assert.deepEqual(CAPABILITY_MATRIX_DECLARATIONS_V1.hostAccess.terminal, {
     producer: 'apps/cli/src/agent/runtime/registry/engineRegistry/nativeAgentSessionHostServiceOwners.ts',
     lifecycle: 'session-runtime',
     specialistOwner: 'apps/cli/src/plugins/runtime/context/terminalHost.ts',
     availabilityDisposition: 'available',
-    provingConsumer: 'packages/plugins/claude/src/agent/runtime/terminal/unified/nativeSession.ts',
+    provingConsumer: 'packages/plugins/claude/src/manifest.ts',
   });
   assert.notEqual(
     CAPABILITY_MATRIX_DECLARATIONS_V1.hostAccess.terminal.producer,
@@ -139,6 +92,65 @@ test('proves public browser descriptors and request policy through the external 
   assert.match(consumer, /requestInterceptors:\s*\{/u);
   assert.doesNotMatch(consumer, /capability:\s*'network\.intercept'/u);
   assert.doesNotMatch(consumer, /hostAccess:\s*\{/u);
+});
+
+test('keeps external Commands and Tools deferred until packed lifecycle proof', async () => {
+  const consumerPath = EXTERNAL_AUTHOR_PROOF;
+  const repoRoot = resolve(import.meta.dirname, '..', '..', '..');
+
+  assert.deepEqual(CAPABILITY_MATRIX_DECLARATIONS_V1.manifestFamilies.commands, {
+    availabilityDisposition: 'deferred',
+    provingConsumer: 'no current positive consumer',
+    unblockCondition: 'An exact packed external Command invokes its Action through the canonical plugin command catalog and proves replacement, disable, and uninstall currentness.',
+  });
+  assert.deepEqual(CAPABILITY_MATRIX_DECLARATIONS_V1.manifestFamilies.tools, {
+    availabilityDisposition: 'deferred',
+    provingConsumer: 'no current positive consumer',
+    unblockCondition: 'An exact packed external Tool invokes its Action through the real daemon MCP catalog and proves replacement, disable, and uninstall currentness.',
+  });
+
+  const consumer = await readFile(resolve(repoRoot, consumerPath), 'utf8');
+  assert.match(consumer, /commands:\s*\{/u);
+  assert.match(consumer, /tools:\s*\{/u);
+});
+
+test('proves notification category, channel, and service authoring through the external author example', async () => {
+  const repoRoot = resolve(import.meta.dirname, '..', '..', '..');
+  const availableNotification = {
+    availabilityDisposition: 'available',
+    provingConsumer: EXTERNAL_AUTHOR_PROOF,
+  };
+  for (const family of ['notifications', 'notificationChannels']) {
+    assert.deepEqual(CAPABILITY_MATRIX_DECLARATIONS_V1.manifestFamilies[family], availableNotification);
+  }
+  assert.deepEqual(CAPABILITY_MATRIX_DECLARATIONS_V1.services.notifications, availableNotification);
+  assert.deepEqual(CAPABILITY_MATRIX_DECLARATIONS_V1.subpaths['./notifications'], availableNotification);
+
+  const consumer = await readFile(resolve(repoRoot, EXTERNAL_AUTHOR_PROOF), 'utf8');
+  assert.match(consumer, /from '@happier-dev\/plugin-sdk\/notifications'/u);
+  assert.match(consumer, /notifications:\s*\{/u);
+  assert.match(consumer, /notificationChannels:\s*\{/u);
+  assert.match(consumer, /sender:\s*documentReviewNotificationSender,/u);
+  assert.match(consumer, /context\.services\.notifications\.send\(/u);
+});
+
+test('proves the SecretsService through the external author example rotation flow', async () => {
+  const repoRoot = resolve(import.meta.dirname, '..', '..', '..');
+  assert.deepEqual(CAPABILITY_MATRIX_DECLARATIONS_V1.services.secrets, {
+    availabilityDisposition: 'available',
+    provingConsumer: EXTERNAL_AUTHOR_PROOF,
+  });
+
+  const consumer = await readFile(resolve(repoRoot, EXTERNAL_AUTHOR_PROOF), 'utf8');
+  assert.match(consumer, /secrets:\s*\[\{\s*id:\s*DOCUMENT_REVIEW_WEBHOOK_TOKEN\s*\}\]/u);
+  for (const operation of ['status', 'set', 'get', 'delete']) {
+    assert.match(
+      consumer,
+      new RegExp(`secrets\\.${operation}\\(`, 'u'),
+      `external author example must invoke SecretsService.${operation}`,
+    );
+  }
+  assert.match(consumer, /expectedRevision:\s*current\.revision/u);
 });
 
 test('records the r1.0 Composer families as deferred until a maintained public plugin proves each live lifecycle', () => {

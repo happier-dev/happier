@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { mkdir, open, rm } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import type { Readable } from 'node:stream';
@@ -42,6 +43,7 @@ export async function downloadResolvedNpmArtifact(params: Readonly<{
     throw error;
   });
   const output = file.createWriteStream();
+  const archiveSha256 = createHash('sha256');
   let byteLength = 0;
   try {
     for await (const value of response.body) {
@@ -49,11 +51,13 @@ export async function downloadResolvedNpmArtifact(params: Readonly<{
       byteLength += chunk.byteLength;
       if (byteLength > params.maxBytes) throw new Error(`Npm artifact exceeds the configured size limit (${params.maxBytes} bytes)`);
       integrity.update(chunk);
+      archiveSha256.update(chunk);
       if (!output.write(chunk)) await once(output, 'drain');
     }
     output.end();
     await finished(output);
     if (!integrity.verify()) throw new Error('Npm artifact integrity verification failed');
+    const archiveDigestSha256 = `sha256:${archiveSha256.digest('hex')}` as const;
     const registrySignature = verifyNpmRegistrySignatures({
       packageName: params.resolved.packageName,
       version: params.resolved.version,
@@ -68,6 +72,7 @@ export async function downloadResolvedNpmArtifact(params: Readonly<{
       },
       artifactPath: params.destinationPath,
       byteLength,
+      archiveDigestSha256,
       registrySignature,
       provenance: params.resolved.provenance?.status === 'declared'
         ? { ...params.resolved.provenance, verified: false }

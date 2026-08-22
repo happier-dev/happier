@@ -4,9 +4,15 @@ import { join } from 'node:path';
 
 import { describe, expect, it, vi } from 'vitest';
 import type { PluginApi, PluginInvocationContext } from '@happier-dev/plugin-sdk';
-import type { PluginInterceptedRequest } from '@happier-dev/plugin-sdk/runtime';
+import type { createPluginRegistrationScope } from '@happier-dev/plugin-sdk/host/registration';
+import type {
+    TargetPluginInterceptedRequest as PluginInterceptedRequest,
+} from './contributions/targetRequestInterceptors';
 
 import type { ResolvedContributionRegistry } from '../../projection/registry/types';
+import type { ResolvedExecutablePluginRuntimeRegistry } from '../resolveExecutablePluginRuntimeRegistry';
+import { createUnavailablePluginServices } from '../invocation/services/unavailable';
+import { createPluginReloadController } from '../reload/controller';
 import { ingestCanonicalPluginManifest } from '../../manifest/ingest';
 import {
     createLocalPathPluginDistributionIdentity,
@@ -14,6 +20,8 @@ import {
 } from '../../store/install/trustIdentity';
 import { activatePluginRuntimeRegistry } from './manager';
 import type { PluginContributionActivationDemand } from './activation/targets';
+
+type TargetPluginRegistrationApi = ReturnType<typeof createPluginRegistrationScope>['api'];
 
 async function createCommittedFileBackedFixtureActivationSource(params: Readonly<{
     pluginId: string;
@@ -35,196 +43,281 @@ async function createCommittedFileBackedFixtureActivationSource(params: Readonly
             immutableGenerationId: `fixture:${params.pluginId}`,
             distribution,
             trust,
-            admittedIntegrity: `sha256:${'9'.repeat(64)}`,
-            packageDigest: `sha256:${'9'.repeat(64)}`,
             isCurrent: async () => true,
         },
     });
 }
 
 describe('target activation publication', () => {
-    it('reports one host-issued fatal lazy-activation attempt for the exact committed generation', async () => {
-        const root = await mkdtemp(join(tmpdir(), 'happier-supervised-lazy-activation-'));
-        const missingEntryPath = join(root, 'missing.mjs');
-        const pluginId = 'acme.supervised.lazy';
+    it('projects required HostAccess directly for static daemon consumers without a legacy grant map', async () => {
+        const pluginId = 'acme.host-access-projection';
         const ingested = ingestCanonicalPluginManifest({
             schemaVersion: 2,
             id: pluginId,
             version: '1.0.0',
-            displayName: 'Supervised lazy target',
-            engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 },
-            entrypoints: { daemon: './missing.mjs' },
+            displayName: 'Host access projection',
+            engines: { happier: '^0.2.0' },
+            runtime: { apiVersion: 1 },
+            entrypoints: { daemon: './daemon.mjs' },
+            hostAccess: {
+                required: [
+                    {
+                        id: 'workspace-read',
+                        capability: 'filesystem',
+                        reason: 'Observe a bounded workspace subtree.',
+                        scope: {
+                            locations: [{ root: 'workspace', pathPrefix: 'observed' }],
+                            access: ['read'],
+                        },
+                    },
+                    {
+                        id: 'plugin-data-read',
+                        capability: 'filesystem',
+                        reason: 'Read plugin-local state through normal invocation services.',
+                        scope: {
+                            locations: [{ root: 'pluginData', pathPrefix: 'state' }],
+                            access: ['read'],
+                        },
+                    },
+                    {
+                        id: 'runtime-environment',
+                        capability: 'environment',
+                        reason: 'Pass the declared environment variable to an SCM operation.',
+                        scope: { keys: ['FORGE_TOKEN'] },
+                    },
+                    {
+                        id: 'runtime-process',
+                        capability: 'process',
+                        reason: 'Run the declared executable with its declared variable.',
+                        scope: { executables: [{ kind: 'systemTool', id: 'forge' }], envKeys: ['FORGE_REGION'] },
+                    },
+                ],
+                optional: [],
+            },
             contributes: {
-                actions: [{ id: 'run', title: 'Run', scopes: ['session'], surfaces: ['cli'], placement: 'primary', dangerLevel: 'safe' }],
+                actions: [{
+                    id: 'run', title: 'Run', scopes: ['global'], surfaces: ['cli'],
+                    execution: { target: 'daemon' },
+                    placementBindings: ['primary'], dangerLevel: 'safe',
+                }],
+                systemTools: [{ id: 'forge', title: 'Forge', executableNames: ['forge'] }],
             },
         });
         if (!ingested.ok) throw new Error(ingested.diagnostics.map((item) => item.message).join('\n'));
-        const distribution = await createLocalPathPluginDistributionIdentity(root);
-        const trust = createPluginTrustRecord({ pluginId, distribution, approvedAtMs: 1 });
-        const registry = {
-            agents: [], actions: [], resources: [],
-            activationTargets: [{
-                provenance: 'external', source: { kind: 'path' }, pluginId,
-                manifestPath: join(root, 'happier.plugin.json'), manifestDigest: `sha256:${'1'.repeat(64)}`,
-                daemonEntryPath: missingEntryPath,
-                sourceSpec: { kind: 'path', locator: root, trustPolicy: 'prompt', installPolicy: 'copy' },
-                activationEvents: [], manifest: ingested.manifest,
-            }],
-            catalogEntriesById: Object.freeze({}),
-            agentDefinitionsById: new Map(),             pluginDiagnosticsByPluginId: Object.freeze({}),
-        } as unknown as ResolvedContributionRegistry;
-        const attempts: unknown[] = [];
-        let markObserverCalled!: () => void;
-        const observerCalled = new Promise<void>((resolve) => { markObserverCalled = resolve; });
-        let releaseObserver!: () => void;
-        const observerGate = new Promise<void>((resolve) => { releaseObserver = resolve; });
-        const times = [10, 25];
+
         const activated = await activatePluginRuntimeRegistry({
-            contributes: registry,
-            generation: 12,
-            createActivationAttemptId: () => 'attempt-lazy-1',
-            nowMs: () => times.shift() ?? 25,
-            onActivationAttempt: async (attempt) => {
-                attempts.push(attempt);
-                markObserverCalled();
-                await observerGate;
-            },
+            contributes: {
+                agents: [], actions: [], resources: [],
+                activationTargets: [{
+                    provenance: 'external', source: { kind: 'path' }, pluginId,
+                    manifestPath: '/virtual/happier.plugin.json', daemonEntryPath: '/virtual/daemon.mjs',
+                    sourceSpec: { kind: 'path', locator: '/virtual', trustPolicy: 'local_trusted', installPolicy: 'copy' },
+                    activationEvents: [], manifest: ingested.manifest,
+                }],
+                catalogEntriesById: Object.freeze({}),
+                agentDefinitionsById: new Map(),
+                pluginDiagnosticsByPluginId: Object.freeze({}),
+            } as unknown as ResolvedContributionRegistry,
+            generation: 24,
             resolveActivationSource: () => ({
-                kind: 'file_backed',
-                entryPath: missingEntryPath,
-                trustPolicy: 'prompt',
-                committedAuthorization: {
-                    pluginId,
-                    immutableGenerationId: 'generation-lazy-1',
-                    distribution,
-                    trust,
-                    admittedIntegrity: `sha256:${'2'.repeat(64)}`,
-                    packageDigest: `sha256:${'2'.repeat(64)}`,
-                    isCurrent: async () => true,
-                },
+                kind: 'bundled',
+                moduleId: '@happier-dev/host-access-projection',
+                load: async () => ({
+                    activate(api: PluginApi) {
+                        api.actions.register('run', async () => ({ ok: true }));
+                    },
+                }),
             }),
         });
 
-        expect(attempts).toEqual([]);
-        const activation = activated.activateContributionsOnDemand([{ pluginId, family: 'actions', localId: 'run' }]);
-        await observerCalled;
-        const activationRace = await Promise.race([
-            activation.then(() => 'activated' as const),
-            new Promise<'observer_blocked'>((resolve) => setTimeout(() => resolve('observer_blocked'), 0)),
-        ]);
-        releaseObserver();
-        await activation;
-        expect(activationRace).toBe('activated');
-        expect(attempts).toEqual([{
-            attemptId: 'attempt-lazy-1',
-            pluginId,
-            immutableGenerationId: 'generation-lazy-1',
-            phase: 'lazyActivation',
-            startedAtMs: 10,
-            completedAtMs: 25,
-            outcome: 'fatal',
-        }]);
-        await activated.dispose();
+        try {
+            await activated.activatePluginsForValidation([pluginId]);
+            expect(activated).not.toHaveProperty('permissionsByPluginId');
+            expect(activated.filesystemReadAllowedPathsByPluginId.get(pluginId))
+                .toEqual(new Set(['observed']));
+            expect(activated.envAllowedNamesByPluginId.get(pluginId))
+                .toEqual(new Set(['FORGE_REGION', 'FORGE_TOKEN']));
+        } finally {
+            await activated.dispose();
+        }
     });
 
-    it('supervises fatal primary bootstrap only for current committed file-backed bytes', async () => {
-        const currentRoot = await mkdtemp(join(tmpdir(), 'happier-supervised-bootstrap-current-'));
-        const staleRoot = await mkdtemp(join(tmpdir(), 'happier-supervised-bootstrap-stale-'));
-        const uncommittedRoot = await mkdtemp(join(tmpdir(), 'happier-supervised-bootstrap-uncommitted-'));
-        for (const root of [currentRoot, staleRoot, uncommittedRoot]) {
-            await writeFile(join(root, 'daemon.mjs'), 'export function activate() { throw new Error("bootstrap failed"); }');
-        }
-        const pluginIds = {
-            current: 'acme.supervised.bootstrap',
-            stale: 'acme.supervised.stale',
-            uncommitted: 'acme.supervised.uncommitted',
-            bundled: 'acme.supervised.bundled',
-        } as const;
-        const createManifest = (pluginId: string) => ingestCanonicalPluginManifest({
+    it.each([
+        ['admits', 'manual', 'active'],
+        ['rejects before publication', 'oauthDeviceCode', 'unavailable'],
+    ] as const)(
+        '%s an external Connected Account runtime only when it matches its declared authentication mode',
+        async (_expectation, runtimeKind, expectedStatus) => {
+            const pluginId = expectedStatus === 'active'
+                ? 'acme.external.accounts.matched'
+                : 'acme.external.accounts.mismatch';
+            const ingested = ingestCanonicalPluginManifest({
+                schemaVersion: 2,
+                id: pluginId,
+                version: '1.0.0',
+                displayName: 'External account fixture',
+                engines: { happier: '^0.2.0' },
+                runtime: { apiVersion: 1 },
+                entrypoints: { daemon: './daemon.mjs' },
+                contributes: {
+                    connectedAccountDescriptors: [{
+                        id: 'forge',
+                        title: 'Forge account',
+                        authentication: {
+                            defaultModeId: 'manual',
+                            modes: [{
+                                id: 'manual',
+                                kind: 'manual',
+                                outcomeReconciliation: 'none',
+                                fields: [{
+                                    id: 'token',
+                                    title: 'Token',
+                                    schema: { type: 'string' },
+                                    secret: true,
+                                }],
+                            }],
+                        },
+                    }],
+                },
+            });
+            if (!ingested.ok) throw new Error(ingested.diagnostics.map((item) => item.message).join('\n'));
+            const activate = vi.fn((api: PluginApi) => {
+                api.connectedAccounts.register('forge', {
+                    authentication: {
+                        modes: {
+                            manual: runtimeKind === 'manual'
+                                ? {
+                                    kind: 'manual',
+                                    async complete() { return { status: 'rejected' as const }; },
+                                }
+                                : {
+                                    kind: 'oauthDeviceCode',
+                                    async begin() { return { status: 'failed' as const }; },
+                                    async poll() { return { status: 'failed' as const }; },
+                                    async cancel() {},
+                                },
+                        },
+                    },
+                    async refresh() { return { status: 'connected' as const }; },
+                    async revoke() { return { status: 'remoteUnsupported' as const }; },
+                    async status() { return { status: 'connected' as const }; },
+                    async materialize() { return { kind: 'environment' as const, env: {} }; },
+                } as never);
+            });
+            const activated = await activatePluginRuntimeRegistry({
+                contributes: {
+                    agents: [], actions: [], resources: [],
+                    activationTargets: [{
+                        provenance: 'external', source: { kind: 'path' }, pluginId,
+                        manifestPath: '/virtual/happier.plugin.json',
+                        daemonEntryPath: '/virtual/daemon.mjs',
+                        sourceSpec: {
+                            kind: 'path', locator: '/virtual', trustPolicy: 'prompt', installPolicy: 'copy',
+                        },
+                        activationEvents: [], manifest: ingested.manifest,
+                    }],
+                    catalogEntriesById: Object.freeze({}),
+                    agentDefinitionsById: new Map(),
+                    pluginDiagnosticsByPluginId: Object.freeze({}),
+                } as unknown as ResolvedContributionRegistry,
+                generation: 23,
+                resolveActivationSource: () => ({
+                    kind: 'bundled',
+                    moduleId: `@happier-dev/${pluginId}`,
+                    load: async () => ({ activate }),
+                }),
+            });
+
+            try {
+                await activated.activatePluginsForValidation([pluginId]);
+                expect(activated.targetActivationFacts).toEqual([
+                    expect.objectContaining({ pluginId, status: expectedStatus }),
+                ]);
+                if (expectedStatus === 'active') {
+                    expect(activated.targetRegistrations).toEqual([
+                        expect.objectContaining({
+                            pluginId,
+                            registration: expect.objectContaining({
+                                family: 'connectedAccountDescriptors',
+                                localId: 'forge',
+                            }),
+                        }),
+                    ]);
+                } else {
+                    expect(activated.targetRegistrations).toEqual([]);
+                    expect(activated.activatedPluginIds.has(pluginId)).toBe(false);
+                }
+            } finally {
+                await activated.dispose();
+            }
+        },
+    );
+
+    it('scopes a native activation module by its committed immutable generation', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-direct-activation-generation-'));
+        const entryPath = join(root, 'daemon.mjs');
+        const pluginId = 'acme.direct.activation';
+        const evaluationCountKey = '__happierDirectActivationEvaluationCount';
+        await writeFile(entryPath, [
+            `globalThis[${JSON.stringify(evaluationCountKey)}] = (globalThis[${JSON.stringify(evaluationCountKey)}] ?? 0) + 1;`,
+            'export function activate() {}',
+            '',
+        ].join('\n'));
+        const ingested = ingestCanonicalPluginManifest({
             schemaVersion: 2,
             id: pluginId,
             version: '1.0.0',
-            displayName: pluginId,
-            engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 },
+            displayName: 'Direct activation',
+            engines: { happier: '^0.2.0' },
+            runtime: { apiVersion: 1 },
             entrypoints: { daemon: './daemon.mjs' },
-            activation: { events: [{ kind: 'startup' }] },
             contributes: {},
         });
-        const manifests = Object.fromEntries(Object.entries(pluginIds).map(([key, pluginId]) => {
-            const ingested = createManifest(pluginId);
-            if (!ingested.ok) throw new Error(ingested.diagnostics.map((item) => item.message).join('\n'));
-            return [key, ingested.manifest];
-        })) as Record<keyof typeof pluginIds, ReturnType<typeof createManifest> extends { ok: true; manifest: infer T } ? T : never>;
-        const registry = {
+        if (!ingested.ok) {
+            throw new Error(ingested.diagnostics.map((item) => item.message).join('\n'));
+        }
+        const createRegistry = () => ({
             agents: [], actions: [], resources: [],
-            activationTargets: [
-                { key: 'current', root: currentRoot, sourceKind: 'path' },
-                { key: 'stale', root: staleRoot, sourceKind: 'path' },
-                { key: 'uncommitted', root: uncommittedRoot, sourceKind: 'path' },
-                { key: 'bundled', root: '/virtual', sourceKind: 'bundled' },
-            ].map(({ key, root, sourceKind }) => ({
-                provenance: sourceKind === 'bundled' ? 'first_party' : 'external',
-                source: { kind: sourceKind },
-                pluginId: pluginIds[key as keyof typeof pluginIds],
+            activationTargets: [{
+                provenance: 'external', source: { kind: 'path' }, pluginId,
                 manifestPath: join(root, 'happier.plugin.json'),
-                manifestDigest: `sha256:${'3'.repeat(64)}`,
-                daemonEntryPath: join(root, 'daemon.mjs'),
-                sourceSpec: sourceKind === 'bundled'
-                    ? { kind: 'package', locator: '@happier-dev/supervised-bundled', trustPolicy: 'bundled_trusted', installPolicy: 'copy' }
-                    : { kind: 'path', locator: root, trustPolicy: 'local_trusted', installPolicy: 'copy' },
+                daemonEntryPath: entryPath,
+                sourceSpec: {
+                    kind: 'path', locator: root, trustPolicy: 'prompt', installPolicy: 'copy',
+                },
                 activationEvents: ['startup'],
-                manifest: manifests[key as keyof typeof manifests],
-            })),
+                manifest: ingested.manifest,
+            }],
             catalogEntriesById: Object.freeze({}),
-            agentDefinitionsById: new Map(),             pluginDiagnosticsByPluginId: Object.freeze({}),
-        } as unknown as ResolvedContributionRegistry;
-        const currentDistribution = await createLocalPathPluginDistributionIdentity(currentRoot);
-        const staleDistribution = await createLocalPathPluginDistributionIdentity(staleRoot);
-        const attempts: unknown[] = [];
-        const times = [100, 125];
-        const activated = await activatePluginRuntimeRegistry({
-            contributes: registry,
-            generation: 13,
-            createActivationAttemptId: () => 'attempt-bootstrap-1',
-            nowMs: () => times.shift() ?? 125,
-            onActivationAttempt: async (attempt) => { attempts.push(attempt); },
-            resolveActivationSource: (target) => {
-                if (target.pluginId === pluginIds.bundled) {
-                    return { kind: 'bundled', moduleId: 'fixture:bundled', load: async () => { throw new Error('bundled failed'); } };
-                }
-                const entryPath = target.daemonEntryPath!;
-                if (target.pluginId === pluginIds.uncommitted) {
-                    return { kind: 'file_backed', entryPath, trustPolicy: 'local_trusted' };
-                }
-                const current = target.pluginId === pluginIds.current;
-                const distribution = current ? currentDistribution : staleDistribution;
-                return {
-                    kind: 'file_backed',
-                    entryPath,
-                    trustPolicy: 'prompt',
-                    committedAuthorization: {
-                        pluginId: target.pluginId,
-                        immutableGenerationId: current ? 'generation-bootstrap-1' : 'generation-stale-1',
-                        distribution,
-                        trust: createPluginTrustRecord({ pluginId: target.pluginId, distribution, approvedAtMs: 1 }),
-                        admittedIntegrity: `sha256:${'4'.repeat(64)}`,
-                        packageDigest: `sha256:${'4'.repeat(64)}`,
-                        isCurrent: async () => current,
-                    },
-                };
-            },
-        });
-
-        expect(attempts).toEqual([{
-            attemptId: 'attempt-bootstrap-1',
-            pluginId: pluginIds.current,
-            immutableGenerationId: 'generation-bootstrap-1',
-            phase: 'primaryBootstrap',
-            startedAtMs: 100,
-            completedAtMs: 125,
-            outcome: 'fatal',
-        }]);
-        await activated.dispose();
+            agentDefinitionsById: new Map(),
+            pluginDiagnosticsByPluginId: Object.freeze({}),
+        } as unknown as ResolvedContributionRegistry);
+        const resolveActivationSource =
+            await createCommittedFileBackedFixtureActivationSource({
+                pluginId,
+                root,
+                entryPath,
+            });
+        let first: Awaited<ReturnType<typeof activatePluginRuntimeRegistry>> | null = null;
+        let second: Awaited<ReturnType<typeof activatePluginRuntimeRegistry>> | null = null;
+        try {
+            first = await activatePluginRuntimeRegistry({
+                contributes: createRegistry(),
+                generation: 19,
+                resolveActivationSource,
+            });
+            await first.dispose();
+            second = await activatePluginRuntimeRegistry({
+                contributes: createRegistry(),
+                generation: 20,
+                resolveActivationSource,
+            });
+            expect(Reflect.get(globalThis, evaluationCountKey)).toBe(1);
+        } finally {
+            await second?.dispose();
+            await first?.dispose();
+            Reflect.deleteProperty(globalThis, evaluationCountKey);
+        }
     });
 
     it.each(['moduleLoad', 'activate'] as const)('does not retry a failed startup %s attempt during validation of the same generation', async (failurePhase) => {
@@ -238,7 +331,7 @@ describe('target activation publication', () => {
             entrypoints: { daemon: './daemon.mjs' },
             activation: { events: [{ kind: 'startup' }] },
             contributes: {
-                actions: [{ id: 'run', title: 'Run', scopes: ['global'], surfaces: ['cli'], placement: 'primary', dangerLevel: 'safe' }],
+                actions: [{ id: 'run', title: 'Run', scopes: ['global'], surfaces: ['cli'], execution: { target: 'daemon' }, placementBindings: ['primary'], dangerLevel: 'safe' }],
             },
         });
         if (!ingested.ok) throw new Error(ingested.diagnostics.map((item) => item.message).join('\n'));
@@ -246,7 +339,7 @@ describe('target activation publication', () => {
             agents: [], actions: [], resources: [],
             activationTargets: [{
                 provenance: 'first_party', source: { kind: 'bundled' }, pluginId,
-                manifestPath: '/virtual/happier.plugin.json', manifestDigest: 'sha256:failed-startup',
+                manifestPath: '/virtual/happier.plugin.json',
                 daemonEntryPath: '/virtual/daemon.mjs',
                 sourceSpec: { kind: 'package', locator: '@happier-dev/plugins-failed-startup', trustPolicy: 'bundled_trusted', installPolicy: 'copy' },
                 activationEvents: ['startup'], manifest: ingested.manifest,
@@ -293,7 +386,7 @@ describe('target activation publication', () => {
             entrypoints: { daemon: './daemon.mjs' },
             activation: { events: [{ kind: 'startup' }] },
             contributes: {
-                actions: [{ id: 'run', title: 'Run', scopes: ['global'], surfaces: ['cli'], placement: 'primary', dangerLevel: 'safe' }],
+                actions: [{ id: 'run', title: 'Run', scopes: ['global'], surfaces: ['cli'], execution: { target: 'daemon' }, placementBindings: ['primary'], dangerLevel: 'safe' }],
             },
         });
         if (!ingested.ok) throw new Error(ingested.diagnostics.map((item) => item.message).join('\n'));
@@ -301,7 +394,7 @@ describe('target activation publication', () => {
             agents: [], actions: [], resources: [],
             activationTargets: [{
                 provenance: 'first_party', source: { kind: 'bundled' }, pluginId,
-                manifestPath: '/virtual/happier.plugin.json', manifestDigest: 'sha256:startup-preparation-isolation',
+                manifestPath: '/virtual/happier.plugin.json',
                 daemonEntryPath: '/virtual/daemon.mjs',
                 sourceSpec: { kind: 'package', locator: '@happier-dev/plugins-startup-preparation-isolation', trustPolicy: 'bundled_trusted', installPolicy: 'copy' },
                 activationEvents: ['startup'], manifest: ingested.manifest,
@@ -337,7 +430,7 @@ describe('target activation publication', () => {
         await activated.dispose();
     });
 
-    it('retries lazy activation after source preparation fails before module loading', async () => {
+    it('retries lazy activation on later demand only after bounded package isolation also fails', async () => {
         const pluginId = 'acme.validation.retryable-preparation';
         const ingested = ingestCanonicalPluginManifest({
             schemaVersion: 2,
@@ -347,7 +440,7 @@ describe('target activation publication', () => {
             engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 },
             entrypoints: { daemon: './daemon.mjs' },
             contributes: {
-                actions: [{ id: 'run', title: 'Run', scopes: ['global'], surfaces: ['cli'], placement: 'primary', dangerLevel: 'safe' }],
+                actions: [{ id: 'run', title: 'Run', scopes: ['global'], surfaces: ['cli'], execution: { target: 'daemon' }, placementBindings: ['primary'], dangerLevel: 'safe' }],
             },
         });
         if (!ingested.ok) throw new Error(ingested.diagnostics.map((item) => item.message).join('\n'));
@@ -355,7 +448,7 @@ describe('target activation publication', () => {
             agents: [], actions: [], resources: [],
             activationTargets: [{
                 provenance: 'first_party', source: { kind: 'bundled' }, pluginId,
-                manifestPath: '/virtual/happier.plugin.json', manifestDigest: 'sha256:retryable-preparation',
+                manifestPath: '/virtual/happier.plugin.json',
                 daemonEntryPath: '/virtual/daemon.mjs',
                 sourceSpec: { kind: 'package', locator: '@happier-dev/plugins-retryable-preparation', trustPolicy: 'bundled_trusted', installPolicy: 'copy' },
                 activationEvents: [], manifest: ingested.manifest,
@@ -364,17 +457,16 @@ describe('target activation publication', () => {
             agentDefinitionsById: new Map(),             pluginDiagnosticsByPluginId: Object.freeze({}),
         } as unknown as ResolvedContributionRegistry;
         const prepare = vi.fn()
-            .mockRejectedValueOnce(new Error('source-dev workspace lock is busy'))
+            .mockRejectedValueOnce(new Error('aggregate source-dev preparation selected package isolation'))
+            .mockRejectedValueOnce(new Error('package-local source preparation is still unavailable'))
             .mockResolvedValueOnce(undefined);
         const activate = vi.fn((api: PluginApi) => {
             api.actions.register('run', async () => ({ ok: true }));
         });
         const load = vi.fn(async () => ({ activate }));
-        const onActivationAttempt = vi.fn();
         const activated = await activatePluginRuntimeRegistry({
             contributes: registry,
             generation: 15,
-            onActivationAttempt,
             resolveActivationSource: () => ({
                 kind: 'bundled',
                 moduleId: '@happier-dev/plugins-retryable-preparation/daemon',
@@ -390,21 +482,19 @@ describe('target activation publication', () => {
             pluginId,
             diagnostics: [expect.objectContaining({
                 code: 'plugin_daemon_module_load_failed',
-                message: expect.stringContaining('source-dev workspace lock is busy'),
+                message: expect.stringContaining('package-local source preparation is still unavailable'),
             })],
         })]);
-        expect(prepare).toHaveBeenCalledTimes(1);
+        expect(prepare).toHaveBeenCalledTimes(2);
         expect(load).not.toHaveBeenCalled();
         expect(activate).not.toHaveBeenCalled();
-        expect(onActivationAttempt).not.toHaveBeenCalled();
         expect(activated.targetActivationFacts).toEqual([]);
 
         await activated.activateContributionsOnDemand(demand);
 
-        expect(prepare).toHaveBeenCalledTimes(2);
+        expect(prepare).toHaveBeenCalledTimes(3);
         expect(load).toHaveBeenCalledTimes(1);
         expect(activate).toHaveBeenCalledTimes(1);
-        expect(onActivationAttempt).not.toHaveBeenCalled();
         expect(activated.activatedPluginIds.has(pluginId)).toBe(true);
         expect(activated.targetActivationFacts).toEqual([
             expect.objectContaining({ pluginId, status: 'active' }),
@@ -422,7 +512,7 @@ describe('target activation publication', () => {
             engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 },
             entrypoints: { daemon: './daemon.mjs' },
             contributes: {
-                actions: [{ id: 'run', title: 'Run', scopes: ['global'], surfaces: ['cli'], placement: 'primary', dangerLevel: 'safe' }],
+                actions: [{ id: 'run', title: 'Run', scopes: ['global'], surfaces: ['cli'], execution: { target: 'daemon' }, placementBindings: ['primary'], dangerLevel: 'safe' }],
             },
         });
         if (!ingested.ok) throw new Error(ingested.diagnostics.map((item) => item.message).join('\n'));
@@ -430,7 +520,7 @@ describe('target activation publication', () => {
             agents: [], actions: [], resources: [],
             activationTargets: [{
                 provenance: 'first_party', source: { kind: 'bundled' }, pluginId,
-                manifestPath: '/virtual/happier.plugin.json', manifestDigest: 'sha256:disposed-preparation',
+                manifestPath: '/virtual/happier.plugin.json',
                 daemonEntryPath: '/virtual/daemon.mjs',
                 sourceSpec: { kind: 'package', locator: '@happier-dev/plugins-disposed-preparation', trustPolicy: 'bundled_trusted', installPolicy: 'copy' },
                 activationEvents: [], manifest: ingested.manifest,
@@ -488,21 +578,36 @@ describe('target activation publication', () => {
             schemaVersion: 2, id: 'acme.target.bundled', version: '1.0.0', displayName: 'Bundled target',
             engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './missing.mjs' },
             hostAccess: {
-                required: [{
-                    id: 'api', capability: 'network', reason: 'Call the fixture API.',
-                    scope: { targets: [{ kind: 'fixedOrigin', origin: 'https://example.test' }], methods: ['POST'] },
-                }],
+                required: [
+                    {
+                        id: 'api', capability: 'network', reason: 'Call the fixture API.',
+                        scope: { targets: [{ kind: 'fixedOrigin', origin: 'https://example.test' }], methods: ['POST'] },
+                    },
+                    {
+                        id: 'external-session-files', capability: 'filesystem',
+                        reason: 'Observe the declared workspace files.',
+                        scope: {
+                            locations: [{ root: 'workspace', pathPrefix: 'observed' }],
+                            access: ['read'],
+                        },
+                    },
+                    {
+                        id: 'hosting-provider-environment', capability: 'environment',
+                        reason: 'Pass the declared credential variable to the hosting provider.',
+                        scope: { keys: ['FORGE_TOKEN'] },
+                    },
+                ],
                 optional: [],
             },
             contributes: {
-                actions: [{ id: 'run', title: 'Run', scopes: ['session'], surfaces: ['cli'], placement: 'primary', dangerLevel: 'safe' }],
+                actions: [{ id: 'run', title: 'Run', scopes: ['session'], surfaces: ['cli'], execution: { target: 'daemon' }, placementBindings: ['primary'], dangerLevel: 'safe' }],
                 hooks: [{
                     id: 'after-spawn', on: 'session.spawned', category: 'lifecycle', scope: 'session',
                     executionKind: 'observe', priority: 12,
                 }],
                 mcp: {
                     servers: [],
-                    discoveryProviders: [{ id: 'config', title: 'Config discovery' }],
+                    discoverySources: [{ id: 'config', title: 'Config discovery' }],
                 },
                 scmBackends: [{
                     id: 'fixture', title: 'Fixture SCM', kind: 'git', capabilities: ['detect'],
@@ -523,7 +628,7 @@ describe('target activation publication', () => {
             agents: [], actions: [], resources: [],
             activationTargets: [{
                 provenance: 'first_party', source: { kind: 'bundled' }, pluginId: 'acme.target.bundled',
-                manifestPath: '/virtual/happier.plugin.json', manifestDigest: 'sha256:bundled-target',
+                manifestPath: '/virtual/happier.plugin.json',
                 daemonEntryPath: '/virtual/missing.mjs',
                 sourceSpec: { kind: 'package', locator: '@happier-dev/plugins-target-bundled', trustPolicy: 'bundled_trusted', installPolicy: 'copy' },
                 activationEvents: [], manifest: ingested.manifest,
@@ -532,7 +637,6 @@ describe('target activation publication', () => {
             agentDefinitionsById: new Map(),             pluginDiagnosticsByPluginId: Object.freeze({}),
         } as unknown as ResolvedContributionRegistry;
 
-        let discoveredDirectory: string | null | undefined;
         const activated = await activatePluginRuntimeRegistry({
             contributes: registry,
             generation: 7,
@@ -543,10 +647,10 @@ describe('target activation publication', () => {
                     activate(api: PluginApi) {
                         api.actions.register('run', async () => ({ ok: true }));
                         api.hooks.register('after-spawn', async () => ({ handled: true }));
-                        api.mcp.registerDiscoveryProvider('config', async (request) => {
-                            discoveredDirectory = request.directory;
-                            return { items: [], servers: [] };
-                        });
+                        api.mcp.registerDiscoverySource('config', async () => ({
+                            items: [],
+                            endpoints: [],
+                        }));
                         api.scm.registerBackend('fixture', {
                             handlers: {
                                 detection: {
@@ -587,7 +691,7 @@ describe('target activation publication', () => {
             }),
             expect.objectContaining({
                 pluginId: 'acme.target.bundled', generation: '7',
-                registration: expect.objectContaining({ family: 'mcp.discoveryProviders', localId: 'config' }),
+                registration: expect.objectContaining({ family: 'mcp.discoverySources', localId: 'config' }),
             }),
             expect.objectContaining({
                 pluginId: 'acme.target.bundled', generation: '7',
@@ -604,14 +708,14 @@ describe('target activation publication', () => {
                 required: expect.arrayContaining([
                     { family: 'actions', localId: 'run' },
                     { family: 'hooks', localId: 'after-spawn' },
-                    { family: 'mcp.discoveryProviders', localId: 'config' },
+                    { family: 'mcp.discoverySources', localId: 'config' },
                     { family: 'scmBackends', localId: 'fixture' },
                     { family: 'notificationChannels', localId: 'configured' },
                 ]),
                 bound: expect.arrayContaining([
                     { family: 'actions', localId: 'run' },
                     { family: 'hooks', localId: 'after-spawn' },
-                    { family: 'mcp.discoveryProviders', localId: 'config' },
+                    { family: 'mcp.discoverySources', localId: 'config' },
                     { family: 'scmBackends', localId: 'fixture' },
                     { family: 'notificationChannels', localId: 'configured' },
                 ]),
@@ -622,16 +726,6 @@ describe('target activation publication', () => {
             pluginId: 'acme.target.bundled', hookId: 'session.spawned', priority: 12,
         }));
         await expect(hook?.handler({ payload: {} }, {})).resolves.toEqual({ handled: true });
-        expect(activated.mcpDiscoveryProviders).toEqual([
-            expect.objectContaining({
-                pluginId: 'acme.target.bundled',
-                registration: expect.objectContaining({ id: 'config' }),
-            }),
-        ]);
-        await expect(activated.mcpDiscoveryProviders[0]?.registration.discover({
-            sessionId: 'session', directory: '/workspace',
-        })).resolves.toEqual({ servers: [] });
-        expect(discoveredDirectory).toBe('/workspace');
         const scmBackend = activated.scmBackendsById.get('acme.target.bundled/fixture');
         expect(scmBackend).toEqual(expect.objectContaining({
             pluginId: 'acme.target.bundled',
@@ -642,7 +736,11 @@ describe('target activation publication', () => {
         }));
         await expect(scmBackend?.registration.handlers.detection?.detectRepo?.({ cwd: '/workspace' }))
             .resolves.toEqual({ isRepo: true, rootPath: '/workspace', mode: '.git' });
-        expect(activated.permissionsByPluginId.get('acme.target.bundled')).toEqual(new Set(['network']));
+        expect(activated).not.toHaveProperty('permissionsByPluginId');
+        expect(activated.filesystemReadAllowedPathsByPluginId.get('acme.target.bundled'))
+            .toEqual(new Set(['observed']));
+        expect(activated.envAllowedNamesByPluginId.get('acme.target.bundled'))
+            .toEqual(new Set(['FORGE_TOKEN']));
         expect(activated.runtimeCapabilitiesByPluginId.get('acme.target.bundled')).toEqual(expect.any(Set));
         expect(activated.systemToolDefinitionsByPluginId.get('acme.target.bundled')).toEqual([
             expect.objectContaining({ id: 'fixture-cli' }),
@@ -660,7 +758,7 @@ describe('target activation publication', () => {
             schemaVersion: 2, id: 'acme.target.load-failure', version: '2.0.0', displayName: 'Target',
             engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './missing.mjs' },
             contributes: {
-                actions: [{ id: 'run', title: 'Run', scopes: ['session'], surfaces: ['cli'], placement: 'primary', dangerLevel: 'safe' }],
+                actions: [{ id: 'run', title: 'Run', scopes: ['session'], surfaces: ['cli'], execution: { target: 'daemon' }, placementBindings: ['primary'], dangerLevel: 'safe' }],
             },
         });
         if (!ingested.ok) throw new Error(ingested.diagnostics.map((item) => item.message).join('\n'));
@@ -668,7 +766,7 @@ describe('target activation publication', () => {
             agents: [], actions: [], resources: [],
             activationTargets: [{
                 provenance: 'external', source: { kind: 'path' }, pluginId: 'acme.target.load-failure',
-                manifestPath: join(root, 'happier.plugin.json'), manifestDigest: 'sha256:target',
+                manifestPath: join(root, 'happier.plugin.json'),
                 daemonEntryPath: join(root, 'missing.mjs'),
                 sourceSpec: { kind: 'path', locator: root, trustPolicy: 'local_trusted', installPolicy: 'link', devWatch: true },
                 activationEvents: [], manifest: ingested.manifest,
@@ -690,12 +788,18 @@ describe('target activation publication', () => {
             pluginId: 'acme.target.load-failure', family: 'actions', localId: 'run',
         }]);
 
-        expect(activated.targetActivationFacts).toEqual([expect.objectContaining({
+        expect(activated.targetActivationFacts).toMatchObject([{
             pluginId: 'acme.target.load-failure', pluginVersion: '2.0.0', source: 'development',
             generation: '6', host: 'daemon', platform: process.platform, occurredAtMs: expect.any(Number),
-            status: 'unavailable', required: [{ family: 'actions', localId: 'run' }], bound: [],
+            status: 'unavailable',
             diagnostics: [expect.objectContaining({ code: 'plugin_source_missing' })],
-        })]);
+        }]);
+        const [fact] = activated.targetActivationFacts;
+        expect(fact?.required).toEqual([{ family: 'actions', localId: 'run' }]);
+        expect(fact?.bound).toEqual([]);
+        expect(JSON.stringify(fact?.required)).not.toMatch(
+            /target|realm|artifactId|requiredFields|promptAssetDescriptor/,
+        );
         await activated.dispose();
     });
 
@@ -704,7 +808,7 @@ describe('target activation publication', () => {
             schemaVersion: 2, id: 'acme.target.lazy', version: '1.0.0', displayName: 'Lazy target',
             engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './daemon.mjs' },
             contributes: {
-                actions: [{ id: 'run', title: 'Run', scopes: ['session'], surfaces: ['cli'], placement: 'primary', dangerLevel: 'safe' }],
+                actions: [{ id: 'run', title: 'Run', scopes: ['session'], execution: { target: 'daemon' }, surfaces: ['cli'], placementBindings: ['primary'], dangerLevel: 'safe' }],
             },
         });
         if (!ingested.ok) throw new Error(ingested.diagnostics.map((item) => item.message).join('\n'));
@@ -712,7 +816,7 @@ describe('target activation publication', () => {
             agents: [], actions: [], resources: [],
             activationTargets: [{
                 provenance: 'first_party', source: { kind: 'bundled' }, pluginId: 'acme.target.lazy',
-                manifestPath: '/virtual/happier.plugin.json', manifestDigest: 'sha256:lazy-target',
+                manifestPath: '/virtual/happier.plugin.json',
                 daemonEntryPath: '/virtual/daemon.mjs',
                 sourceSpec: { kind: 'package', locator: '@happier-dev/plugins-target-lazy', trustPolicy: 'bundled_trusted', installPolicy: 'copy' },
                 activationEvents: [], manifest: ingested.manifest,
@@ -747,7 +851,7 @@ describe('target activation publication', () => {
         await activated.dispose();
     });
 
-    it('keeps a request-interceptor-only target dormant until exact demand and fences its published handler on disposal', async () => {
+    it('keeps a public request-policy target dormant until exact demand and fences its published handler on disposal', async () => {
         const ingested = ingestCanonicalPluginManifest({
             schemaVersion: 2,
             id: 'acme.target.request-policy',
@@ -755,6 +859,7 @@ describe('target activation publication', () => {
             displayName: 'Request policy',
             engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 },
             entrypoints: { daemon: './daemon.mjs' },
+            hostAccess: { required: [], optional: [] },
             contributes: {
                 requestInterceptors: [{
                     id: 'authorize-api',
@@ -769,7 +874,7 @@ describe('target activation publication', () => {
             agents: [], actions: [], resources: [],
             activationTargets: [{
                 provenance: 'first_party', source: { kind: 'bundled' }, pluginId: 'acme.target.request-policy',
-                manifestPath: '/virtual/happier.plugin.json', manifestDigest: 'sha256:request-policy',
+                manifestPath: '/virtual/happier.plugin.json',
                 daemonEntryPath: '/virtual/daemon.mjs',
                 sourceSpec: { kind: 'package', locator: '@happier-dev/plugins-target-request-policy', trustPolicy: 'bundled_trusted', installPolicy: 'copy' },
                 activationEvents: [], manifest: ingested.manifest,
@@ -781,7 +886,7 @@ describe('target activation publication', () => {
             decision: 'continue' as const,
             request: Object.freeze({ ...request, headers: Object.freeze({ ...request.headers, authorization: 'Bearer fixture' }) }),
         }));
-        const activate = vi.fn((api: PluginApi) => {
+        const activate = vi.fn((api: TargetPluginRegistrationApi) => {
             api.interceptors.register('authorize-api', handler);
         });
         const load = vi.fn(async () => ({ activate }));
@@ -839,7 +944,7 @@ describe('target activation publication', () => {
             engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 },
             entrypoints: { daemon: './daemon.mjs' },
             contributes: {
-                actions: [{ id: 'run', title: 'Run', scopes: ['session'], surfaces: ['cli'], placement: 'primary', dangerLevel: 'safe' }],
+                actions: [{ id: 'run', title: 'Run', scopes: ['session'], surfaces: ['cli'], execution: { target: 'daemon' }, placementBindings: ['primary'], dangerLevel: 'safe' }],
             },
         });
         const alpha = createManifest('acme.target.alpha');
@@ -853,7 +958,6 @@ describe('target activation publication', () => {
             source: { kind: 'bundled' as const },
             pluginId,
             manifestPath: `/virtual/${pluginId}/happier.plugin.json`,
-            manifestDigest: `sha256:${pluginId}`,
             daemonEntryPath: `/virtual/${pluginId}/daemon.mjs`,
             sourceSpec: { kind: 'package' as const, locator: `@happier-dev/${pluginId}`, trustPolicy: 'bundled_trusted' as const, installPolicy: 'copy' as const },
             activationEvents: [],
@@ -911,7 +1015,7 @@ describe('target activation publication', () => {
             schemaVersion: 2, id: 'acme.target', version: '1.0.0', displayName: 'Target',
             engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './daemon.mjs' },
             contributes: {
-                actions: [{ id: 'run', title: 'Run', scopes: ['session'], surfaces: ['cli'], placement: 'primary', dangerLevel: 'safe' }],
+                actions: [{ id: 'run', title: 'Run', scopes: ['session'], surfaces: ['cli'], execution: { target: 'daemon' }, placementBindings: ['primary'], dangerLevel: 'safe' }],
             },
         });
         if (!ingested.ok) throw new Error(ingested.diagnostics.map((item) => item.message).join('\n'));
@@ -919,7 +1023,7 @@ describe('target activation publication', () => {
             agents: [], actions: [], resources: [],
             activationTargets: [{
                 provenance: 'external', source: { kind: 'path' }, pluginId: 'acme.target',
-                manifestPath: join(root, 'happier.plugin.json'), manifestDigest: 'sha256:target', daemonEntryPath,
+                manifestPath: join(root, 'happier.plugin.json'), daemonEntryPath,
                 sourceSpec: { kind: 'path', locator: root, trustPolicy: 'local_trusted', installPolicy: 'link' },
                 activationEvents: [], manifest: ingested.manifest,
             }],
@@ -994,7 +1098,7 @@ describe('target activation publication', () => {
             schemaVersion: 2, id: 'acme.target.disposal', version: '1.0.0', displayName: 'Target',
             engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './daemon.mjs' },
             contributes: {
-                actions: [{ id: 'run', title: 'Run', scopes: ['session'], surfaces: ['cli'], placement: 'primary', dangerLevel: 'safe' }],
+                actions: [{ id: 'run', title: 'Run', scopes: ['session'], surfaces: ['cli'], execution: { target: 'daemon' }, placementBindings: ['primary'], dangerLevel: 'safe' }],
             },
         });
         if (!ingested.ok) throw new Error(ingested.diagnostics.map((item) => item.message).join('\n'));
@@ -1002,7 +1106,7 @@ describe('target activation publication', () => {
             agents: [], actions: [], resources: [],
             activationTargets: [{
                 provenance: 'external', source: { kind: 'path' }, pluginId: 'acme.target.disposal',
-                manifestPath: join(root, 'happier.plugin.json'), manifestDigest: 'sha256:target', daemonEntryPath,
+                manifestPath: join(root, 'happier.plugin.json'), daemonEntryPath,
                 sourceSpec: { kind: 'path', locator: root, trustPolicy: 'local_trusted', installPolicy: 'link' },
                 activationEvents: [], manifest: ingested.manifest,
             }],
@@ -1052,7 +1156,7 @@ describe('target activation publication', () => {
             schemaVersion: 2, id: 'acme.target.cleanup-failure', version: '1.0.0', displayName: 'Target',
             engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './daemon.mjs' },
             contributes: {
-                actions: [{ id: 'run', title: 'Run', scopes: ['session'], surfaces: ['cli'], placement: 'primary', dangerLevel: 'safe' }],
+                actions: [{ id: 'run', title: 'Run', scopes: ['session'], surfaces: ['cli'], execution: { target: 'daemon' }, placementBindings: ['primary'], dangerLevel: 'safe' }],
             },
         });
         if (!ingested.ok) throw new Error(ingested.diagnostics.map((item) => item.message).join('\n'));
@@ -1060,7 +1164,7 @@ describe('target activation publication', () => {
             agents: [], actions: [], resources: [],
             activationTargets: [{
                 provenance: 'external', source: { kind: 'path' }, pluginId: 'acme.target.cleanup-failure',
-                manifestPath: join(root, 'happier.plugin.json'), manifestDigest: 'sha256:target', daemonEntryPath,
+                manifestPath: join(root, 'happier.plugin.json'), daemonEntryPath,
                 sourceSpec: { kind: 'path', locator: root, trustPolicy: 'local_trusted', installPolicy: 'link' },
                 activationEvents: [], manifest: ingested.manifest,
             }],
@@ -1109,7 +1213,7 @@ describe('target activation publication', () => {
             schemaVersion: 2, id: 'acme.target.cleanup-timeout', version: '1.0.0', displayName: 'Target',
             engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './daemon.mjs' },
             contributes: {
-                actions: [{ id: 'run', title: 'Run', scopes: ['session'], surfaces: ['cli'], placement: 'primary', dangerLevel: 'safe' }],
+                actions: [{ id: 'run', title: 'Run', scopes: ['session'], surfaces: ['cli'], execution: { target: 'daemon' }, placementBindings: ['primary'], dangerLevel: 'safe' }],
             },
         });
         if (!ingested.ok) throw new Error(ingested.diagnostics.map((item) => item.message).join('\n'));
@@ -1117,7 +1221,7 @@ describe('target activation publication', () => {
             agents: [], actions: [], resources: [],
             activationTargets: [{
                 provenance: 'external', source: { kind: 'path' }, pluginId: 'acme.target.cleanup-timeout',
-                manifestPath: join(root, 'happier.plugin.json'), manifestDigest: 'sha256:target', daemonEntryPath,
+                manifestPath: join(root, 'happier.plugin.json'), daemonEntryPath,
                 sourceSpec: { kind: 'path', locator: root, trustPolicy: 'local_trusted', installPolicy: 'link' },
                 activationEvents: [], manifest: ingested.manifest,
             }],
@@ -1159,5 +1263,134 @@ describe('target activation publication', () => {
         } finally {
             vi.useRealTimers();
         }
+    });
+
+    it('settles only changed-plugin runtime disposables before successor publication', async () => {
+        const contributes: ResolvedContributionRegistry = {
+            agents: Object.freeze([]),
+            actions: Object.freeze([]),
+            resources: Object.freeze([]),
+            activationTargets: Object.freeze([]),
+            catalogEntriesById: Object.freeze({}),
+            agentDefinitionsById: new Map(),
+            pluginDiagnosticsByPluginId: Object.freeze({}),
+        };
+        const changedCleanup = vi.fn(async () => undefined);
+        const retainedPeerCleanup = vi.fn(async () => undefined);
+        const activated = await activatePluginRuntimeRegistry({
+            contributes,
+            generation: 11,
+        });
+        activated.addRuntimeDisposable('acme.changed', Object.freeze({
+            dispose: changedCleanup,
+        }));
+        activated.addRuntimeDisposable('acme.retained-peer', Object.freeze({
+            dispose: retainedPeerCleanup,
+        }));
+
+        activated.retireBackgroundServices(['acme.changed']);
+        await activated.settleRetiredBackgroundServices(['acme.changed']);
+
+        expect(changedCleanup).toHaveBeenCalledOnce();
+        expect(retainedPeerCleanup).not.toHaveBeenCalled();
+
+        await activated.dispose();
+        expect(changedCleanup).toHaveBeenCalledOnce();
+        expect(retainedPeerCleanup).toHaveBeenCalledOnce();
+    });
+
+    it('holds successor publication until the real changed-plugin runtime disposable settles', async () => {
+        const pluginId = 'acme.changed';
+        const contributes: ResolvedContributionRegistry = {
+            agents: Object.freeze([]),
+            actions: Object.freeze([]),
+            resources: Object.freeze([]),
+            activationTargets: Object.freeze([]),
+            catalogEntriesById: Object.freeze({}),
+            agentDefinitionsById: new Map(),
+            pluginDiagnosticsByPluginId: Object.freeze({}),
+        };
+        const activated = await activatePluginRuntimeRegistry({
+            contributes,
+            generation: 12,
+        });
+        const events: string[] = [];
+        let releaseCleanup!: () => void;
+        const cleanupGate = new Promise<void>((resolve) => {
+            releaseCleanup = resolve;
+        });
+        let markCleanupEntered!: () => void;
+        const cleanupEntered = new Promise<void>((resolve) => {
+            markCleanupEntered = resolve;
+        });
+        activated.addRuntimeDisposable(pluginId, Object.freeze({
+            async dispose() {
+                events.push('p-cleanup-start');
+                markCleanupEntered();
+                await cleanupGate;
+                events.push('p-cleanup-end');
+            },
+        }));
+
+        const executableRegistry = (
+            dispose: () => Promise<void>,
+        ): ResolvedExecutablePluginRuntimeRegistry => ({
+            contributes,
+            hookHandlersByHookId: new Map(),
+            agentRuntimesByAgentId: new Map(),
+            scmHostingProvidersById: new Map(),
+            pluginDiagnosticsByPluginId: Object.freeze({}),
+            activatedPluginIds: new Set([pluginId]),
+            activateContributionsOnDemand: async () => [],
+            resolvePromptAssetBlocks: async () => [],
+            createAgentInvocationServices: async () => createUnavailablePluginServices(),
+            retireConsumers: () => {},
+            retirePluginConsumers: (pluginIds) => {
+                activated.retireBackgroundServices(pluginIds);
+            },
+            settleRetiredBackgroundServices: async (pluginIds) => {
+                await activated.settleRetiredBackgroundServices(pluginIds);
+            },
+            addRuntimeDisposable: activated.addRuntimeDisposable,
+            dispose,
+        });
+        const previous = executableRegistry(async () => await activated.dispose());
+        const replacementDispose = vi.fn(async () => undefined);
+        const replacement = executableRegistry(replacementDispose);
+        const controller = createPluginReloadController({
+            resolveRuntimeRegistry: async () => previous,
+        });
+        const lease = await controller.acquireRuntimeRegistry();
+        await lease.release();
+
+        const adoption = controller.adoptPreparedRuntimeRegistry({
+            registry: replacement,
+            changedPluginIds: Object.freeze([pluginId]),
+            durableRevision: 1,
+            runningSessionDisposition: 'retainRunningSessions',
+            beforePublish: async (_registry, publish) => {
+                events.push('q-publish');
+                publish();
+            },
+        });
+        await cleanupEntered;
+
+        expect(controller.getState().activeRegistry).toBe(previous);
+        expect(events).toEqual(['p-cleanup-start']);
+        expect(() => activated.addRuntimeDisposable(pluginId, Object.freeze({
+            dispose: vi.fn(async () => undefined),
+        }))).toThrow(/retired/i);
+
+        releaseCleanup();
+        await adoption;
+
+        expect(events).toEqual([
+            'p-cleanup-start',
+            'p-cleanup-end',
+            'q-publish',
+        ]);
+        expect(controller.getState().activeRegistry).toBe(replacement);
+        await controller.shutdown({ timeoutMs: 0 });
+        expect(replacementDispose).toHaveBeenCalledOnce();
     });
 });

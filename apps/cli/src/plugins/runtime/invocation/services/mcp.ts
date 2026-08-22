@@ -1,8 +1,47 @@
-import { PluginError, type JsonValue } from '@happier-dev/plugin-sdk';
-import { type PluginMcpClient, type PluginMcpDiscoveredServer, type PluginMcpDiscoveryProviderRef, type PluginMcpServerRef, type PluginMcpService, type PluginMcpTool } from '@happier-dev/plugin-sdk/runtime';
+import {
+    AnnotationsSchema,
+    AudioContentSchema,
+    BlobResourceContentsSchema,
+    EmbeddedResourceSchema,
+    GetPromptResultSchema,
+    IconSchema,
+    ImageContentSchema,
+    ListPromptsResultSchema,
+    ListResourcesResultSchema,
+    ListResourceTemplatesResultSchema,
+    PromptArgumentSchema,
+    PromptMessageSchema,
+    PromptSchema,
+    ReadResourceResultSchema,
+    ResourceLinkSchema,
+    ResourceSchema,
+    ResourceTemplateSchema,
+    ResourceUpdatedNotificationParamsSchema,
+    TextContentSchema,
+    TextResourceContentsSchema,
+} from '@modelcontextprotocol/sdk/types.js';
+import { PluginError, type Disposable, type JsonValue } from '@happier-dev/plugin-sdk';
+import {
+    type McpClient as PluginMcpClient,
+    type McpDiscoveredServer as PluginMcpDiscoveredServer,
+    type McpDiscoverySourceRef as PluginMcpDiscoverySourceRef,
+    type McpGetPromptResult as PluginMcpGetPromptResult,
+    type McpPromptPage as PluginMcpPromptPage,
+    type McpReadResourceResult as PluginMcpReadResourceResult,
+    type McpResourcePage as PluginMcpResourcePage,
+    type McpResourceTemplatePage as PluginMcpResourceTemplatePage,
+    type McpResourceUpdatedEvent as PluginMcpResourceUpdatedEvent,
+    type McpServerRef as PluginMcpServerRef,
+    type McpService as PluginMcpService,
+    type McpTool as PluginMcpTool,
+} from '@happier-dev/plugin-sdk/mcp';
+import {
+    cloneStrictPluginJsonValue,
+    measureSerializedValidatedStrictPluginJsonUtf8Bytes,
+} from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 
 import type {
-    ResolvedMcpDiscoveryProviderContribution,
+    ResolvedMcpDiscoverySourceContribution,
     ResolvedMcpServerContribution,
 } from '@/plugins/projection/registry/types';
 
@@ -17,10 +56,9 @@ const MAX_STABLE_PLUGIN_MCP_INPUT_BYTES = 256 * 1024;
 const MAX_STABLE_PLUGIN_MCP_RESULT_BYTES = 1024 * 1024;
 const MAX_STABLE_PLUGIN_MCP_CURSOR_LENGTH = 512;
 const MAX_STABLE_PLUGIN_MCP_TOOL_NAME_LENGTH = 256;
-const MAX_STABLE_PLUGIN_MCP_JSON_DEPTH = 128;
 const MAX_STABLE_PLUGIN_MCP_SCOPED_CURSORS = 100;
 
-type McpRegistrationFamily = 'mcp.servers' | 'mcp.discoveryProviders';
+type McpRegistrationFamily = 'mcp.servers' | 'mcp.discoverySources';
 
 export type StablePluginMcpServerRegistration = Readonly<{
     generation: string;
@@ -36,6 +74,37 @@ export type StablePluginMcpServerRegistration = Readonly<{
         seed: PluginInvocationServicesSeed,
         options?: Readonly<{ signal?: AbortSignal }>,
     ): Promise<JsonValue>;
+    listResources(
+        request: Readonly<{ cursor?: string }>,
+        seed: PluginInvocationServicesSeed,
+        options?: Readonly<{ signal?: AbortSignal }>,
+    ): Promise<PluginMcpResourcePage>;
+    listResourceTemplates(
+        request: Readonly<{ cursor?: string }>,
+        seed: PluginInvocationServicesSeed,
+        options?: Readonly<{ signal?: AbortSignal }>,
+    ): Promise<PluginMcpResourceTemplatePage>;
+    readResource(
+        request: Readonly<{ uri: string }>,
+        seed: PluginInvocationServicesSeed,
+        options?: Readonly<{ signal?: AbortSignal }>,
+    ): Promise<PluginMcpReadResourceResult>;
+    subscribeResource(
+        request: Readonly<{ uri: string }>,
+        listener: (event: PluginMcpResourceUpdatedEvent) => void | Promise<void>,
+        seed: PluginInvocationServicesSeed,
+        options?: Readonly<{ signal?: AbortSignal }>,
+    ): Promise<Disposable>;
+    listPrompts(
+        request: Readonly<{ cursor?: string }>,
+        seed: PluginInvocationServicesSeed,
+        options?: Readonly<{ signal?: AbortSignal }>,
+    ): Promise<PluginMcpPromptPage>;
+    getPrompt(
+        request: Readonly<{ name: string; args?: Readonly<Record<string, string>> }>,
+        seed: PluginInvocationServicesSeed,
+        options?: Readonly<{ signal?: AbortSignal }>,
+    ): Promise<PluginMcpGetPromptResult>;
 }>;
 
 export type StablePluginMcpDiscoveryRegistration = Readonly<{
@@ -85,10 +154,10 @@ export type StablePluginMcpHost = Readonly<{
 export type StablePluginMcpHostParams = Readonly<{
     generation: string;
     servers: readonly ResolvedMcpServerContribution[];
-    discoveryProviders: readonly ResolvedMcpDiscoveryProviderContribution[];
+    discoverySources: readonly ResolvedMcpDiscoverySourceContribution[];
     activateOnDemand(ref: PluginMcpServerRef, family: McpRegistrationFamily): Promise<void>;
     readServer(ref: PluginMcpServerRef): StablePluginMcpServerRegistration | null;
-    readDiscoveryProvider(ref: PluginMcpDiscoveryProviderRef): StablePluginMcpDiscoveryRegistration | null;
+    readDiscoverySource(ref: PluginMcpDiscoverySourceRef): StablePluginMcpDiscoveryRegistration | null;
     connectDeclaredTransport?: DeclaredTransportConnector;
     isDeclaredTransportAvailable?: (declaration: ResolvedMcpServerContribution) => boolean;
     revalidateFinalPolicy?: StablePluginMcpFinalPolicyRevalidator;
@@ -102,7 +171,7 @@ function qualifiedId(ref: PluginMcpServerRef): string {
     return `${ref.pluginId}/${ref.localId}`;
 }
 
-function declarationRef(declaration: ResolvedMcpServerContribution | ResolvedMcpDiscoveryProviderContribution): PluginMcpServerRef | null {
+function declarationRef(declaration: ResolvedMcpServerContribution | ResolvedMcpDiscoverySourceContribution): PluginMcpServerRef | null {
     if (typeof declaration.pluginId !== 'string' || declaration.pluginId.length === 0) return null;
     return Object.freeze({ pluginId: declaration.pluginId, localId: declaration.definition.id });
 }
@@ -156,55 +225,20 @@ function createScopedCursorStore<T>(scope: string): ScopedCursorStore<T> {
 }
 
 function clonePlainJson(value: unknown, code: string, maxBytes: number, overflowCode: string = code): JsonValue {
-    const visiting = new Set<object>();
-    const clone = (entry: unknown, depth: number): JsonValue => {
-        if (depth > MAX_STABLE_PLUGIN_MCP_JSON_DEPTH) fail(code, 'MCP data exceeds the nesting limit');
-        if (entry === null || typeof entry === 'boolean' || typeof entry === 'string') return entry;
-        if (typeof entry === 'number') {
-            if (!Number.isFinite(entry)) fail(code, 'MCP data must contain only finite JSON numbers');
-            return entry;
-        }
-        if (typeof entry !== 'object') fail(code, 'MCP data must be strict JSON');
-        if (visiting.has(entry)) fail(code, 'MCP data must not contain cycles');
-        visiting.add(entry);
-        try {
-            if (Array.isArray(entry)) {
-                const keys = Object.keys(entry);
-                if (keys.length !== entry.length) fail(code, 'MCP arrays must be dense and contain no named properties');
-                const result: JsonValue[] = [];
-                for (let index = 0; index < entry.length; index += 1) {
-                    const descriptor = Object.getOwnPropertyDescriptor(entry, String(index));
-                    if (descriptor === undefined || !('value' in descriptor)) fail(code, 'MCP data must not contain accessors');
-                    result.push(clone(descriptor.value, depth + 1));
-                }
-                return Object.freeze(result);
-            }
-            const prototype = Object.getPrototypeOf(entry);
-            if (prototype !== Object.prototype && prototype !== null) fail(code, 'MCP data must contain only plain objects');
-            const result: Record<string, JsonValue> = {};
-            for (const key of Object.keys(entry)) {
-                const descriptor = Object.getOwnPropertyDescriptor(entry, key);
-                if (descriptor === undefined || !('value' in descriptor)) fail(code, 'MCP data must not contain accessors');
-                Object.defineProperty(result, key, {
-                    configurable: false,
-                    enumerable: true,
-                    writable: false,
-                    value: clone(descriptor.value, depth + 1),
-                });
-            }
-            return Object.freeze(result);
-        } finally {
-            visiting.delete(entry);
-        }
-    };
-    const cloned = clone(value, 0);
-    const bytes = new TextEncoder().encode(JSON.stringify(cloned)).byteLength;
-    if (bytes > maxBytes) fail(overflowCode, `MCP data exceeds the ${maxBytes} byte limit`);
+    let cloned: JsonValue;
+    try {
+        cloned = cloneStrictPluginJsonValue(value, 'MCP data') as JsonValue;
+    } catch (error) {
+        fail(code, error instanceof Error ? error.message : 'MCP data must be strict JSON');
+    }
+    if (measureSerializedValidatedStrictPluginJsonUtf8Bytes(cloned, 'MCP data', maxBytes) > maxBytes) {
+        fail(overflowCode, `MCP data exceeds the ${maxBytes} byte limit`);
+    }
     return cloned;
 }
 
 function assertJsonBytes(value: JsonValue, maxBytes: number, code: string): void {
-    if (new TextEncoder().encode(JSON.stringify(value)).byteLength > maxBytes) {
+    if (measureSerializedValidatedStrictPluginJsonUtf8Bytes(value, 'MCP data', maxBytes) > maxBytes) {
         fail(code, `MCP data exceeds the ${maxBytes} byte limit`);
     }
 }
@@ -271,6 +305,139 @@ function validateTools(result: unknown): Readonly<{ items: readonly PluginMcpToo
     return validated;
 }
 
+const publicMcpStringSchema = ResourceSchema.shape.uri;
+const publicMcpUnknownSchema = TextContentSchema.shape._meta.unwrap().valueType;
+// The curated DTO intentionally exposes annotation hints as plain JSON primitives,
+// while the MCP wire schema constrains their values further.
+const publicMcpFiniteNumberSchema = publicMcpUnknownSchema.refine(
+    (value): value is number => typeof value === 'number' && Number.isFinite(value),
+);
+const publicMcpAnnotationsSchema = AnnotationsSchema.extend({
+    priority: publicMcpFiniteNumberSchema.optional(),
+    lastModified: publicMcpStringSchema.optional(),
+}).strict();
+const publicMcpIconSchema = IconSchema.strict();
+const publicMcpResourceSchema = ResourceSchema.extend({
+    annotations: publicMcpAnnotationsSchema.optional(),
+    icons: publicMcpIconSchema.array().optional(),
+    _meta: publicMcpUnknownSchema.optional(),
+}).strict();
+const publicMcpResourceTemplateSchema = ResourceTemplateSchema.extend({
+    annotations: publicMcpAnnotationsSchema.optional(),
+    icons: publicMcpIconSchema.array().optional(),
+    _meta: publicMcpUnknownSchema.optional(),
+}).strict();
+const publicMcpTextResourceContentsSchema = TextResourceContentsSchema.extend({
+    _meta: publicMcpUnknownSchema.optional(),
+}).strict();
+const publicMcpBlobResourceContentsSchema = BlobResourceContentsSchema.extend({
+    blob: publicMcpStringSchema,
+    _meta: publicMcpUnknownSchema.optional(),
+}).strict();
+const publicMcpResourceContentsSchema = publicMcpTextResourceContentsSchema.or(publicMcpBlobResourceContentsSchema);
+const publicMcpResourcePageSchema = ListResourcesResultSchema.omit({ resources: true }).extend({
+    items: publicMcpResourceSchema.array(),
+    _meta: publicMcpUnknownSchema.optional(),
+}).strict();
+const publicMcpResourceTemplatePageSchema = ListResourceTemplatesResultSchema.omit({ resourceTemplates: true }).extend({
+    items: publicMcpResourceTemplateSchema.array(),
+    _meta: publicMcpUnknownSchema.optional(),
+}).strict();
+const publicMcpReadResourceResultSchema = ReadResourceResultSchema.extend({
+    contents: publicMcpResourceContentsSchema.array(),
+    _meta: publicMcpUnknownSchema.optional(),
+}).strict();
+const publicMcpPromptSchema = PromptSchema.extend({
+    arguments: PromptArgumentSchema.strict().array().optional(),
+    icons: publicMcpIconSchema.array().optional(),
+    _meta: publicMcpUnknownSchema.optional(),
+}).strict();
+const publicMcpPromptPageSchema = ListPromptsResultSchema.omit({ prompts: true }).extend({
+    items: publicMcpPromptSchema.array(),
+    _meta: publicMcpUnknownSchema.optional(),
+}).strict();
+const publicMcpPromptContentSchema = TextContentSchema.extend({
+    annotations: publicMcpAnnotationsSchema.optional(),
+    _meta: publicMcpUnknownSchema.optional(),
+}).strict()
+    .or(ImageContentSchema.extend({
+        data: publicMcpStringSchema,
+        annotations: publicMcpAnnotationsSchema.optional(),
+        _meta: publicMcpUnknownSchema.optional(),
+    }).strict())
+    .or(AudioContentSchema.extend({
+        data: publicMcpStringSchema,
+        annotations: publicMcpAnnotationsSchema.optional(),
+        _meta: publicMcpUnknownSchema.optional(),
+    }).strict())
+    .or(EmbeddedResourceSchema.extend({
+        resource: publicMcpResourceContentsSchema,
+        annotations: publicMcpAnnotationsSchema.optional(),
+        _meta: publicMcpUnknownSchema.optional(),
+    }).strict())
+    .or(publicMcpResourceSchema.extend({ type: ResourceLinkSchema.shape.type }).strict());
+const publicMcpGetPromptResultSchema = GetPromptResultSchema.extend({
+    messages: PromptMessageSchema.extend({ content: publicMcpPromptContentSchema }).strict().array(),
+    _meta: publicMcpUnknownSchema.optional(),
+}).strict();
+const publicMcpResourceUpdatedEventSchema = ResourceUpdatedNotificationParamsSchema.omit({ _meta: true }).strict();
+
+type PublicMcpSchema = Readonly<{
+    safeParse(value: unknown): Readonly<{ success: boolean }>;
+}>;
+
+function validatePublicMcpDto<T>(
+    result: unknown,
+    label: string,
+    schema: PublicMcpSchema,
+    hasCursor = false,
+): T {
+    const cloned = clonePlainJson(
+        result,
+        'plugin_mcp_result_invalid',
+        MAX_STABLE_PLUGIN_MCP_RESULT_BYTES,
+        'plugin_mcp_result_limit_exceeded',
+    );
+    if (!schema.safeParse(cloned).success) {
+        fail('plugin_mcp_result_invalid', `${label} does not match the public MCP contract`);
+    }
+    if (hasCursor) {
+        const record = cloned as Readonly<Record<string, JsonValue>>;
+        validateCursor(typeof record.nextCursor === 'string' ? record.nextCursor : undefined);
+    }
+    return cloned as unknown as T;
+}
+
+function validateResourcePage(result: unknown): PluginMcpResourcePage {
+    return validatePublicMcpDto(result, 'MCP resource page', publicMcpResourcePageSchema, true);
+}
+
+function validateResourceTemplatePage(result: unknown): PluginMcpResourceTemplatePage {
+    return validatePublicMcpDto(result, 'MCP resource template page', publicMcpResourceTemplatePageSchema, true);
+}
+
+function validateReadResourceResult(result: unknown): PluginMcpReadResourceResult {
+    return validatePublicMcpDto(result, 'MCP resource result', publicMcpReadResourceResultSchema);
+}
+
+function validatePromptPage(result: unknown): PluginMcpPromptPage {
+    return validatePublicMcpDto(result, 'MCP prompt page', publicMcpPromptPageSchema, true);
+}
+
+function validateGetPromptResult(result: unknown): PluginMcpGetPromptResult {
+    return validatePublicMcpDto(result, 'MCP prompt result', publicMcpGetPromptResultSchema);
+}
+
+function validateResourceUpdatedEvent(event: unknown): PluginMcpResourceUpdatedEvent {
+    return validatePublicMcpDto(event, 'MCP resource update', publicMcpResourceUpdatedEventSchema);
+}
+
+function validateNonEmptyText(value: string, label: string): void {
+    if (typeof value !== 'string' || value.length === 0 || value.length > MAX_STABLE_PLUGIN_MCP_CURSOR_LENGTH * 16) {
+        fail('plugin_mcp_input_invalid', `${label} is invalid`);
+    }
+}
+
 function validateActive(seed: PluginInvocationServicesSeed, hostDisposed: boolean, generation: string): void {
     if (hostDisposed || seed.generation !== generation || seed.signal.aborted || !seed.isGenerationCurrent()) {
         fail('plugin_mcp_generation_retired', 'Plugin generation is no longer current');
@@ -323,7 +490,18 @@ async function withCancellation<T>(
 async function invokePeer<T>(operation: () => Promise<T>): Promise<T> {
     try {
         return await operation();
-    } catch {
+    } catch (error) {
+        if (typeof error === 'object' && error !== null) {
+            const descriptor = Object.getOwnPropertyDescriptor(error, 'code');
+            if (descriptor !== undefined && 'value' in descriptor && typeof descriptor.value === 'number' && Number.isSafeInteger(descriptor.value)) {
+                const mcpCode = descriptor.value;
+                throw new PluginError({
+                    code: mcpCode === -32601 ? 'plugin_mcp_method_not_found' : 'plugin_mcp_peer_error',
+                    message: 'MCP peer request failed',
+                    details: { mcpCode },
+                });
+            }
+        }
         fail('plugin_mcp_peer_failed', 'MCP peer request failed');
     }
 }
@@ -345,7 +523,7 @@ function assertSession(
 
 export function createStablePluginMcpHost(params: StablePluginMcpHostParams): StablePluginMcpHost {
     const serverDeclarations = new Map<string, ResolvedMcpServerContribution>();
-    const discoveryDeclarations = new Map<string, ResolvedMcpDiscoveryProviderContribution>();
+    const discoverySourceDeclarations = new Map<string, ResolvedMcpDiscoverySourceContribution>();
     for (const declaration of params.servers) {
         const ref = declarationRef(declaration);
         if (ref === null) continue;
@@ -353,12 +531,12 @@ export function createStablePluginMcpHost(params: StablePluginMcpHostParams): St
         if (serverDeclarations.has(key)) fail('plugin_mcp_declaration_duplicate', `Duplicate MCP server declaration: ${key}`);
         serverDeclarations.set(key, declaration);
     }
-    for (const declaration of params.discoveryProviders) {
+    for (const declaration of params.discoverySources) {
         const ref = declarationRef(declaration);
         if (ref === null) continue;
         const key = qualifiedId(ref);
-        if (discoveryDeclarations.has(key)) fail('plugin_mcp_declaration_duplicate', `Duplicate MCP discovery declaration: ${key}`);
-        discoveryDeclarations.set(key, declaration);
+        if (discoverySourceDeclarations.has(key)) fail('plugin_mcp_declaration_duplicate', `Duplicate MCP discovery declaration: ${key}`);
+        discoverySourceDeclarations.set(key, declaration);
     }
 
     let disposed = false;
@@ -386,22 +564,25 @@ export function createStablePluginMcpHost(params: StablePluginMcpHostParams): St
         nextBindingId += 1;
         const bindingId = nextBindingId;
         const serverCursors = createScopedCursorStore<number>(`${bindingId}:servers`);
-        const discoveryCursors = createScopedCursorStore<Readonly<{ provider: string; cursor: string }>>(`${bindingId}:discovery`);
+        const discoveryCursors = createScopedCursorStore<Readonly<{ source: string; cursor: string }>>(`${bindingId}:discovery`);
         const isAuthorized = (
-            ref: PluginMcpServerRef,
+            ref: PluginMcpServerRef | PluginMcpDiscoverySourceRef,
             operation: 'listTools' | 'callTools' | 'discover',
-        ): boolean => authorization === undefined || authorization.some((scope) => (
-            scope.operations.includes(operation)
-            && scope.serverRefs.some((candidate) => (
+        ): boolean => authorization === undefined || authorization.some((scope) => {
+            const refs = operation === 'discover'
+                ? scope.discoverySourceRefs
+                : scope.serverRefs;
+            return scope.operations.includes(operation)
+            && refs.some((candidate) => (
                 candidate.pluginId === ref.pluginId && candidate.localId === ref.localId
-            ))
-        ));
+            ));
+        });
         const assertAuthorized = (
-            ref: PluginMcpServerRef,
+            ref: PluginMcpServerRef | PluginMcpDiscoverySourceRef,
             operation: 'listTools' | 'callTools' | 'discover',
         ): void => {
             if (!isAuthorized(ref, operation)) {
-                fail('plugin_mcp_access_denied', 'MCP server operation was not authorized for this invocation');
+                fail('plugin_mcp_access_denied', 'MCP operation was not authorized for this invocation');
             }
         };
         const revalidateFinalPolicy = (effect: StablePluginMcpFinalPolicyEffect): void | Promise<void> => (
@@ -522,6 +703,16 @@ export function createStablePluginMcpHost(params: StablePluginMcpHostParams): St
                 runtimeClient = Object.freeze({
                     listTools: (request: Readonly<{ cursor?: string; limit?: number; signal?: AbortSignal }> = {}) => selected.listTools(request, seed, request.signal === undefined ? undefined : { signal: request.signal }),
                     callTool: (name: string, input: JsonValue, callOptions?: Readonly<{ signal?: AbortSignal }>) => selected.callTool({ name, input }, seed, callOptions),
+                    listResources: (request: Readonly<{ cursor?: string; signal?: AbortSignal }> = {}) => selected.listResources(request, seed, request.signal === undefined ? undefined : { signal: request.signal }),
+                    listResourceTemplates: (request: Readonly<{ cursor?: string; signal?: AbortSignal }> = {}) => selected.listResourceTemplates(request, seed, request.signal === undefined ? undefined : { signal: request.signal }),
+                    readResource: (uri: string, readOptions?: Readonly<{ signal?: AbortSignal }>) => selected.readResource({ uri }, seed, readOptions),
+                    subscribeResource: (
+                        uri: string,
+                        listener: (event: PluginMcpResourceUpdatedEvent) => void | Promise<void>,
+                        subscribeOptions?: Readonly<{ signal?: AbortSignal }>,
+                    ) => selected.subscribeResource({ uri }, listener, seed, subscribeOptions),
+                    listPrompts: (request: Readonly<{ cursor?: string; signal?: AbortSignal }> = {}) => selected.listPrompts(request, seed, request.signal === undefined ? undefined : { signal: request.signal }),
+                    getPrompt: (name: string, args?: Readonly<Record<string, string>>, promptOptions?: Readonly<{ signal?: AbortSignal }>) => selected.getPrompt({ name, ...(args === undefined ? {} : { args }) }, seed, promptOptions),
                     dispose: async () => {},
                 } satisfies PluginMcpClient);
             }
@@ -532,8 +723,22 @@ export function createStablePluginMcpHost(params: StablePluginMcpHostParams): St
             let disposeOnInvocationAbort: (() => void) | null = null;
             nextClientId += 1;
             const toolCursors = createScopedCursorStore<string>(`${bindingId}:tools:${nextClientId}`);
+            const resourceCursors = createScopedCursorStore<string>(`${bindingId}:resources:${nextClientId}`);
+            const resourceTemplateCursors = createScopedCursorStore<string>(`${bindingId}:resourceTemplates:${nextClientId}`);
+            const promptCursors = createScopedCursorStore<string>(`${bindingId}:prompts:${nextClientId}`);
+            const subscriptions = new Set<Disposable>();
             const disposeRuntime = () => {
-                runtimeDisposePromise ??= Promise.resolve().then(() => runtimeClient.dispose());
+                runtimeDisposePromise ??= (async () => {
+                    const activeSubscriptions = [...subscriptions];
+                    subscriptions.clear();
+                    const results = await Promise.allSettled([
+                        ...activeSubscriptions.map((subscription) => Promise.resolve().then(() => subscription.dispose())),
+                        Promise.resolve().then(() => runtimeClient.dispose()),
+                    ]);
+                    const failures = results.flatMap((result) => result.status === 'rejected' ? [result.reason] : []);
+                    if (failures.length === 1) throw failures[0];
+                    if (failures.length > 0) throw new AggregateError(failures, 'MCP client cleanup failed');
+                })();
                 return runtimeDisposePromise;
             };
             const client: PluginMcpClient = Object.freeze({
@@ -580,6 +785,220 @@ export function createStablePluginMcpHost(params: StablePluginMcpHostParams): St
                     if (registration !== null) assertRegistrationCurrent(registration, params.generation, ref);
                     return clonePlainJson(result, 'plugin_mcp_result_invalid', MAX_STABLE_PLUGIN_MCP_RESULT_BYTES);
                 },
+                async listResources(request: Readonly<{ cursor?: string; signal?: AbortSignal }> = {}) {
+                    if (clientDisposed) fail('plugin_mcp_client_disposed', 'MCP client has been disposed');
+                    assertAuthorized(ref, 'listTools');
+                    validateActive(seed, disposed, params.generation);
+                    if (registration !== null) assertRegistrationCurrent(registration, params.generation, ref);
+                    const peerCursor = request.cursor === undefined ? undefined : resourceCursors.read(request.cursor);
+                    const result = await withCancellation(async () => {
+                        await revalidateFinalPolicy(Object.freeze({ seed, operation: 'listTools', ref: frozenRef }));
+                        return invokePeer(() => runtimeClient.listResources({
+                            ...(peerCursor === undefined ? {} : { cursor: peerCursor }),
+                            ...(request.signal === undefined ? {} : { signal: request.signal }),
+                        }));
+                    }, [seed.signal, request.signal]);
+                    validateActive(seed, disposed, params.generation);
+                    if (registration !== null) assertRegistrationCurrent(registration, params.generation, ref);
+                    const validated = validateResourcePage(result);
+                    return Object.freeze({
+                        items: validated.items,
+                        ...(validated.nextCursor === undefined ? {} : { nextCursor: resourceCursors.issue(validated.nextCursor) }),
+                        ...(validated._meta === undefined ? {} : { _meta: validated._meta }),
+                    });
+                },
+                async listResourceTemplates(request: Readonly<{ cursor?: string; signal?: AbortSignal }> = {}) {
+                    if (clientDisposed) fail('plugin_mcp_client_disposed', 'MCP client has been disposed');
+                    assertAuthorized(ref, 'listTools');
+                    validateActive(seed, disposed, params.generation);
+                    if (registration !== null) assertRegistrationCurrent(registration, params.generation, ref);
+                    const peerCursor = request.cursor === undefined ? undefined : resourceTemplateCursors.read(request.cursor);
+                    const result = await withCancellation(async () => {
+                        await revalidateFinalPolicy(Object.freeze({ seed, operation: 'listTools', ref: frozenRef }));
+                        return invokePeer(() => runtimeClient.listResourceTemplates({
+                            ...(peerCursor === undefined ? {} : { cursor: peerCursor }),
+                            ...(request.signal === undefined ? {} : { signal: request.signal }),
+                        }));
+                    }, [seed.signal, request.signal]);
+                    validateActive(seed, disposed, params.generation);
+                    if (registration !== null) assertRegistrationCurrent(registration, params.generation, ref);
+                    const validated = validateResourceTemplatePage(result);
+                    return Object.freeze({
+                        items: validated.items,
+                        ...(validated.nextCursor === undefined ? {} : { nextCursor: resourceTemplateCursors.issue(validated.nextCursor) }),
+                        ...(validated._meta === undefined ? {} : { _meta: validated._meta }),
+                    });
+                },
+                async readResource(uri: string, readOptions: Readonly<{ signal?: AbortSignal }> = {}) {
+                    if (clientDisposed) fail('plugin_mcp_client_disposed', 'MCP client has been disposed');
+                    assertAuthorized(ref, 'listTools');
+                    validateNonEmptyText(uri, 'MCP resource URI');
+                    validateActive(seed, disposed, params.generation);
+                    if (registration !== null) assertRegistrationCurrent(registration, params.generation, ref);
+                    const result = await withCancellation(async () => {
+                        await revalidateFinalPolicy(Object.freeze({ seed, operation: 'listTools', ref: frozenRef }));
+                        return invokePeer(() => runtimeClient.readResource(uri, readOptions));
+                    }, [seed.signal, readOptions.signal]);
+                    validateActive(seed, disposed, params.generation);
+                    if (registration !== null) assertRegistrationCurrent(registration, params.generation, ref);
+                    const validated = validateReadResourceResult(result);
+                    return Object.freeze({
+                        contents: validated.contents,
+                        ...(validated._meta === undefined ? {} : { _meta: validated._meta }),
+                    });
+                },
+                async subscribeResource(
+                    uri: string,
+                    listener: (event: PluginMcpResourceUpdatedEvent) => void | Promise<void>,
+                    subscribeOptions: Readonly<{ signal?: AbortSignal }> = {},
+                ) {
+                    if (clientDisposed) fail('plugin_mcp_client_disposed', 'MCP client has been disposed');
+                    assertAuthorized(ref, 'listTools');
+                    validateNonEmptyText(uri, 'MCP resource URI');
+                    if (typeof listener !== 'function') fail('plugin_mcp_input_invalid', 'MCP resource listener is invalid');
+                    validateActive(seed, disposed, params.generation);
+                    if (registration !== null) assertRegistrationCurrent(registration, params.generation, ref);
+                    let disposeStaleSubscription: (() => Promise<void>) | null = null;
+                    let retiredBeforeSubscriptionAvailable = false;
+                    let retirementError: unknown;
+                    let subscriptionRetired = false;
+                    let listenerChain = Promise.resolve();
+                    const serializedListener = (event: PluginMcpResourceUpdatedEvent) => {
+                        listenerChain = listenerChain.then(async () => {
+                            if (subscriptionRetired) return;
+                            try {
+                                validateActive(seed, disposed, params.generation);
+                                if (registration !== null) {
+                                    assertRegistrationCurrent(registration, params.generation, ref);
+                                }
+                                await withCancellation(async () => {
+                                    await revalidateFinalPolicy(Object.freeze({
+                                        seed,
+                                        operation: 'listTools',
+                                        ref: frozenRef,
+                                    }));
+                                }, [seed.signal, subscribeOptions.signal]);
+                            } catch (error) {
+                                subscriptionRetired = true;
+                                if (disposeStaleSubscription === null) {
+                                    retiredBeforeSubscriptionAvailable = true;
+                                    retirementError = error;
+                                } else {
+                                    await disposeStaleSubscription();
+                                }
+                                throw error;
+                            }
+                            await listener(validateResourceUpdatedEvent(event));
+                        }).catch(() => {
+                            process.emitWarning('MCP resource subscription listener failed', {
+                                code: 'HAPPIER_MCP_RESOURCE_LISTENER_FAILED',
+                            });
+                        });
+                        return listenerChain;
+                    };
+                    const runtimeSubscription = await withCancellation(async () => {
+                        await revalidateFinalPolicy(Object.freeze({ seed, operation: 'listTools', ref: frozenRef }));
+                        return invokePeer(() => runtimeClient.subscribeResource(uri, serializedListener, subscribeOptions));
+                    }, [seed.signal, subscribeOptions.signal], (detachedSubscription) => {
+                        return Promise.resolve(detachedSubscription.dispose());
+                    }, trackDetachedCleanup);
+                    let subscriptionDisposePromise: Promise<void> | null = null;
+                    let disposeOnCallerAbort: (() => void) | null = null;
+                    const subscription: Disposable = Object.freeze({
+                        dispose() {
+                            if (subscriptionDisposePromise !== null) return subscriptionDisposePromise;
+                            if (disposeOnCallerAbort !== null && subscribeOptions.signal !== undefined) {
+                                subscribeOptions.signal.removeEventListener('abort', disposeOnCallerAbort);
+                                disposeOnCallerAbort = null;
+                            }
+                            subscriptions.delete(subscription);
+                            subscriptionDisposePromise = Promise.resolve().then(() => runtimeSubscription.dispose());
+                            return subscriptionDisposePromise;
+                        },
+                    });
+                    disposeStaleSubscription = async () => {
+                        await subscription.dispose();
+                    };
+                    if (retiredBeforeSubscriptionAvailable) {
+                        await subscription.dispose();
+                        throw retirementError;
+                    }
+                    subscriptions.add(subscription);
+                    if (subscribeOptions.signal !== undefined) {
+                        disposeOnCallerAbort = () => {
+                            void Promise.resolve(subscription.dispose()).catch(() => {});
+                        };
+                        if (subscribeOptions.signal.aborted) {
+                            await subscription.dispose();
+                            fail('plugin_mcp_aborted', 'MCP operation was aborted');
+                        }
+                        subscribeOptions.signal.addEventListener('abort', disposeOnCallerAbort, { once: true });
+                    }
+                    try {
+                        validateActive(seed, disposed, params.generation);
+                        if (registration !== null) assertRegistrationCurrent(registration, params.generation, ref);
+                    } catch (error) {
+                        await subscription.dispose();
+                        throw error;
+                    }
+                    return subscription;
+                },
+                async listPrompts(request: Readonly<{ cursor?: string; signal?: AbortSignal }> = {}) {
+                    if (clientDisposed) fail('plugin_mcp_client_disposed', 'MCP client has been disposed');
+                    assertAuthorized(ref, 'listTools');
+                    validateActive(seed, disposed, params.generation);
+                    if (registration !== null) assertRegistrationCurrent(registration, params.generation, ref);
+                    const peerCursor = request.cursor === undefined ? undefined : promptCursors.read(request.cursor);
+                    const result = await withCancellation(async () => {
+                        await revalidateFinalPolicy(Object.freeze({ seed, operation: 'listTools', ref: frozenRef }));
+                        return invokePeer(() => runtimeClient.listPrompts({
+                            ...(peerCursor === undefined ? {} : { cursor: peerCursor }),
+                            ...(request.signal === undefined ? {} : { signal: request.signal }),
+                        }));
+                    }, [seed.signal, request.signal]);
+                    validateActive(seed, disposed, params.generation);
+                    if (registration !== null) assertRegistrationCurrent(registration, params.generation, ref);
+                    const validated = validatePromptPage(result);
+                    return Object.freeze({
+                        items: validated.items,
+                        ...(validated.nextCursor === undefined ? {} : { nextCursor: promptCursors.issue(validated.nextCursor) }),
+                        ...(validated._meta === undefined ? {} : { _meta: validated._meta }),
+                    });
+                },
+                async getPrompt(
+                    name: string,
+                    args?: Readonly<Record<string, string>>,
+                    promptOptions: Readonly<{ signal?: AbortSignal }> = {},
+                ) {
+                    if (clientDisposed) fail('plugin_mcp_client_disposed', 'MCP client has been disposed');
+                    assertAuthorized(ref, 'listTools');
+                    validateNonEmptyText(name, 'MCP prompt name');
+                    validateActive(seed, disposed, params.generation);
+                    if (registration !== null) assertRegistrationCurrent(registration, params.generation, ref);
+                    const boundedArgs = args === undefined
+                        ? undefined
+                        : clonePlainJson(args, 'plugin_mcp_input_invalid', MAX_STABLE_PLUGIN_MCP_INPUT_BYTES) as Readonly<Record<string, string>>;
+                    if (boundedArgs !== undefined && (
+                        typeof boundedArgs !== 'object'
+                        || boundedArgs === null
+                        || Array.isArray(boundedArgs)
+                        || Object.values(boundedArgs).some((value) => typeof value !== 'string')
+                    )) {
+                        fail('plugin_mcp_input_invalid', 'MCP prompt arguments must be strings');
+                    }
+                    const result = await withCancellation(async () => {
+                        await revalidateFinalPolicy(Object.freeze({ seed, operation: 'listTools', ref: frozenRef }));
+                        return invokePeer(() => runtimeClient.getPrompt(name, boundedArgs, promptOptions));
+                    }, [seed.signal, promptOptions.signal]);
+                    validateActive(seed, disposed, params.generation);
+                    if (registration !== null) assertRegistrationCurrent(registration, params.generation, ref);
+                    const validated = validateGetPromptResult(result);
+                    return Object.freeze({
+                        messages: validated.messages,
+                        ...(validated.description === undefined ? {} : { description: validated.description }),
+                        ...(validated._meta === undefined ? {} : { _meta: validated._meta }),
+                    });
+                },
                 dispose() {
                     if (clientDisposePromise !== null) return clientDisposePromise;
                     clientDisposed = true;
@@ -614,29 +1033,29 @@ export function createStablePluginMcpHost(params: StablePluginMcpHostParams): St
         },
 
         async discover(
-            provider: PluginMcpDiscoveryProviderRef,
+            source: PluginMcpDiscoverySourceRef,
             query: Readonly<{ input?: JsonValue; cursor?: string; limit?: number }> = {},
             options: Readonly<{ signal?: AbortSignal }> = {},
         ) {
             validateActive(seed, disposed, params.generation);
-            assertAuthorized(provider, 'discover');
-            const providerKey = qualifiedId(provider);
+            assertAuthorized(source, 'discover');
+            const sourceKey = qualifiedId(source);
             const cursorState = query.cursor === undefined ? undefined : discoveryCursors.read(query.cursor);
-            if (cursorState !== undefined && cursorState.provider !== providerKey) {
-                fail('plugin_mcp_cursor_invalid', 'MCP discovery cursor belongs to a different provider');
+            if (cursorState !== undefined && cursorState.source !== sourceKey) {
+                fail('plugin_mcp_cursor_invalid', 'MCP discovery cursor belongs to a different source');
             }
             validateLimit(query.limit);
-            const ref = Object.freeze({ ...provider });
-            if (!discoveryDeclarations.has(qualifiedId(ref))) fail('plugin_mcp_discovery_provider_undeclared', 'MCP discovery provider is not declared');
+            const ref = Object.freeze({ ...source });
+            if (!discoverySourceDeclarations.has(qualifiedId(ref))) fail('plugin_mcp_discovery_source_undeclared', 'MCP discovery source is not declared');
             const boundedInput = query.input === undefined
                 ? undefined
                 : clonePlainJson(query.input, 'plugin_mcp_input_invalid', MAX_STABLE_PLUGIN_MCP_INPUT_BYTES);
             await withCancellation(async () => {
-                await params.activateOnDemand(ref, 'mcp.discoveryProviders');
+                await params.activateOnDemand(ref, 'mcp.discoverySources');
                 await revalidateFinalPolicy(Object.freeze({ seed, operation: 'discover', ref }));
             }, [seed.signal, options.signal]);
-            const registration = params.readDiscoveryProvider(ref);
-            if (registration === null) fail('plugin_mcp_discovery_provider_unavailable', 'MCP discovery provider did not register after activation');
+            const registration = params.readDiscoverySource(ref);
+            if (registration === null) fail('plugin_mcp_discovery_source_unavailable', 'MCP discovery source did not register after activation');
             assertRegistrationCurrent(registration, params.generation, ref);
             const result = await withCancellation(async () => {
                 await revalidateFinalPolicy(Object.freeze({ seed, operation: 'discover', ref }));
@@ -675,7 +1094,7 @@ export function createStablePluginMcpHost(params: StablePluginMcpHostParams): St
                     fail('plugin_mcp_result_invalid', 'MCP discovery description must be a string');
                 }
                 return Object.freeze({
-                    provider: ref,
+                    source: ref,
                     discoveryId: record.discoveryId,
                     title: record.title,
                     ...(record.description === undefined ? {} : { description: record.description }),
@@ -685,7 +1104,7 @@ export function createStablePluginMcpHost(params: StablePluginMcpHostParams): St
             const response = Object.freeze({
                 items: Object.freeze(items),
                 ...(resultRecord.nextCursor === undefined ? {} : {
-                    nextCursor: discoveryCursors.issue(Object.freeze({ provider: providerKey, cursor: resultRecord.nextCursor })),
+                    nextCursor: discoveryCursors.issue(Object.freeze({ source: sourceKey, cursor: resultRecord.nextCursor })),
                 }),
             });
             assertJsonBytes(response as JsonValue, MAX_STABLE_PLUGIN_MCP_RESULT_BYTES, 'plugin_mcp_result_limit_exceeded');

@@ -169,9 +169,6 @@ export type PluginCollectionBatchResult<_TValue extends Readonly<Record<string, 
         >['conflicts'][number][];
     }>>;
 
-export type PluginCollectionMutationConflict = PluginCollectionMutationConflictV1;
-export type PluginCollectionMutationError = PluginCollectionMutationErrorV1;
-
 /**
  * Watches are content-free, level-triggered invalidations. Consumers reread
  * after a change or reset rather than treating this as a FIFO row stream.
@@ -186,6 +183,46 @@ export type PluginCollectionWatchQuery<
     TIndexes extends readonly PluginCollectionIndexV1[],
 > = PluginCollectionQuery<PluginCollectionIndexId<TIndexes>>
     | Readonly<{ kind: 'collection' }>;
+
+/**
+ * The Account Collection limits in force for one bound collection: the
+ * connected deployment's published policy narrowed by this collection's own
+ * admitted quota. The server remains the enforcement owner; these are the
+ * numbers a plugin plans against so it never has to guess one.
+ */
+export type PluginCollectionLimits = Readonly<{
+  maxRowEncodedBytes: number;
+  maxBatchBytes: number;
+  maxBatchRows: number;
+  maxAccountRows: number;
+  maxAccountBytes: number;
+  /**
+   * `deployment` when the connected deployment published its effective policy.
+   * `default` when it has not yet, and these are the platform's shipped
+   * deployment defaults; an operator may have lowered a dimension the client
+   * cannot see, so a batch planned on a `default` basis can still be rejected.
+   */
+  basis: 'deployment' | 'default';
+}>;
+
+/**
+ * Encoded wire cost of candidate mutations, measured through the same
+ * seal-and-serialize path `batch` uses, so a plugin never re-models the private
+ * envelope, the projection, or the request shell to size its own batches.
+ *
+ * Costs are additive: any subset of the measured operations sent as one atomic
+ * batch encodes to at most `overheadEncodedBytes` plus that subset's entries in
+ * `operationEncodedBytes`.
+ */
+export type PluginCollectionBatchMeasurement = Readonly<{
+  /** Encoded bytes one mutation request costs before any operation. */
+  overheadEncodedBytes: number;
+  /**
+   * Encoded bytes each measured operation adds, in the order supplied,
+   * including the separator that joins it to a preceding operation.
+   */
+  operationEncodedBytes: readonly number[];
+}>;
 
 export interface PluginAccountCollection<
     TValue extends Readonly<Record<string, JsonValue>>,
@@ -243,6 +280,24 @@ export interface PluginAccountCollection<
         operations: readonly PluginCollectionMutation<TValue>[],
         options?: PluginCancellationOptions,
     ): Promise<PluginCollectionBatchResult<TValue>>;
+    /**
+     * The Account Collection limits in force for this bound collection. Read
+     * them instead of assuming a ceiling: a deployment can lower any dimension,
+     * and only the host knows which value is actually in force.
+     */
+    limits(options?: PluginCancellationOptions): Promise<PluginCollectionLimits>;
+    /**
+     * Measure what these mutations would cost on the wire, through the same
+     * seal-and-serialize path `batch` uses. Use it with `limits()` to size
+     * multi-batch work rather than estimating the private envelope yourself.
+     *
+     * More operations may be measured than one batch can carry — that is the
+     * point — and the reported costs stay exact for any subset of them.
+     */
+    measureBatch(
+        operations: readonly PluginCollectionMutation<TValue>[],
+        options?: PluginCancellationOptions,
+    ): Promise<PluginCollectionBatchMeasurement>;
     watch(
         request: PluginCollectionWatchQuery<TIndexes>,
         listener: (invalidation: PluginCollectionInvalidation) => void,

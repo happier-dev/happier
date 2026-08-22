@@ -13,6 +13,10 @@ import {
   fingerprintPluginHostAccessRequest,
 } from '@/plugins/runtime/hostAccess/scope';
 import {
+  projectPluginInstallationReviewRequestInterceptor,
+} from './changeContract';
+
+import {
   createDefaultPluginAccessScopeRegistry,
   type PluginAccessSelection,
 } from '@/plugins/store/install/accessScopeRegistry';
@@ -95,6 +99,8 @@ function qualifyHostAccessRequestReferences(
         scope: {
           ...request.scope,
           serverRefs: request.scope.serverRefs.map((reference) =>
+            qualifyHostAccessContributionReference(ownerPluginId, reference)),
+          discoverySourceRefs: request.scope.discoverySourceRefs.map((reference) =>
             qualifyHostAccessContributionReference(ownerPluginId, reference)),
         },
       };
@@ -208,6 +214,22 @@ function hasDeclaredIntegrationExpansion(
   return false;
 }
 
+function requestInterceptorReviewFacts(
+  manifest: CanonicalPluginManifest,
+): readonly string[] {
+  return Object.freeze(manifest.contributes.requestInterceptors.map((contribution) => (
+    JSON.stringify(projectPluginInstallationReviewRequestInterceptor(contribution))
+  )).sort());
+}
+
+function hasRequestInterceptorDeclarationChange(
+  previous: CanonicalPluginManifest,
+  candidate: CanonicalPluginManifest,
+): boolean {
+  return JSON.stringify(requestInterceptorReviewFacts(previous))
+    !== JSON.stringify(requestInterceptorReviewFacts(candidate));
+}
+
 export function hasReviewSensitivePluginUpdate(
   previous: CanonicalPluginManifest,
   candidate: CanonicalPluginManifest,
@@ -215,7 +237,8 @@ export function hasReviewSensitivePluginUpdate(
   return hasExecutableRealmExpansion(previous, candidate)
     || hasReviewSensitiveHostAccessChange(previous, candidate)
     || hasConnectedAccountPurposeAccessChange(previous, candidate)
-    || hasDeclaredIntegrationExpansion(previous, candidate);
+    || hasDeclaredIntegrationExpansion(previous, candidate)
+    || hasRequestInterceptorDeclarationChange(previous, candidate);
 }
 
 export function preserveValidPluginOptionalSelections(

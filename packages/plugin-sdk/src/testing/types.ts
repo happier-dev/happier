@@ -59,6 +59,9 @@ export type PluginTestkitRegistrationByFamily = Readonly<{
         sessionRunnerFactory?: NonNullable<NonNullable<
             Parameters<PluginApi['agents']['register']>[2]
         >['sessionRunnerFactory']>;
+        daemonSpawnHooks?: NonNullable<NonNullable<
+            Parameters<PluginApi['agents']['register']>[2]
+        >['daemonSpawnHooks']>;
         externalSessions?: Parameters<PluginApi['agents']['registerExternalSessions']>[1];
         externalSessionHooks?: Parameters<PluginApi['agents']['registerExternalSessionHooks']>[1];
         externalSessionObservation?: Parameters<
@@ -72,7 +75,13 @@ export type PluginTestkitRegistrationByFamily = Readonly<{
     events: Parameters<PluginApi['events']['register']>[1];
     notificationChannels: Parameters<PluginApi['notifications']['registerChannel']>[1];
     connectedAccountDescriptors: Parameters<PluginApi['connectedAccounts']['register']>[1];
-    providers: Parameters<PluginApi['providers']['register']>[1];
+    providers: Readonly<{
+        managedRuntime?: Parameters<PluginApi['providers']['register']>[1];
+        catalogParsers?: Readonly<Record<
+            string,
+            Parameters<PluginApi['providers']['registerCatalogParser']>[2]
+        >>;
+    }>;
     scmHostingProviders: Parameters<PluginApi['scm']['registerHostingProvider']>[1];
     scmBackends: Parameters<PluginApi['scm']['registerBackend']>[1];
     requestInterceptors: Parameters<PluginApi['interceptors']['register']>[1];

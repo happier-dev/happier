@@ -213,7 +213,16 @@ function validateGeneratedModule(output, expectedInputKeys, expectedResultKeys) 
     .filter((diagnostic) => diagnostic.file && isOutput(diagnostic.file.fileName));
   if (diagnostics.length > 0) {
     throw new Error(`Generated Action type map does not typecheck: ${diagnostics
-      .map((diagnostic) => ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n'))
+      .map((diagnostic) => {
+        const position = diagnostic.file && diagnostic.start !== undefined
+          ? diagnostic.file.getLineAndCharacterOfPosition(diagnostic.start)
+          : null;
+        const location = position ? `${position.line + 1}:${position.character + 1}: ` : '';
+        const sourceLine = position
+          ? `\n${output.split('\n').slice(Math.max(0, position.line - 6), position.line + 7).join('\n')}`
+          : '';
+        return `${location}${ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n')}${sourceLine}`;
+      })
       .join('\n')}`);
   }
 

@@ -158,6 +158,11 @@ describe('plugin registration scope targets', () => {
             rights: [{ family: 'actions', localId: 'connect', target: clientRightTarget }],
         });
 
+        if (false) {
+            void scope.api.voiceProviders;
+            // @ts-expect-error A client registration scope does not expose daemon registrations.
+            void scope.api.hooks;
+        }
         expect(scope.api.actions.register('connect', action)).toBeUndefined();
         expect(scope.commit()).toEqual([{
             family: 'actions',
@@ -534,7 +539,7 @@ describe('plugin registration scope targets', () => {
         expect(replacementSettingsAction).toHaveBeenCalledOnce();
     });
 
-    it('rejects undeclared Voice runtime root fields before publication', () => {
+    it('ignores undeclared Voice runtime root fields while publishing only the declared snapshot', () => {
         const scope = createSpeechScope(speechDeclaration({ roles: ['dictation_stt'] }));
         const runtime = {
             ...speechRuntime({ transcribe: true }),
@@ -542,11 +547,20 @@ describe('plugin registration scope targets', () => {
         } as unknown as VoiceProviderRuntime;
 
         scope.api.voiceProviders.register('speech', runtime);
-        expect(() => scope.commit()).toThrow(/invalid 'voiceProviders\/speech' runtime/);
-        expect(scope.registrations()).toEqual([]);
+        const [registration] = scope.commit();
+
+        expect(registration).toMatchObject({
+            family: 'voiceProviders',
+            localId: 'speech',
+            value: { kind: 'speech', transcribe: expect.any(Function) },
+        });
+        if (registration?.family !== 'voiceProviders' || registration.value.kind !== 'speech') {
+            throw new Error('Expected committed speech registration');
+        }
+        expect('undeclared' in registration.value).toBe(false);
     });
 
-    it('rejects undeclared nested Voice catalog fields before publication', () => {
+    it('ignores undeclared nested Voice catalog fields while retaining its declared callback', async () => {
         const scope = createSpeechScope(speechDeclaration({
             roles: ['dictation_stt'],
             catalog: 'models',
@@ -560,11 +574,19 @@ describe('plugin registration scope targets', () => {
         } as unknown as VoiceProviderRuntime;
 
         scope.api.voiceProviders.register('speech', runtime);
-        expect(() => scope.commit()).toThrow(/invalid 'voiceProviders\/speech' runtime/);
-        expect(scope.registrations()).toEqual([]);
+        const [registration] = scope.commit();
+
+        if (registration?.family !== 'voiceProviders' || registration.value.kind !== 'speech') {
+            throw new Error('Expected committed speech registration');
+        }
+        expect(registration.value.catalog).toEqual({ list: expect.any(Function) });
+        await expect(registration.value.catalog!.list(
+            { catalog: 'models' },
+            {} as VoiceSpeechOperationContext,
+        )).resolves.toEqual([]);
     });
 
-    it('rejects a Voice root accessor without invoking it', () => {
+    it('captures a Voice root accessor once at commit', () => {
         const scope = createSpeechScope(speechDeclaration({ roles: ['conversation_tts'] }));
         let getterCalls = 0;
         const runtime = {} as Record<string, unknown>;
@@ -587,12 +609,16 @@ describe('plugin registration scope targets', () => {
             runtime as VoiceProviderRuntime,
         )).toBeUndefined();
         expect(getterCalls).toBe(0);
-        expect(() => scope.commit()).toThrow(/invalid 'voiceProviders\/speech' runtime/);
-        expect(getterCalls).toBe(0);
-        expect(scope.registrations()).toEqual([]);
+        const [registration] = scope.commit();
+        expect(getterCalls).toBe(1);
+        expect(registration).toMatchObject({
+            family: 'voiceProviders',
+            localId: 'speech',
+            value: { kind: 'speech', synthesize: expect.any(Function) },
+        });
     });
 
-    it('rejects a nested Voice accessor without invoking it', () => {
+    it('captures a nested Voice accessor once at commit', async () => {
         const scope = createSpeechScope(speechDeclaration({
             roles: ['dictation_stt'],
             catalog: 'models',
@@ -614,12 +640,18 @@ describe('plugin registration scope targets', () => {
 
         expect(scope.api.voiceProviders.register('speech', runtime)).toBeUndefined();
         expect(getterCalls).toBe(0);
-        expect(() => scope.commit()).toThrow(/invalid 'voiceProviders\/speech' runtime/);
-        expect(getterCalls).toBe(0);
-        expect(scope.registrations()).toEqual([]);
+        const [registration] = scope.commit();
+        expect(getterCalls).toBe(1);
+        if (registration?.family !== 'voiceProviders' || registration.value.kind !== 'speech') {
+            throw new Error('Expected committed speech registration');
+        }
+        await expect(registration.value.catalog!.list(
+            { catalog: 'models' },
+            {} as VoiceSpeechOperationContext,
+        )).resolves.toEqual([]);
     });
 
-    it('rejects a symbol-keyed Voice runtime root field', () => {
+    it('ignores a symbol-keyed Voice runtime root field', () => {
         const scope = createSpeechScope(speechDeclaration({ roles: ['conversation_tts'] }));
         const runtime = {
             ...speechRuntime({ synthesize: true }),
@@ -627,11 +659,14 @@ describe('plugin registration scope targets', () => {
         } as VoiceProviderRuntime;
 
         scope.api.voiceProviders.register('speech', runtime);
-        expect(() => scope.commit()).toThrow(/invalid 'voiceProviders\/speech' runtime/);
-        expect(scope.registrations()).toEqual([]);
+        expect(scope.commit()).toEqual([{
+            family: 'voiceProviders',
+            localId: 'speech',
+            value: { kind: 'speech', synthesize: expect.any(Function) },
+        }]);
     });
 
-    it('rejects a class-based Voice runtime before it can invoke a prototype method', () => {
+    it('captures a class-based Voice runtime and retains its prototype-method receiver', async () => {
         class SpeechRuntime {
             readonly kind = 'speech' as const;
             readonly prefix = 'captured';
@@ -650,9 +685,24 @@ describe('plugin registration scope targets', () => {
         const runtime = new SpeechRuntime();
         scope.api.voiceProviders.register('speech', runtime as VoiceProviderRuntime);
 
-        expect(() => scope.commit()).toThrow(/invalid 'voiceProviders\/speech' runtime/);
-        expect(runtime.calls).toBe(0);
-        expect(scope.registrations()).toEqual([]);
+        const [registration] = scope.commit();
+        if (registration?.family !== 'voiceProviders' || registration.value.kind !== 'speech') {
+            throw new Error('Expected committed speech registration');
+        }
+        await expect(registration.value.synthesize!({
+            requestId: 'class-runtime',
+            input: 'hello',
+            model: null,
+            voiceName: 'default',
+            languageCode: null,
+            format: 'wav',
+            speakingRate: null,
+            pitch: null,
+        }, {} as VoiceSpeechOperationContext)).resolves.toMatchObject({
+            requestId: 'class-runtime',
+            mimeType: 'audio/wav',
+        });
+        expect(runtime.calls).toBe(1);
     });
 
     it.each([
@@ -665,22 +715,31 @@ describe('plugin registration scope targets', () => {
             class VoiceRuntimeArray extends Array<unknown> {}
             return Object.assign(new VoiceRuntimeArray(), speechRuntime({ synthesize: true })) as unknown as Record<string, unknown>;
         }],
-        ['an own __proto__ Voice runtime field', () => {
-            const runtime = Object.assign(Object.create(null) as Record<string, unknown>, speechRuntime({ synthesize: true }));
-            Object.defineProperty(runtime, '__proto__', {
-                configurable: true,
-                enumerable: true,
-                value: { polluted: true },
-                writable: true,
-            });
-            return runtime;
-        }],
     ])('rejects %s before publication', (_label, createRuntime) => {
         const scope = createSpeechScope(speechDeclaration({ roles: ['conversation_tts'] }));
         scope.api.voiceProviders.register('speech', createRuntime() as VoiceProviderRuntime);
 
         expect(() => scope.commit()).toThrow(/invalid 'voiceProviders\/speech' runtime/);
         expect(scope.registrations()).toEqual([]);
+    });
+
+    it('ignores an own __proto__ Voice runtime field without copying it into the host snapshot', () => {
+        const scope = createSpeechScope(speechDeclaration({ roles: ['conversation_tts'] }));
+        const runtime = Object.assign(Object.create(null) as Record<string, unknown>, speechRuntime({ synthesize: true }));
+        Object.defineProperty(runtime, '__proto__', {
+            configurable: true,
+            enumerable: true,
+            value: { polluted: true },
+            writable: true,
+        });
+
+        scope.api.voiceProviders.register('speech', runtime as VoiceProviderRuntime);
+        const [registration] = scope.commit();
+        if (registration?.family !== 'voiceProviders' || registration.value.kind !== 'speech') {
+            throw new Error('Expected committed speech registration');
+        }
+        expect(Object.getPrototypeOf(registration.value)).toBe(Object.prototype);
+        expect(Object.prototype.hasOwnProperty.call(registration.value, '__proto__')).toBe(false);
     });
 
     it('captures receiver-sensitive MCP methods and cleanup at commit', async () => {

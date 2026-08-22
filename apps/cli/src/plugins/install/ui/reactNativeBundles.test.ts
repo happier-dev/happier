@@ -1,13 +1,17 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-    classifyReactNativeBundleArtifactSource,
+    deriveReactNativeBundleRuntimeCacheKey,
     deriveReactNativeNativeCapabilitiesDigest,
-    validateInstalledReactNativeBundleArtifact,
-    type ReactNativeBundleHostRuntime,
+    type ReactNativeBundleCacheIdentity,
 } from './reactNativeBundles';
 
-const hostRuntime = {
+const NATIVE_CAPABILITIES_DIGEST = deriveReactNativeNativeCapabilitiesDigest(['clipboard', 'haptics']);
+
+const BASE_IDENTITY: ReactNativeBundleCacheIdentity = {
+    pluginId: 'acme.preview',
+    contributionId: 'native-preview',
+    artifactDigest: `sha256:${'b'.repeat(64)}`,
     hostAppVersion: '2.0.0',
     hostUiApiVersion: '1.0.0',
     reactVersion: '19.0.0',
@@ -16,198 +20,74 @@ const hostRuntime = {
     hermesVersion: '0.15.0',
     platform: 'ios',
     channel: 'internal',
-    availableNativeCapabilities: ['clipboard', 'haptics'],
+    nativeCapabilitiesDigest: NATIVE_CAPABILITIES_DIGEST,
     projectionGeneration: 12,
-} as const;
-const ARTIFACT_DIGEST = `sha256:${'b'.repeat(64)}`;
+};
 
-const artifact = {
-    id: 'native-preview-ios',
-    pluginId: 'acme.preview',
-    contributionId: 'native-preview',
-    contributionFamily: 'reactNativeBundles',
-    artifactKind: 'reactNativeBundle',
-    platform: 'ios',
-    channel: 'internal',
-    integrity: { digest: ARTIFACT_DIGEST },
-    compatibility: {
-        hostAppVersion: '2.0.0',
-        hostUiApiVersion: '1.0.0',
-        reactVersion: '19.0.0',
-        reactNativeVersion: '0.83.4',
-        expoRuntimeVersion: '0.2.0-native',
-        hermesVersion: '0.15.0',
-        supportedChannels: ['internal'],
-        nativeCapabilities: ['haptics', 'clipboard'],
-    },
-    byteSize: 1024,
-    contentType: 'application/javascript',
-    assetPath: 'react-native/native-preview/ios.bundle.js',
-} as const;
+/**
+ * One materially different value per cache-identity field. Typed as an
+ * exhaustive record so a field added to `ReactNativeBundleCacheIdentity` cannot
+ * be introduced without deciding how it varies — which is what forces the
+ * participation assertion below to cover it.
+ */
+const VARIANT_BY_FIELD: {
+    readonly [K in keyof Required<ReactNativeBundleCacheIdentity>]: Required<ReactNativeBundleCacheIdentity>[K];
+} = {
+    pluginId: 'acme.other',
+    contributionId: 'other-preview',
+    artifactDigest: `sha256:${'c'.repeat(64)}`,
+    hostAppVersion: '2.0.1',
+    hostUiApiVersion: '1.1.0',
+    reactVersion: '19.1.0',
+    reactNativeVersion: '0.84.0',
+    expoRuntimeVersion: '0.3.0-native',
+    hermesVersion: '0.16.0',
+    platform: 'android',
+    channel: 'development',
+    nativeCapabilitiesDigest: deriveReactNativeNativeCapabilitiesDigest(['clipboard']),
+    projectionGeneration: 13,
+};
 
-describe('React Native bundle install validation', () => {
-    it('accepts digest-bound installed plain-JS artifacts and derives the full runtime cache identity', () => {
-        const result = validateInstalledReactNativeBundleArtifact({
-            artifact,
-            expectedPluginId: 'acme.preview',
-            expectedContributionId: 'native-preview',
-            hostRuntime,
-        });
-
-        expect(result).toMatchObject({
-            ok: true,
-            cacheIdentity: {
-                pluginId: 'acme.preview',
-                contributionId: 'native-preview',
-                artifactDigest: ARTIFACT_DIGEST,
-                hostAppVersion: '2.0.0',
-                hostUiApiVersion: '1.0.0',
-                reactVersion: '19.0.0',
-                reactNativeVersion: '0.83.4',
-                expoRuntimeVersion: '0.2.0-native',
-                hermesVersion: '0.15.0',
-                platform: 'ios',
-                channel: 'internal',
-                nativeCapabilitiesDigest: deriveReactNativeNativeCapabilitiesDigest(['clipboard', 'haptics']),
-                projectionGeneration: 12,
-            },
-        });
-        expect(result.ok && result.cacheKey).toContain('2.0.0');
+describe('generated React Native artifact runtime identity', () => {
+    it('derives the cache key from the artifact owner and the full host runtime identity', () => {
+        expect(deriveReactNativeBundleRuntimeCacheKey(BASE_IDENTITY)).toBe([
+            'acme.preview',
+            'native-preview',
+            `sha256:${'b'.repeat(64)}`,
+            '2.0.0',
+            '1.0.0',
+            '19.0.0',
+            '0.83.4',
+            '0.2.0-native',
+            '0.15.0',
+            'ios',
+            'internal',
+            NATIVE_CAPABILITIES_DIGEST,
+            '12',
+        ].join(':'));
     });
 
-    it('accepts a platform:web installed artifact through the same integrity and compatibility pipeline', () => {
-        const webArtifact = {
-            ...artifact,
-            id: 'native-preview-web',
-            platform: 'web',
-            compatibility: {
-                hostAppVersion: '2.0.0',
-                hostUiApiVersion: '1.0.0',
-                reactVersion: '19.0.0',
-                reactNativeVersion: '0.83.4',
-                supportedChannels: ['internal'],
-                nativeCapabilities: [],
-            },
-            assetPath: 'react-native-web/native-preview/entry.mjs',
-        } as const;
+    // A field that stops participating lets two genuinely different host
+    // runtimes share one cached artifact entry, so the wrong bundle is served
+    // for the resolved runtime. The previous assertion here only matched the
+    // owner prefix and still passed with ten of the thirteen fields removed.
+    it('binds every cache-identity field into the derived runtime cache key', () => {
+        const baseKey = deriveReactNativeBundleRuntimeCacheKey(BASE_IDENTITY);
+        const fields = Object.keys(VARIANT_BY_FIELD) as ReadonlyArray<keyof ReactNativeBundleCacheIdentity>;
 
-        expect(validateInstalledReactNativeBundleArtifact({
-            artifact: webArtifact,
-            expectedPluginId: 'acme.preview',
-            expectedContributionId: 'native-preview',
-            hostRuntime: {
-                ...hostRuntime,
-                platform: 'web',
-                availableNativeCapabilities: [],
-                expoRuntimeVersion: undefined,
-                hermesVersion: undefined,
-            },
-        })).toMatchObject({
-            ok: true,
-            cacheIdentity: { platform: 'web', artifactDigest: ARTIFACT_DIGEST },
-        });
+        expect(fields.length).toBe(Object.keys(BASE_IDENTITY).length);
+        for (const field of fields) {
+            const mutated = { ...BASE_IDENTITY, [field]: VARIANT_BY_FIELD[field] };
+            expect(deriveReactNativeBundleRuntimeCacheKey(mutated), field).not.toBe(baseKey);
+        }
     });
 
-    it('fails closed for remote URLs, dev-server artifacts, Hermes bytecode, runtime mismatch, and missing capabilities', () => {
-        const validate = (
-            candidate: unknown,
-            runtime: ReactNativeBundleHostRuntime = hostRuntime,
-        ) =>
-            validateInstalledReactNativeBundleArtifact({
-                artifact: candidate,
-                expectedPluginId: 'acme.preview',
-                expectedContributionId: 'native-preview',
-                hostRuntime: runtime,
-            });
+    // `expoRuntimeVersion` / `hermesVersion` are optional and serialize as ''.
+    // An absent value must not collide with a runtime that declares one.
+    it('separates an absent optional runtime version from a declared one', () => {
+        const { expoRuntimeVersion: _expo, ...withoutExpo } = BASE_IDENTITY;
 
-        expect(validate({
-            ...artifact,
-            assetPath: undefined,
-            url: 'https://example.test/native.bundle.js',
-        })).toEqual({ ok: false, code: 'remote_url_unsupported' });
-        expect(validate({
-            ...artifact,
-            integrity: undefined,
-            channel: 'development',
-            assetPath: undefined,
-            devUrl: 'http://127.0.0.1:8082/native.bundle.js',
-        }, {
-            ...hostRuntime,
-            channel: 'development',
-        })).toEqual({ ok: false, code: 'dev_hot_reload_not_installable' });
-        expect(validate({
-            ...artifact,
-            contentType: 'application/x-hermes-bytecode',
-            assetPath: 'react-native/native-preview/ios.hbc',
-        })).toEqual({ ok: false, code: 'hermes_bytecode_unsupported' });
-        expect(validate(artifact, {
-            ...hostRuntime,
-            reactNativeVersion: '0.82.0',
-        })).toEqual({ ok: false, code: 'runtime_mismatch' });
-        expect(validate(artifact, {
-            ...hostRuntime,
-            availableNativeCapabilities: ['clipboard'],
-        })).toEqual({ ok: false, code: 'missing_native_capability' });
-    });
-
-    it('uses supportedChannels as the sole channel-compatibility authority', () => {
-        const developmentResult = validateInstalledReactNativeBundleArtifact({
-            artifact: {
-                ...artifact,
-                compatibility: {
-                    ...artifact.compatibility,
-                    supportedChannels: ['internal', 'development'],
-                },
-            },
-            expectedPluginId: 'acme.preview',
-            expectedContributionId: 'native-preview',
-            hostRuntime: { ...hostRuntime, channel: 'development' },
-        });
-        const internalResult = validateInstalledReactNativeBundleArtifact({
-            artifact: {
-                ...artifact,
-                compatibility: {
-                    ...artifact.compatibility,
-                    supportedChannels: ['internal', 'development'],
-                },
-            },
-            expectedPluginId: 'acme.preview',
-            expectedContributionId: 'native-preview',
-            hostRuntime,
-        });
-        expect(developmentResult).toMatchObject({ ok: true, cacheIdentity: { channel: 'development' } });
-        expect(internalResult).toMatchObject({ ok: true, cacheIdentity: { channel: 'internal' } });
-        expect(developmentResult.ok && internalResult.ok && developmentResult.cacheKey)
-            .not.toBe(internalResult.ok ? internalResult.cacheKey : null);
-
-        expect(validateInstalledReactNativeBundleArtifact({
-            artifact,
-            expectedPluginId: 'acme.preview',
-            expectedContributionId: 'native-preview',
-            hostRuntime: { ...hostRuntime, channel: 'development' },
-        })).toEqual({ ok: false, code: 'channel_unsupported' });
-
-        const { supportedChannels: _supportedChannels, ...compatibilityWithoutChannels } = artifact.compatibility;
-        void _supportedChannels;
-        expect(validateInstalledReactNativeBundleArtifact({
-            artifact: { ...artifact, compatibility: compatibilityWithoutChannels },
-            expectedPluginId: 'acme.preview',
-            expectedContributionId: 'native-preview',
-            hostRuntime,
-        })).toEqual({ ok: false, code: 'channel_unsupported' });
-    });
-
-    it('classifies dev hot reload as local development only and never as installed loading', () => {
-        expect(classifyReactNativeBundleArtifactSource({
-            ...artifact,
-            channel: 'development',
-            devUrl: 'http://127.0.0.1:8082/native.bundle.js',
-        })).toEqual({ kind: 'devHotReload' });
-        expect(classifyReactNativeBundleArtifactSource({
-            ...artifact,
-            url: 'https://example.test/native.bundle.js',
-            assetPath: undefined,
-        })).toEqual({ kind: 'remoteUnsupported' });
-        expect(classifyReactNativeBundleArtifactSource(artifact)).toEqual({ kind: 'installedArtifact' });
+        expect(deriveReactNativeBundleRuntimeCacheKey(withoutExpo))
+            .not.toBe(deriveReactNativeBundleRuntimeCacheKey(BASE_IDENTITY));
     });
 });

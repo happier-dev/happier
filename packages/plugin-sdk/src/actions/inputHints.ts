@@ -12,9 +12,9 @@ import type {
   ActionInputOption,
   ActionInputOptionValue,
   ActionInputPredicate,
-  ActionSpec,
   EffectiveActionInputField,
 } from './actionTypeMap.generated.js';
+import type { ActionSpec } from './service.js';
 
 export type {
   ActionInputFieldHint,

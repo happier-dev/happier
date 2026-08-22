@@ -186,6 +186,36 @@ function readReviewSummaryInput(input: unknown): ReviewSummaryInput {
     return { transcript, maxBullets };
 }
 
+type ExternalSessionDigestEntry = Readonly<{
+    title: string;
+    agentTurns: number;
+    userTurns: number;
+    truncated: boolean;
+}>;
+
+const DEFAULT_EXTERNAL_SESSION_DIGEST_CANDIDATES = 3;
+const DEFAULT_EXTERNAL_SESSION_DIGEST_ITEMS = 20;
+
+function readExternalSessionDigestInput(value: unknown): Readonly<{
+    agentId: string | null;
+    maxCandidates: number;
+    maxItemsPerCandidate: number;
+}> {
+    const record = typeof value === 'object' && value !== null && !Array.isArray(value)
+        ? value as Record<string, unknown>
+        : {};
+    const agentId = typeof record.agentId === 'string' && record.agentId.trim().length > 0
+        ? record.agentId.trim()
+        : null;
+    const maxCandidates = typeof record.maxCandidates === 'number' && Number.isInteger(record.maxCandidates)
+        ? Math.min(Math.max(record.maxCandidates, 1), 10)
+        : DEFAULT_EXTERNAL_SESSION_DIGEST_CANDIDATES;
+    const maxItemsPerCandidate = typeof record.maxItems === 'number' && Number.isInteger(record.maxItems)
+        ? Math.min(Math.max(record.maxItems, 1), 50)
+        : DEFAULT_EXTERNAL_SESSION_DIGEST_ITEMS;
+    return { agentId, maxCandidates, maxItemsPerCandidate };
+}
+
 export const runReviewSummary: ActionRegistrationHandler = async (value, context) => {
     await context.ui?.status.set('review-summary', 'Summarizing review…');
     const input = readReviewSummaryInput(value);
@@ -204,6 +234,57 @@ export const runReviewSummary: ActionRegistrationHandler = async (value, context
     } finally {
         await context.ui?.status.set('review-summary', null);
     }
+};
+
+/**
+ * The External Sessions consumer path, exercised for real rather than stubbed.
+ *
+ * The host answers availability, owns the candidate inventory and owns the
+ * transcript page; this Action only asks, filters on the capability the host
+ * published for each candidate, and projects a bounded digest. It constructs no
+ * `ExternalSessionRef` of its own — a ref is host-issued and is only ever
+ * carried back from `list`.
+ */
+export const runExternalSessionDigest: ActionRegistrationHandler = async (value, context) => {
+    const input = readExternalSessionDigestInput(value);
+    const external = context.services.sessions.external;
+
+    const capabilities = await external.capabilities({ signal: context.signal });
+    if (capabilities.list.status !== 'available') {
+        return { outcome: 'unavailable', reason: capabilities.list.code, entries: [] };
+    }
+
+    const page = await external.list(
+        {
+            ...(input.agentId ? { agentId: input.agentId } : {}),
+            limit: input.maxCandidates,
+        },
+        { signal: context.signal },
+    );
+    const readable = page.items.filter((item) => item.capabilities.includes('transcript'));
+    if (readable.length === 0) {
+        return { outcome: 'no_readable_candidate', reason: null, entries: [] };
+    }
+
+    const entries: ExternalSessionDigestEntry[] = [];
+    for (const candidate of readable.slice(0, input.maxCandidates)) {
+        const transcript = await external.readTranscript(
+            candidate.ref,
+            { mode: 'page', direction: 'older', limit: input.maxItemsPerCandidate },
+            { signal: context.signal },
+        );
+        // Only the paged arm carries items; every `readAfter` outcome is a
+        // different question and is deliberately not flattened into one shape.
+        if (transcript.mode !== 'page') continue;
+        entries.push({
+            title: candidate.title ?? 'Untitled external session',
+            agentTurns: transcript.items.filter((item) => item.kind === 'agent').length,
+            userTurns: transcript.items.filter((item) => item.kind === 'user').length,
+            truncated: transcript.truncated === true || transcript.hasMore === true,
+        });
+    }
+
+    return { outcome: 'read', reason: null, entries };
 };
 
 export const observeSessionSpawned: HookRegistrationHandler = async (

@@ -5,7 +5,7 @@ import {
 import type { AgentCatalogDefinition } from '@happier-dev/agents';
 import type { PluginContributionIdentityV1 } from '@happier-dev/protocol';
 
-import type { CommandHandler } from '@/cli/commandRegistry';
+import { createAgentRuntimeCatalogEntryHooks } from '../agentCatalogEntryHooks';
 import type {
     ResolvedAgentContribution,
     ResolvedCatalogEntry,
@@ -19,22 +19,6 @@ export type BundledAgentImplementationBinding = Readonly<{
 }>;
 
 type CatalogHookFactory = () => Partial<ResolvedCatalogEntry>;
-
-function createCliCommandHandler(agentId: string): () => Promise<CommandHandler> {
-    return async () => {
-        const { runBackendSessionCliCommand } = await import('@/cli/runBackendSessionCliCommand');
-        return async (context) => {
-            await runBackendSessionCliCommand({
-                context,
-                backendIdForSessionRuntime: agentId,
-                runtimeAuthorityAgentId: agentId,
-                agentIdForAccountSettings: agentId as Parameters<
-                    typeof runBackendSessionCliCommand
-                >[0]['agentIdForAccountSettings'],
-            });
-        };
-    };
-}
 
 function readCatalogHookFactory(binding: BundledAgentImplementationBinding): CatalogHookFactory {
     if (binding.registrationFamily !== 'agents' || typeof binding.implementation !== 'function') {
@@ -134,7 +118,17 @@ export function projectBuiltInAgents(params: Readonly<{
             ...(manifestContribution.catalogEntry ?? {}),
             id: definition.id,
             cliSubcommand: catalogDefinition.core.cliSubcommand,
-            getCliCommandHandler: createCliCommandHandler(definition.id),
+            // Host-owned canonical identity for `happy <agent>`: the bundled
+            // manifest may declare the Agent under a differently cased local id,
+            // and the review Agents declare no session capability at all, so the
+            // manifest projection alone would drop or mis-key their command. The
+            // command itself is still built by the one catalog-entry hook owner,
+            // and a plugin runtime contribution below still overrides it.
+            ...createAgentRuntimeCatalogEntryHooks({
+                agentId: definition.id,
+                packageName: manifestContribution.pluginId ?? definition.id,
+                contribution: { cliSessionCommand: {} },
+            })(),
             vendorResumeSupport: catalogDefinition.core.resume.vendorResume,
             ...(implementation ? implementation.createHooks() : {}),
         });

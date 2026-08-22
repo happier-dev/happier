@@ -124,6 +124,30 @@ describe('defineProtocolJsonValue', () => {
         expect(terminal).toBe('leaf');
     });
 
+    it('keeps lone-surrogate JSON authoring and host validation aligned', () => {
+        const providerConfig = { '\uD800': '\uDC00' };
+        const serializedBytes = new TextEncoder().encode(JSON.stringify(providerConfig)).byteLength;
+        const schema = defineProtocolObject({
+            providerConfig: defineProtocolJsonValue({ maxSerializedUtf8Bytes: serializedBytes }),
+        }, { policy: 'closed' });
+        const validates = compilePluginJsonSchema(schema.jsonSchema);
+
+        expect(schema.safeParse({ providerConfig })).toEqual({
+            success: true,
+            data: { providerConfig },
+        });
+        expect(isValidPluginJsonSchemaValue(validates, { providerConfig })).toBe(true);
+
+        const tooSmall = defineProtocolObject({
+            providerConfig: defineProtocolJsonValue({ maxSerializedUtf8Bytes: serializedBytes - 1 }),
+        }, { policy: 'closed' });
+        expect(tooSmall.safeParse({ providerConfig }).success).toBe(false);
+        expect(isValidPluginJsonSchemaValue(
+            compilePluginJsonSchema(tooSmall.jsonSchema),
+            { providerConfig },
+        )).toBe(false);
+    });
+
     it('projects an owner-declared serialized UTF-8 ceiling into the host compiler', () => {
         const maximumBytes = 48 * 1024;
         const schema = defineProtocolObject({

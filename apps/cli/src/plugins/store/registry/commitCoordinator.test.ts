@@ -1,5 +1,4 @@
-import { createHash } from 'node:crypto';
-import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -55,22 +54,17 @@ import {
   prepareImmutablePluginGeneration,
   type PluginInstallationStateRevision,
 } from './generationStore';
-import { createPendingGenerationHealthRecord } from './healthPolicy';
 
-const digest = (value: string) => `sha256:${createHash('sha256').update(value).digest('hex')}` as const;
 const nextStateRevision: PluginInstallationStateRevision = {
   t: 'happier_plugin_installations_v1',
   schemaVersion: 1,
   revisionId: 'state-1',
   createdAtMs: 1,
   plugins: {},
-  health: {},
   rollbackRetention: [],
-  healthTombstones: [],
 };
 const nextStateReference = {
   revisionId: nextStateRevision.revisionId,
-  digest: digest(JSON.stringify(nextStateRevision, null, 2)),
 };
 
 function createNext(current: PluginRegistryCommitRecord, transactionId: string): PluginRegistryCommitRecord {
@@ -84,11 +78,13 @@ function createNext(current: PluginRegistryCommitRecord, transactionId: string):
   };
 }
 
+
 async function bootstrap(happyHomeDir: string): Promise<ReturnType<typeof resolvePluginStorePaths>> {
   const paths = resolvePluginStorePaths({ happyHomeDir });
   const coordinator = createPluginRegistryCommitCoordinator({ paths, owner: { pid: 100, instanceId: 'daemon-bootstrap' } });
   const result = await coordinator.commit({
     transactionId: 'bootstrap', baseRevision: null,
+    expectedCurrent: null,
     buildNext: () => createEmptyPluginRegistryCommitRecord({
       transactionId: 'bootstrap', createdAtMs: 1, creatorInstanceId: 'daemon-bootstrap', creatorPid: 100,
     }),
@@ -169,9 +165,10 @@ describe('PluginRegistryCommitCoordinator', () => {
       owner: { pid: 101, instanceId: 'daemon-a' },
       isProcessAlive: (pid) => pid === 101,
     });
+    const expectedCurrent = await readPluginRegistryCommitRecord(paths);
 
-    const firstPromise = coordinator.commit({ transactionId: 'tx-a', baseRevision: 0, buildNext: (current) => createNext(current!, 'tx-a') });
-    const samePromise = coordinator.commit({ transactionId: 'tx-a', baseRevision: 0, buildNext: (current) => createNext(current!, 'tx-a') });
+    const firstPromise = coordinator.commit({ transactionId: 'tx-a', baseRevision: 0, expectedCurrent, buildNext: (current) => createNext(current!, 'tx-a') });
+    const samePromise = coordinator.commit({ transactionId: 'tx-a', baseRevision: 0, expectedCurrent, buildNext: (current) => createNext(current!, 'tx-a') });
 
     expect(samePromise).not.toBe(firstPromise);
     const [firstResult, sameIdResult] = await Promise.all([firstPromise, samePromise]);
@@ -181,10 +178,11 @@ describe('PluginRegistryCommitCoordinator', () => {
     expect(committed).toMatchObject({ status: 'committed', record: { revision: 1 } });
     expect(conflict).toEqual({ status: 'conflict', expectedRevision: 0, actualRevision: 1 });
     const completedRetryBuilder = vi.fn(() => { throw new Error('stale builders must not run'); });
-    await expect(coordinator.commit({ transactionId: 'tx-a', baseRevision: 0, buildNext: completedRetryBuilder })).resolves
+    await expect(coordinator.commit({ transactionId: 'tx-a', baseRevision: 0, expectedCurrent: await readPluginRegistryCommitRecord(paths), buildNext: completedRetryBuilder })).resolves
       .toEqual({ status: 'conflict', expectedRevision: 0, actualRevision: 1 });
     expect(completedRetryBuilder).not.toHaveBeenCalled();
   });
+
 
   it('recovers a lock immediately when its process owner is proven dead and fences the displaced owner', async () => {
     const happyHomeDir = await import('node:fs/promises').then(({ mkdtemp }) => mkdtemp(join(tmpdir(), 'happier-registry-stale-lock-')));
@@ -202,8 +200,9 @@ describe('PluginRegistryCommitCoordinator', () => {
       isProcessAlive: () => false,
       sleep: async () => undefined,
     });
+    const expectedCurrent = await readPluginRegistryCommitRecord(paths);
 
-    await expect(coordinator.commit({ transactionId: 'tx-stale', baseRevision: 0, buildNext: (current) => createNext(current!, 'tx-stale') }))
+    await expect(coordinator.commit({ transactionId: 'tx-stale', baseRevision: 0, expectedCurrent, buildNext: (current) => createNext(current!, 'tx-stale') }))
       .resolves.toMatchObject({ status: 'committed', record: { revision: 1 } });
     await expect(readFile(paths.registryCommitLockFilePath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
   });
@@ -214,7 +213,8 @@ describe('PluginRegistryCommitCoordinator', () => {
     const abort = new AbortController();
     abort.abort();
     const coordinator = createPluginRegistryCommitCoordinator({ paths, owner: { pid: 103, instanceId: 'daemon-c' } });
-    await expect(coordinator.commit({ transactionId: 'tx-abort', baseRevision: 0, signal: abort.signal, buildNext: (current) => createNext(current!, 'tx-abort') }))
+    const expectedCurrent = await readPluginRegistryCommitRecord(paths);
+    await expect(coordinator.commit({ transactionId: 'tx-abort', baseRevision: 0, expectedCurrent, signal: abort.signal, buildNext: (current) => createNext(current!, 'tx-abort') }))
       .resolves.toEqual({ status: 'aborted', reason: 'signal' });
 
     const fenced = createPluginRegistryCommitCoordinator({
@@ -225,7 +225,7 @@ describe('PluginRegistryCommitCoordinator', () => {
         await writeFile(paths.registryCommitLockFilePath, JSON.stringify({ ...lock, token: 'replacement-token' }), 'utf8');
       },
     });
-    await expect(fenced.commit({ transactionId: 'tx-fenced', baseRevision: 0, buildNext: (current) => createNext(current!, 'tx-fenced') }))
+    await expect(fenced.commit({ transactionId: 'tx-fenced', baseRevision: 0, expectedCurrent, buildNext: (current) => createNext(current!, 'tx-fenced') }))
       .rejects.toThrow(/fenc/i);
     await expect(readPluginRegistryCommitRecord(paths)).resolves.toMatchObject({ revision: 0, transactionId: 'bootstrap' });
   });
@@ -240,7 +240,7 @@ describe('PluginRegistryCommitCoordinator', () => {
       flushCommit,
     });
 
-    await expect(coordinator.commit({ transactionId: 'tx-post-replace', baseRevision: 0, buildNext: (current) => createNext(current!, 'tx-post-replace') }))
+    await expect(coordinator.commit({ transactionId: 'tx-post-replace', baseRevision: 0, expectedCurrent: await readPluginRegistryCommitRecord(paths), buildNext: (current) => createNext(current!, 'tx-post-replace') }))
       .resolves.toMatchObject({
         status: 'committed_durability_pending',
         record: { revision: 1, transactionId: 'tx-post-replace' },
@@ -262,6 +262,7 @@ describe('PluginRegistryCommitCoordinator', () => {
     await expect(coordinator.commit({
       transactionId: 'tx-canonical',
       baseRevision: 0,
+      expectedCurrent: await readPluginRegistryCommitRecord(paths),
       buildNext: (current) => {
         const next = createNext(current!, 'tx-canonical');
         return {
@@ -291,6 +292,7 @@ describe('PluginRegistryCommitCoordinator', () => {
     await expect(coordinator.commit({
       transactionId: 'tx-operation',
       baseRevision: 0,
+      expectedCurrent: await readPluginRegistryCommitRecord(paths),
       buildNext: (current) => createNext(current!, 'tx-record'),
     })).rejects.toThrow(/transaction id/i);
     await expect(readPluginRegistryCommitRecord(paths)).resolves.toMatchObject({ revision: 0, transactionId: 'bootstrap' });
@@ -304,13 +306,12 @@ describe('PluginRegistryCommitCoordinator', () => {
     await expect(coordinator.commit({
       transactionId: 'tx-missing-generation',
       baseRevision: 0,
+      expectedCurrent: await readPluginRegistryCommitRecord(paths),
       buildNext: (current) => ({
         ...createNext(current!, 'tx-missing-generation'),
         pluginGenerations: {
           'acme.plugin': {
             immutableGenerationId: 'generation-retired',
-            generationRecordDigest: `sha256:${'3'.repeat(64)}`,
-            installedArtifactRecord: { relativePath: 'daemon.mjs', digest: `sha256:${'4'.repeat(64)}` },
           },
         },
       }),
@@ -318,7 +319,7 @@ describe('PluginRegistryCommitCoordinator', () => {
     await expect(readPluginRegistryCommitRecord(paths)).resolves.toMatchObject({ revision: 0 });
   });
 
-  it('re-verifies referenced immutable bytes immediately before publication', async () => {
+  it('re-validates referenced immutable generation structure immediately before publication', async () => {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-registry-prepublication-bytes-'));
     const sourceRootPath = await mkdtemp(join(tmpdir(), 'happier-registry-prepublication-source-'));
     const paths = await bootstrap(happyHomeDir);
@@ -332,14 +333,9 @@ describe('PluginRegistryCommitCoordinator', () => {
         schemaVersion: 1,
         pluginId: 'acme.plugin',
         immutableGenerationId: 'generation-current',
-        fingerprint: digest('fingerprint'),
-        packageDigest: digest('package'),
-        manifestDigest: digest('manifest'),
-        runtimeDigest: digest('runtime'),
-        installedUiArtifactDigest: digest('ui'),
         createdAtMs: 1,
-        files: [{ relativePath: 'daemon.mjs', byteLength: Buffer.byteLength(bytes), digest: digest(bytes) }],
-        installedArtifactRecord: { relativePath: 'daemon.mjs', digest: digest(bytes) },
+        files: [{ relativePath: 'daemon.mjs', byteLength: Buffer.byteLength(bytes) }],
+        manifestRelativePath: 'daemon.mjs',
       },
     });
     const state: PluginInstallationStateRevision = {
@@ -358,40 +354,32 @@ describe('PluginRegistryCommitCoordinator', () => {
           },
           source: {
             distribution: { kind: 'localPath', canonicalPath: '/tmp/acme-plugin' },
-            admittedIntegrity: digest('source'),
           },
           updatePolicy: 'manual',
           optionalAccess: [],
         },
       },
-      health: {
-        'generation-current': createPendingGenerationHealthRecord({
-          pluginId: 'acme.plugin',
-          immutableGenerationId: 'generation-current',
-          fingerprint: digest('generation-current'),
-        }),
-      },
       rollbackRetention: [],
-      healthTombstones: [],
     };
     const installationState = await persistInstallationStateRevision({ paths, state });
     const coordinator = createPluginRegistryCommitCoordinator({
       paths,
       owner: { pid: 109, instanceId: 'daemon-i' },
       beforeReplace: async () => {
-        await writeFile(join(paths.generationsDir, 'generation-current', 'daemon.mjs'), 'tampered', 'utf8');
+        await rm(join(paths.generationsDir, 'generation-current', 'daemon.mjs'));
       },
     });
 
     await expect(coordinator.commit({
       transactionId: 'tx-prepublication-bytes',
       baseRevision: 0,
+      expectedCurrent: await readPluginRegistryCommitRecord(paths),
       buildNext: (current) => ({
         ...createNext(current!, 'tx-prepublication-bytes'),
         installationState,
         pluginGenerations: { 'acme.plugin': prepared.reference },
       }),
-    })).rejects.toThrow(/digest|byte length/i);
+    })).rejects.toThrow(/manifest|required|missing/i);
     await expect(readPluginRegistryCommitRecord(paths)).resolves.toMatchObject({ revision: 0, transactionId: 'bootstrap' });
   });
 });

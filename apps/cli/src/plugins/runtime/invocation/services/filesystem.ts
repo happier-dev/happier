@@ -1,9 +1,11 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { lstat, mkdir, open, readdir, realpath, rename, rm, stat as nodeStat, unlink } from 'node:fs/promises';
-import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
+import { dirname, isAbsolute, resolve } from 'node:path';
 
-import { PluginError } from '@happier-dev/plugin-sdk';
-import { type PluginFileSystemService, type PluginPath } from '@happier-dev/plugin-sdk/runtime';
+import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
+import { type FileSystemService } from '@happier-dev/plugin-sdk/fs';
+import { type PluginPath } from '@happier-dev/plugin-sdk';
+import { isCanonicalAbsolutePathInsideRoot } from '@/utils/path/expandHomeDirPath';
 
 const MAX_IO_BYTES = 16 * 1024 * 1024;
 const MAX_LIST_ITEMS = 100;
@@ -11,13 +13,19 @@ const MAX_CURSOR_CHARS = 96;
 const WINDOWS_RESERVED_NAME = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/iu;
 type Access = 'read' | 'write' | 'delete';
 export type PluginFileSystemScope = Readonly<{ root: PluginPath['root']; projectId?: string; pathPrefix?: string; access: readonly Access[] }>;
+export type PluginFileSystemDisclosureMismatch = Readonly<{
+  root: PluginPath['root'];
+  projectId?: string;
+  relativePath: string;
+  access: Access;
+}>;
 
 function fail(code: string, message: string): never {
   throw new PluginError({ code, message });
 }
 
 function translateFileSystemError(error: unknown): never {
-  if (error instanceof PluginError) throw error;
+  if (isPluginError(error)) throw error;
   const code = typeof error === 'object' && error !== null && 'code' in error && typeof error.code === 'string'
     ? error.code
     : '';
@@ -64,7 +72,7 @@ function normalizedRelativePath(value: string): string {
   return parts.join('/');
 }
 
-export function isPluginPathAuthorizedByScope(
+export function isPluginPathCoveredByDisclosure(
   path: PluginPath,
   scopes: readonly PluginFileSystemScope[],
   access: Access,
@@ -75,11 +83,6 @@ export function isPluginPathAuthorizedByScope(
     const prefix = scope.pathPrefix ? normalizedRelativePath(scope.pathPrefix) : '';
     return scope.access.includes(access) && (!prefix || relativePath === prefix || relativePath.startsWith(`${prefix}/`));
   });
-}
-
-function isWithin(root: string, candidate: string): boolean {
-  const rel = relative(root, candidate);
-  return rel === '' || (!rel.startsWith(`..${sep}`) && rel !== '..' && !isAbsolute(rel));
 }
 
 export function resolvePluginPathWithinRoots(
@@ -94,8 +97,37 @@ export function resolvePluginPathWithinRoots(
       : roots.projects.get(path.projectId) ?? fail('plugin_fs_root_unavailable', 'Project root is unavailable');
   const root = resolve(rawRoot);
   const candidate = resolve(root, relativePath);
-  if (!isWithin(root, candidate)) fail('plugin_fs_path_denied', 'Filesystem path escapes its root');
+  if (!isCanonicalAbsolutePathInsideRoot(root, candidate)) fail('plugin_fs_path_denied', 'Filesystem path escapes its root');
   return candidate;
+}
+
+export async function isCanonicalPathAuthorizedByPluginFileSystemScopes(params: Readonly<{
+  roots: Readonly<{ pluginData: string; workspace: string; projects: ReadonlyMap<string, string> }>;
+  scopes: readonly PluginFileSystemScope[];
+  canonicalPath: string;
+  access: Access;
+}>): Promise<boolean> {
+  if (!isAbsolute(params.canonicalPath)) return false;
+  const verifiedCanonicalPath = await realpath(params.canonicalPath).catch(() => null);
+  if (!verifiedCanonicalPath || resolve(verifiedCanonicalPath) !== resolve(params.canonicalPath)) return false;
+  for (const scope of params.scopes) {
+    if (!scope.access.includes(params.access)) continue;
+    try {
+      const relativePath = normalizedRelativePath(scope.pathPrefix ?? '');
+      const path: PluginPath = scope.root === 'project'
+        ? { root: 'project', projectId: scope.projectId ?? '', relativePath }
+        : { root: scope.root, relativePath };
+      const authorizedRoot = resolvePluginPathWithinRoots(params.roots, path);
+      const canonicalAuthorizedRoot = await realpath(authorizedRoot).catch(() => null);
+      if (
+        canonicalAuthorizedRoot
+        && isCanonicalAbsolutePathInsideRoot(canonicalAuthorizedRoot, verifiedCanonicalPath)
+      ) return true;
+    } catch {
+      // An invalid or unavailable declared scope is not authority.
+    }
+  }
+  return false;
 }
 
 function cursorFingerprint(path: PluginPath, relativePath: string, offset: number): string {
@@ -134,7 +166,8 @@ export function createPluginFileSystemService(params: Readonly<{
   scopes: readonly PluginFileSystemScope[];
   signal: AbortSignal;
   isGenerationCurrent(): boolean;
-}>): PluginFileSystemService {
+  recordDisclosureMismatch?(mismatch: PluginFileSystemDisclosureMismatch): void;
+}>): FileSystemService {
   function guard(signal?: AbortSignal): void {
     if (!params.isGenerationCurrent()) fail('plugin_generation_stale', 'Plugin generation is stale');
     if (params.signal.aborted || signal?.aborted) fail('plugin_fs_aborted', 'Filesystem operation was aborted');
@@ -144,11 +177,21 @@ export function createPluginFileSystemService(params: Readonly<{
     if (path.root === 'workspace') return params.roots.workspace;
     return params.roots.projects.get(path.projectId) ?? fail('plugin_fs_root_unavailable', 'Project root is unavailable');
   }
-  function authorize(path: PluginPath, access: Access): { root: string; relativePath: string; absolutePath: string } {
+  function resolveOperationPath(path: PluginPath, access: Access): { root: string; relativePath: string; absolutePath: string } {
     const relativePath = normalizedRelativePath(path.relativePath);
-    const allowed = isPluginPathAuthorizedByScope(path, params.scopes, access);
-    if (!allowed) fail('plugin_fs_access_denied', 'Filesystem scope is not authorized');
     const root = resolve(rootFor(path));
+    if (!isPluginPathCoveredByDisclosure(path, params.scopes, access)) {
+      try {
+        params.recordDisclosureMismatch?.({
+          root: path.root,
+          ...(path.root === 'project' ? { projectId: path.projectId } : {}),
+          relativePath,
+          access,
+        });
+      } catch {
+        // Cooperative-disclosure diagnostics cannot alter filesystem semantics.
+      }
+    }
     const absolutePath = resolvePluginPathWithinRoots(params.roots, path);
     return { root, relativePath, absolutePath };
   }
@@ -162,13 +205,17 @@ export function createPluginFileSystemService(params: Readonly<{
         if (!allowMissing) fail('plugin_fs_not_found', 'Filesystem path does not exist');
         return;
       }
-      if (matches.length !== 1 || matches[0] !== segment) {
+      const matchedEntry = matches[0]!;
+      if (
+        matches.length !== 1
+        || matchedEntry.normalize('NFC') !== segment.normalize('NFC')
+      ) {
         fail('plugin_fs_case_collision', 'Filesystem path has a case or Unicode collision');
       }
-      current = resolve(current, segment);
+      current = resolve(current, matchedEntry);
       const canonicalRoot = await realpath(root).catch(() => fail('plugin_fs_root_unavailable', 'Filesystem root is unavailable'));
       const canonicalCurrent = await realpath(current).catch(() => fail('plugin_fs_not_found', 'Filesystem path does not exist'));
-      if (!isWithin(canonicalRoot, canonicalCurrent)) {
+      if (!isCanonicalAbsolutePathInsideRoot(canonicalRoot, canonicalCurrent)) {
         fail('plugin_fs_path_denied', 'Filesystem path resolves outside its root');
       }
     }
@@ -182,12 +229,14 @@ export function createPluginFileSystemService(params: Readonly<{
       checked = dirname(candidate);
     }
     const canonical = await realpath(checked).catch(() => fail('plugin_fs_not_found', 'Filesystem path does not exist'));
-    if (!isWithin(canonicalRoot, canonical)) fail('plugin_fs_path_denied', 'Filesystem path resolves outside its root');
+    if (!isCanonicalAbsolutePathInsideRoot(canonicalRoot, canonical)) {
+      fail('plugin_fs_path_denied', 'Filesystem path resolves outside its root');
+    }
   }
-  const implementation: PluginFileSystemService = {
+  const implementation: FileSystemService = {
     async readFile(path, options) {
       guard(options?.signal);
-      const target = authorize(path, 'read');
+      const target = resolveOperationPath(path, 'read');
       await assertContained(target.root, target.relativePath, target.absolutePath, false);
       const handle = await open(target.absolutePath, 'r');
       try {
@@ -211,7 +260,7 @@ export function createPluginFileSystemService(params: Readonly<{
     async writeFile(path, data, options) {
       guard(options?.signal);
       if (!(data instanceof Uint8Array) || data.byteLength > MAX_IO_BYTES) fail('plugin_fs_too_large', 'Filesystem write exceeds byte limit');
-      const target = authorize(path, 'write');
+      const target = resolveOperationPath(path, 'write');
       if (!target.relativePath) fail('plugin_fs_path_denied', 'Filesystem write target must name a file');
       await assertContained(target.root, target.relativePath, target.absolutePath, true);
       const existing = await lstat(target.absolutePath).catch((error: unknown) => {
@@ -240,7 +289,7 @@ export function createPluginFileSystemService(params: Readonly<{
     },
     async stat(path, options) {
       guard(options?.signal);
-      const target = authorize(path, 'read');
+      const target = resolveOperationPath(path, 'read');
       await assertContained(target.root, target.relativePath, target.absolutePath, false);
       const info = await nodeStat(target.absolutePath);
       if (!info.isFile() && !info.isDirectory()) fail('plugin_fs_unsupported_kind', 'Filesystem entry kind is unsupported');
@@ -249,7 +298,7 @@ export function createPluginFileSystemService(params: Readonly<{
     },
     async list(path, options) {
       guard(options?.signal);
-      const target = authorize(path, 'read');
+      const target = resolveOperationPath(path, 'read');
       await assertContained(target.root, target.relativePath, target.absolutePath, false);
       const directoryInfo = await nodeStat(target.absolutePath);
       if (!directoryInfo.isDirectory()) fail('plugin_fs_unsupported_kind', 'Filesystem entry kind is unsupported');
@@ -271,7 +320,7 @@ export function createPluginFileSystemService(params: Readonly<{
     },
     async remove(path, options) {
       guard(options?.signal);
-      const target = authorize(path, 'delete');
+      const target = resolveOperationPath(path, 'delete');
       if (!target.relativePath) fail('plugin_fs_path_denied', 'Filesystem root cannot be removed');
       await assertContained(target.root, target.relativePath, target.absolutePath, false);
       const info = await lstat(target.absolutePath);
@@ -283,7 +332,7 @@ export function createPluginFileSystemService(params: Readonly<{
       await rm(target.absolutePath, { recursive: options?.recursive === true, force: false });
     },
   };
-  const service: PluginFileSystemService = {
+  const service: FileSystemService = {
     readFile: (path, options) => withStableFileSystemErrors(() => implementation.readFile(path, options)),
     writeFile: (path, data, options) => withStableFileSystemErrors(() => implementation.writeFile(path, data, options)),
     stat: (path, options) => withStableFileSystemErrors(() => implementation.stat(path, options)),

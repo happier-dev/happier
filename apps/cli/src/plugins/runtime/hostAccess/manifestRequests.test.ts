@@ -67,6 +67,35 @@ describe('resolveManifestHostAccessRequests', () => {
                 required: true,
             },
         ]);
+
+        expect(resolveManifestHostAccessRequests({
+            manifest: pluginManifest,
+            pluginId: pluginManifest.id,
+            contribution: { family: 'resources', localId: 'live-status' },
+            requestIds: ['required-account'],
+        })).toEqual([{
+            request: pluginManifest.hostAccess.required[0],
+            required: true,
+        }]);
+    });
+
+    it('gives background services the plugin generation\'s full normalized HostAccess declaration', () => {
+        const pluginManifest = manifest();
+
+        expect(resolveManifestHostAccessRequests({
+            manifest: pluginManifest,
+            pluginId: pluginManifest.id,
+            contribution: { family: 'backgroundServices', localId: 'account-supervisor' },
+        })).toEqual([
+            {
+                request: pluginManifest.hostAccess.required[0],
+                required: true,
+            },
+            {
+                request: pluginManifest.hostAccess.optional[0],
+                required: false,
+            },
+        ]);
     });
 
     it('fails closed when a contribution references a missing request id', () => {

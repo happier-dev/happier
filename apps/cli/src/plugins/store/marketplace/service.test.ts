@@ -91,6 +91,33 @@ describe('createMarketplaceIndexService', () => {
     await expect(createMarketplaceIndexService({ happyHomeDir: home }).querySources({ filters: {} }, sources)).rejects.toThrow(/source.*limit|65/i);
   });
 
+  it('projects loader failures before returning the outward marketplace query schema', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'happier-marketplace-service-'));
+    homes.push(home);
+    const service = createMarketplaceIndexService({
+      happyHomeDir: home,
+      loadSource: async () => {
+        throw new Error(
+          `client_secret=marketplace-service-secret at C:\\Users\\alice\\private\\catalog.json ${'🙂'.repeat(1_200)}`,
+        );
+      },
+    });
+    const result = await service.querySources({ filters: {} }, [{
+      id: 'marketplace:review',
+      title: 'Review',
+      sourceUrl: 'https://catalog.example/review.json',
+      enabled: true,
+      origin: 'user',
+    }]);
+    const message = result.diagnostics[0]?.message ?? '';
+
+    expect(message).toContain('[REDACTED]');
+    expect(message).toContain('[REDACTED_PATH]');
+    expect(message).not.toContain('marketplace-service-secret');
+    expect(message).not.toContain('C:\\Users\\alice\\private');
+    expect(Buffer.byteLength(message, 'utf8')).toBeLessThanOrEqual(2_048);
+  });
+
   it('does not let a remote catalog select a host-owned private registry profile', () => {
     const entry = snapshot('https://catalog.example/private.json', 'acme.private').entries[0]!;
     const item: MarketplaceIndexQueryResultV1['items'][number] = {

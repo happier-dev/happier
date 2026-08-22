@@ -138,7 +138,11 @@ async function settleReveals(): Promise<void> {
   });
 }
 
-function renderReviewList(selectedKeys: string[], defaultSelectedKey = 'row-01') {
+function renderReviewList(
+  selectedKeys: string[],
+  defaultSelectedKey = 'row-01',
+  focusedKeys?: string[],
+) {
   return mountList(
     <List
       accessibilityLabel="Reviews"
@@ -149,6 +153,9 @@ function renderReviewList(selectedKeys: string[], defaultSelectedKey = 'row-01')
         defaultSelectedKey,
         isItemDisabled: (item: Review) => item.blocked,
         onSelectedKeyChange: (key) => selectedKeys.push(key),
+        // Left off entirely by every other case here, which is what keeps the
+        // observation optional rather than a new obligation on every author.
+        ...(focusedKeys ? { onFocusedKeyChange: (key: string) => focusedKeys.push(key) } : {}),
       }}
     />,
   );
@@ -187,6 +194,34 @@ describe('virtualized List focus and selection are independent', () => {
 
     expect(selectedKeys).toEqual([]);
     expect(optionNamed(mount, 'Review 01')?.getAttribute('aria-selected')).toBe('true');
+    mount.unmount();
+  });
+
+  it('reports each logical focus move to the author, separately from selection', async () => {
+    const selectedKeys: string[] = [];
+    const focusedKeys: string[] = [];
+    const mount = renderReviewList(selectedKeys, 'row-01', focusedKeys);
+
+    // Mounting places no logical focus, so an author observing the cursor is
+    // told nothing until the reader actually moves it.
+    expect(focusedKeys).toEqual([]);
+
+    await pressKey(optionNamed(mount, 'Review 01'), 'ArrowDown');
+    await settleReveals();
+    // Keyboard traversal is focus-only: the author hears the move and nothing
+    // else, which is the whole reason the two cursors are separate facts.
+    expect(focusedKeys).toEqual(['row-04']);
+    expect(selectedKeys).toEqual([]);
+
+    // Pointer activation is one gesture that moves both cursors, so the author
+    // hears the focus move as well as the selection.
+    const pointerRow = optionNamed(mount, 'Review 06');
+    await act(async () => {
+      pointerRow?.focus();
+      pointerRow?.click();
+    });
+    expect(focusedKeys).toEqual(['row-04', 'row-06']);
+    expect(selectedKeys).toEqual(['row-06']);
     mount.unmount();
   });
 

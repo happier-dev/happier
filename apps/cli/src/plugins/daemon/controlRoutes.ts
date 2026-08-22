@@ -10,20 +10,33 @@ import type {
   TargetActionCurrentIntentResult,
 } from '@/plugins/runtime/invocation/actionExecutor';
 import type { PluginReloadController } from '@/plugins/runtime/reload/controller';
-
 import type { DaemonPluginChangeService } from './changeService';
 
 export const PLUGIN_CHANGE_REQUEST_PATH = '/plugins/change/request';
 export const PLUGIN_CHANGE_DECISION_PATH = '/plugins/change/decide';
+export const PLUGIN_CHANGE_STATUS_PATH = '/plugins/change/status';
+export const PLUGIN_CHANGE_LIST_PATH = '/plugins/change/list';
 export const PLUGIN_ACTION_EXECUTE_PATH = '/plugins/actions/execute';
 export const PLUGIN_CATALOG_READ_PATH = '/plugins/catalog/read';
 
 const NonEmptyStringSchema = z.string().trim().min(1).max(32_768);
 const PluginIdSchema = z.string().trim().min(1).max(256);
+const ImmutableGenerationIdSchema = z.string().trim().min(1).max(512);
+const ExplicitCliTrustFlagProvenanceSchema = z.object({
+  kind: z.literal('explicitCliTrustFlag'),
+  command: z.literal('plugins install'),
+  flag: z.literal('--trust'),
+  source: z.object({
+    kind: z.literal('path'),
+    locator: NonEmptyStringSchema,
+  }).strict(),
+  pluginId: PluginIdSchema.optional(),
+}).strict();
 const AuthenticatedUserInteractionSchema = z.object({
   kind: z.literal('authenticatedLocalUser'),
   interactionId: NonEmptyStringSchema,
   occurredAtMs: z.number().int().nonnegative().safe(),
+  provenance: ExplicitCliTrustFlagProvenanceSchema.optional(),
 }).strict();
 const CredentialFreeHttpsUrlSchema = z.string().trim().max(2_048).url().refine((value) => {
   const parsed = new URL(value);
@@ -99,7 +112,7 @@ const PluginChangeRequestSchema = z.union([
   }).strict(),
   z.object({
     kind: z.literal('development'),
-    pluginId: PluginIdSchema,
+    pluginId: PluginIdSchema.optional(),
     sourceRootPath: NonEmptyStringSchema,
     changedPaths: z.array(NonEmptyStringSchema).max(4_096).optional(),
     sdkRegistryOrigin: NonEmptyStringSchema.optional(),
@@ -111,12 +124,17 @@ const PluginChangeRequestSchema = z.union([
   z.object({
     kind: z.literal('uninstall'),
     pluginId: PluginIdSchema,
-    clearHealthHistory: z.literal(true),
+    allowAlreadyAbsent: z.literal(true),
     actorEvidence: AuthenticatedUserInteractionSchema,
   }).strict(),
 ]);
 
 const PluginChangeDecisionSchema = z.discriminatedUnion('decision', [
+  z.object({
+    pendingChangeId: NonEmptyStringSchema,
+    decision: z.literal('trustSourceRoot'),
+    actorEvidence: AuthenticatedUserInteractionSchema,
+  }).strict(),
   z.object({
     pendingChangeId: NonEmptyStringSchema,
     decision: z.literal('installAndTrust'),
@@ -132,11 +150,16 @@ const PluginChangeDecisionSchema = z.discriminatedUnion('decision', [
   }).strict(),
 ]);
 
+const PluginChangeStatusRequestSchema = z.object({
+  pendingChangeId: NonEmptyStringSchema,
+}).strict();
+
 const PluginActionExecuteRequestSchema = z.object({
   actionId: NonEmptyStringSchema,
   input: z.unknown(),
   surface: z.enum(['cli', 'mcp', 'agent']),
   defaultSessionId: NonEmptyStringSchema.optional(),
+  expectedContributorImmutableGenerationId: ImmutableGenerationIdSchema.optional(),
 }).strict();
 
 export type PluginActionExecuteRequest = z.infer<typeof PluginActionExecuteRequestSchema>;
@@ -165,6 +188,12 @@ export async function executeAppliedDaemonPluginActionWithController(
       runtimeRegistry: lease.registry,
       actionId: request.actionId,
       input: request.input,
+      ...(request.expectedContributorImmutableGenerationId === undefined
+        ? {}
+        : {
+            expectedContributorImmutableGenerationId:
+              request.expectedContributorImmutableGenerationId,
+          }),
       ...(requestCurrentIntent ? { requestCurrentIntent } : {}),
       context: {
         surface: request.surface,
@@ -241,6 +270,22 @@ export function registerDaemonPluginChangeRoutes(
       return await reply.code(400).send({ kind: 'failed', code: 'invalid_plugin_change_decision' });
     }
     return await params.service.decidePluginChange(parsed.data);
+  });
+
+  app.post(PLUGIN_CHANGE_STATUS_PATH, { preHandler: params.requireAuth }, async (request, reply) => {
+    const parsed = PluginChangeStatusRequestSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return await reply.code(400).send({ kind: 'failed', code: 'invalid_plugin_change_status_request' });
+    }
+    return await params.service.statusPluginChange(parsed.data);
+  });
+
+  // Enumeration takes no request body: the outstanding decisions are the
+  // daemon's own state, and a caller that had to name one already has the
+  // by-id status route. This is the read that makes a change some other client
+  // (an Agent's Action call, a terminal) prepared visible to a present user.
+  app.post(PLUGIN_CHANGE_LIST_PATH, { preHandler: params.requireAuth }, async () => {
+    return await params.service.listPendingPluginChanges();
   });
 
   app.post(PLUGIN_ACTION_EXECUTE_PATH, { preHandler: params.requireAuth }, async (request, reply) => {

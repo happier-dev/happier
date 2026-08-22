@@ -106,6 +106,35 @@ describe('plugin-ui Text renders real React Native semantics', () => {
     undeclared.unmount();
   });
 
+  it('interpolates author-owned values in translated text and its readable fallback', () => {
+    const context = createSurfaceContext({
+      translations: { 'acme.review.count': '{shown} of {total} findings' },
+      locale: 'en',
+    });
+
+    const declared = mountSurface(
+      <Text
+        valueKey="acme.review.count"
+        fallback="{shown} of {total} findings"
+        values={{ shown: 3, total: 8 }}
+      />,
+      context,
+    );
+    expect(declared.container.textContent).toBe('3 of 8 findings');
+    declared.unmount();
+
+    const undeclared = mountSurface(
+      <Text
+        valueKey="acme.review.missingCount"
+        fallback="{shown} of {total} findings"
+        values={{ shown: 3, total: 8 }}
+      />,
+      context,
+    );
+    expect(undeclared.container.textContent).toBe('3 of 8 findings');
+    undeclared.unmount();
+  });
+
   it('forwards accessibility identity to the host element', () => {
     const mount = mountSurface(
       <Text value="7 findings" accessibilityLabel="Seven findings" testID="review-count" />,

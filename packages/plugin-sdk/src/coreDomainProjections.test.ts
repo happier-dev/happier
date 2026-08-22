@@ -618,7 +618,11 @@ describe('final core-domain package-local projections', () => {
 
         expect(moduleExportNames(program, 'src/ui.ts')).not.toContain('StructuredMessageContribution');
         expect(moduleExportNames(program, 'src/ui/index.ts')).not.toContain('StructuredMessageContribution');
-    }, 30_000);
+        // Same whole-SDK program as the projection test above, so it carries the
+        // same budget. Measured 13.7 s alone and timing out against 30 s inside
+        // `vitest run` for the package, where several whole-program suites share
+        // the host.
+    }, 120_000);
 
     it('preserves canonical runtime export identities', () => {
         expect(projectedGetActionSpec).toBe(canonicalGetActionSpec);

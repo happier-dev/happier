@@ -14,6 +14,11 @@ import {
 import {
     describeActionInputFieldForVoice as canonicalDescribeActionInputFieldForVoice,
 } from '@happier-dev/protocol/actions/actionInputVoiceGuidance';
+import type {
+    VoiceGuidanceAvailability,
+} from '@happier-dev/protocol/actions/actionInputVoiceGuidance';
+export type { VoiceGuidanceAvailability } from '@happier-dev/protocol/actions/actionInputVoiceGuidance';
+import type { VoiceTranscriptLadderMapper } from '@happier-dev/protocol/voice/realtime';
 import {
     createVoiceTranscriptLadderMapper as canonicalCreateVoiceTranscriptLadderMapper,
     VoiceRealtimeJsonValueSchema as canonicalVoiceRealtimeJsonValueSchema,
@@ -39,10 +44,6 @@ import type {
 export const describeActionForVoiceTool: (
     spec: Pick<ActionSpec, 'title' | 'description' | 'inputHints'>,
 ) => string = canonicalDescribeActionForVoiceTool;
-export type VoiceGuidanceAvailability = Readonly<{
-    disabledActionIds?: readonly string[];
-    availableActionIds?: readonly string[];
-}>;
 export const describeActionInputFieldForVoice: (
     spec: Pick<ActionSpec, 'id'>,
     field: NonNullable<ActionSpec['inputHints']>['fields'][number],
@@ -64,19 +65,11 @@ export const VoiceRealtimeToolResultV1Schema: VoiceSchema<VoiceRealtimeToolResul
 export type {
     VoiceClientAuthArtifact,
 } from '@happier-dev/protocol/voice/providerOperations';
-export type VoiceTranscriptLadderMode = 'delta' | 'updated' | 'final';
-export type VoiceTranscriptLadderObservation = Readonly<{
-    itemId: string;
-    eventId: string;
-    role: 'user' | 'assistant';
-    incoming?: string | null;
-    mode: VoiceTranscriptLadderMode;
-    provenance?: 'live' | 'replay';
-}>;
-export type VoiceTranscriptLadderMapper = Readonly<{
-    beginConversation(): number;
-    map(observation: VoiceTranscriptLadderObservation): VoiceTranscriptCanonicalEvent | null;
-}>;
+export type {
+    VoiceTranscriptLadderMapper,
+    VoiceTranscriptLadderMode,
+    VoiceTranscriptLadderObservation,
+} from '@happier-dev/protocol/voice/realtime';
 
 /**
  * Fold a realtime provider's per-item transcript ladder (interim fragments and
@@ -213,7 +206,6 @@ export type VoiceMicSession = Readonly<{
  * conversation attempt. Providers declare this before connection creation so
  * the host never has to infer capture ownership from a late transport choice.
  */
-/** @preview */
 export type VoiceMicrophoneMode = 'host_webrtc' | 'host_pcm' | 'provider_managed';
 
 export type VoiceRealtimePreflight =
@@ -251,6 +243,14 @@ export type VoiceRealtimeCanonicalEvent =
         calls: readonly VoiceRealtimeToolCall[];
     }>;
 
+/**
+ * The platforms a Voice **client runtime** actually runs on.
+ *
+ * Deliberately narrower than Protocol's `VoiceRuntimePlatform`, which enumerates the platforms a
+ * contribution may *declare* support for (desktop included). The host collapses every desktop shell
+ * to `web` because that is the bundle it loads, so widening this union would make plugin authors
+ * handle cases the host cannot produce. `voice/contract.test.ts` holds it to a canonical subset.
+ */
 export type VoiceRuntimePlatform = 'web' | 'ios' | 'android';
 
 export type VoiceClientToolDefinition = Readonly<{

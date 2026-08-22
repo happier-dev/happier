@@ -187,6 +187,10 @@ describe('browser-safe package exports', () => {
 
     it('publishes the canonical root and manifest entrypoints without retired browser aliases', () => {
         const packageJson = readPackageJson(new URL('../package.json', import.meta.url));
+        const browserRootExports = readNamedExports(resolve(
+            import.meta.dirname,
+            './index.browser.ts',
+        ));
 
         expect(packageJson.exports).toHaveProperty('.', {
             types: './dist/index.d.ts',
@@ -197,6 +201,8 @@ describe('browser-safe package exports', () => {
             types: './dist/manifest/index.d.ts',
             default: './dist/manifest/index.js',
         });
+        expect(browserRootExports).toContain('PluginClientApi');
+        expect(browserRootExports).not.toContain('PluginApi');
     });
 
     it('keeps runtime target-aware types on the browser root while protocol authoring owns author contracts', () => {

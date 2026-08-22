@@ -18,6 +18,7 @@ describe('plugin registry durable reconciliation', () => {
     const coordinator = createPluginRegistryCommitCoordinator({ paths, owner: { pid: 200, instanceId: 'daemon-a' } });
     await coordinator.commit({
       transactionId: 'bootstrap', baseRevision: null,
+      expectedCurrent: null,
       buildNext: () => createEmptyPluginRegistryCommitRecord({ transactionId: 'bootstrap', createdAtMs: 1, creatorPid: 200, creatorInstanceId: 'daemon-a' }),
     });
     const applied: string[] = [];
@@ -46,6 +47,7 @@ describe('plugin registry durable reconciliation', () => {
     const coordinator = createPluginRegistryCommitCoordinator({ paths, owner: { pid: 201, instanceId: 'daemon-a' } });
     await coordinator.commit({
       transactionId: 'bootstrap', baseRevision: null,
+      expectedCurrent: null,
       buildNext: () => createEmptyPluginRegistryCommitRecord({ transactionId: 'bootstrap', createdAtMs: 1, creatorPid: 201, creatorInstanceId: 'daemon-a' }),
     });
     const reconciler = createPluginRegistryReconciler({
@@ -76,6 +78,7 @@ describe('plugin registry durable reconciliation', () => {
     const coordinator = createPluginRegistryCommitCoordinator({ paths, owner: { pid: 202, instanceId: 'daemon-a' } });
     await coordinator.commit({
       transactionId: 'bootstrap', baseRevision: null,
+      expectedCurrent: null,
       buildNext: () => createEmptyPluginRegistryCommitRecord({ transactionId: 'bootstrap', createdAtMs: 1, creatorPid: 202, creatorInstanceId: 'daemon-a' }),
     });
     const applied: string[] = [];
@@ -88,5 +91,39 @@ describe('plugin registry durable reconciliation', () => {
     await expect(createRestartedReconciler().reconcile()).resolves.toMatchObject({ status: 'reconciled', revision: 0 });
     await expect(createRestartedReconciler().reconcile()).resolves.toMatchObject({ status: 'reconciled', revision: 0 });
     expect(applied).toEqual(['active:0', 'active:0']);
+  });
+
+  it('releases rejected in-flight state without emitting an unhandled rejection', async () => {
+    const happyHomeDir = await import('node:fs/promises').then(({ mkdtemp }) => mkdtemp(join(tmpdir(), 'happier-registry-reconcile-rejection-')));
+    const paths = resolvePluginStorePaths({ happyHomeDir });
+    const coordinator = createPluginRegistryCommitCoordinator({ paths, owner: { pid: 203, instanceId: 'daemon-a' } });
+    await coordinator.commit({
+      transactionId: 'bootstrap', baseRevision: null,
+      expectedCurrent: null,
+      buildNext: () => createEmptyPluginRegistryCommitRecord({ transactionId: 'bootstrap', createdAtMs: 1, creatorPid: 203, creatorInstanceId: 'daemon-a' }),
+    });
+    let stateUnavailable = true;
+    const reconciler = createPluginRegistryReconciler({
+      paths,
+      readState: async () => {
+        if (stateUnavailable) throw new Error('installation authority unavailable');
+        return { revisionId: 'state-0' };
+      },
+      surfaces: [{ name: 'activeRegistry', apply: async () => undefined }],
+    });
+    const unhandledRejections: unknown[] = [];
+    const captureUnhandledRejection = (reason: unknown): void => {
+      unhandledRejections.push(reason);
+    };
+    process.prependListener('unhandledRejection', captureUnhandledRejection);
+    try {
+      await expect(reconciler.reconcile()).rejects.toThrow('installation authority unavailable');
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      stateUnavailable = false;
+      await expect(reconciler.reconcile()).resolves.toMatchObject({ status: 'reconciled', revision: 0 });
+      expect(unhandledRejections).toEqual([]);
+    } finally {
+      process.removeListener('unhandledRejection', captureUnhandledRejection);
+    }
   });
 });

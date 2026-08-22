@@ -5,10 +5,10 @@ import {
     SessionProviderHookEventPayloadV1Schema,
 } from '@happier-dev/protocol';
 import { AgentRuntimeJsonValueV1Schema } from '@happier-dev/protocol/runtime';
+import type { JsonValue } from '@happier-dev/plugin-sdk';
 import {
     AGENT_EXTERNAL_SESSION_HOOK_LIMITS,
-    type StrictJsonValue,
-} from '@happier-dev/plugin-sdk/experimental/sessions';
+} from '@happier-dev/plugin-sdk/sessions/external';
 
 import { logger } from '@/ui/logger';
 
@@ -69,7 +69,7 @@ export type QualifiedExternalSessionHookRequest = Readonly<{
     eventId: string;
     observedAtMs: number;
     forwardingStartedAtMs: number;
-    nativePayload: StrictJsonValue;
+    nativePayload: JsonValue;
     signal: AbortSignal;
 }>;
 
@@ -280,7 +280,7 @@ function readQualifiedExternalSessionHookBody(
         eventId: data.eventId.trim(),
         observedAtMs: Number(data.observedAtMs),
         forwardingStartedAtMs: Number(data.forwardingStartedAtMs),
-        nativePayload: nativePayload.data as StrictJsonValue,
+        nativePayload: nativePayload.data as JsonValue,
     };
 }
 

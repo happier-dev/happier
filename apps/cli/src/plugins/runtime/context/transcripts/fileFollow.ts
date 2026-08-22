@@ -4,7 +4,7 @@ import type {
     AgentTranscriptFileFollowHandle,
     AgentTranscriptFileFollowInput,
     AgentTranscriptFileFollowService,
-} from '@happier-dev/plugin-sdk/agent-runtime';
+} from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { createJsonlFollowController } from '@/api/session/fileBackedTranscripts/jsonl';
 import type {

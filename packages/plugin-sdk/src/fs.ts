@@ -32,6 +32,7 @@ export {
   canonicalizePath,
   canonicalizePathSync,
   expandHomePath,
+  isCanonicalAbsolutePathInsideRoot,
   resolveHomeDirFromEnvironment,
   resolveConfiguredPath,
 } from './sessions/fileStores/paths.js';

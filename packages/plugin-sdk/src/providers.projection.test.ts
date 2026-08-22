@@ -41,7 +41,7 @@ import {
   type ProviderCapabilitySupport,
   type ProviderCatalogCommandFallbackV1,
   type ProviderCatalogDeclarationV1,
-  type ProviderCatalogParserV1,
+  type ProviderCatalogParserId,
   type ProviderCatalogProbeV1,
   type ProviderCompatibilityCapabilitiesV1,
   type ProviderCompatibilityOverrideV1,
@@ -86,7 +86,7 @@ describe('Provider public projections', () => {
       .toEqualTypeOf<ProtocolProviderCatalogCommandFallbackV1>();
     expectTypeOf<ProviderCatalogDeclarationV1>()
       .toEqualTypeOf<ProtocolProviderCatalogDeclarationV1>();
-    expectTypeOf<ProviderCatalogParserV1>().toEqualTypeOf<ProtocolProviderCatalogParserV1>();
+    expectTypeOf<ProviderCatalogParserId>().toEqualTypeOf<ProtocolProviderCatalogParserV1>();
     expectTypeOf<ProviderCatalogProbeV1>().toEqualTypeOf<ProtocolProviderCatalogProbeV1>();
     expectTypeOf<ProviderCompatibilityCapabilitiesV1>()
       .toEqualTypeOf<ProtocolProviderCompatibilityCapabilitiesV1>();

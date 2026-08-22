@@ -1,8 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
 import type {
-    PluginPermissionDeclarationV1,
-    PluginPermissionCapabilityV1,
     PluginActionContributionV2,
     ParsedPluginEventContributionV1,
     PluginSystemToolContributionV1,
@@ -23,12 +21,7 @@ import type {
 
 import type { ContributionRuntimeRegistration } from '../api/registrationRightsHost';
 import type {
-    PluginApiDaemonAuthBridgeRegistration,
     PluginDisposable,
-    PluginApiMcpDiscoveryProviderRegistration,
-    PluginApiMcpServerRegistration,
-    PluginApiNotificationCategoryRegistration,
-    PluginApiNotificationChannelRegistration,
     PluginApiScmBackendRegistration,
     PluginApiScmHostingProviderRegistration,
 } from '../api/types';
@@ -45,6 +38,7 @@ import {
     appendDiagnostic,
     appendDiagnostics,
     normalizePositiveTimeoutMs,
+    projectPluginFailureText,
     runWithOptionalTimeout,
     mapDaemonModuleLoadErrorToDiagnostic,
 } from './utils';
@@ -57,31 +51,36 @@ import {
 } from './activation/targets';
 import { resolveActivationSource } from './activation/source';
 import { activateContributionModule } from './activation/activateContributionModule';
-import { buildActivationPolicy } from './activation/policy';
+import {
+    buildActivationPolicy,
+} from './activation/policy';
 import {
     createTargetHookHandlerRegistry,
     type TargetInvocationServiceOwner,
 } from './contributions/targetHooks';
-import { createTargetMcpDiscoveryProviders } from './contributions/targetMcp';
 import { createTargetScmRuntimeEntries } from './contributions/targetScm';
 import {
     createTargetRequestInterceptorBindings,
     type TargetRequestInterceptorBinding,
 } from './contributions/targetRequestInterceptors';
 import {
-    normalizeNetworkPermissionOrigin,
-    normalizeProcessSpawnPermissionPath,
-    normalizeEnvPermissionName,
-    normalizeFilesystemPermissionPath,
-    collectOptionalScopedPermissionMap,
-    collectScopedPermissionMap,
-} from './permissions/scopeNormalizers';
-import type { PluginTargetActivationFact } from './activation/facts';
+    type PluginTargetActivationFact,
+    projectPluginTargetActivationRegistrationFacts,
+} from './activation/facts';
 import { mapPluginSourceToDiagnosticSource } from '@/plugins/projection/introspection/source';
 import {
     createTargetAgentRuntimeRegistry,
     type AgentRuntimeRegistrationLease,
 } from './contributions/targetAgents';
+import { createBackgroundServiceRunnerHost } from './contributions/backgroundServices';
+import {
+    projectRequiredManifestEnvironmentNames,
+    projectRequiredManifestWorkspaceFilesystemReadPaths,
+    resolveManifestHostAccessRequests,
+} from '../hostAccess/manifestRequests';
+import { createPluginInvocationPresentation } from '../invocation/services/interactions';
+import { createPluginInvocationLifetime } from '../invocation/lifetime';
+import type { PluginInvocationServicesSeed } from '../invocation/services/types';
 
 /**
  * Orchestration entrypoint for the plugin runtime activation/deactivation
@@ -96,16 +95,6 @@ import {
 export type PluginActivationDemandResult = Readonly<{
     pluginId: string;
     diagnostics: readonly PluginCompatibilityDiagnostic[];
-}>;
-
-export type SupervisedPluginActivationAttempt = Readonly<{
-    attemptId: string;
-    pluginId: string;
-    immutableGenerationId: string;
-    phase: 'primaryBootstrap' | 'lazyActivation';
-    startedAtMs: number;
-    completedAtMs: number;
-    outcome: 'fatal' | 'nonfatal';
 }>;
 
 type PluginRuntimeDisposalPhase = 'target_activation' | 'runtime_disposables' | 'registered_disposables';
@@ -133,18 +122,6 @@ export type ActivatedPluginRuntimeRegistry = ActivatedHandlerRegistry & Readonly
     }>[];
     targetActivationFacts: readonly PluginTargetActivationFact[];
     agentRuntimesByAgentId: ReadonlyMap<string, AgentRuntimeRegistrationLease>;
-    daemonAuthBridgesByServiceId: ReadonlyMap<string, Readonly<{
-        pluginId: string;
-        registration: PluginApiDaemonAuthBridgeRegistration;
-    }>>;
-    notificationCategoriesById: ReadonlyMap<string, Readonly<{
-        pluginId: string;
-        registration: PluginApiNotificationCategoryRegistration;
-    }>>;
-    notificationChannelsById: ReadonlyMap<string, Readonly<{
-        pluginId: string;
-        registration: PluginApiNotificationChannelRegistration;
-    }>>;
     scmHostingProvidersById: ReadonlyMap<string, Readonly<{
         pluginId: string;
         generation: string;
@@ -161,28 +138,11 @@ export type ActivatedPluginRuntimeRegistry = ActivatedHandlerRegistry & Readonly
         registration: PluginApiScmBackendRegistration;
     }>[];
     requestInterceptors: readonly TargetRequestInterceptorBinding[];
-    mcpServers: readonly Readonly<{
-        pluginId: string;
-        registration: PluginApiMcpServerRegistration;
-    }>[];
-    mcpDiscoveryProviders: readonly Readonly<{
-        pluginId: string;
-        registration: PluginApiMcpDiscoveryProviderRegistration;
-    }>[];
-    networkAllowedPluginIds: ReadonlySet<string>;
-    networkAllowedUrlOriginsByPluginId: ReadonlyMap<string, ReadonlySet<string>>;
-    processSpawnAllowedPathsByPluginId: ReadonlyMap<string, ReadonlySet<string>>;
     systemToolDefinitionsByPluginId: ReadonlyMap<string, readonly PluginSystemToolContributionV1[]>;
     envAllowedNamesByPluginId: ReadonlyMap<string, ReadonlySet<string>>;
     filesystemReadAllowedPathsByPluginId: ReadonlyMap<string, ReadonlySet<string>>;
-    filesystemWriteAllowedPathsByPluginId: ReadonlyMap<string, ReadonlySet<string>>;
-    permissionsByPluginId: ReadonlyMap<string, ReadonlySet<PluginPermissionCapabilityV1>>;
-    permissionDeclarationsByPluginId: ReadonlyMap<string, readonly PluginPermissionDeclarationV1[]>;
-    requiredPermissionsByPluginId: ReadonlyMap<string, ReadonlySet<PluginPermissionCapabilityV1>>;
-    requiredPermissionDeclarationsByPluginId: ReadonlyMap<string, readonly PluginPermissionDeclarationV1[]>;
     runtimeCapabilitiesByPluginId: ReadonlyMap<string, ReadonlySet<string>>;
     eventDeclarationsByPluginId: ReadonlyMap<string, readonly ParsedPluginEventContributionV1[]>;
-    eventSubscriptionPermissionsByPluginId: ReadonlyMap<string, ReadonlySet<PluginPermissionCapabilityV1>>;
     actions: readonly ResolvedActionContribution[];
     tools: readonly ResolvedToolContribution[];
     commands: readonly ResolvedCommandContribution[];
@@ -196,6 +156,9 @@ export type ActivatedPluginRuntimeRegistry = ActivatedHandlerRegistry & Readonly
     activatePluginsForValidation: (
         pluginIds: readonly string[],
     ) => Promise<readonly PluginActivationDemandResult[]>;
+    startAdoptedBackgroundServices: () => void;
+    retireBackgroundServices: (pluginIds: readonly string[]) => void;
+    settleRetiredBackgroundServices: (pluginIds: readonly string[]) => Promise<void>;
     addRuntimeDisposable: (pluginId: string, disposable: PluginDisposable) => PluginDisposable;
     dispose: (params?: PluginRuntimeDisposalOptions) => Promise<void>;
 }>;
@@ -226,16 +189,32 @@ async function runPluginDisposalStep(params: Readonly<{
             logger.warn('[PLUGIN RUNTIME] Plugin cleanup diagnostic observer failed during disposal', {
                 pluginId: params.pluginId,
                 phase: params.phase,
-                error: observerError instanceof Error ? observerError.message : String(observerError),
+                error: projectPluginFailureText(observerError),
             });
         }
         logger.warn('[PLUGIN RUNTIME] Plugin cleanup step failed during disposal', {
             pluginId: params.pluginId,
             phase: params.phase,
-            error: error instanceof Error ? error.message : String(error),
+            error: projectPluginFailureText(error),
         });
         return false;
     }
+}
+
+function resolveLocalDevelopmentDiagnosticSourceRoot(
+    target: ActivationTarget,
+    source: PluginActivationSource<PluginDaemonModuleNamespace>,
+): string | undefined {
+    if (
+        source.kind !== 'file_backed'
+        || source.useDevelopmentEntry !== true
+        || !source.committedAuthorization
+        || target.sourceSpec.kind !== 'path'
+        || target.sourceSpec.devWatch !== true
+    ) {
+        return undefined;
+    }
+    return target.sourceSpec.locator;
 }
 
 export async function activatePluginRuntimeRegistry(params: Readonly<{
@@ -252,10 +231,8 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
     }>>;
     resolveActivationSource?: (target: ActivationTarget) => PluginActivationSource<PluginDaemonModuleNamespace> | null;
     invocationServices?: TargetInvocationServiceOwner;
-    activationPhase?: SupervisedPluginActivationAttempt['phase'];
-    createActivationAttemptId?: () => string;
+    retryFailedPreparation?: boolean;
     nowMs?: () => number;
-    onActivationAttempt?: (attempt: SupervisedPluginActivationAttempt) => void | Promise<void>;
     isActivationCurrent?: () => boolean;
     adoptActivationComponent?: (component: Readonly<{
         pluginId: string;
@@ -312,53 +289,10 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
     const reportedAdmissionFailurePluginIds = new Set<string>();
     let targetGenerationCurrent = true;
     const runtimeDisposableRegistriesByPluginId = new Map<string, ReturnType<typeof createPluginDisposableRegistry>>();
-    const activationPhase = params.activationPhase ?? 'primaryBootstrap';
-    const createActivationAttemptId = params.createActivationAttemptId ?? randomUUID;
+    const runtimeDisposableRetirementPromisesByPluginId = new Map<string, Promise<void>>();
+    const retiredRuntimeDisposablePluginIds = new Set<string>();
     const nowMs = params.nowMs ?? Date.now;
     const isActivationCurrent = params.isActivationCurrent ?? (() => true);
-
-    async function beginSupervisedAttempt(
-        target: ActivationTarget,
-        source: PluginActivationSource<PluginDaemonModuleNamespace>,
-    ): Promise<Omit<SupervisedPluginActivationAttempt, 'completedAtMs' | 'outcome'> | null> {
-        if (source.kind !== 'file_backed' || !source.committedAuthorization) return null;
-        const authorization = source.committedAuthorization;
-        if (authorization.pluginId !== target.pluginId) return null;
-        try {
-            if (!(await authorization.isCurrent())) return null;
-        } catch {
-            return null;
-        }
-        return Object.freeze({
-            attemptId: createActivationAttemptId(),
-            pluginId: target.pluginId,
-            immutableGenerationId: authorization.immutableGenerationId,
-            phase: activationPhase,
-            startedAtMs: nowMs(),
-        });
-    }
-
-    function completeSupervisedAttempt(
-        attempt: Omit<SupervisedPluginActivationAttempt, 'completedAtMs' | 'outcome'> | null,
-        outcome: SupervisedPluginActivationAttempt['outcome'],
-    ): void {
-        if (!attempt || !params.onActivationAttempt) return;
-        const completed = Object.freeze({ ...attempt, completedAtMs: nowMs(), outcome });
-        const reportObserverError = (error: unknown): void => {
-            logger.warn('[PLUGIN RUNTIME] Plugin activation health observer failed', {
-                pluginId: completed.pluginId,
-                immutableGenerationId: completed.immutableGenerationId,
-                attemptId: completed.attemptId,
-                phase: completed.phase,
-                error: error instanceof Error ? error.message : String(error),
-            });
-        };
-        try {
-            void Promise.resolve(params.onActivationAttempt(completed)).catch(reportObserverError);
-        } catch (error) {
-            reportObserverError(error);
-        }
-    }
 
     for (const target of activationTargets) {
         if (allowedPluginIds && !allowedPluginIds.has(target.pluginId)) {
@@ -377,6 +311,12 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
             host: 'daemon' as const,
             platform: process.platform,
         });
+        const requiredRegistrationFacts = projectPluginTargetActivationRegistrationFacts(
+            derivePluginDaemonContributionRegistrationRights(
+                target.manifest.contributes as unknown as Readonly<Record<string, unknown>>,
+            ),
+        );
+        const activationPolicy = buildActivationPolicy(target.manifest);
         const admissionFailure = params.activationAdmissionFailuresByPluginId?.get(target.pluginId);
         if (admissionFailure) {
             let current = false;
@@ -388,26 +328,19 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
             if (!current) continue;
             const diagnostic: PluginCompatibilityDiagnostic = {
                 code: 'plugin_daemon_module_load_failed',
-                message: `Committed plugin generation admission failed for '${target.pluginId}' (${admissionFailure.immutableGenerationId}): ${admissionFailure.message}`,
+                message: projectPluginFailureText(new Error(
+                    `Committed plugin generation admission failed for '${target.pluginId}' (${admissionFailure.immutableGenerationId}): ${admissionFailure.message}`,
+                )),
             };
             appendDiagnostic(diagnosticsByPluginId, target.pluginId, diagnostic);
             targetActivationFacts.push(Object.freeze({
                 ...targetFactMetadata,
                 occurredAtMs: nowMs(),
                 status: 'unavailable',
-                required: Object.freeze([...derivePluginDaemonContributionRegistrationRights(
-                    target.manifest.contributes as unknown as Readonly<Record<string, unknown>>,
-                )]),
+                required: requiredRegistrationFacts,
                 bound: Object.freeze([]),
                 diagnostics: Object.freeze([diagnostic]),
             }));
-            completeSupervisedAttempt(Object.freeze({
-                attemptId: createActivationAttemptId(),
-                pluginId: target.pluginId,
-                immutableGenerationId: admissionFailure.immutableGenerationId,
-                phase: activationPhase,
-                startedAtMs: nowMs(),
-            }), 'fatal');
             reportedAdmissionFailurePluginIds.add(target.pluginId);
             continue;
         }
@@ -421,29 +354,29 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
                 ...targetFactMetadata,
                 occurredAtMs: Date.now(),
                 status: 'unavailable',
-                required: Object.freeze([...derivePluginDaemonContributionRegistrationRights(
-                    target.manifest.contributes as unknown as Readonly<Record<string, unknown>>,
-                )]),
+                required: requiredRegistrationFacts,
                 bound: Object.freeze([]),
                 diagnostics: Object.freeze([diagnostic]),
             }));
             continue;
         }
-        const supervisedAttempt = await beginSupervisedAttempt(target, activationSource);
-
         if (!isActivationCurrent()) {
             continue;
         }
+        const localDevelopmentSourceRoot = resolveLocalDevelopmentDiagnosticSourceRoot(
+            target,
+            activationSource,
+        );
         let moduleNamespace: PluginDaemonModuleNamespace;
         if (activationSource.kind === 'bundled' && activationSource.prepare) {
             try {
                 try {
                     await activationSource.prepare();
-                } catch (error) {
-                    if (activationPhase !== 'primaryBootstrap') throw error;
+                } catch {
                     // A failed aggregate source-dev preflight switches the bundled source
-                    // to package-local isolation. Startup must consume that transition in
-                    // this generation; lazy activation instead retries on later demand.
+                    // to package-local isolation. The activation owner consumes that one
+                    // bounded transition before returning to startup or a lazy caller.
+                    // A second failure remains retryable on a later lazy demand below.
                     await activationSource.prepare();
                 }
             } catch (error) {
@@ -456,13 +389,11 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
                     ...targetFactMetadata,
                     occurredAtMs: Date.now(),
                     status: 'unavailable',
-                    required: Object.freeze([...derivePluginDaemonContributionRegistrationRights(
-                        target.manifest.contributes as unknown as Readonly<Record<string, unknown>>,
-                    )]),
+                    required: requiredRegistrationFacts,
                     bound: Object.freeze([]),
                     diagnostics: Object.freeze([diagnostic]),
                 }));
-                if (activationPhase === 'lazyActivation') {
+                if (params.retryFailedPreparation === true) {
                     retryableActivationPreparationPluginIds.add(target.pluginId);
                 }
                 continue;
@@ -472,24 +403,43 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
             continue;
         }
         try {
+            let cacheGenerationId: string;
+            if (activationSource.kind === 'bundled') {
+                cacheGenerationId = (
+                    params.immutableGenerationIdsByPluginId?.get(target.pluginId)
+                    ?? `runtime:${params.generation}:${target.pluginId}`
+                );
+            } else {
+                const committedAuthorization = activationSource.committedAuthorization;
+                if (!committedAuthorization) {
+                    throw new Error(
+                        `Plugin '${target.pluginId}' has no committed authorization for daemon activation`,
+                    );
+                }
+                cacheGenerationId = committedAuthorization.immutableGenerationId;
+            }
             moduleNamespace = await loadPluginModule({
                 source: activationSource,
-                cacheKey: `${target.manifestDigest}:generation:${params.generation}`,
+                // Module graphs are scoped by the direct immutable generation,
+                // never a copied manifest/package digest.
+                cacheKey: `generation:${cacheGenerationId}`,
             }) as PluginDaemonModuleNamespace;
         } catch (error) {
             if (!isActivationCurrent()) {
                 continue;
             }
-            completeSupervisedAttempt(supervisedAttempt, 'fatal');
-            const diagnostic = mapDaemonModuleLoadErrorToDiagnostic(error);
+            const diagnostic = mapDaemonModuleLoadErrorToDiagnostic(
+                error,
+                localDevelopmentSourceRoot
+                    ? { localDevelopmentSourceRoot }
+                    : undefined,
+            );
             appendDiagnostic(diagnosticsByPluginId, target.pluginId, diagnostic);
             targetActivationFacts.push(Object.freeze({
                 ...targetFactMetadata,
                 occurredAtMs: Date.now(),
                 status: 'unavailable',
-                required: Object.freeze([...derivePluginDaemonContributionRegistrationRights(
-                    target.manifest.contributes as unknown as Readonly<Record<string, unknown>>,
-                )]),
+                required: requiredRegistrationFacts,
                 bound: Object.freeze([]),
                 diagnostics: Object.freeze([diagnostic]),
             }));
@@ -500,28 +450,38 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
         }
 
         {
-            const required = derivePluginDaemonContributionRegistrationRights(
-                target.manifest.contributes as unknown as Readonly<Record<string, unknown>>,
-            );
             const activated = await activateContributionModule({
                 pluginId: target.pluginId,
+                manifestAuthority:
+                    target.provenance === 'first_party'
+                    && target.source.kind === 'bundled'
+                        ? 'bundled_first_party'
+                        : 'external',
                 generation: String(params.generation),
                 manifest: target.manifest,
                 moduleNamespace,
                 isGenerationCurrent: () => targetGenerationCurrent,
                 forceActivation: target.activationEvents?.includes('startup') === true,
+                ...(localDevelopmentSourceRoot
+                    ? { localDevelopmentSourceRoot }
+                    : {}),
+                ...(activationSource.resolveRelativeModule
+                    ? { resolveRelativeModule: activationSource.resolveRelativeModule }
+                    : {}),
+                ...(activationSource.persistValidatedAgentSessionRunnerFactories
+                    ? {
+                        persistValidatedAgentSessionRunnerFactories:
+                            activationSource.persistValidatedAgentSessionRunnerFactories,
+                    }
+                    : {}),
             });
-            completeSupervisedAttempt(
-                supervisedAttempt,
-                activated.status === 'unavailable' ? 'fatal' : 'nonfatal',
-            );
             appendDiagnostics(diagnosticsByPluginId, target.pluginId, activated.diagnostics);
             targetActivationFacts.push(Object.freeze({
                 ...targetFactMetadata,
                 occurredAtMs: Date.now(),
                 status: activated.status,
-                required: Object.freeze([...required]),
-                bound: Object.freeze(activated.registrations.map(({ family, localId }) => Object.freeze({ family, localId }))),
+                required: requiredRegistrationFacts,
+                bound: projectPluginTargetActivationRegistrationFacts(activated.registrations),
                 diagnostics: activated.diagnostics,
             }));
             if (activated.status === 'active') {
@@ -554,24 +514,16 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
         if (!current) continue;
         const diagnostic: PluginCompatibilityDiagnostic = {
             code: 'plugin_daemon_module_load_failed',
-            message: `Committed plugin generation admission failed for '${pluginId}' (${admissionFailure.immutableGenerationId}): ${admissionFailure.message}`,
+            message: projectPluginFailureText(new Error(
+                `Committed plugin generation admission failed for '${pluginId}' (${admissionFailure.immutableGenerationId}): ${admissionFailure.message}`,
+            )),
         };
         appendDiagnostic(diagnosticsByPluginId, pluginId, diagnostic);
-        completeSupervisedAttempt(Object.freeze({
-            attemptId: createActivationAttemptId(),
-            pluginId,
-            immutableGenerationId: admissionFailure.immutableGenerationId,
-            phase: activationPhase,
-            startedAtMs: nowMs(),
-        }), 'fatal');
     }
 
     const activatedTargetMetadataEntries = [] as Array<Readonly<{
         pluginId: string;
-        permissions: readonly PluginPermissionCapabilityV1[];
-        permissionDeclarations: readonly PluginPermissionDeclarationV1[];
-        requiredPermissions: readonly PluginPermissionCapabilityV1[];
-        requiredPermissionDeclarations: readonly PluginPermissionDeclarationV1[];
+        manifest: ActivationTarget['manifest'];
         runtimeCapabilities: readonly string[];
         systemTools: readonly PluginSystemToolContributionV1[];
         declaredEventDeclarations: readonly ParsedPluginEventContributionV1[];
@@ -586,10 +538,7 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
         const policy = buildActivationPolicy(target.manifest);
         activatedTargetMetadataEntries.push(Object.freeze({
             pluginId: target.pluginId,
-            permissions: Object.freeze([...new Set(policy.permissionDeclarations.map((permission) => permission.capability))]),
-            permissionDeclarations: policy.permissionDeclarations,
-            requiredPermissions: Object.freeze([...policy.permissions]),
-            requiredPermissionDeclarations: policy.permissionDeclarations,
+            manifest: target.manifest,
             runtimeCapabilities: policy.runtimeCapabilities,
             systemTools: policy.systemTools,
             declaredEventDeclarations: policy.declaredEventDeclarations,
@@ -599,20 +548,167 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
     let lifecycleState: 'active' | 'disposing' | 'disposed' = 'active';
     let disposalPromise: Promise<void> | null = null;
     const agentExternalSessionsRetirement = new AbortController();
-    const targetHookHandlersByHookId = createTargetHookHandlerRegistry({
+    const backgroundServiceRegistrations = targetRegistrations.flatMap((entry) => {
+        if (entry.registration.family !== 'backgroundServices') return [];
+        if (entry.generation !== String(params.generation)) {
+            throw new Error(
+                `Background service '${entry.pluginId}/backgroundServices/${entry.registration.localId}' was published for the wrong generation`,
+            );
+        }
+        const target = activationTargets.find((candidate) => candidate.pluginId === entry.pluginId);
+        const declaration = target?.manifest.contributes.backgroundServices.find((service) => (
+            service.id === entry.registration.localId
+        ));
+        if (!target || !declaration) {
+            throw new Error(
+                `Background service registration '${entry.pluginId}/backgroundServices/${entry.registration.localId}' has no matching manifest declaration`,
+            );
+        }
+        return [Object.freeze({
+            pluginId: entry.pluginId,
+            pluginVersion: target.manifest.version,
+            generation: entry.generation,
+            localId: entry.registration.localId,
+            runner: entry.registration.value,
+        })];
+    });
+    if (!params.invocationServices) {
+        for (const pluginId of new Set(backgroundServiceRegistrations.map(({ pluginId }) => pluginId))) {
+            appendDiagnostic(diagnosticsByPluginId, pluginId, {
+                code: 'plugin_activation_failed',
+                message: `Plugin '${pluginId}' background services cannot start because the daemon invocation-service owner is unavailable`,
+            });
+        }
+    }
+    const backgroundServiceRunnerHost = createBackgroundServiceRunnerHost({
+        registrations: params.invocationServices ? backgroundServiceRegistrations : Object.freeze([]),
+        createContext(input) {
+            if (!params.invocationServices) {
+                throw new Error('Background service invocation requires the daemon invocation-service owner');
+            }
+            const lifetime = createPluginInvocationLifetime(input.signal);
+            const seed: PluginInvocationServicesSeed = Object.freeze({
+                plugin: Object.freeze({ id: input.pluginId, version: input.pluginVersion }),
+                contribution: Object.freeze({
+                    id: input.localId,
+                    qualifiedId: `${input.pluginId}/backgroundServices/${input.localId}`,
+                }),
+                generation: input.generation,
+                ...(params.immutableGenerationIdsByPluginId?.get(input.pluginId) === undefined
+                    ? {}
+                    : {
+                        immutableGenerationId:
+                            params.immutableGenerationIdsByPluginId.get(input.pluginId),
+                    }),
+                correlationId: randomUUID(),
+                surface: 'background',
+                signal: lifetime.signal,
+                redactionLifetimeSignal: lifetime.redactionLifetimeSignal,
+                isGenerationCurrent: input.isGenerationCurrent,
+            });
+            try {
+                const target = activationTargets.find((candidate) => candidate.pluginId === input.pluginId);
+                const declaration = target?.manifest.contributes.backgroundServices.find((service) => (
+                    service.id === input.localId
+                ));
+                if (!target || !declaration) {
+                    throw new Error(
+                        `Background service '${seed.contribution.qualifiedId}' has no matching manifest declaration`,
+                    );
+                }
+                const hostAccessRequests = resolveManifestHostAccessRequests({
+                    manifest: target.manifest,
+                    pluginId: target.pluginId,
+                    contribution: {
+                        family: 'backgroundServices',
+                        localId: declaration.id,
+                    },
+                });
+                const hostAccessPolicy = hostAccessRequests.length === 0
+                    ? undefined
+                    : params.invocationServices.resolveInvocationHostPolicy?.({
+                        pluginId: seed.plugin.id,
+                        generation: seed.generation,
+                        qualifiedId: seed.contribution.qualifiedId,
+                    }, {
+                        hostAccessRequests,
+                        surface: seed.surface,
+                        signal: seed.signal,
+                    });
+                const unavailableRequired = hostAccessRequests
+                    .filter(({ required }) => required)
+                    .map(({ request }) => Object.freeze({
+                        request,
+                        decision: hostAccessPolicy?.hostAccess.find((candidate) => candidate.id === request.id),
+                    }))
+                    .find(({ decision }) => decision?.status !== 'available');
+                if (unavailableRequired || (hostAccessRequests.length > 0 && !hostAccessPolicy)) {
+                    lifetime.complete();
+                    return Object.freeze({
+                        unavailable: Object.freeze({
+                            code: unavailableRequired?.decision?.code ?? 'plugin_host_access_service_unavailable',
+                            hostAccessId: unavailableRequired?.request.id ?? hostAccessRequests[0]!.request.id,
+                            status: unavailableRequired?.decision?.status === 'denied'
+                                ? 'denied' as const
+                                : 'unavailable' as const,
+                        }),
+                    });
+                }
+                const services = params.invocationServices.createServices(
+                    seed,
+                    hostAccessPolicy?.serviceBinding
+                        ?? params.invocationServices.createOrdinaryServiceBinding(
+                            seed.generation,
+                            `${seed.contribution.qualifiedId}:${seed.correlationId}:binding`,
+                            undefined,
+                            seed.contribution.qualifiedId,
+                        ),
+                );
+                return Object.freeze({
+                    context: Object.freeze({
+                        plugin: seed.plugin,
+                        contribution: seed.contribution,
+                        surface: 'background' as const,
+                        signal: seed.signal,
+                        services,
+                        ui: createPluginInvocationPresentation({
+                            currentSession: null,
+                            signal: seed.signal,
+                            isGenerationCurrent: seed.isGenerationCurrent,
+                        }),
+                    }),
+                    complete: () => lifetime.complete(),
+                });
+            } catch (error) {
+                lifetime.complete();
+                throw error;
+            }
+        },
+        onDiagnostic(event) {
+            logger.warn('[PLUGIN RUNTIME] Background service lifecycle diagnostic', {
+                code: event.code,
+                pluginId: event.pluginId,
+                generation: event.generation,
+                localId: event.localId,
+                ...(event.code === 'background_service_failed' && event.error !== undefined
+                    ? { error: projectPluginFailureText(event.error) }
+                    : {}),
+                ...(event.code === 'background_service_unavailable' ? { reason: event.reason } : {}),
+            });
+        },
+    });
+    let backgroundServicesStarted = false;
+    const targetHookHandlers = createTargetHookHandlerRegistry({
         generation: params.generation,
         activationTargets,
         targetRegistrations,
         isGenerationActive: () => lifecycleState === 'active',
         ...(params.invocationServices ? { invocationServices: params.invocationServices } : {}),
     });
-    const targetMcpDiscoveryProviders = createTargetMcpDiscoveryProviders({
-        generation: params.generation,
-        activationTargets,
-        targetRegistrations,
-        isGenerationActive: () => lifecycleState === 'active',
-        ...(params.invocationServices ? { invocationServices: params.invocationServices } : {}),
-    });
+    const targetHookHandlersByHookId = targetHookHandlers.handlersByHookId;
+    for (const [pluginId, diagnostics] of Object.entries(targetHookHandlers.diagnosticsByPluginId)) {
+        appendDiagnostics(diagnosticsByPluginId, pluginId, diagnostics);
+    }
     const targetScmRuntimeEntries = createTargetScmRuntimeEntries({
         generation: params.generation,
         activationTargets,
@@ -644,18 +740,6 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
             }
         },
     }));
-    const daemonAuthBridgesByServiceId = new Map<string, Readonly<{
-        pluginId: string;
-        registration: PluginApiDaemonAuthBridgeRegistration;
-    }>>();
-    const notificationCategoriesById = new Map<string, Readonly<{
-        pluginId: string;
-        registration: PluginApiNotificationCategoryRegistration;
-    }>>();
-    const notificationChannelsById = new Map<string, Readonly<{
-        pluginId: string;
-        registration: PluginApiNotificationChannelRegistration;
-    }>>();
     const scmHostingProvidersById = new Map<string, Readonly<{
         pluginId: string;
         generation: string;
@@ -682,60 +766,19 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
         scmBackendRegistrations.push(entry);
     }
 
-    const networkAllowedUrlOriginsByPluginId = new Map(collectScopedPermissionMap(
-        activatedTargetMetadataEntries,
-        'network',
-        normalizeNetworkPermissionOrigin,
-    ));
-    const processSpawnAllowedPathsByPluginId = new Map(collectScopedPermissionMap(
-        activatedTargetMetadataEntries,
-        'process.spawn',
-        normalizeProcessSpawnPermissionPath,
-    ));
-    const envAllowedNamesByPluginId = new Map(collectScopedPermissionMap(
-        activatedTargetMetadataEntries,
-        'env',
-        normalizeEnvPermissionName,
-    ));
-    const filesystemReadAllowedPathsByPluginId = new Map(collectOptionalScopedPermissionMap(
-        activatedTargetMetadataEntries,
-        'filesystem.read',
-        normalizeFilesystemPermissionPath,
-    ));
-    const filesystemWriteAllowedPathsByPluginId = new Map(collectOptionalScopedPermissionMap(
-        activatedTargetMetadataEntries,
-        'filesystem.write',
-        normalizeFilesystemPermissionPath,
-    ));
+    const envAllowedNamesByPluginId = new Map(activatedTargetMetadataEntries.flatMap((entry) => {
+        const names = projectRequiredManifestEnvironmentNames(entry.manifest);
+        return names.length > 0 ? [[entry.pluginId, new Set(names)] as const] : [];
+    }));
+    const filesystemReadAllowedPathsByPluginId = new Map(activatedTargetMetadataEntries.flatMap((entry) => {
+        const paths = projectRequiredManifestWorkspaceFilesystemReadPaths(entry.manifest);
+        return paths.length > 0 ? [[entry.pluginId, new Set(paths)] as const] : [];
+    }));
     const hookHandlersByHookId = new Map(targetHookHandlersByHookId);
     const requestInterceptors: TargetRequestInterceptorBinding[] = [...targetRequestInterceptorBindings];
-    const mcpServers: Array<Readonly<{
-        pluginId: string;
-        registration: PluginApiMcpServerRegistration;
-    }>> = [];
-    const mcpDiscoveryProviders = [...targetMcpDiscoveryProviders];
-    const networkAllowedPluginIds = new Set(activatedTargetMetadataEntries.flatMap((entry) => (
-        entry.permissions.includes('network') ? [entry.pluginId] : []
-    )));
     const systemToolDefinitionsByPluginId = new Map(activatedTargetMetadataEntries.map((entry) => [
         entry.pluginId,
         Object.freeze([...entry.systemTools]),
-    ]));
-    const permissionsByPluginId = new Map(activatedTargetMetadataEntries.map((entry) => [
-        entry.pluginId,
-        new Set(entry.permissions),
-    ]));
-    const permissionDeclarationsByPluginId = new Map(activatedTargetMetadataEntries.map((entry) => [
-        entry.pluginId,
-        Object.freeze([...entry.permissionDeclarations]),
-    ]));
-    const requiredPermissionsByPluginId = new Map(activatedTargetMetadataEntries.map((entry) => [
-        entry.pluginId,
-        new Set(entry.requiredPermissions),
-    ]));
-    const requiredPermissionDeclarationsByPluginId = new Map(activatedTargetMetadataEntries.map((entry) => [
-        entry.pluginId,
-        Object.freeze([...entry.requiredPermissionDeclarations]),
     ]));
     const runtimeCapabilitiesByPluginId = new Map(activatedTargetMetadataEntries.map((entry) => [
         entry.pluginId,
@@ -744,10 +787,6 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
     const eventDeclarationsByPluginId = new Map(activatedTargetMetadataEntries.map((entry) => [
         entry.pluginId,
         Object.freeze([...entry.declaredEventDeclarations]),
-    ]));
-    const eventSubscriptionPermissionsByPluginId = new Map(activatedTargetMetadataEntries.map((entry) => [
-        entry.pluginId,
-        new Set(entry.permissions),
     ]));
     const actions: ResolvedActionContribution[] = [];
     const tools: ResolvedToolContribution[] = [];
@@ -762,6 +801,11 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
     const lazyActivatedRegistries: ActivatedPluginRuntimeRegistry[] = [];
 
     const addRuntimeDisposable = (pluginId: string, disposable: PluginDisposable): PluginDisposable => {
+        if (lifecycleState !== 'active' || retiredRuntimeDisposablePluginIds.has(pluginId)) {
+            throw new Error(
+                `Plugin '${pluginId}' runtime disposable registration rejected because its lifecycle is retired`,
+            );
+        }
         const registry = runtimeDisposableRegistriesByPluginId.get(pluginId) ?? createPluginDisposableRegistry();
         runtimeDisposableRegistriesByPluginId.set(pluginId, registry);
         return registry.add(disposable);
@@ -830,35 +874,24 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
         targetActivationFacts.push(...registry.targetActivationFacts);
         mergeHandlerMaps(registry);
         mergeMapEntries(agentRuntimesByAgentId, registry.agentRuntimesByAgentId);
-        mergeMapEntries(daemonAuthBridgesByServiceId, registry.daemonAuthBridgesByServiceId);
-        mergeMapEntries(notificationCategoriesById, registry.notificationCategoriesById);
-        mergeMapEntries(notificationChannelsById, registry.notificationChannelsById);
         mergeMapEntries(scmHostingProvidersById, registry.scmHostingProvidersById);
         mergeMapEntries(scmBackendsById, registry.scmBackendsById);
         scmBackendRegistrations.push(...registry.scmBackendRegistrations);
         requestInterceptors.push(...registry.requestInterceptors);
-        mcpServers.push(...registry.mcpServers);
-        mcpDiscoveryProviders.push(...registry.mcpDiscoveryProviders);
-        mergeSetEntries(networkAllowedPluginIds, registry.networkAllowedPluginIds);
-        mergeMapEntries(networkAllowedUrlOriginsByPluginId, registry.networkAllowedUrlOriginsByPluginId);
-        mergeMapEntries(processSpawnAllowedPathsByPluginId, registry.processSpawnAllowedPathsByPluginId);
         mergeMapEntries(systemToolDefinitionsByPluginId, registry.systemToolDefinitionsByPluginId);
         mergeMapEntries(envAllowedNamesByPluginId, registry.envAllowedNamesByPluginId);
         mergeMapEntries(filesystemReadAllowedPathsByPluginId, registry.filesystemReadAllowedPathsByPluginId);
-        mergeMapEntries(filesystemWriteAllowedPathsByPluginId, registry.filesystemWriteAllowedPathsByPluginId);
-        mergeMapEntries(permissionsByPluginId, registry.permissionsByPluginId);
-        mergeMapEntries(permissionDeclarationsByPluginId, registry.permissionDeclarationsByPluginId);
-        mergeMapEntries(requiredPermissionsByPluginId, registry.requiredPermissionsByPluginId);
-        mergeMapEntries(requiredPermissionDeclarationsByPluginId, registry.requiredPermissionDeclarationsByPluginId);
         mergeMapEntries(runtimeCapabilitiesByPluginId, registry.runtimeCapabilitiesByPluginId);
         mergeMapEntries(eventDeclarationsByPluginId, registry.eventDeclarationsByPluginId);
-        mergeMapEntries(eventSubscriptionPermissionsByPluginId, registry.eventSubscriptionPermissionsByPluginId);
         actions.push(...registry.actions);
         tools.push(...registry.tools);
         commands.push(...registry.commands);
         mergeDiagnosticsFromRegistry(registry, pluginId);
         if (activated) {
             activatedPluginIds.add(pluginId);
+            if (backgroundServicesStarted) {
+                registry.startAdoptedBackgroundServices();
+            }
             if (!params.adoptActivationComponent) {
                 lazyActivatedRegistries.push(registry);
             }
@@ -872,29 +905,15 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
         targetActivationFacts.push(...registry.targetActivationFacts);
         mergeHandlerMaps(registry);
         mergeMapEntries(agentRuntimesByAgentId, registry.agentRuntimesByAgentId);
-        mergeMapEntries(daemonAuthBridgesByServiceId, registry.daemonAuthBridgesByServiceId);
-        mergeMapEntries(notificationCategoriesById, registry.notificationCategoriesById);
-        mergeMapEntries(notificationChannelsById, registry.notificationChannelsById);
         mergeMapEntries(scmHostingProvidersById, registry.scmHostingProvidersById);
         mergeMapEntries(scmBackendsById, registry.scmBackendsById);
         scmBackendRegistrations.push(...registry.scmBackendRegistrations);
         requestInterceptors.push(...registry.requestInterceptors);
-        mcpServers.push(...registry.mcpServers);
-        mcpDiscoveryProviders.push(...registry.mcpDiscoveryProviders);
-        mergeSetEntries(networkAllowedPluginIds, registry.networkAllowedPluginIds);
-        mergeMapEntries(networkAllowedUrlOriginsByPluginId, registry.networkAllowedUrlOriginsByPluginId);
-        mergeMapEntries(processSpawnAllowedPathsByPluginId, registry.processSpawnAllowedPathsByPluginId);
         mergeMapEntries(systemToolDefinitionsByPluginId, registry.systemToolDefinitionsByPluginId);
         mergeMapEntries(envAllowedNamesByPluginId, registry.envAllowedNamesByPluginId);
         mergeMapEntries(filesystemReadAllowedPathsByPluginId, registry.filesystemReadAllowedPathsByPluginId);
-        mergeMapEntries(filesystemWriteAllowedPathsByPluginId, registry.filesystemWriteAllowedPathsByPluginId);
-        mergeMapEntries(permissionsByPluginId, registry.permissionsByPluginId);
-        mergeMapEntries(permissionDeclarationsByPluginId, registry.permissionDeclarationsByPluginId);
-        mergeMapEntries(requiredPermissionsByPluginId, registry.requiredPermissionsByPluginId);
-        mergeMapEntries(requiredPermissionDeclarationsByPluginId, registry.requiredPermissionDeclarationsByPluginId);
         mergeMapEntries(runtimeCapabilitiesByPluginId, registry.runtimeCapabilitiesByPluginId);
         mergeMapEntries(eventDeclarationsByPluginId, registry.eventDeclarationsByPluginId);
-        mergeMapEntries(eventSubscriptionPermissionsByPluginId, registry.eventSubscriptionPermissionsByPluginId);
         actions.push(...registry.actions);
         tools.push(...registry.tools);
         commands.push(...registry.commands);
@@ -933,10 +952,8 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
                 pluginIds: [pluginId],
                 immutableGenerationIdsByPluginId: params.immutableGenerationIdsByPluginId,
                 resolveActivationSource: params.resolveActivationSource,
-                activationPhase: 'lazyActivation',
-                createActivationAttemptId,
+                retryFailedPreparation: true,
                 nowMs,
-                onActivationAttempt: params.onActivationAttempt,
                 isActivationCurrent: () => lifecycleState === 'active',
                 ...(params.invocationServices ? { invocationServices: params.invocationServices } : {}),
             });
@@ -947,7 +964,7 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
                 await registry.dispose({ timeoutMs: 5_000 }).catch((error: unknown) => {
                     logger.warn('[PLUGIN RUNTIME] Failed to dispose retryable lazy activation preparation', {
                         pluginId,
-                        error: error instanceof Error ? error.message : String(error),
+                        error: projectPluginFailureText(error),
                     });
                 });
                 return { pluginId, diagnostics };
@@ -957,7 +974,7 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
                 await registry.dispose({ timeoutMs: 5_000 }).catch((error: unknown) => {
                     logger.warn('[PLUGIN RUNTIME] Failed to dispose late lazy activation after registry disposal', {
                         pluginId,
-                        error: error instanceof Error ? error.message : String(error),
+                        error: projectPluginFailureText(error),
                     });
                 });
                 return {
@@ -1006,34 +1023,79 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
         mergeRetainedRegistry(retained);
     }
 
+    const backgroundServiceRegistries = (): readonly ActivatedPluginRuntimeRegistry[] => Object.freeze([
+        ...(params.retainedRegistries ?? []),
+        ...lazyActivatedRegistries,
+    ]);
+
+    function startAdoptedBackgroundServices(): void {
+        if (backgroundServicesStarted || lifecycleState !== 'active') return;
+        backgroundServicesStarted = true;
+        backgroundServiceRunnerHost.start();
+        for (const registry of backgroundServiceRegistries()) {
+            registry.startAdoptedBackgroundServices();
+        }
+    }
+
+    function retireBackgroundServices(pluginIds: readonly string[]): void {
+        for (const pluginId of pluginIds) {
+            retiredRuntimeDisposablePluginIds.add(pluginId);
+        }
+        backgroundServiceRunnerHost.retire(pluginIds);
+        for (const registry of backgroundServiceRegistries()) {
+            registry.retireBackgroundServices(pluginIds);
+        }
+    }
+
+    async function settleRetiredBackgroundServices(pluginIds: readonly string[]): Promise<void> {
+        for (const pluginId of pluginIds) {
+            retiredRuntimeDisposablePluginIds.add(pluginId);
+        }
+        const runtimeDisposableRetirements = [...new Set(pluginIds)].flatMap((pluginId) => {
+            const pending = runtimeDisposableRetirementPromisesByPluginId.get(pluginId);
+            if (pending) return [pending];
+            const registry = runtimeDisposableRegistriesByPluginId.get(pluginId);
+            if (!registry) return [];
+            runtimeDisposableRegistriesByPluginId.delete(pluginId);
+            const retirement = registry.dispose();
+            runtimeDisposableRetirementPromisesByPluginId.set(pluginId, retirement);
+            retirement.then(
+                () => {
+                    if (runtimeDisposableRetirementPromisesByPluginId.get(pluginId) === retirement) {
+                        runtimeDisposableRetirementPromisesByPluginId.delete(pluginId);
+                    }
+                },
+                () => {
+                    if (runtimeDisposableRetirementPromisesByPluginId.get(pluginId) === retirement) {
+                        runtimeDisposableRetirementPromisesByPluginId.delete(pluginId);
+                    }
+                },
+            );
+            return [retirement];
+        });
+        await Promise.all([
+            backgroundServiceRunnerHost.settle(pluginIds),
+            ...backgroundServiceRegistries().map(async (registry) => {
+                await registry.settleRetiredBackgroundServices(pluginIds);
+            }),
+            ...runtimeDisposableRetirements,
+        ]);
+    }
+
     return {
         generation: params.generation,
         targetRegistrations,
         targetActivationFacts,
         agentRuntimesByAgentId,
-        daemonAuthBridgesByServiceId,
-        notificationCategoriesById,
-        notificationChannelsById,
         scmHostingProvidersById,
         scmBackendsById,
         scmBackendRegistrations,
         requestInterceptors,
-        mcpServers,
-        mcpDiscoveryProviders,
-        networkAllowedPluginIds,
-        networkAllowedUrlOriginsByPluginId,
-        processSpawnAllowedPathsByPluginId,
         systemToolDefinitionsByPluginId,
         envAllowedNamesByPluginId,
         filesystemReadAllowedPathsByPluginId,
-        filesystemWriteAllowedPathsByPluginId,
-        permissionsByPluginId,
-        permissionDeclarationsByPluginId,
-        requiredPermissionsByPluginId,
-        requiredPermissionDeclarationsByPluginId,
         runtimeCapabilitiesByPluginId,
         eventDeclarationsByPluginId,
-        eventSubscriptionPermissionsByPluginId,
         actions,
         tools,
         commands,
@@ -1044,6 +1106,9 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
         retryableActivationPreparationPluginIds,
         activateContributionsOnDemand,
         activatePluginsForValidation,
+        startAdoptedBackgroundServices,
+        retireBackgroundServices,
+        settleRetiredBackgroundServices,
         addRuntimeDisposable,
         dispose(disposeOptions = {}) {
             if (disposalPromise) return disposalPromise;
@@ -1052,6 +1117,7 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
                 agentExternalSessionsRetirement.abort();
                 targetGenerationCurrent = false;
                 try {
+                    await backgroundServiceRunnerHost.dispose();
                     for (const target of [...targetActivationDisposers].reverse()) {
                         await runPluginDisposalStep({
                             pluginId: target.pluginId,
@@ -1064,6 +1130,15 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
                     for (const registry of [...lazyActivatedRegistries].reverse()) {
                         await registry.dispose(disposeOptions);
                     }
+                    for (const [pluginId, retirement] of [...runtimeDisposableRetirementPromisesByPluginId.entries()].reverse()) {
+                        await runPluginDisposalStep({
+                            pluginId,
+                            phase: 'runtime_disposables',
+                            options: disposeOptions,
+                            operation: async () => await retirement,
+                        });
+                    }
+                    runtimeDisposableRetirementPromisesByPluginId.clear();
                     for (const [pluginId, registry] of [...runtimeDisposableRegistriesByPluginId.entries()].reverse()) {
                         await runPluginDisposalStep({
                             pluginId,

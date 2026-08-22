@@ -1,10 +1,11 @@
 import {
+    buildQualifiedPluginContributionKey,
     createPluginContributionIdentity,
     type PluginContributionIdentityV1,
     type PluginResourceKindV2,
-    type PluginStructuredMessageDescriptorV1,
 } from '@happier-dev/protocol';
 import { PluginError, type JsonValue } from '@happier-dev/plugin-sdk';
+import type { HostStructuredMessageDescriptorV1 } from './structuredMessageDescriptor';
 
 import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
 import {
@@ -63,13 +64,13 @@ function contributionIdentities(
 export function resolveStablePluginStructuredMessage(params: Readonly<{
     registry: ResolvedContributionRegistry;
     expectedGeneration: string;
-    currentGeneration?: string;
+    currentGeneration: string;
     kind: string;
     payload: JsonValue;
-    resourceRefs?: NonNullable<PluginStructuredMessageDescriptorV1['actions']>;
+    resourceRefs?: NonNullable<HostStructuredMessageDescriptorV1['actions']>;
     facts: ContributionPolicyFacts;
 }>): StablePluginStructuredMessageModel {
-    const currentGeneration = params.currentGeneration ?? params.registry.generationId;
+    const currentGeneration = params.currentGeneration;
     if (!currentGeneration || currentGeneration !== params.expectedGeneration) {
         throw consumerError(
             'plugin_structured_message_generation_retired',
@@ -135,12 +136,28 @@ export function resolveStablePluginStructuredMessageConsumer(params: Parameters<
             pluginId: rendererContribution.pluginId,
             contribution: candidate.definition,
         }));
+    const rendererActionIdentities = model.actions.map((action) => action.identity);
+    const rendererActionKeys = new Set(rendererActionIdentities.map(buildQualifiedPluginContributionKey));
+    const actionPresentations = Object.freeze((params.registry.actions ?? []).flatMap((action) => {
+        const pluginId = action.pluginId?.trim();
+        if (!pluginId) return [];
+        const identity = createPluginContributionIdentity({ pluginId, localId: action.definition.id });
+        return rendererActionKeys.has(buildQualifiedPluginContributionKey(identity))
+            ? [Object.freeze({
+                identity,
+                title: action.definition.title,
+                ...(action.definition.icon ? { icon: action.definition.icon } : {}),
+            })]
+            : [];
+    }));
     const renderer = createStablePluginDeclarativeModel({
         pluginId: rendererContribution.pluginId,
         generation: model.identity.generation,
         renderer: rendererContribution.definition,
         settings,
-        actions: model.actions.map((action) => action.identity),
+        actions: rendererActionIdentities,
+        actionPresentations,
+        destinations: contributionIdentities(params.registry.uiViewsV2 ?? []),
         availability: {
             visible: model.visible,
             enabledActions: Object.freeze(Object.fromEntries(model.actions.map((action) => [

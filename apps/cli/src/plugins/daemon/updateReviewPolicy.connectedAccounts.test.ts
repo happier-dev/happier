@@ -89,6 +89,38 @@ function networkManifest(service: ConnectedAccountPurposeDeclarationV1['service'
   return parsed;
 }
 
+function networkClientManifest(privateNetwork = false) {
+  const parsed = readCanonicalPluginManifest(createPluginManifestV2Fixture({
+    id: 'acme.websocket-consumer',
+    hostAccess: {
+      required: [{
+        id: 'loopback-gateway',
+        capability: 'network.client',
+        reason: 'Maintain the declared local gateway connection',
+        scope: {
+          targets: [{ kind: 'fixedOrigin', origin: 'http://127.0.0.1:4311' }],
+          transports: ['websocket'],
+          ...(privateNetwork ? { privateNetwork: true } : {}),
+        },
+      }],
+      optional: [],
+    },
+  }));
+  if (!parsed) throw new Error('Expected canonical network.client manifest');
+  return parsed;
+}
+
+function interceptorManifest(requestInterceptors: readonly Readonly<Record<string, unknown>>[]) {
+  const parsed = readCanonicalPluginManifest(createPluginManifestV2Fixture({
+    id: 'acme.interceptor-policy',
+    contributes: {
+      requestInterceptors: requestInterceptors.map((interceptor) => ({ ...interceptor })),
+    },
+  }));
+  if (!parsed) throw new Error('Expected canonical request-interceptor manifest');
+  return parsed;
+}
+
 describe('Connected Accounts plugin update review policy', () => {
   it('treats kind order as canonical but makes every authority change review-sensitive', () => {
     const current = manifest(['environment', 'files']);
@@ -224,5 +256,30 @@ describe('Connected Accounts plugin update review policy', () => {
     expect(hasReviewSensitivePluginUpdate(selfQualified, local)).toBe(false);
     expect(hasReviewSensitivePluginUpdate(local, external)).toBe(true);
     expect(hasReviewSensitivePluginUpdate(external, local)).toBe(true);
+  });
+
+  it('treats explicit network.client private-network intent as an authority change', () => {
+    const defaultIntent = networkClientManifest();
+    const privateIntent = networkClientManifest(true);
+
+    expect(hasReviewSensitivePluginUpdate(defaultIntent, defaultIntent)).toBe(false);
+    expect(hasReviewSensitivePluginUpdate(defaultIntent, privateIntent)).toBe(true);
+    expect(hasReviewSensitivePluginUpdate(privateIntent, defaultIntent)).toBe(true);
+  });
+
+  it('requires review when an existing request interceptor widens its declared policy', () => {
+    const current = interceptorManifest([{
+      id: 'protect-api',
+      origins: ['https://api.example.test'],
+      methods: ['GET'],
+    }]);
+    const widened = interceptorManifest([{
+      id: 'protect-api',
+      origins: ['https://api.example.test', 'https://accounts.example.test'],
+      methods: ['GET', 'POST'],
+    }]);
+
+    expect(hasReviewSensitivePluginUpdate(current, current)).toBe(false);
+    expect(hasReviewSensitivePluginUpdate(current, widened)).toBe(true);
   });
 });

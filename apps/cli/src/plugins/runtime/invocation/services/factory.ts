@@ -24,7 +24,7 @@ export function createLoggerAndFilesystemServiceBinding(
     for (const { request } of hostAccessRequests) {
         if (
             request.capability === 'filesystem'
-            && request.scope.locations.every((location) => (
+            && request.scope.locations.some((location) => (
                 location.root !== 'project'
                 || (location.projectId !== undefined && filesystemRoots.projects.has(location.projectId))
             ))
@@ -37,13 +37,11 @@ export function createLoggerAndFilesystemServiceBinding(
     const binding = withPluginInvocationServiceBindingAvailability(
         createPluginInvocationServiceBinding(generation, id),
         { serviceId: 'logger', availability: 'available' },
-        ...(scopes.length > 0
-            ? [{ serviceId: 'fs' as const, availability: 'available' as const }]
-            : []),
+        { serviceId: 'fs', availability: 'available' },
     );
     return Object.freeze({
         ...binding,
-        ...(scopes.length > 0 ? { filesystemScopes: Object.freeze(scopes) } : {}),
+        filesystemScopes: Object.freeze(scopes),
         ...(requests.length > 0 ? { filesystemRequestIds: Object.freeze(requests.map((request) => request.id)) } : {}),
     });
 }
@@ -71,33 +69,47 @@ export function createLoggerAndEventsAvailablePluginInvocationServiceBinding(
     hostAccessRequests: readonly Readonly<{ request: PluginHostAccessRequestV2; required: boolean }>[] = [],
 ): PluginInvocationServiceBinding {
     const binding = createLoggerAvailablePluginInvocationServiceBinding(generation, id);
-    return addNetworkFetchServiceBinding(addSecretsServiceBinding(
+    return addNetworkHttpServiceBinding(
         withPluginInvocationServiceBindingAvailability(
             binding,
             { serviceId: 'events', availability: 'available' },
         ),
         hostAccessRequests,
-    ), hostAccessRequests);
+    );
 }
 
-function addNetworkFetchServiceBinding(
+function addNetworkHttpServiceBinding(
     binding: PluginInvocationServiceBinding,
     hostAccessRequests: readonly Readonly<{ request: PluginHostAccessRequestV2; required: boolean }>[],
 ): PluginInvocationServiceBinding {
-    const requests = hostAccessRequests.flatMap(({ request }) => (
-        request.capability === 'network'
-        && request.scope.targets.some((target) => (
-            target.kind === 'fixedOrigin'
-            || target.kind === 'connectedAccountOrigin'
-        ))
-            ? [request]
-            : []
-    ));
-    if (requests.length === 0) return binding;
-    const origins = new Set(requests.flatMap((request) => request.scope.targets.flatMap((target) => (
+    const networkRequests: Extract<PluginHostAccessRequestV2, { capability: 'network' }>[] = [];
+    const networkClientRequests: Extract<PluginHostAccessRequestV2, { capability: 'network.client' }>[] = [];
+    for (const { request } of hostAccessRequests) {
+        if (
+            request.capability === 'network'
+            && request.scope.targets.some((target) => (
+                target.kind === 'fixedOrigin'
+                || target.kind === 'connectedAccountOrigin'
+            ))
+        ) networkRequests.push(request);
+        if (
+            request.capability === 'network.client'
+            && request.scope.transports.includes('websocket')
+            && request.scope.targets.some((target) => (
+                target.kind === 'fixedOrigin'
+                || target.kind === 'connectedAccountOrigin'
+            ))
+        ) networkClientRequests.push(request);
+    }
+    if (networkRequests.length === 0 && networkClientRequests.length === 0) return binding;
+    const origins = new Set(networkRequests.flatMap((request) => request.scope.targets.flatMap((target) => (
         target.kind === 'fixedOrigin' ? [target.origin] : []
     ))));
-    const scopes = requests.map((request) => Object.freeze({
+    const clientOrigins = new Set(networkClientRequests.flatMap((request) => request.scope.targets.flatMap((target) => (
+        target.kind === 'fixedOrigin' ? [target.origin] : []
+    ))));
+    const scopes = networkRequests.map((request) => Object.freeze({
+        authority: 'disclosure' as const,
         accessId: request.id,
         required: hostAccessRequests.find((candidate) => candidate.request === request)?.required ?? true,
         origins: Object.freeze(request.scope.targets.flatMap((target) => (
@@ -106,14 +118,31 @@ function addNetworkFetchServiceBinding(
         ...(request.scope.methods === undefined ? {} : { methods: Object.freeze([...request.scope.methods]) }),
         privateNetwork: request.scope.privateNetwork === true,
     }));
+    const clientScopes = networkClientRequests.map((request) => Object.freeze({
+        authority: 'disclosure' as const,
+        accessId: request.id,
+        required: hostAccessRequests.find((candidate) => candidate.request === request)?.required ?? true,
+        origins: Object.freeze(request.scope.targets.flatMap((target) => (
+            target.kind === 'fixedOrigin' ? [target.origin] : []
+        ))),
+        transports: Object.freeze(request.scope.transports.filter((transport) => transport === 'websocket')),
+        privateNetwork: request.scope.privateNetwork === true,
+    }));
     return Object.freeze({
         ...withPluginInvocationServiceBindingAvailability(
             binding,
-            { serviceId: 'fetch', availability: 'available' },
+            { serviceId: 'http', availability: 'available' },
         ),
-        networkOrigins: Object.freeze([...origins].sort()),
-        networkRequestIds: Object.freeze(requests.map((request) => request.id)),
-        networkScopes: Object.freeze(scopes),
+        ...(networkRequests.length === 0 ? {} : {
+            networkOrigins: Object.freeze([...origins].sort()),
+            networkRequestIds: Object.freeze(networkRequests.map((request) => request.id)),
+            networkScopes: Object.freeze(scopes),
+        }),
+        ...(networkClientRequests.length === 0 ? {} : {
+            networkClientOrigins: Object.freeze([...clientOrigins].sort()),
+            networkClientRequestIds: Object.freeze(networkClientRequests.map((request) => request.id)),
+            networkClientScopes: Object.freeze(clientScopes),
+        }),
     });
 }
 
@@ -142,63 +171,56 @@ export function createLoggerFilesystemAndEventsServiceBinding(
     filesystemRoots: PluginFileSystemRoots,
 ): PluginInvocationServiceBinding {
     const binding = createLoggerAndFilesystemServiceBinding(generation, id, hostAccessRequests, filesystemRoots);
-    return addNetworkFetchServiceBinding(addSecretsServiceBinding(
+    return addNetworkHttpServiceBinding(
         withPluginInvocationServiceBindingAvailability(
             binding,
             { serviceId: 'events', availability: 'available' },
         ),
         hostAccessRequests,
-    ), hostAccessRequests);
+    );
 }
 
-function addSecretsServiceBinding(
+export function addExecServiceBinding(
     binding: PluginInvocationServiceBinding,
     hostAccessRequests: readonly Readonly<{ request: PluginHostAccessRequestV2; required: boolean }>[],
-): PluginInvocationServiceBinding {
-    const scopes = hostAccessRequests.flatMap(({ request, required }) => request.capability === 'secrets'
-        ? [Object.freeze({
-            accessId: request.id,
-            required,
-            secretIds: Object.freeze([...request.scope.secretIds]),
-            access: Object.freeze([...request.scope.access]),
-        })]
-        : []);
-    if (scopes.length === 0) return binding;
-    return Object.freeze({
-        ...withPluginInvocationServiceBindingAvailability(
-            binding,
-            { serviceId: 'secrets', availability: 'available' },
-        ),
-        secretScopes: Object.freeze(scopes),
-    });
-}
-
-function addExecServiceBinding(
-    binding: PluginInvocationServiceBinding,
-    hostAccessRequests: readonly Readonly<{ request: PluginHostAccessRequestV2; required: boolean }>[],
-    managedAvailable = false,
+    managedServicesAvailable = false,
+    publicExecAvailable = true,
 ): PluginInvocationServiceBinding {
     const requests = hostAccessRequests
         .map(({ request }) => request)
         .filter((request): request is Extract<PluginHostAccessRequestV2, { capability: 'process' }> => request.capability === 'process');
+    const environmentRequests = hostAccessRequests
+        .map(({ request }) => request)
+        .filter((request): request is Extract<PluginHostAccessRequestV2, { capability: 'environment' }> => (
+            request.capability === 'environment'
+        ));
     const executableByKey = new Map<string, (typeof requests)[number]['scope']['executables'][number]>();
     const envKeys = new Set<string>();
     for (const request of requests) {
         for (const executable of request.scope.executables) executableByKey.set(JSON.stringify(executable), executable);
         for (const key of request.scope.envKeys ?? []) envKeys.add(key);
     }
-    if (executableByKey.size === 0) return binding;
+    for (const request of environmentRequests) {
+        for (const key of request.scope.keys) envKeys.add(key);
+    }
     return Object.freeze({
         ...withPluginInvocationServiceBindingAvailability(
             binding,
-            { serviceId: 'exec', availability: 'available' },
-            ...(managedAvailable
-                ? [{ serviceId: 'managed' as const, availability: 'available' as const }]
+            ...(publicExecAvailable
+                ? [{ serviceId: 'exec' as const, availability: 'available' as const }]
+                : []),
+            ...(managedServicesAvailable
+                ? [{ serviceId: 'managedServices' as const, availability: 'available' as const }]
                 : []),
         ),
         processExecutables: Object.freeze([...executableByKey.values()]),
         processEnvKeys: Object.freeze([...envKeys]),
-        processRequestIds: Object.freeze(requests.map((request) => request.id)),
+        ...(requests.length > 0
+            ? { processRequestIds: Object.freeze(requests.map((request) => request.id)) }
+            : {}),
+        ...(environmentRequests.length > 0
+            ? { environmentRequestIds: Object.freeze(environmentRequests.map((request) => request.id)) }
+            : {}),
     });
 }
 
@@ -207,7 +229,8 @@ export function createLoggerFilesystemEventsAndExecServiceBinding(
     id: string,
     hostAccessRequests: readonly Readonly<{ request: PluginHostAccessRequestV2; required: boolean }>[] = [],
     filesystemRoots: PluginFileSystemRoots,
-    managedAvailable = false,
+    managedServicesAvailable = false,
+    publicExecAvailable = true,
 ): PluginInvocationServiceBinding {
     const binding = createLoggerFilesystemAndEventsServiceBinding(
         generation,
@@ -215,17 +238,28 @@ export function createLoggerFilesystemEventsAndExecServiceBinding(
         hostAccessRequests,
         filesystemRoots,
     );
-    return addExecServiceBinding(binding, hostAccessRequests, managedAvailable);
+    return addExecServiceBinding(
+        binding,
+        hostAccessRequests,
+        managedServicesAvailable,
+        publicExecAvailable,
+    );
 }
 
 export function createLoggerEventsAndExecServiceBinding(
     generation: string,
     id: string,
     hostAccessRequests: readonly Readonly<{ request: PluginHostAccessRequestV2; required: boolean }>[] = [],
-    managedAvailable = false,
+    managedServicesAvailable = false,
+    publicExecAvailable = true,
 ): PluginInvocationServiceBinding {
     const binding = createLoggerAndEventsAvailablePluginInvocationServiceBinding(generation, id, hostAccessRequests);
-    return addExecServiceBinding(binding, hostAccessRequests, managedAvailable);
+    return addExecServiceBinding(
+        binding,
+        hostAccessRequests,
+        managedServicesAvailable,
+        publicExecAvailable,
+    );
 }
 
 export function createUnavailablePluginServicesFactory(): CreatePluginInvocationServices {

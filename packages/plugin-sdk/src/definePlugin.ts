@@ -1,10 +1,4 @@
-import {
-    formatPluginManifestIngestionDiagnostics,
-    PLUGIN_CONTRIBUTION_CATALOG_V2,
-} from '@happier-dev/protocol/plugins/manifest';
-import {
-    COMPOSER_ATTACHMENT_RUNTIME_REGISTRATION_FIELDS_V1,
-} from '@happier-dev/protocol/plugins/contributions/composer-attachments';
+import { COMPOSER_ATTACHMENT_RUNTIME_REGISTRATION_FIELDS_V1 } from '@happier-dev/protocol/plugins/contributions/composer-attachments';
 
 import type { ActionContract, ActionHandler } from './actions/contracts.js';
 import type {
@@ -40,8 +34,13 @@ import type { HookContribution } from './hooks.js';
 import type {
     JsonValue,
     PluginContributionLocalId,
+    PluginJsonSchema,
 } from './identity.js';
-import type { ManagedProviderRuntime } from './managed-services/contract.js';
+import type { ActionContribution as PublicActionContribution } from './actions/service.js';
+import type {
+    ManagedProviderRuntime,
+    ProviderCatalogParser,
+} from './managed-services/contract.js';
 import type {
     McpDiscoverySourceContribution,
     McpServerContribution,
@@ -76,11 +75,7 @@ import type { AgentExternalSessionObservationContribution } from './externalSess
 import type { AgentExternalSessionTakeoverContribution } from './sessions/externalSessionTakeover.js';
 import type { VoiceProviderContribution, VoiceProviderRuntime } from './voice/projections.js';
 import {
-    parsePluginManifest,
-    type ParsedPluginManifest,
-    type PluginContributes,
     type PluginManifest,
-    type PluginManifestParseResult,
     type PluginLocalizedStringV2,
 } from './manifest.js';
 import {
@@ -123,6 +118,10 @@ type PluginManifestContributes = NonNullable<PluginManifest['contributes']>;
 type ContributionRow<TFamily extends keyof PluginManifestContributes> =
     NonNullable<PluginManifestContributes[TFamily]> extends readonly (infer TRow)[] ? TRow : never;
 
+type PluginActionSchema = PluginJsonSchema | ProtocolComposableSchema<unknown, JsonValue>;
+type PluginActionInputHints = NonNullable<PublicActionContribution['inputHints']>;
+type PluginActionAvailability = NonNullable<PublicActionContribution['availability']>;
+
 /**
  * SDK-owned spelling of the parser-owned Action placement vocabulary. Keeping
  * the finite author contract here prevents `definePlugin` declarations from
@@ -140,6 +139,22 @@ export type PluginActionPlacement =
     | 'composer.more'
     | 'composer.slash'
     | 'message.menu';
+
+/**
+ * The one public Action execution declaration. It is deliberately required:
+ * the manifest parser does not infer a daemon target for authored Actions.
+ */
+export type PluginActionExecutionV2 =
+    | Readonly<{ target: 'daemon' }>
+    | Readonly<{
+        target: 'client';
+        client: Readonly<{
+            artifactId: string;
+            modulePath: `./${string}`;
+            exportName: string;
+        }>;
+        platforms: readonly ('web' | 'ios' | 'android')[];
+    }>;
 
 /**
  * SDK-owned author projection of one Action declaration. Protocol remains the
@@ -163,17 +178,18 @@ type ActionContribution = Readonly<{
         | 'workspace'
         | 'machine'
     )[];
-    surfaces: readonly ('cli' | 'mcp' | 'agent' | 'ui' | 'plugin')[];
+    surfaces: readonly ('cli' | 'mcp' | 'agent' | 'ui' | 'plugin' | 'voice')[];
+    execution: PluginActionExecutionV2;
     placementBindings?: readonly PluginActionPlacement[];
     slash?: Readonly<{ tokens: readonly string[] }>;
-    inputSchema?: object;
-    inputHints?: object;
+    inputSchema?: PluginJsonSchema;
+    inputHints?: PluginActionInputHints;
     connectedAccountPurposeBindings?: readonly Readonly<{
         path: string;
         purpose: string;
     }>[];
-    resultSchema?: object;
-    availability?: object;
+    resultSchema?: PluginJsonSchema;
+    availability?: PluginActionAvailability;
     hostAccess?: readonly string[];
     priority?: number;
     dangerLevel: 'safe' | 'writesLocal' | 'writesRemote' | 'externalSideEffect' | 'destructive';
@@ -199,23 +215,27 @@ export type PluginActionAuthorDefaults = Readonly<{
         | 'machine'
     )[];
     /** Immutable schema-derived surface facts are valid Action author input. */
-    surfaces?: readonly ('cli' | 'mcp' | 'agent' | 'ui' | 'plugin')[];
+    surfaces?: readonly ('cli' | 'mcp' | 'agent' | 'ui' | 'plugin' | 'voice')[];
     placementBindings?: readonly PluginActionPlacement[];
     dangerLevel?: 'safe' | 'writesLocal' | 'writesRemote' | 'externalSideEffect' | 'destructive';
 }>;
+/**
+ * The manifest declaration for one authored Action. `execution` is required:
+ * it selects either a root daemon handler or one exact client artifact.
+ */
 export type PluginActionDeclaration = Readonly<{
     title: PluginLocalizedStringV2;
     description?: PluginLocalizedStringV2;
     icon?: string;
     slash?: Readonly<{ tokens: readonly string[] }>;
-    inputSchema?: object;
-    inputHints?: object;
+    inputSchema?: PluginJsonSchema | ProtocolComposableSchema<unknown, JsonValue>;
+    inputHints?: NonNullable<PublicActionContribution['inputHints']>;
     connectedAccountPurposeBindings?: readonly Readonly<{
         path: string;
         purpose: string;
     }>[];
-    resultSchema?: object;
-    availability?: object;
+    resultSchema?: PluginJsonSchema | ProtocolComposableSchema<unknown, JsonValue>;
+    availability?: NonNullable<PublicActionContribution['availability']>;
     hostAccess?: readonly string[];
     priority?: number;
     confirmation?: Readonly<{
@@ -224,457 +244,50 @@ export type PluginActionDeclaration = Readonly<{
         confirmLabel?: PluginLocalizedStringV2;
     }>;
     metadata?: Readonly<Record<string, JsonValue>>;
+    execution: PluginActionExecutionV2;
 } & PluginActionAuthorDefaults>;
-export type PluginActionDefinition<
-    THandler extends ActionHandler = ActionHandler,
-> = Readonly<
-    PluginActionDeclaration & { run: THandler }
->;
 
-/** @preview */
+type PluginDaemonActionDeclaration = PluginActionDeclaration & Readonly<{
+    execution: Extract<PluginActionExecutionV2, Readonly<{ target: 'daemon' }>>;
+}>;
+
+type PluginClientActionDeclaration = PluginActionDeclaration & Readonly<{
+    execution: Extract<PluginActionExecutionV2, Readonly<{ target: 'client' }>>;
+}>;
+
 export type ProtocolActionSchemaInput<TSchema> = TSchema extends ProtocolComposableSchema<unknown, unknown>
     ? ProtocolSchemaInput<TSchema> extends JsonValue ? ProtocolSchemaInput<TSchema> : JsonValue
     : JsonValue;
-/** @preview */
 export type ProtocolActionSchemaOutput<TSchema> = TSchema extends ProtocolComposableSchema<unknown, unknown>
     ? ProtocolSchemaOutput<TSchema> extends JsonValue ? ProtocolSchemaOutput<TSchema> : JsonValue | void
     : JsonValue | void;
 
+type PluginActionRuntimeDeclaration<TDefinition extends PluginActionDeclaration> =
+    | Readonly<{
+        execution: PluginDaemonActionDeclaration['execution'];
+                run: ActionHandler<
+                    ProtocolActionSchemaInput<TDefinition extends { inputSchema: infer TSchema } ? TSchema : undefined>,
+                    ProtocolActionSchemaOutput<TDefinition extends { resultSchema: infer TSchema } ? TSchema : undefined>
+                >;
+    }>
+    | Readonly<{
+        execution: PluginClientActionDeclaration['execution'];
+        run?: never;
+    }>;
+
 type ValidatedPluginActionDefinition<TDefinition extends PluginActionDeclaration> = Readonly<
-    TDefinition
-    & {
-        run: ActionHandler<
-            ProtocolActionSchemaInput<TDefinition extends { inputSchema: infer TSchema } ? TSchema : undefined>,
-            ProtocolActionSchemaOutput<TDefinition extends { resultSchema: infer TSchema } ? TSchema : undefined>
-        >;
-    }
+    TDefinition & PluginActionRuntimeDeclaration<TDefinition>
 >;
+
+/** One root-authored Action definition, with a handler only for daemon targets. */
+export type PluginActionDefinition<
+    TDefinition extends PluginActionDeclaration = PluginActionDeclaration,
+> = ValidatedPluginActionDefinition<TDefinition>;
 type ValidatedPluginActionDefinitions<
     TDefinitions extends Readonly<Record<string, PluginActionDeclaration>>,
 > = Readonly<{
     [TLocalId in keyof TDefinitions]: ValidatedPluginActionDefinition<TDefinitions[TLocalId]>;
 }>;
-
-/**
- * `definePlugin` owns executable Agent bindings. Its cold declaration remains
- * a complete SDK-neutral spelling of the manifest Agent grammar; Protocol is
- * the sole parser and runtime validation owner.
- */
-type PluginAgentContributionReference = string | Readonly<{
-    pluginId: string;
-    localId: string;
-}>;
-
-type PluginAgentPolicyExpression =
-    | Readonly<{
-        fact: 'plugin.enabled' | 'session.exists' | 'project.exists' | 'browser.exists';
-        operator: 'equals';
-        value: boolean;
-    }>
-    | Readonly<{
-        fact: 'host.platform';
-        operator: 'equals' | 'notEquals';
-        value: 'web' | 'ios' | 'android' | 'desktop';
-    }>
-    | Readonly<{
-        fact: 'host.feature';
-        operator: 'enabled';
-        value: string;
-    }>
-    | Readonly<{
-        fact: 'session.agentId' | 'session.state' | 'project.id' | 'machine.id' | 'browser.origin';
-        operator: 'equals' | 'notEquals';
-        value: string;
-    }>
-    | Readonly<{
-        fact: 'session.capability';
-        operator: 'contains';
-        value: string;
-    }>
-    | Readonly<{ all: readonly PluginAgentPolicyExpression[] }>
-    | Readonly<{ any: readonly PluginAgentPolicyExpression[] }>
-    | Readonly<{ not: PluginAgentPolicyExpression }>;
-
-type PluginAgentAvailabilityDescriptor =
-    | Readonly<{
-        when?: PluginAgentPolicyExpression;
-        disabledWhen?: never;
-        disabledReason?: never;
-    }>
-    | Readonly<{
-        when?: PluginAgentPolicyExpression;
-        disabledWhen: PluginAgentPolicyExpression;
-        disabledReason: PluginLocalizedStringV2;
-    }>;
-
-type PluginAgentAcpTimeouts = Readonly<{
-    initializeMs?: number;
-    idleMs?: number;
-    toolCallMs?: number;
-}>;
-type PluginAgentAcpExecutable =
-    | Readonly<{ kind: 'managedDependency'; id: PluginAgentContributionReference }>
-    | Readonly<{ kind: 'systemTool'; id: PluginAgentContributionReference }>;
-type PluginAgentAcpTransport =
-    | Readonly<{
-        kind: 'stdio';
-        executable: PluginAgentAcpExecutable;
-        preferredPath?: string;
-        args?: readonly string[];
-        env?: Readonly<Record<string, string>>;
-        timeouts?: PluginAgentAcpTimeouts;
-    }>
-    | Readonly<{
-        kind: 'webSocket';
-        url: string;
-        headers?: Readonly<Record<string, string>>;
-        timeouts?: PluginAgentAcpTimeouts;
-    }>
-    | Readonly<{
-        kind: 'tcp';
-        host: string;
-        port: number;
-        timeouts?: PluginAgentAcpTimeouts;
-    }>;
-
-type PluginAgentGoalSetCapability = Readonly<{
-    fields: readonly ('objective' | 'status' | 'tokenBudget')[];
-    writableStatuses?: readonly ('active' | 'paused' | 'complete')[];
-}>;
-type PluginAgentGoalControlMode = Readonly<{
-    get?: true;
-    clear?: true;
-    set?: PluginAgentGoalSetCapability;
-}>;
-type PluginAgentGoals = Readonly<{
-    active?: PluginAgentGoalControlMode;
-    inactive?: PluginAgentGoalControlMode;
-    source: string;
-}>;
-type PluginAgentActivity<TValue> = Readonly<{
-    active?: TValue;
-    inactive?: TValue;
-}>;
-type PluginAgentSessionCapabilities = Readonly<{
-    open: readonly ('create' | 'resume' | 'fork')[];
-    delivery: readonly ('newTurn' | 'steer' | 'followUp')[];
-    cancel: boolean;
-    configuration?: boolean;
-    compaction?: Readonly<{ events: true; manual?: true }>;
-    conversationRollback?: true;
-    goals?: PluginAgentGoals;
-    catalog?: PluginAgentActivity<readonly ('vendorPlugins' | 'skills')[]>;
-    usageLimitRecovery?: PluginAgentActivity<readonly ('checkNow' | 'consumeResetCredit')[]>;
-    continuationVerification?: Readonly<{
-        intents: readonly ('resume' | 'fork')[];
-        requirement: 'required' | 'advisory';
-    }>;
-    workStateSources?: readonly Readonly<{
-        id: string;
-        itemKinds: readonly ('goal' | 'task' | 'todo')[];
-    }>[];
-    runtimeActivitySnapshots?: true;
-    startupInstructions?: Readonly<{ versions: readonly [1] }>;
-}>;
-type PluginAgentExecutionRunCapabilities = Readonly<{
-    open: readonly ('create' | 'resume' | 'fork')[];
-    checkpoint: boolean;
-    stop: boolean;
-}>;
-type PluginAgentAuxiliarySurfaces = readonly ('terminal' | 'externalSessions')[];
-type PluginAgentExternalSessionsSurfaces =
-    | readonly ['externalSessions']
-    | readonly ['externalSessions', 'terminal']
-    | readonly ['terminal', 'externalSessions'];
-
-type PluginAgentConnectedAccountPurpose = Readonly<{
-    purpose: string;
-    service: PluginAgentContributionReference;
-    required?: boolean;
-    materializationKinds?: readonly ('httpHeaders' | 'environment' | 'files')[];
-}>;
-
-type PluginAgentCredentialTransportSupport = Readonly<{
-    protocol: 'anthropic' | 'openai-chat' | 'openai-responses' | 'ollama-native';
-    destination:
-        | Readonly<{
-            kind: 'httpHeader';
-            names: 'anyValidated' | readonly string[];
-            formats: readonly ('raw' | 'bearer' | 'template')[];
-        }>
-        | Readonly<{
-            kind: 'queryParam';
-            names: 'anyValidated' | readonly string[];
-            formats: readonly ('raw' | 'bearer' | 'template')[];
-        }>;
-}>;
-type PluginAgentProviderRequirements = Readonly<{
-    acceptsProtocols: readonly ('anthropic' | 'openai-chat' | 'openai-responses' | 'ollama-native')[];
-    required: Readonly<{
-        streaming?: true;
-        toolRoundTrips?: true;
-        statefulResponses?: true;
-        reasoningControls?: true;
-    }>;
-    credentialSupport: Readonly<{
-        supportsNoAuth: boolean;
-        apiKeyTransports: readonly PluginAgentCredentialTransportSupport[];
-    }>;
-    authIsolation: Readonly<{
-        suppressConnectedServiceIds: readonly (
-            | 'openai-codex'
-            | 'openai'
-            | 'anthropic'
-            | 'claude-subscription'
-            | 'gemini'
-            | 'github'
-            | 'bitbucket'
-        )[];
-        ownedEnvKeys: readonly string[];
-    }>;
-    materialization: 'spawnEnv' | 'engineConfig' | 'configFile';
-    applyPolicy: 'live' | 'next_prompt' | 'restart_session' | 'unsupported';
-    supportsFreeformModelIds: boolean;
-}>;
-
-type PluginAgentCliInstallCommand = Readonly<{
-    cmd: string;
-    args: readonly string[];
-    requiresAdmin?: boolean;
-    note?: string | null;
-}>;
-type PluginAgentCliManualInstallRecipes = Readonly<{
-    darwin?: readonly PluginAgentCliInstallCommand[];
-    linux?: readonly PluginAgentCliInstallCommand[];
-    win32?: readonly PluginAgentCliInstallCommand[];
-}>;
-type PluginAgentCliManagedInstall =
-    | Readonly<{
-        kind: 'github_release_binary';
-        githubRepo: string;
-        binaryName: string;
-        assetNameByPlatform?: Readonly<{
-            darwin: Readonly<{ arm64: string; x64: string }>;
-            linux: Readonly<{ arm64: string; x64: string }>;
-            win32: Readonly<{ arm64: string; x64: string }>;
-        }>;
-        archiveEntriesByPlatform?: Readonly<{
-            darwin: readonly Readonly<{ archivePath: string; destinationPath: string }>[];
-            linux: readonly Readonly<{ archivePath: string; destinationPath: string }>[];
-            win32: readonly Readonly<{ archivePath: string; destinationPath: string }>[];
-        }>;
-        archiveExtractionLimits?: Readonly<{
-            maxFileBytes: number;
-            maxExpandedBytes: number;
-        }>;
-    }>
-    | Readonly<{
-        kind: 'managed_package';
-        packageName: string;
-        binaryName: string;
-        packageBinarySetup?: Readonly<{ kind: 'opencode_platform_binary' }> | null;
-    }>;
-type PluginAgentCliMetadata = Readonly<{
-    displayName?: string;
-    executable: Readonly<{
-        binaryName: string;
-        alternativeBinaryNames?: readonly string[];
-        alternativeBinaryFallbackEnabledEnvVar?: string;
-        knownUserBinDirSuffixes?: readonly string[] | null;
-        sourcePreference: 'system-first' | 'managed-first';
-        acceptsJavaScriptFileOverride?: boolean;
-        systemCommandResolutionStrategy?: 'path-first' | 'known-user-first-runnable';
-    }>;
-    install: Readonly<{
-        managed?: PluginAgentCliManagedInstall | null;
-        manual:
-            | Readonly<{ kind: 'none' }>
-            | Readonly<{
-                kind: 'command' | 'vendor_recipe';
-                recipes?: PluginAgentCliManualInstallRecipes;
-            }>;
-        recommendationOrder?: number;
-        guideUrl?: string | null;
-        docsUrl?: string | null;
-    }>;
-    auth: Readonly<{
-        support: 'login_terminal' | 'status_only' | 'manual_only' | 'unsupported';
-        machineLoginKey?: string;
-        probe: Readonly<{
-            parser:
-                | 'none'
-                | 'unknown'
-                | 'envOnly'
-                | 'claudeCredentialsFile'
-                | 'codexLoginStatus'
-                | 'geminiCredentialFiles'
-                | 'opencodeAuthList'
-                | 'piEnvOnly'
-                | 'copilotGhAuth'
-                | 'kiroWhoamiJson'
-                | 'cursorAboutJson';
-            backgroundChecks: 'safe' | 'manual_only';
-            statusArgs?: readonly string[] | null;
-            envVars?: readonly string[];
-            credentialPaths?: readonly string[];
-        }>;
-        loginLaunches: readonly Readonly<{
-            kind: 'primary' | 'device_code';
-            args: readonly string[];
-            initialInput?: string | null;
-        }>[];
-    }>;
-}>;
-
-type PluginAgentExternalSessionSourceWhen = Readonly<{
-    field: string;
-    equals: string;
-}>;
-type PluginAgentExternalSessionSourceField = Readonly<{
-    name: string;
-    optional?: boolean;
-    nullish?: boolean;
-    min?: number;
-    max?: number;
-}> & (
-    | Readonly<{ kind: 'literal'; value: string }>
-    | Readonly<{ kind: 'string' }>
-    | Readonly<{ kind: 'enum'; values: readonly string[] }>
-    | Readonly<{ kind: 'unknown' }>
-);
-type PluginAgentExternalSessionSourceSchema = Readonly<{
-    fields: readonly PluginAgentExternalSessionSourceField[];
-    refinements?: readonly (
-        | Readonly<{
-            kind: 'requiresWhenEquals';
-            field: string;
-            when: PluginAgentExternalSessionSourceWhen;
-        }>
-        | Readonly<{
-            kind: 'forbidsWhenEquals';
-            fields: readonly string[];
-            when: PluginAgentExternalSessionSourceWhen;
-        }>
-    )[];
-}>;
-type PluginAgentExternalSessionSourceKey = Readonly<{
-    segments: readonly (
-        | Readonly<{ kind: 'literal'; value: string }>
-        | Readonly<{ kind: 'field'; field: string }>
-        | Readonly<{ kind: 'homeMode'; field: string }>
-        | Readonly<{
-            kind: 'conditionalField';
-            field: string;
-            when: PluginAgentExternalSessionSourceWhen;
-        }>
-        | Readonly<{
-            kind: 'connectedServiceScope';
-            groupField: string;
-            profileField: string;
-            when: PluginAgentExternalSessionSourceWhen;
-        }>
-    )[];
-}>;
-type PluginAgentExternalSessionSourceInstance =
-    | Readonly<{
-        kind: 'default';
-        constants?: Readonly<Record<string, string | number | boolean | null>>;
-    }>
-    | Readonly<{
-        kind: 'connectedServiceProfiles';
-        serviceId:
-            | 'openai-codex'
-            | 'openai'
-            | 'anthropic'
-            | 'claude-subscription'
-            | 'gemini'
-            | 'github'
-            | 'bitbucket';
-        constants?: Readonly<Record<string, string | number | boolean | null>>;
-        fields: Readonly<{ serviceId: string; profileId: string }>;
-    }>
-    | Readonly<{
-        kind: 'agentSetting';
-        settingId: string;
-        byServerIdSettingId?: string;
-        field: string;
-        normalization: 'httpOrigin';
-        constants?: Readonly<Record<string, string | number | boolean | null>>;
-    }>
-    | Readonly<{
-        kind: 'agentSettingOverride';
-        settingId: string;
-        byServerIdSettingId?: string;
-        field: string;
-        normalization: 'configuredPath';
-        constants?: Readonly<Record<string, string | number | boolean | null>>;
-    }>;
-type PluginAgentExternalSessionSourceDeclaration = Readonly<{
-    sourceKind: string;
-    schema: PluginAgentExternalSessionSourceSchema;
-    key: PluginAgentExternalSessionSourceKey;
-    instances?: readonly PluginAgentExternalSessionSourceInstance[];
-    terminalFollow?: Readonly<{ userRowClassification: 'explicitV1' }>;
-}>;
-type PluginAgentSurfaces = Readonly<{
-    externalSession?: Readonly<{
-        sources: readonly PluginAgentExternalSessionSourceDeclaration[];
-        externalLinkedTakeover?: Readonly<{
-            writerSafety: 'native_prevention' | 'unsupported';
-        }>;
-    }>;
-}>;
-
-type PluginAgentDisplayDeclaration = Readonly<{
-    title: PluginLocalizedStringV2;
-    description?: PluginLocalizedStringV2;
-    metadata?: Readonly<Record<string, JsonValue>>;
-    connectedAccounts?: readonly PluginAgentConnectedAccountPurpose[];
-    providerRequirements?: PluginAgentProviderRequirements;
-    availability?: PluginAgentAvailabilityDescriptor;
-    surfaces?: PluginAgentSurfaces;
-    cli?: PluginAgentCliMetadata;
-}>;
-type PluginAgentSessionPrimaryDeclaration = PluginAgentDisplayDeclaration & Readonly<{
-    primary: 'sessions';
-    capabilities: Readonly<{
-        surfaces?: PluginAgentAuxiliarySurfaces;
-        sessions: PluginAgentSessionCapabilities;
-        executionRuns?: PluginAgentExecutionRunCapabilities;
-    }>;
-}>;
-type PluginAgentExecutionPrimaryDeclaration = PluginAgentDisplayDeclaration & Readonly<{
-    primary: 'executionRuns';
-    capabilities: Readonly<{
-        surfaces?: PluginAgentAuxiliarySurfaces;
-        executionRuns: PluginAgentExecutionRunCapabilities;
-        sessions?: PluginAgentSessionCapabilities;
-    }>;
-}>;
-type PluginAgentRuntimeAcpDeclaration = PluginAgentSessionPrimaryDeclaration & Readonly<{
-    runtime: Readonly<{
-        kind: 'acp';
-        transport: PluginAgentAcpTransport;
-    }>;
-}>;
-type PluginAgentRuntimeCustomSessionDeclaration = PluginAgentSessionPrimaryDeclaration & Readonly<{
-    runtime: Readonly<{ kind: 'custom' }>;
-}>;
-type PluginAgentRuntimeCustomExecutionDeclaration = PluginAgentExecutionPrimaryDeclaration & Readonly<{
-    runtime: Readonly<{ kind: 'custom' }>;
-}>;
-type PluginAgentExternalSessionsAuxiliaryDeclaration = PluginAgentDisplayDeclaration & Readonly<{
-    primary?: never;
-    runtime?: never;
-    capabilities: Readonly<{
-        surfaces: PluginAgentExternalSessionsSurfaces;
-    }>;
-}>;
-type PluginAgentDeclaration =
-    | PluginAgentRuntimeAcpDeclaration
-    | PluginAgentRuntimeCustomSessionDeclaration
-    | PluginAgentRuntimeCustomExecutionDeclaration
-    | PluginAgentExternalSessionsAuxiliaryDeclaration;
 export type PluginCustomAgentDeclaration = DistributiveOmit<
     Extract<AgentContribution, { runtime: { kind: 'custom' } }>,
     'id'
@@ -768,18 +381,24 @@ type PluginManagedProviderDeclaration = Readonly<
         managedRuntime: NonNullable<PluginProviderDeclaration['managedRuntime']>;
     }
 >;
+/**
+ * Implementations of the catalog wire formats this Provider declares but the
+ * host does not bundle, keyed by the `parser` id a declared catalog probe names.
+ */
+type PluginProviderCatalogParsers = Readonly<Record<string, ProviderCatalogParser>>;
 type PluginDescriptorOnlyProviderDefinition = Readonly<{
     declaration: Omit<PluginProviderDeclaration, 'managedRuntime'> & Readonly<{
         managedRuntime?: never;
     }>;
     runtime?: never;
+    catalogParsers?: PluginProviderCatalogParsers;
 }>;
 export type PluginProviderDefinition = RuntimeContributionDefinition<
     'providers',
     ManagedProviderRuntime,
     'runtime',
     PluginManagedProviderDeclaration
->;
+> & Readonly<{ catalogParsers?: PluginProviderCatalogParsers }>;
 type PluginProviderAuthorDefinition =
     | PluginProviderDefinition
     | PluginDescriptorOnlyProviderDefinition;
@@ -814,14 +433,14 @@ export type PluginComposerReferenceDefinition = Readonly<
     & ComposerReferenceRuntime
 >;
 
-/** @preview A normalized renderer-chain declaration accepted by Composer author helpers. */
+/** A normalized renderer-chain declaration accepted by Composer author helpers. */
 export type ComposerRendererChainAuthorInput =
     | string
     | Readonly<{
         renderer: string;
         fallbackRenderers?: readonly string[];
     }>;
-/** @preview Static attachment display declaration before renderer shorthand projection. */
+/** Static attachment display declaration before renderer shorthand projection. */
 export type ComposerAttachmentAuthorDisplay =
     | Readonly<{ kind: 'badge' }>
     | Readonly<{
@@ -833,7 +452,7 @@ export type ComposerAttachmentAuthorDisplay =
         renderer: ComposerRendererChainAuthorInput;
         sizing: 'compact' | 'content';
     }>;
-/** @preview Static attachment preview declaration before renderer shorthand projection. */
+/** Static attachment preview declaration before renderer shorthand projection. */
 export type ComposerAttachmentAuthorPreview =
     | Readonly<{
         kind: 'host';
@@ -845,7 +464,7 @@ export type ComposerAttachmentAuthorPreview =
         presentation: 'auto' | 'popover' | 'dialog';
     }>;
 
-/** @preview Static attachment declaration before value schemas/runtime are attached. */
+/** Static attachment declaration before value schemas/runtime are attached. */
 export type ComposerAttachmentAuthorDeclaration = Readonly<{
     title: PluginLocalizedStringV2;
     description?: PluginLocalizedStringV2;
@@ -865,7 +484,7 @@ export interface PluginComposerAttachmentDefinition<
     readonly runtime?: ComposerAttachmentRuntime<TDraft, TPrepared>;
 }
 
-/** @preview Closed control interaction declaration before renderer shorthand projection. */
+/** Closed control interaction declaration before renderer shorthand projection. */
 export type ComposerControlAuthorInteraction =
     | Readonly<{
         kind: 'action';
@@ -1077,7 +696,7 @@ type PluginStructuredContributionDefinitions<
 > = Readonly<{
     contributes?: never;
     actions?: ValidatedPluginActionDefinitions<TActions>;
-    agents?: TAgents;
+    agents?: DefinePluginInput<Readonly<Record<string, never>>, TAgents>['agents'];
     promptAssets?: TPromptAssets;
     backgroundServices?: readonly BackgroundServiceDefinition[];
     hooks?: Readonly<Record<PluginContributionLocalId, PluginHookDefinition>>;
@@ -1206,22 +825,80 @@ export type DefinePluginInput<
         contributionPoints?: TContributionPoints;
         /** Contributor role bindings grouped by exact target plugin and point. */
         contributesTo?: ContributionAuthorTargets<Extract<keyof TActions, string>>;
-        actions?: Readonly<{
+        actions?: TActions & Readonly<{
             [TLocalId in keyof TActions]: Readonly<
-                TActions[TLocalId]
-                & {
-                    run: ActionHandler<
-                        TActions[TLocalId] extends { inputSchema: infer TSchema }
-                            ? ProtocolActionSchemaInput<TSchema>
-                            : JsonValue,
-                        TActions[TLocalId] extends { resultSchema: infer TSchema }
-                            ? ProtocolActionSchemaOutput<TSchema>
-                            : JsonValue | void
-                    >;
-                }
+                TActions[TLocalId] & (
+                    | Readonly<{
+                        execution: Extract<PluginActionExecutionV2, Readonly<{ target: 'daemon' }>>;
+                        run: ActionHandler<
+                            ProtocolActionSchemaInput<
+                                TActions[TLocalId] extends { inputSchema: infer TSchema }
+                                    ? TSchema
+                                    : undefined
+                            >,
+                            ProtocolActionSchemaOutput<
+                                TActions[TLocalId] extends { resultSchema: infer TSchema }
+                                    ? TSchema
+                                    : undefined
+                            >
+                        >;
+                    }>
+                    | Readonly<{
+                        execution: Extract<PluginActionExecutionV2, Readonly<{ target: 'client' }>>;
+                        run?: never;
+                    }>
+                )
             >;
         }>;
-        agents?: TAgents;
+        /**
+         * The External Sessions facet rule stays structural at this public
+         * boundary: a private helper would become an unnameable dependency of
+         * `DefinePluginInput`. The structured internal projection above reads
+         * this exact property, keeping one type-level owner for the rule.
+         *
+         * A hand-authored literal keeps its tuple through `definePlugin`'s
+         * `const` type parameters, so `'externalSessions'` is visible here. A
+         * bundled or JavaScript Agent widens the list, leaving both directions
+         * to `assertAgentRunnerAuthoring` at runtime.
+         */
+        agents?: TAgents & Readonly<{
+            [TLocalId in keyof TAgents]: Readonly<
+                TAgents[TLocalId] & (
+                    TAgents[TLocalId] extends Readonly<{
+                        declaration: Readonly<{
+                            capabilities: Readonly<{ surfaces?: infer TSurfaces }>;
+                        }>;
+                    }>
+                        ? TSurfaces extends readonly ('terminal' | 'externalSessions')[]
+                            ? number extends TSurfaces['length']
+                                ? unknown
+                                : TSurfaces extends (
+                                    | readonly ['externalSessions']
+                                    | readonly ['externalSessions', 'terminal']
+                                    | readonly ['terminal', 'externalSessions']
+                                )
+                                    ? Readonly<{
+                                        externalSessions: AgentExternalSessionsContribution;
+                                        externalSessionHooks?: AgentExternalSessionHooksContribution;
+                                        externalSessionObservation?: AgentExternalSessionObservationContribution;
+                                        externalSessionTakeover?: AgentExternalSessionTakeoverContribution;
+                                    }>
+                                    : Readonly<{
+                                        externalSessions?: never;
+                                        externalSessionHooks?: never;
+                                        externalSessionObservation?: never;
+                                        externalSessionTakeover?: never;
+                                    }>
+                            : Readonly<{
+                                externalSessions?: never;
+                                externalSessionHooks?: never;
+                                externalSessionObservation?: never;
+                                externalSessionTakeover?: never;
+                            }>
+                        : unknown
+                )
+            >;
+        }>;
         promptAssets?: TPromptAssets;
         backgroundServices?: readonly BackgroundServiceDefinition[];
         hooks?: Readonly<Record<PluginContributionLocalId, Readonly<{
@@ -1266,6 +943,7 @@ export type DefinePluginInput<
                     >;
                 }>;
                 runtime: ManagedProviderRuntime;
+                catalogParsers?: Readonly<Record<string, ProviderCatalogParser>>;
             }>
             | Readonly<{
                 declaration: Omit<
@@ -1273,6 +951,7 @@ export type DefinePluginInput<
                     'id' | 'managedRuntime'
                 > & Readonly<{ managedRuntime?: never }>;
                 runtime?: never;
+                catalogParsers?: Readonly<Record<string, ProviderCatalogParser>>;
             }>
         >>;
         voiceProviders?: Readonly<Record<PluginContributionLocalId, PluginVoiceProviderDefinition>>;
@@ -1327,17 +1006,24 @@ export type DefinePluginInput<
  * author's declarations stay portable and reference only public SDK specifiers.
  */
 export interface DefinedPluginManifest extends Readonly<
-    Omit<ParsedPluginManifest, 'displayName' | 'engines' | 'runtime' | 'hostAccess' | 'contributes'>
+    Omit<PluginManifest, 'displayName' | 'engines' | 'runtime' | 'contributes'>
 > {
-    readonly displayName: NonNullable<ParsedPluginManifest['displayName']>;
-    readonly engines?: NonNullable<ParsedPluginManifest['engines']>;
-    readonly runtime: NonNullable<ParsedPluginManifest['runtime']>;
-    readonly hostAccess: Readonly<{
-        required: NonNullable<NonNullable<ParsedPluginManifest['hostAccess']>['required']>;
-        optional: NonNullable<NonNullable<ParsedPluginManifest['hostAccess']>['optional']>;
-    }>;
-    readonly contributes: PluginContributes;
+    readonly displayName: NonNullable<PluginManifest['displayName']>;
+    readonly engines?: NonNullable<PluginManifest['engines']>;
+    readonly runtime: NonNullable<PluginManifest['runtime']>;
+    /**
+     * Cold emitted declaration facts. `sourceModule` is the sole parser and
+     * normalizer that turns this into a host-consumed manifest.
+     */
+    readonly contributes: DefinedPluginContributes;
 }
+
+/** Every cold contribution family emitted by `definePlugin`, before host ingestion. */
+export type DefinedPluginContributes = Readonly<{
+    [TKey in keyof NonNullable<PluginManifest['contributes']>]?: NonNullable<
+        NonNullable<PluginManifest['contributes']>[TKey]
+    >;
+}>;
 
 /**
  * Runtime Action reference projection. Handler inference remains owned by the
@@ -1393,11 +1079,38 @@ export interface DefinedPlugin<
     readonly collectionMigrations: PluginAccountCollectionMigrationRuntimeProjection;
 }
 
-function projectProtocolSchema(value: object | undefined): object | undefined {
-    return readProtocolComposableSchema(value)?.jsonSchema ?? value;
+function projectProtocolSchema(value: PluginActionSchema | undefined): PluginJsonSchema | undefined {
+    const composableSchema = readProtocolComposableSchema(value);
+    if (composableSchema) return composableSchema.jsonSchema;
+    // `readProtocolComposableSchema` rejects parser-shaped partial values, so
+    // a remaining declared schema is the public JSON-schema arm of this union.
+    return value as PluginJsonSchema | undefined;
 }
 
-function normalizeActionHandler(definition: PluginActionDefinition): ActionHandler {
+type DaemonPluginActionDefinition = Extract<
+    PluginActionDefinition,
+    Readonly<{ execution: Readonly<{ target: 'daemon' }> }>
+>;
+
+function isDaemonPluginActionDefinition(
+    definition: PluginActionDefinition,
+): definition is DaemonPluginActionDefinition {
+    return definition.execution.target === 'daemon' && typeof definition.run === 'function';
+}
+
+function assertRootActionHandlerDeclaration(definition: PluginActionDefinition): void {
+    if (definition.execution.target === 'daemon') {
+        if (!isDaemonPluginActionDefinition(definition)) {
+            throw new TypeError('Daemon Action declarations require a root handler');
+        }
+        return;
+    }
+    if (Object.prototype.hasOwnProperty.call(definition, 'run')) {
+        throw new TypeError('Client Action declarations cannot define a root handler');
+    }
+}
+
+function normalizeActionHandler(definition: DaemonPluginActionDefinition): ActionHandler {
     const inputSchema = readProtocolComposableSchema<JsonValue, JsonValue>(definition.inputSchema);
     const resultSchema = readProtocolComposableSchema<JsonValue, JsonValue>(definition.resultSchema);
     if (inputSchema === undefined && resultSchema === undefined) return definition.run;
@@ -1409,7 +1122,16 @@ function normalizeActionHandler(definition: PluginActionDefinition): ActionHandl
     };
 }
 
+/**
+ * The Action surfaces a person invokes directly. `plugin`, `voice`, `agent`
+ * and `mcp` are discovery or programmatic dispatch, so an Action reachable only
+ * through them has nowhere human to be placed.
+ */
+const HUMAN_INVOCATION_ACTION_SURFACES: ReadonlySet<ActionContribution['surfaces'][number]> =
+    new Set(['ui', 'cli']);
+
 function projectAction(localId: string, definition: PluginActionDefinition): ActionContribution {
+    assertRootActionHandlerDeclaration(definition);
     const {
         run: _run,
         scopes,
@@ -1425,12 +1147,16 @@ function projectAction(localId: string, definition: PluginActionDefinition): Act
     const projectedSurfaces: ActionContribution['surfaces'] = surfaces === undefined
         ? defaultSurfaces
         : [...surfaces];
-    // A plugin-only Action is programmatic. Supplying a human placement binding for it
-    // makes the serialized declaration claim a UI destination it cannot use.
+    // A programmatic Action has no human destination, so supplying a human
+    // placement binding for it makes the serialized declaration claim a UI
+    // destination it cannot use. The placement vocabulary has no empty value —
+    // `placementBindings` is `min(1)` — so an author cannot take a manufactured
+    // one back, which is why the decision is made from the declared surfaces
+    // rather than defaulted and overridden.
     const projectedPlacementBindings = placementBindings ?? (
-        projectedSurfaces.length === 1 && projectedSurfaces[0] === 'plugin'
-            ? undefined
-            : ['commandPalette']
+        projectedSurfaces.some((surface) => HUMAN_INVOCATION_ACTION_SURFACES.has(surface))
+            ? ['commandPalette']
+            : undefined
     );
     return Object.freeze({
         ...descriptor,
@@ -1599,13 +1325,28 @@ function assertAgentRunnerAuthoring(
     }
 }
 
+/**
+ * The one reader for authored Agent definitions.
+ *
+ * The author-facing field carries the compile-time External Sessions facet
+ * rule, whose intersection the compiler cannot re-verify against the
+ * `PluginAgentDefinition` union generically. Every runtime consumer reads the
+ * definitions back through here so the projection, the activation adapter and
+ * the authoring assertions share one spelling.
+ */
+function readAuthoredAgentDefinitions(
+    input: Readonly<Record<string, unknown>>,
+): Readonly<Record<string, PluginAgentDefinition>> | undefined {
+    return input.agents as Readonly<Record<string, PluginAgentDefinition>> | undefined;
+}
+
 function assertAgentRunnerDefinitions(
     definitions: Readonly<Record<PluginContributionLocalId, PluginAgentDefinition>> | undefined,
-    parsedDeclarations: ParsedPluginManifest['contributes']['agents'],
+    declarations: readonly Readonly<{ id: string }>[] | undefined,
 ): void {
-    const parsedByLocalId = new Map(parsedDeclarations.map((declaration) => [declaration.id, declaration]));
+    const declarationsByLocalId = new Map((declarations ?? []).map((declaration) => [declaration.id, declaration]));
     for (const [localId, definition] of Object.entries(definitions ?? {})) {
-        const declaration = parsedByLocalId.get(localId);
+        const declaration = declarationsByLocalId.get(localId);
         assertAgentRunnerAuthoring(
             localId,
             definition,
@@ -1784,7 +1525,7 @@ export function normalizePluginAccountCollectionMigrationRuntimeProjection(
         ].join('; '));
     }
     const normalized = declarations.map((declaration) => {
-        const declaredMigrations = declaration.migrations;
+        const declaredMigrations = declaration.migrations ?? [];
         if (!Array.isArray(declaredMigrations)) {
             throw new TypeError(
                 `Account Collection '${declaration.id}' manifest declaration is missing static migrations`,
@@ -1923,6 +1664,10 @@ const ACTIONS_ADAPTER: DefinePluginFamilyAdapter = Object.freeze({
     activate(input, api) {
         const definitions = input.actions as Readonly<Record<string, PluginActionDefinition>> | undefined;
         for (const [localId, definition] of Object.entries(definitions ?? {})) {
+            if (definition.execution.target === 'client') continue;
+            if (!isDaemonPluginActionDefinition(definition)) {
+                throw new TypeError('Daemon Action declarations require a root handler');
+            }
             api.actions.register(localId, normalizeActionHandler(definition));
         }
     },
@@ -1931,7 +1676,7 @@ const ACTIONS_ADAPTER: DefinePluginFamilyAdapter = Object.freeze({
 const AGENTS_ADAPTER: DefinePluginFamilyAdapter = Object.freeze({
     authorKey: 'agents',
     project(input) {
-        const definitions = input.agents as Readonly<Record<string, PluginAgentDefinition>> | undefined;
+        const definitions = readAuthoredAgentDefinitions(input);
         return {
             agents: Object.entries(definitions ?? {}).map(([localId, definition]) => (
                 projectAgent(localId, definition)
@@ -1939,7 +1684,7 @@ const AGENTS_ADAPTER: DefinePluginFamilyAdapter = Object.freeze({
         };
     },
     activate(input, api) {
-        const definitions = input.agents as Readonly<Record<string, PluginAgentDefinition>> | undefined;
+        const definitions = readAuthoredAgentDefinitions(input);
         for (const [localId, definition] of Object.entries(definitions ?? {})) {
             if (definition.factory !== undefined) {
                 api.agents.register(
@@ -2187,6 +1932,9 @@ const PROVIDERS_ADAPTER: DefinePluginFamilyAdapter = Object.freeze({
             if ('runtime' in definition && definition.runtime !== undefined) {
                 api.providers.register(localId, definition.runtime);
             }
+            for (const [format, parse] of Object.entries(definition.catalogParsers ?? {})) {
+                api.providers.registerCatalogParser(localId, format, parse);
+            }
         }
     },
 });
@@ -2286,11 +2034,9 @@ function projectComposerAttachmentRuntimeDescriptor(
         -readonly [TField in keyof ComposerAttachmentRuntimeDescriptor]:
             ComposerAttachmentRuntimeDescriptor[TField];
     } = {};
-    for (const field of COMPOSER_ATTACHMENT_RUNTIME_REGISTRATION_FIELDS_V1) {
-        if (runtime[field] !== undefined) {
-            descriptor[field] = true;
-        }
-    }
+    if (runtime.prepareForSend !== undefined) descriptor.prepareForSend = true;
+    if (runtime.resolveForDispatch !== undefined) descriptor.resolveForDispatch = true;
+    if (runtime.afterMessageAccepted !== undefined) descriptor.afterMessageAccepted = true;
     return Object.freeze(descriptor);
 }
 
@@ -2655,6 +2401,94 @@ function listDefinePluginAuthorAdapters(): readonly DefinePluginFamilyAdapter[] 
 
 const DEFINE_PLUGIN_AUTHOR_ADAPTERS = listDefinePluginAuthorAdapters();
 
+const DEFINE_PLUGIN_COMPOSER_COLD_FAMILY_AUTHOR_KEYS = Object.freeze({
+    composerReferences: 'references',
+    composerAttachments: 'attachments',
+    composerControls: 'controls',
+    composerRegions: 'regions',
+} as const);
+
+function isDefinePluginAuthorRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+    return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function hasDefinedDefinePluginAuthorFact(
+    input: Readonly<Record<string, unknown>>,
+    key: string,
+): boolean {
+    return Object.hasOwn(input, key) && input[key] !== undefined;
+}
+
+function hasDefinedDefinePluginComposerFact(
+    input: Readonly<Record<string, unknown>>,
+    family: keyof typeof DEFINE_PLUGIN_COMPOSER_COLD_FAMILY_AUTHOR_KEYS,
+): boolean {
+    const composer = input.composer;
+    return isDefinePluginAuthorRecord(composer)
+        && hasDefinedDefinePluginAuthorFact(
+            composer,
+            DEFINE_PLUGIN_COMPOSER_COLD_FAMILY_AUTHOR_KEYS[family],
+        );
+}
+
+function hasDefinedDefinePluginColdContributionFact(
+    input: Readonly<Record<string, unknown>>,
+    family: string,
+): boolean {
+    if (family in DEFINE_PLUGIN_COMPOSER_COLD_FAMILY_AUTHOR_KEYS) {
+        return hasDefinedDefinePluginComposerFact(
+            input,
+            family as keyof typeof DEFINE_PLUGIN_COMPOSER_COLD_FAMILY_AUTHOR_KEYS,
+        );
+    }
+    const policy = DEFINE_PLUGIN_FAMILY_POLICY_V2[
+        family as keyof typeof DEFINE_PLUGIN_FAMILY_POLICY_V2
+    ];
+    return policy !== undefined && hasDefinedDefinePluginAuthorFact(input, policy.authorKey);
+}
+
+function omitUndeclaredDefinePluginColdArrayFacts(
+    projected: Readonly<Record<string, unknown>>,
+    authorInput: Readonly<Record<string, unknown>>,
+): Readonly<Record<string, unknown>> {
+    return Object.fromEntries(Object.entries(projected).filter(([family, value]) => (
+        !Array.isArray(value)
+        || value.length > 0
+        || hasDefinedDefinePluginAuthorFact(authorInput, family)
+    )));
+}
+
+/**
+ * The Protocol schema normalizes omitted contribution families to empty arrays.
+ * Cold manifest bytes deliberately retain the author-declared shape instead, so
+ * exact manifest inspection can distinguish an omitted family from an explicit
+ * empty declaration before sourceModule performs that normalization.
+ */
+function projectDefinePluginColdContributes(
+    authorInput: Readonly<Record<string, unknown>>,
+): DefinedPluginContributes {
+    const projected = Object.assign(
+        {},
+        ...DEFINE_PLUGIN_AUTHOR_ADAPTERS.map((adapter) => adapter.project(authorInput)),
+    ) as Readonly<Record<string, unknown>>;
+
+    return Object.fromEntries(Object.entries(projected).flatMap(([family, value]) => {
+        if (family === 'mcp' || family === 'ui') {
+            const authorValue = authorInput[family];
+            if (!isDefinePluginAuthorRecord(authorValue) || !isDefinePluginAuthorRecord(value)) {
+                return [];
+            }
+            return [[family, omitUndeclaredDefinePluginColdArrayFacts(value, authorValue)]];
+        }
+        if (Array.isArray(value)
+            && value.length === 0
+            && !hasDefinedDefinePluginColdContributionFact(authorInput, family)) {
+            return [];
+        }
+        return [[family, value]];
+    })) as DefinedPluginContributes;
+}
+
 export function deriveDefinePluginDescriptorOnlyContributionFamilies(
     catalog: readonly DefinePluginCatalogClosureEntry[],
 ): readonly (keyof PluginManifestContributes)[] {
@@ -2679,6 +2513,7 @@ const DEFINE_PLUGIN_BASE_KEYS = Object.freeze([
     'brand',
     'activation',
     'hostAccess',
+    'secrets',
     'metadata',
     'setup',
 ] as const);
@@ -2698,18 +2533,16 @@ function assertDefinePluginOwnKeys(input: object): void {
     }
 }
 
-function invalidManifestMessage(
-    result: Exclude<PluginManifestParseResult, { ok: true }>,
-): string {
-    return formatPluginManifestIngestionDiagnostics(result.diagnostics);
-}
-
 function definePluginImplementation<
     const TActions extends Readonly<Record<string, PluginActionDeclaration>> = Readonly<Record<string, never>>,
     const TAgents extends Readonly<Record<string, PluginAgentDefinition>> = Readonly<Record<string, never>>,
     const TPromptAssets extends Readonly<Record<PluginContributionLocalId, PluginPromptAssetDefinition>> = Readonly<
         Record<string, never>
     >,
+    const TAccountCollections extends Readonly<Record<
+        PluginContributionLocalId,
+        PluginAccountCollectionDefinition
+    >> = Readonly<Record<PluginContributionLocalId, PluginAccountCollectionDefinition>>,
     const TPluginId extends string = string,
     const TContributionPoints extends Readonly<Record<
         PluginContributionLocalId,
@@ -2719,7 +2552,7 @@ function definePluginImplementation<
     TActions,
     TAgents,
     TPromptAssets,
-    Readonly<Record<PluginContributionLocalId, PluginAccountCollectionDefinition>>,
+    TAccountCollections,
     TPluginId,
     TContributionPoints
 >): DefinedPlugin<
@@ -2729,12 +2562,9 @@ function definePluginImplementation<
 > {
     assertDefinePluginOwnKeys(input);
     const authorInput = input as Readonly<Record<string, unknown>>;
-    const contributes = Object.assign(
-        {},
-        ...DEFINE_PLUGIN_AUTHOR_ADAPTERS.map((adapter) => adapter.project(authorInput)),
-    ) as PluginManifestContributes;
+    const contributes = projectDefinePluginColdContributes(authorInput);
 
-    const authoredManifest: PluginManifest = {
+    const manifest = {
         schemaVersion: 2,
         id: input.id,
         version: input.version,
@@ -2745,23 +2575,19 @@ function definePluginImplementation<
         ...(input.entrypoints === undefined ? {} : { entrypoints: input.entrypoints }),
         ...(input.brand === undefined ? {} : { brand: input.brand }),
         ...(input.activation === undefined ? {} : { activation: input.activation }),
-        hostAccess: input.hostAccess ?? { required: [], optional: [] },
+        ...(input.hostAccess === undefined ? {} : { hostAccess: input.hostAccess }),
+        ...(input.secrets === undefined ? {} : { secrets: input.secrets }),
         contributes,
         ...(input.metadata === undefined ? {} : { metadata: input.metadata }),
-    };
-    const parsed = parsePluginManifest(authoredManifest);
-    if (!parsed.ok) {
-        throw new TypeError(`Plugin definition is invalid: ${invalidManifestMessage(parsed)}`);
-    }
-    const manifest = parsed.manifest;
-    assertAgentRunnerDefinitions(input.agents, manifest.contributes.agents);
+    } satisfies DefinedPluginManifest;
+    assertAgentRunnerDefinitions(readAuthoredAgentDefinitions(authorInput), manifest.contributes.agents);
     const daemonDatabases = normalizePluginDaemonDatabaseRuntimeProjection(
         authorInput.daemonDatabases,
-        manifest.contributes.daemonDatabases,
+        manifest.contributes.daemonDatabases ?? [],
     );
     const collectionMigrations = normalizePluginAccountCollectionMigrationRuntimeProjection(
         projectPluginAccountCollectionMigrationRuntimeProjection(authorInput.accountCollections),
-        manifest.contributes.accountCollections,
+        manifest.contributes.accountCollections ?? [],
     );
     const actionContracts = projectActionContracts(input.id, authorInput.actions) as DefinedPlugin<
         TPluginId,
@@ -2787,7 +2613,7 @@ function definePluginImplementation<
         }
     }
     attachTargetedContributionPointSemanticRefs(
-        manifest.contributes.pluginContributionPoints,
+        manifest.contributes.pluginContributionPoints ?? [],
         semanticPointRefs,
     );
 
@@ -2808,7 +2634,7 @@ function definePluginImplementation<
     });
 }
 
-export const definePlugin: <
+export function definePlugin<
     const TActions extends Readonly<Record<string, PluginActionDeclaration>> = Readonly<Record<string, never>>,
     const TAgents extends Readonly<Record<string, PluginAgentDefinition>> = Readonly<Record<string, never>>,
     const TPromptAssets extends Readonly<Record<PluginContributionLocalId, PluginPromptAssetDefinition>> = Readonly<
@@ -2832,10 +2658,17 @@ export const definePlugin: <
         TPluginId,
         TContributionPoints
     >,
-) => DefinedPlugin<
+): DefinedPlugin<
     TPluginId,
     DefinedPluginActionContracts<TPluginId, TActions>,
     DefinedContributionPointProtocolMap<TContributionPoints>
-> = function definePlugin(input) {
-    return definePluginImplementation(input);
-};
+> {
+    return definePluginImplementation<
+        TActions,
+        TAgents,
+        TPromptAssets,
+        TAccountCollections,
+        TPluginId,
+        TContributionPoints
+    >(input);
+}

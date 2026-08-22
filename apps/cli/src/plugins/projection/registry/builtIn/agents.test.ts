@@ -1,7 +1,9 @@
+import { readFileSync } from 'node:fs';
+
 import {
     getAgentCliRuntimeSpec,
     getAllAgentDefinitionContracts,
-    isAgentId,
+    isBundledAgentId,
 } from '@happier-dev/agents';
 import { createPluginContributionIdentity } from '@happier-dev/protocol';
 import { describe, expect, it } from 'vitest';
@@ -12,7 +14,7 @@ import type { ResolvedAgentContribution } from '../types';
 
 function manifestAgents(): readonly ResolvedAgentContribution[] {
     return getAllAgentDefinitionContracts().map((definition) => {
-        if (!isAgentId(definition.id)) {
+        if (!isBundledAgentId(definition.id)) {
             throw new Error(`Unexpected non-canonical built-in Agent '${definition.id}'`);
         }
         return {
@@ -39,7 +41,6 @@ function manifestAgents(): readonly ResolvedAgentContribution[] {
             },
             pluginId: `happier.agent.${definition.id.toLowerCase()}`,
             manifestPath: `bundled:happier.agent.${definition.id.toLowerCase()}`,
-            manifestDigest: `bundled:${definition.id}`,
             daemonEntryPath: `@happier-dev/plugins-${definition.id.toLowerCase()}`,
             sourceSpec: {
                 kind: 'bundled',
@@ -54,6 +55,13 @@ function manifestAgents(): readonly ResolvedAgentContribution[] {
 describe('built-in Agent projection overlays', () => {
     it('does not publish a parallel built-in Agent runtime projection', () => {
         expect(builtInAgentProjection).not.toHaveProperty('projectBuiltInAgentRuntimes');
+    });
+
+    it('builds the bundled session command through the canonical catalog-entry hook owner', () => {
+        const source = readFileSync(new URL('./agents.ts', import.meta.url), 'utf8');
+
+        expect(source).toMatch(/createAgentRuntimeCatalogEntryHooks/);
+        expect(source).not.toMatch(/runBackendSessionCliCommand/);
     });
 
     it('overlays host catalog facts without replacing manifest ownership metadata', () => {

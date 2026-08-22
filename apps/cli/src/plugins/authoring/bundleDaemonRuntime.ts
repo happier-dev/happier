@@ -1,9 +1,10 @@
 import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
-import { lstat, mkdir, realpath } from 'node:fs/promises';
+import { lstat, mkdir, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { basename, dirname, extname, isAbsolute, join, posix, relative, resolve, sep } from 'node:path';
 
-import type { build as EsbuildBuild } from 'esbuild';
+import type { build as EsbuildBuild, Plugin as EsbuildPlugin } from 'esbuild';
+import type { Metafile as EsbuildMetafile } from 'esbuild';
 import semver from 'semver';
 
 import {
@@ -11,12 +12,243 @@ import {
   type AuthoritativePackagedRuntimeProjectRoot,
 } from '@/packagedRuntime/resolvePackagedRuntimeEntrypoint';
 import { resolvePortablePluginRelativePath } from '@/plugins/manifest/portableRelativePath';
-import { readPluginManifest } from '@/plugins/manifest/read';
+import type { ValidatedAgentSessionRunnerFactoryFactV1 } from '@/plugins/runtime/activationSources';
+import { isCanonicalAbsolutePathInsideRoot as isPathInsideRoot } from '@/utils/path/expandHomeDirPath';
+import { writePluginDaemonOutputManifest } from './daemonOutputManifest';
+import { resolveSameInstallNodeModulesRoot } from './packageInstallationRoot';
+import {
+  assertPluginDaemonEntryOutsideTypeScriptEmit,
+  resolvePluginAuthorTypeScriptConfigBoundary,
+} from './typescriptConfigBoundary';
+import { evaluatePluginAuthorRuntimeStagingSource } from './runtimeStagingSource';
 
-function isPathInsideRoot(root: string, target: string): boolean {
-  const relativePath = relative(root, target);
-  return relativePath === ''
-    || (relativePath !== '..' && !relativePath.startsWith(`..${sep}`) && !isAbsolute(relativePath));
+const PACKED_ESM_EXTENSIONS = new Set(['.js', '.mjs']);
+
+// esbuild exposes no public hook for its ESM dynamic-require fallback. This
+// exact compiler release is therefore part of the generated-output contract.
+const ESBUILD_DYNAMIC_REQUIRE_HELPER_SOURCE_VERSION = '0.27.2';
+const ESBUILD_DYNAMIC_REQUIRE_ERROR = "throw Error('Dynamic require of \"' + x + '\" is not supported');";
+const ESBUILD_DYNAMIC_REQUIRE_HELPER_DECLARATION_PREFIX =
+  /(?:^|\n)var ([A-Za-z_$][\w$]*) = \/\* @__PURE__ \*\/ \(\(x\) => typeof require !== "undefined" \? require : typeof Proxy !== "undefined" \? new Proxy\(x, \{/gu;
+
+function expectedEsbuildDynamicRequireHelper(helperName: string): string {
+  return [
+    `var ${helperName} = /* @__PURE__ */ ((x) => typeof require !== "undefined" ? require : typeof Proxy !== "undefined" ? new Proxy(x, {`,
+    '  get: (a, b) => (typeof require !== "undefined" ? require : a)[b]',
+    '}) : x)(function(x) {',
+    '  if (typeof require !== "undefined") return require.apply(this, arguments);',
+    `  ${ESBUILD_DYNAMIC_REQUIRE_ERROR}`,
+    '});',
+  ].join('\n');
+}
+
+function rewriteEsbuildDynamicRequireHelper(output: string): string {
+  const candidates = [...output.matchAll(ESBUILD_DYNAMIC_REQUIRE_HELPER_DECLARATION_PREFIX)];
+  if (candidates.length === 0) {
+    return output;
+  }
+  if (candidates.length > 1) {
+    throw new Error('Bundled plugin runtime emitted more than one esbuild dynamic-require helper');
+  }
+
+  const candidate = candidates[0];
+  const candidateIndex = candidate.index;
+  const helperName = candidate[1];
+  if (candidateIndex === undefined || helperName === undefined) {
+    throw new Error('Bundled plugin runtime emitted an unrecognized esbuild dynamic-require helper');
+  }
+  const declarationStart = candidate[0].startsWith('\n') ? candidateIndex + 1 : candidateIndex;
+  const helperSource = expectedEsbuildDynamicRequireHelper(helperName);
+  if (!output.startsWith(helperSource, declarationStart)) {
+    throw new Error('Bundled plugin runtime emitted an unrecognized esbuild dynamic-require helper');
+  }
+
+  let factoryName = `${helperName}Factory`;
+  for (let suffix = 2; output.includes(factoryName); suffix++) {
+    factoryName = `${helperName}Factory${suffix}`;
+  }
+  const replacement = [
+    `import { createRequire as ${factoryName} } from "node:module";`,
+    `var ${helperName} = /* @__PURE__ */ ${factoryName}(import.meta.url);`,
+  ].join('\n');
+  return `${output.slice(0, declarationStart)}${replacement}${output.slice(declarationStart + helperSource.length)}`;
+}
+
+export function projectPackedSessionRunnerModulePath(params: Readonly<{
+  daemonEntrypoint: string;
+  locatorModule: string;
+}>): string {
+  const daemonPath = params.daemonEntrypoint.replaceAll('\\', '/').replace(/^\.\//u, '');
+  const daemonExtension = posix.extname(daemonPath).toLowerCase();
+  if (!PACKED_ESM_EXTENSIONS.has(daemonExtension)) {
+    throw new Error('Code-defined plugin daemon entrypoint must use .js or .mjs for ESM packing');
+  }
+  const locatorPath = params.locatorModule.replace(/^\.\//u, '');
+  const locatorExtension = posix.extname(locatorPath).toLowerCase();
+  const outputExtension = locatorExtension || daemonExtension;
+  if (!PACKED_ESM_EXTENSIONS.has(outputExtension) || outputExtension !== daemonExtension) {
+    throw new Error(
+      `Session runner module '${params.locatorModule}' must use the packed daemon extension '${daemonExtension}'`,
+    );
+  }
+  return posix.join(
+    posix.dirname(daemonPath),
+    locatorExtension ? locatorPath : `${locatorPath}${daemonExtension}`,
+  );
+}
+
+function isRelativeOrAbsoluteImportSpecifier(specifier: string): boolean {
+  return specifier === '.'
+    || specifier === '..'
+    || specifier.startsWith('./')
+    || specifier.startsWith('../')
+    || specifier.startsWith('.\\')
+    || specifier.startsWith('..\\')
+    || isAbsolute(specifier)
+    || /^[a-zA-Z]:[\\/]/u.test(specifier)
+    || specifier.startsWith('\\\\');
+}
+
+const FIRST_PARTY_WORKSPACE_PACKAGE_PREFIX = '@happier-dev/';
+const CANONICAL_WORKSPACE_ALIAS_SCOPE = '@happier-dev-canonical-workspace';
+const CANONICAL_WORKSPACE_RESOLUTION_DIRECTORY = '.happier-canonical-workspace-resolution';
+
+function getFirstPartyWorkspacePackageName(specifier: string): string | null {
+  if (!specifier.startsWith(FIRST_PARTY_WORKSPACE_PACKAGE_PREFIX)) return null;
+  const [scope, packageSegment] = specifier.split('/');
+  if (scope !== '@happier-dev' || !packageSegment || packageSegment === '.' || packageSegment === '..') {
+    return null;
+  }
+  return `${scope}/${packageSegment}`;
+}
+
+type CanonicalWorkspaceImportResolver = Readonly<{
+  aliases: Readonly<Record<string, string>>;
+  plugin: EsbuildPlugin;
+  resolutionRoot: string;
+  dispose(): Promise<void>;
+}>;
+
+async function createCanonicalWorkspaceImportResolver(
+  canonicalWorkspacePackageRoots: Readonly<Record<string, string>> | undefined,
+  stagedRoot: string,
+): Promise<CanonicalWorkspaceImportResolver | undefined> {
+  if (!canonicalWorkspacePackageRoots) return undefined;
+
+  const canonicalPackages = Object.entries(canonicalWorkspacePackageRoots)
+    .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
+    .map(([packageName, configuredRoot]) => {
+      if (getFirstPartyWorkspacePackageName(packageName) !== packageName) {
+        throw new Error(`Canonical workspace package root has an invalid package name '${packageName}'`);
+      }
+      if (typeof configuredRoot !== 'string' || configuredRoot.trim().length === 0) {
+        throw new Error(`Canonical workspace package '${packageName}' has no package root`);
+      }
+
+      const physicalRoot = realpathSync(resolve(configuredRoot));
+      if (!statSync(physicalRoot).isDirectory()) {
+        throw new Error(`Canonical workspace package '${packageName}' root is not a directory`);
+      }
+      const packageJsonPath = realpathSync(join(physicalRoot, 'package.json'));
+      if (!isPathInsideRoot(physicalRoot, packageJsonPath)) {
+        throw new Error(`Canonical workspace package '${packageName}' package.json escapes its package root`);
+      }
+      const packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf8')) as Readonly<{ name?: unknown }>;
+      if (packageJson.name !== packageName) {
+        throw new Error(`Canonical workspace package root does not match '${packageName}'`);
+      }
+
+      const packageSegment = packageName.slice(FIRST_PARTY_WORKSPACE_PACKAGE_PREFIX.length);
+      return Object.freeze({
+        aliasPackageName: `${CANONICAL_WORKSPACE_ALIAS_SCOPE}/${packageSegment}`,
+        packageName,
+        physicalRoot,
+      });
+    });
+  const packageNames = new Set(canonicalPackages.map(({ packageName }) => packageName));
+  const resolutionRoot = join(stagedRoot, CANONICAL_WORKSPACE_RESOLUTION_DIRECTORY);
+  if (existsSync(resolutionRoot)) {
+    throw new Error('Canonical workspace import resolution directory already exists in staged plugin package');
+  }
+  const aliasScopeRoot = join(resolutionRoot, 'node_modules', CANONICAL_WORKSPACE_ALIAS_SCOPE);
+  await mkdir(aliasScopeRoot, { recursive: true });
+  try {
+    for (const { aliasPackageName, physicalRoot } of canonicalPackages) {
+      const aliasPath = join(resolutionRoot, 'node_modules', ...aliasPackageName.split('/'));
+      await symlink(physicalRoot, aliasPath, process.platform === 'win32' ? 'junction' : 'dir');
+    }
+  } catch (error) {
+    await rm(resolutionRoot, { recursive: true, force: true });
+    throw error;
+  }
+
+  const aliases = Object.freeze(Object.fromEntries(canonicalPackages.map(({
+    aliasPackageName,
+    packageName,
+  }) => [packageName, aliasPackageName])));
+
+  return {
+    aliases,
+    resolutionRoot,
+    plugin: {
+      name: 'happier-canonical-workspace-imports',
+      setup(build) {
+        build.onResolve({ filter: /^@happier-dev\// }, (args) => {
+          const packageName = getFirstPartyWorkspacePackageName(args.path);
+          if (!packageName) {
+            return {
+              errors: [{ text: `Invalid first-party workspace import '${args.path}'` }],
+            };
+          }
+
+          if (!packageNames.has(packageName)) {
+            return {
+              errors: [{
+                text: `Unable to resolve first-party import '${args.path}': First-party import '${packageName}' is not in the canonical workspace dependency closure`,
+              }],
+            };
+          }
+
+          // Let esbuild's own resolver preserve exports, side-effect, and module-kind facts.
+          return undefined;
+        });
+      },
+    },
+    async dispose() {
+      await rm(resolutionRoot, { recursive: true, force: true });
+    },
+  };
+}
+
+async function validateContainedPackSourceImports(params: Readonly<{
+  sourceRoot: string;
+  resolutionRoot: string;
+  metafile: EsbuildMetafile;
+}>): Promise<void> {
+  const physicalInputs = new Map<string, string>();
+  for (const inputPath of Object.keys(params.metafile.inputs)) {
+    if (inputPath.startsWith('<')) continue;
+    const logicalInputPath = resolve(params.resolutionRoot, inputPath);
+    physicalInputs.set(logicalInputPath, await realpath(logicalInputPath));
+  }
+
+  for (const [inputPath, input] of Object.entries(params.metafile.inputs)) {
+    if (inputPath.startsWith('<')) continue;
+    const physicalInputPath = physicalInputs.get(resolve(params.resolutionRoot, inputPath));
+    if (!physicalInputPath) continue;
+    if (!isPathInsideRoot(params.sourceRoot, physicalInputPath)) continue;
+
+    for (const imported of input.imports) {
+      if (imported.external) continue;
+      const physicalImportedPath = physicalInputs.get(resolve(params.resolutionRoot, imported.path));
+      if (physicalImportedPath && isPathInsideRoot(params.sourceRoot, physicalImportedPath)) continue;
+      if (imported.original && !isRelativeOrAbsoluteImportSpecifier(imported.original)) continue;
+
+      throw new Error(
+        `Plugin author source import '${imported.original ?? imported.path}' resolves outside the package root`,
+      );
+    }
+  }
 }
 
 async function realpathNearestExistingAncestor(targetPath: string): Promise<string> {
@@ -42,17 +274,6 @@ interface RegularFileIdentity {
 interface PluginAuthorBundlerRuntime {
   readonly mainPath: string;
   readonly nativeBinaryPath: string;
-}
-
-function resolveSameInstallNodeModulesRoot(packageRoot: string): string | null {
-  const packageParent = dirname(packageRoot);
-  if (basename(packageParent) === 'node_modules') {
-    return packageParent;
-  }
-  const scopeParent = dirname(packageParent);
-  return basename(packageParent).startsWith('@') && basename(scopeParent) === 'node_modules'
-    ? scopeParent
-    : null;
 }
 
 export class PluginAuthorBundlerUnavailableError extends Error {
@@ -222,7 +443,11 @@ function resolvePluginAuthorBundlerRuntime(params: Readonly<{
             version?: unknown;
             optionalDependencies?: unknown;
           };
-          if (packageJson.name !== 'esbuild' || packageJson.main !== 'lib/main.js') {
+          if (
+            packageJson.name !== 'esbuild'
+            || packageJson.main !== 'lib/main.js'
+            || packageJson.version !== ESBUILD_DYNAMIC_REQUIRE_HELPER_SOURCE_VERSION
+          ) {
             continue;
           }
           const isDirectPackagedDependency = isPathInsideRoot(physicalRuntimeRoot, packageRoot);
@@ -311,82 +536,245 @@ export async function bundlePluginDaemonRuntime(
   deps: Readonly<{ build?: typeof EsbuildBuild }> = {},
 ): Promise<void> {
   const projectRoot = await realpath(resolve(projectRootInput));
-  const manifestResult = await readPluginManifest({
-    manifestPath: join(projectRoot, '.happier-plugin', 'plugin.json'),
-  });
-  if (!manifestResult.ok) {
-    throw new Error(manifestResult.diagnostics.map((diagnostic) => diagnostic.message).join('; '));
-  }
-  const developmentEntrypoint = manifestResult.manifest.entrypoints?.development;
-  const daemonEntrypoint = manifestResult.manifest.entrypoints?.daemon;
-  if (!developmentEntrypoint || !daemonEntrypoint) {
-    throw new Error('Plugin build requires both entrypoints.development and entrypoints.daemon');
-  }
-  const sourceResolution = resolvePortablePluginRelativePath({
+  const runtimeSource = await evaluatePluginAuthorRuntimeStagingSource({
+    locator: projectRoot,
     rootPath: projectRoot,
-    value: developmentEntrypoint,
-    label: 'entrypoints.development',
+    immutableGenerationId: 'plugin-author-build',
   });
-  if (!sourceResolution.ok) throw new Error(sourceResolution.message);
+  const daemonEntrypoint = runtimeSource.evaluated.manifest.entrypoints?.daemon;
+  if (!daemonEntrypoint) {
+    throw new Error('Plugin build requires entrypoints.daemon');
+  }
+  const staged = await stagePluginDaemonRuntime({
+    sourceRootPath: projectRoot,
+    sourceEntryPath: runtimeSource.evaluated.entry.entryPath,
+    stagedRootPath: projectRoot,
+    daemonEntrypoint,
+    sessionRunnerFactories: runtimeSource.sessionRunnerFactories,
+  }, {
+    ...(deps.build ? { build: deps.build } : {}),
+  });
+  await writePluginDaemonOutputManifest({
+    projectRoot,
+    outputRelativePaths: staged.outputRelativePaths,
+  });
+}
+
+/**
+ * Bundles an already-evaluated author module into an isolated package staging
+ * root. Packing owns this path; it never writes generated bytes back into the
+ * author's source tree.
+ */
+export type StagedPluginDaemonRuntime = Readonly<{
+  outputRelativePaths: readonly string[];
+}>;
+
+export async function stagePluginDaemonRuntime(
+  params: Readonly<{
+    sourceRootPath: string;
+    sourceEntryPath: string;
+    stagedRootPath: string;
+    daemonEntrypoint: string;
+    sessionRunnerFactories?: readonly ValidatedAgentSessionRunnerFactoryFactV1[];
+    /**
+     * Immutable bundled artifacts resolve first-party workspace imports from
+     * the host's declared workspace closure, independent of mutable nested
+     * development dependency copies. Ordinary author builds omit this map.
+     */
+    canonicalWorkspacePackageRoots?: Readonly<Record<string, string>>;
+  }>,
+  deps: Readonly<{ build?: typeof EsbuildBuild }> = {},
+): Promise<StagedPluginDaemonRuntime> {
+  const sourceRoot = await realpath(resolve(params.sourceRootPath));
+  const sourceRealPath = await realpath(resolve(params.sourceEntryPath));
+  const sourceStat = await lstat(sourceRealPath);
+  if (!isPathInsideRoot(sourceRoot, sourceRealPath) || !sourceStat.isFile()) {
+    throw new Error('Plugin author entry must resolve to a contained regular file');
+  }
+  const typeScriptConfig = await resolvePluginAuthorTypeScriptConfigBoundary({
+    packageRootPath: sourceRoot,
+    entryPath: sourceRealPath,
+  });
+
+  const stagedRoot = await realpath(resolve(params.stagedRootPath));
+  const declaredDaemonExtension = posix.extname(params.daemonEntrypoint.replaceAll('\\', '/')).toLowerCase();
+  if (declaredDaemonExtension !== '.js' && declaredDaemonExtension !== '.mjs') {
+    throw new Error('Code-defined plugin daemon staging emits ESM and requires a .mjs entrypoint or .js in a type:module package');
+  }
+  if (declaredDaemonExtension === '.js') {
+    let packageJson: unknown;
+    try {
+      packageJson = JSON.parse(await readFile(join(sourceRoot, 'package.json'), 'utf8'));
+    } catch {
+      throw new Error('Code-defined plugin daemon .js entrypoint requires a valid type:module package.json');
+    }
+    if (
+      typeof packageJson !== 'object'
+      || packageJson === null
+      || Array.isArray(packageJson)
+      || (packageJson as Readonly<Record<string, unknown>>).type !== 'module'
+    ) {
+      throw new Error('Code-defined plugin daemon .js entrypoint requires package.json type:module');
+    }
+  }
   const outputResolution = resolvePortablePluginRelativePath({
-    rootPath: projectRoot,
-    value: daemonEntrypoint,
+    rootPath: stagedRoot,
+    value: params.daemonEntrypoint,
     label: 'entrypoints.daemon',
   });
   if (!outputResolution.ok) throw new Error(outputResolution.message);
-  const sourcePath = sourceResolution.path;
   const outputPath = outputResolution.path;
-  const sourceRealPath = await realpath(sourcePath);
-  const sourceStat = await lstat(sourceRealPath);
-  if (!isPathInsideRoot(projectRoot, sourceRealPath) || !sourceStat.isFile()) {
-    throw new Error('entrypoints.development must resolve to a contained regular file');
-  }
+  // Staging may write into an isolated packaging root, so the two facts are
+  // compared as package-root-relative paths: the emit directory is relative to
+  // the author's source root, the daemon entry to the root receiving it.
+  assertPluginDaemonEntryOutsideTypeScriptEmit({
+    daemonRelativePath: relative(stagedRoot, outputPath).split(sep).join('/'),
+    emitOutputRelativePath: typeScriptConfig.emitOutputRelativePath,
+  });
   const outputParentPath = dirname(outputPath);
   const existingOutputAncestorRealPath = await realpathNearestExistingAncestor(outputParentPath);
-  if (!isPathInsideRoot(projectRoot, existingOutputAncestorRealPath)) {
-    throw new Error('entrypoints.daemon must resolve inside the plugin project');
+  if (!isPathInsideRoot(stagedRoot, existingOutputAncestorRealPath)) {
+    throw new Error('entrypoints.daemon must resolve inside the staged plugin package');
   }
   await mkdir(outputParentPath, { recursive: true });
   const outputParentRealPath = await realpath(outputParentPath);
-  if (!isPathInsideRoot(projectRoot, outputParentRealPath)) {
-    throw new Error('entrypoints.daemon must resolve inside the plugin project');
+  if (!isPathInsideRoot(stagedRoot, outputParentRealPath)) {
+    throw new Error('entrypoints.daemon must resolve inside the staged plugin package');
   }
-  let outputRealPath: string | null = null;
-  let outputStat: Awaited<ReturnType<typeof lstat>> | null = null;
   try {
-    outputStat = await lstat(outputPath);
+    const outputStat = await lstat(outputPath);
     if (outputStat.isSymbolicLink() || !outputStat.isFile()) {
       throw new Error('entrypoints.daemon must be a contained regular file');
     }
-    outputRealPath = await realpath(outputPath);
-    if (!isPathInsideRoot(projectRoot, outputRealPath)) {
-      throw new Error('entrypoints.daemon must resolve inside the plugin project');
+    const outputRealPath = await realpath(outputPath);
+    if (!isPathInsideRoot(stagedRoot, outputRealPath)) {
+      throw new Error('entrypoints.daemon must resolve inside the staged plugin package');
     }
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException | null)?.code !== 'ENOENT') throw error;
-  }
-  if (
-    outputStat !== null
-    && outputRealPath !== null
-    && regularFilesMayAlias({
+    if (regularFilesMayAlias({
       sourcePath: sourceRealPath,
       sourceIdentity: sourceStat,
       outputPath: outputRealPath,
       outputIdentity: outputStat,
-    })
-  ) {
-    throw new Error('entrypoints.daemon must not overwrite entrypoints.development');
+    })) {
+      throw new Error('entrypoints.daemon must not overwrite the plugin author entry');
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException | null)?.code !== 'ENOENT') throw error;
   }
+
+  const sessionRunnerEntries = new Map<string, string>();
+  for (const factory of params.sessionRunnerFactories ?? []) {
+    const locatorModule = factory.locator.module;
+    if (factory.loadMode !== 'source-ts') {
+      throw new Error(`Session runner module '${locatorModule}' must come from the current author source generation`);
+    }
+    const runnerSourceResolution = resolvePortablePluginRelativePath({
+      rootPath: sourceRoot,
+      value: factory.normalizedModulePath,
+      label: 'Validated Agent session runner source module',
+    });
+    if (!runnerSourceResolution.ok) throw new Error(runnerSourceResolution.message);
+    const runnerSourcePath = await realpath(runnerSourceResolution.path);
+    const runnerStat = await lstat(runnerSourcePath);
+    if (!runnerStat.isFile() || !isPathInsideRoot(sourceRoot, runnerSourcePath)) {
+      throw new Error(`Session runner module '${locatorModule}' was not found as a contained author source file`);
+    }
+    if (runnerSourcePath === sourceRealPath) {
+      throw new Error(`Session runner module '${locatorModule}' must be a leaf distinct from the plugin activation entry`);
+    }
+    const packedRelativePath = projectPackedSessionRunnerModulePath({
+      daemonEntrypoint: params.daemonEntrypoint,
+      locatorModule,
+    });
+    const packedResolution = resolvePortablePluginRelativePath({
+      rootPath: stagedRoot,
+      value: packedRelativePath,
+      label: 'Agent session runner factory module',
+    });
+    if (!packedResolution.ok) throw new Error(packedResolution.message);
+    if (packedResolution.path === outputPath) {
+      throw new Error(
+        `Session runner module '${locatorModule}' must not collide with the packed plugin activation entry`,
+      );
+    }
+    const existing = sessionRunnerEntries.get(packedRelativePath);
+    if (existing && existing !== runnerSourcePath) {
+      throw new Error(`Session runner modules collide at packed path '${packedRelativePath}'`);
+    }
+    sessionRunnerEntries.set(packedRelativePath, runnerSourcePath);
+  }
+
   const build = deps.build ?? loadPluginAuthorBundlerBuild();
-  await build({
-    entryPoints: [sourceRealPath],
-    outfile: outputPath,
-    bundle: true,
-    format: 'esm',
-    platform: 'node',
-    target: 'node20',
-    packages: 'bundle',
-    sourcemap: false,
-    logLevel: 'silent',
-  });
+  const canonicalWorkspaceImportResolver = await createCanonicalWorkspaceImportResolver(
+    params.canonicalWorkspacePackageRoots,
+    stagedRoot,
+  );
+  const buildWorkingDirectory = canonicalWorkspaceImportResolver?.resolutionRoot ?? sourceRoot;
+  const daemonRelativePath = relative(stagedRoot, outputPath).split(sep).join('/');
+  const daemonExtension = extname(daemonRelativePath);
+  const entryPoints = Object.fromEntries([
+    [daemonRelativePath.slice(0, -daemonExtension.length), sourceRealPath],
+    ...[...sessionRunnerEntries].map(([packedPath, sourcePath]) => [
+      packedPath.slice(0, -extname(packedPath).length),
+      sourcePath,
+    ] as const),
+  ]);
+  try {
+    const buildResult = await build({
+      entryPoints,
+      outdir: stagedRoot,
+      absWorkingDir: buildWorkingDirectory,
+      bundle: true,
+      format: 'esm',
+      splitting: sessionRunnerEntries.size > 0,
+      platform: 'node',
+      target: 'node20',
+      packages: 'bundle',
+      entryNames: '[dir]/[name]',
+      chunkNames: `${posix.dirname(daemonRelativePath)}/.happier-chunks/[name]-[hash]`,
+      outExtension: { '.js': daemonExtension },
+      sourcemap: false,
+      logLevel: 'silent',
+      metafile: true,
+      tsconfigRaw: typeScriptConfig.bundlerTsconfigRaw,
+      ...(canonicalWorkspaceImportResolver
+        ? {
+          alias: canonicalWorkspaceImportResolver.aliases,
+          plugins: [canonicalWorkspaceImportResolver.plugin],
+        }
+        : {}),
+    });
+    await validateContainedPackSourceImports({
+      sourceRoot,
+      resolutionRoot: buildWorkingDirectory,
+      metafile: buildResult.metafile,
+    });
+
+    const emittedOutputs = Object.keys(buildResult.metafile.outputs).map((outputKey) => {
+      const absoluteOutputPath = resolve(buildWorkingDirectory, outputKey);
+      if (!isPathInsideRoot(stagedRoot, absoluteOutputPath)) {
+        throw new Error(`Staged plugin daemon runtime output escaped its package root: '${outputKey}'`);
+      }
+      return Object.freeze({ outputKey, absoluteOutputPath });
+    });
+
+    for (const { absoluteOutputPath } of emittedOutputs) {
+      const emittedPath = absoluteOutputPath;
+      const emittedSource = await readFile(emittedPath, 'utf8');
+      const rewrittenSource = rewriteEsbuildDynamicRequireHelper(emittedSource);
+      if (rewrittenSource !== emittedSource) {
+        await writeFile(emittedPath, rewrittenSource, 'utf8');
+      }
+    }
+
+    const outputRelativePaths = emittedOutputs.map(({ absoluteOutputPath }) => {
+      return relative(stagedRoot, absoluteOutputPath).split(sep).join('/');
+    });
+    outputRelativePaths.sort((left, right) => left < right ? -1 : left > right ? 1 : 0);
+    return Object.freeze({
+      outputRelativePaths: Object.freeze(outputRelativePaths),
+    });
+  } finally {
+    await canonicalWorkspaceImportResolver?.dispose();
+  }
 }

@@ -1,15 +1,26 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { readdir, readFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import type { JsonValue } from '@happier-dev/plugin-sdk';
-import type { PluginStorageConsistency, PluginStorageScopeService, PluginStorageService, PluginStorageTransaction } from '@happier-dev/plugin-sdk/runtime';
+import type {
+    DaemonDatabaseStorageScope,
+    PluginAccountStorageScope,
+    StorageConsistency,
+    StorageScopeService,
+    StorageService,
+    StorageTransaction,
+} from '@happier-dev/plugin-sdk/storage';
 
 import type { PluginStorePaths } from '@/plugins/store/paths';
 import { withJsonOwnerFileLock } from '@/utils/fs/jsonOwnerFileLock';
 import { writeJsonAtomic } from '@/utils/fs/writeJsonAtomic';
 
 import { PluginContextServiceError } from './errors';
+import {
+    createUnavailablePluginDaemonDatabaseService,
+    type StablePluginDaemonDatabaseHost,
+} from './daemonDatabase';
 import { normalizePluginStorageNamespace } from './pluginNamespace';
 import { preparePluginOwnedDataDirectoryRemoval } from './pluginOwnedDataDirectory';
 import { setOwnRecordValue } from './recordOwnProperties';
@@ -25,9 +36,8 @@ export interface PluginStorageOwnerScope {
 
 export interface PluginStorageOwner {
     readonly ephemeral: PluginStorageOwnerScope;
-    readonly session: PluginStorageOwnerScope;
-    readonly local: PluginStorageOwnerScope;
-    readonly synced: PluginStorageOwnerScope;
+    readonly daemonSession: PluginStorageOwnerScope;
+    readonly daemon: PluginStorageOwnerScope;
 }
 
 type AtomicStorageUpdate = <T>(
@@ -37,31 +47,15 @@ type AtomicStorageUpdate = <T>(
 
 const atomicStorageUpdates = new WeakMap<object, AtomicStorageUpdate>();
 type AtomicStorageTransaction = <T>(
-    operation: (transaction: PluginStorageTransaction) => Promise<T>,
+    operation: (transaction: StorageTransaction) => Promise<T>,
     signal?: AbortSignal,
 ) => Promise<T>;
 const atomicStorageTransactions = new WeakMap<object, AtomicStorageTransaction>();
 const pluginStorageTransactionContext = new AsyncLocalStorage<ReadonlySet<object>>();
 
-export type PluginSyncedStorageAdapter = PluginStorageOwnerScope;
-
-export type AccountSettingsBackedPluginStorageScopeParams = Readonly<{
-    pluginId: string;
-    getSettings: () => Readonly<Record<string, unknown>> | null;
-    updateSettings: (
-        mutate: (settings: Readonly<Record<string, unknown>>) => Record<string, unknown>,
-    ) => Promise<Readonly<Record<string, unknown>>>;
-}>;
-
-export type PluginSyncedStorageRemovalAdapter = Omit<
-    AccountSettingsBackedPluginStorageScopeParams,
-    'pluginId'
->;
-
 export type PreparePluginStorageDataRemovalParams = Readonly<{
     pluginId: string;
     paths: PluginStorePaths;
-    synced: PluginSyncedStorageRemovalAdapter | null;
     removeDirectory?: (directoryPath: string) => Promise<void>;
 }>;
 
@@ -69,13 +63,27 @@ export type CreatePluginStorageOwnerParams = Readonly<{
     pluginId: string;
     paths: PluginStorePaths;
     sessionId?: string | (() => string | null | undefined) | null;
-    synced?: PluginSyncedStorageAdapter | null;
 }>;
 
-export type CopyPluginSessionStorageForForkParams = Readonly<{
-    paths: PluginStorePaths;
-    sourceSessionId: string;
-    targetSessionId: string;
+/**
+ * The Account Data owner supplies this port once its authenticated Protocol
+ * client exists. It receives the host-stamped plugin/generation lifecycle;
+ * no plugin-supplied caller, Account id, writer contract, raw HTTP, or local
+ * fallback crosses this seam.
+ */
+export type StablePluginAccountStorageHost = Readonly<{
+    bind(input: Readonly<{
+        pluginId: string;
+        generation: string;
+        signal: AbortSignal;
+        /**
+         * Resource admission currentness comes from the committed registry and
+         * can require asynchronous confirmation. The Account owner is the
+         * mutation authority, so it must re-check that live fact itself
+         * before crossing its Account boundary.
+         */
+        isGenerationCurrent(): boolean | Promise<boolean>;
+    }>): PluginAccountStorageScope | null;
 }>;
 
 export type PluginStoragePublicShareSnapshotV1 = Readonly<{
@@ -88,8 +96,14 @@ type StorageFileV1 = Readonly<{
     values: JsonObject;
 }>;
 
-const SYNCED_STORAGE_SETTINGS_KEY = 'pluginStorageSyncedV1';
+type StorageListCursorV1 = Readonly<{
+    t: 'happier_plugin_storage_list_cursor_v1';
+    prefix: string | null;
+    after: string;
+}>;
+
 export const PLUGIN_HOST_STORAGE_KEY_PREFIX = '@happier/';
+export const PLUGIN_ACCOUNT_STORAGE_UNAVAILABLE_CODE = 'plugin_account_storage_unavailable';
 
 function createStorageFile(values: JsonObject = {}): StorageFileV1 {
     return Object.freeze({
@@ -112,6 +126,33 @@ function isRecord(value: unknown): value is JsonObject {
     return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
+function createStorageListCursor(params: Readonly<{
+    prefix: string | undefined;
+    after: string;
+}>): string {
+    const cursor: StorageListCursorV1 = {
+        t: 'happier_plugin_storage_list_cursor_v1',
+        prefix: params.prefix ?? null,
+        after: params.after,
+    };
+    return Buffer.from(JSON.stringify(cursor), 'utf8').toString('base64url');
+}
+
+function readStorageListCursor(cursor: string, expectedPrefix: string | undefined): string {
+    try {
+        const parsed: unknown = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8'));
+        if (!isRecord(parsed)
+            || parsed.t !== 'happier_plugin_storage_list_cursor_v1'
+            || parsed.prefix !== (expectedPrefix ?? null)
+            || typeof parsed.after !== 'string') {
+            throw new Error('Invalid plugin storage cursor');
+        }
+        return parsed.after;
+    } catch {
+        throw new PluginContextServiceError('PLUGIN_STORAGE_CURSOR_INVALID', 'Plugin storage list cursor is invalid');
+    }
+}
+
 function cloneJsonValue<T>(value: T): T {
     if (value === undefined) {
         return value;
@@ -126,7 +167,7 @@ function throwIfAborted(signal?: AbortSignal): void {
 }
 
 function createTransactionHandle(values: JsonObject, signal?: AbortSignal): Readonly<{
-    transaction: PluginStorageTransaction;
+    transaction: StorageTransaction;
     end: () => void;
 }> {
     let active = true;
@@ -163,7 +204,7 @@ function createTransactionHandle(values: JsonObject, signal?: AbortSignal): Read
 
 async function runTransaction<T>(params: Readonly<{
     values: JsonObject;
-    operation: (transaction: PluginStorageTransaction) => Promise<T>;
+    operation: (transaction: StorageTransaction) => Promise<T>;
     signal?: AbortSignal;
 }>): Promise<T> {
     throwIfAborted(params.signal);
@@ -175,72 +216,6 @@ async function runTransaction<T>(params: Readonly<{
     } finally {
         handle.end();
     }
-}
-
-function readSyncedStorageRoot(settings: Readonly<Record<string, unknown>> | null): Record<string, Record<string, unknown>> {
-    const root = settings?.[SYNCED_STORAGE_SETTINGS_KEY];
-    if (!isRecord(root) || root.v !== 1 || !isRecord(root.plugins)) {
-        return {};
-    }
-    const plugins: Record<string, Record<string, unknown>> = {};
-    for (const [pluginNamespace, rawValues] of Object.entries(root.plugins)) {
-        if (isRecord(rawValues)) {
-            setOwnRecordValue(plugins, pluginNamespace, cloneJsonValue(rawValues));
-        }
-    }
-    return plugins;
-}
-
-function readSyncedStorageRootForRemoval(
-    settings: Readonly<Record<string, unknown>>,
-): Record<string, Record<string, unknown>> {
-    const root = settings[SYNCED_STORAGE_SETTINGS_KEY];
-    if (root === undefined) return {};
-    if (!isRecord(root) || root.v !== 1 || !isRecord(root.plugins)) {
-        throw new PluginContextServiceError(
-            'PLUGIN_STORAGE_SYNCED_STATE_INVALID',
-            'Synced plugin storage has an unsupported persisted shape',
-        );
-    }
-    const plugins: Record<string, Record<string, unknown>> = {};
-    for (const [pluginNamespace, rawValues] of Object.entries(root.plugins)) {
-        if (!isRecord(rawValues)) {
-            throw new PluginContextServiceError(
-                'PLUGIN_STORAGE_SYNCED_STATE_INVALID',
-                'Synced plugin storage contains an invalid plugin namespace',
-            );
-        }
-        setOwnRecordValue(plugins, pluginNamespace, cloneJsonValue(rawValues));
-    }
-    return plugins;
-}
-
-function writeSyncedStorageRoot(
-    settings: Readonly<Record<string, unknown>>,
-    plugins: Record<string, Record<string, unknown>>,
-): Record<string, unknown> {
-    return {
-        ...settings,
-        [SYNCED_STORAGE_SETTINGS_KEY]: {
-            v: 1,
-            plugins,
-        },
-    };
-}
-
-function writeSyncedStorageRootForRemoval(
-    settings: Readonly<Record<string, unknown>>,
-    plugins: Record<string, Record<string, unknown>>,
-): Record<string, unknown> {
-    const currentRoot = settings[SYNCED_STORAGE_SETTINGS_KEY];
-    return {
-        ...settings,
-        [SYNCED_STORAGE_SETTINGS_KEY]: {
-            ...(isRecord(currentRoot) ? cloneJsonValue(currentRoot) : {}),
-            v: 1,
-            plugins,
-        },
-    };
 }
 
 function createMemoryScope(): PluginStorageOwnerScope {
@@ -260,7 +235,7 @@ function createMemoryScope(): PluginStorageOwnerScope {
         },
     });
     let transactionTail = Promise.resolve();
-    atomicStorageTransactions.set(scope, async <T>(operation: (transaction: PluginStorageTransaction) => Promise<T>, signal?: AbortSignal) => {
+    atomicStorageTransactions.set(scope, async <T>(operation: (transaction: StorageTransaction) => Promise<T>, signal?: AbortSignal) => {
         const preceding = transactionTail;
         let release!: () => void;
         transactionTail = new Promise<void>((resolve) => { release = resolve; });
@@ -342,7 +317,7 @@ function createFileScope(filePath: string): PluginStorageOwnerScope {
         setOwnRecordValue(values, key, cloneJsonValue(next.value));
         return next.result;
     }));
-    atomicStorageTransactions.set(scope, async <T>(operation: (transaction: PluginStorageTransaction) => Promise<T>, signal?: AbortSignal) => (
+    atomicStorageTransactions.set(scope, async <T>(operation: (transaction: StorageTransaction) => Promise<T>, signal?: AbortSignal) => (
         await mutateValues(async (values) => await runTransaction({
             values,
             operation,
@@ -373,7 +348,7 @@ function readSessionId(sessionId: CreatePluginStorageOwnerParams['sessionId']): 
     return trimmed.length > 0 ? trimmed : null;
 }
 
-function createSessionFileScope(params: Readonly<{
+function createDaemonSessionFileScope(params: Readonly<{
     paths: PluginStorePaths;
     pluginNamespace: string;
     sessionId: CreatePluginStorageOwnerParams['sessionId'];
@@ -383,7 +358,7 @@ function createSessionFileScope(params: Readonly<{
         if (!sessionId) {
             throw new PluginContextServiceError(
                 'PLUGIN_STORAGE_SESSION_UNAVAILABLE',
-                'ctx.storage.session is unavailable until the host binds a session identity',
+                'ctx.storage.daemonSession is unavailable until the host binds a Session identity',
             );
         }
         const sessionNamespace = normalizePluginStorageNamespace(sessionId);
@@ -404,110 +379,11 @@ function createSessionFileScope(params: Readonly<{
             return await createFileScope(resolveFilePath()).listKeys();
         },
     });
-    atomicStorageTransactions.set(scope, async <T>(operation: (transaction: PluginStorageTransaction) => Promise<T>, signal?: AbortSignal) => {
+    atomicStorageTransactions.set(scope, async <T>(operation: (transaction: StorageTransaction) => Promise<T>, signal?: AbortSignal) => {
         const resolved = createFileScope(resolveFilePath());
         const transaction = atomicStorageTransactions.get(resolved);
-        if (!transaction) throw new Error('Plugin session storage transaction owner is unavailable');
+        if (!transaction) throw new Error('Plugin daemonSession storage transaction owner is unavailable');
         return await transaction(operation, signal);
-    });
-    return scope;
-}
-
-function createUnavailableSyncedScope(): PluginStorageOwnerScope {
-    const unavailable = async (): Promise<never> => {
-        throw new PluginContextServiceError(
-            'PLUGIN_STORAGE_SYNCED_UNAVAILABLE',
-            'ctx.storage.synced is unavailable because no host account settings adapter is bound',
-        );
-    };
-    return Object.freeze({
-        get: unavailable,
-        set: unavailable,
-        delete: unavailable,
-        listKeys: unavailable,
-    });
-}
-
-export function createAccountSettingsBackedPluginStorageScope(
-    params: AccountSettingsBackedPluginStorageScopeParams,
-): PluginStorageOwnerScope {
-    const pluginNamespace = normalizePluginStorageNamespace(params.pluginId);
-
-    async function mutatePluginValues(
-        mutate: (values: Record<string, unknown>) => Record<string, unknown>,
-    ): Promise<void> {
-        await params.updateSettings((settings) => {
-            const plugins = readSyncedStorageRoot(settings);
-            setOwnRecordValue(plugins, pluginNamespace, mutate({ ...(plugins[pluginNamespace] ?? {}) }));
-            return writeSyncedStorageRoot(settings, plugins);
-        });
-    }
-
-    const scope: PluginStorageOwnerScope = Object.freeze({
-        async get<T = unknown>(key: string): Promise<T | null> {
-            const plugins = readSyncedStorageRoot(params.getSettings());
-            const values = plugins[pluginNamespace] ?? {};
-            return Object.prototype.hasOwnProperty.call(values, key)
-                ? cloneJsonValue(values[key] as T)
-                : null;
-        },
-        async set(key: string, value: unknown): Promise<void> {
-            await mutatePluginValues((values) => {
-                setOwnRecordValue(values, key, cloneJsonValue(value));
-                return values;
-            });
-        },
-        async delete(key: string): Promise<void> {
-            await mutatePluginValues((values) => {
-                delete values[key];
-                return values;
-            });
-        },
-        async listKeys(): Promise<readonly string[]> {
-            const plugins = readSyncedStorageRoot(params.getSettings());
-            return Object.freeze(Object.keys(plugins[pluginNamespace] ?? {}).sort());
-        },
-    });
-    atomicStorageUpdates.set(scope, async <T>(key: string, operation: (
-        current: unknown | null,
-    ) => Readonly<{ value: unknown; result: T }>): Promise<T> => {
-        let result: T | undefined;
-        let operated = false;
-        await params.updateSettings((settings) => {
-            const plugins = readSyncedStorageRoot(settings);
-            const values = { ...(plugins[pluginNamespace] ?? {}) };
-            const current = Object.prototype.hasOwnProperty.call(values, key)
-                ? cloneJsonValue(values[key])
-                : null;
-            const next = operation(current);
-            setOwnRecordValue(values, key, cloneJsonValue(next.value));
-            setOwnRecordValue(plugins, pluginNamespace, values);
-            result = next.result;
-            operated = true;
-            return writeSyncedStorageRoot(settings, plugins);
-        });
-        if (!operated) {
-            throw new PluginContextServiceError(
-                'PLUGIN_STORAGE_SYNCED_UNAVAILABLE',
-                'Synced plugin storage update did not reach the account settings owner',
-            );
-        }
-        return result as T;
-    });
-    let transactionTail = Promise.resolve();
-    atomicStorageTransactions.set(scope, async <T>(operation: (transaction: PluginStorageTransaction) => Promise<T>, signal?: AbortSignal) => {
-        const preceding = transactionTail;
-        let release!: () => void;
-        transactionTail = new Promise<void>((resolve) => { release = resolve; });
-        await preceding;
-        try {
-            const values = cloneJsonValue(readSyncedStorageRoot(params.getSettings())[pluginNamespace] ?? {});
-            const result = await runTransaction({ values, operation, ...(signal ? { signal } : {}) });
-            await mutatePluginValues(() => values);
-            return result;
-        } finally {
-            release();
-        }
     });
     return scope;
 }
@@ -515,44 +391,18 @@ export function createAccountSettingsBackedPluginStorageScope(
 export async function preparePluginStorageDataRemoval(
     params: PreparePluginStorageDataRemovalParams,
 ): Promise<Readonly<{
-    hadLocalData: boolean;
-    hadSyncedData: boolean;
-    removeSynced: () => Promise<void>;
-    removeLocal: () => Promise<void>;
+    hadDaemonData: boolean;
+    removeDaemon: () => Promise<void>;
 }>> {
-    const local = await preparePluginOwnedDataDirectoryRemoval({
+    const daemon = await preparePluginOwnedDataDirectoryRemoval({
         pluginId: params.pluginId,
         rootDir: params.paths.storageDir,
         errorCode: 'PLUGIN_STORAGE_DATA_PATH_INVALID',
         ...(params.removeDirectory ? { removeDirectory: params.removeDirectory } : {}),
     });
-    if (!params.synced) {
-        throw new PluginContextServiceError(
-            'PLUGIN_STORAGE_SYNCED_REMOVAL_UNAVAILABLE',
-            'Synced plugin storage removal requires an active account-settings owner',
-        );
-    }
-    const settings = params.synced.getSettings();
-    if (!settings) {
-        throw new PluginContextServiceError(
-            'PLUGIN_STORAGE_SYNCED_REMOVAL_UNAVAILABLE',
-            'Synced plugin storage removal requires an active account-settings snapshot',
-        );
-    }
-    const pluginNamespace = normalizePluginStorageNamespace(params.pluginId);
-    const plugins = readSyncedStorageRootForRemoval(settings);
-    const hadSyncedData = Object.prototype.hasOwnProperty.call(plugins, pluginNamespace);
     return Object.freeze({
-        hadLocalData: local.existed,
-        hadSyncedData,
-        removeSynced: async () => {
-            await params.synced!.updateSettings((currentSettings) => {
-                const currentPlugins = readSyncedStorageRootForRemoval(currentSettings);
-                delete currentPlugins[pluginNamespace];
-                return writeSyncedStorageRootForRemoval(currentSettings, currentPlugins);
-            });
-        },
-        removeLocal: local.remove,
+        hadDaemonData: daemon.existed,
+        removeDaemon: daemon.remove,
     });
 }
 
@@ -562,22 +412,21 @@ export function createPluginStorageOwner(params: CreatePluginStorageOwnerParams)
 
     return Object.freeze({
         ephemeral: createMemoryScope(),
-        session: createSessionFileScope({
+        daemonSession: createDaemonSessionFileScope({
             paths: params.paths,
             pluginNamespace,
             sessionId: params.sessionId,
         }),
-        local: createFileScope(join(pluginStorageDir, 'local.v1.json')),
-        synced: params.synced ?? createUnavailableSyncedScope(),
+        daemon: createFileScope(join(pluginStorageDir, 'daemon.v1.json')),
     });
 }
 
 function createStableStorageScope(params: Readonly<{
     scope: PluginStorageOwnerScope;
-    consistency: PluginStorageConsistency;
+    consistency: StorageConsistency;
     signal: AbortSignal;
     isGenerationCurrent: () => boolean;
-}>): PluginStorageScopeService {
+}>): StorageScopeService {
     const scopeIdentity = Object.freeze({});
     const assertUsable = (signal?: AbortSignal): void => {
         throwIfAborted(params.signal);
@@ -610,7 +459,7 @@ function createStableStorageScope(params: Readonly<{
             );
         }
     };
-    const publicTransaction = (transaction: PluginStorageTransaction): PluginStorageTransaction => Object.freeze({
+    const publicTransaction = (transaction: StorageTransaction): StorageTransaction => Object.freeze({
         async get<T extends JsonValue = JsonValue>(key: string, options?: { signal?: AbortSignal }): Promise<T | null> {
             assertPublicKey(key);
             return await transaction.get<T>(key, options);
@@ -625,7 +474,7 @@ function createStableStorageScope(params: Readonly<{
         },
     });
     const mutateAtomically = async <T>(
-        operation: (transaction: PluginStorageTransaction) => Promise<T>,
+        operation: (transaction: StorageTransaction) => Promise<T>,
         signal?: AbortSignal,
     ): Promise<T> => {
         assertUsable(signal);
@@ -663,24 +512,24 @@ function createStableStorageScope(params: Readonly<{
             if (options.prefix !== undefined) assertPublicKey(options.prefix);
             assertUsable(options.signal);
             const limit = Math.min(Math.max(options.limit ?? 100, 1), 1_000);
-            const offset = options.cursor === undefined ? 0 : Number.parseInt(options.cursor, 10);
-            if (!Number.isSafeInteger(offset)
-                || offset < 0
-                || (options.cursor !== undefined && String(offset) !== options.cursor)) {
-                throw new PluginContextServiceError('PLUGIN_STORAGE_CURSOR_INVALID', 'Plugin storage list cursor is invalid');
-            }
+            const after = options.cursor === undefined
+                ? null
+                : readStorageListCursor(options.cursor, options.prefix);
             const keys = (await params.scope.listKeys())
                 .filter((key) => !key.startsWith(PLUGIN_HOST_STORAGE_KEY_PREFIX))
                 .filter((key) => options.prefix === undefined || key.startsWith(options.prefix))
                 .sort();
-            const selected = keys.slice(offset, offset + limit);
-            const nextOffset = offset + selected.length;
+            const remaining = after === null ? keys : keys.filter((key) => key > after);
+            const selected = remaining.slice(0, limit);
+            const lastSelected = selected[selected.length - 1];
             return Object.freeze({
                 items: Object.freeze(selected.map((key) => Object.freeze({ key }))),
-                ...(nextOffset < keys.length ? { nextCursor: String(nextOffset) } : {}),
+                ...(selected.length < remaining.length && lastSelected !== undefined
+                    ? { nextCursor: createStorageListCursor({ prefix: options.prefix, after: lastSelected }) }
+                    : {}),
             });
         },
-        async transaction<T>(operation: (transaction: PluginStorageTransaction) => Promise<T>, options?: { signal?: AbortSignal }): Promise<T> {
+        async transaction<T>(operation: (transaction: StorageTransaction) => Promise<T>, options?: { signal?: AbortSignal }): Promise<T> {
             assertTransactionNotNested();
             const result = await mutateAtomically(
                 async (transaction) => await pluginStorageTransactionContext.run(
@@ -696,59 +545,43 @@ function createStableStorageScope(params: Readonly<{
 }
 
 export function createStablePluginStorageService(params: CreatePluginStorageOwnerParams & Readonly<{
+    generation: string;
     signal: AbortSignal;
     isGenerationCurrent: () => boolean;
-}>): PluginStorageService {
+    accountStorageCurrentness?: () => boolean | Promise<boolean>;
+    accountStorage?: StablePluginAccountStorageHost;
+    daemonDatabase?: StablePluginDaemonDatabaseHost;
+}>): StorageService {
     const storage = createPluginStorageOwner(params);
     const authoritative = Object.freeze({ kind: 'authoritativeSerializable' as const });
+    const account = params.accountStorage?.bind({
+        pluginId: params.pluginId,
+        generation: params.generation,
+        signal: params.signal,
+        isGenerationCurrent: params.accountStorageCurrentness ?? params.isGenerationCurrent,
+    }) ?? null;
+    const daemonKv = createStableStorageScope({
+        scope: storage.daemon,
+        consistency: authoritative,
+        signal: params.signal,
+        isGenerationCurrent: params.isGenerationCurrent,
+    });
+    const daemonDatabase = params.daemonDatabase?.bind({
+        pluginId: params.pluginId,
+        generation: params.generation,
+        signal: params.signal,
+        isGenerationCurrent: params.isGenerationCurrent,
+    }) ?? createUnavailablePluginDaemonDatabaseService('daemon_database_unavailable');
+    const daemon: DaemonDatabaseStorageScope = Object.freeze({
+        ...daemonKv,
+        database: daemonDatabase.database,
+    });
     return Object.freeze({
         ephemeral: createStableStorageScope({ scope: storage.ephemeral, consistency: authoritative, signal: params.signal, isGenerationCurrent: params.isGenerationCurrent }),
-        session: createStableStorageScope({ scope: storage.session, consistency: authoritative, signal: params.signal, isGenerationCurrent: params.isGenerationCurrent }),
-        local: createStableStorageScope({ scope: storage.local, consistency: authoritative, signal: params.signal, isGenerationCurrent: params.isGenerationCurrent }),
-        synced: createStableStorageScope({
-            scope: storage.synced,
-            consistency: Object.freeze({ kind: 'localReplicaSerializable', remoteConflicts: 'hostMergeAfterCommit' }),
-            signal: params.signal,
-            isGenerationCurrent: params.isGenerationCurrent,
-        }),
+        daemonSession: createStableStorageScope({ scope: storage.daemonSession, consistency: authoritative, signal: params.signal, isGenerationCurrent: params.isGenerationCurrent }),
+        daemon,
+        ...(account ? { account } : {}),
     });
-}
-
-export async function copyPluginSessionStorageForFork(params: CopyPluginSessionStorageForForkParams): Promise<void> {
-    const sourceSessionNamespace = normalizePluginStorageNamespace(params.sourceSessionId);
-    const targetSessionNamespace = normalizePluginStorageNamespace(params.targetSessionId);
-    if (sourceSessionNamespace === targetSessionNamespace) {
-        return;
-    }
-
-    let pluginNamespaces: readonly string[];
-    try {
-        const pluginEntries = await readdir(params.paths.storageDir, { withFileTypes: true });
-        pluginNamespaces = pluginEntries
-            .filter((entry) => entry.isDirectory())
-            .map((entry) => entry.name.toString());
-    } catch (error) {
-        if ((error as NodeJS.ErrnoException | null)?.code === 'ENOENT') {
-            return;
-        }
-        throw error;
-    }
-
-    for (const pluginNamespace of pluginNamespaces) {
-        const sourcePath = join(params.paths.storageDir, pluginNamespace, 'sessions', sourceSessionNamespace, 'session.v1.json');
-        const targetPath = join(params.paths.storageDir, pluginNamespace, 'sessions', targetSessionNamespace, 'session.v1.json');
-        let file: StorageFileV1;
-        try {
-            const raw = await readFile(sourcePath, 'utf8');
-            file = parseStorageFile(JSON.parse(raw) as unknown, sourcePath);
-        } catch (error) {
-            if ((error as NodeJS.ErrnoException | null)?.code === 'ENOENT') {
-                continue;
-            }
-            throw error;
-        }
-        await writeJsonAtomic(targetPath, createStorageFile(cloneJsonValue(file.values)));
-    }
 }
 
 export async function createPluginStoragePublicShareSnapshot(

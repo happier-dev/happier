@@ -2,9 +2,9 @@ import {
     PluginContributionLocalIdSchema,
     PluginContributionOperationRoleV1Schema,
     PluginContributionProtocolIdV1Schema,
-    PluginIdSchema,
-} from '@happier-dev/protocol/plugins/manifest';
-import { cloneStrictPluginJsonValue } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
+} from '@happier-dev/protocol/plugins/contribution-identity';
+import { PluginIdSchema } from '@happier-dev/protocol/plugins/plugin-id';
+import { cloneStrictPluginJsonValue } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
 import {
     PluginTargetedContributionSelectionV1Schema as canonicalPluginTargetedContributionSelectionV1Schema,
 } from '@happier-dev/protocol/plugins/ui/targetedContributions';
@@ -48,37 +48,10 @@ export type PluginTargetedContributionSelectionV1 = Readonly<{
 export const PluginTargetedContributionSelectionV1Schema: ProtocolComposableSchema<PluginTargetedContributionSelectionV1> =
     canonicalPluginTargetedContributionSelectionV1Schema;
 
-// A feature protocol can be authored against a different physical SDK copy
-// than the target plugin which consumes its `.point()` result. Keep this
-// helper-only semantic sidecar process-local but shared across those copies;
-// the receiving SDK still validates every carried fact before projection.
-const targetedContributionPointSemanticEvidence: unique symbol = Symbol.for(
-    'happier.pluginSdk.targetedContributionPointDefinitionSemantics.v1',
-);
-const contributionAuthoringEvidence: unique symbol = Symbol('contributionAuthoringEvidence');
-declare const contributionPointRefEvidence: unique symbol;
-
-/**
- * This is deliberately process-local rather than a manifest field.  A target
- * may be authored against its installed SDK copy while the daemon consumes the
- * point through the host SDK copy, so the private key must bridge those copies.
- */
-const targetedContributionPointSemanticCarrierKey = Symbol.for(
-    'happier.pluginSdk.targetedContributionPointSemantics.v1',
-);
-/**
- * The parsed contribution-point collection remains a portable structural
- * projection. This process-local sidecar transports the exact refs that
- * `definePlugin` already made for its own target declarations, so the host can
- * apply their authored semantics before publishing a cold snapshot without
- * reconstructing a second semantic carrier from manifest JSON.
- */
-const targetedContributionPointSemanticRefsKey = Symbol.for(
-    'happier.pluginSdk.targetedContributionPointSemanticRefs.v1',
-);
 const TARGETED_CONTRIBUTION_POINT_SEMANTIC_CARRIER_KIND =
     'happier.pluginSdk.targetedContributionPointSemantics' as const;
 const TARGETED_CONTRIBUTION_POINT_SEMANTIC_CARRIER_VERSION = 1 as const;
+const TARGETED_CONTRIBUTION_SEMANTIC_REFS_FIELD = 'semanticPointRefs' as const;
 
 /**
  * `.node(...)` snapshots an author-provided declarative node through the one
@@ -178,9 +151,15 @@ export type SchemaOutput<TSchema> = [ProtocolSchemaOutput<TSchema>] extends [nev
     ? JsonValue
     : ProtocolSchemaOutput<TSchema>;
 
+/**
+ * A declared descriptor schema is a REQUIRED contribution field: the protocol
+ * has no optionality flag, so declaring the schema is the declaration that
+ * every contributor must carry one. A protocol without a schema forbids the
+ * field entirely.
+ */
 export type DescriptorFields<TDescriptorSchema> =
     TDescriptorSchema extends ProtocolComposableSchema<unknown, unknown>
-        ? Readonly<{ descriptor?: ReturnType<TDescriptorSchema['parse']> }>
+        ? Readonly<{ descriptor: ReturnType<TDescriptorSchema['parse']> }>
         : Readonly<{ descriptor?: never }>;
 
 /** The Action presentation surface accepted by one cross-plugin operation role. */
@@ -355,9 +334,9 @@ export type ContributionProtocolDefinition<
 }>;
 
 /**
- * A helper-produced target declaration. Its optional public type witness
- * preserves the exact protocol tuple for projections and declaration emit;
- * runtime helper semantics remain separately validated by the private carrier.
+ * A helper-produced target declaration. The protocol tuple preserves exact
+ * author inference. Its host-only semantic carrier is intentionally not part
+ * of the public authoring shape and never enters canonical JSON.
  */
 export type ContributionPointAuthorDefinition<
     TProtocols extends readonly unknown[] = readonly unknown[],
@@ -365,6 +344,12 @@ export type ContributionPointAuthorDefinition<
     maxContributionsPerContributor?: number;
     protocols: readonly ContributionProtocolManifest[];
     readonly __protocols?: TProtocols;
+}>;
+
+type ContributionPointDefinitionWithSemanticCarrier<
+    TProtocols extends readonly unknown[] = readonly unknown[],
+> = ContributionPointAuthorDefinition<TProtocols> & Readonly<{
+    semanticCarrier: readonly unknown[];
 }>;
 
 type TargetedContributionProtocolSemanticSurface = Readonly<{
@@ -458,11 +443,7 @@ export type ContributionContributeInput<
     operations: ContributionOperationBindings<TOperations, TActionLocalId>;
 } & DescriptorFields<TDescriptorSchema> & SurfaceFields<TSurfaces, TRendererLocalId>>;
 
-/**
- * A helper-produced contributor declaration. Its private evidence keeps a
- * raw manifest-shaped object from bypassing required-role and known-role
- * author typing.
- */
+/** A helper-produced contributor declaration with exact author-side role typing. */
 export type ContributionAuthorDefinition<
     TActionLocalId extends string = string,
     TRendererLocalId extends string = string,
@@ -479,11 +460,6 @@ export type ContributionAuthorDefinition<
         version: number;
     }>;
     operations: ContributionOperationBindings<TOperations, TActionLocalId>;
-    readonly [contributionAuthoringEvidence]: Readonly<{
-        operations: TOperations;
-        surfaces: TSurfaces;
-        descriptor: TDescriptorSchema;
-    }>;
 } & DescriptorFields<TDescriptorSchema> & SurfaceFields<TSurfaces, TRendererLocalId>>;
 
 /** The only `contributesTo` shape accepted by `definePlugin`. */
@@ -737,17 +713,12 @@ export type DefinedContributionPointRef<
     TProtocolVersion extends number = number,
 > = Omit<TargetedContributionPointRef<
     ContributionAdmittedEntry<TOperations, TSurfaces, TDescriptorSchema, TPointId>
->, 'protocol'> & Readonly<{
+>, 'targetPluginId' | 'protocol'> & Readonly<{
+    readonly targetPluginId: TPluginId;
     readonly id: TPointId;
     readonly protocol: Readonly<{
         id: TProtocolId;
         version: TProtocolVersion;
-    }>;
-    readonly [contributionPointRefEvidence]: Readonly<{
-        pluginId: TPluginId;
-        operations: TOperations;
-        surfaces: TSurfaces;
-        descriptor: TDescriptorSchema;
     }>;
 }>;
 
@@ -902,17 +873,13 @@ function isSemanticRecord(value: unknown): value is Readonly<Record<PropertyKey,
     return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
-function readSemanticValue(record: Readonly<Record<PropertyKey, unknown>>, key: PropertyKey): unknown {
-    return record[key];
-}
-
 function readRuntimeProtocolIdentity(value: unknown): Readonly<{
     id: string;
     version: number;
 }> | null {
     if (!isSemanticRecord(value)) return null;
-    const id = readSemanticValue(value, 'id');
-    const version = readSemanticValue(value, 'version');
+    const id = value['id'];
+    const version = value['version'];
     if (typeof id !== 'string' || typeof version !== 'number'
         || !PluginContributionProtocolIdV1Schema.safeParse(id).success
         || !Number.isSafeInteger(version) || version <= 0) return null;
@@ -934,8 +901,8 @@ function readRuntimeSemanticSurfaces(
     for (const [role, requirement] of Object.entries(value)) {
         if (!PluginContributionLocalIdSchema.safeParse(role).success
             || !isSemanticRecord(requirement)) return null;
-        const required = readSemanticValue(requirement, 'required');
-        const presentation = readSemanticValue(requirement, 'presentation');
+        const required = requirement['required'];
+        const presentation = requirement['presentation'];
         if (typeof required !== 'boolean'
             || (presentation !== 'content' && presentation !== 'fill')) {
             return null;
@@ -953,9 +920,9 @@ function readRuntimeSemanticOperations(
     for (const [role, operation] of Object.entries(value)) {
         if (!PluginContributionOperationRoleV1Schema.safeParse(role).success
             || !isSemanticRecord(operation)) return null;
-        const rawInput = readSemanticValue(operation, 'input');
+        const rawInput = operation['input'];
         if (!isSemanticRecord(rawInput)) return null;
-        const inputKind = readSemanticValue(rawInput, 'kind');
+        const inputKind = rawInput['kind'];
         let input: TargetedContributionProtocolSemanticOperation['input'];
         if (inputKind === 'contributorDefined') {
             input = Object.freeze({ kind: 'contributorDefined' as const });
@@ -964,7 +931,7 @@ function readRuntimeSemanticOperations(
                 input = Object.freeze({
                     kind: 'protocolDefined' as const,
                     schema: requireExecutableProtocolSchema(
-                        readSemanticValue(rawInput, 'schema'),
+                        rawInput['schema'],
                         'Operation input schema',
                     ),
                 });
@@ -978,7 +945,7 @@ function readRuntimeSemanticOperations(
         let resultSchema: ProtocolComposableSchema<JsonValue, JsonValue>;
         try {
             resultSchema = requireExecutableProtocolSchema(
-                readSemanticValue(operation, 'resultSchema'),
+                operation['resultSchema'],
                 'Operation result schema',
             );
         } catch {
@@ -1014,13 +981,13 @@ function readStructuralContributionOperation(
     value: unknown,
 ): StructuralContributionOperationProjection | null {
     if (!isSemanticRecord(value)) return null;
-    const declaration = readSemanticValue(value, 'declaration');
+    const declaration = value['declaration'];
     if (!isSemanticRecord(declaration)) return null;
-    const required = readSemanticValue(declaration, 'required');
-    const rawInput = readSemanticValue(declaration, 'input');
-    const resultSchemaValue = readSemanticValue(declaration, 'resultSchema');
-    const dangerLevel = readSemanticValue(declaration, 'dangerLevel');
-    const surfaces = readSemanticValue(declaration, 'surfaces');
+    const required = declaration['required'];
+    const rawInput = declaration['input'];
+    const resultSchemaValue = declaration['resultSchema'];
+    const dangerLevel = declaration['dangerLevel'];
+    const surfaces = declaration['surfaces'];
     if (typeof required !== 'boolean'
         || !isSemanticRecord(rawInput)
         || !isContributionActionDangerLevel(dangerLevel)
@@ -1032,7 +999,7 @@ function readStructuralContributionOperation(
 
     let input: ProjectedContributionOperation['input'];
     let semanticInput: TargetedContributionProtocolSemanticOperation['input'];
-    const inputKind = readSemanticValue(rawInput, 'kind');
+    const inputKind = rawInput['kind'];
     if (inputKind === 'contributorDefined') {
         input = Object.freeze({ kind: 'contributorDefined' as const });
         semanticInput = Object.freeze({ kind: 'contributorDefined' as const });
@@ -1040,7 +1007,7 @@ function readStructuralContributionOperation(
         let schema: ProtocolComposableSchema<JsonValue, JsonValue>;
         try {
             schema = requireExecutableProtocolSchema(
-                readSemanticValue(rawInput, 'schema'),
+                rawInput['schema'],
                 'Operation input schema',
             );
         } catch {
@@ -1083,8 +1050,8 @@ function readStructuralContributionSurface(
     value: unknown,
 ): StructuralContributionSurfaceProjection | null {
     if (!isSemanticRecord(value)) return null;
-    const required = readSemanticValue(value, 'required');
-    const presentation = readSemanticValue(value, 'presentation');
+    const required = value['required'];
+    const presentation = value['presentation'];
     if (typeof required !== 'boolean'
         || (presentation !== 'content' && presentation !== 'fill')) {
         return null;
@@ -1092,7 +1059,7 @@ function readStructuralContributionSurface(
     let inputSchema: ProtocolComposableSchema<JsonValue, JsonValue>;
     try {
         inputSchema = requireExecutableProtocolSchema(
-            readSemanticValue(value, 'inputSchema'),
+            value['inputSchema'],
             'Surface input schema',
         );
     } catch {
@@ -1123,8 +1090,8 @@ function readStructuralContributionProtocol(
 ): StructuralContributionProtocolProjection | null {
     const protocol = readRuntimeProtocolIdentity(value);
     if (!protocol || !isSemanticRecord(value)) return null;
-    const rawOperations = readSemanticValue(value, 'operations');
-    const rawSurfaces = readSemanticValue(value, 'surfaces');
+    const rawOperations = value['operations'];
+    const rawSurfaces = value['surfaces'];
     if (!isSemanticRecord(rawOperations) || !isSemanticRecord(rawSurfaces)) return null;
 
     const manifestOperations: Record<string, ProjectedContributionOperation> = {};
@@ -1147,7 +1114,7 @@ function readStructuralContributionProtocol(
         semanticSurfaces[role] = projection.semantic;
     }
 
-    const descriptorValue = readSemanticValue(value, 'descriptor');
+    const descriptorValue = value['descriptor'];
     let descriptor: ProtocolComposableSchema<JsonValue, JsonValue> | undefined;
     if (descriptorValue !== undefined) {
         try {
@@ -1180,11 +1147,11 @@ function readTargetedContributionProtocolSemanticFact(
     value: unknown,
 ): TargetedContributionProtocolSemanticFact | null {
     if (!isSemanticRecord(value)) return null;
-    const protocol = readRuntimeProtocolIdentity(readSemanticValue(value, 'protocol'));
-    const operations = readRuntimeSemanticOperations(readSemanticValue(value, 'operations'));
-    const surfaces = readRuntimeSemanticSurfaces(readSemanticValue(value, 'surfaces'));
+    const protocol = readRuntimeProtocolIdentity(value['protocol']);
+    const operations = readRuntimeSemanticOperations(value['operations']);
+    const surfaces = readRuntimeSemanticSurfaces(value['surfaces']);
     if (!protocol || !operations || !surfaces) return null;
-    const descriptorValue = readSemanticValue(value, 'descriptor');
+    const descriptorValue = value['descriptor'];
     let descriptor: ProtocolComposableSchema<JsonValue, JsonValue> | undefined;
     if (descriptorValue !== undefined) {
         try {
@@ -1225,13 +1192,13 @@ function readTargetedContributionPointSemanticCarrier(
     value: unknown,
 ): TargetedContributionPointSemanticCarrier | null {
     if (!isSemanticRecord(value)) return null;
-    const kind = readSemanticValue(value, 'kind');
-    const version = readSemanticValue(value, 'version');
-    const targetPluginId = readSemanticValue(value, 'targetPluginId');
-    const id = readSemanticValue(value, 'id');
-    const protocol = readRuntimeProtocolIdentity(readSemanticValue(value, 'protocol'));
-    const operations = readRuntimeSemanticOperations(readSemanticValue(value, 'operations'));
-    const surfaces = readRuntimeSemanticSurfaces(readSemanticValue(value, 'surfaces'));
+    const kind = value['kind'];
+    const version = value['version'];
+    const targetPluginId = value['targetPluginId'];
+    const id = value['id'];
+    const protocol = readRuntimeProtocolIdentity(value['protocol']);
+    const operations = readRuntimeSemanticOperations(value['operations']);
+    const surfaces = readRuntimeSemanticSurfaces(value['surfaces']);
     if (kind !== TARGETED_CONTRIBUTION_POINT_SEMANTIC_CARRIER_KIND
         || version !== TARGETED_CONTRIBUTION_POINT_SEMANTIC_CARRIER_VERSION
         || typeof targetPluginId !== 'string'
@@ -1244,7 +1211,7 @@ function readTargetedContributionPointSemanticCarrier(
         return null;
     }
 
-    const descriptorValue = readSemanticValue(value, 'descriptor');
+    const descriptorValue = value['descriptor'];
     let descriptor: ProtocolComposableSchema<JsonValue, JsonValue> | undefined;
     if (descriptorValue !== undefined) {
         try {
@@ -1272,12 +1239,12 @@ function readTargetedContributionPointSemanticCarrier(
 function readContributionPointSemanticFacts(
     point: ContributionPointAuthorDefinition,
 ): readonly TargetedContributionProtocolSemanticFact[] {
-    const evidence = readSemanticValue(point, targetedContributionPointSemanticEvidence);
-    if (!Array.isArray(evidence) || evidence.length !== point.protocols.length) {
+    const carrier = (point as ContributionPointDefinitionWithSemanticCarrier).semanticCarrier;
+    if (!Array.isArray(carrier) || carrier.length !== point.protocols.length) {
         throw new TypeError('Contribution point helper semantics are invalid');
     }
     const facts: TargetedContributionProtocolSemanticFact[] = [];
-    for (const [index, value] of evidence.entries()) {
+    for (const [index, value] of carrier.entries()) {
         const fact = readTargetedContributionProtocolSemanticFact(value);
         const manifest = point.protocols[index];
         if (!fact || !manifest || !sameProtocolIdentity(fact.protocol, manifest)) {
@@ -1301,13 +1268,8 @@ function createDefinedTargetedContributionPointRef(
         targetPluginId,
         id: pointId,
         protocol: Object.freeze({ id: protocol.id, version: protocol.version }),
+        semanticCarrier: createTargetedContributionPointSemanticCarrier(targetPluginId, pointId, fact),
     };
-    Object.defineProperty(point, targetedContributionPointSemanticCarrierKey, {
-        configurable: false,
-        enumerable: false,
-        writable: false,
-        value: createTargetedContributionPointSemanticCarrier(targetPluginId, pointId, fact),
-    });
     return Object.freeze(point);
 }
 
@@ -1315,7 +1277,7 @@ function createContributionPointDefinition<TProtocols extends readonly unknown[]
     protocols: readonly ContributionProtocolManifest[],
     options: ContributionPointOptions,
     semanticProtocols: readonly TargetedContributionProtocolSemanticFact[],
-): ContributionPointAuthorDefinition<TProtocols> {
+): ContributionPointDefinitionWithSemanticCarrier<TProtocols> {
     if (semanticProtocols.length !== protocols.length) {
         throw new TypeError('Contribution point helper semantics are invalid');
     }
@@ -1325,13 +1287,15 @@ function createContributionPointDefinition<TProtocols extends readonly unknown[]
             : { maxContributionsPerContributor: options.maxContributionsPerContributor }),
         protocols: Object.freeze(protocols.map((protocol) => Object.freeze({ ...protocol }))),
     };
-    Object.defineProperty(definition, targetedContributionPointSemanticEvidence, {
-        configurable: false,
+    // This named structural carrier remains available to the target-point
+    // projector, but stays outside the canonical JSON manifest projection.
+    Object.defineProperty(definition, 'semanticCarrier', {
+        value: Object.freeze([...semanticProtocols]),
         enumerable: false,
         writable: false,
-        value: Object.freeze([...semanticProtocols]),
+        configurable: false,
     });
-    return Object.freeze(definition) as unknown as ContributionPointAuthorDefinition<TProtocols>;
+    return Object.freeze(definition) as unknown as ContributionPointDefinitionWithSemanticCarrier<TProtocols>;
 }
 
 function assertContributionOperationRoles(operations: Readonly<Record<string, unknown>>): void {
@@ -1346,7 +1310,7 @@ function assertContributionSurfaceRoles(surfaces: Readonly<Record<string, unknow
     }
 }
 
-/** @preview The public structural protocol fields needed to combine target epochs. */
+/** The public structural protocol fields needed to combine target epochs. */
 export type ContributionProtocolForPoint = Readonly<{
     id: string;
     version: number;
@@ -1421,16 +1385,15 @@ export function projectDefinedTargetedContributionPoints<
 }
 
 /**
- * Retains the exact target point refs alongside the parsed contribution-point
- * collection. The
- * property is deliberately non-enumerable: it is a same-process host bridge,
- * never a manifest field or serialized compatibility shape.
+ * Retains exact target point refs alongside the parsed contribution-point
+ * collection. The named property is non-enumerable because executable target
+ * schemas are host-only rather than canonical manifest JSON.
  */
 export function attachTargetedContributionPointSemanticRefs(
     contributionPoints: object,
     refs: readonly TargetedContributionPointRef<unknown>[],
 ): void {
-    Object.defineProperty(contributionPoints, targetedContributionPointSemanticRefsKey, {
+    Object.defineProperty(contributionPoints, TARGETED_CONTRIBUTION_SEMANTIC_REFS_FIELD, {
         value: Object.freeze([...refs]),
         enumerable: false,
         configurable: false,
@@ -1441,25 +1404,24 @@ export function attachTargetedContributionPointSemanticRefs(
 /**
  * @realm daemon
  *
- * Reads only the exact ref objects retained by `definePlugin`; JSON manifests
- * cannot supply this process-local sidecar. The cold registry still validates
- * each ref through the target-authored semantic decoder before using it.
+ * Reads only the exact refs retained by `definePlugin`; canonical JSON cannot
+ * supply executable target semantics. The cold registry still validates each
+ * carrier through the target-authored semantic decoder before using it.
  */
 export function readTargetedContributionPointSemanticRefs(
     manifest: unknown,
 ): readonly TargetedContributionPointRef<unknown>[] {
     if (!isSemanticRecord(manifest)) return Object.freeze([]);
-    const contributes = readSemanticValue(manifest, 'contributes');
+    const contributes = manifest['contributes'];
     if (!isSemanticRecord(contributes)) return Object.freeze([]);
-    const contributionPoints = readSemanticValue(contributes, 'pluginContributionPoints');
+    const contributionPoints = contributes['pluginContributionPoints'];
     if (contributionPoints === null
         || (typeof contributionPoints !== 'object' && typeof contributionPoints !== 'function')) {
         return Object.freeze([]);
     }
-    const refs = readSemanticValue(
-        contributionPoints as Readonly<Record<PropertyKey, unknown>>,
-        targetedContributionPointSemanticRefsKey,
-    );
+    const refs = (contributionPoints as Readonly<Record<string, unknown>>)[
+        TARGETED_CONTRIBUTION_SEMANTIC_REFS_FIELD
+    ];
     return Array.isArray(refs)
         ? refs as readonly TargetedContributionPointRef<unknown>[]
         : Object.freeze([]);
@@ -1469,7 +1431,7 @@ function readInputOperationRole(value: unknown): Readonly<{
     role: string;
 }> | null {
     if (!isSemanticRecord(value)) return null;
-    const role = readSemanticValue(value, 'role');
+    const role = value['role'];
     if (typeof role !== 'string') return null;
     return Object.freeze({ role });
 }
@@ -1479,9 +1441,9 @@ function readInputSurfaceRole(value: unknown): Readonly<{
     presentation: unknown;
 }> | null {
     if (!isSemanticRecord(value)) return null;
-    const role = readSemanticValue(value, 'role');
+    const role = value['role'];
     if (typeof role !== 'string') return null;
-    return Object.freeze({ role, presentation: readSemanticValue(value, 'presentation') });
+    return Object.freeze({ role, presentation: value['presentation'] });
 }
 
 type TargetedContributionPointSemanticFailureCode =
@@ -1515,12 +1477,12 @@ function readPointSemanticCarrier(
 > {
     if (!isSemanticRecord(point)) return semanticFailure('target_semantics_unavailable');
     const carrier = readTargetedContributionPointSemanticCarrier(
-        readSemanticValue(point, targetedContributionPointSemanticCarrierKey),
+        point.semanticCarrier,
     );
     if (!carrier) return semanticFailure('target_semantics_unavailable');
-    const pointProtocol = readRuntimeProtocolIdentity(readSemanticValue(point, 'protocol'));
-    const targetPluginId = readSemanticValue(point, 'targetPluginId');
-    const pointId = readSemanticValue(point, 'id');
+    const pointProtocol = readRuntimeProtocolIdentity(point['protocol']);
+    const targetPluginId = point['targetPluginId'];
+    const pointId = point['id'];
     if (!pointProtocol
         || typeof targetPluginId !== 'string'
         || typeof pointId !== 'string'
@@ -1782,6 +1744,9 @@ export function defineContributionProtocol<
             if (rawInput.descriptor !== undefined && descriptorSchema === undefined) {
                 throw new TypeError('Contribution protocol does not declare a descriptor schema');
             }
+            if (rawInput.descriptor === undefined && descriptorSchema !== undefined) {
+                throw new TypeError('Contribution protocol requires a descriptor');
+            }
             const descriptor = rawInput.descriptor === undefined
                 ? undefined
                 : descriptorSchema?.parse(rawInput.descriptor);
@@ -1791,11 +1756,6 @@ export function defineContributionProtocol<
                 ...(descriptor === undefined ? {} : { descriptor }),
                 operations: Object.freeze({ ...input.operations }),
                 ...(surfaceBindings === undefined ? {} : { surfaces: surfaceBindings }),
-                [contributionAuthoringEvidence]: Object.freeze({
-                    operations: definition.operations,
-                    surfaces: definition.surfaces ?? {},
-                    descriptor: definition.descriptor,
-                }),
             }) as unknown as ContributionAuthorDefinition<
                 TActionLocalId,
                 TRendererLocalId,

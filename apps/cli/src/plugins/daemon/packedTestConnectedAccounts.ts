@@ -4,10 +4,13 @@ import { dirname, join } from 'node:path';
 
 import { PluginError } from '@happier-dev/plugin-sdk';
 import type {
-  PluginConnectedAccountMaterialization,
-  PluginConnectedAccountMaterializationRequest,
+  ConnectedAccountMaterializationRequest,
+  ConnectedAccountMaterialization as PluginConnectedAccountMaterialization,
+  ConnectedAccountRuntimeConfiguration,
+} from '@happier-dev/plugin-sdk/connected-accounts';
+import type {
   PluginContributionRef,
-} from '@happier-dev/plugin-sdk/runtime';
+} from '@happier-dev/plugin-sdk';
 import {
   QualifiedConnectedAccountPurposeBindingsV1Schema,
   type QualifiedConnectedAccountPurposeBindingsV1,
@@ -28,6 +31,7 @@ import type {
   StablePluginConnectedAccountsAuthorizedPurpose,
   StablePluginConnectedAccountsOwner,
 } from '@/plugins/runtime/invocation/services/connectedAccounts';
+import type { PluginReloadController } from '@/plugins/runtime/reload/controller';
 import type { PluginAccessSelection } from '@/plugins/store/install/accessScopeRegistry';
 
 type PackedConnectedAccountsState = Readonly<{
@@ -43,6 +47,7 @@ export type PackedTestConnectedAccountsRuntime = Readonly<{
   reconcileRegistryPublication(input: Readonly<{
     previous: ResolvedContributionRegistry | null;
     candidate: ResolvedContributionRegistry;
+    candidateActivePluginIds?: ReadonlySet<string>;
     resolveOptionalAccess(pluginId: string): readonly PluginAccessSelection[];
     publish(): void;
   }>): Promise<void>;
@@ -112,45 +117,6 @@ function firstService(
   });
 }
 
-function selectRequestedValues(
-  requested: readonly string[],
-  values: Readonly<Record<string, string>>,
-): Readonly<Record<string, string>> {
-  return Object.freeze(Object.fromEntries(requested.flatMap((key) => (
-    Object.prototype.hasOwnProperty.call(values, key) ? [[key, values[key]!]] : []
-  ))));
-}
-
-function materializationFor(
-  request: PluginConnectedAccountMaterializationRequest,
-  values: Readonly<{
-    headers?: Readonly<Record<string, string>>;
-    environment?: Readonly<Record<string, string>>;
-    files?: Readonly<Record<string, string>>;
-  }>,
-): PluginConnectedAccountMaterialization {
-  if (request.kind === 'httpHeaders') {
-    return Object.freeze({
-      kind: 'httpHeaders',
-      headers: selectRequestedValues(request.headerNames, values.headers ?? {}),
-    });
-  }
-  if (request.kind === 'environment') {
-    return Object.freeze({
-      kind: 'environment',
-      env: selectRequestedValues(request.keys, values.environment ?? {}),
-    });
-  }
-  const encoded = Object.fromEntries(request.fileIds.flatMap((fileId) => {
-    const value = values.files?.[fileId];
-    return value === undefined ? [] : [[fileId, new TextEncoder().encode(value)]];
-  }));
-  return Object.freeze({
-    kind: 'files',
-    files: Object.freeze(encoded),
-  });
-}
-
 function accountDisplayName(accountId: string): string {
   if (accountId === 'multi') return 'Alternate conformance account';
   if (accountId === 'replaceable-1') return 'Replaceable account 1';
@@ -166,6 +132,14 @@ function accountDisplayName(accountId: string): string {
 export function createPackedTestConnectedAccountsRuntime(params: Readonly<{
   happyHomeDir: string;
   pluginId: string;
+  /**
+   * The packed daemon's incumbent registry lifecycle. The materializer must
+   * use its canonical producer invoker rather than manufacture credentials.
+   */
+  runtimeRegistry?: Pick<
+    PluginReloadController,
+    'acquireRuntimeRegistry' | 'isRuntimeRegistryCurrent'
+  >;
 }>): PackedTestConnectedAccountsRuntime {
   const statePath = join(
     params.happyHomeDir,
@@ -325,75 +299,179 @@ export function createPackedTestConnectedAccountsRuntime(params: Readonly<{
   };
   const materializeAccount = async (input: Readonly<{
     account: QualifiedConnectedAccountRef;
-    request: PluginConnectedAccountMaterializationRequest;
+    credentialRevisionBasis?: Readonly<{
+      captureCredentialRevision(credentialRevision: string): void;
+    }>;
+    request: ConnectedAccountMaterializationRequest;
     signal: AbortSignal;
   }>): Promise<PluginConnectedAccountMaterialization> => {
     input.signal.throwIfAborted();
-    switch (input.account.accountId) {
-      case 'fixed':
-        return materializationFor(input.request, {
-          headers: { authorization: 'Bearer packed-header-secret' },
-          environment: { FIXED_TOKEN: 'packed-environment-secret' },
-          files: { credential: 'packed-file-secret' },
-        });
-      case 'multi':
-        return materializationFor(input.request, {
-          environment: { MULTI_TOKEN: 'packed-alternate-secret' },
-        });
-      case 'alpha':
+    const registryLifecycle = params.runtimeRegistry;
+    if (!registryLifecycle) {
+      throw unavailable('The packed Connected Accounts runtime registry is unavailable');
+    }
+    const registryLease = await registryLifecycle.acquireRuntimeRegistry();
+    try {
+      const runtimeRegistry = registryLease.registry;
+      const runtimeLease = await runtimeRegistry.resolveConnectedAccountRuntime?.(
+        input.account.service,
+      );
+      const invoker = runtimeRegistry.connectedAccountRuntimeInvoker;
+      if (
+        !runtimeLease
+        || !invoker
+        || !registryLifecycle.isRuntimeRegistryCurrent(runtimeRegistry)
+        || !runtimeLease.isCurrent()
+      ) {
+        throw unavailable('The selected packed Connected Account producer is unavailable');
+      }
+      const mode = runtimeLease.descriptor.authentication.modes.find((candidate) => (
+        candidate.id === runtimeLease.descriptor.authentication.defaultModeId
+      ));
+      if (!mode || mode.kind !== 'manual') {
+        throw unavailable('The selected packed Connected Account producer has no manual authentication mode');
+      }
+      const configuration: ConnectedAccountRuntimeConfiguration = Object.freeze({
+        target: Object.freeze(
+          mode.configuration?.scope === 'account'
+            ? {
+              kind: 'account' as const,
+              account: input.account,
+              modeId: mode.id,
+            }
+            : {
+              kind: 'service' as const,
+              service: input.account.service,
+              modeId: mode.id,
+            },
+        ),
+        revision: 'packed-test-configuration-1',
+        values: Object.freeze({}),
+        getSecret: async () => null,
+      });
+      const credentialValues = new Map<string, string>();
+      const attemptCredentials = Object.freeze({
+        async get(key: string) {
+          return credentialValues.get(key) ?? null;
+        },
+        async set(key: string, value: string) {
+          credentialValues.set(key, value);
+        },
+        async delete(key: string) {
+          credentialValues.delete(key);
+        },
+      });
+      const isCurrent = () => (
+        registryLifecycle.isRuntimeRegistryCurrent(runtimeRegistry)
+        && runtimeLease.isCurrent()
+      );
+      const assertCurrent = (): void => {
+        input.signal.throwIfAborted();
+        if (!isCurrent()) {
+          throw unavailable('The selected packed Connected Account producer is no longer current');
+        }
+      };
+      const authentication = await invoker.invokeAuthentication({
+        admission: Object.freeze({
+          service: runtimeLease.ref,
+          descriptor: mode,
+          modeId: mode.id,
+          generation: runtimeLease.generation,
+          immutableGenerationId: runtimeLease.immutableGenerationId,
+        }),
+        operation: Object.freeze({
+          kind: 'submitManual' as const,
+          fields: Object.freeze({ token: 'packed-test-token' }),
+        }),
+        context: Object.freeze({
+          service: runtimeLease.ref,
+          attempt: Object.freeze({
+            kind: 'connect' as const,
+            attemptId: `packed-test-${input.account.accountId}`,
+          }),
+          configuration,
+          attemptCredentials,
+        }),
+        isConfigurationCurrent: () => isCurrent(),
+        signal: input.signal,
+      });
+      if (
+        typeof authentication !== 'object'
+        || authentication === null
+        || !('status' in authentication)
+        || authentication.status !== 'connected'
+      ) {
+        throw unavailable('The selected packed Connected Account producer did not authenticate');
+      }
+      assertCurrent();
+      const target = Object.freeze({
+        account: input.account,
+        expectedCredentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS',
+        expectedRuntimeConfigurationRevision: configuration.revision,
+      });
+      const context = Object.freeze({
+        account: input.account,
+        configuration,
+        credentials: Object.freeze({
+          async get(key: string) {
+            return credentialValues.get(key) ?? null;
+          },
+        }),
+      });
+      const refresh = await invoker.invokeEstablished({
+        target,
+        operation: Object.freeze({
+          kind: 'refresh' as const,
+          operationId: `packed-test-refresh-${input.account.accountId}`,
+          stagedCredentials: attemptCredentials,
+        }),
+        context,
+        isConfigurationCurrent: () => isCurrent(),
+        isCredentialRevisionCurrent: () => isCurrent(),
+        signal: input.signal,
+      });
+      if (refresh.status !== 'connected') {
+        throw unavailable('The selected packed Connected Account producer did not refresh');
+      }
+      assertCurrent();
+      const materialization = await invoker.invokeEstablished({
+        target,
+        operation: Object.freeze({ kind: 'materialize' as const, request: input.request }),
+        context,
+        isConfigurationCurrent: () => isCurrent(),
+        isCredentialRevisionCurrent: () => isCurrent(),
+        signal: input.signal,
+      });
+      assertCurrent();
+      if (input.account.accountId === 'alpha') {
         await serializeMutation((current) => ({
           next: { ...current, groupMember: 'beta' },
           result: undefined,
           notifyInvalidations: true,
         }));
-        input.signal.throwIfAborted();
-        return materializationFor(input.request, {
-          environment: { GROUP_TOKEN: 'packed-group-alpha-secret' },
-        });
-      case 'beta':
-        return materializationFor(input.request, {
-          environment: { GROUP_TOKEN: 'packed-group-beta-secret' },
-        });
-      case 'replaceable-1':
-        return materializationFor(input.request, {
-          environment: { REPLACEABLE_TOKEN: 'packed-replacement-one-secret' },
-        });
-      case 'replaceable-2':
-        return materializationFor(input.request, {
-          environment: { REPLACEABLE_TOKEN: 'packed-replacement-two-secret' },
-        });
-      case 'revocable':
+      } else if (input.account.accountId === 'revocable') {
         await serializeMutation((current) => ({
           next: { ...current, revocableAccountRevoked: true },
           result: undefined,
           notifyInvalidations: true,
         }));
-        input.signal.throwIfAborted();
-        return materializationFor(input.request, {
-          environment: { REVOCABLE_TOKEN: 'packed-revocable-secret' },
-        });
-      case 'rotating': {
-        const materializer = await serializeMutation((current) => ({
+      } else if (input.account.accountId === 'rotating') {
+        await serializeMutation((current) => ({
           next: {
             ...current,
             rotatingMaterializer: 2,
           },
-          result: current.rotatingMaterializer,
+          result: undefined,
           notifyInvalidations: current.rotatingMaterializer === 1,
         }));
-        input.signal.throwIfAborted();
-        return materializationFor(input.request, {
-          environment: {
-            ROTATING_TOKEN: materializer === 1
-              ? 'packed-materializer-one-secret'
-              : 'packed-materializer-two-secret',
-          },
-        });
       }
-      default:
-        return materializationFor(input.request, {
-          environment: { TOKEN: 'packed-generic-secret' },
-        });
+      assertCurrent();
+      input.credentialRevisionBasis?.captureCredentialRevision(
+        'csr_0123456789ABCDEFGHJKMNPQRS',
+      );
+      return materialization;
+    } finally {
+      await registryLease.release();
     }
   };
 
@@ -402,6 +480,16 @@ export function createPackedTestConnectedAccountsRuntime(params: Readonly<{
     selectTarget: async (input) => await selectTarget(input),
     resolveTarget,
     materializeAccount,
+    async projectTargetAccounts() {
+      throw unavailable(
+        'Packed test Connected Accounts harness exposes no purpose-scoped account listing',
+      );
+    },
+    async assertTargetAccountMaterializable() {
+      throw unavailable(
+        'Packed test Connected Accounts harness exposes no exact-listed materialization',
+      );
+    },
     subscribeInvalidations(listener) {
       invalidationListeners.add(listener);
       return Object.freeze({
@@ -413,16 +501,30 @@ export function createPackedTestConnectedAccountsRuntime(params: Readonly<{
   });
 
   return Object.freeze({
-    owner: bindingOwner,
+    // The packed author vertical exercises binding selection and materialization
+    // only. It owns no account inventory, so the purpose-scoped listing seam
+    // fails closed here instead of reporting an unverified empty inventory.
+    owner: Object.freeze({
+      ...bindingOwner,
+      async listAccounts() {
+        throw unavailable(
+          'Packed test Connected Accounts harness exposes no purpose-scoped account listing',
+        );
+      },
+      async materializeListedAccount() {
+        throw unavailable(
+          'Packed test Connected Accounts harness exposes no exact-listed materialization',
+        );
+      },
+    }),
     async reconcileRegistryPublication(input) {
       const signal = new AbortController().signal;
-      const persistedBindings = await store.read(signal);
       await bindingOwner.reconcileAuthorizedPurposes({
         consumerScopes: deriveRegistryConnectedAccountPurposeReconciliationScopes(
           input.previous,
           input.candidate,
-          persistedBindings.bindings.map((binding) => binding.purpose.consumer),
           input.resolveOptionalAccess,
+          { candidateActivePluginIds: input.candidateActivePluginIds },
         ),
         signal,
         publish: input.publish,

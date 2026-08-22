@@ -2,7 +2,8 @@ import { createHash } from 'node:crypto';
 import { chmod, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, normalize, relative, resolve, sep } from 'node:path';
 
-import type { AgentSessionHostServices } from '@happier-dev/plugin-sdk/agent-runtime';
+import type { AgentSessionHostServices } from '@happier-dev/plugin-sdk/agents/runtime';
+import { PluginError } from '@happier-dev/plugin-sdk';
 import {
     SESSION_PROVIDER_TRANSCRIPT_EVENT_ID_V1,
     SessionProviderTranscriptEventPayloadV1Schema,
@@ -16,6 +17,7 @@ import { resolveJavaScriptRuntimeExecutable } from '@/packagedRuntime/js/resolve
 import { logger } from '@/ui/logger';
 import { isBun } from '@/utils/runtime';
 import { writeJsonAtomic } from '@/utils/fs/writeJsonAtomic';
+import { isCanonicalAbsolutePathInsideRoot } from '@/utils/path/expandHomeDirPath';
 
 import {
     startSessionHookServerWithPersistedPortTakeover,
@@ -84,15 +86,15 @@ let secretDirSequence = 0;
 const PRIVATE_DIRECTORY_MODE = 0o700;
 const PRIVATE_FILE_MODE = 0o600;
 const SESSION_HOOKS_CAPABILITY = 'sessionHooks';
-const SESSION_HOOKS_CONTROL_PERMISSION = 'session.hooks.control';
 
-export class PluginSessionHooksError extends Error {
-    readonly code: 'PLUGIN_SESSION_HOOKS_CAPABILITY_REQUIRED';
-
+/**
+ * `ctx.sessionHooks` denials reach plugin authors directly, so they ARE canonical
+ * PluginErrors. Never assign `name` here - `isPluginError` recognizes the contract
+ * by name+data, not by class identity.
+ */
+export class PluginSessionHooksError extends PluginError {
     constructor(message: string) {
-        super(message);
-        this.name = 'PluginSessionHooksError';
-        this.code = 'PLUGIN_SESSION_HOOKS_CAPABILITY_REQUIRED';
+        super({ code: 'PLUGIN_SESSION_HOOKS_CAPABILITY_REQUIRED', message });
     }
 }
 
@@ -226,9 +228,10 @@ async function createPrivateDirectory(dirPath: string): Promise<void> {
 
 async function createPrivateDirectoryTree(rootDir: string, targetDir: string): Promise<void> {
     await createPrivateDirectory(rootDir);
-    const relativePath = targetDir.startsWith(`${rootDir}${sep}`)
-        ? targetDir.slice(rootDir.length + 1)
-        : '';
+    if (!isCanonicalAbsolutePathInsideRoot(rootDir, targetDir)) {
+        throw new Error('Session hook private directory escaped its owned root');
+    }
+    const relativePath = relative(rootDir, targetDir);
     let currentDir = rootDir;
     for (const segment of relativePath.split(sep).filter(Boolean)) {
         currentDir = join(currentDir, segment);
@@ -241,18 +244,10 @@ async function writePrivateFile(filePath: string, contents: string): Promise<voi
     await applyPrivateMode(filePath, PRIVATE_FILE_MODE);
 }
 
-function isPathInsideRoot(rootDir: string, candidatePath: string): boolean {
-    const relativePath = relative(resolve(rootDir), resolve(candidatePath));
-    return relativePath === '' || (!relativePath.startsWith('..') && !isAbsolute(relativePath));
-}
-
 function assertSessionHooksCapability(params: CreateSessionHooksServiceParams): void {
-    if (
-        !params.hasCapability(SESSION_HOOKS_CAPABILITY)
-        || !params.hasCapability(SESSION_HOOKS_CONTROL_PERMISSION)
-    ) {
+    if (!params.hasCapability(SESSION_HOOKS_CAPABILITY)) {
         throw new PluginSessionHooksError(
-            `ctx.sessionHooks requires '${SESSION_HOOKS_CAPABILITY}' runtime capability and '${SESSION_HOOKS_CONTROL_PERMISSION}' permission`,
+            `ctx.sessionHooks requires the manifest-derived '${SESSION_HOOKS_CAPABILITY}' runtime capability`,
         );
     }
 }
@@ -404,7 +399,8 @@ export function createSessionHooksService(
         const resolvedPluginDir = resolve(pluginDir);
         if (disposedPluginDirs.has(resolvedPluginDir)) return;
         if (
-            (!isPathInsideRoot(pluginsRoot, resolvedPluginDir) && !isPathInsideRoot(sessionHooksRoot, resolvedPluginDir))
+            (!isCanonicalAbsolutePathInsideRoot(pluginsRoot, resolvedPluginDir)
+                && !isCanonicalAbsolutePathInsideRoot(sessionHooksRoot, resolvedPluginDir))
             || !activePluginDirs.has(resolvedPluginDir)
         ) {
             throw new Error(`Session hook plugin dir is not owned by this service: ${pluginDir}`);

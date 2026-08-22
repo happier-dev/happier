@@ -38,7 +38,6 @@ describe('validatePluginManifest', () => {
           roles: ['realtime_conversation'],
           platforms: ['web'],
           capabilities: {
-            readiness: { requirements: [] },
             turn: { cancelResponse: true, bargeIn: false },
           },
           client: {
@@ -53,7 +52,7 @@ describe('validatePluginManifest', () => {
     expect(result).toEqual(expect.objectContaining({ ok: true }));
   });
 
-  it('reserves credential-backed Voice readiness for trusted bundled manifests', () => {
+  it('rejects the retired Voice readiness spelling for every manifest authority', () => {
     const createVoiceManifest = (id: string) => ({
       schemaVersion: 2,
       id,
@@ -81,16 +80,14 @@ describe('validatePluginManifest', () => {
       },
     });
 
-    expect(validatePluginManifest(createVoiceManifest('acme.credential-voice'))).toEqual({
-      ok: false,
-      diagnostics: [expect.objectContaining({
-        code: 'plugin_manifest_semantic_invalid',
-        message: expect.stringContaining('credentialless'),
-      })],
-    });
+    expect(validatePluginManifest(createVoiceManifest('acme.credential-voice'))).toEqual(expect.objectContaining({
+      ok: false, diagnostics: [expect.objectContaining({ code: 'plugin_manifest_invalid' })],
+    }));
     expect(validatePluginManifest(createVoiceManifest('happier.voice.openai'), {
       manifestAuthority: 'bundled_first_party',
-    })).toEqual(expect.objectContaining({ ok: true }));
+    })).toEqual(expect.objectContaining({
+      ok: false, diagnostics: [expect.objectContaining({ code: 'plugin_manifest_invalid' })],
+    }));
   });
 
   it('keeps RecipientOperationV1 authority independent from retired action linkage', () => {
@@ -127,7 +124,8 @@ describe('validatePluginManifest', () => {
           title: 'Mint session',
           scopes: ['global'],
           surfaces: ['ui'],
-          placement: 'detailsPanel',
+          execution: { target: 'daemon' },
+          placementBindings: ['detailsPanel'],
           dangerLevel: 'safe',
           hostAccess: ['voice-session-api'],
           inputSchema: {
@@ -150,7 +148,8 @@ describe('validatePluginManifest', () => {
           title: 'List voices',
           scopes: ['global'],
           surfaces: ['ui'],
-          placement: 'detailsPanel',
+          execution: { target: 'daemon' },
+          placementBindings: ['detailsPanel'],
           dangerLevel: 'safe',
           hostAccess: ['voice-catalog-api'],
           inputSchema: {
@@ -233,12 +232,21 @@ describe('validatePluginManifest', () => {
           roles: ['realtime_conversation'],
           platforms: ['web'],
           capabilities: {
-            readiness: { requirements: ['credential'] },
             turn: { cancelResponse: true, bargeIn: false },
           },
-          accountMediation: {
-            credentialSlots: [{ id: 'api_key', scope: 'account' }],
-            operations: [{
+          credentials: {
+            slot: { id: 'api_key', purpose: 'voice.client-auth', title: 'API key' },
+            requirement: { kind: 'always' },
+            sources: [{
+              kind: 'savedSecret',
+              secretKinds: ['apiKey'],
+              operationProjections: [{
+                kind: 'recipientCredential', operation: 'client-auth', phase: 'prepare', format: 'bearer',
+              }, {
+                kind: 'recipientCredential', operation: 'list-voices', phase: 'prepare', format: 'bearer',
+              }],
+            }],
+            hostMediated: { operations: [{
                 id: 'client-auth',
                 purpose: 'voice.client-auth',
                 credentialSlotId: 'api_key',
@@ -282,7 +290,7 @@ describe('validatePluginManifest', () => {
                   mapping: [],
                 },
                 response: { maxBytes: 2 * 1024 * 1024, contentTypes: ['application/json'] },
-              }],
+              }] },
           },
           client: {
             artifactId: 'voice-runtime-web',
@@ -351,7 +359,8 @@ describe('validatePluginManifest', () => {
         title: 'Run',
         scopes: ['global'],
         surfaces: ['cli'],
-        placement: 'commandPalette',
+        execution: { target: 'daemon' },
+        placementBindings: ['commandPalette'],
         dangerLevel: 'safe',
       }],
     }],
@@ -370,7 +379,7 @@ describe('validatePluginManifest', () => {
     ['dynamic MCP server', {
       mcp: {
         servers: [{ id: 'dynamic-server', title: 'Dynamic server', kind: 'dynamic' }],
-        discoveryProviders: [],
+        discoverySources: [],
       },
     }],
   ])('requires a daemon or development entrypoint for a %s registration', (_family, contributes) => {
@@ -498,6 +507,49 @@ describe('validatePluginManifest', () => {
     expect(validatePluginManifest(manifest)).toEqual(expect.objectContaining({ ok: true }));
   });
 
+  it('does not synthesize a host-version floor when engines.happier is absent', () => {
+    const manifest = createManifest('acme.no-engine-floor');
+    delete manifest.engines;
+
+    expect(validatePluginManifest(manifest)).toEqual(expect.objectContaining({ ok: true }));
+  });
+
+  it('keeps an unsupported daemon entry diagnostic bounded without echoing the declared path', () => {
+    const daemonEntry = `./${'x'.repeat(40 * 1024)}.unsupported`;
+    const manifest = createManifest('acme.long-daemon-entry');
+    manifest.entrypoints = { daemon: daemonEntry };
+
+    const result = validatePluginManifest(manifest);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      const diagnostic = result.diagnostics.find((entry) => (
+        entry.code === 'plugin_manifest_semantic_invalid'
+      ));
+      expect(diagnostic?.message).toBe('Plugin daemon entry uses an unsupported extension');
+      expect(diagnostic?.message).not.toContain(daemonEntry);
+      expect(diagnostic?.message.length).toBeLessThanOrEqual(32_768);
+    }
+  });
+
+  it('keeps a long valid incompatible engines.happier diagnostic bounded without echoing the declared range', () => {
+    const happierEngine = `>=9999.0.0${' '.repeat(37_976)}<10000.0.0`;
+    const manifest = createManifest('acme.long-happier-engine');
+    manifest.engines = { happier: happierEngine };
+
+    const result = validatePluginManifest(manifest);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      const diagnostic = result.diagnostics.find((entry) => (
+        entry.code === 'plugin_manifest_semantic_invalid'
+      ));
+      expect(diagnostic?.message).toBe('Plugin manifest requires a compatible Happier CLI version');
+      expect(diagnostic?.message).not.toContain(happierEngine);
+      expect(diagnostic?.message.length).toBeLessThanOrEqual(32_768);
+    }
+  });
+
   it('reports a named syntax diagnostic for invalid engines.happier ranges', () => {
     const manifest = createManifest('acme.invalid-semver');
     manifest.engines = { happier: 'not a semver range' };
@@ -524,7 +576,8 @@ describe('validatePluginManifest', () => {
           title: 'List notes',
           scopes: ['global'],
           surfaces: 'cli',
-          placement: 'commandPalette',
+          execution: { target: 'daemon' },
+          placementBindings: ['commandPalette'],
           dangerLevel: 'safe',
         },
       ],

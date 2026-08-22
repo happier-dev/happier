@@ -99,7 +99,7 @@ describe('Agent CLI system-tool binding (integration)', () => {
                     family: 'agents',
                     localId: fixture.agentId,
                 }]);
-                const services = runtimeRegistry.createAgentInvocationServices({
+                const services = await runtimeRegistry.createAgentInvocationServices({
                     pluginId: fixture.pluginId,
                     pluginVersion: '0.0.0',
                     agentId: fixture.agentId,

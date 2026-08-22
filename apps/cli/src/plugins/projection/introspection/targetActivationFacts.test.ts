@@ -6,11 +6,16 @@ import { adaptTargetActivationFacts } from './targetActivationFacts';
 const required: PluginContributionIntrospectionCandidate = {
   pluginId: 'acme.runtime', pluginVersion: '1.0.0', source: 'development',
   family: 'actions', identity: { kind: 'localId', localId: 'run' },
-  stability: 'stable', registration: 'required', consumer: 'action-dispatch', platforms: ['cli'],
+  registration: 'required', consumer: 'action-dispatch', platforms: ['cli'],
 };
 const descriptor: PluginContributionIntrospectionCandidate = {
   ...required, family: 'ui.translations', identity: { kind: 'locale', locale: 'en-US' },
   registration: 'notRequired', consumer: 'ui-i18n-host', platforms: ['web'],
+};
+const managedProvider: PluginContributionIntrospectionCandidate = {
+  ...required, family: 'providers', identity: { kind: 'delegatedDomain', domainId: 'packed-managed-provider' },
+  runtimeRegistrationHost: 'daemon', runtimeRegistrationFamily: 'providers',
+  consumer: 'providers-first-class',
 };
 const plugin = { pluginId: 'acme.runtime', pluginVersion: '1.0.0', source: 'development' as const };
 
@@ -25,6 +30,36 @@ function activeFact(generation = '4') {
 }
 
 describe('target activation introspection adapter', () => {
+  it('binds a registration-required delegated-domain contribution to the registration identity the runtime derives', () => {
+    const registrationRef = { family: 'providers', localId: 'packed-managed-provider' };
+    const adapted = adaptTargetActivationFacts({
+      generation: 4,
+      candidates: [managedProvider],
+      plugins: [plugin],
+      targetActivationFacts: [{ ...activeFact(), required: [registrationRef], bound: [registrationRef] }],
+      runtimeState: 'current',
+    });
+
+    expect(adapted.runtimeFactsByQualifiedId.get('acme.runtime/providers/packed-managed-provider')).toEqual({
+      registration: { requirement: 'required', state: 'bound', generation: '4' },
+      activation: { state: 'active', generation: '4' }, projection: { state: 'projected' },
+    });
+  });
+
+  it('still rejects a delegated-domain fact that binds an identity the catalog never demanded', () => {
+    expect(() => adaptTargetActivationFacts({
+      generation: 4,
+      candidates: [managedProvider],
+      plugins: [plugin],
+      targetActivationFacts: [{
+        ...activeFact(),
+        required: [{ family: 'providers', localId: 'other-provider' }],
+        bound: [{ family: 'providers', localId: 'other-provider' }],
+      }],
+      runtimeState: 'current',
+    })).toThrow(/unknown required contribution/);
+  });
+
   it('binds and activates only an exact current-generation required target', () => {
     const adapted = adaptTargetActivationFacts({
       generation: 4, candidates: [required, descriptor], targetActivationFacts: [activeFact()],
@@ -41,7 +76,6 @@ describe('target activation introspection adapter', () => {
 
   it.each([
     ['unavailable', activeFact(), 'current'],
-    ['stale', activeFact('3'), 'current'],
     ['disposed', activeFact(), 'disposed'],
   ] as const)('keeps %s target facts unavailable and dormant with a canonical diagnostic', (_name, fact, runtimeState) => {
     const targetActivationFacts = fact.status === 'active' && _name === 'unavailable'
@@ -74,19 +108,29 @@ describe('target activation introspection adapter', () => {
       .toThrow(/exactly match/);
   });
 
-  it('rejects facts from two generations instead of merging them', () => {
+  it('keeps retained active facts usable when a peer update advances the public projection', () => {
     const second = {
       ...required,
       pluginId: 'acme.second',
       identity: { kind: 'localId' as const, localId: 'run' },
     };
-    expect(() => adaptTargetActivationFacts({
-      generation: 4, candidates: [required, second], plugins: [plugin, { ...plugin, pluginId: 'acme.second' }], targetActivationFacts: [
+    const adapted = adaptTargetActivationFacts({
+      generation: 5, candidates: [required, second], plugins: [plugin, { ...plugin, pluginId: 'acme.second' }], targetActivationFacts: [
         activeFact(),
         { ...activeFact('3'), pluginId: 'acme.second' },
       ],
       runtimeState: 'current',
-    })).toThrow(/multiple generations/);
+    });
+
+    expect(adapted.runtimeFactsByQualifiedId.get('acme.runtime/actions/run')).toEqual({
+      registration: { requirement: 'required', state: 'bound', generation: '4' },
+      activation: { state: 'active', generation: '4' }, projection: { state: 'projected' },
+    });
+    expect(adapted.runtimeFactsByQualifiedId.get('acme.second/actions/run')).toEqual({
+      registration: { requirement: 'required', state: 'bound', generation: '3' },
+      activation: { state: 'active', generation: '3' }, projection: { state: 'projected' },
+    });
+    expect(adapted.diagnosticRecords).toEqual([]);
   });
 
   it.each([

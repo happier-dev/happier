@@ -1,18 +1,32 @@
-import type { ValidateFunction } from 'ajv';
 import { isDeepStrictEqual } from 'node:util';
 
 import {
     PluginIdSchema,
+    PluginJsonSchemaV2Schema,
     PluginSettingsContributionV2Schema,
+    type PluginJsonSchemaValidator,
+    compilePluginJsonSchema,
+    isBoundedPluginPerActiveServerValueV1,
+    isValidPluginJsonSchemaValue,
     type PluginSettingFieldV2,
     type PluginSettingsContributionV2,
 } from '@happier-dev/protocol';
-import { PluginError, type Disposable, type JsonValue } from '@happier-dev/plugin-sdk';
-import { type PluginSettingDescriptor, type PluginSettingsChange, type PluginSettingsService } from '@happier-dev/plugin-sdk/runtime';
+import {
+    isPluginError,
+    PluginError,
+    type Disposable,
+    type JsonValue,
+} from '@happier-dev/plugin-sdk';
+import type {
+    ScopedSettingsService,
+    SettingDescriptor,
+    SettingsChange,
+    SettingsScopeRef,
+    SettingsService,
+} from '@happier-dev/plugin-sdk/settings';
 
 import type { StablePluginEventsBroker } from './events';
 import { clonePluginPlainData } from '../../plainData';
-import { compilePluginJsonSchema, isValidPluginJsonSchemaValue } from './jsonSchemaValidation';
 import type { PluginInvocationServicesSeed } from './types';
 import {
     PLUGIN_HOST_STORAGE_KEY_PREFIX,
@@ -23,9 +37,8 @@ import {
 export const PLUGIN_SETTINGS_STORAGE_KEY = `${PLUGIN_HOST_STORAGE_KEY_PREFIX}settings/v1`;
 const SETTINGS_RECORD_TYPE = 'happier_plugin_settings_record_v1';
 const MAX_SETTINGS_EVENT_VALUE_BYTES = 512 * 1024;
-const MAX_SETTINGS_PLAIN_DATA_DEPTH = 64;
-const MAX_SETTINGS_PLAIN_DATA_NODES = 32_768;
-const MAX_SETTINGS_PLAIN_DATA_STRING_BYTES = MAX_SETTINGS_EVENT_VALUE_BYTES + (256 * 1024);
+const MAX_SETTINGS_ACTION_PATCH_BYTES = 64 * 1024;
+const MAX_SETTINGS_ACTION_PATCH_FIELDS = 16;
 const SETTINGS_CHANGED_REF = Object.freeze({
     pluginId: '@happier',
     localId: 'runtime/plugin-settings-changed',
@@ -46,28 +59,32 @@ export type StablePluginSettingsField = Readonly<{
     id: string;
     contributionId: string;
     qualifiedId: string;
-    descriptor: PluginSettingDescriptor;
+    descriptor: SettingDescriptor;
 }>;
 
 export type StablePluginSettingsModel = Readonly<{
     identity: StablePluginSettingsIdentity;
     scope: PluginSettingsContributionV2['scope'];
-    descriptors: readonly PluginSettingDescriptor[];
+    descriptors: readonly SettingDescriptor[];
     fields: readonly StablePluginSettingsField[];
 }>;
 
-const validatorsByModel = new WeakMap<object, ReadonlyMap<string, ValidateFunction>>();
+export type StablePluginSettingsScope = PluginSettingsContributionV2['scope'];
+
+const validatorsByModel = new WeakMap<object, ReadonlyMap<string, PluginJsonSchemaValidator>>();
+const perActiveServerMapFieldIdsByModel = new WeakMap<object, ReadonlySet<string>>();
 
 export type StablePluginSettingsRecordStore = Readonly<{
     supports?(model: StablePluginSettingsModel): boolean;
-    read(model: StablePluginSettingsModel): Promise<unknown | null>;
+    read(model: StablePluginSettingsModel, options?: Readonly<{ signal?: AbortSignal }>): Promise<unknown | null>;
     update<T>(
         model: StablePluginSettingsModel,
         operation: (current: unknown | null) => Readonly<{ record: CanonicalPluginSettingsRecord; result: T }>,
+        options?: Readonly<{ signal?: AbortSignal }>,
     ): Promise<T>;
     watch?(
         model: StablePluginSettingsModel,
-        listener: (change: PluginSettingsChange) => void,
+        listener: (change: SettingsChange) => void,
     ): Disposable;
 }>;
 
@@ -78,13 +95,7 @@ function settingsError(code: string, message: string, details?: JsonValue): Plug
 function clonePlainData<T>(value: T, path = 'value'): T {
     return clonePluginPlainData(value, {
         path,
-        limits: {
-            maxDepth: MAX_SETTINGS_PLAIN_DATA_DEPTH,
-            maxNodes: MAX_SETTINGS_PLAIN_DATA_NODES,
-            maxStringBytes: MAX_SETTINGS_PLAIN_DATA_STRING_BYTES,
-        },
         invalid: (message) => settingsError('plugin_settings_invalid_plain_data', message),
-        limitExceeded: (message) => settingsError('plugin_settings_plain_data_bounded', message),
     });
 }
 
@@ -95,7 +106,7 @@ function localizedText(value: string | Readonly<{ key: string; fallback: string 
 function normalizeTarget(
     pluginId: string,
     target: PluginSettingsContributionV2['target'],
-): PluginSettingDescriptor['target'] {
+): SettingDescriptor['target'] {
     if (target.kind === 'plugin') return Object.freeze({ kind: 'plugin' });
     const agent = typeof target.agent === 'string'
         ? { pluginId, localId: target.agent }
@@ -110,17 +121,17 @@ function descriptorForField(
     contribution: PluginSettingsContributionV2,
     field: PluginSettingFieldV2,
     pluginId: string,
-): PluginSettingDescriptor {
+): SettingDescriptor {
+    const schema = PluginJsonSchemaV2Schema.parse(clonePlainData(field.schema));
     const base = {
         id: field.id,
         title: localizedText(field.title),
         ...(field.description ? { description: localizedText(field.description) } : {}),
         target: normalizeTarget(pluginId, contribution.target),
         scope: contribution.scope,
-        // The protocol schema validates every schema leaf as JSON before this narrow bridge.
-        schema: clonePlainData(field.schema) as JsonValue,
+        schema,
     };
-    return field.secret === true
+    return isSecretSettingField(field)
         ? Object.freeze({ ...base, secret: true as const })
         : Object.freeze({
             ...base,
@@ -128,8 +139,12 @@ function descriptorForField(
         });
 }
 
-function qualifiedSettingsId(pluginId: string): string {
-    return `${pluginId}/settings`;
+function isSecretSettingField(field: PluginSettingFieldV2): boolean {
+    return field.secret === true || (field.secret !== undefined && field.secret !== false);
+}
+
+function qualifiedSettingsId(pluginId: string, scope: StablePluginSettingsScope): string {
+    return `${pluginId}/settings/${scope}`;
 }
 
 function qualifiedSettingsFieldId(identity: StablePluginSettingsIdentity, contributionId: string, fieldId: string): string {
@@ -173,9 +188,16 @@ export function createStablePluginSettingsModel(params: Readonly<{
     }
     const identity = Object.freeze({
         pluginId,
-        qualifiedId: qualifiedSettingsId(pluginId),
+        qualifiedId: qualifiedSettingsId(pluginId, scope),
     });
-    const validators = new Map<string, ValidateFunction>();
+    const validators = new Map<string, PluginJsonSchemaValidator>();
+    const perActiveServerMapFieldIds = new Set(
+        contributions.flatMap((contribution) => contribution.fields.flatMap((field) => (
+            field.presentation?.binding?.kind === 'perActiveServer'
+                ? [field.presentation.binding.byServerIdSettingId]
+                : []
+        ))),
+    );
     const fields = contributions.flatMap((contribution) => contribution.fields.map((field): StablePluginSettingsField => {
         const qualifiedId = qualifiedSettingsFieldId(identity, contribution.id, field.id);
         if (validators.has(field.id)) {
@@ -184,7 +206,7 @@ export function createStablePluginSettingsModel(params: Readonly<{
                 `Plugin setting '${field.id}' is declared by multiple settings contributions for '${pluginId}'`,
             );
         }
-        let validate: ValidateFunction;
+        let validate: PluginJsonSchemaValidator;
         try {
             validate = compilePluginJsonSchema(field.schema);
         } catch {
@@ -193,7 +215,10 @@ export function createStablePluginSettingsModel(params: Readonly<{
                 `Plugin setting '${qualifiedId}' has an invalid schema`,
             );
         }
-        if (field.secret !== true && field.default !== undefined && !isValidPluginJsonSchemaValue(validate, field.default)) {
+        if (!isSecretSettingField(field) && field.default !== undefined
+            && (!isValidPluginJsonSchemaValue(validate, field.default)
+                || (perActiveServerMapFieldIds.has(field.id)
+                    && !isBoundedPluginPerActiveServerValueV1(field.default)))) {
             throw settingsError(
                 'plugin_settings_invalid_default',
                 `Plugin setting '${qualifiedId}' has an invalid default`,
@@ -214,7 +239,65 @@ export function createStablePluginSettingsModel(params: Readonly<{
         fields: Object.freeze(fields),
     });
     validatorsByModel.set(model, validators);
+    perActiveServerMapFieldIdsByModel.set(model, perActiveServerMapFieldIds);
     return model;
+}
+
+/**
+ * Builds one independent model per natural Settings scope.  This is the
+ * canonical partition point: callers cannot flatten Account and daemon
+ * values into one revision, record, or watch stream.
+ */
+export function createStablePluginSettingsModels(params: Readonly<{
+    pluginId: string;
+    contributions: readonly PluginSettingsContributionV2[];
+}>): ReadonlyMap<StablePluginSettingsScope, StablePluginSettingsModel> {
+    const pluginId = PluginIdSchema.parse(params.pluginId);
+    const byScope = new Map<StablePluginSettingsScope, PluginSettingsContributionV2[]>();
+    const secretById = new Map<string, Readonly<{ scope: StablePluginSettingsScope; contributionId: string }>>();
+    const nonSecretById = new Map<string, Readonly<{ scope: StablePluginSettingsScope; contributionId: string }>>();
+
+    for (const contribution of params.contributions) {
+        const group = byScope.get(contribution.scope) ?? [];
+        group.push(contribution);
+        byScope.set(contribution.scope, group);
+        for (const field of contribution.fields) {
+            const existingSecret = secretById.get(field.id);
+            const existingNonSecret = nonSecretById.get(field.id);
+            if (isSecretSettingField(field)) {
+                if (existingSecret || existingNonSecret) {
+                    throw settingsError(
+                        'plugin_settings_field_id_conflict',
+                        `Plugin secret setting '${field.id}' is not plugin-global unique for '${pluginId}'`,
+                    );
+                }
+                secretById.set(field.id, Object.freeze({
+                    scope: contribution.scope,
+                    contributionId: contribution.id,
+                }));
+            } else {
+                if (existingSecret) {
+                    throw settingsError(
+                        'plugin_settings_field_id_conflict',
+                        `Plugin setting '${field.id}' conflicts with a declared plugin secret for '${pluginId}'`,
+                    );
+                }
+                if (!existingNonSecret) {
+                    nonSecretById.set(field.id, Object.freeze({
+                        scope: contribution.scope,
+                        contributionId: contribution.id,
+                    }));
+                }
+            }
+        }
+    }
+
+    return new Map(
+        [...byScope.entries()].map(([scope, contributions]) => [
+            scope,
+            createStablePluginSettingsModel({ pluginId, contributions }),
+        ]),
+    );
 }
 
 export function validateStablePluginSettingValue(
@@ -229,7 +312,10 @@ export function validateStablePluginSettingValue(
             `Plugin setting '${model.identity.qualifiedId}/fields/${settingId}' is not part of this stable model`,
         );
     }
-    return validator(clonePlainData(value, 'settingValue')) === true;
+    const plainValue = clonePlainData(value, 'settingValue');
+    return validator(plainValue) === true
+        && (perActiveServerMapFieldIdsByModel.get(model)?.has(settingId) !== true
+            || isBoundedPluginPerActiveServerValueV1(plainValue));
 }
 
 export function createPluginStorageBackedSettingsRecordStore(params: Readonly<{
@@ -237,7 +323,7 @@ export function createPluginStorageBackedSettingsRecordStore(params: Readonly<{
     scope?: PluginSettingsContributionV2['scope'];
     isAvailable?(): boolean;
 }>): StablePluginSettingsRecordStore {
-    const supportedScope = params.scope ?? 'local';
+    const supportedScope = params.scope ?? 'daemon';
     return Object.freeze({
         supports(model) {
             return model.scope === supportedScope && (params.isAvailable?.() ?? true);
@@ -246,7 +332,7 @@ export function createPluginStorageBackedSettingsRecordStore(params: Readonly<{
             try {
                 return await params.storageForPlugin(model.identity.pluginId).get(PLUGIN_SETTINGS_STORAGE_KEY);
             } catch (error) {
-                if (error instanceof PluginError) throw error;
+                if (isPluginError(error)) throw error;
                 throw settingsError(
                     'plugin_settings_persistence_unavailable',
                     'Plugin settings persistence is unavailable',
@@ -266,7 +352,7 @@ export function createPluginStorageBackedSettingsRecordStore(params: Readonly<{
                     },
                 });
             } catch (error) {
-                if (error instanceof PluginError) throw error;
+                if (isPluginError(error)) throw error;
                 throw settingsError(
                     'plugin_settings_persistence_unavailable',
                     'Plugin settings persistence is unavailable',
@@ -276,165 +362,216 @@ export function createPluginStorageBackedSettingsRecordStore(params: Readonly<{
     });
 }
 
-export const PLUGIN_SETTINGS_ACCOUNT_STATE_KEY = 'pluginSettingsStateV1';
+export type PluginAccountSettingsRecordRead =
+    | Readonly<{
+        status: 'present';
+        revision: number;
+        values: Readonly<Record<string, JsonValue>>;
+    }>
+    | Readonly<{ status: 'absent' }>
+    | Readonly<{ status: 'deleted'; revision: number }>
+    | Readonly<{ status: 'unavailable' }>;
 
-type PluginSettingsAccountState = Readonly<{
-    t: typeof SETTINGS_RECORD_TYPE;
-    revision: number;
+export type PluginAccountSettingsRecordWriteResult =
+    | Readonly<{ status: 'updated'; revision: number }>
+    | Readonly<{ status: 'conflict'; revision: number }>
+    | Readonly<{ status: 'unavailable' }>;
+
+export type PluginAccountSettingsRecordAdapter = Readonly<{
+    readRecord(
+        model: StablePluginSettingsModel,
+        options?: Readonly<{ signal?: AbortSignal }>,
+    ): Promise<PluginAccountSettingsRecordRead>;
+    writeRecord(
+        model: StablePluginSettingsModel,
+        request: Readonly<{
+            expectedRevision: number | 'absent';
+            values: Readonly<Record<string, JsonValue>>;
+        }>,
+        options?: Readonly<{ signal?: AbortSignal }>,
+    ): Promise<PluginAccountSettingsRecordWriteResult>;
+    watchRecord?(
+        model: StablePluginSettingsModel,
+        listener: (hint: Readonly<{ revision?: number }>) => void,
+    ): () => void;
+    isAvailable?(): boolean;
 }>;
 
-function isSyncedAgentSettingsModel(model: StablePluginSettingsModel): boolean {
-    return model.scope === 'synced'
-        && model.descriptors.length > 0
-        && model.descriptors.every((descriptor) => descriptor.target.kind === 'agent');
+type AccountPluginSettingsRecordState = Readonly<{
+    record: CanonicalPluginSettingsRecord;
+    expectedRevision: number | 'absent';
+}>;
+
+function isAccountSettingsModel(model: StablePluginSettingsModel): boolean {
+    return model.scope === 'account';
 }
 
-function accountSettingsRecord(
+function settingsScopeRef(model: StablePluginSettingsModel): SettingsScopeRef {
+    return Object.freeze({ kind: model.scope });
+}
+
+function assertAccountSettingsModel(model: StablePluginSettingsModel): void {
+    if (!isAccountSettingsModel(model)) {
+        throw settingsError(
+            'plugin_settings_scope_unavailable',
+            `Plugin settings scope '${model.scope}' has no bound account persistence owner`,
+            { scope: model.scope },
+        );
+    }
+}
+
+async function readAccountPluginSettingsRecord(
     model: StablePluginSettingsModel,
-    settings: Readonly<Record<string, unknown>>,
-): CanonicalPluginSettingsRecord {
-    const stateByPlugin = settings[PLUGIN_SETTINGS_ACCOUNT_STATE_KEY];
-    const candidateState = stateByPlugin
-        && typeof stateByPlugin === 'object'
-        && !Array.isArray(stateByPlugin)
-        ? Reflect.get(stateByPlugin, model.identity.pluginId)
-        : undefined;
-    const state = candidateState === undefined
-        ? { t: SETTINGS_RECORD_TYPE, revision: 0 }
-        : candidateState;
-    const values: Record<string, JsonValue> = {};
-    for (const field of model.fields) {
-        if (field.descriptor.secret === true) continue;
-        if (Object.prototype.hasOwnProperty.call(settings, field.id)) {
-            values[field.id] = clonePlainData(settings[field.id], `accountSettings.${field.id}`) as JsonValue;
-        }
+    adapter: PluginAccountSettingsRecordAdapter,
+    options?: Readonly<{ signal?: AbortSignal }>,
+): Promise<AccountPluginSettingsRecordState> {
+    const source = await adapter.readRecord(model, options);
+    if (source.status === 'unavailable') {
+        throw settingsError(
+            'plugin_settings_persistence_unavailable',
+            'Account plugin settings persistence is unavailable',
+        );
     }
-    if (!state || typeof state !== 'object' || Array.isArray(state)) {
-        throw settingsError('plugin_settings_record_invalid', 'Plugin settings account revision state is invalid');
+    if (source.status === 'absent') {
+        return Object.freeze({ record: emptyRecord(), expectedRevision: 'absent' });
     }
-    return parseCanonicalPluginSettingsRecord({
-        ...(state as Readonly<Record<string, unknown>>),
-        values,
-    });
-}
-
-function accountStateForRecord(record: CanonicalPluginSettingsRecord): PluginSettingsAccountState {
+    if (source.status === 'deleted') {
+        return Object.freeze({
+            record: Object.freeze({
+                t: SETTINGS_RECORD_TYPE,
+                revision: source.revision,
+                values: Object.freeze({}),
+            }),
+            expectedRevision: source.revision,
+        });
+    }
     return Object.freeze({
-        t: SETTINGS_RECORD_TYPE,
-        revision: record.revision,
+        record: validateRecordForModel(model, parseCanonicalPluginSettingsRecord({
+            t: SETTINGS_RECORD_TYPE,
+            revision: source.revision,
+            values: source.values,
+        })),
+        expectedRevision: source.revision,
     });
 }
 
-export function createAccountSettingsBackedSettingsRecordStore(params: Readonly<{
-    readSettings(): Readonly<Record<string, unknown>> | null | Promise<Readonly<Record<string, unknown>> | null>;
-    isAvailable?(): boolean;
-    subscribeSettings?(
-        listener: (
-            previous: Readonly<Record<string, unknown>> | null,
-            next: Readonly<Record<string, unknown>>,
-        ) => void,
-    ): () => void;
-    updateSettings(
-        mutate: (settings: Readonly<Record<string, unknown>>) => Record<string, unknown>,
-    ): Promise<Readonly<Record<string, unknown>>>;
-}>): StablePluginSettingsRecordStore {
+function publishAccountPluginSettingsChange(
+    model: StablePluginSettingsModel,
+    previous: CanonicalPluginSettingsRecord,
+    next: CanonicalPluginSettingsRecord,
+    listener: (change: SettingsChange) => void,
+): void {
+    const changedIds = model.fields
+        .filter((field) => field.descriptor.secret !== true)
+        .filter((field) => !isDeepStrictEqual(
+            previous.values[field.id],
+            next.values[field.id],
+        ))
+        .map((field) => field.id)
+        .sort();
+    if (previous.revision === next.revision && changedIds.length === 0) return;
+    listener(Object.freeze({
+        scope: settingsScopeRef(model),
+        revision: String(next.revision),
+        changedIds: Object.freeze(changedIds),
+        values: visibleValues(model, next),
+    }));
+}
+
+/**
+ * The Account model is one reserved `(accountId, pluginId)` record. Its
+ * adapter owns HTTP/envelope/CAS mechanics; this owner keeps field validation,
+ * defaults, revisions, and watch projection out of the host preference blob.
+ */
+export function createAccountSettingsBackedSettingsRecordStore(
+    adapter: PluginAccountSettingsRecordAdapter,
+): StablePluginSettingsRecordStore {
     return Object.freeze({
         supports(model) {
-            return isSyncedAgentSettingsModel(model) && (params.isAvailable?.() ?? true);
+            return isAccountSettingsModel(model) && (adapter.isAvailable?.() ?? true);
         },
-        async read(model): Promise<unknown | null> {
-            if (!isSyncedAgentSettingsModel(model)) {
-                throw settingsError(
-                    'plugin_settings_scope_unavailable',
-                    `Plugin settings scope '${model.scope}' has no bound account persistence owner`,
-                    { scope: model.scope },
-                );
-            }
-            const settings = await params.readSettings();
-            if (!settings) {
-                throw settingsError(
-                    'plugin_settings_persistence_unavailable',
-                    'Synced Agent settings require an active account settings snapshot',
-                );
-            }
-            return accountSettingsRecord(model, settings);
+        async read(model, options): Promise<unknown | null> {
+            assertAccountSettingsModel(model);
+            return (await readAccountPluginSettingsRecord(model, adapter, options)).record;
         },
         async update<T>(
             model: StablePluginSettingsModel,
             operation: (
                 current: unknown | null,
             ) => Readonly<{ record: CanonicalPluginSettingsRecord; result: T }>,
+            options?: Readonly<{ signal?: AbortSignal }>,
         ): Promise<T> {
-            if (!isSyncedAgentSettingsModel(model)) {
-                throw settingsError(
-                    'plugin_settings_scope_unavailable',
-                    `Plugin settings scope '${model.scope}' has no bound account persistence owner`,
-                    { scope: model.scope },
-                );
-            }
-            let result: T | undefined;
-            let operated = false;
-            await params.updateSettings((settings) => {
-                const current = accountSettingsRecord(model, settings);
-                const next = operation(current);
-                result = next.result;
-                operated = true;
-                const output: Record<string, unknown> = { ...settings };
-                for (const field of model.fields) {
-                    if (field.descriptor.secret === true) continue;
-                    if (Object.prototype.hasOwnProperty.call(next.record.values, field.id)) {
-                        output[field.id] = clonePlainData(next.record.values[field.id], `settings.${field.id}`);
-                    } else {
-                        delete output[field.id];
-                    }
-                }
-                const currentStateByPlugin = settings[PLUGIN_SETTINGS_ACCOUNT_STATE_KEY];
-                const stateByPlugin = currentStateByPlugin
-                    && typeof currentStateByPlugin === 'object'
-                    && !Array.isArray(currentStateByPlugin)
-                    ? { ...(currentStateByPlugin as Readonly<Record<string, unknown>>) }
-                    : {};
-                stateByPlugin[model.identity.pluginId] = accountStateForRecord(next.record);
-                output[PLUGIN_SETTINGS_ACCOUNT_STATE_KEY] = stateByPlugin;
-                return output;
-            });
-            if (!operated) {
+            assertAccountSettingsModel(model);
+            const current = await readAccountPluginSettingsRecord(model, adapter, options);
+            const next = operation(current.record);
+            const record = validateRecordForModel(
+                model,
+                parseCanonicalPluginSettingsRecord(next.record),
+            );
+            const response = await adapter.writeRecord(
+                model,
+                {
+                    expectedRevision: current.expectedRevision,
+                    values: record.values,
+                },
+                options,
+            );
+            if (response.status === 'unavailable') {
                 throw settingsError(
                     'plugin_settings_persistence_unavailable',
-                    'Synced Agent settings update did not reach the account settings owner',
+                    'Account plugin settings persistence is unavailable',
                 );
             }
-            return result as T;
+            if (response.status === 'conflict') {
+                throw settingsError(
+                    'plugin_settings_revision_conflict',
+                    'Plugin settings revision does not match the current Account revision',
+                    { currentRevision: String(response.revision) },
+                );
+            }
+            if (response.revision !== record.revision) {
+                throw settingsError(
+                    'plugin_settings_persistence_unavailable',
+                    'Account plugin settings write returned an inconsistent revision',
+                );
+            }
+            return next.result;
         },
         watch(model, listener): Disposable {
-            if (!isSyncedAgentSettingsModel(model) || !params.subscribeSettings) {
+            if (!isAccountSettingsModel(model) || !adapter.watchRecord) {
                 return Object.freeze({ dispose() {} });
             }
-            const unsubscribe = params.subscribeSettings((previousSettings, nextSettings) => {
-                try {
-                    const previous = previousSettings
-                        ? validateRecordForModel(model, accountSettingsRecord(model, previousSettings))
-                        : emptyRecord();
-                    const next = validateRecordForModel(model, accountSettingsRecord(model, nextSettings));
-                    const changedIds = model.fields
-                        .filter((field) => field.descriptor.secret !== true)
-                        .filter((field) => !isDeepStrictEqual(
-                            previous.values[field.id],
-                            next.values[field.id],
-                        ))
-                        .map((field) => field.id)
-                        .sort();
-                    if (previous.revision === next.revision && changedIds.length === 0) return;
-                    listener(Object.freeze({
-                        revision: String(next.revision),
-                        changedIds: Object.freeze(changedIds),
-                        values: visibleValues(model, next),
-                    }));
-                } catch {
-                    // Corrupt synced state remains fail-closed on the next direct read.
-                }
+            let closed = false;
+            let previous: CanonicalPluginSettingsRecord | null = null;
+            let serial = Promise.resolve();
+            const baseline = readAccountPluginSettingsRecord(model, adapter)
+                .then((state) => {
+                    previous = state.record;
+                })
+                .catch(() => undefined);
+            const refresh = (): void => {
+                serial = serial.then(async () => {
+                    await baseline;
+                    if (closed) return;
+                    try {
+                        const next = (await readAccountPluginSettingsRecord(model, adapter)).record;
+                        const before = previous ?? emptyRecord();
+                        if (next.revision < before.revision) return;
+                        previous = next;
+                        publishAccountPluginSettingsChange(model, before, next, listener);
+                    } catch {
+                        // A content-free hint never carries a safe fallback value.
+                    }
+                });
+            };
+            const unsubscribe = adapter.watchRecord(model, () => refresh());
+            return Object.freeze({
+                dispose() {
+                    if (closed) return;
+                    closed = true;
+                    unsubscribe();
+                },
             });
-            return Object.freeze({ dispose: unsubscribe });
         },
     });
 }
@@ -457,11 +594,11 @@ export function createRoutedPluginSettingsRecordStore(
         supports(model) {
             return stores.some((store) => store.supports?.(model) === true);
         },
-        read(model) {
-            return resolve(model).read(model);
+        read(model, options) {
+            return resolve(model).read(model, options);
         },
-        update(model, operation) {
-            return resolve(model).update(model, operation);
+        update(model, operation, options) {
+            return resolve(model).update(model, operation, options);
         },
         watch(model, listener) {
             return resolve(model).watch?.(model, listener)
@@ -486,11 +623,10 @@ export function parseCanonicalPluginSettingsRecord(value: unknown): CanonicalPlu
         && Object.prototype.hasOwnProperty.call(record, 'revision')
         && Object.prototype.hasOwnProperty.call(record, 'values');
     if (!isEnvelope) {
-        return Object.freeze({
-            t: SETTINGS_RECORD_TYPE,
-            revision: 0,
-            values: clonePlainData(record) as Readonly<Record<string, JsonValue>>,
-        });
+        throw settingsError(
+            'plugin_settings_record_invalid',
+            'Plugin settings record is invalid',
+        );
     }
     if (record.t !== SETTINGS_RECORD_TYPE
         || recordKeys.some((key) => !['t', 'revision', 'values'].includes(key))
@@ -536,7 +672,9 @@ function validateFieldValue(model: StablePluginSettingsModel, id: string, value:
             `Plugin settings model '${model.identity.qualifiedId}' has no validator for '${id}'`,
         );
     }
-    return isValidPluginJsonSchemaValue(validate, value);
+    return isValidPluginJsonSchemaValue(validate, value)
+        && (perActiveServerMapFieldIdsByModel.get(model)?.has(id) !== true
+            || isBoundedPluginPerActiveServerValueV1(value));
 }
 
 function assertExpectedRevision(record: CanonicalPluginSettingsRecord, expectedRevision?: string): void {
@@ -595,10 +733,106 @@ export function createStablePluginSettingsOwner(params: Readonly<{
     broker: StablePluginEventsBroker;
 }>) {
     return Object.freeze({
+        async applyActionPatch(input: Readonly<{
+            model: StablePluginSettingsModel;
+            seed: PluginInvocationServicesSeed;
+            contributionId: string;
+            allowedFieldIds: readonly string[];
+            patch: Readonly<Record<string, JsonValue>>;
+            expectedRevision?: string;
+            signal?: AbortSignal;
+        }>): Promise<Readonly<{
+            scope: SettingsScopeRef;
+            revision: string;
+            changedIds: readonly string[];
+            values: Readonly<Record<string, JsonValue>>;
+        }>> {
+            const { model, seed } = input;
+            assertSupportedScope(model, params.recordStore);
+            assertCurrent(seed, input.signal);
+            const patch = clonePlainData(input.patch, 'settingsActionPatch');
+            const changedIds = Object.keys(patch).sort();
+            if (changedIds.length === 0 || changedIds.length > MAX_SETTINGS_ACTION_PATCH_FIELDS) {
+                throw settingsError(
+                    'plugin_settings_action_patch_bounded',
+                    'Plugin settings action patch must contain between 1 and 16 fields',
+                );
+            }
+            if (Buffer.byteLength(JSON.stringify(patch), 'utf8') > MAX_SETTINGS_ACTION_PATCH_BYTES) {
+                throw settingsError(
+                    'plugin_settings_action_patch_bounded',
+                    'Plugin settings action patch exceeds the canonical JSON byte limit',
+                );
+            }
+            const allowedIds = new Set(input.allowedFieldIds);
+            for (const id of changedIds) {
+                const field = fieldOrThrow(model, id);
+                if (field.contributionId !== input.contributionId
+                    || field.descriptor.secret === true
+                    || !allowedIds.has(id)) {
+                    throw settingsError(
+                        'plugin_settings_action_patch_forbidden',
+                        `Plugin settings action cannot patch '${field.qualifiedId}'`,
+                    );
+                }
+                if (!validateFieldValue(model, id, patch[id]!)) {
+                    throw settingsError(
+                        'plugin_settings_validation_failed',
+                        `Plugin setting '${field.qualifiedId}' failed schema validation`,
+                    );
+                }
+            }
+            const change = await params.recordStore.update(model, (raw) => {
+                assertCurrent(seed, input.signal);
+                const record = validateRecordForModel(model, parseCanonicalPluginSettingsRecord(raw));
+                assertExpectedRevision(record, input.expectedRevision);
+                const nextRevision = record.revision + 1;
+                if (!Number.isSafeInteger(nextRevision)) {
+                    throw settingsError('plugin_settings_revision_exhausted', 'Plugin settings revision is exhausted');
+                }
+                const values = { ...record.values, ...patch };
+                const next = Object.freeze({
+                    t: SETTINGS_RECORD_TYPE,
+                    revision: nextRevision,
+                    values: Object.freeze(values),
+                });
+                return Object.freeze({
+                    record: next,
+                    result: Object.freeze({
+                        scope: settingsScopeRef(model),
+                        revision: String(nextRevision),
+                        changedIds: Object.freeze(changedIds),
+                        values: visibleValues(model, next),
+                    }),
+                });
+            }, { signal: input.signal });
+            assertCurrent(seed, input.signal);
+            await params.broker.emit({
+                event: {
+                    ref: SETTINGS_CHANGED_REF,
+                    payload: {
+                        settings: { pluginId: model.identity.pluginId, scope: model.scope },
+                        revision: change.revision,
+                        changedIds: change.changedIds,
+                        values: change.values,
+                    },
+                },
+                identity: Object.freeze({
+                    pluginId: seed.plugin.id,
+                    pluginVersion: seed.plugin.version,
+                    contributionId: seed.contribution.id,
+                    contributionQualifiedId: seed.contribution.qualifiedId,
+                    generation: seed.generation,
+                    correlationId: seed.correlationId,
+                    surface: seed.surface,
+                }),
+            }).catch(() => undefined);
+            return change;
+        },
         bind(binding: Readonly<{
             model: StablePluginSettingsModel;
             seed: PluginInvocationServicesSeed;
-        }>): PluginSettingsService {
+        }>): ScopedSettingsService {
             const { model, seed } = binding;
             const eventIdentity = Object.freeze({
                 pluginId: seed.plugin.id,
@@ -615,7 +849,7 @@ export function createStablePluginSettingsOwner(params: Readonly<{
                 assertCurrent(seed, signal);
                 const record = validateRecordForModel(
                     model,
-                    parseCanonicalPluginSettingsRecord(await params.recordStore.read(model)),
+                    parseCanonicalPluginSettingsRecord(await params.recordStore.read(model, { signal })),
                 );
                 assertCurrent(seed, signal);
                 return record;
@@ -627,7 +861,7 @@ export function createStablePluginSettingsOwner(params: Readonly<{
                 signal?: AbortSignal;
                 reset: boolean;
                 value?: JsonValue;
-            }>): Promise<{ revision: string }> {
+            }>): Promise<Readonly<{ scope: SettingsScopeRef; revision: string }>> {
                 assertSupportedScope(model, params.recordStore);
                 assertCurrent(seed, input.signal);
                 const field = fieldOrThrow(model, input.id);
@@ -670,19 +904,20 @@ export function createStablePluginSettingsOwner(params: Readonly<{
                     return Object.freeze({
                         record: next,
                         result: Object.freeze({
+                            scope: settingsScopeRef(model),
                             revision: String(nextRevision),
                             changedIds: Object.freeze([input.id]),
                             values: visibleValues(model, next),
                         }),
                     });
-                });
+                }, { signal: input.signal });
                 // Plugin events are daemon-local and non-durable. Persistence remains authoritative
                 // when transient broker backpressure prevents this at-most-once notification.
                 await params.broker.emit({
                     event: {
                         ref: SETTINGS_CHANGED_REF,
                         payload: {
-                            settings: { pluginId: model.identity.pluginId },
+                        settings: { pluginId: model.identity.pluginId, scope: model.scope },
                             revision: change.revision,
                             changedIds: change.changedIds,
                             values: change.values,
@@ -690,13 +925,14 @@ export function createStablePluginSettingsOwner(params: Readonly<{
                     },
                     identity: eventIdentity,
                 }).catch(() => undefined);
-                return Object.freeze({ revision: change.revision });
+                return Object.freeze({ scope: settingsScopeRef(model), revision: change.revision });
             }
 
-            const service: PluginSettingsService = {
+            const service: ScopedSettingsService = {
                 async snapshot(options?: { signal?: AbortSignal }) {
                     const record = await read(options?.signal);
                     return Object.freeze({
+                        scope: settingsScopeRef(model),
                         revision: String(record.revision),
                         values: visibleValues(model, record),
                     });
@@ -731,11 +967,12 @@ export function createStablePluginSettingsOwner(params: Readonly<{
                     assertCurrent(seed);
                     return model.descriptors;
                 },
-                watch(listener: (change: PluginSettingsChange) => void) {
+                watch(listener: (change: SettingsChange) => void) {
                     assertSupportedScope(model, params.recordStore);
                     assertCurrent(seed);
                     let lastDeliveredRevision: string | null = null;
-                    const deliver = (change: PluginSettingsChange): void => {
+                    const deliver = (change: SettingsChange): void => {
+                        if (change.scope.kind !== model.scope) return;
                         if (lastDeliveredRevision === change.revision) return;
                         lastDeliveredRevision = change.revision;
                         listener(change);
@@ -749,7 +986,8 @@ export function createStablePluginSettingsOwner(params: Readonly<{
                             if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return;
                             const settings = Reflect.get(payload, 'settings');
                             if (!settings || typeof settings !== 'object' || Array.isArray(settings)) return;
-                            if (Reflect.get(settings, 'pluginId') !== model.identity.pluginId) return;
+                            if (Reflect.get(settings, 'pluginId') !== model.identity.pluginId
+                                || Reflect.get(settings, 'scope') !== model.scope) return;
                             const revision = Reflect.get(payload, 'revision');
                             const changedIds = Reflect.get(payload, 'changedIds');
                             const values = Reflect.get(payload, 'values');
@@ -760,9 +998,10 @@ export function createStablePluginSettingsOwner(params: Readonly<{
                                 || typeof values !== 'object'
                                 || Array.isArray(values)) return;
                             deliver(Object.freeze({
+                                scope: settingsScopeRef(model),
                                 revision,
                                 changedIds: Object.freeze([...changedIds]),
-                                values: clonePlainData(values) as PluginSettingsChange['values'],
+                                values: clonePlainData(values) as SettingsChange['values'],
                             }));
                         },
                     });
@@ -794,8 +1033,32 @@ export function createStablePluginSettingsOwner(params: Readonly<{
 
 export type StablePluginSettingsHost = Readonly<{
     hasPlugin(pluginId: string): boolean;
-    bind(seed: PluginInvocationServicesSeed): PluginSettingsService | null;
+    bind(seed: PluginInvocationServicesSeed): SettingsService | null;
 }>;
+
+function unavailableScopedSettingsService(
+    scope: string,
+): ScopedSettingsService {
+    const unavailable = (): never => {
+        throw settingsError(
+            'plugin_settings_scope_unavailable',
+            `Plugin settings scope '${scope}' has no bound persistence owner`,
+            { scope },
+        );
+    };
+    return Object.freeze({
+        snapshot: unavailable,
+        get: unavailable,
+        set: unavailable,
+        reset: unavailable,
+        describe: unavailable,
+        watch: unavailable,
+    });
+}
+
+function readSettingsScope(ref: SettingsScopeRef): StablePluginSettingsScope | null {
+    return ref?.kind === 'account' || ref?.kind === 'daemon' ? ref.kind : null;
+}
 
 export function createStablePluginSettingsHost(params: Readonly<{
     declarations: readonly Readonly<{
@@ -804,6 +1067,13 @@ export function createStablePluginSettingsHost(params: Readonly<{
     }>[];
     recordStore: StablePluginSettingsRecordStore;
     broker: StablePluginEventsBroker;
+    /**
+     * Reports a plugin whose declared settings this host could not model, so the
+     * caller can tell the operator which plugin lost its Settings service. The
+     * host itself owns no logging channel. A caller whose declaration set covers
+     * a single plugin can rethrow to keep the precise authoring error.
+     */
+    onPluginSettingsUnavailable?(input: Readonly<{ pluginId: string; error: unknown }>): void;
 }>): StablePluginSettingsHost {
     const declarationsByPluginId = new Map<string, PluginSettingsContributionV2[]>();
     for (const declaration of params.declarations) {
@@ -811,22 +1081,37 @@ export function createStablePluginSettingsHost(params: Readonly<{
         existing.push(declaration.contribution);
         declarationsByPluginId.set(declaration.pluginId, existing);
     }
-    const modelsByPluginId = new Map(
-        [...declarationsByPluginId].map(([pluginId, contributions]) => [
-            pluginId,
-            createStablePluginSettingsModel({ pluginId, contributions }),
-        ]),
-    );
+    const modelsByPluginId = new Map<string, ReturnType<typeof createStablePluginSettingsModels>>();
+    for (const [pluginId, contributions] of declarationsByPluginId) {
+        try {
+            modelsByPluginId.set(pluginId, createStablePluginSettingsModels({ pluginId, contributions }));
+        } catch (error) {
+            // One plugin's unmodellable settings declaration must not deny every
+            // other plugin its Settings service. Omitting the plugin is strictly
+            // more closed than admitting a partially modelled one: `hasPlugin`
+            // reports false and `bind` returns null, so no read, write, or patch
+            // path can reach an unvalidated field.
+            params.onPluginSettingsUnavailable?.({ pluginId, error });
+        }
+    }
     const owner = createStablePluginSettingsOwner({ recordStore: params.recordStore, broker: params.broker });
     return Object.freeze({
         hasPlugin(pluginId) {
             return modelsByPluginId.has(pluginId);
         },
         bind(seed) {
-            const model = modelsByPluginId.get(seed.plugin.id);
-            return model && params.recordStore.supports?.(model) === true
-                ? owner.bind({ model, seed })
-                : null;
+            const models = modelsByPluginId.get(seed.plugin.id);
+            if (!models) return null;
+            return Object.freeze({
+                forScope(scopeRef: SettingsScopeRef): ScopedSettingsService {
+                    const scope = readSettingsScope(scopeRef);
+                    if (!scope) return unavailableScopedSettingsService('invalid');
+                    const model = models.get(scope);
+                    return model && params.recordStore.supports?.(model) === true
+                        ? owner.bind({ model, seed })
+                        : unavailableScopedSettingsService(scope);
+                },
+            });
         },
     });
 }

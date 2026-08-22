@@ -19,6 +19,7 @@ export {
   useSurfaceContext,
   type PluginAccessibilityFacts,
   type PluginTranslate,
+  type PluginTranslationValues,
 } from './PluginUiProvider.js';
 export * from './Spinner.js';
 export * from './State.js';

@@ -31,9 +31,9 @@ describe('readBuiltUiArtifactContributionIds', () => {
           contributionId: 'main-native',
           tier: 'reactNative',
           platform: 'web',
-          entry: 'react-native-web/main-native/entry.mjs',
+          entry: 'react-native-web/main-native/entry.mjs.bundle',
           files: [{
-            relativePath: 'react-native-web/main-native/entry.mjs',
+            relativePath: 'react-native-web/main-native/entry.mjs.bundle',
             digest: `sha256:${'b'.repeat(64)}`,
             byteSize: 1,
           }],

@@ -1,3 +1,4 @@
+import { throwIfAborted } from '@happier-dev/plugin-sdk/async';
 import type { VoiceProviderRuntime } from '@happier-dev/plugin-sdk/voice';
 import type {
     SpeechProviderRuntime,
@@ -9,13 +10,13 @@ export const speechToTextRuntime: SpeechProviderRuntime = {
     kind: 'speech',
     catalog: {
         async list({ catalog }, context) {
-            context.signal.throwIfAborted();
+            throwIfAborted(context.signal);
             if (catalog !== 'models') throw new Error('voice_catalog_unsupported');
             return [{ id: 'synthetic-stt-v1', name: 'Synthetic STT v1', metadata: {} }];
         },
     },
     async transcribe(request: VoiceSpeechTranscribeRequest, context) {
-        context.signal.throwIfAborted();
+        throwIfAborted(context.signal);
         return { requestId: request.requestId, text: 'synthetic transcript' };
     },
 };
@@ -24,13 +25,13 @@ export const textToSpeechRuntime: SpeechProviderRuntime & Pick<VoiceProviderRunt
     kind: 'speech',
     catalog: {
         async list({ catalog }, context) {
-            context.signal.throwIfAborted();
+            throwIfAborted(context.signal);
             if (catalog !== 'voices') throw new Error('voice_catalog_unsupported');
             return [{ id: 'synthetic-voice', name: 'Synthetic Voice', metadata: { locale: 'en' } }];
         },
     },
     async synthesize(request: VoiceSpeechSynthesizeRequest, context) {
-        context.signal.throwIfAborted();
+        throwIfAborted(context.signal);
         return {
             requestId: request.requestId,
             bytes: new Uint8Array([82, 73, 70, 70]),
@@ -39,7 +40,7 @@ export const textToSpeechRuntime: SpeechProviderRuntime & Pick<VoiceProviderRunt
     },
     settingsActions: {
         async execute(input, context) {
-            context.signal.throwIfAborted();
+            throwIfAborted(context.signal);
             if (input.actionId !== 'refresh-voices') {
                 throw new Error('voice_settings_action_unsupported');
             }

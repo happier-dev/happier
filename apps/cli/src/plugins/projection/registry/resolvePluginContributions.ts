@@ -4,13 +4,11 @@ import { buildPluginContributionRegistry } from './normalize/package';
 import { loadBundledPluginLocators } from './builtIn/locators';
 import { BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS } from './sources/generatedBundledPlugins';
 import { collectNormalizedRegistryIntrospectionCandidates } from '@/plugins/projection/introspection/normalizedRegistry';
-import {
-    createNativeAgentCliCatalogEntry,
-    projectNativeAgentCliRuntimeDescriptor,
-} from './agentCliMetadata';
+import { projectManifestAgentContribution } from './projectManifestAgentContribution';
 
 import type {
     ResolvedActionContribution,
+    ResolvedAccountCollectionContribution,
     ResolvedBrowserActionContribution,
     ResolvedBrowserTargetContribution,
     ResolvedCommandContribution,
@@ -21,13 +19,13 @@ import type {
     ResolvedEventContribution,
     ResolvedHostedWebContribution,
     ResolvedInstallableContribution,
-    ResolvedMcpDiscoveryProviderContribution,
+    ResolvedMcpDiscoverySourceContribution,
     ResolvedMcpServerContribution,
     ResolvedNotificationCategoryContribution,
     ResolvedNotificationChannelContribution,
+    ResolvedOpenableContentViewerContribution,
     ResolvedProviderContribution,
     ResolvedPromptAssetContribution,
-    ResolvedReactNativeBundleContribution,
     ResolvedRequestInterceptorContribution,
     ResolvedScmBackendContribution,
     ResolvedSettingsContribution,
@@ -35,32 +33,29 @@ import type {
     ResolvedAgentContribution,
     ResolvedResourceContribution,
     ResolvedSessionHeaderActionContribution,
-    ResolvedSurfacePlacementContribution,
-    ResolvedStructuredMessageContribution,
+    ResolvedTranscriptActivityContribution,
     ResolvedSystemToolContribution,
     ResolvedToolContribution,
-    ResolvedUiArtifactContribution,
     ResolvedUiTranslationsContribution,
     ResolvedUiRendererV2Contribution,
+    ResolvedUiSettingsGroupV2Contribution,
+    ResolvedUiSettingsPageV2Contribution,
     ResolvedUiTranslationBundleV2Contribution,
     ResolvedUiViewV2Contribution,
+    ResolvedComposerAttachmentContribution,
+    ResolvedComposerReferenceContribution,
+    ResolvedComposerControlContribution,
+    ResolvedComposerRegionContribution,
     ResolvedActivationTarget,
     ResolvedVoiceModelPackContribution,
     ResolvedVoiceProviderContribution,
+    ResolvedPluginContributionPointDeclaration,
+    ResolvedTargetedPluginContributionDeclaration,
 } from './types';
 
 type ResolvePluginContributesParams = Readonly<{
     happyHomeDir?: string;
     existingAgentIds?: ReadonlySet<string>;
-}>;
-
-type PluginResolvedAgentContribution = ResolvedAgentContribution & Readonly<{
-    identity: NonNullable<ResolvedAgentContribution['identity']>;
-    provenance: ResolvedContributionProvenance;
-    pluginId: string;
-    manifestPath: string;
-    manifestDigest: string;
-    daemonEntryPath: string | null;
 }>;
 
 type PluginResolvedProviderContribution = ResolvedProviderContribution & Readonly<{
@@ -70,8 +65,9 @@ type PluginResolvedProviderContribution = ResolvedProviderContribution & Readonl
 type PluginResolvedActionContribution = ResolvedActionContribution & Readonly<{
     provenance: ResolvedContributionProvenance;
     pluginId: string;
+    identity: NonNullable<ResolvedActionContribution['identity']>;
+    pluginRootPath: string;
     manifestPath: string;
-    manifestDigest: string;
     daemonEntryPath: string | null;
 }>;
 
@@ -79,7 +75,6 @@ type PluginResolvedToolContribution = ResolvedToolContribution & Readonly<{
     provenance: ResolvedContributionProvenance;
     pluginId: string;
     manifestPath: string;
-    manifestDigest: string;
     daemonEntryPath: string | null;
 }>;
 
@@ -87,7 +82,6 @@ type PluginResolvedCommandContribution = ResolvedCommandContribution & Readonly<
     provenance: ResolvedContributionProvenance;
     pluginId: string;
     manifestPath: string;
-    manifestDigest: string;
     daemonEntryPath: string | null;
 }>;
 
@@ -96,7 +90,6 @@ type PluginResolvedResourceContribution = ResolvedResourceContribution & Readonl
     pluginId: string;
     pluginRootPath: string;
     manifestPath: string;
-    manifestDigest: string;
     daemonEntryPath: string | null;
 }>;
 
@@ -108,15 +101,6 @@ type PluginResolvedUiTranslationsContribution = ResolvedUiTranslationsContributi
     provenance: ResolvedContributionProvenance;
     pluginId: string;
     manifestPath: string;
-    manifestDigest: string;
-    daemonEntryPath: string | null;
-}>;
-
-type PluginResolvedStructuredMessageContribution = ResolvedStructuredMessageContribution & Readonly<{
-    provenance: ResolvedContributionProvenance;
-    pluginId: string;
-    manifestPath: string;
-    manifestDigest: string;
     daemonEntryPath: string | null;
 }>;
 
@@ -124,15 +108,13 @@ type PluginResolvedSessionHeaderActionContribution = ResolvedSessionHeaderAction
     provenance: ResolvedContributionProvenance;
     pluginId: string;
     manifestPath: string;
-    manifestDigest: string;
     daemonEntryPath: string | null;
 }>;
 
-type PluginResolvedSurfacePlacementContribution = ResolvedSurfacePlacementContribution & Readonly<{
+type PluginResolvedTranscriptActivityContribution = ResolvedTranscriptActivityContribution & Readonly<{
     provenance: ResolvedContributionProvenance;
     pluginId: string;
     manifestPath: string;
-    manifestDigest: string;
     daemonEntryPath: string | null;
 }>;
 
@@ -140,23 +122,6 @@ type PluginResolvedHostedWebContribution = ResolvedHostedWebContribution & Reado
     provenance: ResolvedContributionProvenance;
     pluginId: string;
     manifestPath: string;
-    manifestDigest: string;
-    daemonEntryPath: string | null;
-}>;
-
-type PluginResolvedReactNativeBundleContribution = ResolvedReactNativeBundleContribution & Readonly<{
-    provenance: ResolvedContributionProvenance;
-    pluginId: string;
-    manifestPath: string;
-    manifestDigest: string;
-    daemonEntryPath: string | null;
-}>;
-
-type PluginResolvedUiArtifactContribution = ResolvedUiArtifactContribution & Readonly<{
-    provenance: ResolvedContributionProvenance;
-    pluginId: string;
-    manifestPath: string;
-    manifestDigest: string;
     daemonEntryPath: string | null;
 }>;
 
@@ -164,7 +129,6 @@ type PluginResolvedBrowserTargetContribution = ResolvedBrowserTargetContribution
     provenance: ResolvedContributionProvenance;
     pluginId: string;
     manifestPath: string;
-    manifestDigest: string;
     daemonEntryPath: string | null;
 }>;
 
@@ -172,7 +136,6 @@ type PluginResolvedBrowserActionContribution = ResolvedBrowserActionContribution
     provenance: ResolvedContributionProvenance;
     pluginId: string;
     manifestPath: string;
-    manifestDigest: string;
     daemonEntryPath: string | null;
 }>;
 
@@ -180,7 +143,6 @@ type PluginResolvedNotificationCategoryContribution = ResolvedNotificationCatego
     provenance: ResolvedContributionProvenance;
     pluginId: string;
     manifestPath: string;
-    manifestDigest: string;
     daemonEntryPath: string | null;
 }>;
 
@@ -188,7 +150,6 @@ type PluginResolvedNotificationChannelContribution = ResolvedNotificationChannel
     provenance: ResolvedContributionProvenance;
     pluginId: string;
     manifestPath: string;
-    manifestDigest: string;
     daemonEntryPath: string | null;
 }>;
 
@@ -196,7 +157,6 @@ type PluginResolvedEventContribution = ResolvedEventContribution & Readonly<{
     provenance: ResolvedContributionProvenance;
     pluginId: string;
     manifestPath: string;
-    manifestDigest: string;
     daemonEntryPath: string | null;
 }>;
 
@@ -204,7 +164,6 @@ type PluginResolvedSettingsContribution = ResolvedSettingsContribution & Readonl
     provenance: ResolvedContributionProvenance;
     pluginId: string;
     manifestPath: string;
-    manifestDigest: string;
     daemonEntryPath: string | null;
 }>;
 
@@ -212,7 +171,6 @@ type PluginResolvedExecutionRunProfileContribution = ResolvedExecutionRunProfile
     provenance: ResolvedContributionProvenance;
     pluginId: string;
     manifestPath: string;
-    manifestDigest: string;
     daemonEntryPath: string | null;
 }>;
 
@@ -220,15 +178,13 @@ type PluginResolvedMcpServerContribution = ResolvedMcpServerContribution & Reado
     provenance: ResolvedContributionProvenance;
     pluginId: string;
     manifestPath: string;
-    manifestDigest: string;
     daemonEntryPath: string | null;
 }>;
 
-type PluginResolvedMcpDiscoveryProviderContribution = ResolvedMcpDiscoveryProviderContribution & Readonly<{
+type PluginResolvedMcpDiscoverySourceContribution = ResolvedMcpDiscoverySourceContribution & Readonly<{
     provenance: ResolvedContributionProvenance;
     pluginId: string;
     manifestPath: string;
-    manifestDigest: string;
     daemonEntryPath: string | null;
 }>;
 
@@ -236,7 +192,6 @@ type PluginResolvedInstallableContribution = ResolvedInstallableContribution & R
     provenance: ResolvedContributionProvenance;
     pluginId: string;
     manifestPath: string;
-    manifestDigest: string;
     daemonEntryPath: string | null;
 }>;
 
@@ -244,7 +199,6 @@ type PluginResolvedSystemToolContribution = ResolvedSystemToolContribution & Rea
     provenance: ResolvedContributionProvenance;
     pluginId: string;
     manifestPath: string;
-    manifestDigest: string;
     daemonEntryPath: string | null;
 }>;
 
@@ -252,7 +206,6 @@ type PluginResolvedRequestInterceptorContribution = ResolvedRequestInterceptorCo
     provenance: ResolvedContributionProvenance;
     pluginId: string;
     manifestPath: string;
-    manifestDigest: string;
     daemonEntryPath: string | null;
 }>;
 
@@ -261,7 +214,6 @@ type PluginResolvedConnectedAccountDescriptorContribution =
         provenance: ResolvedContributionProvenance;
         pluginId: string;
         manifestPath: string;
-        manifestDigest: string;
         daemonEntryPath: string | null;
     }>;
 
@@ -269,7 +221,6 @@ type PluginResolvedScmHostingProviderContribution = ResolvedScmHostingProviderCo
     provenance: ResolvedContributionProvenance;
     pluginId: string;
     manifestPath: string;
-    manifestDigest: string;
     daemonEntryPath: string | null;
 }>;
 
@@ -277,7 +228,6 @@ type PluginResolvedScmBackendContribution = ResolvedScmBackendContribution & Rea
     provenance: ResolvedContributionProvenance;
     pluginId: string;
     manifestPath: string;
-    manifestDigest: string;
     daemonEntryPath: string | null;
 }>;
 
@@ -325,9 +275,16 @@ export function projectLoadedPluginContributes(
     const diagnosticsByPluginId: Record<string, PluginCompatibilityDiagnostic[]> = {};
     const knownAgentIds = new Set(params.existingAgentIds ?? []);
     const uiViewV2Candidates: ResolvedUiViewV2Contribution[] = [];
+    const openableContentViewerCandidates: ResolvedOpenableContentViewerContribution[] = [];
+    const uiSettingsGroupV2Candidates: ResolvedUiSettingsGroupV2Contribution[] = [];
+    const uiSettingsPageV2Candidates: ResolvedUiSettingsPageV2Contribution[] = [];
     const uiRendererV2Candidates: ResolvedUiRendererV2Contribution[] = [];
     const uiTranslationV2Candidates: ResolvedUiTranslationBundleV2Contribution[] = [];
-    const agentCandidates: PluginResolvedAgentContribution[] = [];
+    const composerReferenceCandidates: ResolvedComposerReferenceContribution[] = [];
+    const composerAttachmentCandidates: ResolvedComposerAttachmentContribution[] = [];
+    const composerControlCandidates: ResolvedComposerControlContribution[] = [];
+    const composerRegionCandidates: ResolvedComposerRegionContribution[] = [];
+    const agentCandidates: ResolvedAgentContribution[] = [];
     const providerCandidates: PluginResolvedProviderContribution[] = [];
     const actionCandidates: PluginResolvedActionContribution[] = [];
     const toolCandidates: PluginResolvedToolContribution[] = [];
@@ -335,12 +292,9 @@ export function projectLoadedPluginContributes(
     const resourceCandidates: PluginResolvedResourceContribution[] = [];
     const promptAssetCandidates: PluginResolvedPromptAssetContribution[] = [];
     const uiTranslationCandidates: PluginResolvedUiTranslationsContribution[] = [];
-    const structuredMessageCandidates: PluginResolvedStructuredMessageContribution[] = [];
     const sessionHeaderActionCandidates: PluginResolvedSessionHeaderActionContribution[] = [];
-    const surfacePlacementCandidates: PluginResolvedSurfacePlacementContribution[] = [];
+    const transcriptActivityCandidates: PluginResolvedTranscriptActivityContribution[] = [];
     const hostedWebCandidates: PluginResolvedHostedWebContribution[] = [];
-    const reactNativeBundleCandidates: PluginResolvedReactNativeBundleContribution[] = [];
-    const uiArtifactCandidates: PluginResolvedUiArtifactContribution[] = [];
     const browserTargetCandidates: PluginResolvedBrowserTargetContribution[] = [];
     const browserActionCandidates: PluginResolvedBrowserActionContribution[] = [];
     const settingsCandidates: PluginResolvedSettingsContribution[] = [];
@@ -349,7 +303,7 @@ export function projectLoadedPluginContributes(
     const eventCandidates: PluginResolvedEventContribution[] = [];
     const executionRunProfileCandidates: PluginResolvedExecutionRunProfileContribution[] = [];
     const mcpServerCandidates: PluginResolvedMcpServerContribution[] = [];
-    const mcpDiscoveryProviderCandidates: PluginResolvedMcpDiscoveryProviderContribution[] = [];
+    const mcpDiscoverySourceCandidates: PluginResolvedMcpDiscoverySourceContribution[] = [];
     const scmHostingProviderCandidates: PluginResolvedScmHostingProviderContribution[] = [];
     const scmBackendCandidates: PluginResolvedScmBackendContribution[] = [];
     const connectedAccountDescriptorCandidates: PluginResolvedConnectedAccountDescriptorContribution[] = [];
@@ -358,16 +312,51 @@ export function projectLoadedPluginContributes(
     const requestInterceptorCandidates: PluginResolvedRequestInterceptorContribution[] = [];
     const voiceModelPackCandidates: ResolvedVoiceModelPackContribution[] = [];
     const voiceProviderCandidates: ResolvedVoiceProviderContribution[] = [];
+    const accountCollectionCandidates: ResolvedAccountCollectionContribution[] = [];
+    const pluginContributionPointCandidates: ResolvedPluginContributionPointDeclaration[] = [];
+    const targetedPluginContributionCandidates: ResolvedTargetedPluginContributionDeclaration[] = [];
 
     for (const contribution of pluginRegistry.uiViewsV2) {
-        uiViewV2Candidates.push({
+      uiViewV2Candidates.push({
             provenance: params.provenance,
             source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId,
             pluginVersion: contribution.pluginVersion,
             identity: contribution.identity!,
             manifestPath: contribution.manifestPath,
-            manifestDigest: contribution.manifestDigest,
+            definition: contribution.definition,
+      });
+    }
+    for (const contribution of pluginRegistry.openableContentViewers) {
+        openableContentViewerCandidates.push({
+            provenance: params.provenance,
+            source: { kind: contribution.sourceSpec.kind },
+            pluginId: contribution.pluginId,
+            pluginVersion: contribution.pluginVersion,
+            identity: contribution.identity!,
+            manifestPath: contribution.manifestPath,
+            definition: contribution.definition,
+        });
+    }
+    for (const contribution of pluginRegistry.uiSettingsGroupsV2) {
+        uiSettingsGroupV2Candidates.push({
+            provenance: params.provenance,
+            source: { kind: contribution.sourceSpec.kind },
+            pluginId: contribution.pluginId,
+            pluginVersion: contribution.pluginVersion,
+            identity: contribution.identity!,
+            manifestPath: contribution.manifestPath,
+            definition: contribution.definition,
+        });
+    }
+    for (const contribution of pluginRegistry.uiSettingsPagesV2) {
+        uiSettingsPageV2Candidates.push({
+            provenance: params.provenance,
+            source: { kind: contribution.sourceSpec.kind },
+            pluginId: contribution.pluginId,
+            pluginVersion: contribution.pluginVersion,
+            identity: contribution.identity!,
+            manifestPath: contribution.manifestPath,
             definition: contribution.definition,
         });
     }
@@ -379,7 +368,6 @@ export function projectLoadedPluginContributes(
             pluginVersion: contribution.pluginVersion,
             identity: contribution.identity!,
             manifestPath: contribution.manifestPath,
-            manifestDigest: contribution.manifestDigest,
             pluginRootPath: contribution.pluginRootPath,
             ...(contribution.generatedUiArtifactsManifest
                 ? { generatedUiArtifactsManifest: contribution.generatedUiArtifactsManifest }
@@ -394,7 +382,50 @@ export function projectLoadedPluginContributes(
             pluginId: contribution.pluginId,
             localeIdentity: contribution.localeIdentity,
             manifestPath: contribution.manifestPath,
-            manifestDigest: contribution.manifestDigest,
+            definition: contribution.definition,
+        });
+    }
+    for (const contribution of pluginRegistry.composerReferences) {
+        composerReferenceCandidates.push({
+            provenance: params.provenance,
+            source: { kind: contribution.sourceSpec.kind },
+            pluginId: contribution.pluginId,
+            pluginVersion: contribution.pluginVersion,
+            identity: contribution.identity!,
+            manifestPath: contribution.manifestPath,
+            definition: contribution.definition,
+        });
+    }
+    for (const contribution of pluginRegistry.composerAttachments) {
+        composerAttachmentCandidates.push({
+            provenance: params.provenance,
+            source: { kind: contribution.sourceSpec.kind },
+            pluginId: contribution.pluginId,
+            pluginVersion: contribution.pluginVersion,
+            identity: contribution.identity!,
+            manifestPath: contribution.manifestPath,
+            definition: contribution.definition,
+        });
+    }
+    for (const contribution of pluginRegistry.composerControls) {
+        composerControlCandidates.push({
+            provenance: params.provenance,
+            source: { kind: contribution.sourceSpec.kind },
+            pluginId: contribution.pluginId,
+            pluginVersion: contribution.pluginVersion,
+            identity: contribution.identity!,
+            manifestPath: contribution.manifestPath,
+            definition: contribution.definition,
+        });
+    }
+    for (const contribution of pluginRegistry.composerRegions) {
+        composerRegionCandidates.push({
+            provenance: params.provenance,
+            source: { kind: contribution.sourceSpec.kind },
+            pluginId: contribution.pluginId,
+            pluginVersion: contribution.pluginVersion,
+            identity: contribution.identity!,
+            manifestPath: contribution.manifestPath,
             definition: contribution.definition,
         });
     }
@@ -405,10 +436,34 @@ export function projectLoadedPluginContributes(
             pluginId: contribution.pluginId,
             identity: contribution.identity!,
             manifestPath: contribution.manifestPath,
-            manifestDigest: contribution.manifestDigest,
             daemonEntryPath: contribution.daemonEntryPath,
             devDaemonEntryPath: contribution.devDaemonEntryPath,
             sourceSpec: contribution.sourceSpec,
+            definition: contribution.definition,
+        });
+    }
+    for (const contribution of pluginRegistry.pluginContributionPoints) {
+        pluginContributionPointCandidates.push({
+            provenance: params.provenance,
+            source: { kind: contribution.sourceSpec.kind },
+            pluginId: contribution.pluginId,
+            pluginVersion: contribution.pluginVersion,
+            identity: contribution.identity!,
+            manifestPath: contribution.manifestPath,
+            ...(contribution.semanticPointRefs === undefined
+                ? {}
+                : { semanticPointRefs: contribution.semanticPointRefs }),
+            definition: contribution.definition,
+        });
+    }
+    for (const contribution of pluginRegistry.targetedPluginContributions) {
+        targetedPluginContributionCandidates.push({
+            provenance: params.provenance,
+            source: { kind: contribution.sourceSpec.kind },
+            pluginId: contribution.pluginId,
+            pluginVersion: contribution.pluginVersion,
+            identity: contribution.identity!,
+            manifestPath: contribution.manifestPath,
             definition: contribution.definition,
         });
     }
@@ -427,7 +482,6 @@ export function projectLoadedPluginContributes(
             source: { kind: plugin.sourceSpec.kind },
             pluginId: plugin.pluginId,
             manifestPath: plugin.manifestPath,
-            manifestDigest: plugin.manifestDigest,
             daemonEntryPath: plugin.daemonEntryPath,
             devDaemonEntryPath: plugin.devDaemonEntryPath,
             sourceSpec: plugin.sourceSpec,
@@ -453,43 +507,17 @@ export function projectLoadedPluginContributes(
         if (!pluginHostAccess) {
             throw new Error(`Missing cold-manifest host access for Agent '${contribution.pluginId}/${agentId}'`);
         }
-        const cliMetadata = contribution.definition.cli ?? null;
-        agentCandidates.push({
-            id: agentId,
-            identity: contribution.identity!,
+        agentCandidates.push(projectManifestAgentContribution({
+            definition: contribution.definition,
             provenance: params.provenance,
             source: { kind: contribution.sourceSpec.kind },
-            definition: Object.freeze({
-                kindVersion: 1,
-                id: agentId,
-                ownedBackendIds: Object.freeze([]),
-                ...(contribution.definition.providerRequirements
-                    ? { providerRequirements: contribution.definition.providerRequirements }
-                    : {}),
-            }),
-            richDefinition: {
-                provenance: params.provenance,
-                definition: contribution.definition,
-            },
-            runtimeSpec: cliMetadata
-                ? projectNativeAgentCliRuntimeDescriptor({
-                    agentId,
-                    title: contribution.definition.title,
-                    cli: cliMetadata,
-                })
-                : null,
-            cliMetadata,
-            catalogEntry: cliMetadata
-                ? createNativeAgentCliCatalogEntry({ agentId, cli: cliMetadata })
-                : null,
-            sourceSpec: contribution.sourceSpec,
             pluginId: contribution.pluginId,
+            sourceSpec: contribution.sourceSpec,
             hostAccess: pluginHostAccess,
             manifestPath: contribution.manifestPath,
-            manifestDigest: contribution.manifestDigest,
             daemonEntryPath: contribution.daemonEntryPath,
             devDaemonEntryPath: contribution.devDaemonEntryPath,
-        });
+        }));
     }
 
     for (const contribution of pluginRegistry.actions) {
@@ -497,11 +525,19 @@ export function projectLoadedPluginContributes(
             provenance: params.provenance,
             source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId,
+            pluginVersion: contribution.pluginVersion,
+            identity: contribution.identity!,
+            pluginRootPath: contribution.pluginRootPath,
             manifestPath: contribution.manifestPath,
-            manifestDigest: contribution.manifestDigest,
             daemonEntryPath: contribution.daemonEntryPath,
             devDaemonEntryPath: contribution.devDaemonEntryPath,
             sourceSpec: contribution.sourceSpec,
+            ...(contribution.generatedUiArtifactsManifest
+                ? { generatedUiArtifactsManifest: contribution.generatedUiArtifactsManifest }
+                : {}),
+            ...(contribution.localizedPresentation
+                ? { localizedPresentation: contribution.localizedPresentation }
+                : {}),
             definition: contribution.definition,
         });
     }
@@ -512,7 +548,6 @@ export function projectLoadedPluginContributes(
             source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId,
             manifestPath: contribution.manifestPath,
-            manifestDigest: contribution.manifestDigest,
             daemonEntryPath: contribution.daemonEntryPath,
             devDaemonEntryPath: contribution.devDaemonEntryPath,
             sourceSpec: contribution.sourceSpec,
@@ -526,7 +561,6 @@ export function projectLoadedPluginContributes(
             source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId,
             manifestPath: contribution.manifestPath,
-            manifestDigest: contribution.manifestDigest,
             daemonEntryPath: contribution.daemonEntryPath,
             devDaemonEntryPath: contribution.devDaemonEntryPath,
             sourceSpec: contribution.sourceSpec,
@@ -541,7 +575,6 @@ export function projectLoadedPluginContributes(
             pluginId: contribution.pluginId,
             pluginRootPath: contribution.pluginRootPath,
             manifestPath: contribution.manifestPath,
-            manifestDigest: contribution.manifestDigest,
             daemonEntryPath: contribution.daemonEntryPath,
             devDaemonEntryPath: contribution.devDaemonEntryPath,
             sourceSpec: contribution.sourceSpec,
@@ -555,21 +588,6 @@ export function projectLoadedPluginContributes(
             source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId,
             manifestPath: contribution.manifestPath,
-            manifestDigest: contribution.manifestDigest,
-            daemonEntryPath: contribution.daemonEntryPath,
-            devDaemonEntryPath: contribution.devDaemonEntryPath,
-            sourceSpec: contribution.sourceSpec,
-            definition: contribution.definition,
-        });
-    }
-
-    for (const contribution of pluginRegistry.structuredMessages) {
-        structuredMessageCandidates.push({
-            provenance: params.provenance,
-            source: { kind: contribution.sourceSpec.kind },
-            pluginId: contribution.pluginId,
-            manifestPath: contribution.manifestPath,
-            manifestDigest: contribution.manifestDigest,
             daemonEntryPath: contribution.daemonEntryPath,
             devDaemonEntryPath: contribution.devDaemonEntryPath,
             sourceSpec: contribution.sourceSpec,
@@ -583,7 +601,6 @@ export function projectLoadedPluginContributes(
             source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId,
             manifestPath: contribution.manifestPath,
-            manifestDigest: contribution.manifestDigest,
             daemonEntryPath: contribution.daemonEntryPath,
             devDaemonEntryPath: contribution.devDaemonEntryPath,
             sourceSpec: contribution.sourceSpec,
@@ -591,16 +608,15 @@ export function projectLoadedPluginContributes(
         });
     }
 
-    for (const contribution of pluginRegistry.surfacePlacements) {
-        surfacePlacementCandidates.push({
+    for (const contribution of pluginRegistry.transcriptActivities) {
+        transcriptActivityCandidates.push({
             provenance: params.provenance,
             source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId,
+            pluginVersion: contribution.pluginVersion,
+            identity: contribution.identity!,
             manifestPath: contribution.manifestPath,
-            manifestDigest: contribution.manifestDigest,
             daemonEntryPath: contribution.daemonEntryPath,
-            devDaemonEntryPath: contribution.devDaemonEntryPath,
-            sourceSpec: contribution.sourceSpec,
             definition: contribution.definition,
         });
     }
@@ -611,35 +627,6 @@ export function projectLoadedPluginContributes(
             source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId,
             manifestPath: contribution.manifestPath,
-            manifestDigest: contribution.manifestDigest,
-            daemonEntryPath: contribution.daemonEntryPath,
-            devDaemonEntryPath: contribution.devDaemonEntryPath,
-            sourceSpec: contribution.sourceSpec,
-            definition: contribution.definition,
-        });
-    }
-
-    for (const contribution of pluginRegistry.reactNativeBundles) {
-        reactNativeBundleCandidates.push({
-            provenance: params.provenance,
-            source: { kind: contribution.sourceSpec.kind },
-            pluginId: contribution.pluginId,
-            manifestPath: contribution.manifestPath,
-            manifestDigest: contribution.manifestDigest,
-            daemonEntryPath: contribution.daemonEntryPath,
-            devDaemonEntryPath: contribution.devDaemonEntryPath,
-            sourceSpec: contribution.sourceSpec,
-            definition: contribution.definition,
-        });
-    }
-
-    for (const contribution of pluginRegistry.uiArtifacts) {
-        uiArtifactCandidates.push({
-            provenance: params.provenance,
-            source: { kind: contribution.sourceSpec.kind },
-            pluginId: contribution.pluginId,
-            manifestPath: contribution.manifestPath,
-            manifestDigest: contribution.manifestDigest,
             daemonEntryPath: contribution.daemonEntryPath,
             devDaemonEntryPath: contribution.devDaemonEntryPath,
             sourceSpec: contribution.sourceSpec,
@@ -653,7 +640,6 @@ export function projectLoadedPluginContributes(
             source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId,
             manifestPath: contribution.manifestPath,
-            manifestDigest: contribution.manifestDigest,
             daemonEntryPath: contribution.daemonEntryPath,
             devDaemonEntryPath: contribution.devDaemonEntryPath,
             sourceSpec: contribution.sourceSpec,
@@ -667,7 +653,6 @@ export function projectLoadedPluginContributes(
             source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId,
             manifestPath: contribution.manifestPath,
-            manifestDigest: contribution.manifestDigest,
             daemonEntryPath: contribution.daemonEntryPath,
             devDaemonEntryPath: contribution.devDaemonEntryPath,
             sourceSpec: contribution.sourceSpec,
@@ -681,7 +666,6 @@ export function projectLoadedPluginContributes(
             source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId,
             manifestPath: contribution.manifestPath,
-            manifestDigest: contribution.manifestDigest,
             daemonEntryPath: contribution.daemonEntryPath,
             devDaemonEntryPath: contribution.devDaemonEntryPath,
             sourceSpec: contribution.sourceSpec,
@@ -696,7 +680,6 @@ export function projectLoadedPluginContributes(
             pluginId: contribution.pluginId,
             identity: contribution.identity!,
             manifestPath: contribution.manifestPath,
-            manifestDigest: contribution.manifestDigest,
             daemonEntryPath: contribution.daemonEntryPath,
             devDaemonEntryPath: contribution.devDaemonEntryPath,
             sourceSpec: contribution.sourceSpec,
@@ -710,7 +693,6 @@ export function projectLoadedPluginContributes(
             source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId,
             manifestPath: contribution.manifestPath,
-            manifestDigest: contribution.manifestDigest,
             daemonEntryPath: contribution.daemonEntryPath,
             devDaemonEntryPath: contribution.devDaemonEntryPath,
             sourceSpec: contribution.sourceSpec,
@@ -724,7 +706,6 @@ export function projectLoadedPluginContributes(
             source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId,
             manifestPath: contribution.manifestPath,
-            manifestDigest: contribution.manifestDigest,
             daemonEntryPath: contribution.daemonEntryPath,
             devDaemonEntryPath: contribution.devDaemonEntryPath,
             sourceSpec: contribution.sourceSpec,
@@ -738,7 +719,6 @@ export function projectLoadedPluginContributes(
             source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId,
             manifestPath: contribution.manifestPath,
-            manifestDigest: contribution.manifestDigest,
             daemonEntryPath: contribution.daemonEntryPath,
             devDaemonEntryPath: contribution.devDaemonEntryPath,
             sourceSpec: contribution.sourceSpec,
@@ -752,7 +732,6 @@ export function projectLoadedPluginContributes(
             source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId,
             manifestPath: contribution.manifestPath,
-            manifestDigest: contribution.manifestDigest,
             daemonEntryPath: contribution.daemonEntryPath,
             devDaemonEntryPath: contribution.devDaemonEntryPath,
             sourceSpec: contribution.sourceSpec,
@@ -766,7 +745,6 @@ export function projectLoadedPluginContributes(
             source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId,
             manifestPath: contribution.manifestPath,
-            manifestDigest: contribution.manifestDigest,
             daemonEntryPath: contribution.daemonEntryPath,
             devDaemonEntryPath: contribution.devDaemonEntryPath,
             sourceSpec: contribution.sourceSpec,
@@ -774,13 +752,12 @@ export function projectLoadedPluginContributes(
         });
     }
 
-    for (const contribution of pluginRegistry.mcpDiscoveryProviders) {
-        mcpDiscoveryProviderCandidates.push({
+    for (const contribution of pluginRegistry.mcpDiscoverySources) {
+        mcpDiscoverySourceCandidates.push({
             provenance: params.provenance,
             source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId,
             manifestPath: contribution.manifestPath,
-            manifestDigest: contribution.manifestDigest,
             daemonEntryPath: contribution.daemonEntryPath,
             devDaemonEntryPath: contribution.devDaemonEntryPath,
             sourceSpec: contribution.sourceSpec,
@@ -795,7 +772,6 @@ export function projectLoadedPluginContributes(
             source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId,
             manifestPath: contribution.manifestPath,
-            manifestDigest: contribution.manifestDigest,
             daemonEntryPath: contribution.daemonEntryPath,
             devDaemonEntryPath: contribution.devDaemonEntryPath,
             sourceSpec: contribution.sourceSpec,
@@ -811,7 +787,6 @@ export function projectLoadedPluginContributes(
             identity: contribution.identity,
             pluginId: contribution.pluginId,
             manifestPath: contribution.manifestPath,
-            manifestDigest: contribution.manifestDigest,
             daemonEntryPath: contribution.daemonEntryPath,
             devDaemonEntryPath: contribution.devDaemonEntryPath,
             sourceSpec: contribution.sourceSpec,
@@ -825,7 +800,6 @@ export function projectLoadedPluginContributes(
             source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId,
             manifestPath: contribution.manifestPath,
-            manifestDigest: contribution.manifestDigest,
             daemonEntryPath: contribution.daemonEntryPath,
             devDaemonEntryPath: contribution.devDaemonEntryPath,
             sourceSpec: contribution.sourceSpec,
@@ -839,7 +813,6 @@ export function projectLoadedPluginContributes(
             source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId,
             manifestPath: contribution.manifestPath,
-            manifestDigest: contribution.manifestDigest,
             daemonEntryPath: contribution.daemonEntryPath,
             devDaemonEntryPath: contribution.devDaemonEntryPath,
             sourceSpec: contribution.sourceSpec,
@@ -853,7 +826,6 @@ export function projectLoadedPluginContributes(
             source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId,
             manifestPath: contribution.manifestPath,
-            manifestDigest: contribution.manifestDigest,
             daemonEntryPath: contribution.daemonEntryPath,
             devDaemonEntryPath: contribution.devDaemonEntryPath,
             sourceSpec: contribution.sourceSpec,
@@ -867,7 +839,6 @@ export function projectLoadedPluginContributes(
             source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId,
             manifestPath: contribution.manifestPath,
-            manifestDigest: contribution.manifestDigest,
             daemonEntryPath: contribution.daemonEntryPath,
             devDaemonEntryPath: contribution.devDaemonEntryPath,
             sourceSpec: contribution.sourceSpec,
@@ -882,7 +853,6 @@ export function projectLoadedPluginContributes(
             pluginId: contribution.pluginId,
             identity: contribution.identity!,
             manifestPath: contribution.manifestPath,
-            manifestDigest: contribution.manifestDigest,
             daemonEntryPath: contribution.daemonEntryPath,
             devDaemonEntryPath: contribution.devDaemonEntryPath,
             sourceSpec: contribution.sourceSpec,
@@ -897,7 +867,6 @@ export function projectLoadedPluginContributes(
             pluginId: contribution.pluginId,
             identity: contribution.identity!,
             manifestPath: contribution.manifestPath,
-            manifestDigest: contribution.manifestDigest,
             pluginRootPath: contribution.pluginRootPath,
             sourceSpec: contribution.sourceSpec,
             ...(contribution.generatedUiArtifactsManifest
@@ -907,12 +876,39 @@ export function projectLoadedPluginContributes(
         });
     }
 
+    for (const contribution of pluginRegistry.accountCollections) {
+        accountCollectionCandidates.push({
+            provenance: params.provenance,
+            source: { kind: contribution.sourceSpec.kind },
+            pluginId: contribution.pluginId,
+            pluginVersion: contribution.pluginVersion,
+            identity: contribution.identity!,
+            manifestPath: contribution.manifestPath,
+            definition: contribution.definition,
+        });
+    }
+
     const agents = agentCandidates;
+    const materializationIdsByPluginId = Object.freeze(Object.fromEntries(
+        loadResult.loadedPlugins.flatMap((plugin) => {
+            const materializationId = loadResult.materializationIdsByPluginId?.[plugin.pluginId];
+            return typeof materializationId === 'string' && materializationId.trim().length > 0
+                ? [[plugin.pluginId, materializationId] as const]
+                : [];
+        }),
+    ));
     return {
         introspectionContributions: collectNormalizedRegistryIntrospectionCandidates(pluginRegistry),
         uiViewsV2: Object.freeze(uiViewV2Candidates),
+        openableContentViewers: Object.freeze(openableContentViewerCandidates),
+        uiSettingsGroupsV2: Object.freeze(uiSettingsGroupV2Candidates),
+        uiSettingsPagesV2: Object.freeze(uiSettingsPageV2Candidates),
         uiRenderersV2: Object.freeze(uiRendererV2Candidates),
         uiTranslationsV2: Object.freeze(uiTranslationV2Candidates),
+        composerReferences: Object.freeze(composerReferenceCandidates),
+        composerAttachments: Object.freeze(composerAttachmentCandidates),
+        composerControls: Object.freeze(composerControlCandidates),
+        composerRegions: Object.freeze(composerRegionCandidates),
         agents: Object.freeze(agents),
         providers: Object.freeze(providerCandidates),
         actions: Object.freeze(actionCandidates),
@@ -921,12 +917,9 @@ export function projectLoadedPluginContributes(
         resources: Object.freeze(resourceCandidates),
         promptAssets: Object.freeze(promptAssetCandidates),
         uiTranslations: Object.freeze(uiTranslationCandidates),
-        structuredMessages: Object.freeze(structuredMessageCandidates),
         sessionHeaderActions: Object.freeze(sessionHeaderActionCandidates),
-        surfacePlacements: Object.freeze(surfacePlacementCandidates),
+        transcriptActivities: Object.freeze(transcriptActivityCandidates),
         hostedWeb: Object.freeze(hostedWebCandidates),
-        reactNativeBundles: Object.freeze(reactNativeBundleCandidates),
-        uiArtifacts: Object.freeze(uiArtifactCandidates),
         browserTargets: Object.freeze(browserTargetCandidates),
         browserActions: Object.freeze(browserActionCandidates),
         settings: Object.freeze(settingsCandidates),
@@ -935,7 +928,7 @@ export function projectLoadedPluginContributes(
         events: Object.freeze(eventCandidates),
         executionRunProfiles: Object.freeze(executionRunProfileCandidates),
         mcpServers: Object.freeze(mcpServerCandidates),
-        mcpDiscoveryProviders: Object.freeze(mcpDiscoveryProviderCandidates),
+        mcpDiscoverySources: Object.freeze(mcpDiscoverySourceCandidates),
         scmHostingProviders: Object.freeze(scmHostingProviderCandidates),
         scmBackends: Object.freeze(scmBackendCandidates),
         connectedAccountDescriptors: Object.freeze(connectedAccountDescriptorCandidates),
@@ -944,7 +937,11 @@ export function projectLoadedPluginContributes(
         requestInterceptors: Object.freeze(requestInterceptorCandidates),
         voiceModelPacks: Object.freeze(voiceModelPackCandidates),
         voiceProviders: Object.freeze(voiceProviderCandidates),
+        accountCollections: Object.freeze(accountCollectionCandidates),
+        pluginContributionPoints: Object.freeze(pluginContributionPointCandidates),
+        targetedPluginContributions: Object.freeze(targetedPluginContributionCandidates),
         activationTargets: Object.freeze(activationTargets),
+        materializationIdsByPluginId,
         pluginDiagnosticsByPluginId: Object.freeze(diagnosticsByPluginId),
     };
 }

@@ -10,6 +10,7 @@ import {
     PluginUiHostApiClientError,
     createPluginUiHostApiClientFromTransport,
 } from './clientTransport.js';
+import { isPluginError } from '../errors.js';
 import type { PluginReference } from '../identity.js';
 import type { ComposerContentHandleV1, SurfaceContext } from './hostApi.js';
 import { createSurfaceContextFixture } from './surfaceContext.fixture.js';
@@ -88,6 +89,46 @@ describe('plugin UI domain client transport adapter', () => {
         await expect(api.context()).resolves.toEqual(sdkSurface);
         expect(observed).toEqual([sdkSurface]);
         watch.dispose();
+    });
+
+    it('rejects malformed current-UI enrichment before it can disappear at the host boundary', async () => {
+        const sent: PluginUiHostApiWireEnvelopeV1[] = [];
+        let receive: ((message: unknown) => void) | undefined;
+        const api = await createPluginUiHostApiClientFromTransport({
+            identity,
+            transport: {
+                subscribe(listener) {
+                    receive = listener;
+                    return { dispose: () => undefined };
+                },
+                send(message) {
+                    sent.push(message);
+                    if (message.kind === 'negotiate') {
+                        receive?.({
+                            wireVersion: 1,
+                            kind: 'negotiated',
+                            identity,
+                            apiVersion: '1.0.0',
+                            methods: ['publishCurrentUiContext'],
+                            surface,
+                        });
+                    }
+                },
+            },
+        });
+
+        let thrown: unknown;
+        try {
+            api.publishCurrentUiContext({
+                entity: { kind: '', label: 'Review #42' },
+            });
+        } catch (error) {
+            thrown = error;
+        }
+
+        expect(thrown).toBeInstanceOf(PluginUiHostApiClientError);
+        expect(thrown).toMatchObject({ code: 'invalid_payload' });
+        expect(sent).toHaveLength(1);
     });
 
     it('round-trips the flat Composer document methods and retires observations and locks through one disposer', async () => {
@@ -1712,12 +1753,24 @@ describe('plugin UI domain client transport adapter', () => {
             },
         });
 
-        await expect(operation).rejects.toMatchObject({
+        const failure = await operation.catch((error: unknown) => error);
+
+        expect(isPluginError(failure)).toBe(true);
+        expect(failure).toMatchObject({
+            name: 'PluginError',
             code: 'permission_denied',
             retryable: false,
             details: { permission: 'clipboard' },
             remediation: { kind: 'openSettings', path: 'plugins.permissions' },
             diagnostics: [{ code: 'permission_denied', severity: 'warning' }],
+            data: {
+                name: 'PluginError',
+                code: 'permission_denied',
+                retryable: false,
+                details: { permission: 'clipboard' },
+                remediation: { kind: 'openSettings', path: 'plugins.permissions' },
+                diagnostics: [{ code: 'permission_denied', severity: 'warning' }],
+            },
         });
     });
 

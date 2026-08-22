@@ -1,10 +1,10 @@
-import type { ValidateFunction } from 'ajv';
+import {
+    compilePluginJsonSchema,
+    type PluginJsonSchemaValidator,
+    type PluginSettingFieldV2,
+} from '@happier-dev/protocol';
 
-import type { PluginSettingFieldV2 } from '@happier-dev/protocol';
-
-import { compilePluginJsonSchema } from '@/plugins/runtime/invocation/services/jsonSchemaValidation';
-
-const validatorsByField = new WeakMap<PluginSettingFieldV2, ValidateFunction>();
+const validatorsByField = new WeakMap<PluginSettingFieldV2, PluginJsonSchemaValidator>();
 
 export class PluginSettingFieldSchemaCompilationError extends Error {
     constructor() {
@@ -15,11 +15,11 @@ export class PluginSettingFieldSchemaCompilationError extends Error {
 
 export function compilePluginSettingFieldSchema(
     field: PluginSettingFieldV2,
-): ValidateFunction {
+): PluginJsonSchemaValidator {
     const cached = validatorsByField.get(field);
     if (cached) return cached;
 
-    let validate: ValidateFunction;
+    let validate: PluginJsonSchemaValidator;
     try {
         validate = compilePluginJsonSchema(field.schema);
     } catch {

@@ -8,6 +8,9 @@ const manifest = {
     {
       contributionId: 'preview-web',
       tier: 'hostedWeb',
+      // `defineHostedWebViteBuildArtifact` (plugin-sdk `ui/hostedWebBuild.ts`) always
+      // stamps `platform: 'web'`, and the generated-manifest resolution path binds on it.
+      platform: 'web',
       entry: 'hosted-web/preview-web/index.html',
       files: [
         {
@@ -24,28 +27,9 @@ const manifest = {
       digest: 'sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff',
       builtWith: { bundler: 'vite', version: '6.0.0' },
       hostUiApiVersion: '1.0.0',
-      compat: { react: '19.0.0' },
+      compat: {},
     },
   ],
-} as const;
-
-const artifact = {
-  id: 'artifact-preview-web',
-  pluginId: 'acme.preview',
-  contributionId: 'preview-web',
-  contributionFamily: 'hostedWeb',
-  artifactKind: 'hostedWebAsset',
-  platform: 'web',
-  channel: 'internal',
-  integrity: { digest: 'sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff' },
-  compatibility: {
-    hostAppVersion: '1.0.0',
-    hostUiApiVersion: '1.0.0',
-    reactVersion: '19.0.0',
-    nativeCapabilities: [],
-  },
-  byteSize: 2048,
-  contentType: 'text/html',
 } as const;
 
 describe('hosted web installed asset runtime resolution', () => {
@@ -68,21 +52,6 @@ describe('hosted web installed asset runtime resolution', () => {
         'hosted-web/preview-web/assets/index.js',
       ],
       digest: 'sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff',
-    });
-  });
-
-  it('fails closed when managed services are requested before LSV-2 runtime resolution', () => {
-    expect(resolveHostedWebAssetRuntime({
-      contributionId: 'preview-web',
-      runtimeMode: {
-        kind: 'managedLocalService',
-        localServiceId: 'preview-dev-server',
-      },
-      manifest,
-    })).toEqual({
-      ok: false,
-      code: 'managed_service_requires_lsv2',
-      diagnostics: ['lsv2_runtime_required'],
     });
   });
 
@@ -117,6 +86,34 @@ describe('hosted web installed asset runtime resolution', () => {
     });
   });
 
+  it('rejects a mismatched Host API version through the generated manifest resolver', () => {
+    const incompatibleManifest = {
+      ...manifest,
+      entries: manifest.entries.map((entry) => ({
+        ...entry,
+        hostUiApiVersion: '9.9.9',
+      })),
+    };
+    const expected = {
+      ok: false,
+      code: 'hosted_web_static_artifact_host_api_mismatch',
+      diagnostics: ['hosted_web_static_artifact_host_api_mismatch'],
+    };
+
+    // `staticAssets/source.ts` builds both fields from the same `artifactId`, so a
+    // realistic generated-manifest call carries the identical value in each.
+    expect(resolveHostedWebAssetRuntime({
+      contributionId: 'preview-web-renderer',
+      manifestContributionId: 'preview-web',
+      runtimeMode: {
+        kind: 'installedStaticAssets',
+        artifactId: 'preview-web',
+        assetRootId: 'hosted-web/preview-web',
+      },
+      manifest: incompatibleManifest,
+    })).toEqual(expected);
+  });
+
   it('fails closed when the requested asset root does not contain the hosted-web manifest entry', () => {
     expect(resolveHostedWebAssetRuntime({
       contributionId: 'preview-web',
@@ -133,28 +130,4 @@ describe('hosted web installed asset runtime resolution', () => {
     });
   });
 
-  it('requires hosted-web artifact integrity when installed artifact metadata is provided', () => {
-    expect(resolveHostedWebAssetRuntime({
-      contributionId: 'preview-web',
-      pluginId: 'acme.preview',
-      runtimeMode: {
-        kind: 'installedStaticAssets',
-        artifactId: 'artifact-preview-web',
-        assetRootId: 'hosted-web/preview-web',
-      },
-      manifest,
-      artifact,
-    })).toMatchObject({
-      ok: true,
-      artifactId: 'artifact-preview-web',
-      cacheKey: expect.stringContaining('acme.preview:preview-web:hostedWebAsset:web:internal:sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff'),
-      integrity: {
-        digest: 'sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff',
-        pluginId: 'acme.preview',
-        contributionId: 'preview-web',
-        artifactKind: 'hostedWebAsset',
-      },
-    });
-
-  });
 });

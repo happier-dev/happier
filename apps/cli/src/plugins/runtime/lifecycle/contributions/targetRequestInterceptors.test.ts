@@ -1,12 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
-import type { PluginRequestInterceptor } from '@happier-dev/plugin-sdk/runtime';
 
 import type { ContributionRuntimeRegistration } from '@/plugins/runtime/api/registrationRightsHost';
 
 import type { ActivationTarget } from '../activation/targets';
-import { createTargetRequestInterceptorBindings } from './targetRequestInterceptors';
+import {
+    createTargetRequestInterceptorBindings,
+    type TargetPluginRequestInterceptor as PluginRequestInterceptor,
+} from './targetRequestInterceptors';
 
 describe('target request interceptor bindings', () => {
     it('joins the exact qualified declaration and fences retirement before and after async completion', async () => {

@@ -129,6 +129,12 @@ export function decorateRuntimeTurnOperationsWithMetadata(params: Readonly<{
         ...(runtime.canSteerPrompt
             ? { canSteerPrompt: () => runtime.canSteerPrompt?.() ?? false }
             : {}),
+        ...(runtime.canInterruptForPendingInput
+            ? {
+                canInterruptForPendingInput: () =>
+                    runtime.canInterruptForPendingInput?.() ?? true,
+            }
+            : {}),
         ...(runtime.steerPrompt
             ? {
                 async steerPrompt(message: string, options?: RuntimeTurnPromptMeta) {

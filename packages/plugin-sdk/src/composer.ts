@@ -63,7 +63,6 @@ export type ComposerContentInspectResultV1 = Readonly<{
     eof: boolean;
 }>;
 
-/** @experimental */
 export function defineComposerReference(
     definition: PluginComposerReferenceDefinition,
 ): PluginComposerReferenceDefinition {
@@ -109,7 +108,6 @@ function defineComposerAttachmentImplementation<
     >;
 }
 
-/** @experimental */
 export const defineComposerAttachment = defineComposerAttachmentImplementation as <
     const TValueSchema extends ProtocolComposableSchema<unknown, unknown>,
     const TPreparedSchema extends ProtocolComposableSchema<unknown, unknown> | undefined = undefined,
@@ -136,14 +134,12 @@ export const defineComposerAttachment = defineComposerAttachmentImplementation a
         : Extract<ReturnType<TValueSchema['parse']>, JsonValue>
 >;
 
-/** @experimental */
 export function defineComposerControl(
     definition: PluginComposerControlDefinition,
 ): PluginComposerControlDefinition {
     return definition;
 }
 
-/** @experimental */
 export function defineComposerRegion(
     definition: PluginComposerRegionDefinition,
 ): PluginComposerRegionDefinition {

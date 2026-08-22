@@ -74,6 +74,22 @@ describe('shared item and group semantics', () => {
     expect(resolveHappierRovingSelection({ entries, currentIndex: 2, key: 'Home', rtl: false })).toBe(0);
   });
 
+  it('lands End on the last ENABLED entry, not the last index', () => {
+    // `core/SURFACE.md` §442/§457 make this collection collection-wide owner of
+    // Home/End, so a consumer must never re-derive the extremes itself. Home was
+    // already covered; End was not, and a trailing disabled row is the case that
+    // separates `enabled.at(-1)` from `entries.length - 1`.
+    const trailingDisabled = [{ disabled: false }, { disabled: false }, { disabled: true }] as const;
+    expect(resolveHappierRovingSelection({
+      entries: trailingDisabled, currentIndex: 0, key: 'End', rtl: false,
+    })).toBe(1);
+
+    const leadingDisabled = [{ disabled: true }, { disabled: false }, { disabled: false }] as const;
+    expect(resolveHappierRovingSelection({
+      entries: leadingDisabled, currentIndex: 2, key: 'Home', rtl: false,
+    })).toBe(1);
+  });
+
   it('keeps one reachable roving tab stop on the current choice or the first selectable entry', () => {
     const entries = [{ disabled: true }, { disabled: false }, { disabled: false }] as const;
 

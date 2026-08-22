@@ -62,10 +62,10 @@ describe('React Native bundle build SDK helper', () => {
         const entry = defineReactNativeBundleBuildArtifact({
             contributionId: 'native-preview',
             platform: 'ios',
-            entry: 'react-native/native-preview/ios.bundle.js',
+            entry: 'react-native/native-preview/ios.bundle',
             files: [
-                artifactFile('react-native/native-preview/ios.bundle.js'),
-                artifactFile('react-native/native-preview/ios.bundle.js.map'),
+                artifactFile('react-native/native-preview/ios.bundle'),
+                artifactFile('react-native/native-preview/ios.bundle.map'),
             ],
             digest: BUNDLE_DIGEST,
             repackVersion: '5.0.0',
@@ -83,10 +83,10 @@ describe('React Native bundle build SDK helper', () => {
             contributionId: 'native-preview',
             tier: 'reactNative',
             platform: 'ios',
-            entry: 'react-native/native-preview/ios.bundle.js',
+            entry: 'react-native/native-preview/ios.bundle',
             files: [
-                artifactFile('react-native/native-preview/ios.bundle.js'),
-                artifactFile('react-native/native-preview/ios.bundle.js.map'),
+                artifactFile('react-native/native-preview/ios.bundle'),
+                artifactFile('react-native/native-preview/ios.bundle.map'),
             ],
             digest: BUNDLE_DIGEST,
             builtWith: { bundler: 'repack', version: '5.0.0' },
@@ -105,8 +105,8 @@ describe('React Native bundle build SDK helper', () => {
         const entry = defineReactNativeBundleBuildArtifact({
             contributionId: 'native-preview',
             platform: 'ios',
-            entry: 'react-native/native-preview/ios.bundle.js',
-            files: [artifactFile('react-native/native-preview/ios.bundle.js')],
+            entry: 'react-native/native-preview/ios.bundle',
+            files: [artifactFile('react-native/native-preview/ios.bundle')],
             digest: BUNDLE_DIGEST,
             repackVersion: '5.0.0',
             hostUiApiVersion: '1.0.0',
@@ -143,8 +143,8 @@ describe('React Native bundle build SDK helper', () => {
         const baseInput = {
             contributionId: 'native-preview',
             platform: 'ios' as const,
-            entry: 'react-native/native-preview/ios.bundle.js',
-            files: [artifactFile('react-native/native-preview/ios.bundle.js')],
+            entry: 'react-native/native-preview/ios.bundle',
+            files: [artifactFile('react-native/native-preview/ios.bundle')],
             digest: BUNDLE_DIGEST,
             repackVersion: '5.0.0',
             hostUiApiVersion: '1.0.0',
@@ -157,13 +157,13 @@ describe('React Native bundle build SDK helper', () => {
 
         expect(() => defineReactNativeBundleBuildArtifact({
             ...baseInput,
-            entry: '../ios.bundle.js',
+            entry: '../ios.bundle',
         })).toThrow(/relative path|artifact paths/u);
 
         expect(() => defineReactNativeBundleBuildArtifact({
             ...baseInput,
             files: [
-                artifactFile('react-native/native-preview/ios.bundle.js'),
+                artifactFile('react-native/native-preview/ios.bundle'),
                 artifactFile('react-native\\native-preview\\ios.map'),
             ],
         })).toThrow(/relative path/u);
@@ -233,7 +233,7 @@ describe('React Native bundle build SDK helper', () => {
             bundler: 'repack',
             output: {
                 root: 'dist/happier-plugin-ui/react-native/native-preview',
-                entry: 'react-native/native-preview/ios/ios.bundle.js',
+                entry: 'react-native/native-preview/ios/ios.bundle',
             },
             repack: {
                 version: '5.0.0',

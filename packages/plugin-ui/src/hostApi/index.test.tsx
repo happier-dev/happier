@@ -771,8 +771,16 @@ describe('plugin host API hooks', () => {
     });
   });
 
-  it('keeps a live hook truthful when watchResource is not advertised', async () => {
-    const watchResource: PluginUiHostApi['watchResource'] = vi.fn(async () => ({ dispose: vi.fn() }));
+  it('keeps a live hook truthful when the host refuses to serve watchResource', async () => {
+    // Both physical transports refuse an unadvertised method locally, so the
+    // host — not a method set sampled once at mount — is the admission
+    // authority. A refusal is the capability fact the hook reports.
+    const watchResource: PluginUiHostApi['watchResource'] = vi.fn(async () => {
+      throw Object.assign(new Error('watchResource is not installed for this mount'), {
+        code: 'unsupported_method',
+        retryable: false,
+      });
+    });
     const host = createHostApiStub({ watchResource });
     const snapshots: PluginUiResourceSnapshot[] = [];
 
@@ -789,7 +797,7 @@ describe('plugin host API hooks', () => {
       );
     });
 
-    expect(watchResource).not.toHaveBeenCalled();
+    expect(watchResource).toHaveBeenCalledTimes(1);
     expect(snapshots.at(-1)).toMatchObject({
       freshness: 'fresh',
       pending: 'idle',

@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -46,8 +46,17 @@ type FixtureOverrides = Readonly<{
   includeVoiceProvider?: boolean;
   voiceProviderPlatforms?: readonly ('web' | 'ios' | 'android')[];
   additionalVoiceArtifactPlatforms?: readonly ('ios' | 'android')[];
+  additionalVoiceProviderModulePath?: string;
+  nativeVoiceArtifactModulePath?: string;
+  nativeVoiceArtifactExportName?: string;
   duplicateArtifactSlot?: boolean;
   extraPackageJson?: Readonly<Record<string, unknown>>;
+  packageAssets?: readonly Readonly<{
+    id: string;
+    path: string;
+    contentType: string;
+    body: string | Uint8Array;
+  }>[];
   extraEntries?: readonly TestTarEntry[];
   omitPaths?: readonly string[];
 }>;
@@ -77,7 +86,11 @@ async function createCandidateFixture(overrides: FixtureOverrides = {}): Promise
     name: overrides.packageName ?? '@acme/happier-plugin',
     version: overrides.packageVersion ?? '1.2.3',
     keywords: overrides.packageKeywords ?? ['happier-plugin'],
-    files: overrides.packageFiles ?? ['.happier-plugin', 'dist'],
+    files: overrides.packageFiles ?? [
+      '.happier-plugin',
+      'dist',
+      ...[...new Set((overrides.packageAssets ?? []).map((asset) => asset.path.split('/')[0]!))],
+    ],
     happier: { manifest: overrides.packageManifestPath ?? '.happier-plugin/plugin.json' },
     scripts: { preinstall: `touch ${JSON.stringify(sideEffectPath)}` },
     dependencies: { 'should-never-be-installed': '1.0.0' },
@@ -101,22 +114,44 @@ async function createCandidateFixture(overrides: FixtureOverrides = {}): Promise
           },
         ],
       },
-      voiceProviders: overrides.includeVoiceProvider ? [{
-        id: 'conversation',
-        title: 'Conversation',
-        kind: 'conversation',
-        roles: ['realtime_conversation', 'turn_control'],
-        platforms: overrides.voiceProviderPlatforms ?? ['web'],
-        capabilities: {
-          readiness: { requirements: [] },
-          turn: { cancelResponse: true, bargeIn: false },
+      voiceProviders: overrides.includeVoiceProvider ? [
+        {
+          id: 'conversation',
+          title: 'Conversation',
+          kind: 'conversation',
+          roles: ['realtime_conversation', 'turn_control'],
+          platforms: overrides.voiceProviderPlatforms ?? ['web'],
+          capabilities: {
+            turn: { cancelResponse: true, bargeIn: false },
+          },
+          client: {
+            artifactId: 'voice-runtime-web',
+            modulePath: './voiceRuntime',
+            exportName: 'activate',
+          },
         },
-        client: {
-          artifactId: 'voice-runtime-web',
-          modulePath: './voiceRuntime',
-          exportName: 'activate',
-        },
-      }] : [],
+        ...(overrides.additionalVoiceProviderModulePath ? [{
+          id: 'conversation-secondary',
+          title: 'Secondary conversation',
+          kind: 'conversation',
+          roles: ['realtime_conversation'],
+          platforms: overrides.voiceProviderPlatforms ?? ['web'],
+          capabilities: {
+            turn: { cancelResponse: true, bargeIn: false },
+          },
+          client: {
+            artifactId: 'voice-runtime-web',
+            modulePath: overrides.additionalVoiceProviderModulePath,
+            exportName: 'activate',
+          },
+        }] : []),
+      ] : [],
+      resources: (overrides.packageAssets ?? []).map((asset) => ({
+        id: asset.id,
+        kind: 'asset',
+        path: asset.path,
+        contentType: asset.contentType,
+      })),
     },
   };
   const artifactManifest = {
@@ -135,13 +170,14 @@ async function createCandidateFixture(overrides: FixtureOverrides = {}): Promise
         digest: overrides.artifactDigest ?? uiDigest,
         builtWith: { bundler: 'vite', version: '7.0.0' },
         hostUiApiVersion: '1.0.0',
-        compat: {
-          react: '19.2.0',
-          ...(overrides.artifactTier === 'reactNative' ? { reactNative: '0.83.4' } : {}),
-        },
+        // Mirrors what the public SDK builders emit: `hostedWebBuild.ts` writes
+        // `compat: {}` and only the React Native builders declare compatibility.
+        compat: overrides.artifactTier === 'reactNative'
+          ? { react: '19.2.0', reactNative: '0.83.4' }
+          : {},
       },
       ...((overrides.additionalVoiceArtifactPlatforms ?? []).map((platform) => {
-        const relativePath = `react-native/voice-runtime-web/${platform}.bundle.js`;
+        const relativePath = `react-native/voice-runtime-web/${platform}.bundle`;
         const bytes = Buffer.from(`export function activate() { /* ${platform} */ }\n`);
         return {
           contributionId: 'voice-runtime-web',
@@ -153,8 +189,8 @@ async function createCandidateFixture(overrides: FixtureOverrides = {}): Promise
           builtWith: { bundler: 'repack' as const, version: '5.2.5' },
           repack: {
             containerName: 'happier_voice_runtime_web_native',
-            modulePath: './voiceRuntime',
-            exportName: 'activate',
+            modulePath: overrides.nativeVoiceArtifactModulePath ?? './voiceRuntime',
+            exportName: overrides.nativeVoiceArtifactExportName ?? 'activate',
           },
           hostUiApiVersion: '1.0.0',
           compat: { react: '19.2.0', reactNative: '0.83.4' },
@@ -173,10 +209,11 @@ async function createCandidateFixture(overrides: FixtureOverrides = {}): Promise
         digest: duplicateUiDigest,
         builtWith: { bundler: 'vite', version: '7.0.0' },
         hostUiApiVersion: '1.0.0',
-        compat: {
-          react: '19.2.0',
-          ...(overrides.artifactTier === 'reactNative' ? { reactNative: '0.83.4' } : {}),
-        },
+        // Mirrors what the public SDK builders emit: `hostedWebBuild.ts` writes
+        // `compat: {}` and only the React Native builders declare compatibility.
+        compat: overrides.artifactTier === 'reactNative'
+          ? { react: '19.2.0', reactNative: '0.83.4' }
+          : {},
       }] : []),
     ],
   };
@@ -187,12 +224,16 @@ async function createCandidateFixture(overrides: FixtureOverrides = {}): Promise
     { name: 'package/dist/happier-plugin-ui/ui-artifacts.json', body: JSON.stringify(artifactManifest) },
     { name: `package/dist/happier-plugin-ui/${uiEntryPath}`, body: uiBytes },
     ...((overrides.additionalVoiceArtifactPlatforms ?? []).map((platform) => ({
-      name: `package/dist/happier-plugin-ui/react-native/voice-runtime-web/${platform}.bundle.js`,
+      name: `package/dist/happier-plugin-ui/react-native/voice-runtime-web/${platform}.bundle`,
       body: `export function activate() { /* ${platform} */ }\n`,
     }))),
     ...(overrides.duplicateArtifactSlot
       ? [{ name: `package/dist/happier-plugin-ui/${duplicateUiEntryPath}`, body: duplicateUiBytes }]
       : []),
+    ...(overrides.packageAssets ?? []).map((asset) => ({
+      name: `package/${asset.path}`,
+      body: asset.body,
+    })),
     ...(overrides.extraEntries ?? []),
   ];
   const omittedPaths = new Set(overrides.omitPaths ?? []);
@@ -213,6 +254,7 @@ async function createCandidateFixture(overrides: FixtureOverrides = {}): Promise
       },
       artifactPath,
       byteLength: bytes.byteLength,
+      archiveDigestSha256: `sha256:${createHash('sha256').update(bytes).digest('hex')}`,
       registrySignature: { status: 'verified', keyid: 'SHA256:test-key' },
       provenance: { status: 'absent' },
     },
@@ -229,6 +271,93 @@ describe('stageDownloadedNpmArtifactCandidate', () => {
       candidate: fixture.candidate,
       stagingParentPath: fixture.stagingParentPath,
     })).resolves.toMatchObject({ ok: true });
+  });
+
+  it('retains the exact tarball SHA-256 from verified acquisition rather than a staged tree digest', async () => {
+    const fixture = await createCandidateFixture();
+
+    await expect(stageDownloadedNpmArtifactCandidate({
+      candidate: fixture.candidate,
+      stagingParentPath: fixture.stagingParentPath,
+    })).resolves.toMatchObject({
+      ok: true,
+      candidate: {
+        archiveDigestSha256: fixture.candidate.archiveDigestSha256,
+      },
+    });
+  });
+
+  it('retains one deterministic archive of only the manifest-declared packaged asset Resources', async () => {
+    const fixture = await createCandidateFixture({
+      packageAssets: [
+        { id: 'zeta', path: 'assets/zeta.png', contentType: 'image/png', body: new Uint8Array([9, 8, 7]) },
+        { id: 'alpha', path: 'assets/alpha.svg', contentType: 'image/svg+xml', body: new Uint8Array([4, 5]) },
+      ],
+      extraEntries: [{ name: 'package/assets/unclaimed.txt', body: 'must not be admitted' }],
+    });
+
+    const result = await stageDownloadedNpmArtifactCandidate({
+      candidate: fixture.candidate,
+      stagingParentPath: fixture.stagingParentPath,
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      candidate: {
+        packageAssetArchive: {
+          descriptor: {
+            resources: [
+              expect.objectContaining({ resourceId: 'alpha', path: 'assets/alpha.svg', mimeType: 'image/svg+xml', byteSize: 2 }),
+              expect.objectContaining({ resourceId: 'zeta', path: 'assets/zeta.png', mimeType: 'image/png', byteSize: 3 }),
+            ],
+          },
+          body: {
+            resources: [
+              expect.objectContaining({ resourceId: 'alpha', bytesBase64: 'BAU=' }),
+              expect.objectContaining({ resourceId: 'zeta', bytesBase64: 'CQgH' }),
+            ],
+          },
+        },
+      },
+    });
+    if (result.ok) await cleanupStagedNpmArtifactCandidate(result.candidate);
+  });
+
+  it('derives compatibility facts from the staged manifest and generated UI inventory instead of package metadata', async () => {
+    const fixture = await createCandidateFixture({
+      extraPackageJson: {
+        happier: {
+          manifest: '.happier-plugin/plugin.json',
+          compatibilityProjection: {
+            version: 1,
+            manifest: {
+              schemaVersion: 2,
+              id: 'acme.author-supplied-projection',
+              version: '9.9.9',
+              displayName: 'Forged projection',
+              runtime: { apiVersion: 1 },
+              contributes: {},
+            },
+            uiArtifacts: { version: 1, entries: [] },
+            builtWith: { pluginSdk: '9999.0.0' },
+          },
+        },
+      },
+    });
+
+    await expect(stageDownloadedNpmArtifactCandidate({
+      candidate: fixture.candidate,
+      stagingParentPath: fixture.stagingParentPath,
+    })).resolves.toMatchObject({
+      ok: true,
+      candidate: {
+        compatibilityProjection: {
+          version: 1,
+          manifest: { id: 'acme.npm-stage', version: '1.2.3' },
+          uiArtifacts: { version: 1, entries: [expect.objectContaining({ contributionId: 'panel-web' })] },
+        },
+      },
+    });
   });
 
   it('rejects native platform identities for a hostedWeb artifact', async () => {
@@ -276,6 +405,49 @@ describe('stageDownloadedNpmArtifactCandidate', () => {
       candidate: fixture.candidate,
       stagingParentPath: fixture.stagingParentPath,
     })).resolves.toMatchObject({ ok: true });
+  });
+
+  it.each([
+    ['module', { nativeVoiceArtifactModulePath: './otherRuntime' }],
+    ['export', { nativeVoiceArtifactExportName: 'otherActivate' }],
+  ] satisfies readonly [string, FixtureOverrides][])('rejects a native Voice artifact whose Re.Pack %s identity differs from its declaration', async (_case, overrides) => {
+    const fixture = await createCandidateFixture({
+      includeUiRenderer: false,
+      includeVoiceProvider: true,
+      voiceProviderPlatforms: ['web', 'ios'],
+      artifactContributionId: 'voice-runtime-web',
+      artifactTier: 'reactNative',
+      additionalVoiceArtifactPlatforms: ['ios'],
+      ...overrides,
+    });
+
+    await expect(stageDownloadedNpmArtifactCandidate({
+      candidate: fixture.candidate,
+      stagingParentPath: fixture.stagingParentPath,
+    })).resolves.toMatchObject({
+      ok: false,
+      rejection: { code: 'ui_artifact_identity_mismatch' },
+    });
+  });
+
+  it('rejects shared native Voice artifacts whose declarations disagree about the Re.Pack module', async () => {
+    const fixture = await createCandidateFixture({
+      includeUiRenderer: false,
+      includeVoiceProvider: true,
+      voiceProviderPlatforms: ['web', 'ios'],
+      additionalVoiceProviderModulePath: './otherRuntime',
+      artifactContributionId: 'voice-runtime-web',
+      artifactTier: 'reactNative',
+      additionalVoiceArtifactPlatforms: ['ios'],
+    });
+
+    await expect(stageDownloadedNpmArtifactCandidate({
+      candidate: fixture.candidate,
+      stagingParentPath: fixture.stagingParentPath,
+    })).resolves.toMatchObject({
+      ok: false,
+      rejection: { code: 'manifest_invalid' },
+    });
   });
 
   it('rejects Voice artifacts that omit or add an undeclared platform sibling', async () => {
@@ -348,8 +520,11 @@ describe('stageDownloadedNpmArtifactCandidate', () => {
       },
     });
     if (!result.ok) throw new Error('Expected candidate to stage');
-    expect(result.candidate.rootDigest).toMatch(/^sha256:[a-f0-9]{64}$/);
+    expect(result.candidate).not.toHaveProperty('rootDigest');
     expect(result.candidate.inventory.some((file) => file.path === 'dist/daemon.mjs')).toBe(true);
+    const manifestInventoryFile = result.candidate.inventory.find((file) => file.path === '.happier-plugin/plugin.json');
+    expect(manifestInventoryFile?.digest).toMatch(/^sha256:[a-f0-9]{64}$/);
+    expect(result.candidate.manifest.digest).toBe(manifestInventoryFile?.digest);
     await expect(readFile(fixture.sideEffectPath)).rejects.toMatchObject({ code: 'ENOENT' });
     await expect(readFile(fixture.candidate.artifactPath)).resolves.toBeInstanceOf(Buffer);
 
@@ -438,6 +613,7 @@ describe('stageDownloadedNpmArtifactCandidate', () => {
     const candidate = {
       ...fixture.candidate,
       byteLength: bytes.byteLength,
+      archiveDigestSha256: `sha256:${createHash('sha256').update(bytes).digest('hex')}`,
       source: { ...fixture.candidate.source, integrity: sriSha512(bytes) },
     } satisfies DownloadedNpmArtifactCandidate;
 
@@ -447,20 +623,40 @@ describe('stageDownloadedNpmArtifactCandidate', () => {
     })).resolves.toMatchObject({ ok: false, rejection: { code: 'published_entrypoint_invalid' } });
   });
 
-  it('rejects a plugin manifest above the bounded metadata limit before parsing it', async () => {
-    const validManifest = JSON.stringify({
+  it('stages a schema-valid plugin manifest whose declarative content exceeds a mebibyte', async () => {
+    // First-party plugins already publish manifests well past a mebibyte of
+    // honest declarative content: the generated Channels manifest is ~1.48 MiB
+    // of `contributes` plus localized strings. Manifest bytes therefore carry
+    // no ceiling of their own. Strict UTF-8 decoding, JSON parsing, schema and
+    // semantic validation, and the depth-bounded traversal guard are owned by
+    // manifest ingestion; per-file and aggregate expansion bounds are owned by
+    // the archive. `package.json` and `ui-artifacts.json` keep the retained
+    // control-artifact metadata bound because they stay small by construction.
+    const resources = Array.from({ length: 3_000 }, (_, index) => ({
+      id: `generated-resource-${index}`,
+      source: 'dynamic',
+      kind: 'prompt',
+      contentType: 'text/markdown',
+      metadata: {
+        title: `Generated conversation resource ${index}`,
+        summary: `Declarative contribution ${index} standing in for the localized`
+          + ` contribution content that makes a real first-party manifest large.`,
+      },
+    }));
+    const pluginManifestBody = JSON.stringify({
       schemaVersion: 2,
       id: 'acme.npm-stage',
       version: '1.2.3',
       displayName: 'Acme npm stage',
-      description: 'Oversized candidate staging fixture',
+      description: 'Large declarative candidate staging fixture',
       engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 },
       entrypoints: { daemon: './dist/daemon.mjs' },
-      contributes: {},
-    });
+      contributes: { resources },
+    }, null, 2);
+    expect(Buffer.byteLength(pluginManifestBody, 'utf8')).toBeGreaterThan(1024 * 1024);
     const fixture = await createCandidateFixture({
       includeUiRenderer: false,
-      pluginManifestBody: `${' '.repeat(1024 * 1024)}${validManifest}`,
+      pluginManifestBody,
       omitPaths: [
         'package/dist/happier-plugin-ui/ui-artifacts.json',
         'package/dist/happier-plugin-ui/hosted-web/panel/entry.mjs',
@@ -470,8 +666,24 @@ describe('stageDownloadedNpmArtifactCandidate', () => {
     await expect(stageDownloadedNpmArtifactCandidate({
       candidate: fixture.candidate,
       stagingParentPath: fixture.stagingParentPath,
-      archiveLimits: { maxCompressionRatio: 10_000 },
-    })).resolves.toMatchObject({ ok: false, rejection: { code: 'manifest_invalid' } });
+    })).resolves.toMatchObject({ ok: true });
+  });
+
+  it('still rejects a control artifact that exceeds the retained metadata byte bound', async () => {
+    // Dropping the manifest ceiling was surgical. `package.json` and
+    // `ui-artifacts.json` are small-by-construction control artifacts that the
+    // staging reader parses before anything else has validated them, so they
+    // keep the bounded-read metadata limit the manifest no longer carries.
+    // High-entropy padding: compressible filler would trip the archive's
+    // compression-ratio guard first and this test would stop discriminating.
+    const fixture = await createCandidateFixture({
+      extraPackageJson: { padding: randomBytes(600 * 1024).toString('hex') },
+    });
+
+    await expect(stageDownloadedNpmArtifactCandidate({
+      candidate: fixture.candidate,
+      stagingParentPath: fixture.stagingParentPath,
+    })).resolves.toMatchObject({ ok: false, rejection: { code: 'package_json_invalid' } });
   });
 
   it('accepts unrelated future package happier metadata while keeping manifest ownership exact', async () => {
@@ -589,7 +801,7 @@ describe('stageDownloadedNpmArtifactCandidate', () => {
     expect(result).toMatchObject({ ok: false, rejection: { code: 'staging_aborted' } });
   });
 
-  it('binds the canonical root digest to exact package and inventory bytes', async () => {
+  it('retains the exact per-file manifest digest without publishing aggregate tree or package JSON digest fields', async () => {
     const firstFixture = await createCandidateFixture();
     const secondFixture = await createCandidateFixture({
       packageFiles: ['.happier-plugin', 'dist', 'NOTICE'],
@@ -600,8 +812,15 @@ describe('stageDownloadedNpmArtifactCandidate', () => {
     const second = await stageDownloadedNpmArtifactCandidate({ candidate: secondFixture.candidate, stagingParentPath: secondFixture.stagingParentPath });
     if (!first.ok || !second.ok) throw new Error('Expected both fixtures to stage');
 
-    expect(first.candidate.rootDigest).not.toBe(second.candidate.rootDigest);
-    expect(first.candidate.packageJsonDigest).toBe(`sha256:${createHash('sha256').update(await readFile(join(first.candidate.rootPath, 'package.json'))).digest('hex')}`);
+    expect(first.candidate).not.toHaveProperty('rootDigest');
+    expect(second.candidate).not.toHaveProperty('rootDigest');
+    const firstManifestFile = first.candidate.inventory.find((file) => file.path === '.happier-plugin/plugin.json');
+    const secondManifestFile = second.candidate.inventory.find((file) => file.path === '.happier-plugin/plugin.json');
+    expect(first.candidate.manifest.digest).toBe(firstManifestFile?.digest);
+    expect(second.candidate.manifest.digest).toBe(secondManifestFile?.digest);
+    expect(firstManifestFile?.digest).toBe(secondManifestFile?.digest);
+    expect(first.candidate).not.toHaveProperty('packageJsonDigest');
+    expect(second.candidate).not.toHaveProperty('packageJsonDigest');
   });
 
   it('refuses cleanup requests that do not identify an operation-owned staging root', async () => {

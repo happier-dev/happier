@@ -9,7 +9,7 @@ import {
 } from '@happier-dev/protocol';
 import { PluginError } from '@happier-dev/plugin-sdk';
 
-import type { ResolvedContributionRegistry, ResolvedInstallableContribution } from '@/plugins/projection/registry/types';
+import type { ResolvedInstallableContribution } from '@/plugins/projection/registry/types';
 
 const MAX_V2_MANAGED_DEPENDENCIES_PER_GENERATION = 128;
 const MAX_V2_MANAGED_DEPENDENCY_SOURCES = 8;
@@ -17,7 +17,7 @@ const MAX_V2_MANAGED_DEPENDENCY_DECLARATION_BYTES = 64 * 1024;
 const MAX_V2_MANAGED_DEPENDENCY_ARCHITECTURES = 16;
 const MAX_V2_MANAGED_DEPENDENCY_ARCHITECTURE_CODE_UNITS = 64;
 
-type HostPlatform = 'darwin' | 'linux' | 'win32';
+export type ManagedDependencyHostPlatform = 'darwin' | 'linux' | 'win32';
 type DeclaredPlatform = NonNullable<PluginManagedDependencyContributionV2['platforms']>[number];
 type V2Source = PluginManagedDependencyContributionV2['sources'][number];
 
@@ -32,12 +32,10 @@ export type ManagedDependencySourceModelEntry = Readonly<{
 }>;
 
 export type ManagedDependencySourceModelDependency = Readonly<{
-    generationId: string;
     provenance: ResolvedInstallableContribution['provenance'];
     identity: PluginContributionIdentityV1;
     qualifiedId: string;
     manifestPath: string;
-    manifestDigest: string;
     pluginSource: NonNullable<ResolvedInstallableContribution['sourceSpec']>;
     definition: PluginManagedDependencyContributionV2;
     availability:
@@ -47,21 +45,21 @@ export type ManagedDependencySourceModelDependency = Readonly<{
 }>;
 
 export type V2ManagedDependencySourceModel = Readonly<{
-    generationId: string;
+    platform: ManagedDependencyHostPlatform;
+    architecture: string;
     snapshot(): Readonly<{
-        generationId: string;
         retired: boolean;
         dependencies: readonly ManagedDependencySourceModelDependency[];
     }>;
     resolve(identity: PluginContributionIdentityV1): ManagedDependencySourceModelDependency;
-    retireGeneration(generationId: string): void;
+    retire(): void;
 }>;
 
 function fail(code: string, message: string): never {
     throw new PluginError({ code, message });
 }
 
-function platformName(platform: HostPlatform): DeclaredPlatform {
+function platformName(platform: ManagedDependencyHostPlatform): DeclaredPlatform {
     return platform === 'darwin' ? 'macos' : platform === 'win32' ? 'windows' : 'linux';
 }
 
@@ -111,15 +109,10 @@ type ResolvedV2ManagedDependencyContribution = Readonly<
 >;
 
 export function createV2ManagedDependencySourceModel(params: Readonly<{
-    generationId: string;
-    platform: HostPlatform;
+    platform: ManagedDependencyHostPlatform;
     architecture: string;
     contributions: readonly ResolvedInstallableContribution[];
 }>): V2ManagedDependencySourceModel {
-    const generationId = params.generationId;
-    if (!generationId || generationId.trim() !== generationId) {
-        return fail('plugin_managed_dependency_generation_invalid', 'Managed dependency generation identity is required');
-    }
     if (
         !(['darwin', 'linux', 'win32'] as const).includes(params.platform)
         || !params.architecture
@@ -166,8 +159,6 @@ export function createV2ManagedDependencySourceModel(params: Readonly<{
             || candidate.pluginId.trim() !== candidate.pluginId
             || !candidate.manifestPath
             || candidate.manifestPath.trim() !== candidate.manifestPath
-            || !candidate.manifestDigest
-            || candidate.manifestDigest.trim() !== candidate.manifestDigest
             || !parsedSource?.success
             || parsedSource.data.kind !== candidate.source.kind
         ) {
@@ -208,12 +199,10 @@ export function createV2ManagedDependencySourceModel(params: Readonly<{
                 ? Object.freeze({ state: 'unavailable' as const, code: 'plugin_managed_dependency_architecture_unsupported' as const })
                 : Object.freeze({ state: 'available' as const });
         const dependency = Object.freeze({
-            generationId,
             provenance: candidate.provenance,
             identity,
             qualifiedId,
             manifestPath: candidate.manifestPath,
-            manifestDigest: candidate.manifestDigest,
             pluginSource: parsedSource.data,
             definition: candidate.definition,
             availability,
@@ -232,35 +221,17 @@ export function createV2ManagedDependencySourceModel(params: Readonly<{
     }
 
     return Object.freeze({
-        generationId,
-        snapshot: () => Object.freeze({ generationId, retired, dependencies: Object.freeze([...dependencies]) }),
+        platform: params.platform,
+        architecture: params.architecture,
+        snapshot: () => Object.freeze({ retired, dependencies: Object.freeze([...dependencies]) }),
         resolve(identity) {
             assertCurrent();
             const parsedIdentity = createPluginContributionIdentity(identity);
             return byQualifiedId.get(buildQualifiedPluginContributionKey(parsedIdentity))
                 ?? fail('plugin_managed_dependency_undeclared', 'Managed dependency is not declared for this plugin');
         },
-        retireGeneration(candidateGenerationId) {
-            if (candidateGenerationId !== generationId) {
-                fail('plugin_managed_dependency_generation_mismatch', 'Managed dependency generation identity does not match');
-            }
+        retire() {
             retired = true;
         },
-    });
-}
-
-export function createV2ManagedDependencySourceModelFromRegistry(params: Readonly<{
-    registry: Pick<ResolvedContributionRegistry, 'generationId' | 'managedDependencies'>;
-    platform: HostPlatform;
-    architecture: string;
-}>): V2ManagedDependencySourceModel {
-    if (!params.registry.generationId) {
-        return fail('plugin_managed_dependency_generation_invalid', 'Resolved contribution registry generation is required');
-    }
-    return createV2ManagedDependencySourceModel({
-        generationId: params.registry.generationId,
-        platform: params.platform,
-        architecture: params.architecture,
-        contributions: params.registry.managedDependencies ?? [],
     });
 }

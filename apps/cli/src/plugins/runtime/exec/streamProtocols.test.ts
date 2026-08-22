@@ -4,7 +4,10 @@ import { describe, expect, it } from 'vitest';
 
 import type { ExecProcessHandleV1 } from './privateContract';
 
-import { PluginExecClientError } from './errors';
+import {
+    PluginExecClientError,
+    createPluginExecClientExitError,
+} from './errors';
 import { createFramedBytesProcessClient } from './framedBytes';
 import { createJsonStreamProcessClient } from './jsonStream';
 import { encodeContentLengthFrame } from './contentLengthFraming';
@@ -146,6 +149,67 @@ describe('A.13p.1 stream protocol clients', () => {
             },
         });
         expect(writes).toEqual([]);
+    });
+
+    it('keeps clean JSON-stream EOF authoritative after process exit zero', async () => {
+        const stdout = new PassThrough();
+        const protocol = createJsonStreamProcessClient({
+            process: createInMemoryProcess([]),
+            stdout,
+            write: async () => undefined,
+        });
+
+        stdout.end();
+        await expect(protocol.client.closed).resolves.toBeUndefined();
+        protocol.settleExit(createPluginExecClientExitError({ exitCode: 0, signal: null }));
+
+        await expect(protocol.client.writeRecord({ afterExit: true })).resolves.toMatchObject({
+            kind: 'rejected_before_write',
+            error: { code: 'PLUGIN_EXEC_CLIENT_DISPOSED' },
+        });
+    });
+
+    it('retains a later nonzero JSON-stream exit for calls made after terminal settlement', async () => {
+        const stdout = new PassThrough();
+        const protocol = createJsonStreamProcessClient({
+            process: createInMemoryProcess([]),
+            stdout,
+            write: async () => undefined,
+        });
+
+        stdout.end();
+        await expect(protocol.client.closed).resolves.toBeUndefined();
+        protocol.settleExit(createPluginExecClientExitError({ exitCode: 23, signal: null }, 'nested failure'));
+
+        await expect(protocol.client.writeRecord({ afterExit: true })).resolves.toMatchObject({
+            kind: 'rejected_before_write',
+            error: {
+                code: 'PLUGIN_EXEC_CLIENT_EXITED',
+                message: expect.stringMatching(/exit code 23.*nested failure/u),
+            },
+        });
+    });
+
+    it('installs explicit JSON-stream disposal after clean EOF for later calls', async () => {
+        const stdout = new PassThrough();
+        const explicitDisposal = new PluginExecClientError(
+            'PLUGIN_TEST_EXPLICIT_DISPOSAL',
+            'explicit test disposal',
+        );
+        const protocol = createJsonStreamProcessClient({
+            process: createInMemoryProcess([]),
+            stdout,
+            write: async () => undefined,
+        });
+
+        stdout.end();
+        await expect(protocol.client.closed).resolves.toBeUndefined();
+        protocol.dispose(explicitDisposal);
+
+        await expect(protocol.client.writeRecord({ afterDispose: true })).resolves.toEqual({
+            kind: 'rejected_before_write',
+            error: explicitDisposal,
+        });
     });
 
     it('classifies already-aborted JSON stream writes as rejected before write', async () => {

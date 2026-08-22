@@ -46,16 +46,6 @@ function mergeLimits(overrides: Partial<PortableArchiveLimits> | undefined): Por
   return limits;
 }
 
-function createRootDigest(inventory: readonly PortableArchiveFile[]): `sha256:${string}` {
-  const hash = createHash('sha256').update('happier.portableArchive.fileSet.v1\n');
-  for (const file of inventory) {
-    hash.update(`path:${Buffer.byteLength(file.path, 'utf8')}\n`);
-    hash.update(file.path);
-    hash.update(`\nbytes:${file.byteLength}\ndigest:${file.digest}\n`);
-  }
-  return `sha256:${hash.digest('hex')}`;
-}
-
 function classifyUnexpectedFailure(cause: unknown): PortableArchiveError {
   if (cause instanceof PortableArchiveError) return cause;
   const code = (cause as NodeJS.ErrnoException | null)?.code;
@@ -265,7 +255,6 @@ export async function extractPortableTarGzipArchive(
     const result: ExtractedPortableArchive = Object.freeze({
       rootPath: extractedRoot,
       inventory: Object.freeze(inventory),
-      rootDigest: createRootDigest(inventory),
     });
     ownedExtractions.set(result, { cleanupPromise: null });
     return result;

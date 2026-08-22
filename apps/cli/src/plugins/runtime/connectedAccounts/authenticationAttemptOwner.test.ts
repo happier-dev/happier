@@ -14,6 +14,9 @@ import {
     type ConnectedAccountAttemptSettlementRequest,
     type ConnectedAccountOAuthCallbackCompletion,
 } from './authenticationAttemptOwner';
+import {
+    ConnectedAccountRuntimeInvocationNotStartedError,
+} from './contributionRegistry';
 
 const service = Object.freeze({ pluginId: 'acme.accounts', localId: 'work' });
 const accountA = Object.freeze({ service, accountId: 'account-a' });
@@ -94,6 +97,7 @@ function manualMode(
 function oauthMode(input: Readonly<{
     outcomeReconciliation: 'providerCheck' | 'lateEvidence' | 'none';
     configuration?: PluginConnectedAccountConfigurationV2;
+    callbackUrl?: string;
 }>): ConnectedAccountAttemptModeAdmission {
     return Object.freeze({
         service,
@@ -102,6 +106,7 @@ function oauthMode(input: Readonly<{
             kind: 'oauthAuthorizationCode',
             pkce: 'required',
             outcomeReconciliation: input.outcomeReconciliation,
+            ...(input.callbackUrl ? { callbackUrl: input.callbackUrl } : {}),
             ...(input.configuration ? { configuration: input.configuration } : {}),
         }),
         generation: 'generation-1',
@@ -406,6 +411,38 @@ function durableOAuthTransactions(input: Readonly<{
 }
 
 describe('ConnectedAccountAuthenticationAttemptOwner', () => {
+    it('passes a provider-fixed OAuth callback to the single transaction owner', async () => {
+        const create = vi.fn(async (transactionInput: Readonly<{
+            snapshot: TestOAuthTransactionSnapshot;
+        }>) => ({
+            snapshot: transactionInput.snapshot,
+            request: Object.freeze({
+                callbackUrl: 'https://provider.example/oauth/callback',
+                state: 'state-1',
+                pkce: Object.freeze({ challenge: 'challenge-1', method: 'S256' as const }),
+            }),
+            acknowledge: async () => {},
+            acceptCompletion: async () => {
+                throw new Error('not invoked');
+            },
+            close: async () => {},
+        }));
+        const h = harness({
+            admittedMode: oauthMode({
+                outcomeReconciliation: 'none',
+                callbackUrl: 'https://provider.example/oauth/callback',
+            }),
+            oauthTransactions: { create, read: vi.fn(async () => null) },
+        });
+
+        await h.owner.beginConnect({ service, modeId: 'oauth' });
+        await waitForAttemptStatus(h.owner, 'attempt-1', 'awaitingOAuth');
+
+        expect(create).toHaveBeenCalledWith(expect.objectContaining({
+            callbackUrl: 'https://provider.example/oauth/callback',
+        }));
+    });
+
     it('revalidates mutable peer admission before continuing an active provider attempt', async () => {
         let peer: 'v4' | 'exact-old' = 'v4';
         const assertEffectfulOperationAllowed = vi.fn(() => {
@@ -1039,6 +1076,103 @@ describe('ConnectedAccountAuthenticationAttemptOwner', () => {
             code: 'connected_account_runtime_unavailable',
         });
         expect(h.admitConfiguration).not.toHaveBeenCalled();
+        expect(h.invoke).not.toHaveBeenCalled();
+    });
+
+    it('reports runtime generation drift, not unavailability, when admission rejects with the typed currentness error', async () => {
+        const h = harness({
+            admitMode: async () => {
+                throw new ConnectedAccountRuntimeInvocationNotStartedError();
+            },
+        });
+
+        await expect(h.owner.beginConnect({
+            service,
+            modeId: 'manual',
+        })).resolves.toEqual({
+            status: 'conflict',
+            code: 'connected_account_runtime_generation_changed',
+        });
+        expect(h.admitConfiguration).not.toHaveBeenCalled();
+        expect(h.invoke).not.toHaveBeenCalled();
+    });
+
+    it('reports runtime generation drift when a restored device attempt observes the typed currentness error', async () => {
+        const clear = vi.fn(async () => {});
+        const h = harness({
+            admitMode: async () => {
+                throw new ConnectedAccountRuntimeInvocationNotStartedError();
+            },
+            deviceTransactions: {
+                acknowledge: vi.fn(async () => {}),
+                read: vi.fn(async () => Object.freeze({
+                    attemptId: 'attempt-restored',
+                    createdAtMs: 1_000,
+                    intent: 'connect',
+                    service,
+                    modeId: 'device',
+                    immutableGenerationId: 'artifact-acme-1',
+                    expectedCredentialRevision: null,
+                    expectedCredentialConfigurationRevision: null,
+                    expectedConfigurationRevision: 'configuration-1',
+                    expiresAtMs: 61_000,
+                    pollIntervalMs: 5_000,
+                    nextPollAtMs: 6_000,
+                    verificationUri: 'https://provider.example/device',
+                    userCode: 'ABCD',
+                    stagedCredentials: Object.freeze({}),
+                })),
+                clear,
+            },
+        });
+
+        await expect(h.owner.resumeDevice({
+            attemptId: 'attempt-restored',
+        })).resolves.toEqual({
+            status: 'conflict',
+            attemptId: 'attempt-restored',
+            code: 'connected_account_runtime_generation_changed',
+        });
+        expect(clear).toHaveBeenCalledWith('attempt-restored');
+        expect(h.invoke).not.toHaveBeenCalled();
+    });
+
+    it('reports runtime generation drift when continueConnect observes the typed currentness error', async () => {
+        const target = Object.freeze({
+            kind: 'attempt' as const,
+            attemptId: 'attempt-1',
+            service,
+            modeId: 'oauth',
+        });
+        let rejectRuntimeCurrentness = false;
+        const h = harness({
+            admittedMode: oauthMode({
+                outcomeReconciliation: 'none',
+                configuration: accountScopedConfiguration(),
+            }),
+            configuration: {
+                status: 'configurationRequired',
+                target,
+                missingFieldIds: ['tenant'],
+            },
+            generationCurrent: async () => {
+                if (rejectRuntimeCurrentness) {
+                    throw new ConnectedAccountRuntimeInvocationNotStartedError();
+                }
+                return true;
+            },
+        });
+        await h.owner.beginConnect({ service, modeId: 'oauth' });
+        rejectRuntimeCurrentness = true;
+
+        await expect(h.owner.continueConnect({
+            attemptId: 'attempt-1',
+            expectedConfigurationRevision: 'configuration-1',
+        })).resolves.toEqual({
+            status: 'conflict',
+            attemptId: 'attempt-1',
+            code: 'connected_account_runtime_generation_changed',
+        });
         expect(h.invoke).not.toHaveBeenCalled();
     });
 
@@ -3363,7 +3497,7 @@ describe('ConnectedAccountAuthenticationAttemptOwner', () => {
                 }
                 return {
                     status: 'rejected',
-                    diagnostic: { code: 'provider_rejected' },
+                    diagnostic: { code: 'provider_rejected', severity: 'error' },
                 };
             },
         });
@@ -4591,6 +4725,59 @@ describe('ConnectedAccountAuthenticationAttemptOwner', () => {
         expect(h.settle).not.toHaveBeenCalled();
     });
 
+    it('accepts only bounded protocol diagnostics from provider results', async () => {
+        const accepted = harness({
+            invoke: async () => ({
+                status: 'rejected',
+                diagnostic: {
+                    code: 'provider_denied',
+                    severity: 'error',
+                    message: 'The provider denied this account.',
+                    details: { retryable: false },
+                    remediation: { kind: 'retry' },
+                },
+            }),
+        });
+        await accepted.owner.beginConnect({ service, modeId: 'manual' });
+        await expect(accepted.owner.submitManual({
+            attemptId: 'attempt-1',
+            fields: { token: 'denied' },
+        })).resolves.toEqual({
+            status: 'rejected',
+            attemptId: 'attempt-1',
+            code: 'provider_denied',
+            diagnostic: {
+                code: 'provider_denied',
+                severity: 'error',
+                message: 'The provider denied this account.',
+                details: { retryable: false },
+                remediation: { kind: 'retry' },
+            },
+        });
+
+        for (const diagnostic of [
+            { code: 'provider_denied' },
+            {
+                code: 'provider_denied',
+                severity: 'error',
+                message: 'x'.repeat(2_049),
+            },
+        ]) {
+            const rejected = harness({
+                invoke: async () => ({ status: 'rejected', diagnostic }),
+            });
+            await rejected.owner.beginConnect({ service, modeId: 'manual' });
+            await expect(rejected.owner.submitManual({
+                attemptId: 'attempt-1',
+                fields: { token: 'denied' },
+            })).resolves.toMatchObject({
+                status: 'reconnectRequired',
+                code: 'connected_account_authentication_outcome_unknown',
+            });
+            expect(rejected.settle).not.toHaveBeenCalled();
+        }
+    });
+
     it('bounds attempt credential staging before any settlement can persist it', async () => {
         const h = harness({
             invoke: async ({ context }) => {
@@ -4648,7 +4835,7 @@ describe('ConnectedAccountAuthenticationAttemptOwner', () => {
         const rejected = harness({
             invoke: async () => ({
                 status: 'rejected',
-                diagnostic: { code: 'provider_denied' },
+                diagnostic: { code: 'provider_denied', severity: 'error' },
             }),
         });
         await rejected.owner.beginConnect({ service, modeId: 'manual' });

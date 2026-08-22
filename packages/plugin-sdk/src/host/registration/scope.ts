@@ -2,7 +2,10 @@ import {
     COMPOSER_ATTACHMENT_RUNTIME_REGISTRATION_FIELDS_V1,
     type ComposerAttachmentRuntimeRegistrationFieldV1,
 } from '@happier-dev/protocol/plugins/contributions/composer-attachments';
-import type { ActionHandler } from '../../actions/service.js';
+import type {
+    ActionHandler,
+    PluginClientActionHandler,
+} from '../../actions/service.js';
 import type {
     AgentExternalSessionObservationContribution,
     AgentExternalSessionsContribution,
@@ -10,6 +13,7 @@ import type {
     ComposerReferenceRuntime,
     HookHandler,
     PluginApi,
+    PluginClientApi,
     PluginMcpDiscoveryHandler,
     PluginMcpServerRuntime,
     PluginNotificationSender,
@@ -37,6 +41,7 @@ import {
 } from '../../sessions/externalSessionTakeover.js';
 import type {
     AgentProviderBindingAdapter,
+    AgentDaemonSpawnHooks,
     AgentRuntimeFactory,
     AgentRuntimeRegistrationOptions,
     AgentSessionRunnerFactoryLocatorV1,
@@ -46,9 +51,13 @@ import type { JsonValue } from '../../identity.js';
 import type { PromptAssetAdapter } from '../../resources.js';
 import type { PluginDynamicResourceRuntime } from '../../services/resources.js';
 import type { PluginConnectedAccountRuntime } from '../../services/index.js';
-import type { ManagedProviderRuntime } from '../../managed-services/contract.js';
+import type {
+    ManagedProviderRuntime,
+    ProviderCatalogParser,
+} from '../../managed-services/contract.js';
 import type { VoiceProviderRuntime } from '../../voice/projections.js';
 import {
+    snapshotManagedProviderRuntime,
     snapshotPromptAssetDescriptor,
     snapshotStaticRegistrationValue,
 } from './staticRegistrationSnapshots.js';
@@ -114,6 +123,11 @@ type StagedAgentRuntimeRegistration = Readonly<{
     externalSessionTakeover?: AgentExternalSessionTakeoverContribution;
 }>;
 
+type StagedProviderRuntimeRegistration = Readonly<{
+    managedRuntime?: ManagedProviderRuntime;
+    catalogParsers?: Readonly<Record<string, ProviderCatalogParser>>;
+}>;
+
 type StagedPluginRuntimeRegistration =
     | Exclude<PluginRuntimeRegistration, Readonly<{ family: 'agents' }>>
     | Readonly<{
@@ -122,7 +136,30 @@ type StagedPluginRuntimeRegistration =
         value: StagedAgentRuntimeRegistration;
     }>;
 
-type PluginRegistrationScopeApi = PluginApi;
+type PluginRegistrationScopeParams = Readonly<{
+    pluginId: string;
+    target: PluginRegistrationScopeTarget;
+    rights: readonly PluginRegistrationRight[];
+    assertAvailable?(): void;
+    onFailure?(message: string): void;
+}>;
+
+type PluginRegistrationScope<TApi extends PluginApi | PluginClientApi> = Readonly<{
+    api: TApi;
+    commit(): readonly PluginRuntimeRegistration[];
+    registrations(): readonly PluginRuntimeRegistration[];
+    dispose(): Promise<void>;
+}>;
+
+type PluginDaemonRegistrationScopeTarget = Extract<
+    PluginRegistrationScopeTarget,
+    Readonly<{ realm: 'daemon' }>
+>;
+
+type PluginClientRegistrationScopeTarget = Extract<
+    PluginRegistrationScopeTarget,
+    Readonly<{ realm: 'client' }>
+>;
 
 type RegistrationState = 'staging' | 'committing' | 'committed' | 'disposed' | 'failed';
 
@@ -170,6 +207,33 @@ function isStructurallyEqual(left: unknown, right: unknown): boolean {
             ));
 }
 
+/**
+ * Captures the staged Provider composite. The managed runtime keeps its exact
+ * static capture, and each contributed catalog format is captured as a direct
+ * callable so it cannot be swapped after commit.
+ */
+function snapshotProviderRuntimeRegistration(
+    staged: Readonly<{
+        managedRuntime?: ManagedProviderRuntime;
+        catalogParsers?: Readonly<Record<string, ProviderCatalogParser>>;
+    }>,
+): PluginRegistrationValueByFamily['providers'] {
+    const catalogParsers = Object.entries(staged.catalogParsers ?? {});
+    for (const [format, parse] of catalogParsers) {
+        if (typeof parse !== 'function') {
+            throw new TypeError(`Provider catalog format '${format}' parser must be a function`);
+        }
+    }
+    return Object.freeze({
+        ...(staged.managedRuntime === undefined
+            ? {}
+            : { managedRuntime: snapshotManagedProviderRuntime(staged.managedRuntime) }),
+        ...(catalogParsers.length === 0
+            ? {}
+            : { catalogParsers: Object.freeze(Object.fromEntries(catalogParsers)) }),
+    });
+}
+
 function freezeRegistration<TFamily extends PluginRegistrationFamily>(
     family: TFamily,
     localId: string,
@@ -198,6 +262,10 @@ const AGENT_EXTERNAL_SESSION_OBSERVATION_KEYS = Object.freeze([
     'describeResource',
     'observeResource',
     'reconcileResource',
+] as const);
+const AGENT_DAEMON_SPAWN_HOOK_KEYS = Object.freeze([
+    'resolveRuntimePrerequisites',
+    'augmentEnv',
 ] as const);
 
 function readOwnEnumerableDataValue(
@@ -241,6 +309,43 @@ function snapshotAgentProviderBindingAdapter(
     });
 }
 
+function snapshotAgentDaemonSpawnHooks(
+    value: AgentDaemonSpawnHooks,
+): AgentDaemonSpawnHooks {
+    const receiver = requireStaticRegistrationObject(value, 'Agent daemon spawn hooks');
+    if (Reflect.ownKeys(receiver).some((key) => (
+        typeof key !== 'string'
+        || !AGENT_DAEMON_SPAWN_HOOK_KEYS.includes(
+            key as (typeof AGENT_DAEMON_SPAWN_HOOK_KEYS)[number],
+        )
+    ))) {
+        throw new TypeError('Agent daemon spawn hooks contain unknown fields');
+    }
+    const resolveRuntimePrerequisites = captureStaticRegistrationMethod<
+        NonNullable<AgentDaemonSpawnHooks['resolveRuntimePrerequisites']>
+    >(
+        receiver,
+        'resolveRuntimePrerequisites',
+        'Agent daemon spawn hooks.resolveRuntimePrerequisites',
+        false,
+    );
+    const augmentEnv = captureStaticRegistrationMethod<
+        NonNullable<AgentDaemonSpawnHooks['augmentEnv']>
+    >(
+        receiver,
+        'augmentEnv',
+        'Agent daemon spawn hooks.augmentEnv',
+        false,
+    );
+    if (!resolveRuntimePrerequisites && !augmentEnv) {
+        throw new TypeError('Agent daemon spawn hooks must define at least one hook');
+    }
+    return Object.freeze({
+        ...(resolveRuntimePrerequisites ? { resolveRuntimePrerequisites } : {}),
+        ...(augmentEnv ? { augmentEnv } : {}),
+    });
+}
+
 function snapshotAgentRuntimeRegistrationOptions(
     options: AgentRuntimeRegistrationOptions | undefined,
 ): AgentRuntimeRegistrationOptions {
@@ -253,7 +358,11 @@ function snapshotAgentRuntimeRegistrationOptions(
         throw new TypeError('Agent runtime registration options must be a plain object');
     }
     const ownKeys = Reflect.ownKeys(options);
-    if (ownKeys.some((key) => key !== 'providerBinding' && key !== 'sessionRunnerFactory')) {
+    if (ownKeys.some((key) => (
+        key !== 'providerBinding'
+        && key !== 'sessionRunnerFactory'
+        && key !== 'daemonSpawnHooks'
+    ))) {
         throw new TypeError('Agent runtime registration options contain unknown fields');
     }
     const providerBinding = ownKeys.includes('providerBinding')
@@ -262,9 +371,13 @@ function snapshotAgentRuntimeRegistrationOptions(
     const sessionRunnerFactory = ownKeys.includes('sessionRunnerFactory')
         ? readOwnEnumerableDataValue(options, 'sessionRunnerFactory')
         : undefined;
+    const daemonSpawnHooks = ownKeys.includes('daemonSpawnHooks')
+        ? readOwnEnumerableDataValue(options, 'daemonSpawnHooks')
+        : undefined;
     const snapshot: {
         providerBinding?: AgentProviderBindingAdapter;
         sessionRunnerFactory?: AgentSessionRunnerFactoryLocatorV1;
+        daemonSpawnHooks?: AgentDaemonSpawnHooks;
     } = {};
     if (providerBinding !== undefined) {
         snapshot.providerBinding = snapshotAgentProviderBindingAdapter(
@@ -328,6 +441,11 @@ function snapshotAgentRuntimeRegistrationOptions(
                 ? { externalSessionsExport: externalSessionsExport as string }
                 : {}),
         });
+    }
+    if (daemonSpawnHooks !== undefined) {
+        snapshot.daemonSpawnHooks = snapshotAgentDaemonSpawnHooks(
+            daemonSpawnHooks as AgentDaemonSpawnHooks,
+        );
     }
     return Object.freeze(snapshot);
 }
@@ -433,6 +551,9 @@ function snapshotAgentRuntimeRegistration(
         ...(options.providerBinding !== undefined ? { providerBinding: options.providerBinding } : {}),
         ...(options.sessionRunnerFactory !== undefined
             ? { sessionRunnerFactory: options.sessionRunnerFactory }
+            : {}),
+        ...(options.daemonSpawnHooks !== undefined
+            ? { daemonSpawnHooks: options.daemonSpawnHooks }
             : {}),
         ...(staged.externalSessions !== undefined
             ? { externalSessions: snapshotAgentExternalSessionsContribution(staged.externalSessions) }
@@ -575,18 +696,15 @@ function connectedAccountRegistrationCorrespondenceError(
  * the SDK testkit. It validates and snapshots author registrations, but cannot
  * install a plugin or publish daemon currentness.
  */
-export function createPluginRegistrationScope(params: Readonly<{
-    pluginId: string;
-    target: PluginRegistrationScopeTarget;
-    rights: readonly PluginRegistrationRight[];
-    assertAvailable?(): void;
-    onFailure?(message: string): void;
-}>): Readonly<{
-    api: PluginRegistrationScopeApi;
-    commit(): readonly PluginRuntimeRegistration[];
-    registrations(): readonly PluginRuntimeRegistration[];
-    dispose(): Promise<void>;
-}> {
+export function createPluginRegistrationScope(
+    params: PluginRegistrationScopeParams & Readonly<{ target: PluginClientRegistrationScopeTarget }>,
+): PluginRegistrationScope<PluginClientApi>;
+export function createPluginRegistrationScope(
+    params: PluginRegistrationScopeParams & Readonly<{ target: PluginDaemonRegistrationScopeTarget }>,
+): PluginRegistrationScope<PluginApi>;
+export function createPluginRegistrationScope(
+    params: PluginRegistrationScopeParams,
+): PluginRegistrationScope<PluginApi | PluginClientApi> {
     const rightsByKey = new Map<string, PluginRegistrationRight>();
     for (const right of params.rights) {
         if (!Object.values(REGISTRATION_FAMILY).includes(right.family as never)) {
@@ -758,6 +876,50 @@ export function createPluginRegistrationScope(params: Readonly<{
         register(REGISTRATION_FAMILY.voiceProviders, localId, runtime);
     }
 
+    function registerProviderFields(
+        localId: string,
+        fields: StagedProviderRuntimeRegistration,
+        duplicateLabel: string,
+    ): void {
+        assertRegistrationOpen();
+        assertRegistrationLocalId(localId);
+        const key = registrationKey(REGISTRATION_FAMILY.providers, localId);
+        if (!rightsByKey.has(key)) {
+            fail(`Plugin '${params.pluginId}' cannot register undeclared contribution 'providers/${localId}'`);
+        }
+        const existing = stagedByKey.get(key);
+        if (existing && existing.family !== REGISTRATION_FAMILY.providers) {
+            fail(`Plugin '${params.pluginId}' registered conflicting contribution 'providers/${localId}'`);
+        }
+        const current = existing?.value as StagedProviderRuntimeRegistration | undefined;
+        if (fields.managedRuntime !== undefined && current?.managedRuntime !== undefined) {
+            fail(`Plugin '${params.pluginId}' registered duplicate ${duplicateLabel} for Provider '${localId}'`);
+        }
+        const catalogParsers = {
+            ...(current?.catalogParsers ?? {}),
+        };
+        for (const [format, parse] of Object.entries(fields.catalogParsers ?? {})) {
+            if (Object.hasOwn(catalogParsers, format)) {
+                fail(`Plugin '${params.pluginId}' registered duplicate catalog format '${format}' for Provider '${localId}'`);
+            }
+            catalogParsers[format] = parse;
+        }
+        stagedByKey.set(key, Object.freeze({
+            family: REGISTRATION_FAMILY.providers,
+            localId,
+            value: Object.freeze({
+                ...(fields.managedRuntime !== undefined
+                    ? { managedRuntime: fields.managedRuntime }
+                    : current?.managedRuntime !== undefined
+                        ? { managedRuntime: current.managedRuntime }
+                        : {}),
+                ...(Object.keys(catalogParsers).length > 0
+                    ? { catalogParsers: Object.freeze(catalogParsers) }
+                    : {}),
+            }),
+        }));
+    }
+
     function registerAgentFields(
         localId: string,
         fields: StagedAgentRuntimeRegistration,
@@ -809,9 +971,20 @@ export function createPluginRegistrationScope(params: Readonly<{
         }));
     }
 
-    const actions: PluginApi['actions'] = Object.freeze({
-        register<I extends JsonValue = JsonValue, O extends JsonValue | void = JsonValue | void>(id: string, handler: ActionHandler<I, O>) {
-            return register(REGISTRATION_FAMILY.actions, id, (input, context) => handler(input as I, context));
+    const daemonActions: PluginApi['actions'] = Object.freeze({
+        register<I extends JsonValue = JsonValue, O extends JsonValue | void = JsonValue | void>(
+            id: string,
+            handler: ActionHandler<I, O>,
+        ) {
+            return register(REGISTRATION_FAMILY.actions, id, handler);
+        },
+    });
+    const clientActions: PluginClientApi['actions'] = Object.freeze({
+        register<I extends JsonValue = JsonValue, O extends JsonValue | void = JsonValue | void>(
+            id: string,
+            handler: PluginClientActionHandler<I, O>,
+        ) {
+            return register(REGISTRATION_FAMILY.actions, id, handler);
         },
     });
     const hooks: PluginApi['hooks'] = Object.freeze({
@@ -826,8 +999,12 @@ export function createPluginRegistrationScope(params: Readonly<{
             );
         },
     });
-    const api: PluginRegistrationScopeApi = Object.freeze({
-        actions,
+    const voiceProviders: PluginClientApi['voiceProviders'] = Object.freeze({
+        register: (id: string, runtime: VoiceProviderRuntime) =>
+            registerVoiceProvider(id, runtime),
+    });
+    const daemonApi: PluginApi = Object.freeze({
+        actions: daemonActions,
         hooks,
         events,
         agents: Object.freeze({
@@ -911,7 +1088,23 @@ export function createPluginRegistrationScope(params: Readonly<{
         }),
         providers: Object.freeze({
             register: (id: string, runtime: ManagedProviderRuntime) =>
-                register(REGISTRATION_FAMILY.providers, id, runtime),
+                registerProviderFields(
+                    id,
+                    Object.freeze({ managedRuntime: runtime }),
+                    'managed Provider runtime',
+                ),
+            registerCatalogParser: (
+                id: string,
+                format: string,
+                parse: ProviderCatalogParser,
+            ) => {
+                assertRegistrationLocalId(format);
+                return registerProviderFields(
+                    id,
+                    Object.freeze({ catalogParsers: Object.freeze({ [format]: parse }) }),
+                    'Provider catalog format',
+                );
+            },
         }),
         scm: Object.freeze({
             registerHostingProvider: (id: string, runtime: HostingProviderRuntime) =>
@@ -931,10 +1124,7 @@ export function createPluginRegistrationScope(params: Readonly<{
             register: (id: string, interceptor: PluginRequestInterceptor) =>
                 register(REGISTRATION_FAMILY.interceptors, id, interceptor),
         }),
-        voiceProviders: Object.freeze({
-            register: (id: string, runtime: VoiceProviderRuntime) =>
-                registerVoiceProvider(id, runtime),
-        }),
+        voiceProviders,
         composerReferences: Object.freeze({
             register: (id: string, runtime: ComposerReferenceRuntime) =>
                 register(REGISTRATION_FAMILY.composerReferences, id, runtime),
@@ -954,6 +1144,13 @@ export function createPluginRegistrationScope(params: Readonly<{
                 register(REGISTRATION_FAMILY.backgroundServices, id, runner),
         }),
     });
+    const clientApi: PluginClientApi = Object.freeze({
+        actions: clientActions,
+        voiceProviders,
+    });
+    const api: PluginApi | PluginClientApi = params.target.realm === 'client'
+        ? clientApi
+        : daemonApi;
 
     return Object.freeze({
         api,
@@ -972,6 +1169,8 @@ export function createPluginRegistrationScope(params: Readonly<{
                 try {
                     if (staged.family === REGISTRATION_FAMILY.agents) {
                         capturedValue = snapshotAgentRuntimeRegistration(staged.value);
+                    } else if (staged.family === REGISTRATION_FAMILY.providers) {
+                        capturedValue = snapshotProviderRuntimeRegistration(staged.value);
                     } else {
                         capturedValue = snapshotStaticRegistrationValue(
                             staged.family,

@@ -1,11 +1,16 @@
 import type { PluginRegistryCommitResult } from './commitCoordinator';
-import type { PluginRegistryCommitRecord } from './commitRecord';
+import { projectPluginFailureText } from '../../runtime/lifecycle/utils';
+import {
+  pluginRegistryCommitRecordsEqual,
+  type PluginRegistryCommitRecord,
+} from './commitRecord';
 
 type CommitCoordinator = Readonly<{
   readCurrent: () => Promise<PluginRegistryCommitRecord | null>;
   commit: (input: Readonly<{
     transactionId: string;
     baseRevision: number | null;
+    expectedCurrent: PluginRegistryCommitRecord | null;
     signal?: AbortSignal;
     buildNext: (current: PluginRegistryCommitRecord | null) => PluginRegistryCommitRecord | Promise<PluginRegistryCommitRecord>;
   }>) => Promise<PluginRegistryCommitResult>;
@@ -43,6 +48,7 @@ export type PluginRegistryPendingSurface =
 type TransactionOperation<TPrepared, TActivated> = Readonly<{
   transactionId: string;
   baseRevision: number | null;
+  expectedCurrent: PluginRegistryCommitRecord | null;
   signal?: AbortSignal;
   prepare: () => Promise<TPrepared>;
   validateAndActivate: (prepared: TPrepared) => Promise<TActivated>;
@@ -67,8 +73,12 @@ export type PluginRegistryTransactionExecutionResult<TActivated> =
       retryActivation: TActivated;
     }>);
 
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+function projectTransactionFailureText(error: unknown): string {
+  return projectPluginFailureText(error);
+}
+
+function projectTransactionFailureMessage(message: string): string {
+  return projectTransactionFailureText(new Error(message));
 }
 
 export function createPluginRegistryTransactionService(input: Readonly<{
@@ -86,7 +96,7 @@ export function createPluginRegistryTransactionService(input: Readonly<{
       try {
         prepared = await operation.prepare();
       } catch (error) {
-        return { status: 'precommit_failed', phase: 'prepare', message: errorMessage(error) };
+        return { status: 'precommit_failed', phase: 'prepare', message: projectTransactionFailureText(error) };
       }
 
       let activation: Readonly<{ value: TActivated }> | null = null;
@@ -98,7 +108,7 @@ export function createPluginRegistryTransactionService(input: Readonly<{
           await operation.abortPrepared(prepared, activation?.value);
           return undefined;
         } catch (error) {
-          return errorMessage(error);
+          return projectTransactionFailureText(error);
         }
       }
 
@@ -107,7 +117,7 @@ export function createPluginRegistryTransactionService(input: Readonly<{
       } catch (error) {
         const abortMessage = await abortOnce();
         return {
-          status: 'precommit_failed', phase: 'validateAndActivate', message: errorMessage(error),
+          status: 'precommit_failed', phase: 'validateAndActivate', message: projectTransactionFailureText(error),
           ...(abortMessage ? { abortMessage } : {}),
         };
       }
@@ -118,12 +128,15 @@ export function createPluginRegistryTransactionService(input: Readonly<{
       } catch (error) {
         const abortMessage = await abortOnce();
         return {
-          status: 'precommit_failed', phase: 'readCurrent', message: errorMessage(error),
+          status: 'precommit_failed', phase: 'readCurrent', message: projectTransactionFailureText(error),
           ...(abortMessage ? { abortMessage } : {}),
         };
       }
       const actualRevision = current?.revision ?? null;
-      if (actualRevision !== operation.baseRevision) {
+      if (
+        actualRevision !== operation.baseRevision
+        || !pluginRegistryCommitRecordsEqual(current, operation.expectedCurrent)
+      ) {
         if (operation.retainActivatedOnConflict && activation) {
           return {
             status: 'conflict',
@@ -145,7 +158,7 @@ export function createPluginRegistryTransactionService(input: Readonly<{
       } catch (error) {
         const abortMessage = await abortOnce();
         return {
-          status: 'precommit_failed', phase: 'persist', message: errorMessage(error),
+          status: 'precommit_failed', phase: 'persist', message: projectTransactionFailureText(error),
           ...(abortMessage ? { abortMessage } : {}),
         };
       }
@@ -155,13 +168,14 @@ export function createPluginRegistryTransactionService(input: Readonly<{
         commitResult = await input.coordinator.commit({
           transactionId: operation.transactionId,
           baseRevision: operation.baseRevision,
+          expectedCurrent: operation.expectedCurrent,
           ...(operation.signal ? { signal: operation.signal } : {}),
           buildNext: () => next,
         });
       } catch (error) {
         const abortMessage = await abortOnce();
         return {
-          status: 'precommit_failed', phase: 'commit', message: errorMessage(error),
+          status: 'precommit_failed', phase: 'commit', message: projectTransactionFailureText(error),
           ...(abortMessage ? { abortMessage } : {}),
         };
       }
@@ -181,14 +195,14 @@ export function createPluginRegistryTransactionService(input: Readonly<{
             status: 'outcomeUnknown',
             record: commitResult.record,
             phase: 'adoption',
-            message: errorMessage(error),
+            message: projectTransactionFailureText(error),
           };
         }
         return {
           status: 'outcomeUnknown',
           record: commitResult.record,
           phase: 'durability',
-          message: commitResult.message,
+          message: projectTransactionFailureMessage(commitResult.message),
         };
       }
       if (commitResult.status !== 'committed') {
@@ -221,7 +235,7 @@ export function createPluginRegistryTransactionService(input: Readonly<{
           status: 'outcomeUnknown',
           record,
           phase: 'adoption',
-          message: errorMessage(error),
+          message: projectTransactionFailureText(error),
         };
       }
       try {
@@ -233,14 +247,16 @@ export function createPluginRegistryTransactionService(input: Readonly<{
             applied: true,
             ...(appliedGenerationsByPluginId ? { appliedGenerationsByPluginId } : {}),
             pendingSurfaces: Object.freeze(['reconciliation']),
-            message: reconciliation.message ?? 'Registry reconciliation is retryable',
+            message: reconciliation.message === undefined
+              ? 'Registry reconciliation is retryable'
+              : projectTransactionFailureMessage(reconciliation.message),
           };
         }
       } catch (error) {
         return {
           status: 'committed', record, applied: true,
           ...(appliedGenerationsByPluginId ? { appliedGenerationsByPluginId } : {}),
-          pendingSurfaces: Object.freeze(['reconciliation']), message: errorMessage(error),
+          pendingSurfaces: Object.freeze(['reconciliation']), message: projectTransactionFailureText(error),
         };
       }
       try {
@@ -249,7 +265,7 @@ export function createPluginRegistryTransactionService(input: Readonly<{
         return {
           status: 'committed', record, applied: true,
           ...(appliedGenerationsByPluginId ? { appliedGenerationsByPluginId } : {}),
-          pendingSurfaces: Object.freeze(['retirement']), message: errorMessage(error),
+          pendingSurfaces: Object.freeze(['retirement']), message: projectTransactionFailureText(error),
         };
       }
       try {
@@ -258,7 +274,7 @@ export function createPluginRegistryTransactionService(input: Readonly<{
         return {
           status: 'committed', record, applied: true,
           ...(appliedGenerationsByPluginId ? { appliedGenerationsByPluginId } : {}),
-          pendingSurfaces: Object.freeze(['cleanup']), message: errorMessage(error),
+          pendingSurfaces: Object.freeze(['cleanup']), message: projectTransactionFailureText(error),
         };
       }
       return {

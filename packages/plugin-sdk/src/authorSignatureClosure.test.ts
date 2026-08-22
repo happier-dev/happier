@@ -55,27 +55,60 @@ describe('author signature closure source contract', () => {
         expect(declarationText('PluginHostOwnedAgentDeclaration')).toContain('AgentContribution');
         expect(declarationText('PluginHostOwnedAgentDeclaration')).not.toContain('PluginAgentDeclaration');
 
+        // The Agent authoring grammar has exactly one spelling: the
+        // Protocol-owned `AgentContribution` row projected above. A second,
+        // hand-written mirror in this file is a split-brain that silently
+        // re-closes unions Protocol deliberately opened — the wire protocol
+        // among them — so no mirror declaration may exist at all.
+        const localTypeNames = sourceFile.statements.flatMap((statement) => (
+            ts.isTypeAliasDeclaration(statement) ? [statement.name.text] : []
+        ));
+        expect(localTypeNames).not.toContain('PluginAgentDeclaration');
+        expect(localTypeNames).not.toContain('PluginAgentDisplayDeclaration');
+        expect(localTypeNames).not.toContain('PluginAgentProviderRequirements');
+        expect(sourceText).not.toContain(
+            "'anthropic' | 'openai-chat' | 'openai-responses' | 'ollama-native'",
+        );
+
         expect(declarationText('DefinePluginInput')).toContain('McpServerContribution');
         expect(declarationText('DefinePluginInput')).toContain('McpDiscoverySourceContribution');
         expect(declarationText('DefinePluginInput')).not.toContain('PluginMcpServerDeclaration');
         expect(declarationText('DefinePluginInput')).not.toContain('PluginMcpDiscoverySourceDeclaration');
 
-        const definition = sourceFile.statements.flatMap((statement) => (
+        const definePluginInputSignature = declarationText('DefinePluginInput');
+        expect(definePluginInputSignature).not.toContain('ValidatedPluginAgentDefinitions');
+        expect(definePluginInputSignature).not.toContain('ValidatedPluginAgentDefinition');
+        expect(definePluginInputSignature).not.toContain('PluginAgentExternalSessionsFacetRule');
+        expect(definePluginInputSignature).toContain("readonly ('terminal' | 'externalSessions')[]");
+        expect(definePluginInputSignature).toContain('externalSessions: AgentExternalSessionsContribution');
+        expect(definePluginInputSignature).toContain('externalSessions?: never');
+        expect(definePluginInputSignature).toContain('AgentExternalSessionHooksContribution');
+        expect(definePluginInputSignature).toContain('AgentExternalSessionObservationContribution');
+        expect(definePluginInputSignature).toContain('AgentExternalSessionTakeoverContribution');
+
+        const functionDeclaration = sourceFile.statements.find((statement): statement is ts.FunctionDeclaration => (
+            ts.isFunctionDeclaration(statement)
+            && statement.name?.text === 'definePlugin'
+        ));
+        const variableDeclaration = sourceFile.statements.flatMap((statement) => (
             ts.isVariableStatement(statement) ? statement.declarationList.declarations : []
         )).find((declaration) => (
             ts.isIdentifier(declaration.name) && declaration.name.text === 'definePlugin'
         ));
-        const publicSignature = definition?.type?.getText(sourceFile);
+        const publicSignature = functionDeclaration?.getText(sourceFile)
+            ?? variableDeclaration?.type?.getText(sourceFile);
         expect(publicSignature).toContain('DefinePluginInput');
         expect(publicSignature).toContain('DefinedPluginActionContracts<TPluginId, TActions>');
         expect(publicSignature).not.toContain('ProjectedDefinedPluginActionContracts');
         expect(sourceText).not.toContain('ProjectedDefinedPluginActionContracts');
     });
 
-    it('keeps the approved Composer effect and parser contract directly nameable by authors', async () => {
-        const [sourceText, publicSource] = await Promise.all([
+    it('keeps every named declarative grammar dependency directly nameable through the canonical manifest author spec', async () => {
+        const [sourceText, publicSource, rootPublicSource, uiPublicSource] = await Promise.all([
             readFile(new URL('./manifest.ts', import.meta.url), 'utf8'),
             readFile(new URL('./manifest/index.public.ts', import.meta.url), 'utf8'),
+            readFile(new URL('./index.public.ts', import.meta.url), 'utf8'),
+            readFile(new URL('./ui/index.public.ts', import.meta.url), 'utf8'),
         ]);
         const sourceFile = ts.createSourceFile(
             'manifest.ts',
@@ -88,6 +121,10 @@ describe('author signature closure source contract', () => {
             ts.isTypeAliasDeclaration(statement)
             && statement.name.text === 'PluginDeclarativeComposerApplyEffectV1'
         ));
+        const actionNode = sourceFile.statements.find((statement): statement is ts.TypeAliasDeclaration => (
+            ts.isTypeAliasDeclaration(statement)
+            && statement.name.text === 'PluginDeclarativeActionNodeV2'
+        ));
         const identitySchema = sourceFile.statements.flatMap((statement) => (
             ts.isVariableStatement(statement) ? statement.declarationList.declarations : []
         )).find((declaration) => (
@@ -98,12 +135,40 @@ describe('author signature closure source contract', () => {
         expect(effect).toBeDefined();
         expect(effect && hasExportedType(sourceFile, effect.name.text)).toBe(true);
         const effectSignature = effect?.type.getText(sourceFile) ?? '';
+        expect(actionNode?.type.getText(sourceFile)).toContain('PluginDeclarativeComposerApplyEffectV1');
         expect(effectSignature).toContain("kind: 'composerApply'");
-        expect(effectSignature).toContain('expectedRevision: number');
-        expect(effectSignature).toContain('operations: readonly ComposerOperationV1[]');
-        expect(publicSource).toContain(
-            "export type { PluginDeclarativeComposerApplyEffectV1 } from '../manifest.js';",
+        expect(effectSignature).toContain('PluginJsonValueV2');
+        expect(effectSignature).toContain('ComposerContentMediaKindV1');
+        expect(effectSignature).not.toContain('DeclarationMutable');
+        expect(effectSignature).not.toContain('ComposerOperationV1');
+        expect(rootPublicSource).toContain(
+            "export type { PluginJsonValueV2 } from './identity.js';",
         );
+        expect(rootPublicSource).toContain('ComposerContentMediaKindV1,');
+        expect(rootPublicSource).toContain('ComposerContentMimeTypeV1,');
+        expect(uiPublicSource).toContain(
+            "export type { PluginUiIconTokenV1 } from '../ui.js';",
+        );
+        expect(uiPublicSource).toContain(
+            "export type { PluginUiAttachmentToneV1 } from '../ui.js';",
+        );
+        for (const name of [
+            'PluginDeclarativeActionVariantV2',
+            'PluginCollectionProjectedScalarFieldRefV1',
+            'PluginCollectionRowCommandV1',
+            'PluginDeclarativeRowNodeV2',
+            'PluginDeclarativeMetadataEntryV2',
+            'PluginDeclarativeStateV2',
+            'PluginDeclarativeComposerApplyEffectV1',
+        ]) {
+            expect(hasExportedType(sourceFile, name), name).toBe(true);
+            expect(publicSource, name).toContain(
+                `export type { ${name} } from '../manifest.js';`,
+            );
+        }
+        expect(publicSource).not.toContain('MutableComposerTransactionV1');
+
+        expect(sourceText).toContain("from '@happier-dev/protocol/plugins/manifest';");
 
         const identitySchemaSignature = identitySchema?.type?.getText(sourceFile) ?? '';
         expect(identitySchemaSignature).toBe('ProtocolComposableSchema<PluginContributionIdentity>');

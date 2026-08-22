@@ -5,13 +5,15 @@ import type {
 } from '@happier-dev/protocol';
 import type {
     AgentExternalSessionLinkData,
+} from '@happier-dev/plugin-sdk/sessions/external';
+import type {
     AgentExternalSessionSource,
-} from '@happier-dev/plugin-sdk/experimental/sessions';
+} from '@happier-dev/plugin-sdk/sessions/external';
 
 import { executeExternalSessionLinkEnsureAction } from '@/session/actions/externalSessions/discoveryLinkActions';
 import { resolveExternalSessionSourceKeyOwner } from '@/session/actions/externalSessions/providerOpsResolution';
 import { acquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
-import { readCredentials } from '@/persistence';
+import { readStoredCredentials } from '@/persistence';
 import {
     loadCanonicalCurrentExternalSessionStatusDemandLink,
 } from '@/api/session/external/leases/applyExternalSessionStatusDemandBatch';
@@ -32,6 +34,7 @@ import {
 import { loadLinkedExternalSessionFromRaw } from '@/api/session/external/takeover/loadLinkedExternalSession';
 import { deepEqual } from '@/utils/deterministicJson';
 import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { fetchAccountEncryptionCurrentness } from '@/api/client/connectedServiceCredentialApi';
 
 import {
     createQualifiedExternalSessionHookIngress,
@@ -146,7 +149,7 @@ export async function resolveDurableCurrentLink(
             sessionId: request.sessionId,
         });
     }
-    const credentials = await readCredentials().catch(() => null);
+    const credentials = await readStoredCredentials().catch(() => null);
     if (!credentials) return null;
     const sourceKeyOwner = await resolveExternalSessionSourceKeyOwner(
         request.agentId as ExternalSessionsAgentId,
@@ -166,8 +169,14 @@ export async function resolveDurableCurrentLink(
         sourceKey: sourceKeyOwner.sourceKey,
         releasedSourceKeys,
     });
+    const accountEncryptionCurrentness = await fetchAccountEncryptionCurrentness({
+        token: credentials.token,
+        ...(request.signal ? { signal: request.signal } : {}),
+    }).catch(() => null);
+    if (!accountEncryptionCurrentness) return { state: 'blocked' };
     const lookup = await resolveExternalSessionIndexedTagLookup({
         credentials,
+        accountEncryptionMode: accountEncryptionCurrentness.mode,
         machineId: request.machineId,
         agentId: request.agentId as ExternalSessionsAgentId,
         remoteSessionId: request.identity.remoteSessionId,
@@ -197,6 +206,7 @@ export async function resolveDurableCurrentLink(
     const loaded = await loadLinkedExternalSessionFromRaw({
         credentials,
         rawSession: lookup.existing.rawSession,
+        accountEncryptionMode: accountEncryptionCurrentness.mode,
         machineId: request.machineId,
     }).catch(() => null);
     if (!loaded?.ok) return { state: 'blocked' };

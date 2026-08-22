@@ -29,6 +29,7 @@ import {
     canonicalizePath as sourceCanonicalizePath,
     canonicalizePathSync as sourceCanonicalizePathSync,
     expandHomePath as sourceExpandHomePath,
+    isCanonicalAbsolutePathInsideRoot as sourceIsCanonicalAbsolutePathInsideRoot,
     resolveHomeDirFromEnvironment as sourceResolveHomeDirFromEnvironment,
     resolveConfiguredPath as sourceResolveConfiguredPath,
 } from './sessions/fileStores/paths.js';
@@ -40,11 +41,13 @@ describe('EU-3 async and filesystem package-local projections', () => {
             'raceWithTimeout',
             'sleep',
             'sleepWithSignal',
+            'throwIfAborted',
         ]);
         expect(asyncProjection.createCoalescedScheduler).toBe(sourceCreateCoalescedScheduler);
         expect(asyncProjection.raceWithTimeout).toBe(timeoutSource.raceWithTimeout);
         expect(asyncProjection.sleep).toBe(timeoutSource.sleep);
         expect(asyncProjection.sleepWithSignal).toBe(timeoutSource.sleepWithSignal);
+        expect(asyncProjection.throwIfAborted).toBe(timeoutSource.throwIfAborted);
 
         expectTypeOf<ProjectedCoalescedScheduler>().toEqualTypeOf<SourceCoalescedScheduler>();
         expectTypeOf<ProjectedRaceWithTimeoutResult<string>>()
@@ -61,6 +64,7 @@ type RetiredTimeoutService = never; /* @sdk-negative-type-case-end */
             'canonicalizePath',
             'canonicalizePathSync',
             'expandHomePath',
+            'isCanonicalAbsolutePathInsideRoot',
             'resolveConfiguredPath',
             'resolveHomeDirFromEnvironment',
             'withExclusiveFileLock',
@@ -71,6 +75,7 @@ type RetiredTimeoutService = never; /* @sdk-negative-type-case-end */
         expect(fsProjection.canonicalizePath).toBe(sourceCanonicalizePath);
         expect(fsProjection.canonicalizePathSync).toBe(sourceCanonicalizePathSync);
         expect(fsProjection.expandHomePath).toBe(sourceExpandHomePath);
+        expect(fsProjection.isCanonicalAbsolutePathInsideRoot).toBe(sourceIsCanonicalAbsolutePathInsideRoot);
         expect(fsProjection.resolveHomeDirFromEnvironment).toBe(sourceResolveHomeDirFromEnvironment);
         expect(fsProjection.resolveConfiguredPath).toBe(sourceResolveConfiguredPath);
         expect(fsProjection.writeSecureTempTextFileSync).toBe(sourceWriteSecureTempTextFileSync);

@@ -292,6 +292,7 @@ export const contributorPlugin = definePlugin({
   actions: {
     'non-protocol-local-action': {
       title: 'Inspect an external source',
+      execution: { target: 'daemon' },
       surfaces: ['plugin'],
       inputSchema: inspectionInputSchema,
       resultSchema: inspectionResultSchema,
@@ -389,6 +390,7 @@ if (false) {
     actions: {
       'declared-but-different-action': {
         title: 'Declared action',
+        execution: { target: 'daemon' },
         surfaces: ['plugin'],
         inputSchema: inspectionInputSchema,
         resultSchema: inspectionResultSchema,

@@ -19,15 +19,17 @@ happier plugins pack .
 Focused typecheck diagnostics remain available through
 `happier plugins author typecheck .`.
 
-The canonical external source of truth is the generated
-`.happier-plugin/plugin.json`. It is cold JSON with current daemon and
-development entrypoints and manifest-declared contribution ids. Executable
-binding happens through a named `activate(api: PluginApi)` export.
+The canonical external source of truth is the generated package's
+`src/index.ts`: `definePlugin(...)` derives its named `manifest` and `activate`
+exports there. Packing evaluates that declared source once, validates the
+canonical projection, and writes `.happier-plugin/plugin.json` into the
+archive. A newly generated code-defined package does not keep a competing
+checked-in JSON manifest beside its source.
 
-For UI templates, use the supported scaffold command:
+For UI templates, use the supported creation command:
 
 ```bash
-happier plugins scaffold ./my-plugin \
+happier plugins create ./my-plugin \
   --id com.example.my-plugin \
   --name "My plugin" \
   --ui reactNative

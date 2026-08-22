@@ -1,7 +1,12 @@
 import type { PluginDiagnosticRecordV1 } from '@happier-dev/protocol';
 
 import type { PluginTargetActivationFact } from '@/plugins/runtime/lifecycle/activation/facts';
-import { buildPluginContributionIntrospectionQualifiedId, enrichPluginDiagnosticRecord } from './project';
+import { projectPluginFailureText } from '@/plugins/runtime/lifecycle/utils';
+import {
+  buildPluginContributionIntrospectionQualifiedId,
+  enrichPluginDiagnosticRecord,
+  readPluginContributionIntrospectionIdentityValue,
+} from './project';
 import type { PluginContributionIntrospectionCandidate, PluginContributionRuntimeFacts } from './types';
 
 export type { PluginTargetActivationFact } from '@/plugins/runtime/lifecycle/activation/facts';
@@ -52,10 +57,6 @@ export function adaptTargetActivationFacts(params: Readonly<{
   targetActivationFacts: readonly PluginTargetActivationFact[];
   runtimeState: 'current' | 'disposed';
 }>): PluginTargetActivationIntrospectionSnapshot {
-  const reportedGenerations = new Set(params.targetActivationFacts.map((fact) => fact.generation));
-  if (reportedGenerations.size > 1) {
-    throw new Error(`Target activation facts contain multiple generations: ${[...reportedGenerations].sort().join(', ')}`);
-  }
   const candidatesByPluginId = new Map<string, PluginContributionIntrospectionCandidate[]>();
   for (const candidate of params.candidates) {
     const entries = candidatesByPluginId.get(candidate.pluginId) ?? [];
@@ -103,15 +104,15 @@ export function adaptTargetActivationFacts(params: Readonly<{
       candidate.registration === 'required'
       && (candidate.runtimeRegistrationHost ?? 'daemon') === activationRegistrationHost
     ));
-    const expectedRequired = new Set(requiredCandidates.map((candidate) => {
-      if (candidate.identity.kind !== 'localId') {
-        throw new Error(`Registration-required contribution '${buildPluginContributionIntrospectionQualifiedId(candidate)}' must use a local-id identity`);
-      }
-      return targetRefKey({
-        family: candidate.runtimeRegistrationFamily ?? candidate.family,
-        localId: candidate.identity.localId,
-      });
-    }));
+    // Registration demand is keyed by the canonical identity value the catalog
+    // derives from the family's identity field — the same string the daemon's
+    // registration rights carry. The introspection identity kind only records
+    // how that value is presented, so a delegated-domain family such as
+    // `providers` registers exactly like a local-id one.
+    const expectedRequired = new Set(requiredCandidates.map((candidate) => targetRefKey({
+      family: candidate.runtimeRegistrationFamily ?? candidate.family,
+      localId: readPluginContributionIntrospectionIdentityValue(candidate.identity),
+    })));
     const reportedRequired = assertUniqueRefs(fact.required, 'required', fact.pluginId);
     const reportedBound = assertUniqueRefs(fact.bound, 'bound', fact.pluginId);
     for (const ref of reportedRequired) {
@@ -130,19 +131,19 @@ export function adaptTargetActivationFacts(params: Readonly<{
       throw new Error(`Inactive target '${fact.pluginId}' cannot publish bound contributions`);
     }
 
-    const currentGeneration = fact.generation === String(params.generation);
     const currentMetadata = (
       fact.pluginVersion === currentPlugin.pluginVersion && fact.source === currentPlugin.source
     );
-    const usable = params.runtimeState === 'current' && currentGeneration && currentMetadata;
+    // `generation` on an activation fact is contributor-local provenance. The
+    // snapshot generation is the public projection revision, which may advance
+    // when a different contributor changes while this activation remains live.
+    const usable = params.runtimeState === 'current' && currentMetadata;
     const unavailable = !usable || fact.status === 'unavailable';
-    const unavailableReason = params.runtimeState === 'disposed'
+    const unavailableReason = projectPluginFailureText(new Error(params.runtimeState === 'disposed'
       ? `Activation generation '${fact.generation}' was disposed`
-      : !currentGeneration
-        ? `Activation generation '${fact.generation}' is stale; current generation is '${params.generation}'`
-        : !currentMetadata
-          ? `Activation facts for '${fact.pluginId}' describe ${fact.source} version '${fact.pluginVersion}', not current ${currentPlugin.source} version '${currentPlugin.pluginVersion}'`
-        : fact.diagnostics[0]?.message ?? `Plugin '${fact.pluginId}' activation is unavailable`;
+      : !currentMetadata
+        ? `Activation facts for '${fact.pluginId}' describe ${fact.source} version '${fact.pluginVersion}', not current ${currentPlugin.source} version '${currentPlugin.pluginVersion}'`
+        : fact.diagnostics[0]?.message ?? `Plugin '${fact.pluginId}' activation is unavailable`));
 
     for (const candidate of requiredCandidates) {
       const qualifiedId = buildPluginContributionIntrospectionQualifiedId(candidate);
@@ -167,13 +168,11 @@ export function adaptTargetActivationFacts(params: Readonly<{
 
     const stateDiagnostic = params.runtimeState === 'disposed'
       ? { code: 'plugin_activation_generation_disposed', message: unavailableReason }
-      : !currentGeneration
-        ? { code: 'plugin_activation_generation_stale', message: unavailableReason }
-        : !currentMetadata
-          ? { code: 'plugin_activation_metadata_stale', message: unavailableReason }
-          : fact.status === 'unavailable' && fact.diagnostics.length === 0
-            ? { code: 'plugin_activation_unavailable', message: unavailableReason }
-            : null;
+      : !currentMetadata
+        ? { code: 'plugin_activation_metadata_stale', message: unavailableReason }
+        : fact.status === 'unavailable' && fact.diagnostics.length === 0
+          ? { code: 'plugin_activation_unavailable', message: unavailableReason }
+          : null;
     const diagnostics: readonly Readonly<{
       diagnostic: Readonly<{ code: string; message: string }>;
       ordinal: number;

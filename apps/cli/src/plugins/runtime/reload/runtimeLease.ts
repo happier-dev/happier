@@ -11,6 +11,9 @@ export function createEphemeralPluginRuntimeRegistryLease(
     return {
         registry,
         source: 'ephemeral',
+        resolveCurrentPluginMaterializationRef: registry.resolveCurrentPluginMaterializationRef,
+        resolveCurrentMediatorContributionMaterializationRef:
+            registry.resolveCurrentMediatorContributionMaterializationRef,
         release: async () => {
             if (released) return;
             released = true;
@@ -22,7 +25,6 @@ export function createEphemeralPluginRuntimeRegistryLease(
 export async function acquireAuthoritativePluginRuntimeRegistryLease(params?: Readonly<{
     happyHomeDir?: string;
     controller?: PluginReloadController;
-    resolveRuntimeRegistry?: () => Promise<ResolvedExecutablePluginRuntimeRegistry>;
 }>): Promise<PluginRuntimeRegistryLease> {
     // Callers may scope the registry resolution to a specific home directory (tests, multi-home
     // diagnostics). The singleton controller is global and reads `configuration.happyHomeDir`,
@@ -46,7 +48,6 @@ export async function acquireAuthoritativePluginRuntimeRegistryLease(params?: Re
 export function tryAcquireAuthoritativePluginRuntimeRegistryLease(params?: Readonly<{
     happyHomeDir?: string;
     controller?: PluginReloadController;
-    resolveRuntimeRegistry?: () => Promise<ResolvedExecutablePluginRuntimeRegistry>;
 }>): PluginRuntimeRegistryLease | null {
     const shouldUseSingletonController = typeof params?.happyHomeDir !== 'string'
         || params.happyHomeDir === configuration.happyHomeDir;

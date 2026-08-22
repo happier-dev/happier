@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
-import { join, relative, resolve } from 'node:path';
+import { join, resolve } from 'node:path';
+import { isCanonicalAbsolutePathInsideRoot } from '@happier-dev/cli-common/path';
 
 export type TerminalBreadcrumbValidationContext<TInput> = Readonly<{
   input: TInput;
@@ -33,11 +34,6 @@ export type TerminalBreadcrumbResolverConfig<TInput, TSource> = Readonly<{
 
 export type TerminalBreadcrumbResolver<TInput, TSource> = (input: TInput) => TSource | undefined;
 
-function isPathInside(parentPath: string, childPath: string): boolean {
-  const relativePath = relative(resolve(parentPath), resolve(childPath));
-  return relativePath === '' || (!relativePath.startsWith('..') && !relativePath.includes('..\\'));
-}
-
 function readTextFile(path: string): string {
   return readFileSync(path, 'utf8');
 }
@@ -66,7 +62,7 @@ export function createTerminalBreadcrumbResolver<TInput, TSource>(
     const agentDir = canonicalizePath(resolveAgentDir(config.agentDir, input));
     const breadcrumbRoot = canonicalizePath(join(agentDir, config.breadcrumbSubdir));
     const breadcrumbPath = canonicalizePath(join(breadcrumbRoot, terminalId));
-    if (!isPathInside(breadcrumbRoot, breadcrumbPath)) return undefined;
+    if (!isCanonicalAbsolutePathInsideRoot(breadcrumbRoot, breadcrumbPath)) return undefined;
     const contentReader = config.readTextFile ?? readTextFile;
 
     let content: string;
@@ -85,7 +81,7 @@ export function createTerminalBreadcrumbResolver<TInput, TSource>(
 
     const sessionsRoot = canonicalizePath(join(agentDir, config.sessionsSubdir));
     const sessionFilePath = canonicalizePath(sessionFileRaw);
-    if (!isPathInside(sessionsRoot, sessionFilePath)) return undefined;
+    if (!isCanonicalAbsolutePathInsideRoot(sessionsRoot, sessionFilePath)) return undefined;
 
     const context: TerminalBreadcrumbValidationContext<TInput> = {
       input,

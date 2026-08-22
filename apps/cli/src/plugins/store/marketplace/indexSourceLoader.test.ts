@@ -7,10 +7,87 @@ import type { MarketplaceIndexSourceSnapshotV1 } from '@happier-dev/protocol';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { loadMarketplaceIndexSource, parseCommunityNpmDiscovery } from './indexSourceLoader';
+import type { NpmRegistryJsonClient } from '@/plugins/distribution/npm/resolver';
 import { createPluginStateStore } from '@/plugins/store/state.testkit';
 
 const homes: string[] = [];
 const source = { id: 'marketplace:curated', title: 'Curated', kind: 'curated' as const, sourceUrl: 'https://marketplace.example.test/catalog.json' };
+const communitySource = { id: 'marketplace:community-npm', title: 'Community npm', kind: 'community-npm' as const, sourceUrl: 'https://registry.npmjs.org/-/v1/search?text=keywords:happier-plugin&size=100' };
+const COMMUNITY_INTEGRITY = 'sha512-AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQ==';
+
+function communityHappierMetadata(params: Readonly<{
+  marketplaceDiscovery?: Record<string, unknown>;
+  compatibilityProjection?: Record<string, unknown>;
+}> = {}) {
+  const compatibilityProjection = params.compatibilityProjection ?? {
+    version: 1,
+    manifest: {
+      schemaVersion: 2,
+      id: 'acme.community',
+      version: '1.0.0',
+      displayName: 'Community',
+      engines: { happier: '>=0.0.0' },
+      runtime: { apiVersion: 1 },
+      entrypoints: { daemon: './dist/index.js' },
+      hostAccess: { required: [], optional: [] },
+      contributes: {},
+    },
+    uiArtifacts: { version: 1, entries: [] },
+  };
+  return {
+    manifest: '.happier-plugin/plugin.json',
+    compatibilityProjection,
+    marketplaceDiscovery: params.marketplaceDiscovery ?? {
+      version: 1,
+      pluginId: 'acme.community',
+      manifestDigest: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      display: { title: 'Community', description: null },
+      summary: {
+        contributions: [],
+        requiredHostAccess: [],
+        optionalHostAccess: [],
+        executableRealms: ['daemon'],
+      },
+    },
+  };
+}
+
+function communityNpmSearchPayload(packageNames: readonly string[] = ['@acme/community']) {
+  return {
+    objects: packageNames.map((packageName) => ({
+      package: {
+        name: packageName,
+        version: '1.0.0',
+        description: 'Community plugin',
+        keywords: ['happier-plugin'],
+        date: '2026-08-17T00:00:00.000Z',
+        links: { npm: `https://www.npmjs.com/package/${packageName}` },
+        publisher: { username: 'acme' },
+        maintainers: [{ username: 'acme' }],
+      },
+    })),
+  };
+}
+
+function communityNpmMetadataClient(happier: unknown): NpmRegistryJsonClient {
+  return {
+    getJson: vi.fn(async () => ({
+      name: '@acme/community',
+      'dist-tags': { latest: '1.0.0' },
+      versions: {
+        '1.0.0': {
+          name: '@acme/community',
+          version: '1.0.0',
+          happier,
+          dist: {
+            integrity: COMMUNITY_INTEGRITY,
+            tarball: 'https://registry.npmjs.org/@acme/community/-/community-1.0.0.tgz',
+          },
+        },
+      },
+    })),
+  };
+}
 
 function snapshot(): MarketplaceIndexSourceSnapshotV1 {
   return {
@@ -61,6 +138,27 @@ describe('loadMarketplaceIndexSource', () => {
     expect(offline.diagnostics).toEqual(expect.arrayContaining([expect.objectContaining({ code: 'marketplace_source_refresh_failed' })]));
   });
 
+  it('projects source failures before publishing marketplace diagnostics', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'happier-marketplace-index-'));
+    homes.push(home);
+    const result = await loadMarketplaceIndexSource({
+      source,
+      happyHomeDir: home,
+      fetchImpl: async () => {
+        throw new Error(
+          `client_secret=marketplace-loader-secret at /Users/alice/private/catalog.json ${'🙂'.repeat(1_200)}`,
+        );
+      },
+    });
+    const message = result.diagnostics[0]?.message ?? '';
+
+    expect(message).toContain('[REDACTED]');
+    expect(message).toContain('[REDACTED_PATH]');
+    expect(message).not.toContain('marketplace-loader-secret');
+    expect(message).not.toContain('/Users/alice/private');
+    expect(Buffer.byteLength(message, 'utf8')).toBeLessThanOrEqual(2_048);
+  });
+
   it('labels a rejected online refresh as stale rather than offline', async () => {
     const home = await mkdtemp(join(tmpdir(), 'happier-marketplace-index-'));
     homes.push(home);
@@ -76,21 +174,87 @@ describe('loadMarketplaceIndexSource', () => {
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
-  it('maps only bounded happier-plugin npm metadata and labels it unreviewed', () => {
-    const communitySource = { id: 'marketplace:community-npm', title: 'Community npm', kind: 'community-npm' as const, sourceUrl: 'https://registry.npmjs.org/-/v1/search?text=keywords:happier-plugin&size=100' };
-    const happierPlugin = {
-      pluginId: 'acme.community', publisher: { id: 'acme', displayName: 'Acme' }, display: { title: 'Community', description: null },
-      distribution: { kind: 'npm', registryOrigin: 'https://registry.npmjs.org', packageName: '@acme/community', version: '1.0.0', integrity: 'sha512-AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQ==' },
-      manifestDigest: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', compatibility: { happier: '>=1', platforms: ['linux'] },
-      summary: { contributions: ['agents'], requiredHostAccess: [], optionalHostAccess: [], executableRealms: ['daemon'] }, categories: ['agents'], media: [], links: {},
-    };
-    const parsed = parseCommunityNpmDiscovery({ objects: [
-      { package: { name: '@acme/community', version: '1.0.0', happierPlugin } },
-      { package: { name: '@attacker/other', version: '1.0.0', happierPlugin } },
-      { package: { name: 'not-a-plugin' } },
-    ] }, communitySource);
+  it('loads bounded exact package metadata for npm search candidates before mapping community listings', async () => {
+    const client = communityNpmMetadataClient(communityHappierMetadata());
+    const parsed = await parseCommunityNpmDiscovery(communityNpmSearchPayload(), communitySource, { client });
     expect(parsed.entries).toHaveLength(1);
     expect(parsed.entries[0]).toMatchObject({ pluginId: 'acme.community', review: { status: 'unreviewed' }, updatePolicy: 'manual' });
+    expect(client.getJson).toHaveBeenCalledWith(expect.objectContaining({
+      url: 'https://registry.npmjs.org/%40acme%2Fcommunity',
+      headers: { accept: 'application/json' },
+    }));
+  });
+
+  it('rejects community metadata whose discovery projection contradicts its generated compatibility manifest', async () => {
+    const client = communityNpmMetadataClient(communityHappierMetadata({
+      marketplaceDiscovery: {
+        version: 1,
+        pluginId: 'acme.attacker',
+        manifestDigest: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        display: { title: 'Community', description: null },
+        summary: { contributions: [], requiredHostAccess: [], optionalHostAccess: [], executableRealms: ['daemon'] },
+      },
+    }));
+
+    await expect(parseCommunityNpmDiscovery(communityNpmSearchPayload(), communitySource, { client })).resolves.toMatchObject({ entries: [] });
+  });
+
+  it('rejects community metadata whose discovery display contradicts its generated compatibility manifest', async () => {
+    const client = communityNpmMetadataClient(communityHappierMetadata({
+      marketplaceDiscovery: {
+        version: 1,
+        pluginId: 'acme.community',
+        manifestDigest: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        display: { title: 'Spoofed community', description: null },
+        summary: { contributions: [], requiredHostAccess: [], optionalHostAccess: [], executableRealms: ['daemon'] },
+      },
+    }));
+
+    await expect(parseCommunityNpmDiscovery(communityNpmSearchPayload(), communitySource, { client })).resolves.toMatchObject({ entries: [] });
+  });
+
+  it('keeps healthy community listings visible when another package metadata request fails', async () => {
+    const healthyClient = communityNpmMetadataClient(communityHappierMetadata());
+    const client: NpmRegistryJsonClient = {
+      getJson: vi.fn(async (input) => {
+        if (input.url.endsWith('%40acme%2Funavailable')) {
+          throw new Error('Npm registry request timed out with token=community-discovery-secret at /Users/alice/private');
+        }
+        return await healthyClient.getJson(input);
+      }),
+    };
+
+    const parsed = await parseCommunityNpmDiscovery(
+      communityNpmSearchPayload(['@acme/unavailable', '@acme/community']),
+      communitySource,
+      { client },
+    );
+
+    expect(parsed.entries).toMatchObject([{ pluginId: 'acme.community' }]);
+    expect(parsed.diagnostics).toEqual([{
+      code: 'community_npm_metadata_skipped',
+      message: 'Skipped metadata for 1 community npm package.',
+    }]);
+    expect(parsed.diagnostics[0]?.message).not.toContain('community-discovery-secret');
+    expect(parsed.diagnostics[0]?.message).not.toContain('/Users/alice/private');
+  });
+
+  it('reports a community metadata timeout as a skipped candidate instead of taking the source unavailable', async () => {
+    const client: NpmRegistryJsonClient = {
+      getJson: vi.fn(async () => { throw new Error('Npm registry request timed out'); }),
+    };
+
+    const result = await loadMarketplaceIndexSource({
+      source: communitySource,
+      fetchImpl: async () => new Response(JSON.stringify(communityNpmSearchPayload()), { status: 200 }),
+      communityNpmClient: client,
+    });
+
+    expect(result).toMatchObject({ freshness: { state: 'fresh' }, entries: [] });
+    expect(result.diagnostics).toEqual([{
+      code: 'community_npm_metadata_skipped',
+      message: 'Skipped metadata for 1 community npm package.',
+    }]);
   });
 
   it('reports corrupt cache truth when refresh is unavailable', async () => {

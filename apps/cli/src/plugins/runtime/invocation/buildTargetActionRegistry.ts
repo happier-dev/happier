@@ -1,7 +1,10 @@
 import {
+    buildQualifiedPluginContributionKey,
+    createPluginContributionIdentity,
     derivePluginDaemonContributionRegistrationRights,
     PluginActionConfirmationV2Schema,
     PluginActionDangerLevelV2Schema,
+    type PluginActionPresentUserGatePolicy,
 } from '@happier-dev/protocol';
 
 import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
@@ -12,7 +15,10 @@ import {
     createTargetActionInvocationRegistry,
     type TargetActionDefinition,
 } from './targetActionRegistry';
-import type { ResolvedTargetAction } from './actionExecutor';
+import {
+    resolveCatalogTargetActionPolicy,
+    type ResolvedTargetAction,
+} from './actionExecutor';
 import type {
     ResolveTargetActionHostBinding,
     ResolveTargetActionHostPolicy,
@@ -26,6 +32,18 @@ import {
 } from '../policy/evaluate';
 import type { CreatePluginInvocationServices } from './services/types';
 import type { HostCurrentSessionUiServices } from '@/agent/runtime/state/currentSessionUiTypes';
+import {
+    revalidateRegistryConnectedAccountActionFormInput,
+    resolveRegistryConnectedAccountActionPurposeBindingSnapshot,
+    type ResolveRegistryConnectedAccountOptionalAccess,
+    type ResolveRegistryCurrentAutomationEventHistoryGapSource,
+} from '@/daemon/connectedServices/purposeBindings/deriveRegistryConnectedAccountPurposeAuthorizations';
+import type { ConnectedAccountPurposeBindingOwner } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
+import type {
+    JsonValue,
+    PluginInvocationContext,
+} from '@happier-dev/plugin-sdk';
+import type { ActionHandler } from '@happier-dev/plugin-sdk/actions';
 
 type TargetRegistration = Readonly<{
     pluginId: string;
@@ -64,20 +82,61 @@ function readTargetDefinition(value: unknown): TargetActionDefinition {
     });
 }
 
+/**
+ * Re-enters an opaque committed Action registration only after this daemon
+ * owner has selected the target realm. The target registry validates both
+ * JSON input and result around this call.
+ */
+function invokeCapturedDaemonActionHandler(
+    handler: Extract<ContributionRuntimeRegistration, Readonly<{ family: 'actions' }>>['value'],
+    input: JsonValue,
+    context: PluginInvocationContext,
+): ReturnType<ActionHandler> {
+    return Reflect.apply(handler, undefined, [input, context]);
+}
+
 export function buildTargetActionInvocationRegistry(params: Readonly<{
     contributes: ResolvedContributionRegistry;
-    generation: number;
+    /** Exact admitted bytes for the target Action caller provenance. */
+    immutableGenerationIdsByPluginId?: ReadonlyMap<string, string>;
+    /** Resolved runtime-owned dispatch-time caller provenance lookup. */
+    resolveCurrentPluginMaterializationRef?(pluginId: string): import('@happier-dev/protocol').PluginMachineMaterializationRefV1 | null;
+    /** Canonical committed immutable-generation authority for final Action admission. */
+    resolveCurrentPluginImmutableGenerationId?(pluginId: string): Promise<string | null>;
     targetRegistrations: readonly TargetRegistration[];
     targetActivationFacts: readonly PluginTargetActivationFact[];
     resolveAuthorizationFacts: (action: ResolvedTargetAction) => TargetActionAuthorizationFacts;
+    /** Read-only runtime final-policy owner; this registry only delegates. */
+    resolvePresentUserGatePolicy?: (
+        pluginId: string,
+        localId: string,
+    ) => PluginActionPresentUserGatePolicy | null;
     resolveHostBinding: ResolveTargetActionHostBinding;
     resolveHostPolicy: ResolveTargetActionHostPolicy;
     createServices: CreatePluginInvocationServices;
+    redactDiagnosticText?: (
+        scope: Readonly<{ pluginId: string; generation: string; correlationId: string }>,
+        value: string,
+    ) => string;
+    completeDiagnosticScope?: (
+        scope: Readonly<{ pluginId: string; generation: string; correlationId: string }>,
+    ) => void;
     resolveGenerationLifecycle?(pluginId: string): Readonly<{
         isCurrent(): boolean;
         retirementSignal: AbortSignal;
     }>;
     resolveCurrentSessionUi?: (sessionId: string) => HostCurrentSessionUiServices | null;
+    /** Exact declaration-routed Account truth for submitted dynamic form refs. */
+    actionFormConnectedAccounts?: Pick<
+        ConnectedAccountPurposeBindingOwner,
+        'resolveBindingIntent'
+    > & Partial<Pick<ConnectedAccountPurposeBindingOwner, 'activatePurposeBindings'>>;
+    /**
+     * Canonical host-only source resolver for declared history-gap recovery
+     * bindings. The target Action lifecycle remains the operation owner.
+     */
+    resolveAutomationEventHistoryGapSource?: ResolveRegistryCurrentAutomationEventHistoryGapSource;
+    resolveOptionalAccess?: ResolveRegistryConnectedAccountOptionalAccess;
 }>) {
     const expectedActions = params.contributes.activationTargets.flatMap((target) => (
         derivePluginDaemonContributionRegistrationRights(
@@ -89,16 +148,14 @@ export function buildTargetActionInvocationRegistry(params: Readonly<{
     const readActions = () => {
         const expectedActionKeys = new Set<string>();
         for (const fact of params.targetActivationFacts) {
-            if (fact.status !== 'active' || fact.generation !== String(params.generation)) continue;
+            if (fact.status !== 'active') continue;
             for (const required of fact.required) {
                 if (required.family === 'actions') expectedActionKeys.add(`${fact.pluginId}\u0000${required.localId}`);
             }
         }
         const actions = params.targetRegistrations.flatMap((entry) => {
             if (entry.registration.family !== 'actions') return [];
-            if (entry.generation !== String(params.generation)) {
-                throw new Error(`Target action '${entry.pluginId}/actions/${entry.registration.localId}' was published for the wrong generation`);
-            }
+            const capturedHandler = entry.registration.value;
             const activationFact = params.targetActivationFacts.find((fact) => (
                 fact.pluginId === entry.pluginId
                 && fact.generation === entry.generation
@@ -122,6 +179,12 @@ export function buildTargetActionInvocationRegistry(params: Readonly<{
                 pluginId: entry.pluginId,
                 pluginVersion: activationFact.pluginVersion,
                 generation: entry.generation,
+                ...(params.immutableGenerationIdsByPluginId?.get(entry.pluginId) === undefined
+                    ? {}
+                    : {
+                        immutableGenerationId:
+                            params.immutableGenerationIdsByPluginId.get(entry.pluginId),
+                    }),
                 localId: entry.registration.localId,
                 definition: {
                     ...readTargetDefinition(actionDefinition),
@@ -135,7 +198,11 @@ export function buildTargetActionInvocationRegistry(params: Readonly<{
                         ...(hostAccessIds ? { requestIds: hostAccessIds } : {}),
                     }),
                 },
-                handler: entry.registration.value,
+                handler: (input: JsonValue, context: PluginInvocationContext) => invokeCapturedDaemonActionHandler(
+                    capturedHandler,
+                    input,
+                    context,
+                ),
             }];
         });
         const missing = expectedActionKeys.values().next().value;
@@ -145,64 +212,161 @@ export function buildTargetActionInvocationRegistry(params: Readonly<{
         }
         return actions;
     };
+    const resolveCatalogAction = (
+        pluginId: string,
+        localId: string,
+    ): ResolvedTargetAction | null => {
+        const registration = readActions().find((candidate) => (
+            candidate.pluginId === pluginId && candidate.localId === localId
+        ));
+        if (!registration) return null;
+        const availability = resolveTargetActionAvailability({
+            availability: registration.definition.availability ?? undefined,
+            facts: resolveInvocationContributionPolicyFacts(),
+        });
+        return resolveCatalogTargetActionPolicy({
+            pluginId,
+            localId,
+            generation: registration.generation,
+            dangerLevel: registration.definition.dangerLevel,
+            scopes: registration.definition.scopes,
+            surfaces: registration.definition.surfaces,
+            hostAccessRequests: registration.definition.hostAccessRequests ?? [],
+            ...(availability === undefined ? {} : { availability }),
+            ...(registration.definition.confirmation === undefined
+                ? {}
+                : { confirmation: registration.definition.confirmation }),
+            resolveHostPolicy: params.resolveHostPolicy,
+        });
+    };
+
     return createTargetActionInvocationRegistry({
         actions: readActions(),
         expectedActions,
         readActions,
         evaluateCatalogPolicy: ({ pluginId, localId }) => {
-            const registration = readActions().find((candidate) => (
-                candidate.pluginId === pluginId && candidate.localId === localId
-            ));
-            if (!registration) {
+            const action = resolveCatalogAction(pluginId, localId);
+            if (!action) {
                 return Object.freeze({
                     outcome: 'unavailable' as const,
                     code: 'plugin_action_handler_missing',
                     requiresCurrentIntent: false,
                 });
             }
-            const availability = resolveTargetActionAvailability({
-                availability: registration.definition.availability ?? undefined,
-                facts: resolveInvocationContributionPolicyFacts(),
-            });
-            const action = Object.freeze({
-                qualifiedId: `${pluginId}/actions/${localId}`,
-                pluginId,
-                localId,
-                generation: registration.generation,
-                dangerLevel: registration.definition.dangerLevel,
-                scopes: registration.definition.scopes,
-                surfaces: registration.definition.surfaces,
-                hostAccess: (registration.definition.hostAccessRequests ?? []).map(({ request, required }) => ({
-                    id: request.id,
-                    required,
-                    status: 'unavailable' as const,
-                    code: 'plugin_host_access_context_unavailable',
-                    requestFingerprint: '',
-                })),
-                ...(availability ? { availability } : {}),
-                ...(registration.definition.confirmation === undefined
-                    ? {}
-                    : { confirmation: registration.definition.confirmation }),
-                input: null,
-                policyFingerprint: '',
-            });
-            const binding = params.resolveHostPolicy(action, {
-                hostAccessRequests: registration.definition.hostAccessRequests ?? [],
-                surface: 'catalog',
-            });
             return evaluateTargetActionCatalogPolicy({
-                action: binding.action,
-                authorizationFacts: params.resolveAuthorizationFacts(binding.action),
+                action,
+                authorizationFacts: params.resolveAuthorizationFacts(action),
             });
         },
+        ...(params.resolvePresentUserGatePolicy
+            ? { resolvePresentUserGatePolicy: params.resolvePresentUserGatePolicy }
+            : {}),
         resolveAuthorizationFacts: params.resolveAuthorizationFacts,
         resolveHostBinding: params.resolveHostBinding,
         createServices: params.createServices,
+        ...(params.redactDiagnosticText
+            ? { redactDiagnosticText: params.redactDiagnosticText }
+            : {}),
+        ...(params.completeDiagnosticScope
+            ? { completeDiagnosticScope: params.completeDiagnosticScope }
+            : {}),
         ...(params.resolveGenerationLifecycle
             ? { resolveGenerationLifecycle: params.resolveGenerationLifecycle }
+            : {}),
+        ...(params.resolveCurrentPluginMaterializationRef
+            ? {
+                resolveCurrentPluginMaterializationRef:
+                    params.resolveCurrentPluginMaterializationRef,
+            }
+            : {}),
+        ...(params.resolveCurrentPluginImmutableGenerationId
+            ? {
+                resolveCurrentPluginImmutableGenerationId:
+                    params.resolveCurrentPluginImmutableGenerationId,
+            }
             : {}),
         ...(params.resolveCurrentSessionUi
             ? { resolveCurrentSessionUi: params.resolveCurrentSessionUi }
             : {}),
+        revalidateConnectedAccountActionFormInput: async (input) => {
+            return await revalidateRegistryConnectedAccountActionFormInput({
+                registry: params.contributes,
+                qualifiedActionId: buildQualifiedPluginContributionKey(
+                    createPluginContributionIdentity({
+                        pluginId: input.pluginId,
+                        localId: input.localId,
+                    }),
+                ),
+                value: input.input,
+                ...(params.resolveOptionalAccess
+                    ? { resolveOptionalAccess: params.resolveOptionalAccess }
+                    : {}),
+                ...(params.actionFormConnectedAccounts
+                    ? { actionFormConnectedAccounts: params.actionFormConnectedAccounts }
+                    : {}),
+                signal: input.signal,
+                isCurrent: input.isCurrent,
+            });
+        },
+        bindConnectedAccountActionOperation: async (input) => {
+            const snapshot = await resolveRegistryConnectedAccountActionPurposeBindingSnapshot({
+                registry: params.contributes,
+                qualifiedActionId: buildQualifiedPluginContributionKey(
+                    createPluginContributionIdentity({
+                        pluginId: input.pluginId,
+                        localId: input.localId,
+                    }),
+                ),
+                value: input.input,
+                ...(params.resolveOptionalAccess
+                    ? { resolveOptionalAccess: params.resolveOptionalAccess }
+                    : {}),
+                ...(params.actionFormConnectedAccounts
+                    ? { actionFormConnectedAccounts: params.actionFormConnectedAccounts }
+                    : {}),
+                ...(params.resolveAutomationEventHistoryGapSource
+                    ? {
+                        resolveAutomationEventHistoryGapSource:
+                            params.resolveAutomationEventHistoryGapSource,
+                    }
+                    : {}),
+                signal: input.signal,
+                isCurrent: input.isCurrent,
+            });
+            if ('status' in snapshot) return snapshot;
+            if (snapshot.purposes.length === 0) return null;
+            if (!params.actionFormConnectedAccounts?.activatePurposeBindings) {
+                return Object.freeze({
+                    status: 'unavailable' as const,
+                    code: 'plugin_action_form_connected_account_options_unavailable',
+                    message: 'Connected Account operation binding is unavailable for this Action',
+                });
+            }
+            const lease = params.actionFormConnectedAccounts.activatePurposeBindings({
+                subject: {
+                    kind: 'operation',
+                    operationId: input.correlationId,
+                    consumer: {
+                        pluginId: input.pluginId,
+                        localId: input.localId,
+                    },
+                    isCurrent: input.isCurrent,
+                },
+                purposes: snapshot.purposes,
+                bindings: snapshot.bindings,
+            });
+            if (!input.isCurrent()) {
+                lease.dispose();
+                return Object.freeze({
+                    status: 'unavailable' as const,
+                    code: 'plugin_action_generation_retired',
+                    message: 'The target Action is no longer current',
+                });
+            }
+            return Object.freeze({
+                exactPurposeBindingSubjectId: lease.subjectId,
+                dispose: () => lease.dispose(),
+            });
+        },
     });
 }

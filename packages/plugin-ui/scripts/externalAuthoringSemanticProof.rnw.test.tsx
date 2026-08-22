@@ -179,7 +179,10 @@ describe('external author semantic proof', () => {
   });
 
   it('mounts a real public external surface and proves its rendered role and handler', async () => {
-    const initialSurface = createSurfaceContextFixture({ locale: 'en-GB' });
+    const initialSurface = createSurfaceContextFixture({
+      locale: 'en-GB',
+      translations: { 'external.review.save': 'Save external review' },
+    });
     const actionCalls: Array<Readonly<{ action: string; input: unknown }>> = [];
     let resolveSave!: () => void;
     let signalSaveStarted!: () => void;
@@ -233,24 +236,35 @@ describe('external author semantic proof', () => {
       }]);
 
       await act(async () => {
-        await fixture.updateSurface({ ...initialSurface, locale: 'de-CH' });
+        await fixture.updateSurface({
+          ...initialSurface,
+          locale: 'fr-FR',
+          translations: { 'external.review.save': 'Enregistrer la revue externe' },
+        });
       });
       await expect(fixture.press(initialSave)).rejects.toMatchObject({ code: 'stale_surface' });
 
       const updatedSave = await fixture.getByRole('button', {
-        name: 'Save external review (de-CH)',
+        name: 'Enregistrer la revue externe (fr-FR)',
       });
       await fixture.press(updatedSave);
       await expect(fixture.findByRole('status', {
-        name: 'Saved external review (de-CH)',
+        name: 'Saved external review (fr-FR)',
       })).resolves.toEqual({
         role: 'status',
-        name: 'Saved external review (de-CH)',
+        name: 'Saved external review (fr-FR)',
       });
       expect(actionCalls).toEqual([
         { action: 'save-external-review', input: { locale: 'en-GB' } },
-        { action: 'save-external-review', input: { locale: 'de-CH' } },
+        { action: 'save-external-review', input: { locale: 'fr-FR' } },
       ]);
+
+      await act(async () => {
+        await fixture.updateSurface({ ...initialSurface, locale: 'de-CH', translations: {} });
+      });
+      await expect(fixture.getByRole('button', {
+        name: 'Save external review (de-CH)',
+      })).resolves.toBeDefined();
     } finally {
       await fixture.dispose();
     }

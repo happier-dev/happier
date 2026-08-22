@@ -1,5 +1,4 @@
 import { describe, expect, it, vi } from 'vitest';
-import { readHookEventEnvelopeV1 } from '@happier-dev/protocol';
 
 import { ingestCanonicalPluginManifest } from '@/plugins/manifest/ingest';
 import type { ResolvedActivatedHookRegistration } from '@/plugins/projection/registry/types';
@@ -18,9 +17,7 @@ function createBackendPrerequisiteHookRegistration(params: Readonly<{
     provenance: 'external',
     source: { kind: 'path' },
     pluginId: params.pluginId,
-    manifestPath: `/plugins/${params.pluginId}/plugin.json`,
-    manifestDigest: `sha256:${params.pluginId}`,
-    daemonEntryPath: `/plugins/${params.pluginId}/daemon.mjs`,
+    manifestPath: `/plugins/${params.pluginId}/plugin.json`,daemonEntryPath: `/plugins/${params.pluginId}/daemon.mjs`,
     sourceSpec: {
       kind: 'path',
       locator: `/plugins/${params.pluginId}`,
@@ -55,9 +52,7 @@ describe('dispatchPluginHookEvent', () => {
       provenance: 'external',
       source: { kind: 'path' },
       pluginId: 'echo.plugin',
-      manifestPath: '/plugins/echo/plugin.json',
-      manifestDigest: 'sha256:echo',
-      daemonEntryPath: '/plugins/echo/daemon.mjs',
+      manifestPath: '/plugins/echo/plugin.json',daemonEntryPath: '/plugins/echo/daemon.mjs',
       sourceSpec: {
         kind: 'path',
         locator: '/plugins/echo',
@@ -96,7 +91,6 @@ describe('dispatchPluginHookEvent', () => {
     try {
       const result = await dispatchPluginHookEvent({
         runtimeRegistry: {
-          readHookEventEnvelopeV1,
           hookHandlersByHookId: new Map([[
             'agent.stream.token',
             [{
@@ -104,9 +98,7 @@ describe('dispatchPluginHookEvent', () => {
               hookId: 'agent.stream.token',
               priority: 0,
               registrationIndex: 0,
-              manifestPath: registration.manifestPath,
-              manifestDigest: registration.manifestDigest,
-              daemonEntryPath: registration.daemonEntryPath!,
+              manifestPath: registration.manifestPath,daemonEntryPath: registration.daemonEntryPath!,
               exportName: 'observeToken',
               registration,
               handler,
@@ -173,12 +165,9 @@ describe('dispatchPluginHookEvent', () => {
     }
   });
 
-  it('parses hook envelopes through the canonical protocol owner instead of a registry method-presence fallback', async () => {
-    const obsoleteParser = vi.fn(() => null);
-
+  it('parses hook envelopes through the canonical protocol owner', async () => {
     const result = await dispatchPluginHookEvent({
       runtimeRegistry: {
-        readHookEventEnvelopeV1: obsoleteParser,
         hookHandlersByHookId: new Map(),
       },
       event: {
@@ -198,13 +187,11 @@ describe('dispatchPluginHookEvent', () => {
     });
 
     expect(result.eventId).toBe('agent.resolvePrerequisites');
-    expect(obsoleteParser).not.toHaveBeenCalled();
   });
 
   it('fails closed for invalid fail-closed decision hook payloads', async () => {
     const result = await dispatchPluginHookEvent({
       runtimeRegistry: {
-        readHookEventEnvelopeV1,
         hookHandlersByHookId: new Map(),
       },
       event: {
@@ -236,7 +223,6 @@ describe('dispatchPluginHookEvent', () => {
   it('aggregates augment hook object results in deterministic handler order', async () => {
     const result = await dispatchPluginHookEvent({
       runtimeRegistry: {
-        readHookEventEnvelopeV1,
         hookHandlersByHookId: new Map([
           [
             'agent.spawnEnv.augment',
@@ -246,17 +232,13 @@ describe('dispatchPluginHookEvent', () => {
                 hookId: 'agent.spawnEnv.augment',
                 priority: 10,
                 registrationIndex: 0,
-                manifestPath: '/plugins/alpha/plugin.json',
-                manifestDigest: 'sha256:alpha',
-                daemonEntryPath: '/plugins/alpha/daemon.mjs',
+                manifestPath: '/plugins/alpha/plugin.json',daemonEntryPath: '/plugins/alpha/daemon.mjs',
                 exportName: 'augmentSpawn',
                 registration: {
                   provenance: 'external',
                   source: { kind: 'path' },
                   pluginId: 'alpha.plugin',
-                  manifestPath: '/plugins/alpha/plugin.json',
-                  manifestDigest: 'sha256:alpha',
-                  daemonEntryPath: '/plugins/alpha/daemon.mjs',
+                  manifestPath: '/plugins/alpha/plugin.json',daemonEntryPath: '/plugins/alpha/daemon.mjs',
                   sourceSpec: {
                     kind: 'path',
                     locator: '/plugins/alpha',
@@ -282,17 +264,13 @@ describe('dispatchPluginHookEvent', () => {
                 hookId: 'agent.spawnEnv.augment',
                 priority: 0,
                 registrationIndex: 1,
-                manifestPath: '/plugins/beta/plugin.json',
-                manifestDigest: 'sha256:beta',
-                daemonEntryPath: '/plugins/beta/daemon.mjs',
+                manifestPath: '/plugins/beta/plugin.json',daemonEntryPath: '/plugins/beta/daemon.mjs',
                 exportName: 'augmentSpawn',
                 registration: {
                   provenance: 'external',
                   source: { kind: 'path' },
                   pluginId: 'beta.plugin',
-                  manifestPath: '/plugins/beta/plugin.json',
-                  manifestDigest: 'sha256:beta',
-                  daemonEntryPath: '/plugins/beta/daemon.mjs',
+                  manifestPath: '/plugins/beta/plugin.json',daemonEntryPath: '/plugins/beta/daemon.mjs',
                   sourceSpec: {
                     kind: 'path',
                     locator: '/plugins/beta',
@@ -351,7 +329,6 @@ describe('dispatchPluginHookEvent', () => {
 
     const result = await dispatchPluginHookEvent({
       runtimeRegistry: {
-        readHookEventEnvelopeV1,
         hookHandlersByHookId: new Map([
           [
             'agent.spawnEnv.augment',
@@ -361,17 +338,13 @@ describe('dispatchPluginHookEvent', () => {
                 hookId: 'agent.spawnEnv.augment',
                 priority: 0,
                 registrationIndex: 0,
-                manifestPath: '/plugins/codex/plugin.json',
-                manifestDigest: 'sha256:codex',
-                daemonEntryPath: '/plugins/codex/daemon.mjs',
+                manifestPath: '/plugins/codex/plugin.json',daemonEntryPath: '/plugins/codex/daemon.mjs',
                 exportName: 'augmentCodex',
                 registration: {
                   provenance: 'external',
                   source: { kind: 'path' },
                   pluginId: 'codex.plugin',
-                  manifestPath: '/plugins/codex/plugin.json',
-                  manifestDigest: 'sha256:codex',
-                  daemonEntryPath: '/plugins/codex/daemon.mjs',
+                  manifestPath: '/plugins/codex/plugin.json',daemonEntryPath: '/plugins/codex/daemon.mjs',
                   sourceSpec: {
                     kind: 'path',
                     locator: '/plugins/codex',
@@ -398,17 +371,13 @@ describe('dispatchPluginHookEvent', () => {
                 hookId: 'agent.spawnEnv.augment',
                 priority: 0,
                 registrationIndex: 1,
-                manifestPath: '/plugins/other/plugin.json',
-                manifestDigest: 'sha256:other',
-                daemonEntryPath: '/plugins/other/daemon.mjs',
+                manifestPath: '/plugins/other/plugin.json',daemonEntryPath: '/plugins/other/daemon.mjs',
                 exportName: 'augmentOther',
                 registration: {
                   provenance: 'external',
                   source: { kind: 'path' },
                   pluginId: 'other.plugin',
-                  manifestPath: '/plugins/other/plugin.json',
-                  manifestDigest: 'sha256:other',
-                  daemonEntryPath: '/plugins/other/daemon.mjs',
+                  manifestPath: '/plugins/other/plugin.json',daemonEntryPath: '/plugins/other/daemon.mjs',
                   sourceSpec: {
                     kind: 'path',
                     locator: '/plugins/other',
@@ -440,8 +409,6 @@ describe('dispatchPluginHookEvent', () => {
         category: 'augmentation',
         scope: 'daemon',
         agentId: 'codex',
-        providerId: 'other',
-        backendId: 'other',
         timestampMs: 1,
         payload: {
           agentId: 'codex',
@@ -470,7 +437,6 @@ describe('dispatchPluginHookEvent', () => {
 
     const result = await dispatchPluginHookEvent({
       runtimeRegistry: {
-        readHookEventEnvelopeV1,
         hookHandlersByHookId: new Map([
           [
             'agent.spawnEnv.augment',
@@ -480,17 +446,13 @@ describe('dispatchPluginHookEvent', () => {
                 hookId: 'agent.spawnEnv.augment',
                 priority: 0,
                 registrationIndex: 0,
-                manifestPath: '/plugins/provider-alias/plugin.json',
-                manifestDigest: 'sha256:provider-alias',
-                daemonEntryPath: '/plugins/provider-alias/daemon.mjs',
+                manifestPath: '/plugins/provider-alias/plugin.json',daemonEntryPath: '/plugins/provider-alias/daemon.mjs',
                 exportName: 'providerAlias',
                 registration: {
                   provenance: 'external',
                   source: { kind: 'path' },
                   pluginId: 'provider-alias.plugin',
-                  manifestPath: '/plugins/provider-alias/plugin.json',
-                  manifestDigest: 'sha256:provider-alias',
-                  daemonEntryPath: '/plugins/provider-alias/daemon.mjs',
+                  manifestPath: '/plugins/provider-alias/plugin.json',daemonEntryPath: '/plugins/provider-alias/daemon.mjs',
                   sourceSpec: {
                     kind: 'path',
                     locator: '/plugins/provider-alias',
@@ -517,17 +479,13 @@ describe('dispatchPluginHookEvent', () => {
                 hookId: 'agent.spawnEnv.augment',
                 priority: 0,
                 registrationIndex: 1,
-                manifestPath: '/plugins/backend-alias/plugin.json',
-                manifestDigest: 'sha256:backend-alias',
-                daemonEntryPath: '/plugins/backend-alias/daemon.mjs',
+                manifestPath: '/plugins/backend-alias/plugin.json',daemonEntryPath: '/plugins/backend-alias/daemon.mjs',
                 exportName: 'backendAlias',
                 registration: {
                   provenance: 'external',
                   source: { kind: 'path' },
                   pluginId: 'backend-alias.plugin',
-                  manifestPath: '/plugins/backend-alias/plugin.json',
-                  manifestDigest: 'sha256:backend-alias',
-                  daemonEntryPath: '/plugins/backend-alias/daemon.mjs',
+                  manifestPath: '/plugins/backend-alias/plugin.json',daemonEntryPath: '/plugins/backend-alias/daemon.mjs',
                   sourceSpec: {
                     kind: 'path',
                     locator: '/plugins/backend-alias',
@@ -559,8 +517,6 @@ describe('dispatchPluginHookEvent', () => {
         category: 'augmentation',
         scope: 'daemon',
         agentId: 'codex',
-        providerId: 'codex',
-        backendId: 'codex',
         timestampMs: 1,
         payload: {
           agentId: 'codex',
@@ -587,7 +543,6 @@ describe('dispatchPluginHookEvent', () => {
 
     await dispatchPluginHookEvent({
       runtimeRegistry: {
-        readHookEventEnvelopeV1,
         hookHandlersByHookId: new Map([
           [
             'agent.resolvePrerequisites',
@@ -597,17 +552,13 @@ describe('dispatchPluginHookEvent', () => {
                 hookId: 'agent.resolvePrerequisites',
                 priority: 0,
                 registrationIndex: 0,
-                manifestPath: '/plugins/acme/plugin.json',
-                manifestDigest: 'sha256:acme',
-                daemonEntryPath: '/plugins/acme/daemon.mjs',
+                manifestPath: '/plugins/acme/plugin.json',daemonEntryPath: '/plugins/acme/daemon.mjs',
                 exportName: 'validateSpawn',
                 registration: {
                   provenance: 'external',
                   source: { kind: 'path' },
                   pluginId: 'acme.plugin',
-                  manifestPath: '/plugins/acme/plugin.json',
-                  manifestDigest: 'sha256:acme',
-                  daemonEntryPath: '/plugins/acme/daemon.mjs',
+                  manifestPath: '/plugins/acme/plugin.json',daemonEntryPath: '/plugins/acme/daemon.mjs',
                   sourceSpec: {
                     kind: 'path',
                     locator: '/plugins/acme',
@@ -684,7 +635,6 @@ describe('dispatchPluginHookEvent', () => {
 
     const result = await dispatchPluginHookEvent({
       runtimeRegistry: {
-        readHookEventEnvelopeV1,
         hookHandlersByHookId: new Map([[
           'agent.resolvePrerequisites',
           [{
@@ -692,9 +642,7 @@ describe('dispatchPluginHookEvent', () => {
             hookId: 'agent.resolvePrerequisites',
             priority: 0,
             registrationIndex: 0,
-            manifestPath: registration.manifestPath,
-            manifestDigest: registration.manifestDigest,
-            daemonEntryPath: registration.daemonEntryPath!,
+            manifestPath: registration.manifestPath,daemonEntryPath: registration.daemonEntryPath!,
             exportName: 'validateSpawn',
             registration,
             handler,
@@ -747,7 +695,6 @@ describe('dispatchPluginHookEvent', () => {
   it('fails closed for decide hooks when a matched handler rejects', async () => {
     const result = await dispatchPluginHookEvent({
       runtimeRegistry: {
-        readHookEventEnvelopeV1,
         hookHandlersByHookId: new Map([
           [
             'agent.resolvePrerequisites',
@@ -757,17 +704,13 @@ describe('dispatchPluginHookEvent', () => {
                 hookId: 'agent.resolvePrerequisites',
                 priority: 0,
                 registrationIndex: 0,
-                manifestPath: '/plugins/acme/plugin.json',
-                manifestDigest: 'sha256:acme',
-                daemonEntryPath: '/plugins/acme/daemon.mjs',
+                manifestPath: '/plugins/acme/plugin.json',daemonEntryPath: '/plugins/acme/daemon.mjs',
                 exportName: 'denySpawn',
                 registration: {
                   provenance: 'external',
                   source: { kind: 'path' },
                   pluginId: 'acme.plugin',
-                  manifestPath: '/plugins/acme/plugin.json',
-                  manifestDigest: 'sha256:acme',
-                  daemonEntryPath: '/plugins/acme/daemon.mjs',
+                  manifestPath: '/plugins/acme/plugin.json',daemonEntryPath: '/plugins/acme/daemon.mjs',
                   sourceSpec: {
                     kind: 'path',
                     locator: '/plugins/acme',
@@ -843,7 +786,6 @@ describe('dispatchPluginHookEvent', () => {
 
     // This fixture represents runtime bytes that the canonical typed owner no longer admits.
     const retiredStaticRegistry = {
-      readHookEventEnvelopeV1,
       contributes: {
         hookRegistrations: Object.freeze([
           availableRegistration,
@@ -859,9 +801,7 @@ describe('dispatchPluginHookEvent', () => {
               hookId: 'agent.resolvePrerequisites',
               priority: 0,
               registrationIndex: 0,
-              manifestPath: availableRegistration.manifestPath,
-              manifestDigest: availableRegistration.manifestDigest,
-              daemonEntryPath: '/plugins/available.plugin/daemon.mjs',
+              manifestPath: availableRegistration.manifestPath,daemonEntryPath: '/plugins/available.plugin/daemon.mjs',
               exportName: 'allowSpawn',
               registration: availableRegistration,
               handler: async () => ({ decision: 'allow' as const }),
@@ -947,16 +887,13 @@ describe('dispatchPluginHookEvent', () => {
 
     const result = await dispatchPluginHookEvent({
       runtimeRegistry: {
-        readHookEventEnvelopeV1,
         activateContributionsOnDemand,
         contributes: {
           activationTargets: Object.freeze([{
             provenance: 'external',
             source: { kind: 'path' },
             pluginId,
-            manifestPath: `/plugins/${pluginId}/plugin.json`,
-            manifestDigest: 'sha256:codex',
-            daemonEntryPath: `/plugins/${pluginId}/daemon.mjs`,
+            manifestPath: `/plugins/${pluginId}/plugin.json`,daemonEntryPath: `/plugins/${pluginId}/daemon.mjs`,
             sourceSpec: {
               kind: 'path',
               locator: `/plugins/${pluginId}`,
@@ -974,9 +911,7 @@ describe('dispatchPluginHookEvent', () => {
             hookId: 'agent.resolvePrerequisites',
             priority: 0,
             registrationIndex: 0,
-            manifestPath: `/plugins/${pluginId}/plugin.json`,
-            manifestDigest: 'sha256:codex',
-            daemonEntryPath: `/plugins/${pluginId}/daemon.mjs`,
+            manifestPath: `/plugins/${pluginId}/plugin.json`,daemonEntryPath: `/plugins/${pluginId}/daemon.mjs`,
             exportName: '<activation>',
             registration: createBackendPrerequisiteHookRegistration({
               pluginId,
@@ -1041,7 +976,6 @@ describe('dispatchPluginHookEvent', () => {
     const secondHandler = vi.fn().mockResolvedValue({ decision: 'deny' as const });
     const result = await dispatchPluginHookEvent({
       runtimeRegistry: {
-        readHookEventEnvelopeV1,
         hookHandlersByHookId: new Map([
           [
             'agent.resolvePrerequisites',
@@ -1051,17 +985,13 @@ describe('dispatchPluginHookEvent', () => {
                 hookId: 'agent.resolvePrerequisites',
                 priority: 10,
                 registrationIndex: 0,
-                manifestPath: '/plugins/alpha/plugin.json',
-                manifestDigest: 'sha256:alpha',
-                daemonEntryPath: '/plugins/alpha/daemon.mjs',
+                manifestPath: '/plugins/alpha/plugin.json',daemonEntryPath: '/plugins/alpha/daemon.mjs',
                 exportName: 'allowRequest',
                 registration: {
                   provenance: 'external',
                   source: { kind: 'path' },
                   pluginId: 'alpha.plugin',
-                  manifestPath: '/plugins/alpha/plugin.json',
-                  manifestDigest: 'sha256:alpha',
-                  daemonEntryPath: '/plugins/alpha/daemon.mjs',
+                  manifestPath: '/plugins/alpha/plugin.json',daemonEntryPath: '/plugins/alpha/daemon.mjs',
                   sourceSpec: {
                     kind: 'path',
                     locator: '/plugins/alpha',
@@ -1087,17 +1017,13 @@ describe('dispatchPluginHookEvent', () => {
                 hookId: 'agent.resolvePrerequisites',
                 priority: 0,
                 registrationIndex: 1,
-                manifestPath: '/plugins/beta/plugin.json',
-                manifestDigest: 'sha256:beta',
-                daemonEntryPath: '/plugins/beta/daemon.mjs',
+                manifestPath: '/plugins/beta/plugin.json',daemonEntryPath: '/plugins/beta/daemon.mjs',
                 exportName: 'denyRequest',
                 registration: {
                   provenance: 'external',
                   source: { kind: 'path' },
                   pluginId: 'beta.plugin',
-                  manifestPath: '/plugins/beta/plugin.json',
-                  manifestDigest: 'sha256:beta',
-                  daemonEntryPath: '/plugins/beta/daemon.mjs',
+                  manifestPath: '/plugins/beta/plugin.json',daemonEntryPath: '/plugins/beta/daemon.mjs',
                   sourceSpec: {
                     kind: 'path',
                     locator: '/plugins/beta',
@@ -1169,20 +1095,17 @@ describe('dispatchPluginHookEvent', () => {
 
     const result = await dispatchPluginHookEvent({
       runtimeRegistry: {
-        readHookEventEnvelopeV1,
         hookHandlersByHookId: new Map([[
           'agent.resolvePrerequisites',
           [
             {
               pluginId: 'alpha.plugin', hookId: 'agent.resolvePrerequisites', priority: 0, registrationIndex: 0,
-              manifestPath: abstainRegistration.manifestPath, manifestDigest: abstainRegistration.manifestDigest,
-              daemonEntryPath: abstainRegistration.daemonEntryPath!, exportName: 'abstainRequest',
+              manifestPath: abstainRegistration.manifestPath,daemonEntryPath: abstainRegistration.daemonEntryPath!, exportName: 'abstainRequest',
               registration: abstainRegistration, handler: async () => ({ decision: 'abstain' as const }),
             },
             {
               pluginId: 'beta.plugin', hookId: 'agent.resolvePrerequisites', priority: 1, registrationIndex: 1,
-              manifestPath: denyRegistration.manifestPath, manifestDigest: denyRegistration.manifestDigest,
-              daemonEntryPath: denyRegistration.daemonEntryPath!, exportName: 'denyRequest',
+              manifestPath: denyRegistration.manifestPath,daemonEntryPath: denyRegistration.daemonEntryPath!, exportName: 'denyRequest',
               registration: denyRegistration, handler: denyHandler,
             },
           ],
@@ -1220,18 +1143,15 @@ describe('dispatchPluginHookEvent', () => {
 
     const result = await dispatchPluginHookEvent({
       runtimeRegistry: {
-        readHookEventEnvelopeV1,
         hookHandlersByHookId: new Map([[
           'agent.resolvePrerequisites',
           [{
             pluginId: 'alpha.plugin', hookId: 'agent.resolvePrerequisites', priority: 0, registrationIndex: 0,
-            manifestPath: malformedRegistration.manifestPath, manifestDigest: malformedRegistration.manifestDigest,
-            daemonEntryPath: malformedRegistration.daemonEntryPath!, exportName: 'malformedRequest',
+            manifestPath: malformedRegistration.manifestPath,daemonEntryPath: malformedRegistration.daemonEntryPath!, exportName: 'malformedRequest',
             registration: malformedRegistration, handler: async () => undefined,
           }, {
             pluginId: 'beta.plugin', hookId: 'agent.resolvePrerequisites', priority: 1, registrationIndex: 1,
-            manifestPath: '/plugins/beta.plugin/plugin.json', manifestDigest: 'sha256:beta.plugin',
-            daemonEntryPath: '/plugins/beta.plugin/daemon.mjs', exportName: 'allowRequest',
+            manifestPath: '/plugins/beta.plugin/plugin.json',daemonEntryPath: '/plugins/beta.plugin/daemon.mjs', exportName: 'allowRequest',
             registration: createBackendPrerequisiteHookRegistration({ pluginId: 'beta.plugin', exportName: 'allowRequest' }),
             handler: laterHandler,
           }],
@@ -1260,7 +1180,6 @@ describe('dispatchPluginHookEvent', () => {
 
     const result = await dispatchPluginHookEvent({
       runtimeRegistry: {
-        readHookEventEnvelopeV1,
         activateContributionsOnDemand,
         hookHandlersByHookId: new Map([
           [
@@ -1271,17 +1190,13 @@ describe('dispatchPluginHookEvent', () => {
                 hookId: 'session.spawned',
                 priority: 0,
                 registrationIndex: 0,
-                manifestPath: '/plugins/acme/plugin.json',
-                manifestDigest: 'sha256:acme',
-                daemonEntryPath: '/plugins/acme/daemon.mjs',
+                manifestPath: '/plugins/acme/plugin.json',daemonEntryPath: '/plugins/acme/daemon.mjs',
                 exportName: 'onSubagentStart',
                 registration: {
                   provenance: 'external',
                   source: { kind: 'path' },
                   pluginId: 'acme.plugin',
-                  manifestPath: '/plugins/acme/plugin.json',
-                  manifestDigest: 'sha256:acme',
-                  daemonEntryPath: '/plugins/acme/daemon.mjs',
+                  manifestPath: '/plugins/acme/plugin.json',daemonEntryPath: '/plugins/acme/daemon.mjs',
                   sourceSpec: {
                     kind: 'path',
                     locator: '/plugins/acme',

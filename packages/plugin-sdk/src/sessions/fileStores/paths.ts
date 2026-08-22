@@ -1,6 +1,7 @@
 /** @moduleRealm daemon */
 import {
   expandHomeDirPath,
+  isCanonicalAbsolutePathInsideRoot as isCanonicalAbsolutePathInsideRootShared,
   resolveHomeDirFromEnvironment,
 } from '@happier-dev/cli-common/path';
 import { realpath, realpathSync } from 'node:fs';
@@ -11,11 +12,30 @@ const realpathAsync = promisify(realpath);
 
 export { resolveHomeDirFromEnvironment };
 
-export function expandHomePath(raw: string, homeDir?: string): string {
+/**
+ * Public SDK projection of the shared cross-platform lexical-containment
+ * decision. Physical containment callers still resolve symlinks first.
+ */
+export function isCanonicalAbsolutePathInsideRoot(
+  rootPath: string,
+  candidatePath: string,
+  options: Readonly<{
+    env?: NodeJS.ProcessEnv;
+    platform?: NodeJS.Platform;
+  }> = {},
+): boolean {
+  return isCanonicalAbsolutePathInsideRootShared(rootPath, candidatePath, options);
+}
+
+export function expandHomePath(
+  raw: string,
+  homeDir?: string,
+  platform: NodeJS.Platform = process.platform,
+): string {
   const trimmed = raw.trim();
   return homeDir === undefined
-    ? expandHomeDirPath(trimmed)
-    : expandHomeDirPath(trimmed, { HOME: homeDir, USERPROFILE: homeDir });
+    ? expandHomeDirPath(trimmed, process.env, platform)
+    : expandHomeDirPath(trimmed, { HOME: homeDir, USERPROFILE: homeDir }, platform);
 }
 
 export function resolveConfiguredPath(raw: string, input: Readonly<{

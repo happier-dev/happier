@@ -1,15 +1,17 @@
 import { describe, expect, it } from 'vitest';
 
 import type {
+    NormalizedPluginCollectionUiQueryDescriptorV1,
     PluginSettingsContributionV2,
-    PluginStructuredMessageDescriptorV1,
 } from '@happier-dev/protocol';
+import { preparePluginJsonSchema } from '@happier-dev/protocol';
 import { PluginError } from '@happier-dev/plugin-sdk';
 
 import {
     createStablePluginDeclarativeModel,
     createStablePluginStructuredMessageModel,
 } from './declarativeModel';
+import type { HostStructuredMessageDescriptorV1 } from './structuredMessageDescriptor';
 import { createStablePluginSettingsModel } from './settings';
 
 const settingsContribution: PluginSettingsContributionV2 = {
@@ -17,7 +19,7 @@ const settingsContribution: PluginSettingsContributionV2 = {
     version: 1,
     title: 'Appearance',
     target: { kind: 'plugin' },
-    scope: 'local',
+    scope: 'daemon',
     fields: [
         { id: 'enabled', title: 'Enabled', schema: { type: 'boolean' }, default: false },
         {
@@ -73,7 +75,7 @@ describe('stable declarative plugin model', () => {
                         { kind: 'action', action: 'save', label: 'Save', input: { source: 'form' } },
                         {
                             kind: 'action',
-                            action: { pluginId: 'com.acme.shared', localId: 'reset' },
+                            action: 'reset',
                             label: 'Reset',
                         },
                     ],
@@ -82,13 +84,13 @@ describe('stable declarative plugin model', () => {
             settings: [settings],
             actions: [
                 { pluginId: 'com.acme.forms', localId: 'save' },
-                { pluginId: 'com.acme.shared', localId: 'reset' },
+                { pluginId: 'com.acme.forms', localId: 'reset' },
             ],
             availability: {
                 visible: true,
                 enabledActions: {
                     'com.acme.forms/save': true,
-                    'com.acme.shared/reset': false,
+                    'com.acme.forms/reset': false,
                 },
             },
         });
@@ -111,7 +113,7 @@ describe('stable declarative plugin model', () => {
             kind: 'field',
             setting: {
                 id: 'enabled',
-                qualifiedId: 'com.acme.forms/settings/appearance/fields/enabled',
+                qualifiedId: 'com.acme.forms/settings/daemon/appearance/fields/enabled',
                 descriptor: { schema: { type: 'boolean' } },
             },
         });
@@ -126,11 +128,258 @@ describe('stable declarative plugin model', () => {
         });
         expect(model.nodes[4]).toMatchObject({
             kind: 'action',
-            action: { qualifiedId: 'com.acme.shared/reset' },
+            action: { qualifiedId: 'com.acme.forms/reset' },
             enabled: false,
         });
-        expect(Object.isFrozen(model)).toBe(true);
+    expect(Object.isFrozen(model)).toBe(true);
+  });
+
+  it('projects a target-local Surface only from the exact host-stamped inventory', () => {
+    const inputValidation = preparePluginJsonSchema({
+      type: 'object',
+      properties: { reviewId: { type: 'string' } },
+      required: ['reviewId'],
+      additionalProperties: false,
     });
+    const model = createStablePluginDeclarativeModel({
+      pluginId: 'com.acme.dashboard',
+      generation: 'generation-dashboard-a',
+      renderer: {
+        id: 'dashboard',
+        kind: 'declarative',
+        root: {
+          kind: 'targetedSurface',
+          surface: {
+            point: { pointId: 'details', protocol: { id: 'review-detail', version: 1 } },
+            contributor: { pluginId: 'com.acme.review', contributionId: 'detail' },
+            role: 'detail',
+          },
+          input: { reviewId: 'review-42' },
+          instanceKey: 'review-42',
+          fallback: { kind: 'state', state: 'loading', title: 'Loading review' },
+        },
+      },
+      settings: [],
+      actions: [],
+      preparedTargetedSurfaces: [{
+        targetPluginId: 'com.acme.dashboard',
+        handle: {
+          point: { pointId: 'details', protocol: { id: 'review-detail', version: 1 } },
+          contributor: {
+            pluginId: 'com.acme.review',
+            contributionId: 'detail',
+            immutableGenerationId: 'review-generation-a',
+          },
+          role: 'detail',
+          presentation: 'content',
+        },
+        inputSchema: inputValidation.jsonSchema,
+        inputValidation,
+      }],
+      availability: { visible: true, enabledActions: {} },
+    });
+
+    expect(model.root).toMatchObject({
+      kind: 'targetedSurface',
+      surface: {
+        contributor: {
+          pluginId: 'com.acme.review',
+          contributionId: 'detail',
+          immutableGenerationId: 'review-generation-a',
+        },
+        presentation: 'content',
+      },
+      input: { reviewId: 'review-42' },
+      instanceKey: expect.stringMatching(/^targeted-surface:v1:[a-f0-9]{64}$/u),
+      fallback: { kind: 'state', state: 'loading' },
+    });
+    expect(model.nodes.map((node) => node.kind)).toEqual(['targetedSurface', 'state']);
+  });
+
+  it('projects the full admitted Action and Settings inventory independently of the static root', () => {
+    const settings = createStablePluginSettingsModel({
+      pluginId: 'com.acme.forms',
+      contribution: settingsContribution,
+    });
+    const model = createStablePluginDeclarativeModel({
+      pluginId: 'com.acme.forms',
+      generation: 'generation-8',
+      renderer: {
+        id: 'text-only',
+        kind: 'declarative',
+        root: { kind: 'text', text: 'Static first paint' },
+      },
+      settings: [settings],
+      actions: [
+        { pluginId: 'com.acme.forms', localId: 'refresh' },
+        { pluginId: 'com.acme.other', localId: 'outside' },
+      ],
+      availability: {
+        visible: true,
+        enabledActions: {
+          'com.acme.forms/refresh': true,
+          'com.acme.other/outside': true,
+        },
+      },
+    });
+
+    expect(model.declarativeInventory).toMatchObject({
+      actions: [{
+        identity: { pluginId: 'com.acme.forms', localId: 'refresh' },
+        qualifiedId: 'com.acme.forms/refresh',
+        generation: 'generation-8',
+        enabled: true,
+      }],
+      settings: [
+        {
+          pluginId: 'com.acme.forms',
+          id: 'enabled',
+          qualifiedId: 'com.acme.forms/settings/daemon/appearance/fields/enabled',
+          secret: false,
+          schema: { type: 'boolean' },
+        },
+        {
+          pluginId: 'com.acme.forms',
+          id: 'mode',
+          qualifiedId: 'com.acme.forms/settings/daemon/appearance/fields/mode',
+          secret: false,
+          schema: { type: 'string', enum: ['compact', 'full'] },
+        },
+      ],
+    });
+  });
+
+  it('projects a declarative collection list from the supplied Data-normalized UI-query inventory', () => {
+    const uiQuery = {
+      collection: { pluginId: 'com.acme.forms', collectionId: 'tasks' },
+      id: 'open-tasks',
+      indexId: 'by-status',
+      parameters: {
+        status: { kind: 'string', maxUtf8Bytes: 32, enum: ['open'] },
+      },
+      prefix: [{ kind: 'parameter', parameterId: 'status' }],
+      order: 'asc',
+      pageSize: 20,
+      projectedFields: [
+        { field: 'title', kind: 'string' },
+        { field: 'updated-at', kind: 'instant' },
+      ],
+    } satisfies NormalizedPluginCollectionUiQueryDescriptorV1;
+    const model = createStablePluginDeclarativeModel({
+      pluginId: 'com.acme.forms',
+      generation: 'generation-8',
+      renderer: {
+        id: 'tasks',
+        kind: 'declarative',
+        root: {
+          kind: 'collectionList',
+          source: {
+            collectionId: 'tasks',
+            uiQueryId: 'open-tasks',
+            parameters: { status: 'open' },
+          },
+          projection: {
+            titleField: { field: 'title', kind: 'string' },
+            detailField: { field: 'updated-at', kind: 'instant' },
+          },
+        },
+      },
+      settings: [],
+      actions: [],
+      uiQueries: [uiQuery],
+      availability: { visible: true, enabledActions: {} },
+    });
+
+    expect(model.declarativeInventory.uiQueries).toEqual([uiQuery]);
+    expect(model.root).toMatchObject({
+      kind: 'collectionList',
+      source: { collectionId: 'tasks', uiQueryId: 'open-tasks', parameters: { status: 'open' } },
+      query: uiQuery,
+      projection: {
+        titleField: { field: 'title', kind: 'string' },
+        detailField: { field: 'updated-at', kind: 'instant' },
+      },
+    });
+  });
+
+  it('projects fixed collection row commands with their Action presentation and destination inventory', () => {
+    const uiQuery = {
+      collection: { pluginId: 'com.acme.forms', collectionId: 'tasks' },
+      id: 'open-tasks',
+      indexId: 'by-status',
+      parameters: {
+        status: { kind: 'string', maxUtf8Bytes: 32, enum: ['open'] },
+      },
+      prefix: [{ kind: 'parameter', parameterId: 'status' }],
+      order: 'asc',
+      pageSize: 20,
+      projectedFields: [{ field: 'title', kind: 'string' }],
+    } satisfies NormalizedPluginCollectionUiQueryDescriptorV1;
+    const inspect = { pluginId: 'com.acme.forms', localId: 'inspect-task' } as const;
+    const details = { pluginId: 'com.acme.forms', localId: 'task-details' } as const;
+
+    const model = createStablePluginDeclarativeModel({
+      pluginId: 'com.acme.forms',
+      generation: 'generation-collection-commands',
+      renderer: {
+        id: 'tasks',
+        kind: 'declarative',
+        root: {
+          kind: 'collectionList',
+          source: {
+            collectionId: 'tasks',
+            uiQueryId: 'open-tasks',
+            parameters: { status: 'open' },
+          },
+          projection: { titleField: { field: 'title', kind: 'string' } },
+          primaryCommand: { kind: 'action', action: 'inspect-task' },
+          secondaryCommands: [{ kind: 'openSurface', destination: 'task-details' }],
+        },
+      },
+      settings: [],
+      actions: [inspect],
+      actionPresentations: [{ identity: inspect, title: 'Inspect task', icon: 'eye' }],
+      destinations: [details],
+      uiQueries: [uiQuery],
+      availability: {
+        visible: true,
+        enabledActions: { 'com.acme.forms/inspect-task': true },
+      },
+    });
+
+    expect(model.declarativeInventory).toMatchObject({
+      actions: [{
+        identity: inspect,
+        qualifiedId: 'com.acme.forms/inspect-task',
+        title: 'Inspect task',
+        icon: 'eye',
+      }],
+      destinations: [{
+        identity: details,
+        qualifiedId: 'com.acme.forms/task-details',
+        generation: 'generation-collection-commands',
+      }],
+    });
+    expect(model.root).toMatchObject({
+      kind: 'collectionList',
+      primaryCommand: {
+        kind: 'action',
+        action: {
+          identity: inspect,
+          qualifiedId: 'com.acme.forms/inspect-task',
+          generation: 'generation-collection-commands',
+        },
+      },
+      secondaryCommands: [{
+        kind: 'openSurface',
+        destination: {
+          identity: details,
+          qualifiedId: 'com.acme.forms/task-details',
+          generation: 'generation-collection-commands',
+        },
+      }],
+    });
+  });
 
     it('fails closed for ambiguous settings, invalid select values, and missing actions', () => {
         const settings = createStablePluginSettingsModel({
@@ -183,6 +432,27 @@ describe('stable declarative plugin model', () => {
         }), 'plugin_declarative_action_missing');
     });
 
+    it('rejects a foreign Action even when that Action appears in the admitted inventory', () => {
+        expectPluginError(() => createStablePluginDeclarativeModel({
+            pluginId: 'com.acme.forms',
+            generation: 'generation-7',
+            settings: [],
+            actions: [
+                { pluginId: 'com.acme.forms', localId: 'save' },
+                { pluginId: 'com.acme.other', localId: 'mutate' },
+            ],
+            renderer: {
+                id: 'foreign-action',
+                kind: 'declarative',
+                root: {
+                    kind: 'action',
+                    action: { pluginId: 'com.acme.other', localId: 'mutate' },
+                    label: 'Mutate',
+                },
+            },
+        }), 'plugin_declarative_action_scope_invalid');
+    });
+
     it('rejects semantically duplicate structured select options', () => {
         const nullPrototypeValue = {
             columns: 2.5,
@@ -197,7 +467,7 @@ describe('stable declarative plugin model', () => {
                 version: 1,
                 title: 'Structured',
                 target: { kind: 'plugin' },
-                scope: 'local',
+                scope: 'daemon',
                 fields: [{
                     id: 'layout',
                     title: 'Layout',
@@ -267,7 +537,7 @@ describe('stable declarative plugin model', () => {
         expect(valueOfReads).toBe(0);
     });
 
-    it('rejects noncanonical array properties and oversized JSON object keys without retaining them', () => {
+    it('rejects noncanonical array properties while preserving valid unbounded JSON keys', () => {
         const actionInput: unknown[] = [];
         Object.defineProperty(actionInput, '01', {
             value: 'hidden',
@@ -289,7 +559,7 @@ describe('stable declarative plugin model', () => {
             },
         }), 'plugin_declarative_invalid_plain_data');
 
-        expectPluginError(() => createStablePluginDeclarativeModel({
+        const model = createStablePluginDeclarativeModel({
             ...base,
             renderer: {
                 id: 'oversized-key',
@@ -301,7 +571,12 @@ describe('stable declarative plugin model', () => {
                     input: { ['k'.repeat((256 * 1024) + 1)]: null },
                 },
             },
-        }), 'plugin_declarative_invalid_plain_data');
+        });
+
+        expect(model.root).toMatchObject({
+            kind: 'action',
+            input: { ['k'.repeat((256 * 1024) + 1)]: null },
+        });
     });
 
     it('maps malformed availability to a coded model error', () => {
@@ -317,6 +592,213 @@ describe('stable declarative plugin model', () => {
             },
             availability: null as unknown as { visible: boolean; enabledActions: Readonly<Record<string, boolean>> },
         }), 'plugin_declarative_availability_invalid');
+    });
+
+    // The renderer owns its semantic-node ceiling. Strict JSON itself has no
+    // generic depth quota, so valid deep data reaches that owner unchanged.
+    it('enforces the declarative node ceiling without borrowing a JSON depth quota', () => {
+        const nest = (depth: number): { kind: 'stack'; children: readonly unknown[] } | { kind: 'text'; text: string } => (
+            depth === 0
+                ? { kind: 'text', text: 'leaf' }
+                : { kind: 'stack', children: [nest(depth - 1)] }
+        );
+        const flat = (count: number) => ({
+            kind: 'stack' as const,
+            children: Array.from({ length: count }, (_unused, index) => ({
+                kind: 'text' as const,
+                text: `line-${index}`,
+            })),
+        });
+        const build = (root: unknown) => createStablePluginDeclarativeModel({
+            pluginId: 'com.acme.forms',
+            generation: 'generation-7',
+            settings: [],
+            actions: [],
+            renderer: { id: 'bounded', kind: 'declarative', root: root as never },
+        });
+
+        expect(build(nest(24)).root).toBeDefined();
+
+        // The root stack counts, so 511 children is exactly 512 nodes.
+        expect(build(flat(511)).root).toBeDefined();
+        expectPluginError(() => build(flat(512)), 'plugin_declarative_nodes_exceeded');
+    });
+
+    it('normalizes the list vocabulary and binds item actions through the one action owner', () => {
+        const model = createStablePluginDeclarativeModel({
+            pluginId: 'com.acme.repos',
+            generation: 'generation-7',
+            settings: [],
+            actions: [
+                { pluginId: 'com.acme.repos', localId: 'open' },
+                { pluginId: 'com.acme.repos', localId: 'archive' },
+            ],
+            availability: {
+                visible: true,
+                enabledActions: { 'com.acme.repos/open': true, 'com.acme.repos/archive': false },
+            },
+            renderer: {
+                id: 'repositories',
+                kind: 'declarative',
+                // `metadata` and `actionPanel` are siblings of the list, not rows
+                // inside it: the grammar binds `list` to sections/items/states so
+                // a toolbar can never be announced as a list row.
+                root: {
+                    kind: 'stack',
+                    children: [
+                        {
+                            kind: 'list',
+                            label: 'Repositories',
+                            children: [
+                                {
+                                    kind: 'section',
+                                    title: 'Active',
+                                    footer: 'Refreshed on reload',
+                                    children: [
+                                        {
+                                            kind: 'item',
+                                            title: 'happier',
+                                            subtitle: 'Main repository',
+                                            detail: '42',
+                                            icon: 'file',
+                                            tone: 'success',
+                                            action: 'open',
+                                            input: { id: 'happier' },
+                                        },
+                                        { kind: 'item', title: 'archived', action: 'archive' },
+                                        { kind: 'item', title: 'read only' },
+                                    ],
+                                },
+                                { kind: 'state', state: 'empty', title: 'No archived repositories', icon: 'info' },
+                            ],
+                        },
+                        { kind: 'metadata', title: 'Details', entries: [{ label: 'Branch', value: 'dev', tone: 'muted' }] },
+                        {
+                            kind: 'actionPanel',
+                            title: 'Repository actions',
+                            children: [{ kind: 'action', action: 'archive', label: 'Archive', variant: 'destructive' }],
+                        },
+                    ],
+                } as never,
+            },
+        });
+
+        expect(model.nodes.map((node) => [node.kind, node.path, node.order])).toEqual([
+            ['stack', 'root', 0],
+            ['list', 'root.children[0]', 1],
+            ['section', 'root.children[0].children[0]', 2],
+            ['item', 'root.children[0].children[0].children[0]', 3],
+            ['item', 'root.children[0].children[0].children[1]', 4],
+            ['item', 'root.children[0].children[0].children[2]', 5],
+            ['state', 'root.children[0].children[1]', 6],
+            ['metadata', 'root.children[1]', 7],
+            ['actionPanel', 'root.children[2]', 8],
+            ['action', 'root.children[2].children[0]', 9],
+        ]);
+        // An item action is qualified and policy-gated by the SAME owner as an
+        // `action` node — an item must never become a second dispatch path.
+        expect(model.nodes[3]).toMatchObject({
+            kind: 'item',
+            title: 'happier',
+            icon: 'file',
+            tone: 'success',
+            action: { qualifiedId: 'com.acme.repos/open', generation: 'generation-7' },
+            input: { id: 'happier' },
+            enabled: true,
+        });
+        expect(model.nodes[4]).toMatchObject({ kind: 'item', enabled: false });
+        expect(model.nodes[5]).not.toHaveProperty('action');
+        expect(model.nodes[5]).not.toHaveProperty('enabled');
+        expect(model.nodes[6]).toMatchObject({ kind: 'state', state: 'empty', icon: 'info' });
+        expect(model.nodes[7]).toMatchObject({
+            kind: 'metadata',
+            entries: [{ label: 'Branch', value: 'dev', tone: 'muted' }],
+        });
+        expect(model.nodes[9]).toMatchObject({ kind: 'action', enabled: false });
+    });
+
+    it('refuses a semantic container holding children it cannot render', () => {
+        const build = (root: unknown) => createStablePluginDeclarativeModel({
+            pluginId: 'com.acme.repos',
+            generation: 'generation-7',
+            settings: [],
+            actions: [{ pluginId: 'com.acme.repos', localId: 'open' }],
+            renderer: { id: 'grammar', kind: 'declarative', root: root as never },
+        });
+
+        // The evaluated model refuses through the SAME typed code as any other
+        // invalid renderer — it never drops the misplaced child and renders the
+        // rest.
+        expectPluginError(() => build({
+            kind: 'actionPanel',
+            children: [{ kind: 'text', text: 'Not an action' }],
+        }), 'plugin_declarative_document_invalid');
+        expectPluginError(() => build({
+            kind: 'list',
+            children: [{ kind: 'metadata', entries: [{ label: 'Branch', value: 'dev' }] }],
+        }), 'plugin_declarative_document_invalid');
+        expectPluginError(() => build({
+            kind: 'section',
+            children: [{ kind: 'section', children: [] }],
+        }), 'plugin_declarative_document_invalid');
+    });
+
+    it('fails closed for an unbound item action and an input without one', () => {
+        const base = {
+            pluginId: 'com.acme.repos',
+            generation: 'generation-7',
+            settings: [],
+            actions: [{ pluginId: 'com.acme.repos', localId: 'open' }],
+            availability: { visible: true, enabledActions: {} },
+        } as const;
+
+        expectPluginError(() => createStablePluginDeclarativeModel({
+            ...base,
+            renderer: {
+                id: 'unbound',
+                kind: 'declarative',
+                root: { kind: 'item', title: 'Row', action: 'missing' } as never,
+            },
+        }), 'plugin_declarative_action_missing');
+
+        // A launch input with no action to launch is an authoring mistake, not a
+        // silently ignored field.
+        expectPluginError(() => createStablePluginDeclarativeModel({
+            ...base,
+            renderer: {
+                id: 'inputless',
+                kind: 'declarative',
+                root: { kind: 'item', title: 'Row', input: { id: 'x' } } as never,
+            },
+        }), 'plugin_declarative_item_action_missing');
+    });
+
+    it('projects a realistic list under the node budget and rejects an over-budget one', () => {
+        const rows = (count: number) => ({
+            kind: 'list' as const,
+            children: [{
+                kind: 'section' as const,
+                title: 'Rows',
+                children: Array.from({ length: count }, (_unused, index) => ({
+                    kind: 'item' as const,
+                    title: `row-${index}`,
+                })),
+            }],
+        });
+        const build = (root: unknown) => createStablePluginDeclarativeModel({
+            pluginId: 'com.acme.repos',
+            generation: 'generation-7',
+            settings: [],
+            actions: [],
+            renderer: { id: 'rows', kind: 'declarative', root: root as never },
+        });
+
+        // Bounds disposition (plan §EU-9): MAX_DECLARATIVE_NODES stays 512. A
+        // declarative tree is an authored manifest document, so 200 rows is a
+        // generous realistic ceiling and still leaves ~300 nodes of headroom.
+        expect(build(rows(200)).nodes).toHaveLength(202);
+        // Over-cap rejects through the existing typed code — it never truncates.
+        expectPluginError(() => build(rows(511)), 'plugin_declarative_nodes_exceeded');
     });
 
     it('maps a malformed identity inventory to its coded domain error', () => {
@@ -335,7 +817,7 @@ describe('stable declarative plugin model', () => {
 });
 
 describe('stable structured-message plugin model', () => {
-    const descriptor: PluginStructuredMessageDescriptorV1 = {
+    const descriptor: HostStructuredMessageDescriptorV1 = {
         id: 'build-result',
         title: 'Build result',
         kind: 'acme.build-result.v1',

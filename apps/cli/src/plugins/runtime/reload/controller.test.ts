@@ -1,11 +1,17 @@
-import { readHookEventEnvelopeV1 } from '@happier-dev/protocol';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import type { PluginCompatibilityDiagnostic } from '@/plugins/validation/diagnostics/types';
 import { createUnavailablePluginServices } from '@/plugins/runtime/invocation/services/unavailable';
+import {
+    bindDeclaredEventSubscriptions,
+    createStablePluginEventsBroker,
+} from '@/plugins/runtime/invocation/services/events';
 
-import { createPluginReloadController } from './controller';
+import {
+    createPluginReloadController,
+    isPluginRunningSessionDispositionTarget,
+} from './controller';
 
 function createRuntimeRegistry(
     label: string,
@@ -14,7 +20,11 @@ function createRuntimeRegistry(
         dispose?: ResolvedExecutablePluginRuntimeRegistry['dispose'];
         retireConsumers?: ResolvedExecutablePluginRuntimeRegistry['retireConsumers'];
         retirePluginConsumers?: (pluginIds: readonly string[]) => void;
-        generationId?: string;
+        settleRetiredBackgroundServices?: (pluginIds: readonly string[]) => Promise<void>;
+        startAdoptedBackgroundServices?: () => void;
+        publishDeclaredEventSubscriptions?: () => void;
+        retireLiveSubscriptionConsumers?: () => void;
+        applyResourceSessionAccessWitness?: ResolvedExecutablePluginRuntimeRegistry['applyResourceSessionAccessWitness'];
         additionalPluginDiagnostics?: Readonly<Record<string, readonly PluginCompatibilityDiagnostic[]>>;
     }>,
 ): ResolvedExecutablePluginRuntimeRegistry {
@@ -31,14 +41,10 @@ function createRuntimeRegistry(
                         catalogEntriesById: Object.freeze({}),
             agentDefinitionsById: new Map(),
                         pluginDiagnosticsByPluginId: Object.freeze({}),
-            ...(params?.generationId ? { generationId: params.generationId } : {}),
         },
         hookHandlersByHookId: new Map(),
         agentRuntimesByAgentId: new Map(),
-        daemonAuthBridgesByServiceId: new Map(),
         scmHostingProvidersById: new Map(),
-        networkAllowedUrlOriginsByPluginId: new Map(),
-        processSpawnAllowedPathsByPluginId: new Map(),
         pluginDiagnosticsByPluginId: Object.freeze({
             [label]: Object.freeze([...(params?.diagnostics ?? [])]),
             ...(params?.additionalPluginDiagnostics ?? {}),
@@ -48,9 +54,23 @@ function createRuntimeRegistry(
         resolvePromptAssetBlocks: async () => [],
         retireConsumers: params?.retireConsumers ?? (() => undefined),
         retirePluginConsumers: params?.retirePluginConsumers ?? (() => undefined),
+        ...(params?.settleRetiredBackgroundServices
+            ? { settleRetiredBackgroundServices: params.settleRetiredBackgroundServices }
+            : {}),
+        ...(params?.startAdoptedBackgroundServices
+            ? { startAdoptedBackgroundServices: params.startAdoptedBackgroundServices }
+            : {}),
+        ...(params?.publishDeclaredEventSubscriptions
+            ? { publishDeclaredEventSubscriptions: params.publishDeclaredEventSubscriptions }
+            : {}),
+        ...(params?.retireLiveSubscriptionConsumers
+            ? { retireLiveSubscriptionConsumers: params.retireLiveSubscriptionConsumers }
+            : {}),
         addRuntimeDisposable: (_pluginId, disposable) => disposable,
-        createAgentInvocationServices: () => createUnavailablePluginServices(),
-        readHookEventEnvelopeV1,
+        createAgentInvocationServices: async () => createUnavailablePluginServices(),
+        ...(params?.applyResourceSessionAccessWitness
+            ? { applyResourceSessionAccessWitness: params.applyResourceSessionAccessWitness }
+            : {}),
         dispose: params?.dispose ?? (async () => {}),
     };
 }
@@ -101,6 +121,144 @@ describe('createPluginReloadController', () => {
         await firstLease.release();
         await secondLease.release();
         await controller.shutdown();
+    });
+
+    it('starts background services only after adoption and settles changed predecessors first', async () => {
+        const calls: string[] = [];
+        const initialRegistry = createRuntimeRegistry('initial', {
+            retirePluginConsumers: (pluginIds) => calls.push(`retire:${pluginIds.join(',')}`),
+            settleRetiredBackgroundServices: async (pluginIds) => {
+                calls.push(`settle:${pluginIds.join(',')}`);
+            },
+            startAdoptedBackgroundServices: () => calls.push('start:initial'),
+        });
+        const replacementRegistry = createRuntimeRegistry('replacement', {
+            startAdoptedBackgroundServices: () => calls.push('start:replacement'),
+        });
+        const controller = createPluginReloadController({
+            resolveRuntimeRegistry: async () => initialRegistry,
+        });
+
+        const initialLease = await controller.acquireRuntimeRegistry();
+        await initialLease.release();
+        expect(calls).toEqual(['start:initial']);
+
+        await controller.adoptPreparedRuntimeRegistry({
+            registry: replacementRegistry,
+            changedPluginIds: ['acme.indexer'],
+            durableRevision: 1,
+            runningSessionDisposition: 'retainRunningSessions',
+            beforePublish: async (_registry, publish) => {
+                calls.push('publish');
+                publish();
+            },
+        });
+
+        expect(calls).toEqual([
+            'start:initial',
+            'retire:acme.indexer',
+            'settle:acme.indexer',
+            'publish',
+            'start:replacement',
+        ]);
+    });
+
+    it('cuts shared-broker declared handlers over exactly at registry publication while predecessor disposal is lease-delayed', async () => {
+        const broker = createStablePluginEventsBroker();
+        const delivered: string[] = [];
+        const bindHandler = (
+            label: string,
+            readCurrent: () => boolean,
+        ) => bindDeclaredEventSubscriptions({
+            host: {
+                broker,
+                declarationsByPluginId: new Map([['acme.events', [{
+                    id: 'watch-turn',
+                    kind: 'subscription' as const,
+                    target: {
+                        kind: 'host' as const,
+                        eventId: '@happier/runtime/turn-complete' as const,
+                        scope: { kind: 'current-session' as const },
+                    },
+                }]]]),
+                activePluginIds: new Set(['acme.events']),
+            },
+            registrations: [{
+                pluginId: 'acme.events',
+                pluginVersion: '1.0.0',
+                generation: label,
+                localId: 'watch-turn',
+                handler(payload) {
+                    const sequence = payload !== null && typeof payload === 'object'
+                        ? Reflect.get(payload, 'sequence')
+                        : undefined;
+                    delivered.push(`${label}:${sequence}`);
+                },
+            }],
+            isGenerationCurrent: () => true,
+            isEffectCapable: readCurrent,
+            createContext: () => Object.freeze({
+                context: {} as never,
+                complete() {},
+            }),
+        });
+        let initialCurrent = true;
+        let preparedCurrent = false;
+        const initialBinding = bindHandler('G', () => initialCurrent);
+        const preparedBinding = bindHandler('H', () => preparedCurrent);
+        const initialRegistry = createRuntimeRegistry('initial', {
+            publishDeclaredEventSubscriptions: () => {
+                initialCurrent = true;
+            },
+            retireLiveSubscriptionConsumers: () => {
+                initialCurrent = false;
+            },
+        });
+        const preparedRegistry = createRuntimeRegistry('prepared', {
+            publishDeclaredEventSubscriptions: () => {
+                preparedCurrent = true;
+            },
+            retireLiveSubscriptionConsumers: () => {
+                preparedCurrent = false;
+            },
+        });
+        const controller = createPluginReloadController({
+            resolveRuntimeRegistry: async () => initialRegistry,
+        });
+        const predecessorLease = await controller.acquireRuntimeRegistry();
+        try {
+            broker.publishHostEvent({
+                sequence: 1,
+                sessionId: 'session-events',
+                emittedAtMs: 1,
+                kind: 'turn-complete',
+                turnId: 'turn-before-publication',
+            });
+            await vi.waitFor(() => expect(delivered).toEqual(['G:1']));
+
+            await controller.adoptPreparedRuntimeRegistry({
+                registry: preparedRegistry,
+                changedPluginIds: [],
+                durableRevision: 1,
+                runningSessionDisposition: 'retainRunningSessions',
+            });
+            broker.publishHostEvent({
+                sequence: 2,
+                sessionId: 'session-events',
+                emittedAtMs: 2,
+                kind: 'turn-complete',
+                turnId: 'turn-after-publication',
+            });
+            await vi.waitFor(() => expect(delivered).toEqual([
+                'G:1',
+                'H:2',
+            ]));
+        } finally {
+            await predecessorLease.release();
+            await controller.shutdown();
+            await initialBinding.dispose();
+            await preparedBinding.dispose();
+        }
     });
 
     it('reuses the initialized registry without resolving again', async () => {
@@ -186,6 +344,31 @@ describe('createPluginReloadController', () => {
         expect(dispose).toHaveBeenCalledOnce();
     });
 
+    it('does not start a published cold candidate after shutdown wins its remaining startup gate', async () => {
+        const published = createDeferred<void>();
+        const releaseStartupGate = createDeferred<void>();
+        const startAdoptedBackgroundServices = vi.fn();
+        const registry = createRuntimeRegistry('cold-published-shutdown-race', {
+            startAdoptedBackgroundServices,
+        });
+        const controller = createPluginReloadController();
+        const acquisition = controller.acquireRuntimeRegistry({
+            resolveRuntimeRegistry: async () => registry,
+            beforePublish: async (_registry, publish) => {
+                publish();
+                published.resolve();
+                await releaseStartupGate.promise;
+            },
+        });
+        await published.promise;
+
+        await controller.shutdown({ timeoutMs: 50 });
+        releaseStartupGate.resolve();
+
+        await expect(acquisition).rejects.toThrow(/shut down/i);
+        expect(startAdoptedBackgroundServices).not.toHaveBeenCalled();
+    });
+
     it('isolates a cold plugin activation failure without withholding the healthy runtime registry', async () => {
         const dispose = vi.fn(async () => {});
         const registry = createRuntimeRegistry('acme.healthy', {
@@ -266,9 +449,7 @@ describe('createPluginReloadController', () => {
                 await allowCleanup.promise;
             },
         });
-        const preparedRegistry = createRuntimeRegistry('prepared', {
-            generationId: 'registry:prepared',
-        });
+        const preparedRegistry = createRuntimeRegistry('prepared');
         const resolveRuntimeRegistry = vi.fn(async () => initialRegistry);
         const controller = createPluginReloadController({ resolveRuntimeRegistry });
         const initialLease = await controller.acquireRuntimeRegistry();
@@ -278,12 +459,13 @@ describe('createPluginReloadController', () => {
             registry: preparedRegistry,
             changedPluginIds: [' acme.plugin ', 'acme.plugin'],
             durableRevision: 1,
+            runningSessionDisposition: 'retainRunningSessions',
         });
 
         expect(adopted).toMatchObject({
             ok: true,
             generation: 2,
-            activeGenerationId: 'registry:prepared',
+            activeGenerationId: '2',
             registry: preparedRegistry,
             changedPluginIds: ['acme.plugin'],
         });
@@ -291,6 +473,134 @@ describe('createPluginReloadController', () => {
         expect(resolveRuntimeRegistry).toHaveBeenCalledTimes(1);
         await cleanupStarted.promise;
         allowCleanup.resolve();
+    });
+
+    it('forwards one Account-change Session access witness to every live generation and a replacement', async () => {
+        const applyPredecessorWitness = vi.fn();
+        const applyActiveWitness = vi.fn();
+        const predecessorRegistry = createRuntimeRegistry('predecessor', {
+            applyResourceSessionAccessWitness: applyPredecessorWitness,
+        });
+        const activeRegistry = createRuntimeRegistry('active', {
+            applyResourceSessionAccessWitness: applyActiveWitness,
+        });
+        const controller = createPluginReloadController({
+            resolveRuntimeRegistry: async () => predecessorRegistry,
+        });
+        const predecessorLease = await controller.acquireRuntimeRegistry();
+
+        try {
+            controller.applyResourceSessionAccessWitness({
+                accountId: 'account-a',
+                witness: {
+                    v: 1,
+                    throughCursor: 11,
+                    entries: [{ sessionId: 'session-a', cursor: 11, status: 'unavailable' }],
+                },
+            });
+            expect(applyPredecessorWitness).toHaveBeenCalledExactlyOnceWith({
+                accountId: 'account-a',
+                witness: {
+                    v: 1,
+                    throughCursor: 11,
+                    entries: [{ sessionId: 'session-a', cursor: 11, status: 'unavailable' }],
+                },
+            });
+
+            await controller.adoptPreparedRuntimeRegistry({
+                registry: activeRegistry,
+                changedPluginIds: [],
+                durableRevision: 1,
+                runningSessionDisposition: 'retainRunningSessions',
+            });
+
+            // The replacement receives the carrier's captured fact before it
+            // can serve a new Resource binding, without rebuilding a held-ID
+            // inventory or performing a Session detail fetch.
+            expect(applyActiveWitness).toHaveBeenCalledExactlyOnceWith({
+                accountId: 'account-a',
+                witness: {
+                    v: 1,
+                    throughCursor: 11,
+                    entries: [{ sessionId: 'session-a', cursor: 11, status: 'unavailable' }],
+                },
+            });
+
+            controller.applyResourceSessionAccessWitness({
+                accountId: 'account-a',
+                witness: {
+                    v: 1,
+                    throughCursor: 12,
+                    entries: [{ sessionId: 'session-b', cursor: 12, status: 'unavailable' }],
+                },
+            });
+            expect(applyPredecessorWitness).toHaveBeenCalledTimes(2);
+            expect(applyActiveWitness).toHaveBeenCalledTimes(2);
+
+            await predecessorLease.release();
+            controller.applyResourceSessionAccessWitness({ accountId: 'account-a' });
+            expect(applyPredecessorWitness).toHaveBeenCalledTimes(2);
+            expect(applyActiveWitness).toHaveBeenCalledTimes(3);
+        } finally {
+            await predecessorLease.release();
+            await controller.shutdown();
+        }
+    });
+
+    it('keeps the newest Session-access witness for a replacement when an older page settles late', async () => {
+        const applyPredecessorWitness = vi.fn();
+        const applyReplacementWitness = vi.fn();
+        const predecessorRegistry = createRuntimeRegistry('predecessor', {
+            applyResourceSessionAccessWitness: applyPredecessorWitness,
+        });
+        const replacementRegistry = createRuntimeRegistry('replacement', {
+            applyResourceSessionAccessWitness: applyReplacementWitness,
+        });
+        const controller = createPluginReloadController({
+            resolveRuntimeRegistry: async () => predecessorRegistry,
+        });
+        const predecessorLease = await controller.acquireRuntimeRegistry();
+
+        try {
+            controller.applyResourceSessionAccessWitness({
+                accountId: 'account-a',
+                witness: {
+                    v: 1,
+                    throughCursor: 12,
+                    entries: [{ sessionId: 'session-new', cursor: 12, status: 'unavailable' }],
+                },
+            });
+            // The incumbent Resource owner rejects stale pages for its live
+            // contexts. A replacement begins empty, so the carrier must not
+            // overwrite its retained current proof with this older page.
+            controller.applyResourceSessionAccessWitness({
+                accountId: 'account-a',
+                witness: {
+                    v: 1,
+                    throughCursor: 11,
+                    entries: [{ sessionId: 'session-old', cursor: 11, status: 'available' }],
+                },
+            });
+
+            await controller.adoptPreparedRuntimeRegistry({
+                registry: replacementRegistry,
+                changedPluginIds: [],
+                durableRevision: 1,
+                runningSessionDisposition: 'retainRunningSessions',
+            });
+
+            expect(applyReplacementWitness).toHaveBeenCalledExactlyOnceWith({
+                accountId: 'account-a',
+                witness: {
+                    v: 1,
+                    throughCursor: 12,
+                    entries: [{ sessionId: 'session-new', cursor: 12, status: 'unavailable' }],
+                },
+            });
+        } finally {
+            await predecessorLease.release();
+            await controller.shutdown();
+        }
     });
 
     it('keeps prepared registry adoption monotonic by durable desired revision', async () => {
@@ -304,22 +614,26 @@ describe('createPluginReloadController', () => {
             registry: revisionOne,
             changedPluginIds: ['acme.first'],
             durableRevision: 1,
+            runningSessionDisposition: 'retainRunningSessions',
         })).resolves.toMatchObject({ generation: 1, registry: revisionOne });
         await expect(controller.adoptPreparedRuntimeRegistry({
             registry: revisionTwo,
             changedPluginIds: ['acme.second'],
             durableRevision: 2,
+            runningSessionDisposition: 'retainRunningSessions',
         })).resolves.toMatchObject({ generation: 2, registry: revisionTwo });
 
         await expect(controller.adoptPreparedRuntimeRegistry({
             registry: staleRevisionOne,
             changedPluginIds: ['acme.first'],
             durableRevision: 1,
+            runningSessionDisposition: 'retainRunningSessions',
         })).rejects.toThrow(/not newer than observed revision 2/i);
         await expect(controller.adoptPreparedRuntimeRegistry({
             registry: duplicateRevisionTwo,
             changedPluginIds: ['acme.second'],
             durableRevision: 2,
+            runningSessionDisposition: 'retainRunningSessions',
         })).rejects.toThrow(/not newer than observed revision 2/i);
 
         expect(controller.getState()).toMatchObject({
@@ -350,6 +664,7 @@ describe('createPluginReloadController', () => {
             registry: lowerRegistry,
             changedPluginIds: ['acme.lower'],
             durableRevision: 2,
+            runningSessionDisposition: 'retainRunningSessions',
             beforePublish: async (_registry, publish) => {
                 lowerEntered.resolve();
                 await releaseLower.promise;
@@ -366,6 +681,7 @@ describe('createPluginReloadController', () => {
             registry: higherRegistry,
             changedPluginIds: ['acme.higher'],
             durableRevision: 3,
+            runningSessionDisposition: 'retainRunningSessions',
             beforePublish: async (_registry, publish) => {
                 publishHigher();
                 publish();
@@ -414,6 +730,7 @@ describe('createPluginReloadController', () => {
             registry: lowerRegistry,
             changedPluginIds: ['acme.lower'],
             durableRevision: 2,
+            runningSessionDisposition: 'retainRunningSessions',
             beforePublish: async (_registry, publish) => {
                 lowerEntered.resolve();
                 await releaseLower.promise;
@@ -427,6 +744,7 @@ describe('createPluginReloadController', () => {
             registry: higherRegistry,
             changedPluginIds: ['acme.higher'],
             durableRevision: 3,
+            runningSessionDisposition: 'retainRunningSessions',
             beforePublish: async () => {
                 higherEntered.resolve();
                 await releaseHigher.promise;
@@ -479,6 +797,7 @@ describe('createPluginReloadController', () => {
             registry: lowerRegistry,
             changedPluginIds: ['acme.lower'],
             durableRevision: 2,
+            runningSessionDisposition: 'retainRunningSessions',
             beforePublish: async (_registry, publish) => {
                 lowerEntered.resolve();
                 await releaseLower.promise;
@@ -501,6 +820,7 @@ describe('createPluginReloadController', () => {
             registry: higherRegistry,
             changedPluginIds: ['acme.higher'],
             durableRevision: 3,
+            runningSessionDisposition: 'retainRunningSessions',
             beforePublish: async (_registry, publish) => {
                 higherEntered.resolve();
                 await releaseHigher.promise;
@@ -557,6 +877,7 @@ describe('createPluginReloadController', () => {
             registry: preparedRegistry,
             changedPluginIds: ['acme.plugin'],
             durableRevision: 1,
+            runningSessionDisposition: 'retainRunningSessions',
             beforePublish,
         })).rejects.toBe(failure);
 
@@ -612,6 +933,7 @@ describe('createPluginReloadController', () => {
             registry: preparedRegistry,
             changedPluginIds: ['acme.plugin'],
             durableRevision: 1,
+            runningSessionDisposition: 'retainRunningSessions',
             beforePublish,
         });
 
@@ -628,6 +950,7 @@ describe('createPluginReloadController', () => {
             registry,
             changedPluginIds: ['acme.plugin'],
             durableRevision: 1,
+            runningSessionDisposition: 'retainRunningSessions',
             beforePublish: async (_registry, publish) => {
                 beforePublishEntered.resolve();
                 await releaseBeforePublish.promise;
@@ -644,6 +967,34 @@ describe('createPluginReloadController', () => {
         expect(dispose).toHaveBeenCalledOnce();
     });
 
+    it('does not start a published prepared candidate after shutdown wins its remaining adoption gate', async () => {
+        const published = createDeferred<void>();
+        const releaseAdoptionGate = createDeferred<void>();
+        const startAdoptedBackgroundServices = vi.fn();
+        const registry = createRuntimeRegistry('prepared-published-shutdown-race', {
+            startAdoptedBackgroundServices,
+        });
+        const controller = createPluginReloadController();
+        const adoption = controller.adoptPreparedRuntimeRegistry({
+            registry,
+            changedPluginIds: ['acme.plugin'],
+            durableRevision: 1,
+            runningSessionDisposition: 'retainRunningSessions',
+            beforePublish: async (_registry, publish) => {
+                publish();
+                published.resolve();
+                await releaseAdoptionGate.promise;
+            },
+        });
+        await published.promise;
+
+        await controller.shutdown({ timeoutMs: 50 });
+        releaseAdoptionGate.resolve();
+
+        await expect(adoption).rejects.toThrow(/shut down/i);
+        expect(startAdoptedBackgroundServices).not.toHaveBeenCalled();
+    });
+
     it('waits for cold initialization before adopting a prepared registry', async () => {
         const coldDeferred = createDeferred<ResolvedExecutablePluginRuntimeRegistry>();
         const coldRegistry = createRuntimeRegistry('cold');
@@ -657,6 +1008,7 @@ describe('createPluginReloadController', () => {
             registry: preparedRegistry,
             changedPluginIds: ['acme.plugin'],
             durableRevision: 1,
+            runningSessionDisposition: 'retainRunningSessions',
         }).then((result) => {
             adoptionSettled = true;
             return result;
@@ -684,6 +1036,7 @@ describe('createPluginReloadController', () => {
             registry: preparedRegistry,
             changedPluginIds: ['acme.plugin'],
             durableRevision: 1,
+            runningSessionDisposition: 'retainRunningSessions',
             beforePublish: async (_registry, publish) => {
                 preparedEntered.resolve();
                 await releasePrepared.promise;
@@ -728,6 +1081,7 @@ describe('createPluginReloadController', () => {
             registry: preparedRegistry,
             changedPluginIds: ['acme.plugin'],
             durableRevision: 1,
+            runningSessionDisposition: 'retainRunningSessions',
             beforePublish: async (_registry, publish) => {
                 preparedEntered.resolve();
                 await releasePrepared.promise;
@@ -770,6 +1124,7 @@ describe('createPluginReloadController', () => {
             registry: firstRegistry,
             changedPluginIds: ['acme.plugin'],
             durableRevision: 1,
+            runningSessionDisposition: 'retainRunningSessions',
             beforePublish: async () => {
                 firstEntered.resolve();
                 await releaseFirst.promise;
@@ -783,6 +1138,7 @@ describe('createPluginReloadController', () => {
             registry: secondRegistry,
             changedPluginIds: ['acme.plugin'],
             durableRevision: 2,
+            runningSessionDisposition: 'retainRunningSessions',
             beforePublish: async (_registry, publish) => {
                 secondEntered.resolve();
                 await releaseSecond.promise;
@@ -816,6 +1172,7 @@ describe('createPluginReloadController', () => {
             registry: preparedRegistry,
             changedPluginIds: ['acme.plugin'],
             durableRevision: 1,
+            runningSessionDisposition: 'retainRunningSessions',
         });
         expect(disposeInitial).not.toHaveBeenCalled();
 
@@ -847,6 +1204,7 @@ describe('createPluginReloadController', () => {
             registry,
             changedPluginIds: ['acme.broken'],
             durableRevision: 1,
+            runningSessionDisposition: 'retainRunningSessions',
         })).rejects.toThrow(/blocking activation diagnostic/i);
         const afterFailure = await controller.acquireRuntimeRegistry();
         expect(afterFailure.registry).toBe(initialRegistry);
@@ -873,6 +1231,7 @@ describe('createPluginReloadController', () => {
             registry: preparedRegistry,
             changedPluginIds: ['acme.plugin'],
             durableRevision: 1,
+            runningSessionDisposition: 'retainRunningSessions',
         });
         unsubscribe();
 
@@ -951,5 +1310,44 @@ describe('createPluginReloadController', () => {
         await expect(leasePromise).rejects.toThrow(/shut down/i);
         expect(dispose).toHaveBeenCalledTimes(1);
         await expect(controller.acquireRuntimeRegistry()).rejects.toThrow(/shut down/i);
+    });
+
+    it('targets an immutable-generation disposition without widening to healthy same-plugin Agent or Provider generations', () => {
+        const event = {
+            durableRevision: 9,
+            changedPluginIds: ['plugin.runner'],
+            runningSessionDisposition: 'revokeRunningSessions',
+            runningSessionRevocationScope: {
+                kind: 'immutableGeneration',
+                pluginId: 'plugin.runner',
+                immutableGenerationId: 'generation-g1',
+            },
+        } as const;
+
+        expect(isPluginRunningSessionDispositionTarget(event, {
+            pluginId: 'plugin.runner',
+            immutableGenerationId: 'generation-g1',
+        })).toBe(true);
+        expect(isPluginRunningSessionDispositionTarget(event, {
+            pluginId: 'plugin.runner',
+            immutableGenerationId: 'generation-g2',
+        })).toBe(false);
+        expect(isPluginRunningSessionDispositionTarget(event, {
+            pluginId: 'plugin.runner',
+            immutableGenerationId: 'generation-h',
+        })).toBe(false);
+        expect(isPluginRunningSessionDispositionTarget(event, {
+            pluginId: 'plugin.runner',
+            immutableGenerationId: 'generation-p',
+        })).toBe(false);
+
+        const controller = createPluginReloadController();
+        const observed: unknown[] = [];
+        const unsubscribe = controller.subscribeRunningSessionDisposition(
+            (published) => observed.push(published),
+        );
+        controller.publishDurableRunningSessionDisposition(event);
+        unsubscribe();
+        expect(observed).toEqual([event]);
     });
 });

@@ -1,5 +1,6 @@
 /**
- * Browser-safe validator-neutral data-only protocol/schema algebra.
+ * Browser-safe validator-neutral data-only protocol/schema algebra, plus the
+ * host-owned protocol values a feature protocol embeds in its own declarations.
  * Cross-plugin contribution authoring lives on the sibling `/contributions`
  * entrypoint so the two public owners remain disjoint.
  */
@@ -33,3 +34,10 @@ export {
     pluginJsonValuesEqual,
     ProtocolValidationError,
 } from './protocolFacade.js';
+/**
+ * The composable projection of one exact Composer scope. `/ui` publishes the
+ * same canonical value as `ComposerRefV1Schema`, declaration-only, for reading
+ * Host API payloads; this one is composable, for declaring protocol objects.
+ */
+export type { ProtocolComposerRefV1 } from './composerRef.js';
+export { ProtocolComposerRefV1Schema } from './composerRef.js';

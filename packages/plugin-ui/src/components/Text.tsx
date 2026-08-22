@@ -3,6 +3,7 @@ import type { ReactElement, ReactNode } from 'react';
 import { HappierText } from '../presentation/text/Text.js';
 import type { HappierTextVariant, HappierTone } from '../presentation/semantics.js';
 import { usePluginTranslation } from './PluginUiProvider.js';
+import type { PluginTranslationValues } from './PluginUiProvider.js';
 import { resolveAuthorText } from './resolveAuthorText.js';
 
 export type TextTone = HappierTone;
@@ -22,6 +23,8 @@ export type TextProps = Readonly<{
    */
   valueKey?: string;
   fallback?: string;
+  /** Author-owned values substituted into `{name}` placeholders after localization. */
+  values?: PluginTranslationValues;
   tone?: TextTone;
   variant?: TextVariant;
   numberOfLines?: number;
@@ -42,6 +45,7 @@ export function Text({
   value,
   valueKey,
   fallback,
+  values,
   tone,
   variant,
   numberOfLines,
@@ -51,7 +55,7 @@ export function Text({
   children,
 }: TextProps): ReactElement {
   const translate = usePluginTranslation();
-  const resolved = resolveAuthorText(translate, value, valueKey, fallback);
+  const resolved = resolveAuthorText(translate, value, valueKey, fallback, values);
 
   return (
     <HappierText

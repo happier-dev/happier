@@ -113,9 +113,27 @@ export const externalAuthoringPlugin = definePlugin({
     renderers: [{
       id: 'external-authoring-composer-renderer',
       kind: 'declarative',
-      root: { kind: 'text', text: 'External authoring Composer surface' },
+      root: {
+        kind: 'text',
+        text: {
+          key: 'external.composer.surface',
+          fallback: 'External authoring Composer surface',
+        },
+      },
     }],
-    translations: [],
+    translations: [{
+      locale: 'en',
+      messages: {
+        'external.composer.surface': 'External authoring Composer surface',
+        'external.review.save': 'Save external review',
+      },
+    }, {
+      locale: 'fr',
+      messages: {
+        'external.composer.surface': 'Surface Composer de création externe',
+        'external.review.save': 'Enregistrer la revue externe',
+      },
+    }],
   },
   composer: {
     references: {

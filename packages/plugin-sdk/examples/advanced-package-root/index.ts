@@ -19,6 +19,7 @@ export const { manifest, activate } = definePlugin({
             title: 'Summarize',
             scopes: ['global'],
             surfaces: ['cli'],
+            execution: { target: 'daemon' },
             placementBindings: ['commandPalette'],
             dangerLevel: 'safe',
             inputSchema: {

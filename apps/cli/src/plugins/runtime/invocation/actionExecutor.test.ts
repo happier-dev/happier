@@ -4,6 +4,7 @@ import type { PluginActionDangerLevelV2 } from '@happier-dev/protocol';
 
 import { createTargetActionExecutor } from './actionExecutor';
 import { createUnavailablePluginInvocationServiceBinding } from './services/factory';
+import { projectPluginFailureText } from '../lifecycle/utils';
 
 function resolved(dangerLevel: PluginActionDangerLevelV2 = 'safe') {
   return {
@@ -58,10 +59,9 @@ describe('target action executor', () => {
     const executor = createExecutor({
       resolve: () => resolved('destructive'),
       resolveAuthorizationFacts,
-      fingerprint: () => 'bound',
-      requestCurrentIntent: async () => {
+      requestCurrentIntent: async ({ fingerprint }) => {
         appliedGeneration = '6';
-        return { status: 'approved', fingerprint: 'bound' };
+        return { status: 'approved', fingerprint };
       },
       invoke,
     });
@@ -87,12 +87,12 @@ describe('target action executor', () => {
 
   it.each(['writesLocal', 'writesRemote', 'externalSideEffect', 'destructive'] satisfies PluginActionDangerLevelV2[])('binds %s confirmation and re-evaluates before one invocation', async (dangerLevel) => {
     let generation = '7';
-    const requestCurrentIntent = vi.fn(async () => ({ status: 'approved' as const, fingerprint: 'bound' }));
+    const requestCurrentIntent = vi.fn(async ({ fingerprint }: Readonly<{ fingerprint: string }>) => ({ status: 'approved' as const, fingerprint }));
     const invoke = vi.fn(async () => ({ status: 'executed' as const, value: null }));
     const executor = createExecutor({
       resolve: () => resolved(dangerLevel),
       resolveAuthorizationFacts: () => authorizationFacts({ desiredGeneration: generation, appliedGeneration: generation }),
-      fingerprint: () => 'bound', requestCurrentIntent, invoke,
+      requestCurrentIntent, invoke,
     });
     await expect(executor.execute({ pluginId: 'acme.alpha', localId: 'run', input: { value: 'x' }, surface: 'cli' }))
       .resolves.toMatchObject({ status: 'executed' });
@@ -106,8 +106,7 @@ describe('target action executor', () => {
     const executor = createExecutor({
       resolve: () => resolved('destructive'),
       resolveAuthorizationFacts: () => authorizationFacts({ desiredGeneration: generation, appliedGeneration: generation }),
-      fingerprint: () => 'expected',
-      requestCurrentIntent: async () => { generation = '8'; return { status: 'approved', fingerprint: 'other' }; },
+      requestCurrentIntent: async ({ fingerprint }) => { generation = '8'; return { status: 'approved', fingerprint }; },
       invoke,
     });
     await expect(executor.execute({ pluginId: 'acme.alpha', localId: 'run', input: {}, surface: 'cli' }))
@@ -218,6 +217,41 @@ describe('target action executor', () => {
     expect(invoke).not.toHaveBeenCalled();
   });
 
+  it('marks only failures proved before target handler invocation', async () => {
+    const missingInvoke = vi.fn();
+    const missing = createExecutor({
+      resolve: () => null,
+      invoke: missingInvoke,
+    });
+
+    await expect(missing.execute({
+      pluginId: 'acme.alpha', localId: 'run', input: {}, surface: 'cli',
+    })).resolves.toEqual({
+      status: 'unavailable',
+      code: 'plugin_action_handler_missing',
+      message: 'plugin_action_handler_missing',
+      actionHandlerInvocation: 'notStarted',
+    });
+    expect(missingInvoke).not.toHaveBeenCalled();
+
+    const invoked = createExecutor({
+      resolve: () => resolved(),
+      invoke: async () => {
+        throw new Error('transport failed after handler entry');
+      },
+    });
+    const result = await invoked.execute({
+      pluginId: 'acme.alpha', localId: 'run', input: {}, surface: 'cli',
+    });
+
+    expect(result).toEqual({
+      status: 'failed',
+      code: 'plugin_action_execution_failed',
+      message: 'transport failed after handler entry',
+    });
+    expect(result).not.toHaveProperty('actionHandlerInvocation');
+  });
+
   it('rejects an action when its referenced optional host resource is unselected', async () => {
     const invoke = vi.fn(async () => ({ status: 'executed' as const, value: null }));
     const executor = createExecutor({
@@ -260,7 +294,10 @@ describe('target action executor', () => {
     await expect(executor.execute({
       pluginId: 'acme.alpha', localId: 'run', input: {}, surface: 'cli',
     })).resolves.toEqual({
-      status: 'failed', code: 'plugin_generation_stale', message: 'Plugin generation is stale',
+      status: 'failed',
+      code: 'plugin_generation_stale',
+      message: 'Plugin generation is stale',
+      actionHandlerInvocation: 'notStarted',
     });
     expect(invoke).not.toHaveBeenCalled();
   });
@@ -298,6 +335,174 @@ describe('target action executor', () => {
       .resolves.toMatchObject({ status: 'failed', code: 'plugin_action_execution_failed' });
   });
 
+  it('projects only the canonical failure fields when an invocation returns richer metadata', async () => {
+    const cause = new Error('provider credential is secret');
+    const richFailure = Object.freeze({
+      status: 'failed' as const,
+      code: 'fixture_provider_failed',
+      message: 'provider credential is secret',
+      retryable: true,
+      // Author vocabulary belongs inside the canonical `data` payload. These
+      // top-level copies are not the contract and never reach a caller.
+      details: { credential: 'secret' },
+      remediation: { kind: 'reauthenticate' },
+      diagnostics: [{ code: 'fixture_diagnostic' }],
+      cause,
+    });
+    const executor = createExecutor({
+      resolve: () => resolved(),
+      invoke: async () => richFailure,
+    });
+
+    const result = await executor.execute({
+      pluginId: 'acme.alpha', localId: 'run', input: {}, surface: 'cli',
+    });
+
+    expect(result).toEqual({
+      status: 'failed',
+      code: 'fixture_provider_failed',
+      message: 'provider credential is secret',
+      retryable: true,
+    });
+    expect(result).not.toBe(richFailure);
+    expect(result).not.toHaveProperty('cause');
+  });
+
+  it('carries a canonical failure payload and redacts its scoped secrets in place', async () => {
+    // The invocation credential redactor is the same user-secret boundary that
+    // already owns the failure code and message. A published payload crosses
+    // to the caller, but not as an unredacted route out of that invocation.
+    const executor = createExecutor({
+      resolve: () => resolved(),
+      invoke: async () => ({
+        status: 'failed' as const,
+        code: 'fixture_provider_failed',
+        message: 'provider rejected the publish',
+        retryable: true,
+        data: {
+          name: 'PluginError',
+          code: 'fixture_provider_failed',
+          details: {
+            authorization: 'Bearer scoped-secret',
+            attempts: 2,
+            trace: ['scoped-secret', null],
+          },
+        },
+      }),
+      redactFailureText: (_action, value) => value.replaceAll('scoped-secret', '[redacted]'),
+    });
+
+    await expect(executor.execute({
+      pluginId: 'acme.alpha', localId: 'run', input: {}, surface: 'cli',
+    })).resolves.toEqual({
+      status: 'failed',
+      code: 'fixture_provider_failed',
+      message: 'provider rejected the publish',
+      retryable: true,
+      data: {
+        name: 'PluginError',
+        code: 'fixture_provider_failed',
+        details: {
+          authorization: 'Bearer [redacted]',
+          attempts: 2,
+          trace: ['[redacted]', null],
+        },
+      },
+    });
+  });
+
+  it('withholds only the failure payload when scoped redaction is unavailable', async () => {
+    const executor = createExecutor({
+      resolve: () => resolved(),
+      invoke: async () => ({
+        status: 'failed' as const,
+        code: 'fixture_provider_failed',
+        message: 'provider rejected the publish',
+        retryable: false,
+        data: { name: 'PluginError', code: 'fixture_provider_failed' },
+      }),
+      redactFailureText: () => {
+        throw new Error('redactor unavailable');
+      },
+    });
+
+    await expect(executor.execute({
+      pluginId: 'acme.alpha', localId: 'run', input: {}, surface: 'cli',
+    })).resolves.toEqual({
+      status: 'failed',
+      code: 'plugin_action_execution_failed',
+      message: 'plugin_action_execution_failed',
+      retryable: false,
+    });
+  });
+
+  it('uses the stable failure code when diagnostic redaction fails', async () => {
+    const executor = createExecutor({
+      resolve: () => resolved(),
+      invoke: async () => {
+        throw new Error('plugin-controlled failure detail');
+      },
+      redactFailureText: () => {
+        throw new Error('redactor unavailable');
+      },
+    });
+
+    await expect(executor.execute({
+      pluginId: 'acme.alpha',
+      localId: 'run',
+      input: {},
+      surface: 'cli',
+    })).resolves.toEqual({
+      status: 'failed',
+      code: 'plugin_action_execution_failed',
+      message: 'plugin_action_execution_failed',
+    });
+  });
+
+  it('projects scoped target-action failure text through the bounded diagnostics owner', async () => {
+    const scopedMessage = `scoped failure ${'🚫'.repeat(700)}`;
+    const executor = createExecutor({
+      resolve: () => resolved(),
+      invoke: async () => {
+        throw new Error('unredacted provider failure');
+      },
+      redactFailureText: (_action, value) => (
+        value === 'plugin_action_execution_failed' ? value : scopedMessage
+      ),
+    });
+
+    const result = await executor.execute({
+      pluginId: 'acme.alpha', localId: 'run', input: {}, surface: 'cli',
+    });
+
+    if (result.status !== 'failed') throw new Error('Expected target-action failure');
+    expect(result).toEqual({
+      status: 'failed',
+      code: 'plugin_action_execution_failed',
+      message: projectPluginFailureText(new Error(scopedMessage)),
+    });
+    expect(new TextEncoder().encode(result.message).byteLength).toBeLessThanOrEqual(2_048);
+  });
+
+  it('falls back when a scoped failure code is not a bounded stable taxonomy', async () => {
+    const executor = createExecutor({
+      resolve: () => resolved(),
+      invoke: async () => ({
+        status: 'failed' as const,
+        code: `provider.${'x'.repeat(120)}`,
+        message: 'provider failure',
+      }),
+      redactFailureText: (_action, value) => value,
+    });
+
+    await expect(executor.execute({
+      pluginId: 'acme.alpha', localId: 'run', input: {}, surface: 'cli',
+    })).resolves.toMatchObject({
+      status: 'failed',
+      code: 'plugin_action_execution_failed',
+    });
+  });
+
   it('does not invoke after an explicit current-intent decline', async () => {
     const invoke = vi.fn();
     const executor = createExecutor({
@@ -306,6 +511,29 @@ describe('target action executor', () => {
     });
     await expect(executor.execute({ pluginId: 'acme.alpha', localId: 'run', input: {}, surface: 'cli' }))
       .resolves.toMatchObject({ status: 'unavailable', code: 'plugin_action_current_intent_rejected' });
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it('does not reuse approval after the current Action confirmation changes', async () => {
+    let body = 'Events in the history gap are not replayed.';
+    const invoke = vi.fn();
+    const executor = createExecutor({
+      resolve: () => ({
+        ...resolved('writesLocal'),
+        confirmation: { title: 'Start a new baseline', body },
+      }),
+      requestCurrentIntent: async ({ fingerprint }) => {
+        body = 'A changed confirmation must be approved again.';
+        return { status: 'approved', fingerprint };
+      },
+      invoke,
+    });
+
+    await expect(executor.execute({
+      pluginId: 'acme.alpha', localId: 'run', input: {}, surface: 'cli',
+    })).resolves.toMatchObject({
+      status: 'unavailable', code: 'plugin_action_current_intent_mismatch',
+    });
     expect(invoke).not.toHaveBeenCalled();
   });
 });

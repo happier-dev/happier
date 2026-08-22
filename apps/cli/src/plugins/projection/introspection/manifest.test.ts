@@ -14,9 +14,17 @@ describe('manifest contribution introspection', () => {
       contributes: {
         actions: [{
           id: 'run', title: 'Run', scopes: ['session'], surfaces: ['cli'],
-          placement: 'primary', dangerLevel: 'safe',
+          execution: { target: 'daemon' },
+          placementBindings: ['primary'], dangerLevel: 'safe',
         }],
         commands: [{ id: 'command', title: 'Command', path: ['run'], action: 'run' }],
+        composerReferences: [{
+          id: 'issues',
+          title: 'Issues',
+          description: 'Search issues',
+          icon: 'search',
+          triggers: ['$'],
+        }],
         voiceModelPacks: [],
       },
     });
@@ -34,7 +42,18 @@ describe('manifest contribution introspection', () => {
     expect(projection.contributions.map((entry) => entry.contribution.family)).toEqual([
       'actions',
       'commands',
+      'composerReferences',
     ]);
+    expect(projection.contributions.find((entry) => entry.contribution.family === 'composerReferences'))
+      .toMatchObject({
+        presentation: {
+          kind: 'composerReference',
+          title: 'Issues',
+          description: 'Search issues',
+          icon: 'search',
+          triggers: ['$'],
+        },
+      });
     expect(projection.contributions.every((entry) => entry.progression.merged === false)).toBe(true);
   });
 });

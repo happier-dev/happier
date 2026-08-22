@@ -1,5 +1,7 @@
 import { mkdir, mkdtemp, rename, rm, writeFile } from 'node:fs/promises';
-import { dirname, join, resolve, sep } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
+
+import { isCanonicalAbsolutePathInsideRoot } from '@happier-dev/cli-common/path';
 
 import {
     PluginUiArtifactsManifestV1Schema,
@@ -22,7 +24,10 @@ import {
     defineReactNativeWebViteBuildArtifact,
     type ReactNativeWebViteBuildPreset,
 } from '../reactNativeWebBuild.js';
-import { applyStrictSafeGuardedRequireTransform } from '../reactNativeRepackStrictSafety.js';
+import {
+    applyStrictSafeGuardedRequireTransform,
+    carriesReactNativeArtifactJavaScript,
+} from '../reactNativeRepackStrictSafety.js';
 
 /**
  * Canonical on-disk artifact root the daemon static-asset source reads
@@ -154,7 +159,7 @@ function normalizeEmittedFiles(
         seen.add(relativePath);
         const bytes = surface.kind === 'reactNative'
             && surface.preset.bundler === 'repack'
-            && relativePath.endsWith('.js')
+            && carriesReactNativeArtifactJavaScript(relativePath)
             ? new TextEncoder().encode(
                 applyStrictSafeGuardedRequireTransform(new TextDecoder().decode(file.bytes)).source,
             )
@@ -239,8 +244,7 @@ async function writeArtifactFile(
     // `relativePath` is already validated by readRelativeBuildPath (no `..`,
     // no absolute, no backslashes), so the join cannot escape the root.
     const absolutePath = join(artifactsRoot, ...file.relativePath.split('/'));
-    const rootPrefix = artifactsRoot.endsWith(sep) ? artifactsRoot : `${artifactsRoot}${sep}`;
-    if (!absolutePath.startsWith(rootPrefix)) {
+    if (!isCanonicalAbsolutePathInsideRoot(resolve(artifactsRoot), resolve(absolutePath))) {
         throw new PluginUiBuildError(
             'artifact_escapes_root',
             `Refusing to write "${file.relativePath}" outside the artifact root`,

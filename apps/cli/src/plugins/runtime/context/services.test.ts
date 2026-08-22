@@ -3,28 +3,32 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { describe, expect, it, vi } from 'vitest';
+import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
 
 import type {
     ExecLaunchInputV1,
 } from '../exec/privateContract';
 
 import { resolvePluginStorePaths } from '@/plugins/store/paths';
-import { createPluginEnvService } from './env';
 import { createPluginExecService } from '../exec/hostService';
-import { createPluginFsService } from './fs';
-import { createPluginSecretStore, preparePluginSecretsDataRemoval } from './secrets';
 import {
-    copyPluginSessionStorageForFork,
-    createAccountSettingsBackedPluginStorageScope,
+    createPluginSecretStore,
+    createPurposeKeyedPluginSecretStore,
+    preparePluginSecretsDataRemoval,
+} from './secrets';
+import {
     createPluginStoragePublicShareSnapshot,
     createPluginStorageOwner,
     preparePluginStorageDataRemoval,
-    updatePluginStorageScopeValueAtomically,
 } from './storage';
-import { createPluginTerminalHostService } from './terminalHost';
+import {
+    createPluginTerminalHostService,
+    installAgentChildLaunchEnvironmentTransformerForTerminalHost,
+} from './terminalHost';
 import { createPluginTranscriptFileFollowService } from './transcripts/fileFollow';
 import { createTranscriptFileFollowPathGrantRegistry } from './transcripts/fileFollowGrants';
 import { createPluginDisposableRegistry } from '../lifecycle/disposables';
+import { PluginContextServiceError } from './errors';
 import type {
     TerminalControlPort,
     TerminalHostAdapter,
@@ -50,79 +54,75 @@ async function firstExecutablePath(candidates: readonly string[]): Promise<strin
 }
 
 describe('A.11 plugin context services', () => {
-    it('scopes storage by plugin id and keeps ephemeral/session/local/synced behavior distinct', async () => {
+    it('exposes factory and service failures through the canonical public PluginError contract', async () => {
+        const wrapped = new PluginContextServiceError('PLUGIN_RUNTIME_ERROR', 'opaque host failure');
+
+        expect(wrapped).toBeInstanceOf(PluginContextServiceError);
+        expect(wrapped).toBeInstanceOf(PluginError);
+        expect(isPluginError(wrapped)).toBe(true);
+        expect(wrapped).toMatchObject({
+            name: 'PluginError',
+            code: 'PLUGIN_RUNTIME_ERROR',
+            message: 'opaque host failure',
+            retryable: false,
+        });
+
         const happyHomeDir = await makeHappyHome();
-        const syncedValues = new Map<string, unknown>();
-        const service = createPluginStorageOwner({
+        const unbound = createPluginStorageOwner({
             pluginId: 'acme.plugin',
             paths: resolvePluginStorePaths({ happyHomeDir }),
-            sessionId: 'session-source',
-            synced: {
-                get: async <T = unknown>(key: string): Promise<T | null> =>
-                    syncedValues.has(key) ? syncedValues.get(key) as T : null,
-                set: async (key, value) => {
-                    syncedValues.set(key, value);
-                },
-                delete: async (key) => {
-                    syncedValues.delete(key);
-                },
-                listKeys: async () => [...syncedValues.keys()],
-            },
         });
+        const storageFailure = await unbound.daemonSession.listKeys().catch((error: unknown) => error);
 
-        await service.ephemeral.set('volatile', { ok: true });
-        await service.session.set('turn', { session: true });
-        await service.local.set('durable', { local: true });
-        await service.synced.set('account', { synced: true });
-
-        expect(await service.ephemeral.get('volatile')).toEqual({ ok: true });
-        expect(await service.session.get('turn')).toEqual({ session: true });
-        expect(await service.local.get('durable')).toEqual({ local: true });
-        expect(await service.synced.get('account')).toEqual({ synced: true });
-
-        const restarted = createPluginStorageOwner({
-            pluginId: 'acme.plugin',
-            paths: resolvePluginStorePaths({ happyHomeDir }),
-            sessionId: 'session-source',
-        });
-        expect(await restarted.ephemeral.get('volatile')).toBeNull();
-        expect(await restarted.session.get('turn')).toEqual({ session: true });
-        expect(await restarted.local.get('durable')).toEqual({ local: true });
-        await expect(restarted.synced.get('account')).rejects.toMatchObject({
-            code: 'PLUGIN_STORAGE_SYNCED_UNAVAILABLE',
+        expect(storageFailure).toBeInstanceOf(PluginContextServiceError);
+        expect(storageFailure).toBeInstanceOf(PluginError);
+        expect(isPluginError(storageFailure)).toBe(true);
+        expect(storageFailure).toMatchObject({
+            name: 'PluginError',
+            code: 'PLUGIN_STORAGE_SESSION_UNAVAILABLE',
+            retryable: false,
         });
     });
 
-    it('deep-copies session storage on fork and strips it from public share snapshots', async () => {
+    it('scopes storage by plugin id and keeps ephemeral/daemonSession/daemon behavior distinct', async () => {
         const happyHomeDir = await makeHappyHome();
         const paths = resolvePluginStorePaths({ happyHomeDir });
-        const source = createPluginStorageOwner({
+        const service = createPluginStorageOwner({
             pluginId: 'acme.plugin',
             paths,
             sessionId: 'session-source',
         });
-        await source.session.set('draft', { nested: { value: 1 } });
-        await source.local.set('deviceOnly', { value: true });
 
-        await copyPluginSessionStorageForFork({
+        await service.ephemeral.set('volatile', { ok: true });
+        await service.daemonSession.set('turn', { session: true });
+        await service.daemon.set('durable', { daemon: true });
+
+        expect(await service.ephemeral.get('volatile')).toEqual({ ok: true });
+        expect(await service.daemonSession.get('turn')).toEqual({ session: true });
+        expect(await service.daemon.get('durable')).toEqual({ daemon: true });
+
+        const restarted = createPluginStorageOwner({
+            pluginId: 'acme.plugin',
             paths,
-            sourceSessionId: 'session-source',
-            targetSessionId: 'session-target',
+            sessionId: 'session-source',
         });
-        await source.session.set('draft', { nested: { value: 2 } });
+        expect(await restarted.ephemeral.get('volatile')).toBeNull();
+        expect(await restarted.daemonSession.get('turn')).toEqual({ session: true });
+        expect(await restarted.daemon.get('durable')).toEqual({ daemon: true });
 
-        const target = createPluginStorageOwner({
+        const otherSession = createPluginStorageOwner({
             pluginId: 'acme.plugin',
             paths,
             sessionId: 'session-target',
         });
-        expect(await target.session.get('draft')).toEqual({ nested: { value: 1 } });
+        expect(await otherSession.daemonSession.get('turn')).toBeNull();
+        expect(await otherSession.daemon.get('durable')).toEqual({ daemon: true });
 
         const unbound = createPluginStorageOwner({
             pluginId: 'acme.plugin',
             paths,
         });
-        await expect(unbound.session.listKeys()).rejects.toMatchObject({
+        await expect(unbound.daemonSession.listKeys()).rejects.toMatchObject({
             code: 'PLUGIN_STORAGE_SESSION_UNAVAILABLE',
         });
         await expect(createPluginStoragePublicShareSnapshot({ paths })).resolves.toEqual({
@@ -131,172 +131,67 @@ describe('A.11 plugin context services', () => {
         });
     });
 
-    it('backs synced storage with account settings while preserving unknown account fields', async () => {
-        let settings: Record<string, unknown> = { existing: true };
-        const synced = createAccountSettingsBackedPluginStorageScope({
-            pluginId: 'acme.plugin',
-            getSettings: () => settings,
-            updateSettings: async (mutate) => {
-                settings = mutate(settings);
-                return settings;
-            },
-        });
-
-        await synced.set('shared', { ok: true });
-
-        expect(await synced.get('shared')).toEqual({ ok: true });
-        expect(await synced.listKeys()).toEqual(['shared']);
-        expect(settings.existing).toBe(true);
-
-        await synced.delete('shared');
-        expect(await synced.get('shared')).toBeNull();
-    });
-
-    it('atomically updates one synced key through the account settings owner', async () => {
-        let settings: Record<string, unknown> = {
-            existing: true,
-            pluginStorageSyncedV1: {
-                v: 1,
-                plugins: {
-                    'acme.plugin': {
-                        settings: { revision: 0 },
-                        untouched: { keep: true },
-                    },
-                    'sibling.plugin': { settings: { keep: true } },
-                },
-            },
-        };
-        const synced = createAccountSettingsBackedPluginStorageScope({
-            pluginId: 'acme.plugin',
-            getSettings: () => settings,
-            updateSettings: async (mutate) => {
-                settings = mutate(settings);
-                return settings;
-            },
-        });
-
-        const revision = await updatePluginStorageScopeValueAtomically({
-            scope: synced,
-            key: 'settings',
-            operation: (current) => ({
-                value: { revision: 1, previous: current },
-                result: 1,
-            }),
-        });
-
-        expect(revision).toBe(1);
-        expect(await synced.get('settings')).toEqual({
-            revision: 1,
-            previous: { revision: 0 },
-        });
-        expect(settings).toMatchObject({
-            existing: true,
-            pluginStorageSyncedV1: {
-                plugins: {
-                    'acme.plugin': { untouched: { keep: true } },
-                    'sibling.plugin': { settings: { keep: true } },
-                },
-            },
-        });
-    });
-
-    it('removes only one validated plugin storage/settings/session/filesystem and secret namespace', async () => {
+    it('removes only one validated plugin daemon/session/filesystem and secret namespace', async () => {
         const happyHomeDir = await makeHappyHome();
         const paths = resolvePluginStorePaths({ happyHomeDir });
-        let accountSettings: Record<string, unknown> = { existing: true };
-        const accountSettingsAdapter = {
-            getSettings: () => accountSettings,
-            updateSettings: async (mutate: (settings: Readonly<Record<string, unknown>>) => Record<string, unknown>) => {
-                accountSettings = mutate(accountSettings);
-                return accountSettings;
-            },
-        };
         const acme = createPluginStorageOwner({
             pluginId: 'acme.plugin',
             paths,
             sessionId: 'session-1',
-            synced: createAccountSettingsBackedPluginStorageScope({ pluginId: 'acme.plugin', ...accountSettingsAdapter }),
         });
         const sibling = createPluginStorageOwner({
             pluginId: 'sibling.plugin',
             paths,
             sessionId: 'session-1',
-            synced: createAccountSettingsBackedPluginStorageScope({ pluginId: 'sibling.plugin', ...accountSettingsAdapter }),
         });
-        await acme.local.set('settings', { enabled: true });
-        await acme.session.set('draft', { text: 'remove me' });
-        await acme.synced.set('profile', { id: 'remove-me' });
-        await sibling.local.set('settings', { enabled: false });
-        await sibling.session.set('draft', { text: 'keep me' });
-        await sibling.synced.set('profile', { id: 'keep-me' });
-        accountSettings = {
-            ...accountSettings,
-            pluginStorageSyncedV1: {
-                ...(accountSettings.pluginStorageSyncedV1 as Record<string, unknown>),
-                futureEnvelopeField: { keep: true },
-            },
-        };
+        await acme.daemon.set('settings', { enabled: true });
+        await acme.daemonSession.set('draft', { text: 'remove me' });
+        await sibling.daemon.set('settings', { enabled: false });
+        await sibling.daemonSession.set('draft', { text: 'keep me' });
         await mkdir(join(paths.storageDir, 'acme.plugin', 'fs'), { recursive: true });
         await writeFile(join(paths.storageDir, 'acme.plugin', 'fs', 'owned.txt'), 'remove me', 'utf8');
 
-        const acmeSecrets = createPluginSecretStore({ pluginId: 'acme.plugin', paths });
-        const siblingSecrets = createPluginSecretStore({ pluginId: 'sibling.plugin', paths });
+        const testSecretKey = new Uint8Array(32).fill(7);
+        const acmeSecrets = createPluginSecretStore({ pluginId: 'acme.plugin', paths, secretKey: testSecretKey });
+        const siblingSecrets = createPluginSecretStore({ pluginId: 'sibling.plugin', paths, secretKey: testSecretKey });
         await acmeSecrets.set('token', 'remove-me');
         await siblingSecrets.set('token', 'keep-me');
 
         const storageRemoval = await preparePluginStorageDataRemoval({
             pluginId: 'acme.plugin',
             paths,
-            synced: accountSettingsAdapter,
         });
         const secretsRemoval = await preparePluginSecretsDataRemoval({ pluginId: 'acme.plugin', paths });
-        await storageRemoval.removeSynced();
-        await storageRemoval.removeLocal();
+        expect(storageRemoval.hadDaemonData).toBe(true);
+        await storageRemoval.removeDaemon();
         await secretsRemoval.remove();
 
         const restartedAcme = createPluginStorageOwner({
             pluginId: 'acme.plugin',
             paths,
             sessionId: 'session-1',
-            synced: createAccountSettingsBackedPluginStorageScope({ pluginId: 'acme.plugin', ...accountSettingsAdapter }),
         });
-        expect(await restartedAcme.local.listKeys()).toEqual([]);
-        expect(await restartedAcme.session.listKeys()).toEqual([]);
-        expect(await restartedAcme.synced.listKeys()).toEqual([]);
-        expect(await createPluginSecretStore({ pluginId: 'acme.plugin', paths }).list()).toEqual([]);
+        expect(await restartedAcme.daemon.listKeys()).toEqual([]);
+        expect(await restartedAcme.daemonSession.listKeys()).toEqual([]);
+        expect(await createPluginSecretStore({ pluginId: 'acme.plugin', paths, secretKey: testSecretKey }).list()).toEqual([]);
 
-        expect(await sibling.local.get('settings')).toEqual({ enabled: false });
-        expect(await sibling.session.get('draft')).toEqual({ text: 'keep me' });
-        expect(await sibling.synced.get('profile')).toEqual({ id: 'keep-me' });
+        expect(await sibling.daemon.get('settings')).toEqual({ enabled: false });
+        expect(await sibling.daemonSession.get('draft')).toEqual({ text: 'keep me' });
         expect(await siblingSecrets.get('token')).toBe('keep-me');
-        expect(accountSettings.existing).toBe(true);
-        expect(accountSettings).toMatchObject({
-            pluginStorageSyncedV1: { futureEnvelopeField: { keep: true } },
+        await expect(access(join(paths.secretsDir, 'plugin-secrets-key.v1'))).rejects.toMatchObject({
+            code: 'ENOENT',
         });
-        await expect(access(join(paths.secretsDir, 'plugin-secrets-key.v1'))).resolves.toBeUndefined();
     });
 
     it('rejects ambiguous identities and symlinked plugin namespaces before any destructive mutation', async () => {
         const happyHomeDir = await makeHappyHome();
         const paths = resolvePluginStorePaths({ happyHomeDir });
-        let accountSettings: Record<string, unknown> = {
-            pluginStorageSyncedV1: {
-                v: 1,
-                plugins: { 'sibling.plugin': { keep: true } },
-            },
-        };
-        const updateSettings = vi.fn(async (
-            mutate: (settings: Readonly<Record<string, unknown>>) => Record<string, unknown>,
-        ) => {
-            accountSettings = mutate(accountSettings);
-            return accountSettings;
-        });
-        const synced = { getSettings: () => accountSettings, updateSettings };
+        const removeDirectory = vi.fn(async () => undefined);
 
         await expect(preparePluginStorageDataRemoval({
             pluginId: '../sibling.plugin',
             paths,
-            synced,
+            removeDirectory,
         })).rejects.toMatchObject({ code: 'PLUGIN_DATA_REMOVAL_IDENTITY_INVALID' });
 
         const outside = join(happyHomeDir, 'outside-plugin-data');
@@ -308,13 +203,10 @@ describe('A.11 plugin context services', () => {
         await expect(preparePluginStorageDataRemoval({
             pluginId: 'acme.plugin',
             paths,
-            synced,
+            removeDirectory,
         })).rejects.toMatchObject({ code: 'PLUGIN_STORAGE_DATA_PATH_INVALID' });
-        expect(updateSettings).not.toHaveBeenCalled();
+        expect(removeDirectory).not.toHaveBeenCalled();
         expect(await readFile(join(outside, 'keep.txt'), 'utf8')).toBe('keep');
-        expect(accountSettings).toMatchObject({
-            pluginStorageSyncedV1: { plugins: { 'sibling.plugin': { keep: true } } },
-        });
     });
 
     it('stores secrets per plugin namespace without exposing values in list output', async () => {
@@ -350,17 +242,37 @@ describe('A.11 plugin context services', () => {
         }
     });
 
+    it('uses caller-owned key material without creating the retired shared plugin key', async () => {
+        const happyHomeDir = await makeHappyHome();
+        const paths = resolvePluginStorePaths({ happyHomeDir });
+        const secrets = createPurposeKeyedPluginSecretStore({
+            pluginId: 'acme.plugin',
+            paths,
+            secretKey: new Uint8Array(32).fill(7),
+            randomBytes: (length) => new Uint8Array(length).fill(3),
+        });
+
+        await secrets.set('token', 'daemon-owned-secret');
+
+        expect(await secrets.get('token')).toBe('daemon-owned-secret');
+        await expect(access(join(paths.secretsDir, 'plugin-secrets-key.v1'))).rejects.toMatchObject({
+            code: 'ENOENT',
+        });
+    });
+
     it('serializes concurrent secret writes from separate service instances without losing names', async () => {
         const happyHomeDir = await makeHappyHome();
         const paths = resolvePluginStorePaths({ happyHomeDir });
         const first = createPluginSecretStore({
             pluginId: 'acme.plugin',
             paths,
+            secretKey: new Uint8Array(32).fill(7),
             randomBytes: (length) => new Uint8Array(length).fill(3),
         });
         const second = createPluginSecretStore({
             pluginId: 'acme.plugin',
             paths,
+            secretKey: new Uint8Array(32).fill(7),
             randomBytes: (length) => new Uint8Array(length).fill(4),
         });
 
@@ -384,10 +296,10 @@ describe('A.11 plugin context services', () => {
             paths: resolvePluginStorePaths({ happyHomeDir }),
         });
 
-        await storage.local.set('__proto__', { persisted: true });
+        await storage.daemon.set('__proto__', { persisted: true });
 
-        expect(await storage.local.get('__proto__')).toEqual({ persisted: true });
-        expect(await storage.local.listKeys()).toEqual(['__proto__']);
+        expect(await storage.daemon.get('__proto__')).toEqual({ persisted: true });
+        expect(await storage.daemon.listKeys()).toEqual(['__proto__']);
     });
 
     it('persists a prototype-named secret as an own encrypted record', async () => {
@@ -406,7 +318,7 @@ describe('A.11 plugin context services', () => {
         expect(await secrets.get('__proto__')).toBe('secret-value');
     });
 
-    it('does not create local secret key material for a missing secret read', async () => {
+    it('refuses a keyless read instead of reporting an empty namespace, whatever the name', async () => {
         const happyHomeDir = await makeHappyHome();
         const paths = resolvePluginStorePaths({ happyHomeDir });
         const secrets = createPluginSecretStore({
@@ -414,21 +326,16 @@ describe('A.11 plugin context services', () => {
             paths,
         });
 
-        await expect(secrets.get('missing')).resolves.toBeNull();
-        await expect(access(join(paths.secretsDir, 'plugin-secrets-key.v1'))).rejects.toMatchObject({
-            code: 'ENOENT',
-        });
-    });
-
-    it('does not create local secret key material for a missing prototype-named secret read', async () => {
-        const happyHomeDir = await makeHappyHome();
-        const paths = resolvePluginStorePaths({ happyHomeDir });
-        const secrets = createPluginSecretStore({
-            pluginId: 'acme.plugin',
-            paths,
-        });
-
-        await expect(secrets.get('__proto__')).resolves.toBeNull();
+        // A caller with no custody-owned key material must not be able to tell
+        // an empty namespace from a populated one, and must not cause any local
+        // key to be created. `null` here would hide exactly that custody bug.
+        // The name is irrelevant to the refusal, including a prototype-polluting
+        // one whose lookup would otherwise be answered from the prototype chain.
+        for (const name of ['missing', '__proto__']) {
+            await expect(secrets.get(name)).rejects.toMatchObject({
+                code: 'PLUGIN_SECRETS_KEY_REQUIRED',
+            });
+        }
         await expect(access(join(paths.secretsDir, 'plugin-secrets-key.v1'))).rejects.toMatchObject({
             code: 'ENOENT',
         });
@@ -475,28 +382,6 @@ describe('A.11 plugin context services', () => {
         expect(await readFile(secretFile, 'utf8')).toBe(original);
     });
 
-    it('provides A.13 env and fs services through plugin-scoped access only', async () => {
-        const happyHomeDir = await makeHappyHome();
-        const paths = resolvePluginStorePaths({ happyHomeDir });
-        const env = createPluginEnvService({
-            env: {
-                HAPPIER_ALLOWED: 'yes',
-                SECRET_TOKEN: 'no',
-            },
-            allowedNames: ['HAPPIER_ALLOWED'],
-        });
-        const fs = createPluginFsService({
-            rootDir: join(paths.storageDir, 'acme.plugin', 'fs'),
-        });
-
-        expect(env.get('HAPPIER_ALLOWED')).toBe('yes');
-        expect(env.get('SECRET_TOKEN')).toBeNull();
-        await fs.writeText({ path: 'notes/run.txt', contents: 'ok' });
-
-        await expect(fs.readText({ path: 'notes/run.txt' })).resolves.toBe('ok');
-        await expect(fs.writeText({ path: '../escape.txt', contents: 'no' })).rejects.toThrow(/escapes/);
-    });
-
     it('exposes terminal host control only through a host-owned capability-gated wrapper', async () => {
         const handle: TerminalHostHandle = {
             kind: 'tmux',
@@ -537,7 +422,7 @@ describe('A.11 plugin context services', () => {
             dispose: vi.fn(async () => undefined),
         };
         const service = createPluginTerminalHostService({
-            hasCapability: (capability) => capability === 'terminalHost' || capability === 'terminal.host.control',
+            hasCapability: (capability) => capability === 'terminalHost',
             resolveTerminalHost: (preference) => ({
                 status: 'resolved',
                 adapter,
@@ -557,6 +442,19 @@ describe('A.11 plugin context services', () => {
             onHostCreated,
             disposeHost,
         });
+        const placeholder =
+            'happier_runner_placeholder_AAAAAAAAAAAAAAAAAAAAAAAAAAA';
+        const transformerBinding =
+            installAgentChildLaunchEnvironmentTransformerForTerminalHost(
+                service,
+                (environment) => Object.freeze({
+                    ...environment,
+                    HAPPIER_PROVIDER_KEY:
+                        environment.HAPPIER_PROVIDER_KEY === placeholder
+                            ? 'runner-owned-secret'
+                            : environment.HAPPIER_PROVIDER_KEY,
+                }),
+            );
 
         await expect(service.resolve({ preference: 'auto' })).resolves.toEqual({
             status: 'resolved',
@@ -573,6 +471,7 @@ describe('A.11 plugin context services', () => {
                 args: ['--continue'],
                 env: {
                     EXTRA: '1',
+                    HAPPIER_PROVIDER_KEY: placeholder,
                     HAPPIER_SESSION_PROFILE_ID: 'plugin-spoof',
                     HAPPIER_SERVER_URL: 'https://plugin-spoof.example.test',
                 },
@@ -596,6 +495,7 @@ describe('A.11 plugin context services', () => {
             spawnEnv: {
                 CLAUDE_CONFIG_DIR: '/tmp/claude-config',
                 EXTRA: '1',
+                HAPPIER_PROVIDER_KEY: 'runner-owned-secret',
                 HAPPIER_SERVER_URL: 'https://canonical.example.test',
             },
             unsetEnvKeys: ['openai_api_key'],
@@ -606,6 +506,7 @@ describe('A.11 plugin context services', () => {
             scheduling: { timeoutMs: 15_000 },
         });
         expect(onHostCreated).toHaveBeenCalledWith(handle);
+        transformerBinding.dispose();
 
         await service.dispose(terminalHandle, {
             kind: 'preserve_host',
@@ -674,7 +575,7 @@ describe('A.11 plugin context services', () => {
             dispose: vi.fn(async () => undefined),
         };
         const service = createPluginTerminalHostService({
-            hasCapability: (capability) => capability === 'terminalHost' || capability === 'terminal.host.control',
+            hasCapability: (capability) => capability === 'terminalHost',
             resolveTerminalHost: () => ({ status: 'resolved', adapter, reason: 'tmux_available' }),
             resolveAgentCliLaunch: () => ({ command: '/usr/local/bin/claude', args: [] }),
             disposeHost: vi.fn(async () => undefined),
@@ -733,7 +634,7 @@ describe('A.11 plugin context services', () => {
             dispose: vi.fn(async () => undefined),
         };
         const service = createPluginTerminalHostService({
-            hasCapability: (capability) => capability === 'terminalHost' || capability === 'terminal.host.control',
+            hasCapability: (capability) => capability === 'terminalHost',
             resolveTerminalHost: () => ({ status: 'resolved', adapter, reason: 'tmux_available' }),
             resolveAgentCliLaunch: () => ({ command: '/usr/local/bin/claude', args: [] }),
             disposeHost: vi.fn(async () => undefined),
@@ -788,7 +689,7 @@ describe('A.11 plugin context services', () => {
             dispose: vi.fn(async () => undefined),
         };
         const service = createPluginTerminalHostService({
-            hasCapability: (capability) => capability === 'terminalHost' || capability === 'terminal.host.control',
+            hasCapability: (capability) => capability === 'terminalHost',
             resolveTerminalHost: () => ({ status: 'resolved', adapter, reason: 'tmux_available' }),
             resolveAgentCliLaunch: () => ({ command: '/usr/local/bin/claude', args: [] }),
             disposeHost: vi.fn(async () => undefined),
@@ -873,7 +774,7 @@ describe('A.11 plugin context services', () => {
             dispose: vi.fn(async () => undefined),
         };
         const makeService = (adapter: TerminalHostAdapter) => createPluginTerminalHostService({
-            hasCapability: (capability) => capability === 'terminalHost' || capability === 'terminal.host.control',
+            hasCapability: (capability) => capability === 'terminalHost',
             resolveTerminalHost: () => ({ status: 'resolved', adapter, reason: 'tmux_available' }),
             resolveAgentCliLaunch: () => ({ command: '/usr/local/bin/claude', args: [] }),
             disposeHost: vi.fn(async () => undefined),
@@ -899,134 +800,6 @@ describe('A.11 plugin context services', () => {
         await expect(makeService({ ...baseAdapter, createControlPort }).controlPort(handle)).rejects.toMatchObject({
             code: 'PLUGIN_TERMINAL_HOST_HANDLE_NOT_ACTIVE',
         });
-    });
-
-    it('creates host-owned plugin temp directories with scoped read write and cleanup', async () => {
-        const happyHomeDir = await makeHappyHome();
-        const paths = resolvePluginStorePaths({ happyHomeDir });
-        const fs = createPluginFsService({
-            rootDir: join(paths.storageDir, 'acme.plugin', 'fs'),
-        });
-
-        const temp = await fs.createTempDirectory({ prefix: 'happier-deepsec-' });
-        const textPath = await temp.createTextFile({
-            suffix: '.files.txt',
-            contents: 'src/auth.ts\n',
-        });
-
-        expect(textPath).toContain('happier-deepsec-');
-        await expect(temp.readText({ path: textPath })).resolves.toBe('src/auth.ts\n');
-        await expect(temp.createTextFile({ suffix: '/escape.txt', contents: 'no' })).rejects.toThrow(/suffix/);
-        await expect(temp.readText({ path: join(tmpdir(), 'outside.txt') })).rejects.toThrow(/escapes/);
-
-        await temp.cleanup();
-        await expect(stat(temp.path)).rejects.toMatchObject({ code: 'ENOENT' });
-    });
-
-    it('rejects plugin filesystem symlink escapes from the scoped root', async () => {
-        const happyHomeDir = await makeHappyHome();
-        const paths = resolvePluginStorePaths({ happyHomeDir });
-        const rootDir = join(paths.storageDir, 'acme.plugin', 'fs');
-        const outsideDir = await mkdtemp(join(tmpdir(), 'happier-a13-fs-outside-'));
-        await mkdir(rootDir, { recursive: true });
-        await writeFile(join(outsideDir, 'secret.txt'), 'secret', 'utf8');
-        await symlink(outsideDir, join(rootDir, 'outside'), 'dir');
-        const fs = createPluginFsService({
-            rootDir,
-        });
-
-        await expect(fs.readText({ path: 'outside/secret.txt' })).rejects.toThrow(/escapes/);
-        await expect(fs.writeText({ path: 'outside/new.txt', contents: 'no' })).rejects.toThrow(/escapes/);
-        await expect(fs.list({ path: 'outside' })).rejects.toThrow(/escapes/);
-        await expect(fs.stat({ path: 'outside/secret.txt' })).rejects.toThrow(/escapes/);
-    });
-
-    it('materializes scoped path list files from the host root and blocks symlink escapes', async () => {
-        const happyHomeDir = await makeHappyHome();
-        const paths = resolvePluginStorePaths({ happyHomeDir });
-        const repoRoot = await mkdtemp(join(tmpdir(), 'happier-a11-scoped-repo-'));
-        const outsideDir = await mkdtemp(join(tmpdir(), 'happier-a11-scoped-outside-'));
-        await mkdir(join(repoRoot, 'src'), { recursive: true });
-        await writeFile(join(repoRoot, 'src', 'auth.ts'), 'export const auth = true;\n', 'utf8');
-        await writeFile(join(repoRoot, 'src', 'api.ts'), 'export const api = true;\n', 'utf8');
-        await writeFile(join(outsideDir, 'secret.ts'), 'export const secret = true;\n', 'utf8');
-        await symlink(outsideDir, join(repoRoot, 'src', 'outside'), 'dir');
-        const fs = createPluginFsService({
-            rootDir: join(paths.storageDir, 'acme.plugin', 'fs'),
-            readScopedRootDir: () => repoRoot,
-        });
-        const temp = await fs.createTempDirectory({ prefix: 'happier-deepsec-' });
-
-        const created = await temp.createScopedPathListFile({
-            suffix: '.files.txt',
-            paths: [' src/auth.ts ', './src\\api.ts', 'src/auth.ts'],
-        });
-
-        expect(created).toMatchObject({
-            status: 'created',
-            paths: ['src/auth.ts', 'src/api.ts'],
-        });
-        if (created.status !== 'created') {
-            throw new Error('Expected scoped path list file to be created');
-        }
-        await expect(readFile(created.path, 'utf8')).resolves.toBe('src/auth.ts\nsrc/api.ts\n');
-
-        await expect(temp.createScopedPathListFile({
-            suffix: '.files.txt',
-            paths: ['src/outside/secret.ts'],
-        })).resolves.toEqual({
-            status: 'blocked',
-            diagnostics: [
-                expect.objectContaining({
-                    code: 'path_escape',
-                    path: 'src/outside/secret.ts',
-                }),
-            ],
-        });
-
-        await temp.cleanup();
-    });
-
-    it('enforces declared plugin filesystem read and write permissions', async () => {
-        const happyHomeDir = await makeHappyHome();
-        const paths = resolvePluginStorePaths({ happyHomeDir });
-        const rootDir = join(paths.storageDir, 'acme.plugin', 'fs');
-        const fs = createPluginFsService({
-            rootDir,
-            readAllowedPaths: [],
-            writeAllowedPaths: ['allowed'],
-        });
-
-        await expect(fs.writeText({ path: 'allowed/run.txt', contents: 'ok' })).resolves.toBeUndefined();
-        await expect(fs.writeText({ path: 'denied/run.txt', contents: 'no' })).rejects.toThrow(/permission/);
-        await expect(fs.readText({ path: 'allowed/run.txt' })).rejects.toThrow(/permission/);
-    });
-
-    it('does not expose Happier environment variables without explicit manifest scopes', () => {
-        const env = createPluginEnvService({
-            env: {
-                HAPPIER_A13_SECRET: 'hidden',
-                HAPPIER_VISIBLE_ONLY_IF_DECLARED: 'hidden',
-            },
-        });
-
-        expect(env.get('HAPPIER_A13_SECRET')).toBeNull();
-        expect(env.list()).toEqual({});
-        expect(() => env.require('HAPPIER_A13_SECRET')).toThrow(/unavailable/);
-    });
-
-    it('exposes only explicitly declared environment variable scopes', () => {
-        const env = createPluginEnvService({
-            env: {
-                HAPPIER_DECLARED_ENV: 'visible',
-                HAPPIER_A13_SECRET: 'hidden',
-            },
-            allowedNames: ['HAPPIER_DECLARED_ENV'],
-        });
-
-        expect(env.get('HAPPIER_DECLARED_ENV')).toBe('visible');
-        expect(env.get('HAPPIER_A13_SECRET')).toBeNull();
-        expect(env.list()).toEqual({ HAPPIER_DECLARED_ENV: 'visible' });
     });
 
     it('threads transcript file-follow grants through the Agent transcript owner', async () => {
@@ -1126,7 +899,7 @@ describe('A.11 plugin context services', () => {
             toolId: 'acme.package-manager',
             purpose: 'verify package-manager deny before grant',
         })).rejects.toMatchObject({
-            code: 'PLUGIN_EXEC_SYSTEM_TOOL_DENIED',
+            code: 'plugin_exec_system_tool_denied',
             diagnostics: [
                 expect.objectContaining({
                     code: 'system_tool_denied',
@@ -1170,15 +943,11 @@ describe('A.11 plugin context services', () => {
             toolId: 'acme.audit',
             purpose: 'review security findings',
         })).rejects.toMatchObject({
-            code: 'PLUGIN_EXEC_SYSTEM_TOOL_UNAVAILABLE',
+            code: 'plugin_exec_system_tool_unavailable',
             diagnostics: [
                 expect.objectContaining({
                     code: 'system_tool_missing',
                     severity: 'error',
-                    messageKey: 'plugins.exec.systemTools.missing',
-                    detail: expect.objectContaining({
-                        toolId: 'acme.audit',
-                    }),
                 }),
             ],
         });
@@ -1209,7 +978,7 @@ describe('A.11 plugin context services', () => {
         controller.abort();
 
         await expect(resolvePromise).rejects.toMatchObject({
-            code: 'PLUGIN_EXEC_SYSTEM_TOOL_ABORTED',
+            code: 'plugin_exec_system_tool_aborted',
         });
         await expect(exec.run({
             kind: 'binary',
@@ -1464,7 +1233,7 @@ describe('A.11 plugin context services', () => {
                 purpose: 'verify command override rejection',
                 preferredCommand: 'acme-other',
             })).rejects.toMatchObject({
-                code: 'PLUGIN_EXEC_SYSTEM_TOOL_INVALID_COMMAND',
+                code: 'plugin_exec_system_tool_invalid_command',
             });
         } finally {
             process.env.PATH = previousPath;

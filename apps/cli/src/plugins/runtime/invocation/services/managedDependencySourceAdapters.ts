@@ -1,13 +1,14 @@
 import { constants as fsConstants } from 'node:fs';
 import { access } from 'node:fs/promises';
 import { delimiter, join } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 
 import { resolveWindowsCommandOnPath } from '@happier-dev/cli-common/process';
 import { PluginError } from '@happier-dev/plugin-sdk';
 
 import type { RuntimeInstallableAdapter } from '@/packagedRuntime/installables/registry';
+import type { InstallableDependencyDescriptor } from '@happier-dev/protocol/installables';
 import { getManagedPypiWheelAssetRuntimeInstallableAdapter } from '@/packagedRuntime/installables/sourceAdapters/pypiWheelAsset';
-import { projectManagedPypiWheelAssetInstallableDescriptor } from '@/plugins/projection/registry/managedDependencyExecutables';
 import type {
     ManagedDependencySourceModelDependency,
     ManagedDependencySourceModelEntry,
@@ -59,6 +60,7 @@ function managedPypiWheelAssetPlatformKey(
 export async function createProductionManagedDependencySourceAdapter(input: Readonly<{
     dependency: ManagedDependencySourceModelDependency;
     source: ManagedDependencySourceModelEntry;
+    sourceInstallable?: InstallableDependencyDescriptor;
     env?: NodeJS.ProcessEnv;
     platform?: NodeJS.Platform;
     architecture?: string;
@@ -67,12 +69,6 @@ export async function createProductionManagedDependencySourceAdapter(input: Read
         input.source.kind === 'managedPypiWheelAsset'
         && input.source.declaration.kind === 'managedPypiWheelAsset'
     ) {
-        if (input.dependency.pluginSource.kind !== 'bundled') {
-            return fail(
-                'plugin_managed_dependency_source_disallowed',
-                'Managed PyPI wheel assets are restricted to bundled first-party plugins',
-            );
-        }
         const source = input.source.declaration;
         const platformKey = managedPypiWheelAssetPlatformKey(
             input.platform ?? process.platform,
@@ -84,24 +80,40 @@ export async function createProductionManagedDependencySourceAdapter(input: Read
                 'Managed PyPI wheel asset does not declare this platform and architecture',
             );
         }
-        const descriptor = projectManagedPypiWheelAssetInstallableDescriptor({
-            definition: input.dependency.definition,
-            source,
-            provenance: input.dependency.provenance,
-            resolvedSourceKind: input.dependency.pluginSource.kind,
-            pluginSourceKind: input.dependency.pluginSource.kind,
-            pluginId: input.dependency.identity.pluginId,
-            manifestPath: input.dependency.manifestPath,
-            manifestDigest: input.dependency.manifestDigest,
-            host: {
-                platform: input.platform ?? process.platform,
-                architecture: input.architecture ?? process.arch,
-            },
-        }) ?? fail(
-            'plugin_managed_dependency_source_invalid',
-            'Managed PyPI wheel asset cannot be projected into the installables registry',
-        );
-        return await getManagedPypiWheelAssetRuntimeInstallableAdapter(descriptor)
+        const descriptor = input.sourceInstallable;
+        const expectedSource = Object.freeze({
+            kind: 'managed_pypi_wheel_asset' as const,
+            distribution: source.distribution,
+            versionSpecifier: source.versionSpecifier,
+            assetPathByPlatform: source.assetPathByPlatform,
+            executable: true as const,
+            ...(source.compatibilityProbe
+                ? { compatibilityProbe: source.compatibilityProbe }
+                : {}),
+            installConsent: source.installConsent,
+            autoUpdateMode: source.autoUpdateMode,
+            ...(source.trustedPublisher
+                ? { trustedPublisher: source.trustedPublisher }
+                : {}),
+        });
+        if (
+            !descriptor
+            || descriptor.id !== source.installId
+            || descriptor.key !== source.installId
+            || descriptor.capabilityId !== source.installId
+            || descriptor.binary.commands.length !== 1
+            || descriptor.binary.commands[0] !== input.dependency.definition.executable
+            || !isDeepStrictEqual(descriptor.source, expectedSource)
+        ) {
+            return fail(
+                'plugin_managed_dependency_source_invalid',
+                'Managed PyPI wheel asset source acquisition is unavailable',
+            );
+        }
+        return await getManagedPypiWheelAssetRuntimeInstallableAdapter(
+            descriptor,
+            input.dependency.identity.pluginId,
+        )
             ?? fail(
                 'plugin_managed_dependency_source_invalid',
                 'Managed PyPI wheel asset descriptor could not be adapted',

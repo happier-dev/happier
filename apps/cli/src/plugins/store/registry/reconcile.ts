@@ -1,5 +1,9 @@
 import type { PluginStorePaths } from '../paths';
-import { readPluginRegistryCommitRecord, type PluginRegistryCommitRecord } from './commitRecord';
+import {
+  pluginRegistryCommitRecordsEqual,
+  readPluginRegistryCommitRecord,
+  type PluginRegistryCommitRecord,
+} from './commitRecord';
 
 export type PluginRegistryReconcileSurface = Readonly<{
   name: string;
@@ -12,6 +16,7 @@ export type PluginRegistryReconcileSurface = Readonly<{
 
 export type PluginRegistryReconcileResult = Readonly<{
   status: 'reconciled' | 'retryable' | 'no_commit';
+  commit: PluginRegistryCommitRecord | null;
   revision: number | null;
   surfaces: Readonly<Record<string, Readonly<{
     status: 'applied' | 'failed' | 'stale';
@@ -29,19 +34,21 @@ export function createPluginRegistryReconciler(input: Readonly<{
     if (!surface.name || surfaceNames.has(surface.name)) throw new Error(`Duplicate plugin registry reconciliation surface '${surface.name}'`);
     surfaceNames.add(surface.name);
   }
-  const appliedRevision = new Map<string, number>();
+  const appliedCommit = new Map<string, PluginRegistryCommitRecord>();
   let inFlight: Promise<PluginRegistryReconcileResult> | null = null;
 
   async function run(): Promise<PluginRegistryReconcileResult> {
     const commit = await readPluginRegistryCommitRecord(input.paths);
-    if (!commit) return { status: 'no_commit', revision: null, surfaces: {} };
+    if (!commit) return { status: 'no_commit', commit: null, revision: null, surfaces: {} };
     const installationState = await input.readState(commit);
     const results: Record<string, { status: 'applied' | 'failed' | 'stale'; message?: string }> = {};
-    const committedIdentity = JSON.stringify(commit);
-    const isCurrent = async (): Promise<boolean> => JSON.stringify(await readPluginRegistryCommitRecord(input.paths)) === committedIdentity;
+    const isCurrent = async (): Promise<boolean> => pluginRegistryCommitRecordsEqual(
+      await readPluginRegistryCommitRecord(input.paths),
+      commit,
+    );
 
     for (const surface of input.surfaces) {
-      if (appliedRevision.get(surface.name) === commit.revision) {
+      if (pluginRegistryCommitRecordsEqual(appliedCommit.get(surface.name) ?? null, commit)) {
         results[surface.name] = { status: 'applied' };
         continue;
       }
@@ -55,7 +62,7 @@ export function createPluginRegistryReconciler(input: Readonly<{
           results[surface.name] = { status: 'stale', message: 'Surface completed after its generation fence changed' };
           continue;
         }
-        appliedRevision.set(surface.name, commit.revision);
+        appliedCommit.set(surface.name, commit);
         results[surface.name] = { status: 'applied' };
       } catch (error) {
         results[surface.name] = {
@@ -67,6 +74,7 @@ export function createPluginRegistryReconciler(input: Readonly<{
     const reconciled = Object.values(results).every((result) => result.status === 'applied');
     return Object.freeze({
       status: reconciled ? 'reconciled' : 'retryable',
+      commit,
       revision: commit.revision,
       surfaces: Object.freeze(results),
     });
@@ -76,9 +84,10 @@ export function createPluginRegistryReconciler(input: Readonly<{
     if (inFlight) return inFlight;
     const operation = run();
     inFlight = operation;
-    void operation.finally(() => {
+    const release = (): void => {
       if (inFlight === operation) inFlight = null;
-    });
+    };
+    void operation.then(release, release);
     return operation;
   }
 

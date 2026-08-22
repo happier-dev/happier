@@ -165,5 +165,14 @@ describe('resolved Agent external-session source projection', () => {
       'first-agent',
       { kind: 'firstKind', scope: '' },
     )).toEqual({ ok: false, code: 'source_invalid' });
+    expect(resolveExternalSessionSourceFromAgentProjection(
+      registry,
+      'first-agent',
+      {
+        kind: 'firstKind',
+        scope: 'team',
+        futureMutableSourceState: { revision: 1 },
+      },
+    )).toEqual({ ok: false, code: 'source_invalid' });
   });
 });

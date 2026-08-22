@@ -17,6 +17,20 @@ The handler returns the request unchanged; the host remains the only fetch and
 policy-chain owner, and plugins cannot use this path to rewrite bodies or inject
 provider authentication.
 
+The example also declares a normal command and agent/MCP tool that both invoke
+one Action. That Action sends a `document-review-ready` notification through
+the public Notifications service. Its `webhook` channel is registered during
+activation and declares an Account-scoped webhook URL that the existing Plugin
+Settings screen renders and saves; there is no separate notification-settings
+screen or second configuration store.
+
+The webhook credential itself is a declared plugin secret. A second Action
+rotates it through the public Secrets service: it reads `status` for the
+incumbent revision, passes that revision as `expectedRevision` so a concurrent
+rotation loses instead of overwriting, reads the value back at the point of use
+with a user-readable reason, and returns only the state and revision. The value
+is never written to settings, plugin storage, an Action result, or a log line.
+
 The paired contributor is `../action-contract-consumer`. The
 `fixtures/external-targeted-packages/` proof, rather than this ordinary author
 example, owns the specialized independently installed SDK-copy contract.

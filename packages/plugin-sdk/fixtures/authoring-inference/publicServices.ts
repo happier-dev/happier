@@ -492,6 +492,7 @@ const { manifest, activate } = definePlugin({
   actions: {
     exercise: {
       title: 'Exercise generic public services',
+      execution: { target: 'daemon' },
       inputSchema,
       resultSchema,
       async run(input, context) {

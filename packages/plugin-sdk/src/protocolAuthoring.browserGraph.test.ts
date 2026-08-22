@@ -31,10 +31,16 @@ const protocolUiTargetedContributions = resolve(
     import.meta.dirname,
     '../../protocol/src/plugins/ui/targetedContributions.ts',
 );
+const protocolUiComposerRef = resolve(
+    import.meta.dirname,
+    '../../protocol/src/plugins/ui/composerRef.ts',
+);
 
 const expectedProtocolExports = [
     'ProtocolArrayOptions',
     'ProtocolComposableSchema',
+    'ProtocolComposerRefV1',
+    'ProtocolComposerRefV1Schema',
     'ProtocolJsonValue',
     'ProtocolJsonValueOptions',
     'ProtocolNumberOptions',
@@ -132,6 +138,10 @@ async function bundleProtocolAuthoring(): Promise<Readonly<{
                     replacement: protocolUiTargetedContributions,
                 },
                 {
+                    find: '@happier-dev/protocol/plugins/ui/composerRef',
+                    replacement: protocolUiComposerRef,
+                },
+                {
                     // The graph is a source-level browser check; never let a stale
                     // workspace dist decide which Protocol exports it sees.
                     find: /^@happier-dev\/protocol$/u,
@@ -147,7 +157,7 @@ async function bundleProtocolAuthoring(): Promise<Readonly<{
             load(id) {
                 if (id !== '\0virtual:protocol-authoring-browser-realm-entry') return null;
                 return [
-                    `export { defineProtocolArray, defineProtocolJsonValue, defineProtocolLiteral, defineProtocolNumber, defineProtocolObject, defineProtocolString, defineProtocolUnion, defineProtocolUtf8String, defineProtocolUniqueArray, pluginJsonValuesEqual } from ${JSON.stringify(protocolBrowserEntry)};`,
+                    `export { defineProtocolArray, defineProtocolJsonValue, defineProtocolLiteral, defineProtocolNumber, defineProtocolObject, defineProtocolString, defineProtocolUnion, defineProtocolUtf8String, defineProtocolUniqueArray, pluginJsonValuesEqual, ProtocolComposerRefV1Schema } from ${JSON.stringify(protocolBrowserEntry)};`,
                     `export { defineContributionPoint, defineContributionProtocol, PluginTargetedContributionSelectionV1Schema } from ${JSON.stringify(contributionsBrowserEntry)};`,
                 ].join('\n');
             },
@@ -247,6 +257,12 @@ describe('protocol-authoring public browser entrypoint', () => {
         expect(moduleIds).toContain(contributionsPublicEntry);
         expect(moduleIds).not.toContain(protocolRootEntry);
         expect(moduleIds).toContain(protocolUiTargetedContributions);
+        // The composer-scope grammar reaches the browser-safe author surface
+        // through its own narrow leaf. Publishing it from `plugins/ui/composer.ts`
+        // instead would pull that module's renderer, token, attachment, media,
+        // session-creation and voice graph into every feature-protocol bundle,
+        // which the pinned list below is what catches.
+        expect(moduleIds).toContain(protocolUiComposerRef);
         const manifestOrContributionsModules = moduleIds
             .filter((id) => id.includes('/protocol/src/plugins/manifest/')
                 || id.includes('/protocol/src/plugins/contributions/'))

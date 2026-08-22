@@ -4,6 +4,11 @@ import type {
     PluginInvocableActionId,
 } from '../actions/service.js';
 import {
+    CURRENT_UI_CONTEXT_BOUNDED_INCOMPLETENESS_V1 as canonicalCurrentUiContextBoundedIncompletenessV1,
+    CURRENT_UI_CONTEXT_MAX_COMMANDS_V1 as canonicalCurrentUiContextMaxCommandsV1,
+    CURRENT_UI_CONTEXT_MAX_UTF8_BYTES_V1 as canonicalCurrentUiContextMaxUtf8BytesV1,
+    PLUGIN_UI_SUB_PATH_MAX_UTF8_BYTES_V1 as canonicalPluginUiSubPathMaxUtf8BytesV1,
+    normalizePluginUiSubPathV1 as canonicalNormalizePluginUiSubPathV1,
     COMPOSER_MEDIA_CONTENT_CAPABILITY_V1 as canonicalComposerMediaContentCapabilityV1,
     MAX_COMPOSER_ATTACHMENT_DESCRIPTION_CODE_POINTS_V1 as canonicalMaxComposerAttachmentDescriptionCodePointsV1,
     MAX_COMPOSER_ATTACHMENT_LABEL_CODE_POINTS_V1 as canonicalMaxComposerAttachmentLabelCodePointsV1,
@@ -29,6 +34,28 @@ export const MAX_COMPOSER_ATTACHMENT_LABEL_CODE_POINTS_V1: number =
     canonicalMaxComposerAttachmentLabelCodePointsV1;
 export const COMPOSER_MEDIA_CONTENT_CAPABILITY_V1: ComposerMediaContentCapabilityV1 =
     canonicalComposerMediaContentCapabilityV1;
+/** Canonical current-UI context authoring bounds and incomplete-data marker. */
+export const CURRENT_UI_CONTEXT_MAX_COMMANDS_V1: number = canonicalCurrentUiContextMaxCommandsV1;
+export const CURRENT_UI_CONTEXT_MAX_UTF8_BYTES_V1: number = canonicalCurrentUiContextMaxUtf8BytesV1;
+export const CURRENT_UI_CONTEXT_BOUNDED_INCOMPLETENESS_V1: CurrentUiContextBoundedIncompletenessV1 =
+    canonicalCurrentUiContextBoundedIncompletenessV1;
+/**
+ * The bound a full-page surface's own plugin-local location is measured
+ * against, and the canonicalizer that applies it.
+ *
+ * {@link PluginUiHostApi.replacePageLocation} already fails closed on an
+ * over-long or illegal location, but a rejected write is the wrong moment for
+ * a page to find out: by then its own state has already moved, and the reader
+ * is looking at a lens the URL no longer carries. Publishing the exact
+ * incumbent owner lets a page preflight the complete location it is about to
+ * ask for and refuse the edit while the prior lens is still current, instead
+ * of copying the number and becoming a second bound that can drift from this
+ * one.
+ */
+export const PLUGIN_UI_SUB_PATH_MAX_UTF8_BYTES_V1: number =
+    canonicalPluginUiSubPathMaxUtf8BytesV1;
+export const normalizePluginUiSubPathV1: (value: string) => string | null =
+    canonicalNormalizePluginUiSubPathV1;
 
 import type { PluginCancellationOptions, Disposable } from '../lifecycle.js';
 import type { PluginDiagnosticData } from '../diagnostics.js';
@@ -60,11 +87,13 @@ import type {
     ComposerUnavailableReasonV1,
     ComposerMentionRefV1,
     ComposerMediaContentCapabilityV1,
+    CurrentUiContextBoundedIncompletenessV1,
     OpenableContentBodyV1,
     OpenableContentReadRequestInputV1,
     OpenableContentReadResultV1,
     OpenableContentRefV1,
     OpenableContentStatResultV1,
+    PluginUiContextEnrichmentV1,
     PluginUiHostMethodV1,
     PluginUiHostApiSurfaceContextV1,
     PluginUiHostApiSurfaceTargetV1,
@@ -78,6 +107,7 @@ import type {
     PluginUiTargetedContributionPointSnapshotV1,
     PluginUiTargetedContributionTargetV1,
 } from './publicContract.js';
+
 
 export type {
     ComposerAttachmentAuthorPresentationV1,
@@ -113,6 +143,15 @@ export type {
     ComposerMediaContentCapabilityV1,
     PluginUiContainerV1,
     PluginUiContributionIdentityV1,
+    CurrentUiCommandDeclarationV1,
+    CurrentUiCommandDescriptorV1,
+    CurrentUiContextBoundedIncompletenessV1,
+    CurrentUiContextEntityV1,
+    CurrentUiContextSnapshotV1,
+    PluginUiContextEnrichmentV1,
+    PluginUiSemanticCommandV1,
+    PluginUiSemanticExecuteActionCommandV1,
+    PluginUiSemanticOpenSurfaceCommandV1,
     PluginUiHostMethodV1,
     PluginUiMountContextV1,
     PluginUiSelectedActionInputCarrierV1,
@@ -131,6 +170,8 @@ export type {
 } from './publicContract.js';
 
 /** Canonical parsers for the Composer values accepted and returned by this Host API. */
+export const ComposerRefV1Schema: PluginUiSchema<ComposerRefV1> =
+    canonicalComposerRefV1Schema;
 export const ComposerDecorationResultV1Schema: PluginUiSchema<ComposerDecorationResultV1> =
     canonicalComposerDecorationResultV1Schema;
 export const ComposerDecorationSetV1Schema: PluginUiSchema<ComposerDecorationSetV1> =
@@ -143,7 +184,6 @@ export const ComposerOperationV1Schema: PluginUiSchema<ComposerOperationV1> =
     canonicalComposerOperationV1Schema;
 export const ComposerReadResultV1Schema: PluginUiSchema<ComposerReadResultV1> =
     canonicalComposerReadResultV1Schema;
-export const ComposerRefV1Schema: PluginUiSchema<ComposerRefV1> = canonicalComposerRefV1Schema;
 export const ComposerSurfaceInputV1Schema: PluginUiSchema<ComposerSurfaceInputV1> =
     canonicalComposerSurfaceInputV1Schema;
 export const ComposerSnapshotV1Schema: PluginUiSchema<ComposerSnapshotV1> = canonicalComposerSnapshotV1Schema;
@@ -313,6 +353,13 @@ export interface PluginUiHostApi {
         wireVersion: number;
         methods: readonly SurfaceHostMethod[];
     }>;
+    /**
+     * Atomically replace this exact mounted surface's semantic enrichment, or
+     * clear it with `null`. The host owns mount currentness, local-reference
+     * qualification, opaque command IDs, and synchronous retirement; authors
+     * supply data only and receive no callback or routing authority.
+     */
+    publishCurrentUiContext(enrichment: PluginUiContextEnrichmentV1 | null): void;
     context(options?: PluginCancellationOptions): Promise<SurfaceContext>;
     /**
      * Observe surface-context changes (§3.6).

@@ -41,12 +41,14 @@ import { Field, TextField } from './Form.js';
 import { Stack } from './Layout.js';
 import { Menu } from './Overlay.js';
 import { usePluginTranslation } from './PluginUiProvider.js';
+import { resolveAuthorText } from './resolveAuthorText.js';
 
 const LIST_MORE_ACTIONS_TRANSLATION_KEY = 'happier.plugin-ui.list.moreActions';
 
 type ListBaseProps = Readonly<{
   /** Names the collection for assistive technology. */
   accessibilityLabel?: string;
+  accessibilityLabelKey?: string;
   testID?: string;
   style?: HappierStyleProp;
   density?: 'compact' | 'regular';
@@ -86,6 +88,14 @@ type ListSelectionBaseProps<Item> = Readonly<{
    * what a reader can actually choose.
    */
   isItemDisabled?: (item: Item, index: number) => boolean;
+  /**
+   * Observes the logical focus cursor, which is not the selection: keyboard
+   * traversal moves focus alone, pointer/touch activation moves both, and a
+   * background refresh moves neither. This List owns the movement — only it can
+   * see the rows its virtualizer has not mounted — so an author who needs to
+   * know where the reader is reads it here rather than keeping a second cursor.
+   */
+  onFocusedKeyChange?: (key: string) => void;
 }>;
 
 /** One selected semantic List.Item key, controlled or initially author-owned. */
@@ -229,6 +239,10 @@ type ItemSecondaryActionsProps =
  * accessory placement and ItemGroup indexing remain adapter-owned facts.
  */
 export type ItemProps = Readonly<{
+  /**
+   * The row's content. Alone it owns the whole row; beside `title`/`subtitle`
+   * it is the row body and renders after them. Either way it is rendered.
+   */
   children?: ReactNode;
   title?: string;
   subtitle?: string;
@@ -478,6 +492,15 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
   // rest of the surface would immediately act on, and a background refresh,
   // scan arrival or watch update moves neither.
   const [focusedKey, setFocusedKey] = useState<string | null>(null);
+  // One owner for "focus moved", so both movement paths report the same fact
+  // and neither reads the author's callback through a memoized closure that an
+  // inline arrow would invalidate on every render.
+  const requestFocus = (key: string) => {
+    setFocusedKey(key);
+    props.selection?.onFocusedKeyChange?.(key);
+  };
+  const requestFocusRef = useRef(requestFocus);
+  requestFocusRef.current = requestFocus;
   const requestSelection = (key: string) => {
     if (key === selectedKey) return;
     if (!selectionIsControlled) setUncontrolledSelectedKey(key);
@@ -495,7 +518,7 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
   // row the reader just chose, one or more frames after the interaction.
   const selectItem = useCallback((key: string) => {
     rowFocusRequest.abandon();
-    setFocusedKey(key);
+    requestFocusRef.current(key);
     requestSelectionRef.current(key);
   }, [rowFocusRequest]);
   const requestQueryChange = (nextQuery: string) => {
@@ -610,7 +633,7 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
     // Selection is deliberately untouched: arrow and j/k movement is a reading
     // gesture, and committing a selection per keypress would make every step
     // through the list act on the rest of the surface.
-    setFocusedKey(nextKey);
+    requestFocusRef.current(nextKey);
     requestRowFocus(nextKey, next);
     return true;
   };
@@ -779,11 +802,18 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
 }
 
 function ListRoot<Item>(props: ListProps<Item>): ReactElement {
-  if (isVirtualizedList(props)) return <VirtualizedList {...props} />;
+  const { accessibilityLabel, accessibilityLabelKey, ...rest } = props;
+  const resolvedAccessibilityLabel = resolveAuthorText(
+    usePluginTranslation(),
+    accessibilityLabel,
+    accessibilityLabelKey,
+  );
+  const resolvedProps = { ...rest, accessibilityLabel: resolvedAccessibilityLabel } as ListProps<Item>;
+  if (isVirtualizedList(resolvedProps)) return <VirtualizedList {...resolvedProps} />;
   const densityStyle: HappierPortableStyle = props.density === 'compact' ? { gap: 4 } : { gap: 8 };
   return (
     <HappierList
-      accessibilityLabel={props.accessibilityLabel}
+      accessibilityLabel={resolvedAccessibilityLabel}
       testID={props.testID}
       style={[densityStyle, props.style]}
     >
@@ -877,13 +907,24 @@ export type ItemGroupProps = Readonly<{
   children?: ReactNode;
   accessibilityRole?: 'radiogroup';
   accessibilityLabel?: string;
+  accessibilityLabelKey?: string;
   testID?: string;
   style?: HappierStyleProp;
 }>;
 
 /** Standalone group semantics; app-private card/grid chrome is intentionally absent. */
 export function ItemGroup(props: ItemGroupProps): ReactElement {
-  return <HappierItemGroup {...props} />;
+  const { accessibilityLabel, accessibilityLabelKey, ...rest } = props;
+  return (
+    <HappierItemGroup
+      {...rest}
+      accessibilityLabel={resolveAuthorText(
+        usePluginTranslation(),
+        accessibilityLabel,
+        accessibilityLabelKey,
+      )}
+    />
+  );
 }
 
 /**

@@ -127,6 +127,32 @@ describe('fs helpers', () => {
     }, 'win32')).toBe('C:\\Users\\alice');
   });
 
+  it('expands either home separator spelling with target-platform separators', async () => {
+    const fs = await import('./fs/index.js') as Readonly<{
+      expandHomePath(raw: string, homeDir: string, platform: NodeJS.Platform): string;
+    }>;
+
+    expect(fs.expandHomePath('~\\tools/bash', '/home/alice', 'linux'))
+      .toBe('/home/alice/tools/bash');
+    expect(fs.expandHomePath('~/tools\\bash.exe', 'C:\\Users\\alice', 'win32'))
+      .toBe('C:\\Users\\alice\\tools\\bash.exe');
+  });
+
+  it('projects the canonical cross-platform containment decision through the daemon fs subpath', async () => {
+    const fs = await import('./fs/index.js') as Readonly<{
+      isCanonicalAbsolutePathInsideRoot(root: string, candidate: string): boolean;
+    }>;
+
+    expect(fs.isCanonicalAbsolutePathInsideRoot(
+      'C:\\Users\\alice\\plugin',
+      'c:/users/alice/plugin\\..build/output.js',
+    )).toBe(true);
+    expect(fs.isCanonicalAbsolutePathInsideRoot(
+      'C:\\Users\\alice\\plugin',
+      'C:\\Users\\alice\\plugin-sibling\\output.js',
+    )).toBe(false);
+  });
+
   it('keeps exact-owner compatibility controls out of the author-facing fs module', async () => {
     const fs = await loadFs();
 

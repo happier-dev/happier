@@ -1,3 +1,5 @@
+import { trimBugReportTextHeadToMaxBytes } from '@happier-dev/protocol';
+
 import type { ExecClientDiagnosticSanitizerV1 } from '../privateContract';
 
 import {
@@ -83,7 +85,7 @@ function clipStringByBytes(value: string, maxBytes: number): string | TruncatedS
         __happierRpcDiagnosticTruncated: TRUNCATION_MARKER,
         originalType: 'string',
         originalBytes,
-        value: Buffer.from(value).subarray(0, maxBytes).toString('utf8'),
+        value: trimBugReportTextHeadToMaxBytes(value, maxBytes),
     });
 }
 

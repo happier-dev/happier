@@ -9,7 +9,6 @@ import { createTestNpmTarball } from '@/plugins/distribution/testkit/npmTarball'
 import { createPluginRegistryStateStore } from '@/plugins/store/registry/currentState';
 import { readPluginRegistryCommitRecord } from '@/plugins/store/registry/commitRecord';
 import { resolvePluginStorePaths } from '@/plugins/store/paths';
-import type { SupervisedPluginActivationAttempt } from '@/plugins/runtime/lifecycle/manager';
 import { createPluginReloadController } from '@/plugins/runtime/reload/controller';
 import { createDaemonPluginRegistryRuntimeLifecycle } from '@/plugins/runtime/reload/registryRuntimeLifecycle';
 import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
@@ -81,7 +80,8 @@ async function createArchiveFixture(params?: Readonly<{
             title: 'Roundtrip',
             scopes: ['global'],
             surfaces: ['cli'],
-            placement: 'commandPalette',
+            execution: { target: 'daemon' },
+            placementBindings: ['commandPalette'],
             dangerLevel: 'safe',
           }],
         } : params?.speech ? {
@@ -91,7 +91,26 @@ async function createArchiveFixture(params?: Readonly<{
             kind: 'speech',
             roles: ['dictation_stt', 'conversation_stt', 'conversation_tts'],
             platforms: ['web', 'ios', 'android'],
-            capabilities: { readiness: { requirements: [] } },
+            settings: {
+              schemaVersion: 2,
+              fields: [
+                {
+                  id: 'model',
+                  title: 'Model',
+                  schema: { type: 'string', minLength: 1, maxLength: 512 },
+                  default: 'packed-stt-model',
+                  presentation: { control: 'text' },
+                },
+                {
+                  id: 'voice',
+                  title: 'Voice',
+                  schema: { type: 'string', minLength: 1, maxLength: 512 },
+                  default: 'voice',
+                  presentation: { control: 'select' },
+                },
+              ],
+            },
+            catalogs: [{ kind: 'voices', settingFieldId: 'voice', allowCustom: false }],
           }],
         } : params?.scm ? {
           scmBackends: [{
@@ -117,28 +136,24 @@ async function createArchiveFixture(params?: Readonly<{
         ? [
             'export function activate(api) {',
             "  api.actions.register('roundtrip', async (_input, context) => {",
-            "    await context.services.storage.local.set('value', 'archive-adopted');",
-            "    return { value: await context.services.storage.local.get('value') };",
+            "    await context.services.storage.daemon.set('value', 'archive-adopted');",
+            "    return { value: await context.services.storage.daemon.get('value') };",
             '  });',
             '}',
             '',
           ].join('\n')
         : params?.speech
           ? [
-              'const schema = Object.freeze({ safeParse(value) { return { success: true, data: value }; }, parse(value) { return value; } });',
               'const runtime = Object.freeze({',
-              '  catalogProviders: [{ providerId: "fixture", catalogOperations: { async fetchCatalog({ credential, signal }) {',
+              '  kind: "speech",',
+              '  catalog: { async list(_request, { signal }) {',
               '    if (signal.aborted) throw new Error("aborted");',
-              '    return await credential(async (secret) => [{ id: "voice", name: secret, metadata: {} }]);',
-              '  } } }],',
-              '  operations: {',
-              '    async transcribe({ credential, request, signal }) { if (signal.aborted) throw new Error("aborted"); return await credential(async (secret) => ({ requestId: request.requestId, text: `${secret}:${request.bytes.byteLength}` })); },',
-              '    async synthesize({ credential, request, signal }) { if (signal.aborted) throw new Error("aborted"); return await credential(async () => ({ requestId: request.requestId, bytes: new Uint8Array([1, 2, 3]), mimeType: "audio/wav" })); },',
-              '  },',
-              '  speechProviderIds: { transcribe: "fixture", synthesize: "fixture" },',
-              '  schemas: { transcribeRequest: schema, transcribeResponse: schema, synthesizeRequest: schema, synthesizeResponse: schema },',
+              '    return [{ id: "voice", name: "Packed Voice", metadata: {} }];',
+              '  } },',
+              '  async transcribe(request, { signal }) { if (signal.aborted) throw new Error("aborted"); return { requestId: request.requestId, text: `bytes:${request.bytes.byteLength}` }; },',
+              '  async synthesize(request, { signal }) { if (signal.aborted) throw new Error("aborted"); return { requestId: request.requestId, bytes: new Uint8Array([1, 2, 3]), mimeType: "audio/wav" }; },',
               '});',
-              'export function activate(api) { api.voiceProviders.registerSpeech("speech", runtime); }',
+              'export function activate(api) { api.voiceProviders.register("speech", runtime); }',
               '',
             ].join('\n')
           : params?.scm
@@ -179,6 +194,18 @@ async function candidateRoots(happyHomeDir: string): Promise<readonly string[]> 
     return (await readdir(cacheDir, { withFileTypes: true }))
       .filter((entry) => entry.isDirectory() && entry.name.startsWith('plugin-archive-candidate-'))
       .map((entry) => join(cacheDir, entry.name));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException | null)?.code === 'ENOENT') return [];
+    throw error;
+  }
+}
+
+async function preparedGenerationRoots(happyHomeDir: string): Promise<readonly string[]> {
+  const generationsDir = resolvePluginStorePaths({ happyHomeDir }).generationsDir;
+  try {
+    return (await readdir(generationsDir, { withFileTypes: true }))
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => join(generationsDir, entry.name));
   } catch (error) {
     if ((error as NodeJS.ErrnoException | null)?.code === 'ENOENT') return [];
     throw error;
@@ -240,11 +267,6 @@ describe('createDaemonArchivePluginChangePreparer', () => {
         packageIdentity: { name: '@acme/archive-candidate', version: '1.2.3' },
         publisherIdentity: { status: 'unavailable' },
         updateChannel: { kind: 'archive' },
-        integrity: {
-          packageDigest: expect.stringMatching(/^sha256:/),
-          manifestDigest: expect.stringMatching(/^sha256:/),
-          uiArtifactDigest: expect.stringMatching(/^sha256:/),
-        },
         signature: { status: 'notProvided' },
         provenance: { status: 'notProvided' },
         curation: { status: 'notApplicable' },
@@ -260,6 +282,7 @@ describe('createDaemonArchivePluginChangePreparer', () => {
     if (begun.kind !== 'reviewRequired') {
       throw new Error(`Expected archive installation review, received ${JSON.stringify(begun)}`);
     }
+    expect(begun.review).not.toHaveProperty('integrity');
     await expect(service.decidePluginChange({
       pendingChangeId: begun.pendingChangeId,
       decision: 'installAndTrust',
@@ -375,11 +398,17 @@ describe('createDaemonArchivePluginChangePreparer', () => {
       localId: 'speech',
     });
     expect(speech?.isCurrent()).toBe(true);
-    await expect(speech?.runtime.catalogProviders[0]?.catalogOperations.fetchCatalog({
-      credential: async (use) => await use('packed-secret'),
-      catalog: 'voices',
-      signal: new AbortController().signal,
-    })).resolves.toEqual([{ id: 'voice', name: 'packed-secret', metadata: {} }]);
+    if (!speech) throw new Error('Expected installed speech runtime');
+    const signal = new AbortController().signal;
+    await expect(speech.runtime.catalog?.list(
+      { catalog: 'voices' },
+      {
+        credentials: { phase: 'speech', mediated: null, raw: null },
+        settings: Object.freeze({ model: 'packed-stt-model', voice: 'voice' }),
+        http: speech.createHttp(signal),
+        signal,
+      },
+    )).resolves.toEqual([{ id: 'voice', name: 'Packed Voice', metadata: {} }]);
     await activeLease.release();
 
     await store.setEnabled('acme.archive-candidate', false);
@@ -398,30 +427,19 @@ describe('createDaemonArchivePluginChangePreparer', () => {
     roots.push(happyHomeDir);
     const fixture = await createArchiveFixture({ action: true });
     const reloadController = createPluginReloadController({ happyHomeDir });
-    let observeActivationAttempt: (
-      attempt: SupervisedPluginActivationAttempt,
-    ) => Promise<void> = async () => undefined;
     const runtimeLifecycle = createDaemonPluginRegistryRuntimeLifecycle({
       happyHomeDir,
       reloadController,
-      onActivationAttempt: async (attempt) => await observeActivationAttempt(attempt),
     });
-    const healthStore = createPluginRegistryStateStore({
+    const stateStore = createPluginRegistryStateStore({
       happyHomeDir,
       runtimeLifecycle,
-      healthSupervisor: {
-        daemonInstanceId: 'daemon-test',
-        daemonUptimeMs: () => 1,
-        schedule: () => undefined,
-      },
     });
-    observeActivationAttempt = healthStore.observeActivationAttempt;
-    await healthStore.initialize();
+    await stateStore.initialize();
     const initialLease = await reloadController.acquireRuntimeRegistry({
       resolveRuntimeRegistry: async () => await resolveExecutablePluginRuntimeRegistry({
         happyHomeDir,
         generation: reloadController.getState().generation + 1,
-        onActivationAttempt: healthStore.observeActivationAttempt,
       }),
     });
     await initialLease.release();
@@ -518,7 +536,6 @@ describe('createDaemonArchivePluginChangePreparer', () => {
         kind: 'archive',
         locator: canonicalArchivePath,
         resolvedVersion: '1.2.3',
-        resolvedDigest: expect.stringMatching(/^sha256:[a-f0-9]{64}$/),
       },
       install: {
         mode: 'managed_install',
@@ -580,9 +597,10 @@ describe('createDaemonArchivePluginChangePreparer', () => {
     });
     await service.shutdown();
     expect(await candidateRoots(happyHomeDir)).toEqual([]);
+    expect(await preparedGenerationRoots(happyHomeDir)).toEqual([]);
   });
 
-  it('rejects staged-byte substitution after review without invoking runtime preparation or publishing currentness', async () => {
+  it('installs the daemon-custodied reviewed archive candidate when staging bytes change after review', async () => {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-archive-change-home-'));
     roots.push(happyHomeDir);
     const fixture = await createArchiveFixture();
@@ -604,11 +622,16 @@ describe('createDaemonArchivePluginChangePreparer', () => {
       pendingChangeId: begun.pendingChangeId,
       decision: 'installAndTrust',
       actorEvidence: { kind: 'authenticatedLocalUser', interactionId: 'archive-tamper', occurredAtMs: 11 },
-    })).resolves.toEqual({ kind: 'conflict', pluginId: 'acme.archive-candidate' });
+    })).resolves.toMatchObject({ kind: 'committed', pluginId: 'acme.archive-candidate' });
 
-    expect(prepareRuntime).not.toHaveBeenCalled();
-    expect((await createPluginRegistryStateStore({ happyHomeDir }).read()).plugins['acme.archive-candidate']).toBeUndefined();
+    expect(prepareRuntime).toHaveBeenCalledOnce();
+    const installed = (await createPluginRegistryStateStore({ happyHomeDir }).read())
+      .plugins['acme.archive-candidate'];
+    expect(installed).toBeDefined();
+    await expect(readFile(join(installed!.source.resolvedPath, 'payload.txt'), 'utf8'))
+      .resolves.toBe('reviewed archive bytes');
     expect(await candidateRoots(happyHomeDir)).toEqual([]);
+    expect(await preparedGenerationRoots(happyHomeDir)).toHaveLength(1);
   });
 
   it('rejects when the same installed plugin changes after archive review', async () => {
@@ -700,6 +723,11 @@ describe('createDaemonArchivePluginChangePreparer', () => {
           integrity: fixture.integrity,
         } } },
       });
+    await expect(createPluginRegistryStateStore({ happyHomeDir }).readSnapshot()).resolves.toMatchObject({
+      admittedIntegrityByPluginId: {
+        'acme.archive-candidate': fixture.integrity,
+      },
+    });
     expect(JSON.stringify(await createPluginRegistryStateStore({ happyHomeDir }).read()))
       .not.toContain('private-archive-secret');
     expect(JSON.stringify(await createPluginRegistryStateStore({ happyHomeDir }).read()))

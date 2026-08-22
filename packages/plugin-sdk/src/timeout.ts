@@ -9,6 +9,12 @@ export async function sleep(ms: number): Promise<void> {
     });
 }
 
+export function throwIfAborted(signal?: AbortSignal | null): void {
+    if (!signal?.aborted) return;
+    if (signal.reason !== undefined) throw signal.reason;
+    throw Object.assign(new Error('Aborted'), { name: 'AbortError' });
+}
+
 export async function sleepWithSignal(ms: number, signal?: AbortSignal | null): Promise<void> {
     if (signal?.aborted) {
         throw abortReason(signal);

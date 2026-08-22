@@ -1,13 +1,21 @@
 import type {
-    SessionAuthServiceV1,
-    SessionRuntimeAuthRefreshRequestV1,
-    SessionRuntimeAuthRefreshResultV1,
-} from '@happier-dev/plugin-sdk/experimental/sessions';
+    SessionAuthService,
+    SessionRuntimeAuthRefreshRequest,
+    SessionRuntimeAuthRefreshResult,
+} from '@happier-dev/plugin-sdk/sessions';
+import {
+    AgentSessionAuthRefreshErrorV1Schema,
+    AgentSessionAuthRefreshPayloadV1Schema,
+    AgentSessionAuthRefreshRecoveryV1Schema,
+    normalizeAgentSessionAuthRefreshErrorV1,
+    type AgentSessionAuthRefreshErrorV1,
+    type AgentSessionAuthRefreshRecoveryV1,
+} from '@happier-dev/protocol';
 
 import {
-    CATALOG_AGENT_IDS,
     type CatalogAgentId,
 } from '@/agent/catalog/ids';
+import { isCatalogAgentId } from '@/agent/catalog/resolution';
 import { getConnectedServiceRuntimeAuthAdapter } from '@/daemon/connectedServices/catalogHooks';
 import { reportConnectedServiceRuntimeAuthFailureToDaemon } from '@/daemon/connectedServices/runtimeAuth/reportConnectedServiceRuntimeAuthFailureToDaemon';
 import { hasConnectedServiceRuntimeAuthRecoveryContext } from '@/agent/runtime/session/errors/connectedServiceRuntimeAuthRecoveryContext';
@@ -24,8 +32,9 @@ type RuntimeAuthAdapterResolver = (
 type RuntimeAuthFailureReporter = typeof reportConnectedServiceRuntimeAuthFailureToDaemon;
 const RUNTIME_AUTH_REFRESH_DAEMON_ACK_TIMEOUT_MS = 120_000;
 
-export type CreateSessionScopedAuthServicesParams = Readonly<{
+export type CreateSessionHandleAuthServiceParams = Readonly<{
     readSessionId: (signal?: AbortSignal) => Promise<string | null>;
+    readAgentId: (signal?: AbortSignal) => Promise<string | null>;
     resolveAdapter?: RuntimeAuthAdapterResolver;
     reportFailure?: RuntimeAuthFailureReporter;
     refreshViaDaemon?: typeof requestDaemonSessionConnectedServiceRuntimeAuthRefresh;
@@ -43,10 +52,15 @@ function readRefreshFailureReason(value: unknown, fallback: string): string {
     return readTrimmedString(isRecord(value) ? value.reason : null) ?? fallback;
 }
 
+function readRuntimeAuthRefreshError(error: unknown): AgentSessionAuthRefreshErrorV1 {
+    const parsed = AgentSessionAuthRefreshErrorV1Schema.safeParse(error);
+    return parsed.success ? parsed.data : normalizeAgentSessionAuthRefreshErrorV1(error);
+}
+
 function normalizeRuntimeAuthRefreshResult(
     value: unknown,
     expectedRefreshAttemptId: string | null,
-): SessionRuntimeAuthRefreshResultV1 {
+): SessionRuntimeAuthRefreshResult {
     if (!isRecord(value)) {
         return Object.freeze({
             status: 'failed',
@@ -54,9 +68,18 @@ function normalizeRuntimeAuthRefreshResult(
         });
     }
     if (value.status === 'refreshed') {
+        const result = AgentSessionAuthRefreshPayloadV1Schema.safeParse(
+            Object.prototype.hasOwnProperty.call(value, 'result') ? value.result : value,
+        );
+        if (!result.success) {
+            return Object.freeze({
+                status: 'failed',
+                reason: 'runtime_auth_refresh_invalid_result',
+            });
+        }
         return Object.freeze({
             status: 'refreshed',
-            result: Object.prototype.hasOwnProperty.call(value, 'result') ? value.result : value,
+            result: result.data,
         });
     }
     if (value.status === 'pending') {
@@ -79,7 +102,9 @@ function normalizeRuntimeAuthRefreshResult(
         return Object.freeze({
             status: 'failed',
             reason: readRefreshFailureReason(value, 'runtime_auth_refresh_failed'),
-            ...(Object.prototype.hasOwnProperty.call(value, 'error') ? { error: value.error } : {}),
+            ...(Object.prototype.hasOwnProperty.call(value, 'error')
+                ? { error: readRuntimeAuthRefreshError(value.error) }
+                : {}),
         });
     }
     if (value.status === 'available' || value.status === 'unsupported') {
@@ -108,9 +133,7 @@ function readCatalogAgentId(value: unknown): CatalogAgentId | null {
     if (!agentId) {
         return null;
     }
-    return (CATALOG_AGENT_IDS as readonly string[]).includes(agentId)
-        ? agentId as CatalogAgentId
-        : null;
+    return isCatalogAgentId(agentId) ? agentId : null;
 }
 
 function createAbortError(signal: AbortSignal): Error {
@@ -147,7 +170,7 @@ async function raceWithAbort<T>(operation: Promise<T>, signal: AbortSignal | und
 
 function withSelectionHints(
     selection: unknown,
-    request: SessionRuntimeAuthRefreshRequestV1,
+    request: SessionRuntimeAuthRefreshRequest,
 ): unknown {
     if (!isRecord(selection)) {
         return selection;
@@ -163,10 +186,10 @@ function withSelectionHints(
 }
 
 async function reportRecoveryIfPossible(
-    params: CreateSessionScopedAuthServicesParams,
-    request: SessionRuntimeAuthRefreshRequestV1,
+    params: CreateSessionHandleAuthServiceParams,
+    request: SessionRuntimeAuthRefreshRequest,
     signal: AbortSignal | undefined,
-): Promise<unknown | undefined> {
+): Promise<AgentSessionAuthRefreshRecoveryV1 | undefined> {
     if (
         !request.classification
         || !hasConnectedServiceRuntimeAuthRecoveryContext(request.classification)
@@ -177,15 +200,17 @@ async function reportRecoveryIfPossible(
     if (!sessionId) {
         return undefined;
     }
-    return await (params.reportFailure ?? reportConnectedServiceRuntimeAuthFailureToDaemon)({
+    const recovery = await (params.reportFailure ?? reportConnectedServiceRuntimeAuthFailureToDaemon)({
         sessionId,
         classification: request.classification,
     });
+    const parsed = AgentSessionAuthRefreshRecoveryV1Schema.safeParse(recovery);
+    return parsed.success ? parsed.data : undefined;
 }
 
 function buildRefreshInput(
     agentId: CatalogAgentId,
-    request: SessionRuntimeAuthRefreshRequestV1,
+    request: SessionRuntimeAuthRefreshRequest,
 ): ConnectedServiceRuntimeAuthTargetInput {
     return Object.freeze({
         target: Object.freeze({
@@ -206,18 +231,19 @@ function buildRefreshInput(
     });
 }
 
-export function createSessionScopedAuthServices(
-    params: CreateSessionScopedAuthServicesParams,
-): SessionAuthServiceV1 {
+export function createSessionHandleAuthService(
+    params: CreateSessionHandleAuthServiceParams,
+): SessionAuthService {
     const resolveAdapter = params.resolveAdapter ?? getConnectedServiceRuntimeAuthAdapter;
     return Object.freeze({
         services: Object.freeze({
             async refreshRuntimeAuth(
-                request: SessionRuntimeAuthRefreshRequestV1,
+                request: SessionRuntimeAuthRefreshRequest,
                 options?: Readonly<{ signal?: AbortSignal }>,
-            ): Promise<SessionRuntimeAuthRefreshResultV1> {
+            ): Promise<SessionRuntimeAuthRefreshResult> {
                 throwIfAborted(options?.signal);
-                const agentId = readCatalogAgentId(request.agentId);
+                const agentId = readCatalogAgentId(await params.readAgentId(options?.signal));
+                throwIfAborted(options?.signal);
                 const serviceId = readTrimmedString(request.serviceId);
                 if (!agentId || !serviceId) {
                     return Object.freeze({
@@ -308,7 +334,7 @@ export function createSessionScopedAuthServices(
                     return Object.freeze({
                         status: 'failed',
                         reason: 'runtime_auth_refresh_failed',
-                        error,
+                        error: readRuntimeAuthRefreshError(error),
                         ...(request.classification ? { runtimeAuthClassification: request.classification } : {}),
                         ...(recovery ? { recovery } : {}),
                     });

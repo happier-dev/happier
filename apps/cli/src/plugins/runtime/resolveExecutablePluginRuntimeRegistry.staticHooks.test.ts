@@ -12,6 +12,33 @@ import type {
 import { resolveExecutablePluginRuntimeRegistry } from './resolveExecutablePluginRuntimeRegistry';
 
 describe('executable plugin hook activation ownership', () => {
+    it('activates the exact bundled Codex hook demand and projects its registered handler', async () => {
+        const runtime = await resolveExecutablePluginRuntimeRegistry();
+
+        try {
+            expect(runtime.activatedPluginIds.has('happier.agent.codex')).toBe(false);
+
+            await runtime.activateContributionsOnDemand([{
+                pluginId: 'happier.agent.codex',
+                family: 'hooks',
+                localId: 'resolve-prerequisites',
+            }]);
+
+            expect(runtime.activatedPluginIds.has('happier.agent.codex')).toBe(true);
+            expect(
+                runtime.hookHandlersByHookId.get('agent.resolvePrerequisites'),
+            ).toEqual(expect.arrayContaining([
+                expect.objectContaining({
+                    pluginId: 'happier.agent.codex',
+                    localId: 'resolve-prerequisites',
+                    handler: expect.any(Function),
+                }),
+            ]));
+        } finally {
+            await runtime.dispose();
+        }
+    });
+
     it('does not import or bind a manifest-static hook export outside named activation', async () => {
         const root = await mkdtemp(join(tmpdir(), 'happier-static-hook-deny-'));
         const daemonEntryPath = join(root, 'daemon.mjs');
@@ -24,7 +51,6 @@ describe('executable plugin hook activation ownership', () => {
             source: { kind: 'path' },
             pluginId: 'acme.static-hook',
             manifestPath: join(root, 'happier.plugin.json'),
-            manifestDigest: 'sha256:static-hook',
             daemonEntryPath,
             sourceSpec: {
                 kind: 'path', locator: root, trustPolicy: 'local_trusted', installPolicy: 'link',

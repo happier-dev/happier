@@ -10,11 +10,57 @@ import {
 } from './catalogSnapshot';
 
 describe('plugin catalog introspection snapshot', () => {
+  it('retains an attributed targeted-admission diagnostic in the CLI catalog snapshot', () => {
+    const entry = {
+      pluginId: 'acme.contributor', title: 'Contributor', description: null, version: '1.2.3', enabled: true,
+      desiredGeneration: 'generation-1', appliedGeneration: 'generation-1', admittedIntegrity: null,
+      source: { kind: 'path', locator: '/plugins/acme.contributor', trustPolicy: 'local_trusted', installPolicy: 'link', resolvedPath: '/plugins/acme.contributor', manifestPath: '/plugins/acme.contributor/plugin.json' },
+      install: { mode: 'link', manifestVersion: '1.2.3' }, compatibility: { status: 'compatible', diagnostics: [] },
+      manifestPath: '/plugins/acme.contributor/plugin.json', manifest: null, diagnostics: [],
+      contributionIntrospection: { version: 1, generation: 0, diagnostics: [], contributions: [] },
+    } satisfies PluginCatalogEntry;
+
+    const joined = joinInstalledCatalogRuntimeIntrospection([entry], {
+      pluginDiagnosticsByPluginId: {
+        'acme.contributor': [{
+          code: 'point_absent',
+          message: 'Targeted contribution admission rejected (point_absent).',
+          stage: 'normalization',
+          contribution: { pluginId: 'acme.contributor', localId: 'provider-a' },
+          details: {
+            targetPluginId: 'acme.target',
+            pointId: 'providers',
+            protocol: { id: 'provider', version: 1 },
+          },
+        }],
+      },
+    });
+
+    expect(joined[0]?.contributionIntrospection.diagnostics).toEqual([
+      expect.objectContaining({
+        data: expect.objectContaining({
+          code: 'point_absent',
+          details: {
+            targetPluginId: 'acme.target',
+            pointId: 'providers',
+            protocol: { id: 'provider', version: 1 },
+          },
+        }),
+        plugin: { id: 'acme.contributor', version: '1.2.3', source: 'localPath' },
+        contribution: { pluginId: 'acme.contributor', localId: 'provider-a' },
+        stage: 'normalization',
+      }),
+    ]);
+    expect(projectPluginCatalogEntrySnapshot(joined[0]!).diagnostics)
+      .toEqual(joined[0]!.contributionIntrospection.diagnostics);
+  });
+
   it('returns one serialization model for CLI and dev-loop consumers', () => {
     const entry = {
       pluginId: 'acme.snapshot',
       desiredGeneration: 'generation-1',
       appliedGeneration: null,
+      admittedIntegrity: null,
       title: 'Snapshot',
       description: null,
       version: '1.0.0',
@@ -26,7 +72,6 @@ describe('plugin catalog introspection snapshot', () => {
       install: { mode: 'link', manifestVersion: '1.0.0' },
       compatibility: { status: 'compatible', diagnostics: [] },
       manifestPath: '/plugins/acme.snapshot/plugin.json',
-      manifestDigest: null,
       manifest: null,
       contributionIntrospection: {
         version: 1,
@@ -58,15 +103,15 @@ describe('plugin catalog introspection snapshot', () => {
   it('gives list, show, and dev-loop consumers the same generation-joined runtime snapshot', () => {
     const entry = {
       pluginId: 'acme.snapshot', title: 'Snapshot', description: null, version: '1.0.0', enabled: true,
-      desiredGeneration: 'generation-1', appliedGeneration: null,
+      desiredGeneration: 'generation-1', appliedGeneration: null, admittedIntegrity: null,
       source: { kind: 'path', locator: '/plugins/acme.snapshot', trustPolicy: 'local_trusted', installPolicy: 'link', resolvedPath: '/plugins/acme.snapshot', manifestPath: '/plugins/acme.snapshot/plugin.json' },
       install: { mode: 'link', manifestVersion: '1.0.0' }, compatibility: { status: 'compatible', diagnostics: [] },
-      manifestPath: '/plugins/acme.snapshot/plugin.json', manifestDigest: null, manifest: null, diagnostics: [],
+      manifestPath: '/plugins/acme.snapshot/plugin.json', manifest: null, diagnostics: [],
       contributionIntrospection: {
         version: 1, generation: 0, diagnostics: [], contributions: [{
           version: 1,
           contribution: { pluginId: 'acme.snapshot', family: 'actions', qualifiedId: 'acme.snapshot/actions/run', kind: 'localId', localId: 'run' },
-          stability: 'stable', progression: { declared: true, normalized: true, merged: false },
+          progression: { declared: true, normalized: true, merged: false },
           registration: { requirement: 'required', state: 'unbound' }, activation: { state: 'dormant' },
           projection: { state: 'projected' }, consumer: 'action-dispatch', platforms: ['cli'], diagnostics: [],
         }],
@@ -94,8 +139,8 @@ describe('plugin catalog introspection snapshot', () => {
       generation: 4,
       pluginFinalPolicyCurrentGenerationsById: new Map([['acme.snapshot', {
         immutableGenerationId: 'generation-1',
-        packageDigest: 'sha256:package',
-        manifestDigest: 'sha256:manifest',
+        desiredImmutableGenerationId: 'generation-1',
+        appliedImmutableGenerationId: 'generation-1',
         distribution: { kind: 'localPath' },
         applied: true,
         selectedAccess: [],
@@ -120,8 +165,8 @@ describe('plugin catalog introspection snapshot', () => {
     expect(joinInstalledCatalogRuntimeIntrospection([entry], {
       pluginFinalPolicyCurrentGenerationsById: new Map([['acme.snapshot', {
         immutableGenerationId: 'generation-before-update',
-        packageDigest: 'sha256:old-package',
-        manifestDigest: 'sha256:old-manifest',
+        desiredImmutableGenerationId: 'generation-before-update',
+        appliedImmutableGenerationId: 'generation-before-update',
         distribution: { kind: 'localPath' },
         applied: true,
         selectedAccess: [],
@@ -147,7 +192,22 @@ describe('plugin catalog introspection snapshot', () => {
           kind: 'speech',
           roles: ['dictation_stt', 'conversation_stt', 'conversation_tts'],
           platforms: ['web', 'ios', 'android'],
-          capabilities: { readiness: { requirements: ['credential'] } },
+          settings: {
+            schemaVersion: 2,
+            fields: [{
+              id: 'model',
+              title: 'Model',
+              schema: { type: 'string', minLength: 1, maxLength: 256 },
+              default: 'synthetic-stt-v1',
+              presentation: { control: 'text' },
+            }, {
+              id: 'voiceName',
+              title: 'Voice',
+              schema: { type: 'string', minLength: 1, maxLength: 256 },
+              default: 'synthetic-voice-v1',
+              presentation: { control: 'text' },
+            }],
+          },
         }, {
           id: 'conversation',
           title: 'Conversation',
@@ -155,7 +215,6 @@ describe('plugin catalog introspection snapshot', () => {
           roles: ['realtime_conversation'],
           platforms: ['web'],
           capabilities: {
-            readiness: { requirements: [] },
             turn: { cancelResponse: true, bargeIn: false },
           },
           client: { artifactId: 'voice-runtime-web', modulePath: './voiceRuntime', exportName: 'activate' },
@@ -164,21 +223,21 @@ describe('plugin catalog introspection snapshot', () => {
     });
     const entry = {
       pluginId: 'acme.speech', title: 'Speech', description: null, version: '1.0.0', enabled: true,
-      desiredGeneration: 'generation-1', appliedGeneration: null,
+      desiredGeneration: 'generation-1', appliedGeneration: null, admittedIntegrity: null,
       source: { kind: 'path', locator: '/plugins/acme.speech', trustPolicy: 'local_trusted', installPolicy: 'link', resolvedPath: '/plugins/acme.speech', manifestPath: '/plugins/acme.speech/plugin.json' },
       install: { mode: 'link', manifestVersion: '1.0.0' }, compatibility: { status: 'compatible', diagnostics: [] },
-      manifestPath: '/plugins/acme.speech/plugin.json', manifestDigest: null, manifest, diagnostics: [],
+      manifestPath: '/plugins/acme.speech/plugin.json', manifest, diagnostics: [],
       contributionIntrospection: {
         version: 1, generation: 0, diagnostics: [], contributions: [{
           version: 1,
           contribution: { pluginId: 'acme.speech', family: 'voiceProviders', qualifiedId: 'acme.speech/voiceProviders/speech', kind: 'localId', localId: 'speech' },
-          stability: 'experimental', progression: { declared: true, normalized: true, merged: false },
+          progression: { declared: true, normalized: true, merged: false },
           registration: { requirement: 'required', state: 'unbound' }, activation: { state: 'dormant' },
           projection: { state: 'projected' }, consumer: 'voice-host', platforms: ['web', 'ios', 'android'], diagnostics: [],
         }, {
           version: 1,
           contribution: { pluginId: 'acme.speech', family: 'voiceProviders', qualifiedId: 'acme.speech/voiceProviders/conversation', kind: 'localId', localId: 'conversation' },
-          stability: 'experimental', progression: { declared: true, normalized: true, merged: false },
+          progression: { declared: true, normalized: true, merged: false },
           registration: { requirement: 'required', state: 'unbound' }, activation: { state: 'dormant' },
           projection: { state: 'projected' }, consumer: 'voice-host', platforms: ['web', 'ios', 'android'], diagnostics: [],
         }],
@@ -191,8 +250,8 @@ describe('plugin catalog introspection snapshot', () => {
         pluginId: 'acme.speech', pluginVersion: '1.0.0', source: 'localPath',
         generation: '4', host: 'daemon', platform: 'darwin', occurredAtMs: 10,
         status: 'active',
-        required: [{ family: 'voiceProviders.speech', localId: 'speech' }],
-        bound: [{ family: 'voiceProviders.speech', localId: 'speech' }],
+        required: [{ family: 'voiceProviders', localId: 'speech' }],
+        bound: [{ family: 'voiceProviders', localId: 'speech' }],
         diagnostics: [],
       }],
     });
@@ -226,15 +285,15 @@ describe('plugin catalog introspection snapshot', () => {
   it('retains registration-free failures and replaces cached activation diagnostics without double enrichment', () => {
     const entry = {
       pluginId: 'acme.snapshot', title: 'Snapshot', description: null, version: '1.0.0', enabled: true,
-      desiredGeneration: 'generation-1', appliedGeneration: null,
+      desiredGeneration: 'generation-1', appliedGeneration: null, admittedIntegrity: null,
       source: { kind: 'path', locator: '/plugins/acme.snapshot', trustPolicy: 'local_trusted', installPolicy: 'link', resolvedPath: '/plugins/acme.snapshot', manifestPath: '/plugins/acme.snapshot/plugin.json' },
       install: { mode: 'link', manifestVersion: '1.0.0' }, compatibility: { status: 'compatible', diagnostics: [] },
-      manifestPath: '/plugins/acme.snapshot/plugin.json', manifestDigest: null, manifest: null, diagnostics: [],
+      manifestPath: '/plugins/acme.snapshot/plugin.json', manifest: null, diagnostics: [],
       contributionIntrospection: {
         version: 1, generation: 0, diagnostics: [], contributions: [{
           version: 1,
           contribution: { pluginId: 'acme.snapshot', family: 'ui.translations', qualifiedId: 'acme.snapshot/ui.translations/en-US', kind: 'locale', locale: 'en-US' },
-          stability: 'stable', progression: { declared: true, normalized: true, merged: false },
+          progression: { declared: true, normalized: true, merged: false },
           registration: { requirement: 'notRequired', state: 'notRequired' }, activation: { state: 'notRequired' },
           projection: { state: 'projected' }, consumer: 'ui-i18n-host', platforms: ['web'], diagnostics: [],
         }],

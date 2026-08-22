@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest';
 
 import {
   createDefaultPluginAccessScopeRegistry,
-  createPluginNetworkEffectScopeRegistry,
   createPluginAccessScopeRegistry,
 } from './accessScopeRegistry';
 
@@ -29,25 +28,12 @@ describe('PluginAccessScopeRegistry', () => {
       'secrets',
       { secretIds: ['token'], access: ['read'] },
       { secretIds: ['token', 'webhook'], access: ['read', 'write'] },
-    )).toMatchObject({ relation: 'narrower' });
+    )).toEqual({ relation: 'changed', reason: 'unknown_capability' });
   });
 
   it('returns exact, narrower, broader, invalid, and conservative changed decisions', () => {
     const registry = createDefaultPluginAccessScopeRegistry();
 
-    expect(registry.compare('secrets', { secretIds: ['B', 'A'], access: ['read'] }, { secretIds: ['A', 'B'], access: ['read'] })).toMatchObject({
-      relation: 'exact',
-    });
-    expect(registry.compare('secrets', { secretIds: ['A'], access: ['read'] }, { secretIds: ['A', 'B'], access: ['read'] })).toMatchObject({
-      relation: 'narrower',
-    });
-    expect(registry.compare('secrets', { secretIds: ['A', 'B'], access: ['read'] }, { secretIds: ['A'], access: ['read'] })).toMatchObject({
-      relation: 'broader',
-    });
-    expect(registry.compare('secrets', { secretIds: [], access: ['read'] }, { secretIds: ['A'], access: ['read'] })).toMatchObject({
-      relation: 'invalid',
-      reason: 'candidate_scope_invalid',
-    });
     expect(registry.compare('future.capability', {}, {})).toEqual({
       relation: 'changed',
       reason: 'unknown_capability',
@@ -62,9 +48,6 @@ describe('PluginAccessScopeRegistry', () => {
   it('implements subset comparison only for independently selectable host resources', () => {
     const registry = createDefaultPluginAccessScopeRegistry();
     const narrowerCases = [
-      ['secrets',
-        { secretIds: ['token'], access: ['read'] },
-        { secretIds: ['token', 'webhook'], access: ['read', 'write'] }],
       ['connectedAccounts',
         { serviceRefs: ['github'], accountScopes: ['read'], operations: ['use'], materializationKinds: ['environment'] },
         { serviceRefs: ['github', { pluginId: 'com.acme.accounts', localId: 'slack' }], accountScopes: ['read', 'write'], operations: ['select', 'use'], materializationKinds: ['files', 'environment'] }],
@@ -72,13 +55,75 @@ describe('PluginAccessScopeRegistry', () => {
         { access: ['read'], machineIds: ['machine-a'], projectIds: ['project-a'] },
         { access: ['read', 'write'], machineIds: ['machine-a', 'machine-b'], projectIds: ['project-a'] }],
       ['mcp',
-        { serverRefs: ['local-server'], operations: ['listTools'] },
-        { serverRefs: ['local-server', { pluginId: 'other.plugin', localId: 'shared' }], operations: ['listTools', 'callTools'] }],
+        {
+          serverRefs: ['local-server'],
+          discoverySourceRefs: ['local-discovery'],
+          operations: ['listTools', 'discover'],
+        },
+        {
+          serverRefs: ['local-server', { pluginId: 'other.plugin', localId: 'shared' }],
+          discoverySourceRefs: [
+            'local-discovery',
+            { pluginId: 'other.plugin', localId: 'shared-discovery' },
+          ],
+          operations: ['listTools', 'callTools', 'discover'],
+        }],
     ] as const;
 
     for (const [capability, candidate, previous] of narrowerCases) {
       expect(registry.compare(capability, candidate, previous), capability).toMatchObject({ relation: 'narrower' });
     }
+  });
+
+  it('canonicalizes MCP server and discovery-source references as independent sets', () => {
+    const registry = createDefaultPluginAccessScopeRegistry();
+    const localDiscovery = 'local-discovery';
+    const sharedDiscovery = { pluginId: 'other.plugin', localId: 'shared-discovery' } as const;
+    const server = { pluginId: 'other.plugin', localId: 'shared-server' } as const;
+
+    expect(registry.compare(
+      'mcp',
+      {
+        serverRefs: [server, 'local-server'],
+        discoverySourceRefs: [sharedDiscovery, localDiscovery],
+        operations: ['discover', 'listTools'],
+      },
+      {
+        serverRefs: ['local-server', server],
+        discoverySourceRefs: [localDiscovery, sharedDiscovery],
+        operations: ['listTools', 'discover'],
+      },
+    )).toMatchObject({ relation: 'exact' });
+    expect(registry.compare(
+      'mcp',
+      {
+        serverRefs: ['local-server'],
+        discoverySourceRefs: [localDiscovery],
+        operations: ['listTools', 'discover'],
+      },
+      {
+        serverRefs: ['local-server'],
+        discoverySourceRefs: [localDiscovery, sharedDiscovery],
+        operations: ['listTools', 'discover'],
+      },
+    )).toMatchObject({ relation: 'narrower' });
+
+    const selection = registry.createSelection({
+      pluginId: 'acme.plugin',
+      accessId: 'mcp',
+      capability: 'mcp',
+      scope: {
+        serverRefs: [server, 'local-server'],
+        discoverySourceRefs: [sharedDiscovery, localDiscovery],
+        operations: ['discover', 'listTools'],
+      },
+      selectedAtMs: 1,
+    });
+    expect(selection.normalizedScope).toEqual({
+      serverRefs: ['local-server', server],
+      discoverySourceRefs: ['local-discovery', sharedDiscovery],
+      operations: ['discover', 'listTools'],
+    });
   });
 
   it('canonicalizes and compares Connected Account materialization authority as an exact set', () => {
@@ -123,6 +168,38 @@ describe('PluginAccessScopeRegistry', () => {
     });
   });
 
+  it('accepts the exact optional Account-storage HostAccess scope', () => {
+    const registry = createDefaultPluginAccessScopeRegistry();
+
+    expect(registry.compare(
+      'storage.account',
+      { enabled: true },
+      { enabled: true },
+    )).toEqual({ relation: 'exact', reason: 'canonical_scope_equal' });
+    expect(registry.createSelection({
+      pluginId: 'acme.plugin',
+      accessId: 'account-storage',
+      capability: 'storage.account',
+      scope: { enabled: true },
+      selectedAtMs: 1,
+    }).normalizedScope).toEqual({ enabled: true });
+    expect(registry.createSelection({
+      pluginId: 'acme.plugin',
+      accessId: 'gateway',
+      capability: 'network.client',
+      scope: {
+        targets: [{ kind: 'fixedOrigin', origin: 'https://gateway.example.test' }],
+        transports: ['websocket'],
+        privateNetwork: false,
+      },
+      selectedAtMs: 1,
+    }).normalizedScope).toEqual({
+      targets: [{ kind: 'fixedOrigin', origin: 'https://gateway.example.test' }],
+      transports: ['websocket'],
+      privateNetwork: false,
+    });
+  });
+
   it('canonicalizes filesystem prefixes segment-wise and rejects root escape', () => {
     const registry = createDefaultPluginAccessScopeRegistry();
     expect(registry.compare(
@@ -142,34 +219,12 @@ describe('PluginAccessScopeRegistry', () => {
     )).toMatchObject({ relation: 'changed', reason: 'comparator_missing' });
   });
 
-  it('keeps concrete network-effect containment in a separate final-dispatch policy', () => {
-    const registry = createPluginNetworkEffectScopeRegistry();
-
-    expect(registry.compare(
-      'network',
-      {
-        targets: [{ kind: 'fixedOrigin', origin: 'https://api.example.test' }],
-        methods: ['GET'],
-      },
-      {
-        targets: [{ kind: 'fixedOrigin', origin: 'https://api.example.test' }],
-        methods: ['GET', 'POST'],
-        privateNetwork: true,
-      },
-    )).toMatchObject({ relation: 'narrower' });
-  });
-
   it('canonicalizes origin spelling and duplicate set entries before comparison', () => {
     const registry = createDefaultPluginAccessScopeRegistry();
     expect(registry.compare(
       'network',
       { targets: [{ kind: 'fixedOrigin', origin: 'https://API.example.test:443' }], methods: ['POST', 'GET', 'GET'] },
       { targets: [{ kind: 'fixedOrigin', origin: 'https://api.example.test' }], methods: ['GET', 'POST'], privateNetwork: false },
-    )).toMatchObject({ relation: 'exact' });
-    expect(registry.compare(
-      'network.intercept',
-      { origins: ['https://API.example.test:443', 'https://api.example.test'] },
-      { origins: ['https://api.example.test'] },
     )).toMatchObject({ relation: 'exact' });
   });
 
@@ -307,13 +362,22 @@ describe('PluginAccessScopeRegistry', () => {
     expect(registry.validateSelection({ ...selection, selectedAtMs: Number.MAX_SAFE_INTEGER + 1 })).toBe(false);
   });
 
-  it('uses locale-independent ordering for canonical scope sets', () => {
+  it('uses locale-independent ordering for canonical Account-selection scope sets', () => {
     const selection = createDefaultPluginAccessScopeRegistry().createSelection({
-      pluginId: 'acme.plugin', accessId: 'secrets', capability: 'secrets',
-      scope: { secretIds: ['a', 'Z'], access: ['read'] }, selectedAtMs: 1,
+      pluginId: 'acme.plugin', accessId: 'connected-accounts', capability: 'connectedAccounts',
+      scope: {
+        serviceRefs: ['github'],
+        accountScopes: ['a', 'Z'],
+        operations: ['use'],
+      },
+      selectedAtMs: 1,
     });
 
-    expect(selection.normalizedScope).toEqual({ secretIds: ['Z', 'a'], access: ['read'] });
+    expect(selection.normalizedScope).toEqual({
+      serviceRefs: ['github'],
+      accountScopes: ['Z', 'a'],
+      operations: ['use'],
+    });
   });
 
   it('rejects duplicate or non-canonical capability registrations', () => {

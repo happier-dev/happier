@@ -25,8 +25,17 @@ type PublicCreatePluginServiceReferenceAdapter = never; /* @sdk-negative-type-ca
 /* @sdk-negative-type-case:src-zeroConsumerContraction-test-ts-266:LS0gcm9vdCBKc29uVmFsdWUgaXMgdGhlIHNvbGUgcHVibGljIHN0cmljdCBKU09OIGlkZW50aXR5Lg:aW1wb3J0IHR5cGUgeyBTdHJpY3RKc29uVmFsdWUgYXMgUmV0aXJlZFN0cmljdEpzb25WYWx1ZSB9IGZyb20gJy4vc2Vzc2lvbnMvaW5kZXguanMnOw */
 type RetiredStrictJsonValue = never; /* @sdk-negative-type-case-end */
 
+import type {
+    PluginCollectionMutationConflictV1 as ProtocolPluginCollectionMutationConflictV1,
+    PluginCollectionMutationErrorV1 as ProtocolPluginCollectionMutationErrorV1,
+} from '@happier-dev/protocol';
+
 import type { PluginApi } from './activation.js';
 import type { PluginOperationAvailability } from './availability.js';
+import type {
+    PluginCollectionMutationConflictV1,
+    PluginCollectionMutationErrorV1,
+} from './collections/index.js';
 import type { DefinePluginInput } from './definePlugin.js';
 import type { PluginManifest } from './manifest.js';
 import type { PluginServices } from './services/index.js';
@@ -124,5 +133,24 @@ describe('zero-consumer SDK contraction', () => {
         expect(runtimeApi).not.toHaveProperty('ErrorRuntimeServiceV1');
         expect(runtimeApi).not.toHaveProperty('PluginServiceAvailability');
         expect(testingApi).not.toHaveProperty('createPluginServiceReferenceAdapter');
+    });
+
+    it('publishes one name per collection mutation member instead of a bare synonym of the V1 identity', () => {
+        const collectionsSource = readFileSync(new URL('./collections.ts', import.meta.url), 'utf8');
+        const collectionsBarrel = readFileSync(new URL('./collections/index.ts', import.meta.url), 'utf8');
+        const publicCollections = readFileSync(
+            new URL('./collections/index.public.ts', import.meta.url),
+            'utf8',
+        );
+
+        // The V1 members stay published; only the duplicate unsuffixed synonyms go.
+        expectTypeOf<PluginCollectionMutationConflictV1>()
+            .toEqualTypeOf<ProtocolPluginCollectionMutationConflictV1>();
+        expectTypeOf<PluginCollectionMutationErrorV1>()
+            .toEqualTypeOf<ProtocolPluginCollectionMutationErrorV1>();
+        for (const source of [collectionsSource, collectionsBarrel, publicCollections]) {
+            expect(source).not.toMatch(/\bPluginCollectionMutationConflict\b/u);
+            expect(source).not.toMatch(/\bPluginCollectionMutationError\b/u);
+        }
     });
 });

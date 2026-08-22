@@ -1,10 +1,32 @@
 import type { PluginCompatibilityDiagnostic } from '@/plugins/validation/diagnostics/types';
 import type { ResolvedActivatedHookRegistration } from '@/plugins/projection/registry/types';
-import type { PluginInvocationSurface } from '@happier-dev/plugin-sdk/runtime';
+import type { PluginInvocationSurface } from '@happier-dev/plugin-sdk/interactions';
 
 export type PluginDaemonModuleNamespace = Readonly<Record<string, unknown>> & Readonly<{
     default?: unknown;
 }>;
+
+declare const PreparedPluginActivationGraphBrand: unique symbol;
+
+/** One process-local TypeScript graph evaluated from an owned immutable generation. */
+export type PreparedPluginActivationGraph = Readonly<{
+    [PreparedPluginActivationGraphBrand]: true;
+    module: PluginDaemonModuleNamespace;
+    generationScope: object;
+    immutableGenerationId: string;
+    rootPath: string;
+    entryPath: string;
+}>;
+
+export function createPreparedPluginActivationGraph(input: Readonly<{
+    module: PluginDaemonModuleNamespace;
+    generationScope: object;
+    immutableGenerationId: string;
+    rootPath: string;
+    entryPath: string;
+}>): PreparedPluginActivationGraph {
+    return Object.freeze({ ...input }) as PreparedPluginActivationGraph;
+}
 
 export type PluginHookHandler = (...args: readonly unknown[]) => unknown | Promise<unknown>;
 
@@ -20,7 +42,6 @@ export type ResolvedPluginHookHandler = Readonly<{
     priority: number;
     registrationIndex: number;
     manifestPath: string;
-    manifestDigest: string;
     daemonEntryPath: string;
     registration: ResolvedActivatedHookRegistration;
     handler: PluginRuntimeHookHandler;

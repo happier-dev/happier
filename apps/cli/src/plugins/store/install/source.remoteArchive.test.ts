@@ -25,7 +25,7 @@ async function createArchivedSamplePluginFixture(rootName = `sample-plugin-${ran
     name: '@acme/sample-plugin',
     version: '1.0.0',
     keywords: ['happier-plugin'],
-    files: ['.happier-plugin', 'daemon.mjs'],
+    files: ['.happier-plugin', 'daemon.mjs', 'agentRuntime.mjs'],
     happier: { manifest: '.happier-plugin/plugin.json' },
   }), 'utf8');
   const archivePath = join(pluginSourceRoot, `${rootName}.tar.gz`);

@@ -1,11 +1,12 @@
 import type {
-    ScmBackendRuntimeRegistration,
-} from '@happier-dev/plugin-sdk/experimental/scm/backend';
+    BackendRuntimeRegistration as ScmBackendRuntimeRegistration,
+} from '@happier-dev/plugin-sdk/scm/backend';
 import type {
-    ScmHostingProviderRuntimeRegistration,
-} from '@happier-dev/plugin-sdk/experimental/scm/hostingProvider';
+    HostingProviderRuntimeRegistration as ScmHostingProviderRuntimeRegistration,
+} from '@happier-dev/plugin-sdk/scm/hosting';
 
 import type { ContributionRuntimeRegistration } from '@/plugins/runtime/api/registrationRightsHost';
+import { createGuardedRuntimeView } from '@/plugins/runtime/guardedRuntimeView';
 
 import type { ActivationTarget } from '../activation/targets';
 
@@ -23,14 +24,21 @@ function readPromiseLikeThen(value: unknown): ((...args: readonly unknown[]) => 
         : null;
 }
 
-function guardRuntimeValue<T>(params: Readonly<{
+/**
+ * Registration already owns method identity and static-data capture. This
+ * target adapter only fences the committed generation's values at invocation;
+ * it deliberately does not clone descriptors, walk prototypes, bind
+ * receivers, or recapture author-owned structure. The guarded view mirrors the
+ * captured object's structure instead, so enumeration and property access
+ * report the same members.
+ */
+function guardCapturedRuntimeValue<T>(params: Readonly<{
     value: T;
     pluginId: string;
     family: 'scmBackends' | 'scmHostingProviders';
     isGenerationActive(): boolean;
 }>): T {
     const guardedByValue = new WeakMap<object, object>();
-    const guardedFunctionsByOwner = new WeakMap<object, WeakMap<object, object>>();
     const assertActive = (): void => {
         if (!params.isGenerationActive()) {
             throw new Error(`Plugin '${params.pluginId}' ${params.family} runtime is no longer active`);
@@ -39,37 +47,27 @@ function guardRuntimeValue<T>(params: Readonly<{
     const assertOperationNotAborted = (args: readonly unknown[]): void => {
         const input = args[0];
         if (!input || typeof input !== 'object') return;
-        let signal: unknown;
-        try {
-            signal = Reflect.get(input, 'signal');
-        } catch {
-            throw new Error(`Plugin '${params.pluginId}' ${params.family} operation signal is unreadable`);
-        }
-        if (signal instanceof AbortSignal && signal.aborted) {
+        const operationInput = input as Readonly<{
+            signal?: unknown;
+            context?: Readonly<{ signal?: unknown }>;
+        }>;
+        const operationSignals = [operationInput.signal, operationInput.context?.signal];
+        if (operationSignals.some((signal) => signal instanceof AbortSignal && signal.aborted)) {
             throw new Error(`Plugin '${params.pluginId}' ${params.family} operation was aborted`);
         }
     };
 
-    const guard = (value: unknown, functionOwner?: object): unknown => {
+    const guard = (value: unknown): unknown => {
         if ((typeof value !== 'object' || value === null) && typeof value !== 'function') return value;
 
         if (typeof value === 'function') {
-            const ownerCache = functionOwner
-                ? (guardedFunctionsByOwner.get(value) ?? new WeakMap<object, object>())
-                : null;
-            if (functionOwner && !guardedFunctionsByOwner.has(value)) {
-                guardedFunctionsByOwner.set(value, ownerCache!);
-            }
-            const cached = functionOwner
-                ? ownerCache?.get(functionOwner)
-                : guardedByValue.get(value);
+            const cached = guardedByValue.get(value);
             if (cached) return cached;
             const runtimeFunction = value as (...args: readonly unknown[]) => unknown;
             const guardedFunction = function (this: unknown, ...args: readonly unknown[]): unknown {
                 assertActive();
                 assertOperationNotAborted(args);
-                const receiver = functionOwner ?? this;
-                const result = Reflect.apply(runtimeFunction, receiver, args);
+                const result = Reflect.apply(runtimeFunction, this, args);
                 const then = readPromiseLikeThen(result);
                 if (then) {
                     const settled = new Promise<unknown>((resolve, reject) => {
@@ -79,71 +77,30 @@ function guardRuntimeValue<T>(params: Readonly<{
                             reject(error);
                         }
                     });
-                    return settled.then((resolved) => {
-                        assertActive();
-                        return resolved;
-                    });
+                    return settled.then(
+                        (resolved) => {
+                            assertActive();
+                            return resolved;
+                        },
+                        (error: unknown) => {
+                            assertActive();
+                            throw error;
+                        },
+                    );
                 }
                 assertActive();
                 return result;
             };
-            if (functionOwner) {
-                ownerCache?.set(functionOwner, guardedFunction);
-            } else {
-                guardedByValue.set(value, guardedFunction);
-            }
-            return guardedFunction;
+            const frozenGuardedFunction = Object.freeze(guardedFunction);
+            guardedByValue.set(value, frozenGuardedFunction);
+            return frozenGuardedFunction;
         }
 
         const cached = guardedByValue.get(value as object);
         if (cached) return cached;
-
-        if (Array.isArray(value)) {
-            const guardedArray = value.map((item) => guard(item));
-            guardedByValue.set(value, guardedArray);
-            return Object.freeze(guardedArray);
-        }
-
-        const guardedObject = Object.create(Object.getPrototypeOf(value)) as Record<PropertyKey, unknown>;
-        guardedByValue.set(value, guardedObject);
-        const descriptors = new Map<PropertyKey, PropertyDescriptor>();
-        let descriptorOwner: object | null = value;
-        while (descriptorOwner && descriptorOwner !== Object.prototype) {
-            for (const property of Reflect.ownKeys(descriptorOwner)) {
-                if (property === 'constructor' || descriptors.has(property)) continue;
-                const descriptor = Reflect.getOwnPropertyDescriptor(descriptorOwner, property);
-                if (descriptor) descriptors.set(property, descriptor);
-            }
-            descriptorOwner = Reflect.getPrototypeOf(descriptorOwner) as object | null;
-        }
-        for (const [property, descriptor] of descriptors) {
-            if ('value' in descriptor) {
-                Reflect.defineProperty(guardedObject, property, {
-                    ...descriptor,
-                    value: guard(descriptor.value, value),
-                });
-            } else {
-                Reflect.defineProperty(guardedObject, property, {
-                    ...descriptor,
-                    ...(descriptor.get ? {
-                        get() {
-                            assertActive();
-                            const result = Reflect.apply(descriptor.get!, value, []);
-                            assertActive();
-                            return guard(result, value);
-                        },
-                    } : {}),
-                    ...(descriptor.set ? {
-                        set(nextValue: unknown) {
-                            assertActive();
-                            Reflect.apply(descriptor.set!, value, [nextValue]);
-                            assertActive();
-                        },
-                    } : {}),
-                });
-            }
-        }
-        return Object.freeze(guardedObject);
+        const guardedObject = createGuardedRuntimeView({ owner: value as object, guard });
+        guardedByValue.set(value as object, guardedObject);
+        return guardedObject;
     };
 
     return guard(params.value) as T;
@@ -182,11 +139,17 @@ export function createTargetScmRuntimeEntries(params: Readonly<{
             backends.push(Object.freeze({
                 pluginId: target.pluginId,
                 generation: entry.generation,
-                registration: guardRuntimeValue({
-                    value: Object.freeze({ id: declaration.id, ...entry.registration.value }),
-                    pluginId: target.pluginId,
-                    family: 'scmBackends',
-                    isGenerationActive: params.isGenerationActive,
+                registration: Object.freeze({
+                    id: declaration.id,
+                    ...(entry.registration.value.runtime === undefined
+                        ? {}
+                        : { runtime: entry.registration.value.runtime }),
+                    handlers: guardCapturedRuntimeValue({
+                        value: entry.registration.value.handlers,
+                        pluginId: target.pluginId,
+                        family: 'scmBackends',
+                        isGenerationActive: params.isGenerationActive,
+                    }),
                 }),
             }));
             continue;
@@ -200,11 +163,14 @@ export function createTargetScmRuntimeEntries(params: Readonly<{
         hostingProviders.push(Object.freeze({
             pluginId: target.pluginId,
             generation: entry.generation,
-            registration: guardRuntimeValue({
-                value: Object.freeze({ id: declaration.id, ...entry.registration.value }),
-                pluginId: target.pluginId,
-                family: 'scmHostingProviders',
-                isGenerationActive: params.isGenerationActive,
+            registration: Object.freeze({
+                id: declaration.id,
+                adapter: guardCapturedRuntimeValue({
+                    value: entry.registration.value.adapter,
+                    pluginId: target.pluginId,
+                    family: 'scmHostingProviders',
+                    isGenerationActive: params.isGenerationActive,
+                }),
             }),
         }));
     }

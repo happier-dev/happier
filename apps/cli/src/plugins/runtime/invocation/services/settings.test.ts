@@ -27,7 +27,7 @@ function declaration(): PluginSettingsContributionV2 {
         version: 1,
         title: { key: 'settings.preferences', fallback: 'Preferences' },
         target: { kind: 'plugin' },
-        scope: 'local',
+        scope: 'daemon',
         fields: [
             {
                 id: 'endpoint',
@@ -52,6 +52,40 @@ function declaration(): PluginSettingsContributionV2 {
     };
 }
 
+function perActiveServerDeclaration(): PluginSettingsContributionV2 {
+    return {
+        id: 'server-preferences',
+        version: 1,
+        title: { key: 'settings.serverPreferences', fallback: 'Server preferences' },
+        target: { kind: 'plugin' },
+        scope: 'account',
+        fields: [
+            {
+                id: 'endpoint',
+                title: 'Endpoint',
+                schema: { type: 'string', minLength: 1 },
+                presentation: {
+                    binding: {
+                        kind: 'perActiveServer',
+                        fallbackSettingId: 'endpoint',
+                        byServerIdSettingId: 'endpointByServer',
+                    },
+                },
+            },
+            {
+                id: 'endpointByServer',
+                title: 'Endpoint by server',
+                schema: {
+                    type: 'object',
+                    additionalProperties: { type: 'string', minLength: 1 },
+                },
+                presentation: { hidden: true },
+            },
+        ],
+        presentation: { sections: [], subagentSections: [] },
+    };
+}
+
 function seed(current: () => boolean, controller = new AbortController()): PluginInvocationServicesSeed {
     return Object.freeze({
         plugin: Object.freeze({ id: 'acme.plugin', version: '1.0.0' }),
@@ -68,17 +102,114 @@ function seed(current: () => boolean, controller = new AbortController()): Plugi
 }
 
 describe('stable typed settings foundation', () => {
-    it('persists synced Agent settings at their existing account roots with only revision metadata beside them', async () => {
-        let accountSettings: Readonly<Record<string, unknown>> = Object.freeze({
-            codexBackendMode: 'appServer',
+    it('applies a bounded contribution-scoped settings action patch atomically', async () => {
+        let record: unknown | null = null;
+        const recordStore = {
+            supports: () => true,
+            read: async () => record,
+            async update<T>(
+                _model: unknown,
+                operation: (current: unknown | null) => Readonly<{
+                    record: import('./settings').CanonicalPluginSettingsRecord;
+                    result: T;
+                }>,
+            ): Promise<T> {
+                const next = operation(record);
+                record = next.record;
+                return next.result;
+            },
+        };
+        const model = createStablePluginSettingsModel({
+            pluginId: 'acme.plugin',
+            contribution: declaration(),
         });
-        const createRecordStore = () => createAccountSettingsBackedSettingsRecordStore({
-            readSettings: () => accountSettings,
-            async updateSettings(mutate) {
-                accountSettings = Object.freeze(mutate(accountSettings));
-                return accountSettings;
+        const owner = createStablePluginSettingsOwner({
+            recordStore,
+            broker: createStablePluginEventsBroker(),
+        });
+
+        await expect(owner.applyActionPatch({
+            model,
+            seed: seed(() => true),
+            contributionId: 'preferences',
+            allowedFieldIds: ['endpoint', 'enabled'],
+            expectedRevision: '0',
+            patch: {
+                endpoint: 'https://action.example',
+                enabled: true,
+            },
+        })).resolves.toEqual({
+            scope: { kind: 'daemon' },
+            revision: '1',
+            changedIds: ['enabled', 'endpoint'],
+            values: {
+                endpoint: 'https://action.example',
+                enabled: true,
             },
         });
+
+        await expect(owner.applyActionPatch({
+            model,
+            seed: seed(() => true),
+            contributionId: 'preferences',
+            allowedFieldIds: ['endpoint'],
+            patch: { enabled: false },
+        })).rejects.toMatchObject({ code: 'plugin_settings_action_patch_forbidden' });
+        await expect(owner.applyActionPatch({
+            model,
+            seed: seed(() => true),
+            contributionId: 'preferences',
+            allowedFieldIds: ['token'],
+            patch: { token: 'must-not-write' },
+        })).rejects.toMatchObject({ code: 'plugin_settings_action_patch_forbidden' });
+
+        expect(record).toMatchObject({
+            revision: 1,
+            values: {
+                endpoint: 'https://action.example',
+                enabled: true,
+            },
+        });
+    });
+
+    it('uses the reserved Account plugin-settings record instead of unrelated host preference roots', async () => {
+        const hostSettingsOutsidePluginRecord: Readonly<Record<string, unknown>> = Object.freeze({
+            codexBackendMode: 'appServer',
+            unrelatedHostPreferenceV1: {
+                source: 'fixture',
+                revision: 1,
+            },
+        });
+        let record: Readonly<{
+            status: 'present';
+            revision: number;
+            values: Readonly<Record<string, JsonValue>>;
+        }> = Object.freeze({
+            status: 'present' as const,
+            revision: 7,
+            values: Object.freeze({ codexBackendMode: 'acp' }),
+        });
+        const writes: unknown[] = [];
+        const adapter = {
+            // An unrelated host root makes accidental host-preference access loud.
+            readSettings: () => hostSettingsOutsidePluginRecord,
+            async updateSettings(): Promise<Readonly<Record<string, unknown>>> {
+                throw new Error('legacy Account Settings writer must not be called');
+            },
+            async readRecord() {
+                return record;
+            },
+            async writeRecord(_model: unknown, request: unknown) {
+                writes.push(request);
+                record = Object.freeze({
+                    status: 'present' as const,
+                    revision: 8,
+                    values: Object.freeze({ codexBackendMode: 'appServer' }),
+                });
+                return Object.freeze({ status: 'updated' as const, revision: 8 });
+            },
+        };
+        const createRecordStore = () => createAccountSettingsBackedSettingsRecordStore(adapter);
         const model = createStablePluginSettingsModel({
             pluginId: 'happier.agent.codex',
             contribution: {
@@ -86,7 +217,7 @@ describe('stable typed settings foundation', () => {
                 version: 1,
                 title: 'Codex settings',
                 target: { kind: 'agent', agent: 'codex' },
-                scope: 'synced',
+                scope: 'account',
                 fields: [{
                     id: 'codexBackendMode',
                     title: 'Backend mode',
@@ -102,62 +233,81 @@ describe('stable typed settings foundation', () => {
         }).bind({ model, seed: seed(() => true) });
 
         await expect(service.snapshot()).resolves.toEqual({
-            revision: '0',
-            values: { codexBackendMode: 'appServer' },
+            scope: { kind: 'account' },
+            revision: '7',
+            values: { codexBackendMode: 'acp' },
         });
-        await expect(service.set('codexBackendMode', 'acp', { expectedRevision: '0' }))
-            .resolves.toEqual({ revision: '1' });
-        expect(accountSettings.codexBackendMode).toBe('acp');
-        expect(accountSettings.pluginSettingsStateV1).toEqual({
-            'happier.agent.codex': {
-                t: 'happier_plugin_settings_record_v1',
+        await expect(service.set('codexBackendMode', 'appServer', { expectedRevision: '7' }))
+            .resolves.toEqual({ scope: { kind: 'account' }, revision: '8' });
+        expect(writes).toEqual([{
+            expectedRevision: 7,
+            values: { codexBackendMode: 'appServer' },
+        }]);
+        expect(hostSettingsOutsidePluginRecord).toEqual({
+            codexBackendMode: 'appServer',
+            unrelatedHostPreferenceV1: {
+                source: 'fixture',
                 revision: 1,
             },
         });
-        expect(JSON.stringify(accountSettings.pluginSettingsStateV1)).not.toContain('"values"');
 
         const restarted = createStablePluginSettingsOwner({
             recordStore: createRecordStore(),
             broker: createStablePluginEventsBroker(),
         }).bind({ model, seed: seed(() => true) });
         await expect(restarted.snapshot()).resolves.toEqual({
-            revision: '1',
-            values: { codexBackendMode: 'acp' },
+            scope: { kind: 'account' },
+            revision: '8',
+            values: { codexBackendMode: 'appServer' },
         });
-        await expect(restarted.set('codexBackendMode', 'appServer', { expectedRevision: '0' }))
+        await expect(restarted.set('codexBackendMode', 'acp', { expectedRevision: '0' }))
             .rejects.toMatchObject({
                 code: 'plugin_settings_revision_conflict',
-                details: { currentRevision: '1' },
+                details: { currentRevision: '8' },
             });
     });
 
-    it('observes externally committed synced Agent settings without creating a second revision owner', async () => {
-        let accountSettings: Readonly<Record<string, unknown>> = Object.freeze({
-            codexBackendMode: 'appServer',
-            pluginSettingsStateV1: {
-                'happier.agent.codex': {
-                    t: 'happier_plugin_settings_record_v1',
-                    revision: 1,
-                },
-            },
+    it('re-reads the reserved Account record after its content-free change notification', async () => {
+        let record: Readonly<{
+            status: 'present';
+            revision: number;
+            values: Readonly<Record<string, JsonValue>>;
+        }> = Object.freeze({
+            status: 'present' as const,
+            revision: 1,
+            values: Object.freeze({ codexBackendMode: 'appServer' }),
         });
-        const subscribers = new Set<(
-            previous: Readonly<Record<string, unknown>>,
-            next: Readonly<Record<string, unknown>>,
-        ) => void>();
-        const recordStore = createAccountSettingsBackedSettingsRecordStore({
-            readSettings: () => accountSettings,
-            subscribeSettings(listener) {
+        const subscribers = new Set<(hint: Readonly<{ revision: number }>) => void>();
+        const adapter = {
+            // Account plugin Settings must not read host preference roots after
+            // the destination record becomes live.
+            readSettings: () => Object.freeze({ codexBackendMode: 'acp' }),
+            async updateSettings(): Promise<Readonly<Record<string, unknown>>> {
+                throw new Error('legacy Account Settings writer must not be called');
+            },
+            async readRecord() {
+                return record;
+            },
+            async writeRecord(_model: unknown, request: Readonly<{
+                expectedRevision: number | 'absent';
+                values: Readonly<Record<string, JsonValue>>;
+            }>) {
+                if (request.expectedRevision !== record.revision) {
+                    return Object.freeze({ status: 'conflict' as const, revision: record.revision });
+                }
+                record = Object.freeze({
+                    status: 'present' as const,
+                    revision: record.revision + 1,
+                    values: Object.freeze({ ...request.values }),
+                });
+                return Object.freeze({ status: 'updated' as const, revision: record.revision });
+            },
+            watchRecord(_model: unknown, listener: (hint: Readonly<{ revision: number }>) => void) {
                 subscribers.add(listener);
                 return () => subscribers.delete(listener);
             },
-            async updateSettings(mutate) {
-                const previous = accountSettings;
-                accountSettings = Object.freeze(mutate(accountSettings));
-                for (const listener of subscribers) listener(previous, accountSettings);
-                return accountSettings;
-            },
-        });
+        };
+        const recordStore = createAccountSettingsBackedSettingsRecordStore(adapter);
         const model = createStablePluginSettingsModel({
             pluginId: 'happier.agent.codex',
             contribution: {
@@ -165,7 +315,7 @@ describe('stable typed settings foundation', () => {
                 version: 1,
                 title: 'Codex settings',
                 target: { kind: 'agent', agent: 'codex' },
-                scope: 'synced',
+                scope: 'account',
                 fields: [{
                     id: 'codexBackendMode',
                     title: 'Backend mode',
@@ -182,31 +332,28 @@ describe('stable typed settings foundation', () => {
         const changes: unknown[] = [];
         const disposable = service.watch((change) => changes.push(change));
 
-        const previous = accountSettings;
-        accountSettings = Object.freeze({
-            ...accountSettings,
-            codexBackendMode: 'acp',
-            pluginSettingsStateV1: {
-                'happier.agent.codex': {
-                    t: 'happier_plugin_settings_record_v1',
-                    revision: 2,
-                },
-            },
+        record = Object.freeze({
+            status: 'present' as const,
+            revision: 2,
+            values: Object.freeze({ codexBackendMode: 'acp' }),
         });
-        for (const listener of subscribers) listener(previous, accountSettings);
+        for (const listener of subscribers) listener({ revision: 2 });
 
         await vi.waitFor(() => expect(changes).toEqual([{
+            scope: { kind: 'account' },
             revision: '2',
             changedIds: ['codexBackendMode'],
             values: { codexBackendMode: 'acp' },
         }]));
         await expect(service.set('codexBackendMode', 'appServer', { expectedRevision: '2' }))
-            .resolves.toEqual({ revision: '3' });
+            .resolves.toEqual({ scope: { kind: 'account' }, revision: '3' });
         await vi.waitFor(() => expect(changes).toEqual([{
+            scope: { kind: 'account' },
             revision: '2',
             changedIds: ['codexBackendMode'],
             values: { codexBackendMode: 'acp' },
         }, {
+            scope: { kind: 'account' },
             revision: '3',
             changedIds: ['codexBackendMode'],
             values: { codexBackendMode: 'appServer' },
@@ -215,32 +362,75 @@ describe('stable typed settings foundation', () => {
         expect(subscribers.size).toBe(0);
     });
 
-    it('fails closed instead of dropping unsupported or mixed persistence scopes from the stable host', async () => {
+    it('rejects retired Settings scopes instead of translating them into a supported owner', async () => {
         const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-settings-scopes-'));
         const recordStore = createPluginStorageBackedSettingsRecordStore({
             storageForPlugin: (pluginId) => createPluginStorageOwner({
                 pluginId,
                 paths: resolvePluginStorePaths({ happyHomeDir }),
-            }).local,
+            }).daemon,
         });
-        const projectContribution = { ...declaration(), scope: 'project' as const };
-        const projectHost = createStablePluginSettingsHost({
-            declarations: [{ pluginId: 'acme.plugin', contribution: projectContribution }],
+        const retiredContribution = {
+            ...declaration(),
+            scope: 'project',
+        } as unknown as PluginSettingsContributionV2;
+        expect(() => createStablePluginSettingsModel({
+            pluginId: 'acme.plugin',
+            contribution: retiredContribution,
+        })).toThrowError(expect.objectContaining({
+            code: 'plugin_settings_declaration_invalid',
+        }));
+        const host = createStablePluginSettingsHost({
+            declarations: [{
+                pluginId: 'acme.plugin',
+                contribution: declaration(),
+            }],
             recordStore,
             broker: createStablePluginEventsBroker(),
         });
+        expect(host.bind(seed(() => true))?.forScope({ kind: 'daemon' }))
+            .toBeDefined();
+    });
 
-        expect(projectHost.hasPlugin('acme.plugin')).toBe(true);
-        const projectService = projectHost.bind(seed(() => true));
-        expect(projectService).toBeNull();
-        expect(() => createStablePluginSettingsHost({
+    it('isolates one plugin whose settings declaration cannot be modelled', () => {
+        const invalidDefault = {
+            ...declaration(),
+            id: 'prefs',
+            fields: [{
+                id: 'endpoint',
+                title: 'Endpoint',
+                schema: { type: 'string', minLength: 40 },
+                default: 'short',
+            }],
+        } as unknown as PluginSettingsContributionV2;
+        const isolationRecordStore = {
+            supports: () => true,
+            read: async () => null,
+            update: async <T>(
+                _model: unknown,
+                operation: (current: unknown | null) => Readonly<{ record: unknown; result: T }>,
+            ): Promise<T> => operation(null).result,
+        } as unknown as Parameters<typeof createStablePluginSettingsHost>[0]['recordStore'];
+        const unavailable: { pluginId: string; message: string }[] = [];
+        const host = createStablePluginSettingsHost({
             declarations: [
+                { pluginId: 'bad.plugin', contribution: invalidDefault },
                 { pluginId: 'acme.plugin', contribution: declaration() },
-                { pluginId: 'acme.plugin', contribution: projectContribution },
             ],
-            recordStore,
+            recordStore: isolationRecordStore,
             broker: createStablePluginEventsBroker(),
-        })).toThrowError(expect.objectContaining({ code: 'plugin_settings_scope_mixed' }));
+            onPluginSettingsUnavailable({ pluginId, error }) {
+                unavailable.push({ pluginId, message: (error as Error).message });
+            },
+        });
+        // The mis-authored plugin loses its own Settings service and nothing else.
+        expect(host.hasPlugin('acme.plugin')).toBe(true);
+        expect(host.hasPlugin('bad.plugin')).toBe(false);
+        expect(host.bind(seed(() => true))?.forScope({ kind: 'daemon' })).toBeDefined();
+        // The refusal is reported with its real cause, never silently dropped.
+        expect(unavailable).toHaveLength(1);
+        expect(unavailable[0]?.pluginId).toBe('bad.plugin');
+        expect(unavailable[0]?.message).toContain('invalid default');
     });
 
     it('uses one plugin-local revision across every flattened settings contribution', async () => {
@@ -261,33 +451,59 @@ describe('stable typed settings foundation', () => {
             ],
         });
         const service = createStablePluginSettingsOwner({
-            recordStore: createPluginStorageBackedSettingsRecordStore({ storageForPlugin: () => storage.local }),
+            recordStore: createPluginStorageBackedSettingsRecordStore({ storageForPlugin: () => storage.daemon }),
             broker: createStablePluginEventsBroker(),
         }).bind({ model, seed: seed(() => true) });
 
         expect(service.describe().map((field) => field.id)).toEqual(['endpoint', 'enabled', 'token', 'theme']);
         await expect(service.set('endpoint', 'https://one.example', { expectedRevision: '0' }))
-            .resolves.toEqual({ revision: '1' });
+            .resolves.toEqual({ scope: { kind: 'daemon' }, revision: '1' });
         await expect(service.set('theme', 'dark', { expectedRevision: '0' }))
             .rejects.toMatchObject({ code: 'plugin_settings_revision_conflict' });
         await expect(service.set('theme', 'dark', { expectedRevision: '1' }))
-            .resolves.toEqual({ revision: '2' });
+            .resolves.toEqual({ scope: { kind: 'daemon' }, revision: '2' });
         await expect(service.snapshot()).resolves.toEqual({
+            scope: { kind: 'daemon' },
             revision: '2',
             values: { endpoint: 'https://one.example', theme: 'dark' },
         });
         await service.set('enabled', true);
         await expect(service.snapshot()).resolves.toEqual({
+            scope: { kind: 'daemon' },
             revision: '3',
             values: { endpoint: 'https://one.example', theme: 'dark', enabled: true },
         });
-        expect(await storage.local.get(PLUGIN_SETTINGS_STORAGE_KEY)).toEqual({
+        expect(await storage.daemon.get(PLUGIN_SETTINGS_STORAGE_KEY)).toEqual({
             t: 'happier_plugin_settings_record_v1',
             revision: 3,
             values: { endpoint: 'https://one.example', theme: 'dark', enabled: true },
         });
-        expect(await storage.local.get('typed-settings/preferences')).toBeNull();
-        expect(await storage.local.get('typed-settings/appearance')).toBeNull();
+        expect(await storage.daemon.get('typed-settings/preferences')).toBeNull();
+        expect(await storage.daemon.get('typed-settings/appearance')).toBeNull();
+    });
+
+    it('rejects an unpublished raw predecessor record instead of importing it', async () => {
+        const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-settings-direct-cut-'));
+        const storage = createPluginStorageOwner({
+            pluginId: 'acme.plugin',
+            paths: resolvePluginStorePaths({ happyHomeDir }),
+        });
+        await storage.daemon.set(PLUGIN_SETTINGS_STORAGE_KEY, {
+            endpoint: 'https://predecessor.example',
+        });
+        const model = createStablePluginSettingsModel({
+            pluginId: 'acme.plugin',
+            contribution: declaration(),
+        });
+        const service = createStablePluginSettingsOwner({
+            recordStore: createPluginStorageBackedSettingsRecordStore({
+                storageForPlugin: () => storage.daemon,
+            }),
+            broker: createStablePluginEventsBroker(),
+        }).bind({ model, seed: seed(() => true) });
+
+        await expect(service.snapshot())
+            .rejects.toMatchObject({ code: 'plugin_settings_record_invalid' });
     });
 
     it('keeps nested contribution and field identities collision-free', () => {
@@ -310,12 +526,12 @@ describe('stable typed settings foundation', () => {
 
         expect(nestedContribution.fields[0]?.qualifiedId).not.toBe(nestedField.fields[0]?.qualifiedId);
         expect(nestedContribution.fields[0]?.qualifiedId)
-            .toBe('acme.plugin/settings/preferences%2Ffields%2Flayout/fields/mode');
+            .toBe('acme.plugin/settings/daemon/preferences%2Ffields%2Flayout/fields/mode');
         expect(nestedField.fields[0]?.qualifiedId)
-            .toBe('acme.plugin/settings/preferences/fields/layout%2Ffields%2Fmode');
+            .toBe('acme.plugin/settings/daemon/preferences/fields/layout%2Ffields%2Fmode');
     });
 
-    it('bounds deeply nested setting values before recursive schema validation', () => {
+    it('passes deep strict JSON to the declared setting schema without a generic depth quota', () => {
         const model = createStablePluginSettingsModel({
             pluginId: 'acme.plugin',
             contribution: {
@@ -326,8 +542,40 @@ describe('stable typed settings foundation', () => {
         let value: JsonValue = {};
         for (let depth = 0; depth < 128; depth += 1) value = { child: value };
 
-        expect(() => validateStablePluginSettingValue(model, 'nested', value))
-            .toThrowError(expect.objectContaining({ code: 'plugin_settings_plain_data_bounded' }));
+        expect(validateStablePluginSettingValue(model, 'nested', value)).toBe(true);
+    });
+
+    it('rejects oversized per-active-server maps on direct validation, writes, and record reads', async () => {
+        const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-settings-per-active-server-'));
+        const storage = createPluginStorageOwner({
+            pluginId: 'acme.plugin',
+            paths: resolvePluginStorePaths({ happyHomeDir }),
+        });
+        const model = createStablePluginSettingsModel({
+            pluginId: 'acme.plugin',
+            contribution: perActiveServerDeclaration(),
+        });
+        const oversized = Object.fromEntries(
+            Array.from({ length: 257 }, (_, index) => [`server-${index}`, 'https://example.test']),
+        ) as JsonValue;
+        const service = createStablePluginSettingsOwner({
+            recordStore: createPluginStorageBackedSettingsRecordStore({
+                storageForPlugin: () => storage.daemon,
+                scope: 'account',
+            }),
+            broker: createStablePluginEventsBroker(),
+        }).bind({ model, seed: seed(() => true) });
+
+        expect(validateStablePluginSettingValue(model, 'endpointByServer', oversized)).toBe(false);
+        await expect(service.set('endpointByServer', oversized, { expectedRevision: '0' }))
+            .rejects.toMatchObject({ code: 'plugin_settings_validation_failed' });
+
+        await storage.daemon.set(PLUGIN_SETTINGS_STORAGE_KEY, {
+            t: 'happier_plugin_settings_record_v1',
+            revision: 1,
+            values: { endpointByServer: oversized },
+        });
+        await expect(service.snapshot()).rejects.toMatchObject({ code: 'plugin_settings_record_invalid' });
     });
 
     it('normalizes qualified field identities and rejects accessor-bearing or invalid defaults without reading accessors', () => {
@@ -338,7 +586,7 @@ describe('stable typed settings foundation', () => {
 
         expect(model.identity).toEqual({
             pluginId: 'acme.plugin',
-            qualifiedId: 'acme.plugin/settings',
+            qualifiedId: 'acme.plugin/settings/daemon',
         });
         expect(model.descriptors.map((descriptor) => descriptor.id)).toEqual([
             'endpoint',
@@ -346,11 +594,11 @@ describe('stable typed settings foundation', () => {
             'token',
         ]);
         expect(model.fields.find((field) => field.id === 'endpoint')?.qualifiedId)
-            .toBe('acme.plugin/settings/preferences/fields/endpoint');
+            .toBe('acme.plugin/settings/daemon/preferences/fields/endpoint');
         expect(model.descriptors[0]).toMatchObject({
             title: 'Endpoint',
             target: { kind: 'plugin' },
-            scope: 'local',
+            scope: 'daemon',
             default: 'https://default.example',
         });
         expect(structuredClone(model).fields.map((field) => field.id)).toEqual([
@@ -446,7 +694,7 @@ describe('stable typed settings foundation', () => {
                 version: 1,
                 title: 'Agent preferences',
                 target: { kind: 'agent', agent: 'primary' },
-                scope: 'local',
+                scope: 'daemon',
                 fields: [
                     { id: 'null-value', title: 'Null', schema: { type: 'null' }, default: null },
                     { id: 'boolean-value', title: 'Boolean', schema: { type: 'boolean' }, default: true },
@@ -481,7 +729,7 @@ describe('stable typed settings foundation', () => {
             paths: resolvePluginStorePaths({ happyHomeDir }),
         });
         const recordStore = createPluginStorageBackedSettingsRecordStore({
-            storageForPlugin: () => storage.local,
+            storageForPlugin: () => storage.daemon,
         });
         const broker = createStablePluginEventsBroker();
         const owner = createStablePluginSettingsOwner({ recordStore, broker });
@@ -496,13 +744,18 @@ describe('stable typed settings foundation', () => {
         const disposable = service.watch((change) => changes.push(change));
 
         expect(service.describe()).toEqual(model.descriptors);
-        await expect(service.snapshot()).resolves.toEqual({ revision: '0', values: {} });
+        await expect(service.snapshot()).resolves.toEqual({
+            scope: { kind: 'daemon' },
+            revision: '0',
+            values: {},
+        });
         await expect(service.get('endpoint')).resolves.toBe('https://default.example');
         await expect(service.get('enabled')).resolves.toBe(false);
 
         await expect(service.set('endpoint', 'https://one.example', { expectedRevision: '0' }))
-            .resolves.toEqual({ revision: '1' });
+            .resolves.toEqual({ scope: { kind: 'daemon' }, revision: '1' });
         await vi.waitFor(() => expect(changes).toEqual([{
+            scope: { kind: 'daemon' },
             revision: '1',
             changedIds: ['endpoint'],
             values: { endpoint: 'https://one.example' },
@@ -520,16 +773,17 @@ describe('stable typed settings foundation', () => {
                 storageForPlugin: () => createPluginStorageOwner({
                     pluginId: 'acme.plugin',
                     paths: resolvePluginStorePaths({ happyHomeDir }),
-                }).local,
+                }).daemon,
             }),
             broker,
         }).bind({ model, seed: seed(() => true) });
         await expect(restarted.snapshot()).resolves.toEqual({
+            scope: { kind: 'daemon' },
             revision: '1',
             values: { endpoint: 'https://one.example' },
         });
         await expect(restarted.reset('endpoint', { expectedRevision: '1' }))
-            .resolves.toEqual({ revision: '2' });
+            .resolves.toEqual({ scope: { kind: 'daemon' }, revision: '2' });
         await expect(restarted.get('endpoint')).resolves.toBe('https://default.example');
 
         await expect(service.get('token')).rejects.toMatchObject({
@@ -538,7 +792,7 @@ describe('stable typed settings foundation', () => {
         await expect(service.set('token', 'must-not-persist')).rejects.toMatchObject({
             code: 'plugin_settings_secret_materialization_required',
         });
-        expect(await storage.local.get(PLUGIN_SETTINGS_STORAGE_KEY)).toEqual({
+        expect(await storage.daemon.get(PLUGIN_SETTINGS_STORAGE_KEY)).toEqual({
             t: 'happier_plugin_settings_record_v1',
             revision: 2,
             values: {},
@@ -556,7 +810,7 @@ describe('stable typed settings foundation', () => {
             event: {
                 ref: { pluginId: '@happier', localId: 'runtime/plugin-settings-changed' },
                 payload: {
-                    settings: { pluginId: 'acme.plugin' },
+                    settings: { pluginId: 'acme.plugin', scope: 'daemon' },
                     revision: '3',
                     changedIds: ['enabled'],
                     values: { enabled: true },
@@ -587,7 +841,7 @@ describe('stable typed settings foundation', () => {
         });
         const service = createStablePluginSettingsOwner({
             recordStore: createPluginStorageBackedSettingsRecordStore({
-                storageForPlugin: () => storage.local,
+                storageForPlugin: () => storage.daemon,
             }),
             broker: createStablePluginEventsBroker(),
         }).bind({ model, seed: seed(() => true) });
@@ -596,7 +850,7 @@ describe('stable typed settings foundation', () => {
                 storageForPlugin: () => createPluginStorageOwner({
                     pluginId: 'acme.plugin',
                     paths: resolvePluginStorePaths({ happyHomeDir }),
-                }).local,
+                }).daemon,
             }),
             broker: createStablePluginEventsBroker(),
         }).bind({ model, seed: seed(() => true) });
@@ -615,7 +869,7 @@ describe('stable typed settings foundation', () => {
             }),
         ]);
 
-        await storage.local.set(PLUGIN_SETTINGS_STORAGE_KEY, {
+        await storage.daemon.set(PLUGIN_SETTINGS_STORAGE_KEY, {
             t: 'happier_plugin_settings_record_v1',
             revision: 2,
             values: { token: 'leaked-secret' },
@@ -624,17 +878,14 @@ describe('stable typed settings foundation', () => {
             code: 'plugin_settings_record_invalid',
         });
 
-        const projectModel = createStablePluginSettingsModel({
-            pluginId: 'acme.plugin',
-            contribution: { ...declaration(), scope: 'project', fields: [] },
-        });
-        const projectService = createStablePluginSettingsOwner({
+        const unavailableDaemonService = createStablePluginSettingsOwner({
             recordStore: createPluginStorageBackedSettingsRecordStore({
-                storageForPlugin: () => storage.local,
+                scope: 'account',
+                storageForPlugin: () => storage.daemon,
             }),
             broker: createStablePluginEventsBroker(),
-        }).bind({ model: projectModel, seed: seed(() => true) });
-        await expect(projectService.snapshot()).rejects.toMatchObject({
+        }).bind({ model, seed: seed(() => true) });
+        await expect(unavailableDaemonService.snapshot()).rejects.toMatchObject({
             code: 'plugin_settings_scope_unavailable',
         });
     });
@@ -657,7 +908,7 @@ describe('stable typed settings foundation', () => {
             contribution: declaration(),
         });
         const recordStore = createPluginStorageBackedSettingsRecordStore({
-            storageForPlugin: () => storage.local,
+            storageForPlugin: () => storage.daemon,
         });
         const first = createStablePluginSettingsOwner({
             recordStore,
@@ -665,8 +916,8 @@ describe('stable typed settings foundation', () => {
         }).bind({ model, seed: seed(() => true) });
 
         await expect(first.set('endpoint', 'https://durable.example', { expectedRevision: '0' }))
-            .resolves.toEqual({ revision: '1' });
-        expect(await storage.local.get(PLUGIN_SETTINGS_STORAGE_KEY)).toEqual({
+            .resolves.toEqual({ scope: { kind: 'daemon' }, revision: '1' });
+        expect(await storage.daemon.get(PLUGIN_SETTINGS_STORAGE_KEY)).toEqual({
             t: 'happier_plugin_settings_record_v1',
             revision: 1,
             values: { endpoint: 'https://durable.example' },

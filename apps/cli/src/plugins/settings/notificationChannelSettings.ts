@@ -29,7 +29,7 @@ export function resolveNotificationChannelSettingsContributions(
             title: channel.definition.title,
             ...(channel.definition.description ? { description: channel.definition.description } : {}),
             target: { kind: 'plugin' },
-            scope: 'synced',
+            scope: 'account',
             fields: channel.definition.settings.map((field) => ({
                 ...field,
                 id: notificationChannelSettingFieldId(channel.definition.id, field.id),

@@ -37,6 +37,9 @@
           "commandPalette"
         ],
         "dangerLevel": "safe",
+        "execution": {
+          "target": "daemon"
+        },
         "inputSchema": {
           "type": "object",
           "additionalProperties": false

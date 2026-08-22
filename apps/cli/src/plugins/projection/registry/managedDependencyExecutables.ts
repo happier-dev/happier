@@ -31,12 +31,8 @@ export type ManagedDependencyProjectionHost = Readonly<{
 type ManagedPypiWheelAssetProjectionInput = Readonly<{
     definition: PluginManagedDependencyContributionV2;
     source: ManagedPypiWheelAssetSourceV2;
-    provenance: ResolvedInstallableContribution['provenance'];
-    resolvedSourceKind: ResolvedInstallableContribution['source']['kind'];
-    pluginSourceKind?: NonNullable<ResolvedInstallableContribution['sourceSpec']>['kind'];
     pluginId?: string;
     manifestPath?: string;
-    manifestDigest?: string;
     host?: ManagedDependencyProjectionHost;
 }>;
 
@@ -63,8 +59,8 @@ function managedPypiAssetPlatformKey(host: ManagedDependencyProjectionHost): str
 /**
  * Projects the one currently supported Manifest V2 managed source into the
  * existing installables descriptor contract. This is intentionally partial:
- * incomplete provenance, unsupported hosts, and every other source kind stay
- * out of the installables registry rather than being coerced.
+ * incomplete immutable manifest facts, unsupported hosts, and every other
+ * source kind stay out of the installables registry rather than being coerced.
  */
 export function projectManagedPypiWheelAssetInstallableDescriptor(
     input: ManagedPypiWheelAssetProjectionInput,
@@ -73,12 +69,8 @@ export function projectManagedPypiWheelAssetInstallableDescriptor(
     const platform = declaredPlatform(host.platform);
     const platformKey = managedPypiAssetPlatformKey(host);
     if (
-        input.provenance !== 'first_party'
-        || input.resolvedSourceKind !== 'bundled'
-        || input.pluginSourceKind !== 'bundled'
-        || !input.pluginId
+        !input.pluginId
         || !input.manifestPath
-        || !input.manifestDigest
         || !platform
         || !platformKey
         || (input.definition.platforms && !input.definition.platforms.includes(platform))
@@ -141,7 +133,7 @@ export function isExecutableManagedDependency(
 
 /**
  * Manifest V2 managed-dependency contributions describe dependency requests.
- * The one complete bundled managed-PyPI source projects through the canonical
+ * Each complete managed-PyPI source projects through the canonical
  * installables descriptor owner; all other V2 source kinds remain request-only
  * and must never be coerced into executable descriptors.
  */
@@ -162,12 +154,8 @@ export function selectExecutableManagedDependencies(
             const descriptor = projectManagedPypiWheelAssetInstallableDescriptor({
                 definition: parsed.data,
                 source,
-                provenance: contribution.provenance,
-                resolvedSourceKind: contribution.source.kind,
-                ...(contribution.sourceSpec ? { pluginSourceKind: contribution.sourceSpec.kind } : {}),
                 ...(contribution.pluginId ? { pluginId: contribution.pluginId } : {}),
                 ...(contribution.manifestPath ? { manifestPath: contribution.manifestPath } : {}),
-                ...(contribution.manifestDigest ? { manifestDigest: contribution.manifestDigest } : {}),
                 ...(host ? { host } : {}),
             });
             if (!descriptor) continue;
@@ -185,7 +173,6 @@ export function toExecutableManagedDependencyRegistryContribution(
 ): InstallableRegistryContribution {
     const isHostBuiltIn = candidate.provenance === 'first_party'
         && !candidate.manifestPath
-        && !candidate.manifestDigest
         && !candidate.daemonEntryPath
         && !candidate.sourceSpec;
     return Object.freeze({
@@ -198,7 +185,6 @@ export function toExecutableManagedDependencyRegistryContribution(
             ownerId: candidate.pluginId ?? `${candidate.provenance}:${candidate.definition.key}`,
             ...(candidate.pluginId ? { pluginId: candidate.pluginId } : {}),
             ...(candidate.manifestPath ? { manifestPath: candidate.manifestPath } : {}),
-            ...(candidate.manifestDigest ? { manifestDigest: candidate.manifestDigest } : {}),
         }),
         descriptor: candidate.definition,
     });

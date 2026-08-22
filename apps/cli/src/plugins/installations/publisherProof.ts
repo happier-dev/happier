@@ -9,8 +9,7 @@ import {
     type MachineInstallationIdentityV1,
 } from '@happier-dev/protocol';
 
-import { readOrCreateInstallationIdentity } from '@/daemon/identity/store';
-import { readSettings } from '@/persistence';
+import { readCurrentMachineInstallation } from '@/daemon/identity/currentMachineInstallation';
 
 export type CreatePluginInstallationPublisherHeader = (request: Readonly<{
     method: 'POST';
@@ -70,18 +69,13 @@ export function signPluginInstallationPublisherHeader(params: Readonly<{
 export async function createDefaultPluginInstallationPublisherHeader(
     request: Parameters<CreatePluginInstallationPublisherHeader>[0],
 ): Promise<string | null> {
-    const settings = await readSettings().catch(() => null);
-    const machineId = typeof settings?.machineId === 'string' ? settings.machineId.trim() : '';
-    if (!machineId) {
-        return null;
-    }
-    const identity = await readOrCreateInstallationIdentity().catch(() => null);
-    if (!identity) {
+    const current = await readCurrentMachineInstallation();
+    if (!current) {
         return null;
     }
     return signPluginInstallationPublisherHeader({
-        identity,
-        machineId,
+        identity: current.identity,
+        machineId: current.machineId,
         path: request.path,
         body: request.body,
     });

@@ -86,6 +86,8 @@ export function createUnavailableHostedWebPluginUiDataClient(): PluginUiDataClie
     delete: unavailable,
     query: unavailable,
     batch: unavailable,
+    limits: unavailable,
+    measureBatch: unavailable,
   });
 
   return Object.freeze({ collection, openCollectionQuery: unavailable });

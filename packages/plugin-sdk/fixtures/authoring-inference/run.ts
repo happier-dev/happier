@@ -29,7 +29,8 @@ const managedProviderTestkit = await createPluginTestkit({
   module: { activate: managedProviderActivate },
 });
 try {
-  const registeredProviderRuntime = managedProviderTestkit.registration('providers', 'gateway');
+  const registeredProvider = managedProviderTestkit.registration('providers', 'gateway');
+  const registeredProviderRuntime = registeredProvider?.managedRuntime;
   if (!registeredProviderRuntime
     || registeredProviderRuntime === managedProviderRuntime
     || registeredProviderRuntime.start === managedProviderRuntime.start) {

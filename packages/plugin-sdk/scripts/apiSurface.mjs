@@ -1,5 +1,6 @@
 import { posix as path } from 'node:path';
 import { readFile } from 'node:fs/promises';
+import semver from 'semver';
 
 const ENTRYPOINT_KEYS = Object.freeze([
   'specifier',
@@ -16,21 +17,13 @@ const SYMBOL_KEYS = Object.freeze([
   'sourceModule',
   'sourceExport',
   'realm',
-  'stability',
+  'since',
   'replacement',
   'removalCondition',
 ]);
 const REALMS = new Set(['any', 'browser', 'react-native', 'client', 'daemon', 'build']);
 const VISIBILITIES = new Set(['author', 'host']);
 const SYMBOL_KINDS = new Set(['type', 'value']);
-// Author-facing inventory rows are package-level Developer Preview unless a
-// structured deprecation says otherwise. The current publisher normalizes
-// legacy `@stable` and `@experimental` source markers before emitting its
-// output. Keep their already-emitted inventory spelling readable here until
-// that sole publisher rematerializes the checked-in artifact; accepting it is
-// compatibility input, not permission for a new stronger author contract.
-const READABLE_AUTHOR_STABILITIES = new Set(['preview', 'deprecated', 'stable', 'experimental']);
-const PREPUBLICATION_AUTHOR_STABILITY = 'preview';
 const HOST_EXPORTS_BY_ENTRYPOINT = new Map([
   ['./host/registration', new Map([
     ['createPluginRegistrationScope', 'value'],
@@ -70,6 +63,10 @@ const SOURCE_MODULE_PATTERN = /^src\/[A-Za-z0-9][A-Za-z0-9._/-]*\.tsx?$/u;
 const TYPES_CONDITION_TARGET_PATTERN = /^\.\/dist\/[A-Za-z0-9][A-Za-z0-9._/-]*\.d\.ts$/u;
 const RUNTIME_CONDITION_TARGET_PATTERN = /^\.\/dist\/[A-Za-z0-9][A-Za-z0-9._/-]*\.js$/u;
 const EXPORT_NAME_PATTERN = /^[A-Za-z_$][A-Za-z0-9_$]*$/u;
+
+function isExactCanonicalPublishedVersion(value) {
+  return typeof value === 'string' && semver.valid(value) === value;
+}
 
 export class ApiSurfaceValidationError extends Error {
   /** @param {readonly string[]} diagnostics */
@@ -313,6 +310,12 @@ export function validateApiSurfaceInventory(input) {
       diagnostics.push(`${location}.sourceModule must be the canonical sourceModule, not a generated barrel`);
     }
     if (!REALMS.has(symbol.realm)) diagnostics.push(`${location}.realm is invalid`);
+    if (
+      symbol.since !== undefined
+      && !isExactCanonicalPublishedVersion(symbol.since)
+    ) {
+      diagnostics.push(`${location}.since must be exact canonical semver`);
+    }
 
     if (entrypoint?.visibility === 'host') {
       const hostExportKinds = hostExportKindsByEntrypoint.get(symbol.specifier) ?? new Map();
@@ -345,9 +348,6 @@ export function validateApiSurfaceInventory(input) {
       if (typeof symbol.sourceModule === 'string' && symbol.sourceModule.startsWith('src/host/')) {
         diagnostics.push(`${location} author symbol cannot project a src/host/** source owner`);
       }
-      if (!READABLE_AUTHOR_STABILITIES.has(symbol.stability)) {
-        diagnostics.push(`${location} author symbol has an unsupported stability`);
-      }
       const existingOwner = authorOwnerByName.get(symbol.exportName);
       if (existingOwner && existingOwner !== symbol.specifier) {
         diagnostics.push(
@@ -356,19 +356,21 @@ export function validateApiSurfaceInventory(input) {
       } else {
         authorOwnerByName.set(symbol.exportName, symbol.specifier);
       }
-    } else if (entrypoint?.visibility === 'host' && symbol.stability !== 'host-internal') {
-      diagnostics.push(`${location} host symbol must have host-internal stability`);
     }
 
-    if (symbol.stability === 'deprecated') {
-      if (typeof symbol.replacement !== 'string' || symbol.replacement.length === 0) {
-        diagnostics.push(`${location} deprecated symbol requires replacement`);
-      }
-      if (typeof symbol.removalCondition !== 'string' || symbol.removalCondition.length === 0) {
-        diagnostics.push(`${location} deprecated symbol requires removalCondition`);
-      }
-    } else if (symbol.replacement !== undefined || symbol.removalCondition !== undefined) {
-      diagnostics.push(`${location} non-deprecated symbol cannot declare replacement or removalCondition`);
+    const hasReplacement = symbol.replacement !== undefined;
+    const hasRemovalCondition = symbol.removalCondition !== undefined;
+    if (hasReplacement !== hasRemovalCondition) {
+      diagnostics.push(`${location} deprecation requires replacement and removalCondition together`);
+    }
+    if (hasReplacement && (typeof symbol.replacement !== 'string' || symbol.replacement.length === 0)) {
+      diagnostics.push(`${location} deprecation replacement must be a non-empty string`);
+    }
+    if (
+      hasRemovalCondition
+      && (typeof symbol.removalCondition !== 'string' || symbol.removalCondition.length === 0)
+    ) {
+      diagnostics.push(`${location} deprecation removalCondition must be a non-empty string`);
     }
   }
 
@@ -508,7 +510,6 @@ export function apiSurfaceEntrypointBrowserRuntimeTarget(specifier) {
  *     sourceModule: string,
  *     sourceExport: string,
  *     realm: string,
- *     stability: string,
  *     replacement?: string,
  *     removalCondition?: string,
  *   }>[],
@@ -523,16 +524,16 @@ export function projectApiSurfaceInventory(input) {
     const visibility = HOST_ENTRYPOINTS.has(published.specifier) ? 'host' : 'author';
     const entrypointSymbols = published.symbols
       .map((symbol) => {
-        // While this package is on its documented prepublication hold, every
-        // author API is Developer Preview. A publication spec's old `@stable` or
-        // `@experimental` marker cannot manufacture a stronger contract.
-        // A structured `@deprecated <replacement>; remove when <condition>`
-        // remains a genuine transition contract instead of being flattened.
-        const stability = visibility === 'host'
-          ? 'host-internal'
-          : symbol.stability === 'deprecated'
-            ? 'deprecated'
-            : PREPUBLICATION_AUTHOR_STABILITY;
+        if (Object.hasOwn(symbol, 'stability')) {
+          throw new ApiSurfaceValidationError([
+            `publication symbol ${published.specifier}:${symbol.exportName} uses retired per-symbol stability metadata`,
+          ]);
+        }
+        if (Object.hasOwn(symbol, 'since')) {
+          throw new ApiSurfaceValidationError([
+            `publication symbol ${published.specifier}:${symbol.exportName} uses publisher-owned @since metadata`,
+          ]);
+        }
         const row = {
           specifier: published.specifier,
           exportName: symbol.exportName,
@@ -540,9 +541,8 @@ export function projectApiSurfaceInventory(input) {
           sourceModule: symbol.sourceModule,
           sourceExport: symbol.sourceExport,
           realm: symbol.realm,
-          stability,
         };
-        if (stability === 'deprecated') {
+        if (symbol.replacement !== undefined || symbol.removalCondition !== undefined) {
           row.replacement = symbol.replacement;
           row.removalCondition = symbol.removalCondition;
         }
@@ -560,6 +560,106 @@ export function projectApiSurfaceInventory(input) {
   return validateApiSurfaceInventory({ schemaVersion: 1, entrypoints, symbols });
 }
 
+/**
+ * Projects the inventory included in one official SDK publication. Publication
+ * is the sole owner of the current package version and of retaining the
+ * immediately previous official inventory. A previous inventory already
+ * carries every earlier first-publication fact, so this needs no parallel
+ * per-symbol registry or author-maintained source tags.
+ *
+ * @param {{
+ *   inventory: unknown,
+ *   publishedVersion: string,
+ *   previousPublishedInventory?: unknown,
+ * }} input
+ */
+export function projectPublishedApiSurfaceInventory(input) {
+  if (!isRecord(input)) {
+    throw new ApiSurfaceValidationError(['published inventory input must be an object']);
+  }
+  if (
+    !isExactCanonicalPublishedVersion(input.publishedVersion)
+  ) {
+    throw new ApiSurfaceValidationError(['publishedVersion must be exact canonical semver']);
+  }
+
+  const inventory = validateApiSurfaceInventory(input.inventory);
+  for (const symbol of inventory.symbols) {
+    if (Object.hasOwn(symbol, 'since')) {
+      throw new ApiSurfaceValidationError([
+        `current source inventory symbol ${symbolKey(symbol)} must not declare publisher-owned @since`,
+      ]);
+    }
+  }
+
+  const previousSinceBySymbol = new Map();
+  if (input.previousPublishedInventory !== undefined) {
+    const previousInventory = validateApiSurfaceInventory(input.previousPublishedInventory);
+    for (const symbol of previousInventory.symbols) {
+      if (symbol.since === undefined) {
+        throw new ApiSurfaceValidationError([
+          `previous published inventory symbol ${symbolKey(symbol)} is missing @since`,
+        ]);
+      }
+      if (!semver.lte(symbol.since, input.publishedVersion)) {
+        throw new ApiSurfaceValidationError([
+          `previous published inventory symbol ${symbolKey(symbol)} has @since ${symbol.since} after publishedVersion ${input.publishedVersion}`,
+        ]);
+      }
+      previousSinceBySymbol.set(symbolKey(symbol), symbol.since);
+    }
+  }
+
+  return validateApiSurfaceInventory({
+    ...inventory,
+    symbols: inventory.symbols.map((symbol) => ({
+      ...symbol,
+      since: previousSinceBySymbol.get(symbolKey(symbol)) ?? input.publishedVersion,
+    })),
+  });
+}
+
+/**
+ * Reapplies only publication-owned `@since` facts retained in the generated
+ * inventory to the current source-owned surface. New source symbols remain
+ * unstamped until the next actual publication, while removed symbols cannot
+ * survive because this starts from the current source inventory.
+ *
+ * @param {{
+ *   inventory: unknown,
+ *   retainedPublishedInventory: unknown,
+ * }} input
+ */
+export function projectRetainedPublishedApiSurfaceInventory(input) {
+  if (!isRecord(input)) {
+    throw new ApiSurfaceValidationError(['retained published inventory input must be an object']);
+  }
+  const inventory = validateApiSurfaceInventory(input.inventory);
+  for (const symbol of inventory.symbols) {
+    if (Object.hasOwn(symbol, 'since')) {
+      throw new ApiSurfaceValidationError([
+        `current source inventory symbol ${symbolKey(symbol)} must not declare publisher-owned @since`,
+      ]);
+    }
+  }
+  const retainedInventory = validateApiSurfaceInventory(input.retainedPublishedInventory);
+  const retainedSinceBySymbol = new Map();
+  for (const symbol of retainedInventory.symbols) {
+    if (symbol.since === undefined) {
+      throw new ApiSurfaceValidationError([
+        `retained published inventory symbol ${symbolKey(symbol)} is missing @since`,
+      ]);
+    }
+    retainedSinceBySymbol.set(symbolKey(symbol), symbol.since);
+  }
+  return validateApiSurfaceInventory({
+    ...inventory,
+    symbols: inventory.symbols.map((symbol) => {
+      const since = retainedSinceBySymbol.get(symbolKey(symbol));
+      return since === undefined ? symbol : { ...symbol, since };
+    }),
+  });
+}
 
 function moduleSpecifier(barrelModule, sourceModule) {
   const relativeModule = path.relative(path.dirname(barrelModule), sourceModule)
@@ -567,12 +667,15 @@ function moduleSpecifier(barrelModule, sourceModule) {
   return relativeModule.startsWith('.') ? relativeModule : `./${relativeModule}`;
 }
 
-function stabilityDoc(symbol) {
-  if (symbol.stability === 'preview') return '/** @preview */\n';
-  if (symbol.stability === 'deprecated') {
-    return `/** @deprecated ${symbol.replacement}; remove when ${symbol.removalCondition} */\n`;
+function symbolDocumentationDoc(symbol) {
+  const tags = [];
+  if (symbol.since !== undefined) tags.push(`@since ${symbol.since}`);
+  if (symbol.replacement !== undefined) {
+    tags.push(`@deprecated ${symbol.replacement}; remove when ${symbol.removalCondition}`);
   }
-  return '';
+  if (tags.length === 0) return '';
+  if (tags.length === 1) return `/** ${tags[0]} */\n`;
+  return `/**\n${tags.map((tag) => ` * ${tag}`).join('\n')}\n */\n`;
 }
 
 function renderBarrel(entrypoint, symbols) {
@@ -580,7 +683,7 @@ function renderBarrel(entrypoint, symbols) {
     const importedName = symbol.sourceExport === symbol.exportName
       ? symbol.exportName
       : `${symbol.sourceExport} as ${symbol.exportName}`;
-    return `${stabilityDoc(symbol)}export${symbol.kind === 'type' ? ' type' : ''} { ${importedName} } from '${moduleSpecifier(entrypoint.sourceModule, symbol.sourceModule)}';`;
+    return `${symbolDocumentationDoc(symbol)}export${symbol.kind === 'type' ? ' type' : ''} { ${importedName} } from '${moduleSpecifier(entrypoint.sourceModule, symbol.sourceModule)}';`;
   }).join('\n')}\n`;
 }
 
@@ -605,6 +708,10 @@ export function createApiSurfaceGenerationPlan(input) {
   const authorDeclarationAssertions = {};
   const testkitAssertions = {};
   const authorDocumentationRows = [];
+  const hasAuthorSince = symbols.some((symbol) => (
+    symbol.since !== undefined
+    && entrypoints.find((entrypoint) => entrypoint.specifier === symbol.specifier)?.visibility === 'author'
+  ));
   for (const entrypoint of entrypoints) {
     const entrypointSymbols = symbolsBySpecifier.get(entrypoint.specifier);
     packageExports[entrypoint.specifier] = orderPackageExportConditions(entrypoint.conditions);
@@ -615,7 +722,7 @@ export function createApiSurfaceGenerationPlan(input) {
     testkitAssertions[entrypoint.specifier] = names;
     for (const symbol of entrypointSymbols) {
       authorDocumentationRows.push(
-        `| \`${entrypoint.specifier}\` | \`${symbol.exportName}\` | ${symbol.kind} | ${symbol.realm} | ${symbol.stability} |`,
+        `| \`${entrypoint.specifier}\` | \`${symbol.exportName}\` | ${symbol.kind} | ${symbol.realm}${hasAuthorSince ? ` | ${symbol.since ?? ''}` : ''} |`,
       );
     }
   }
@@ -627,12 +734,12 @@ export function createApiSurfaceGenerationPlan(input) {
     authorApiMarkdown: [
       '# Plugin SDK API surface',
       '',
-      '> `preview` is the package-level Developer Preview posture, not a per-symbol maturity claim.',
+      '> This package is Developer Preview.',
       '> `capability-matrix.json` records public-family availability with its proving consumer or explicit deferred disposition.',
       '> Generated from `api-surface.json`. Do not hand-edit.',
       '',
-      '| Specifier | Export | Kind | Realm | Stability |',
-      '|---|---|---|---|---|',
+      `| Specifier | Export | Kind | Realm${hasAuthorSince ? ' | Since' : ''} |`,
+      `|---|---|---|---${hasAuthorSince ? '|---' : ''}|`,
       ...authorDocumentationRows,
       '',
     ].join('\n'),

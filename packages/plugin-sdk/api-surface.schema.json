@@ -211,8 +211,7 @@
         "kind",
         "sourceModule",
         "sourceExport",
-        "realm",
-        "stability"
+        "realm"
       ],
       "properties": {
         "specifier": {
@@ -238,15 +237,9 @@
         "realm": {
           "$ref": "#/$defs/realm"
         },
-        "stability": {
-          "description": "Current author output uses preview or structured deprecated. Stable and experimental remain readable only for already-emitted inventory rows until the sole publisher rematerializes them.",
-          "enum": [
-            "preview",
-            "deprecated",
-            "stable",
-            "experimental",
-            "host-internal"
-          ]
+        "since": {
+          "type": "string",
+          "pattern": "^[0-9A-Za-z][0-9A-Za-z.+-]*$"
         },
         "replacement": {
           "type": "string",
@@ -257,32 +250,14 @@
           "minLength": 1
         }
       },
-      "allOf": [
-        {
-          "if": {
-            "properties": {
-              "stability": {
-                "const": "deprecated"
-              }
-            },
-            "required": [
-              "stability"
-            ]
-          },
-          "then": {
-            "required": [
-              "replacement",
-              "removalCondition"
-            ]
-          },
-          "else": {
-            "properties": {
-              "replacement": false,
-              "removalCondition": false
-            }
-          }
-        }
-      ]
+      "dependentRequired": {
+        "replacement": [
+          "removalCondition"
+        ],
+        "removalCondition": [
+          "replacement"
+        ]
+      }
     }
   }
 }

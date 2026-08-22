@@ -33,15 +33,166 @@ describe('resolveAndDownloadNpmArtifact', () => {
     dirs.push(dir);
 
     const candidate = await resolveAndDownloadNpmArtifact({
-      input: { registryOrigin: 'https://registry.example.test', packageName: 'plugin' },
+      input: { registryOrigin: 'https://registry.example.test', packageName: 'plugin', selector: '1.0.0' },
       destinationPath: join(dir, 'plugin.tgz'), artifactMaxBytes: 1024, client,
     });
 
-    expect(candidate.source).toMatchObject({ packageName: 'plugin', version: '1.0.0', integrity });
+    expect(candidate).toMatchObject({
+      source: { packageName: 'plugin', version: '1.0.0', integrity },
+      compatibility: {
+        automaticEligible: false,
+        diagnostics: [expect.objectContaining({ code: 'plugin_compatibility_projection_missing' })],
+      },
+    });
     expect(calls).toEqual([
       'https://registry.example.test/plugin',
       'https://registry.example.test/plugin/-/plugin-1.0.0.tgz',
     ]);
+  });
+
+  it.each([
+    ['an omitted selector', undefined],
+    ['a tag selector', 'latest'],
+    ['a range selector', '^1.0.0'],
+  ] as const)('refuses %s without generated compatibility facts before downloading an archive', async (_label, selector) => {
+    const bytes = Buffer.from('ineligible package');
+    const integrity = `sha512-${createHash('sha512').update(bytes).digest('base64')}`;
+    const bodyRequests: string[] = [];
+    const client: NpmRegistryArtifactClient = {
+      getJson: async () => ({
+        name: 'plugin', 'dist-tags': { latest: '1.0.0' }, versions: {
+          '1.0.0': {
+            name: 'plugin', version: '1.0.0',
+            dist: { integrity, tarball: 'https://registry.example.test/plugin/-/plugin-1.0.0.tgz' },
+          },
+        },
+      }),
+      getBody: async ({ url }) => {
+        bodyRequests.push(url);
+        return { body: Readable.from([bytes]), contentLength: bytes.byteLength };
+      },
+    };
+    const dir = await mkdtemp(join(tmpdir(), 'happier-npm-adapter-ineligible-manual-'));
+    dirs.push(dir);
+
+    await expect(resolveAndDownloadNpmArtifact({
+      input: {
+        registryOrigin: 'https://registry.example.test',
+        packageName: 'plugin',
+        ...(selector === undefined ? {} : { selector }),
+      },
+      destinationPath: join(dir, 'plugin.tgz'),
+      artifactMaxBytes: 1024,
+      client,
+    })).rejects.toThrow(/compatible generated compatibility projection/i);
+
+    expect(bodyRequests).toEqual([]);
+  });
+
+  it('does not let an automatic exact selector defer missing compatibility facts to review', async () => {
+    const bytes = Buffer.from('ineligible automatic package');
+    const integrity = `sha512-${createHash('sha512').update(bytes).digest('base64')}`;
+    const bodyRequests: string[] = [];
+    const client: NpmRegistryArtifactClient = {
+      getJson: async () => ({
+        name: 'plugin', 'dist-tags': { latest: '1.0.0' }, versions: {
+          '1.0.0': {
+            name: 'plugin', version: '1.0.0',
+            dist: { integrity, tarball: 'https://registry.example.test/plugin/-/plugin-1.0.0.tgz' },
+          },
+        },
+      }),
+      getBody: async ({ url }) => {
+        bodyRequests.push(url);
+        return { body: Readable.from([bytes]), contentLength: bytes.byteLength };
+      },
+    };
+    const dir = await mkdtemp(join(tmpdir(), 'happier-npm-adapter-ineligible-automatic-'));
+    dirs.push(dir);
+
+    await expect(resolveAndDownloadNpmArtifact({
+      input: { registryOrigin: 'https://registry.example.test', packageName: 'plugin', selector: '1.0.0' },
+      destinationPath: join(dir, 'plugin.tgz'),
+      artifactMaxBytes: 1024,
+      requireCompatibleProjection: true,
+      client,
+    })).rejects.toThrow(/compatible generated compatibility projection/i);
+
+    expect(bodyRequests).toEqual([]);
+  });
+
+  it('downloads only the newest compatible artifact after inspecting full-version metadata', async () => {
+    const compatibleBytes = Buffer.from('compatible package');
+    const incompatibleBytes = Buffer.from('incompatible package');
+    const compatibleIntegrity = `sha512-${createHash('sha512').update(compatibleBytes).digest('base64')}`;
+    const incompatibleIntegrity = `sha512-${createHash('sha512').update(incompatibleBytes).digest('base64')}`;
+    const bodyRequests: string[] = [];
+    const projection = (
+      version: string,
+      entries: readonly Record<string, unknown>[] = [],
+    ) => ({
+      version: 1,
+      manifest: {
+        schemaVersion: 2,
+        id: 'acme.download-selection',
+        version,
+        displayName: 'Download selection',
+        engines: { happier: '>=0.0.0' },
+        runtime: { apiVersion: 1 },
+        contributes: {},
+      },
+      uiArtifacts: { version: 1, entries },
+    });
+    const incompatibleUiEntry = {
+      contributionId: 'main',
+      tier: 'hostedWeb',
+      entry: 'web/index.html',
+      files: [{
+        relativePath: 'web/index.html',
+        digest: `sha256:${'a'.repeat(64)}`,
+        byteSize: 1,
+      }],
+      digest: `sha256:${'b'.repeat(64)}`,
+      builtWith: { bundler: 'vite', version: '7.0.0' },
+      hostUiApiVersion: '999.0.0',
+      compat: {},
+    };
+    const client: NpmRegistryArtifactClient = {
+      getJson: async () => ({
+        name: 'plugin',
+        'dist-tags': { latest: '2.0.0' },
+        versions: {
+          '1.0.0': {
+            name: 'plugin',
+            version: '1.0.0',
+            happier: { manifest: '.happier-plugin/plugin.json', compatibilityProjection: projection('1.0.0') },
+            dist: { integrity: compatibleIntegrity, tarball: 'https://registry.example.test/plugin/-/plugin-1.0.0.tgz' },
+          },
+          '2.0.0': {
+            name: 'plugin',
+            version: '2.0.0',
+            happier: { manifest: '.happier-plugin/plugin.json', compatibilityProjection: projection('2.0.0', [incompatibleUiEntry]) },
+            dist: { integrity: incompatibleIntegrity, tarball: 'https://registry.example.test/plugin/-/plugin-2.0.0.tgz' },
+          },
+        },
+      }),
+      getBody: async ({ url }) => {
+        bodyRequests.push(url);
+        const bytes = url.endsWith('1.0.0.tgz') ? compatibleBytes : incompatibleBytes;
+        return { body: Readable.from([bytes]), contentLength: bytes.byteLength };
+      },
+    };
+    const dir = await mkdtemp(join(tmpdir(), 'happier-npm-adapter-selection-'));
+    dirs.push(dir);
+
+    await expect(resolveAndDownloadNpmArtifact({
+      input: { registryOrigin: 'https://registry.example.test', packageName: 'plugin' },
+      destinationPath: join(dir, 'plugin.tgz'),
+      artifactMaxBytes: 1024,
+      client,
+    })).resolves.toMatchObject({ source: { version: '1.0.0' } });
+
+    expect(bodyRequests).toEqual(['https://registry.example.test/plugin/-/plugin-1.0.0.tgz']);
   });
 
   it('retrieves declared provenance under bounds as a non-authoritative review signal', async () => {
@@ -63,7 +214,7 @@ describe('resolveAndDownloadNpmArtifact', () => {
     const dir = await mkdtemp(join(tmpdir(), 'happier-npm-adapter-'));
     dirs.push(dir);
     await expect(resolveAndDownloadNpmArtifact({
-      input: { registryOrigin: 'https://registry.example.test', packageName: 'plugin' },
+      input: { registryOrigin: 'https://registry.example.test', packageName: 'plugin', selector: '1.0.0' },
       destinationPath: join(dir, 'plugin.tgz'), artifactMaxBytes: 1024, client,
     })).resolves.toMatchObject({
       provenance: { status: 'retrieved', predicateTypes: ['https://slsa.dev/provenance/v1'], verified: false },
@@ -90,7 +241,7 @@ describe('resolveAndDownloadNpmArtifact', () => {
     const dir = await mkdtemp(join(tmpdir(), 'happier-npm-adapter-'));
     dirs.push(dir);
     await expect(resolveAndDownloadNpmArtifact({
-      input: { registryOrigin: 'https://registry.example.test', packageName: 'plugin' },
+      input: { registryOrigin: 'https://registry.example.test', packageName: 'plugin', selector: '1.0.0' },
       destinationPath: join(dir, 'plugin.tgz'), artifactMaxBytes: 1024, client,
     })).resolves.toMatchObject({
       provenance: { status: 'unavailable', code: 'attestation_unavailable', verified: false },
@@ -116,7 +267,7 @@ describe('resolveAndDownloadNpmArtifact', () => {
     const dir = await mkdtemp(join(tmpdir(), 'happier-npm-adapter-'));
     dirs.push(dir);
     await expect(resolveAndDownloadNpmArtifact({
-      input: { registryOrigin: 'https://registry.example.test', packageName: 'plugin' },
+      input: { registryOrigin: 'https://registry.example.test', packageName: 'plugin', selector: '1.0.0' },
       destinationPath: join(dir, 'plugin.tgz'), artifactMaxBytes: 1024, client,
     })).rejects.toThrow(/expiry/i);
   });

@@ -231,7 +231,8 @@ export type ExecClientDiagnosticsV1 = Readonly<{
 
 export type JsonRpcRequestOptionsV1 = Readonly<{
     signal?: AbortSignal;
-    timeoutMs?: number;
+    /** `null` disables this request's local correlator timer. */
+    timeoutMs?: number | null;
 }>;
 
 export type JsonRpcRequestHandlerContextV1 = Readonly<{
@@ -426,108 +427,3 @@ export interface ExecRuntimeServiceV1 {
     spawnClient(spec: ExecLoopbackWebSocketJsonClientSpecV1, options?: ExecRunOptionsV1): Promise<ExecClientHandleV1<LoopbackWebSocketJsonClientV1>>;
     spawnClient(spec: ExecClientSpecV1, options?: ExecRunOptionsV1): Promise<ExecClientHandleV1<ExecProtocolClientV1>>;
 }
-
-// Host-private shapes retained by the daemon local-service bridge after the
-// public legacy SDK barrel was removed. The bridge protocol is the wire owner;
-// these types keep its in-process callers aligned without republishing it.
-export type LocalServiceLaunchV1 =
-    | Readonly<{
-        kind: 'agent-cli';
-        agentId: string;
-        args?: readonly string[];
-        cwd?: string;
-        env?: Readonly<Record<string, string>>;
-        unsetEnvKeys?: readonly string[];
-        stdin?: string | Uint8Array;
-    }>
-    | Readonly<{
-        kind: 'binary';
-        executablePath: string;
-        args?: readonly string[];
-        cwd?: string;
-        env?: Readonly<Record<string, string>>;
-        unsetEnvKeys?: readonly string[];
-        stdin?: string | Uint8Array;
-    }>
-    | Readonly<{
-        kind: 'managed-installable';
-        installableId: string;
-        executableName?: string;
-        args?: readonly string[];
-        cwd?: string;
-        env?: Readonly<Record<string, string>>;
-        unsetEnvKeys?: readonly string[];
-        stdin?: string | Uint8Array;
-        sourcePreference?: 'managed-first' | 'system-first';
-    }>
-    | Readonly<{ kind: 'ipc'; endpoint: string }>;
-
-export type LocalServiceDeclarationV1 = Readonly<{
-    id: string;
-    launch: LocalServiceLaunchV1;
-    launchMode:
-        | Readonly<{ kind: 'detectAfterLaunch'; minimumConfidence?: 'high' | 'medium' | 'low' }>
-        | Readonly<{
-            kind: 'assignAndInject';
-            portPolicy:
-                | Readonly<{ kind: 'fixed'; port: number; onCollision?: 'fail' | 'fallback' }>
-                | Readonly<{ kind: 'allocated'; preferredPort?: number; onCollision?: 'fail' | 'fallback' }>
-                | Readonly<{ kind: 'inherited'; envName: string }>;
-            environment?: Readonly<{ inject?: readonly string[] }>;
-        }>
-        | Readonly<{
-            kind: 'externalRegistered';
-            inventoryId: string;
-            minimumConfidence?: 'high' | 'medium' | 'low';
-        }>;
-    hostPolicy: Readonly<{ kind: 'loopback'; host?: string }>;
-    name:
-        | Readonly<{ strategy: 'derived'; base: string }>
-        | Readonly<{ strategy: 'fixed'; name: string }>;
-    healthCheck:
-        | Readonly<{ kind: 'none' }>
-        | Readonly<{ kind: 'http'; path?: string; timeoutMs?: number }>
-        | Readonly<{ kind: 'command'; launch: LocalServiceLaunchV1; timeoutMs?: number }>;
-    restart: Readonly<{ kind: 'never' }>;
-    cleanup: Readonly<{ staleAfterMs: number }>;
-}>;
-
-export type LocalServiceRuntimeSnapshotV1 = Readonly<{
-    id: string;
-    phase: 'starting' | 'detecting' | 'running' | 'unhealthy' | 'stopping' | 'stopped' | 'failed';
-    inventoryId?: string;
-    port?: number;
-    url?: string;
-    diagnostics: readonly Readonly<{
-        code: string;
-        message?: string;
-        severity?: 'info' | 'warning' | 'error';
-    }>[];
-}>;
-
-export type FetchRuntimeHeadersV1 = Readonly<Record<string, string>>;
-
-export type FetchRuntimeRequestV1 = Readonly<{
-    url: string;
-    method?: string;
-    headers?: FetchRuntimeHeadersV1;
-    body?: unknown;
-    signal?: AbortSignal;
-    timeoutMs?: number;
-    metadata?: Readonly<Record<string, unknown>>;
-}>;
-
-export type FetchRuntimeResponseV1 = Readonly<{
-    ok: boolean;
-    status: number;
-    statusText?: string;
-    headers: FetchRuntimeHeadersV1;
-    body?: unknown;
-    text(): Promise<string>;
-    json(): Promise<unknown>;
-    arrayBuffer(): Promise<ArrayBuffer>;
-}>;
-
-export type FetchRuntimeServiceV1 = (
-    request: FetchRuntimeRequestV1,
-) => Promise<FetchRuntimeResponseV1>;

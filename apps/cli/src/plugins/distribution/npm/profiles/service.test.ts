@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { access, chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -7,6 +7,8 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { createNpmRegistryProfileService } from './service';
 import { createNpmRegistryCredentialStore } from './credentials';
 import { NpmRegistryHttpError } from '../httpsClient';
+import { createPurposeKeyedPluginSecretStore } from '@/plugins/runtime/context/secrets';
+import { resolvePluginStorePaths } from '@/plugins/store/paths';
 
 describe('npm registry profile service', () => {
   const roots: string[] = [];
@@ -116,6 +118,78 @@ describe('npm registry profile service', () => {
     await service.snapshot();
 
     await expect(credentials.has('credential-orphaned-before-profile-commit')).resolves.toBe(false);
+  });
+
+  it('keeps npm credentials under the purpose-derived distribution key, never the retired plugin key', async () => {
+    const { happyHomeDir } = await makeService();
+    const credentials = createNpmRegistryCredentialStore({ happyHomeDir });
+
+    await credentials.set('npm-purpose-key', 'Bearer distribution-secret');
+
+    expect(await credentials.get('npm-purpose-key')).toBe('Bearer distribution-secret');
+    await expect(access(join(
+      happyHomeDir,
+      'plugins',
+      'plugins',
+      'secrets',
+      'plugin-secrets-key.v1',
+    ))).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('reseals the bounded legacy NPM namespace under the purpose-derived key and removes its retired key file', async () => {
+    const { happyHomeDir } = await makeService();
+    const paths = resolvePluginStorePaths({ happyHomeDir });
+    const legacyKey = new Uint8Array(32).fill(7);
+    const legacyKeyPath = join(paths.secretsDir, 'plugin-secrets-key.v1');
+    await mkdir(paths.secretsDir, { recursive: true });
+    await writeFile(legacyKeyPath, JSON.stringify({
+      t: 'happier_plugin_secret_key_v1',
+      key: Buffer.from(legacyKey).toString('base64'),
+    }), 'utf8');
+    await chmod(legacyKeyPath, 0o600);
+    const legacy = createPurposeKeyedPluginSecretStore({
+      pluginId: 'happier.npm.registry.credentials',
+      paths,
+      secretKey: legacyKey,
+    });
+    await legacy.set('legacy-npm-credential', 'Bearer reseal-me');
+
+    const credentials = createNpmRegistryCredentialStore({ happyHomeDir });
+
+    await expect(credentials.get('legacy-npm-credential')).resolves.toBe('Bearer reseal-me');
+    await expect(access(legacyKeyPath)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('keeps a resealed NPM credential readable when another namespace prevents legacy-key retirement', async () => {
+    const { happyHomeDir } = await makeService();
+    const paths = resolvePluginStorePaths({ happyHomeDir });
+    const legacyKey = new Uint8Array(32).fill(8);
+    const legacyKeyPath = join(paths.secretsDir, 'plugin-secrets-key.v1');
+    await mkdir(paths.secretsDir, { recursive: true });
+    await writeFile(legacyKeyPath, JSON.stringify({
+      t: 'happier_plugin_secret_key_v1',
+      key: Buffer.from(legacyKey).toString('base64'),
+    }), 'utf8');
+    await chmod(legacyKeyPath, 0o600);
+    const legacyNpmStore = createPurposeKeyedPluginSecretStore({
+      pluginId: 'happier.npm.registry.credentials',
+      paths,
+      secretKey: legacyKey,
+    });
+    await legacyNpmStore.set('legacy-npm-credential', 'Bearer keep-npm-readable');
+    const unrelatedLegacyStore = createPurposeKeyedPluginSecretStore({
+      pluginId: 'another.legacy.plugin',
+      paths,
+      secretKey: legacyKey,
+    });
+    await unrelatedLegacyStore.set('unrelated-secret', 'must-not-be-resealed-by-npm');
+
+    const credentials = createNpmRegistryCredentialStore({ happyHomeDir });
+
+    await expect(credentials.listRefs()).resolves.toEqual(['legacy-npm-credential']);
+    await expect(credentials.get('legacy-npm-credential')).resolves.toBe('Bearer keep-npm-readable');
+    await expect(access(legacyKeyPath)).resolves.toBeUndefined();
+    await expect(unrelatedLegacyStore.get('unrelated-secret')).resolves.toBe('must-not-be-resealed-by-npm');
   });
 
   it('rejects ambiguous origins, scopes, defaults, and stale revisions without partial changes', async () => {

@@ -519,7 +519,7 @@ describe('createManagedRuntimeBundlerRunner (real vite build)', () => {
                 `    outDir: ${JSON.stringify(preset.output.root)},`,
                 '    emptyOutDir: true,',
                 '    minify: false,',
-                "    lib: { entry: 'src/main.tsx', formats: ['es'], fileName: () => 'entry.mjs' },",
+                "    lib: { entry: 'src/main.tsx', formats: ['es'], fileName: () => 'entry.mjs.bundle' },",
                 '  },',
                 '};',
                 '',

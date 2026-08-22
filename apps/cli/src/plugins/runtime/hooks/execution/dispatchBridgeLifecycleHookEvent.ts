@@ -19,7 +19,7 @@ import {
 type DispatchBridgeLifecycleHookEventDeps = Readonly<{
   resolveRuntimeRegistry?: (params: Readonly<{ happyHomeDir: string }>) => Promise<ResolvedExecutablePluginRuntimeRegistry>;
   dispatchEvent?: (params: Readonly<{
-    runtimeRegistry: Pick<ResolvedExecutablePluginRuntimeRegistry, 'hookHandlersByHookId' | 'readHookEventEnvelopeV1'>;
+    runtimeRegistry: Pick<ResolvedExecutablePluginRuntimeRegistry, 'hookHandlersByHookId'>;
     event: HookEventEnvelopeV1;
   }>) => Promise<DispatchPluginHookEventResultV1>;
   nowMs?: () => number;

@@ -1,8 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { RuntimeTurnOperations } from '@/agent/runtime/turns/runtimeTurnOperations';
-import type { Credentials } from '@/persistence';
-import { ProviderConnectionIdSchema } from '@happier-dev/protocol';
+import type { Credentials, StoredCredentials } from '@/persistence';
+import { logger } from '@/ui/logger';
+import {
+  ProviderConnectionIdSchema,
+  type ProviderBoundModelRef,
+} from '@happier-dev/protocol';
 
 import {
     createNativeAgentHostSessionRuntimePlan as createPublicPluginSessionRuntimePlan,
@@ -21,6 +25,11 @@ vi.mock('@/agent/runtime/startup/releasedStartupOverridesCacheV1', () => ({
   writeReleasedStartupOverridesCacheV1: releasedCacheMocks.write,
 }));
 
+vi.mock('@/persistence', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/persistence')>(),
+  readSettings: vi.fn(async () => ({ machineId: 'machine-1' })),
+}));
+
 const credentials: Credentials = {
   token: 'test-token',
   encryption: {
@@ -28,6 +37,10 @@ const credentials: Credentials = {
     secret: new Uint8Array([1, 2, 3]),
   },
 };
+const tokenOnlyCredentials = {
+  token: 'plain-account-token',
+  encryption: null,
+} satisfies StoredCredentials;
 
 function createBackendFixture() {
   return {
@@ -93,6 +106,7 @@ function createHostFactoryParams() {
     directory: '/tmp/plugin-backend',
     metadata: {} as never,
     machineId: 'machine-1',
+    agentTargetKey: 'backend:claude',
     session: { sessionId: 'host-session-1' } as never,
     transcriptSession: {} as never,
     messageBuffer: {} as never,
@@ -101,10 +115,99 @@ function createHostFactoryParams() {
     getPermissionMode: () => 'default' as const,
     setThinking: () => undefined,
     memoryRecallGuidanceEnabled: false,
+    runnerProcessIdentity: null,
+    startupModelSelection: null,
+    runWithTerminalModelSelection: async <T>(
+      effect: (
+        selection: ProviderBoundModelRef | null,
+        runWithCurrentPublisherPermit: <U>(
+          localEffect: () => Promise<U>,
+        ) => Promise<
+          | Readonly<{ status: 'completed'; value: U }>
+          | Readonly<{ status: 'blocked' }>
+        >,
+      ) => Promise<T>,
+    ) => ({
+      status: 'completed' as const,
+      value: await effect(
+        null,
+        async <U>(localEffect: () => Promise<U>) => ({
+          status: 'completed' as const,
+          value: await localEffect(),
+        }),
+      ),
+    }),
   };
 }
 
 describe('plugin session runtime adapters', () => {
+  it('threads the exact selected Agent provider declaration into both host runtime plans', async () => {
+    const providerRequirements = Object.freeze({
+      acceptsProtocols: ['openai-responses'],
+      required: { streaming: true },
+      credentialSupport: {
+        supportsNoAuth: true,
+        apiKeyTransports: [],
+      },
+      authIsolation: {
+        suppressConnectedServiceIds: [],
+        ownedEnvKeys: ['EXTERNAL_PROVIDER_TOKEN'],
+      },
+      materialization: 'spawnEnv',
+      applyPolicy: 'restart_session',
+      supportsFreeformModelIds: true,
+    });
+    const baseAgent = createAgentFixture() as unknown as Record<
+      string,
+      unknown
+    >;
+    const agent = {
+      ...baseAgent,
+      richDefinition: {
+        provenance: 'external',
+        definition: {
+          catalogAgentId: 'claude',
+          providerRequirements,
+        },
+      },
+    } as never;
+    const sessionInput = buildPluginSessionBindingInput({ credentials });
+    const nativePlan = await createPublicPluginSessionRuntimePlan({
+      backend: createBackendFixture(),
+      agent,
+      createSessionRuntime: async () => createRuntimeTurnOperations(),
+      sessionInput,
+    });
+    const pluginPlan = await createPluginSessionRuntimePlan({
+      backend: createBackendFixture(),
+      agent,
+      launch: async () => ({
+        operations: createRuntimeTurnOperations(),
+      }) as never,
+      sessionInput,
+    });
+
+    expect(nativePlan.config.providerRequirements)
+      .toBe(providerRequirements);
+    expect(pluginPlan.config.providerRequirements)
+      .toBe(providerRequirements);
+  });
+
+  it('preserves token-only credentials through the host runtime binding', () => {
+    const input = buildPluginSessionBindingInput({
+      credentials: tokenOnlyCredentials,
+    });
+
+    expect(input.credentials).toEqual(tokenOnlyCredentials);
+    expect(buildPluginHostSessionRuntimeOptions(input).credentials).toEqual(tokenOnlyCredentials);
+  });
+
+  it('rejects malformed credentials at the untyped session launch boundary', () => {
+    expect(() => buildPluginSessionBindingInput({
+      credentials: { token: 'malformed', encryption: { type: 'legacy' } },
+    })).toThrow(/credentials/i);
+  });
+
   it('preserves the canonical native fork-open source through session binding', () => {
     const nativeForkSource = {
       sessionId: 'host-parent',
@@ -229,6 +332,92 @@ describe('plugin session runtime adapters', () => {
       hasTerminalTty: expect.any(Boolean),
     });
     expect(legacyPlan.config.startupBootstrap).toBeUndefined();
+  });
+
+  it('does not authorize an offline Session stub for native Agent startup', async () => {
+    const baseAgent = createAgentFixture() as unknown as Record<string, unknown>;
+    const plan = await createPublicPluginSessionRuntimePlan({
+      backend: createBackendFixture(),
+      agent: {
+        ...baseAgent,
+        catalogEntry: {
+          id: 'acme.sample.provider',
+          cliSubcommand: 'acme.sample.provider',
+          shouldUseDeferredSessionStartup: () => true,
+        },
+      } as never,
+      createSessionRuntime: async () => createRuntimeTurnOperations(),
+      sessionInput: buildPluginSessionBindingInput({ credentials }),
+    });
+    const create = plan.config.startupBootstrap?.create;
+    if (!create) throw new Error('expected deferred startup factory');
+    const createPreparedDeferredStartupBootstrap = vi.fn(async (_params: unknown) => ({} as never));
+
+    await create({
+      opts: {
+        ...plan.opts,
+        launchControlMetadata: {} as never,
+      },
+      seed: {
+        permissionMode: 'default',
+        permissionModeUpdatedAt: 1,
+        permissionModeSource: 'fallback',
+        modelSelection: null,
+      },
+      createPreparedDeferredStartupBootstrap,
+    });
+
+    expect(createPreparedDeferredStartupBootstrap).toHaveBeenCalledOnce();
+    expect(createPreparedDeferredStartupBootstrap.mock.calls[0]?.[0]).not.toHaveProperty(
+      'allowOfflineStub',
+    );
+  });
+
+  it('does not retain deferred-startup failure details in logs', async () => {
+    const privatePayload = 'VOICE_PRIVATE_STARTUP_CONTROL_PAYLOAD';
+    const debug = vi.spyOn(logger, 'debug').mockImplementation(() => undefined);
+    const baseAgent = createAgentFixture() as unknown as Record<string, unknown>;
+    const plan = await createPublicPluginSessionRuntimePlan({
+      backend: createBackendFixture(),
+      agent: {
+        ...baseAgent,
+        catalogEntry: {
+          id: 'acme.sample.provider',
+          cliSubcommand: 'acme.sample.provider',
+          shouldUseDeferredSessionStartup: () => true,
+        },
+      } as never,
+      createSessionRuntime: async () => createRuntimeTurnOperations(),
+      sessionInput: buildPluginSessionBindingInput({ credentials }),
+    });
+    const create = plan.config.startupBootstrap?.create;
+    if (!create) throw new Error('expected deferred startup factory');
+
+    await create({
+      opts: {
+        ...plan.opts,
+        launchControlMetadata: {} as never,
+      },
+      seed: {
+        permissionMode: 'default',
+        permissionModeUpdatedAt: 1,
+        permissionModeSource: 'fallback',
+        modelSelection: null,
+      },
+      createPreparedDeferredStartupBootstrap: async (params) => {
+        await params.onBackgroundStartFailure?.(
+          new Error(privatePayload),
+          { timing: {} as never },
+        );
+        return {} as never;
+      },
+    });
+
+    expect(debug).toHaveBeenCalledWith(
+      expect.stringContaining('Deferred Session startup failed'),
+    );
+    expect(JSON.stringify(debug.mock.calls)).not.toContain(privatePayload);
+    debug.mockRestore();
   });
 
   it('adopts the deployed Codex V1 cache only as a lowest-priority provider-resume seed', async () => {
@@ -601,19 +790,7 @@ describe('plugin session runtime adapters', () => {
       }),
     });
 
-    const created = await plan.config.createSessionRuntime?.({
-      directory: '/tmp/plugin-backend',
-      metadata: {} as never,
-      machineId: 'machine-1',
-      session: { sessionId: 'host-session-1' } as never,
-      transcriptSession: {} as never,
-      messageBuffer: {} as never,
-      mcpServers: {},
-      permissionHandler: {} as never,
-      getPermissionMode: () => 'default',
-      setThinking: () => undefined,
-      memoryRecallGuidanceEnabled: false,
-    });
+    const created = await plan.config.createSessionRuntime?.(createHostFactoryParams());
 
     const operations = (created as Readonly<{ operations: RuntimeTurnOperations }>).operations;
     await operations.sendTurnPrompt('hello', { userMessageSeq: 42, modelId: 'opencode/big-pickle' });
@@ -636,19 +813,7 @@ describe('plugin session runtime adapters', () => {
       }),
     });
 
-    const created = await plan.config.createSessionRuntime?.({
-      directory: '/tmp/plugin-backend',
-      metadata: {} as never,
-      machineId: 'machine-1',
-      session: { sessionId: 'host-session-1' } as never,
-      transcriptSession: {} as never,
-      messageBuffer: {} as never,
-      mcpServers: {},
-      permissionHandler: {} as never,
-      getPermissionMode: () => 'default',
-      setThinking: () => undefined,
-      memoryRecallGuidanceEnabled: false,
-    });
+    const created = await plan.config.createSessionRuntime?.(createHostFactoryParams());
 
     const operations = (created as Readonly<{ operations: RuntimeTurnOperations }>).operations;
     await operations.steerInFlightTurn('hello steer', { userMessageSeq: 43 });
@@ -672,19 +837,7 @@ describe('plugin session runtime adapters', () => {
       }),
     });
 
-    const created = await plan.config.createSessionRuntime?.({
-      directory: '/tmp/plugin-backend',
-      metadata: {} as never,
-      machineId: 'machine-1',
-      session: { sessionId: 'host-session-1' } as never,
-      transcriptSession: {} as never,
-      messageBuffer: {} as never,
-      mcpServers: {},
-      permissionHandler: {} as never,
-      getPermissionMode: () => 'default',
-      setThinking: () => undefined,
-      memoryRecallGuidanceEnabled: false,
-    });
+    const created = await plan.config.createSessionRuntime?.(createHostFactoryParams());
 
     const operations = (created as Readonly<{ operations: RuntimeTurnOperations }>).operations;
     await operations.updateSessionRuntimeConfig({ permissionMode: 'read-only' });
@@ -709,19 +862,7 @@ describe('plugin session runtime adapters', () => {
       }),
     });
 
-    await plan.config.createSessionRuntime?.({
-      directory: '/tmp/plugin-backend',
-      metadata: {} as never,
-      machineId: 'machine-1',
-      session: { sessionId: 'host-session-1' } as never,
-      transcriptSession: {} as never,
-      messageBuffer: {} as never,
-      mcpServers: {},
-      permissionHandler: {} as never,
-      getPermissionMode: () => 'default',
-      setThinking: () => undefined,
-      memoryRecallGuidanceEnabled: false,
-    });
+    await plan.config.createSessionRuntime?.(createHostFactoryParams());
 
     expect(capturedOpenIntent).toEqual({
       kind: 'resume',
@@ -742,19 +883,7 @@ describe('plugin session runtime adapters', () => {
       }),
     });
 
-    const created = await plan.config.createSessionRuntime?.({
-      directory: '/tmp/plugin-backend',
-      metadata: {} as never,
-      machineId: 'machine-1',
-      session: { sessionId: 'host-session-1' } as never,
-      transcriptSession: {} as never,
-      messageBuffer: {} as never,
-      mcpServers: {},
-      permissionHandler: {} as never,
-      getPermissionMode: () => 'default',
-      setThinking: () => undefined,
-      memoryRecallGuidanceEnabled: false,
-    });
+    const created = await plan.config.createSessionRuntime?.(createHostFactoryParams());
 
     const operations = (created as Readonly<{
       operations: RuntimeTurnOperations & Record<string, unknown>;
@@ -821,6 +950,14 @@ describe('plugin session runtime adapters', () => {
 
   it('rebinds canonical native operations after reset and fences stale predecessor events', async () => {
     const lifecycleOrder: string[] = [];
+    const initialProviderBindingAdmission = Object.freeze({
+      v: 1,
+      connectionId: 'pc-initial',
+    }) as never;
+    const successorProviderBindingAdmission = Object.freeze({
+      v: 1,
+      connectionId: 'pc-successor',
+    }) as never;
     const firstEventHandlers: Array<(event: never) => void> = [];
     const secondEventHandlers: Array<(event: never) => void> = [];
     const firstInterruptPendingInputAndRun = vi.fn(async (request: Readonly<{
@@ -835,6 +972,7 @@ describe('plugin session runtime adapters', () => {
     }>) => ({ ok: true as const, status: 'accepted' as const, ...request }));
     const first = {
       ...createRuntimeTurnOperations(),
+      canInterruptForPendingInput: () => false,
       interruptPendingInputAndRun: firstInterruptPendingInputAndRun,
       sendTurnPrompt: vi.fn(async (prompt: string) => {
         lifecycleOrder.push(`first-prompt:${prompt}`);
@@ -852,6 +990,7 @@ describe('plugin session runtime adapters', () => {
     };
     const second = {
       ...createRuntimeTurnOperations(),
+      canInterruptForPendingInput: () => true,
       interruptPendingInputAndRun: secondInterruptPendingInputAndRun,
       sendTurnPrompt: vi.fn(async (prompt: string) => {
         lifecycleOrder.push(`second-prompt:${prompt}`);
@@ -862,8 +1001,14 @@ describe('plugin session runtime adapters', () => {
       }),
     };
     const createSessionRuntime = vi.fn()
-      .mockResolvedValueOnce(first)
-      .mockResolvedValueOnce(second);
+      .mockResolvedValueOnce({
+        operations: first,
+        admittedProviderBindingHandoff: initialProviderBindingAdmission,
+      })
+      .mockResolvedValueOnce({
+        operations: second,
+        admittedProviderBindingHandoff: successorProviderBindingAdmission,
+      });
     const plan = await createPublicPluginSessionRuntimePlan({
       backend: createBackendFixture(),
       agent: createAgentFixture(),
@@ -875,6 +1020,7 @@ describe('plugin session runtime adapters', () => {
       operations: RuntimeTurnOperations & Readonly<{
         setRuntimeReplacementLifecycle(lifecycle: Readonly<{
           beforeReplacement(): Promise<void>;
+          onSuccessorProviderBindingAdmitted(input: unknown): Promise<void>;
           onSuccessorBound(): Promise<void>;
           onSuccessorUsable(): Promise<void>;
         }>): void;
@@ -883,16 +1029,25 @@ describe('plugin session runtime adapters', () => {
           localId: string;
           expectedStateAtMs?: number;
         }>): Promise<unknown> | unknown;
+        canInterruptForPendingInput(): boolean;
       }>;
     }>).operations;
+    expect((created as Readonly<{
+      admittedProviderBindingHandoff?: unknown;
+    }>).admittedProviderBindingHandoff).toBe(initialProviderBindingAdmission);
     operations.setRuntimeReplacementLifecycle({
       beforeReplacement: async () => { lifecycleOrder.push('before'); },
+      onSuccessorProviderBindingAdmitted: async (input) => {
+        expect(input).toBe(successorProviderBindingAdmission);
+        lifecycleOrder.push('successor-admitted');
+      },
       onSuccessorBound: async () => { lifecycleOrder.push('bound'); },
       onSuccessorUsable: async () => { lifecycleOrder.push('usable'); },
     });
     const observed: unknown[] = [];
     operations.subscribeRuntimeEvents((event) => observed.push(event));
 
+    expect(operations.canInterruptForPendingInput()).toBe(false);
     await operations.sendTurnPrompt('first');
     await expect(operations.interruptPendingInputAndRun({
       sessionId: 'host-session-1',
@@ -908,6 +1063,7 @@ describe('plugin session runtime adapters', () => {
       providerSessionId: 'provider-successor',
       importHistory: false,
     });
+    expect(operations.canInterruptForPendingInput()).toBe(true);
     await operations.sendTurnPrompt('second');
     await expect(operations.interruptPendingInputAndRun({
       sessionId: 'host-session-1',
@@ -933,6 +1089,7 @@ describe('plugin session runtime adapters', () => {
       'first-terminal',
       'before',
       'first-disposed',
+      'successor-admitted',
       'bound',
       'usable',
       'second-prompt:second',
@@ -957,6 +1114,139 @@ describe('plugin session runtime adapters', () => {
       providerSessionId: 'provider-successor',
       importHistory: false,
     });
+  });
+
+  it('does not bind an ordinary-update successor path into the retained native runtime', async () => {
+    const first = {
+      ...createRuntimeTurnOperations(),
+      readSessionIdentity: vi.fn(() => ({
+        sessionId: 'provider-session-g',
+      })),
+      resetOrDisposeRuntime: vi.fn(async () => undefined),
+    };
+    const second = {
+      ...createRuntimeTurnOperations(),
+      readSessionIdentity: vi.fn(() => ({
+        sessionId: 'provider-session-h',
+      })),
+    };
+    const createSessionRuntime = vi.fn()
+      .mockResolvedValueOnce(first)
+      .mockResolvedValueOnce(second);
+    const plan = await createPublicPluginSessionRuntimePlan({
+      backend: createBackendFixture(),
+      agent: createAgentFixture(),
+      createSessionRuntime,
+      sessionInput: buildPluginSessionBindingInput({ credentials }),
+    });
+
+    const created =
+      await plan.config.createSessionRuntime?.(createHostFactoryParams());
+    const operations = (created as Readonly<{
+      operations: RuntimeTurnOperations;
+    }>).operations;
+
+    expect(first.resetOrDisposeRuntime).not.toHaveBeenCalled();
+    expect(createSessionRuntime).toHaveBeenCalledOnce();
+    await operations.sendTurnPrompt('retained G turn');
+    expect(first.sendTurnPrompt).toHaveBeenCalledWith(
+      'retained G turn',
+      undefined,
+    );
+    expect(second.sendTurnPrompt).not.toHaveBeenCalled();
+  });
+
+  it('does not replay a pending prompt through a successor after a runtime error', async () => {
+    const runtimeError = new Error(
+      'retained runtime rejected before provider dispatch',
+    );
+    const first = {
+      ...createRuntimeTurnOperations(),
+      sendTurnPrompt: vi.fn(async () => {
+        throw runtimeError;
+      }),
+      readSessionIdentity: vi.fn(() => ({
+        sessionId: 'provider-session-g',
+      })),
+      resetOrDisposeRuntime: vi.fn(async () => undefined),
+    };
+    const second = {
+      ...createRuntimeTurnOperations(),
+      sendTurnPrompt: vi.fn(async () => undefined),
+      readSessionIdentity: vi.fn(() => ({
+        sessionId: 'provider-session-h',
+      })),
+    };
+    const createSessionRuntime = vi.fn()
+      .mockResolvedValueOnce(first)
+      .mockResolvedValueOnce(second);
+    const plan = await createPublicPluginSessionRuntimePlan({
+      backend: createBackendFixture(),
+      agent: createAgentFixture(),
+      createSessionRuntime,
+      sessionInput: buildPluginSessionBindingInput({ credentials }),
+    });
+    const created =
+      await plan.config.createSessionRuntime?.(createHostFactoryParams());
+    const operations = (created as Readonly<{
+      operations: RuntimeTurnOperations;
+    }>).operations;
+
+    await expect(operations.sendTurnPrompt('pending prompt', {
+      localId: 'pending-input-1',
+      turnId: 'pending-turn-1',
+    })).rejects.toBe(runtimeError);
+
+    expect(first.sendTurnPrompt).toHaveBeenCalledOnce();
+    expect(first.resetOrDisposeRuntime).not.toHaveBeenCalled();
+    expect(second.sendTurnPrompt).not.toHaveBeenCalled();
+    expect(createSessionRuntime).toHaveBeenCalledOnce();
+  });
+
+  it('does not replay a provider error that counterfeits the generation replacement shape', async () => {
+    const counterfeit = Object.assign(
+      new Error('provider failed after effect'),
+      {
+        name: 'RunnerAgentGenerationReplacementRequiredError',
+        code: 'RUNNER_AGENT_GENERATION_REPLACED',
+      },
+    );
+    const first = {
+      ...createRuntimeTurnOperations(),
+      sendTurnPrompt: vi.fn(async () => {
+        throw counterfeit;
+      }),
+      readSessionIdentity: vi.fn(() => ({
+        sessionId: 'provider-session-g',
+      })),
+      resetOrDisposeRuntime: vi.fn(async () => undefined),
+    };
+    const second = {
+      ...createRuntimeTurnOperations(),
+      sendTurnPrompt: vi.fn(async () => undefined),
+    };
+    const createSessionRuntime = vi.fn()
+      .mockResolvedValueOnce(first)
+      .mockResolvedValueOnce(second);
+    const plan = await createPublicPluginSessionRuntimePlan({
+      backend: createBackendFixture(),
+      agent: createAgentFixture(),
+      createSessionRuntime,
+      sessionInput: buildPluginSessionBindingInput({ credentials }),
+    });
+    const created =
+      await plan.config.createSessionRuntime?.(createHostFactoryParams());
+    const operations = (created as Readonly<{
+      operations: RuntimeTurnOperations;
+    }>).operations;
+
+    await expect(
+      operations.sendTurnPrompt('do not replay'),
+    ).rejects.toBe(counterfeit);
+    expect(first.sendTurnPrompt).toHaveBeenCalledOnce();
+    expect(first.resetOrDisposeRuntime).not.toHaveBeenCalled();
+    expect(second.sendTurnPrompt).not.toHaveBeenCalled();
+    expect(createSessionRuntime).toHaveBeenCalledOnce();
   });
 
   it('fails closed when a successor drops an activated prompt-delivery outcome seam', async () => {

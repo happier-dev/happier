@@ -25,16 +25,22 @@ import {
   PluginRegistryCandidateConflictError,
   type PluginRegistryRuntimeLifecycle,
 } from '@/plugins/store/registry/currentState';
+import type { PluginRegistryCommitRecord } from '@/plugins/store/registry/commitRecord';
 import {
-  createImmutablePluginGenerationRecordFromSource,
+  prepareOwnedImmutablePluginGeneration,
+  type OwnedPreparedImmutablePluginGeneration,
 } from '@/plugins/store/registry/generationStore';
+import { resolvePluginStorePaths } from '@/plugins/store/paths';
 import type { PluginStateRecord } from '@/plugins/store/state';
 import { expandHomeDirPath } from '@/utils/path/expandHomeDirPath';
+import { createVerifiedPortablePluginInstallationAvailability } from '@/plugins/availability/releaseFacts';
+import { projectPluginFailureText } from '@/plugins/runtime/lifecycle/utils';
 
 import type {
   PluginChangeRequest,
-  PreparedDaemonPluginChange,
+  PreparedDaemonPluginChangeCandidate,
 } from './changeContract';
+import { derivePluginInstallReviewPrincipal } from './installReviewPrincipal';
 import { projectPluginInstallationReview } from './installationReview';
 import { projectPluginTransactionChangeResult } from './transactionChangeResult';
 import { createSelectedPluginOptionalAccess } from './optionalAccessSelections';
@@ -53,7 +59,11 @@ function readRemoteArchiveUrl(locator: string): string | null {
   }
 }
 
-async function hashArchive(path: string): Promise<Readonly<{ byteLength: number; integrity: string }>> {
+async function hashArchive(path: string): Promise<Readonly<{
+  byteLength: number;
+  integrity: string;
+  archiveDigestSha256: `sha256:${string}`;
+}>> {
   const hash = createHash('sha256');
   let byteLength = 0;
   for await (const chunk of createReadStream(path)) {
@@ -61,9 +71,11 @@ async function hashArchive(path: string): Promise<Readonly<{ byteLength: number;
     byteLength += bytes.byteLength;
     hash.update(bytes);
   }
+  const digest = hash.digest();
   return Object.freeze({
     byteLength,
-    integrity: `sha256-${hash.digest('base64')}`,
+    integrity: `sha256-${digest.toString('base64')}`,
+    archiveDigestSha256: `sha256:${digest.toString('hex')}`,
   });
 }
 
@@ -76,6 +88,7 @@ async function materializeArchive(params: Readonly<{
     | Readonly<{ kind: 'remoteUrl'; url: string }>;
   byteLength: number;
   integrity: string;
+  archiveDigestSha256: `sha256:${string}`;
 }>> {
   const maximumBytes = Math.min(
     resolvePluginRemoteArchiveMaxBytes(),
@@ -126,8 +139,16 @@ function archiveLocator(distribution: PluginDistributionIdentity): string {
 async function cleanupOwnedCandidate(params: Readonly<{
   operationRootPath: string;
   candidate?: StagedNpmCompatiblePluginArchive;
+  preparedGeneration?: OwnedPreparedImmutablePluginGeneration;
 }>): Promise<void> {
   let cleanupError: unknown;
+  if (params.preparedGeneration) {
+    try {
+      await params.preparedGeneration.cleanup();
+    } catch (error) {
+      cleanupError = error;
+    }
+  }
   if (params.candidate) {
     try {
       await cleanupStagedNpmCompatiblePluginArchive(params.candidate);
@@ -146,8 +167,9 @@ async function cleanupOwnedCandidate(params: Readonly<{
 export function createDaemonArchivePluginChangePreparer(params: Readonly<{
   happyHomeDir: string;
   runtimeLifecycle: PluginRegistryRuntimeLifecycle;
+  onRegistryApplied?: (record: PluginRegistryCommitRecord) => void;
   nowMs?: () => number;
-}>): (request: PluginChangeRequest) => Promise<PreparedDaemonPluginChange> {
+}>): (request: PluginChangeRequest) => Promise<PreparedDaemonPluginChangeCandidate> {
   const nowMs = params.nowMs ?? Date.now;
 
   return async (request) => {
@@ -160,6 +182,7 @@ export function createDaemonArchivePluginChangePreparer(params: Readonly<{
       kind: 'archive',
     });
     let stagedCandidate: StagedNpmCompatiblePluginArchive | undefined;
+    let preparedGeneration: OwnedPreparedImmutablePluginGeneration | undefined;
     try {
       const materialized = await materializeArchive({
         locator: request.locator,
@@ -176,25 +199,30 @@ export function createDaemonArchivePluginChangePreparer(params: Readonly<{
         archivePath: join(operationRootPath, 'candidate.tgz'),
         byteLength: materialized.byteLength,
         integrity: materialized.integrity,
+        archiveDigestSha256: materialized.archiveDigestSha256,
         stagingParentPath: join(operationRootPath, 'staging'),
       });
       if (!staged.ok) {
         throw new Error(`Archive plugin candidate rejected (${staged.rejection.code}): ${staged.rejection.message}`);
       }
       stagedCandidate = staged.candidate;
-
-      const reviewedGeneration = await createImmutablePluginGenerationRecordFromSource({
+      const availability = createVerifiedPortablePluginInstallationAvailability({
+        sourceClass: 'versionedArchive',
+        archiveDigestSha256: staged.candidate.archiveDigestSha256,
+        manifest: staged.candidate.manifest.value,
+        generatedUiArtifacts: staged.candidate.generatedUiArtifacts.manifest,
+        packageAssetArchive: staged.candidate.packageAssetArchive.descriptor,
+      });
+      const candidateGeneration = await prepareOwnedImmutablePluginGeneration({
+        paths: resolvePluginStorePaths({ happyHomeDir: params.happyHomeDir }),
         pluginId: staged.candidate.manifest.id,
         sourceRootPath: staged.candidate.rootPath,
         manifestRelativePath: PACKAGE_MANIFEST_PATH,
         distribution,
         updatePolicy: 'manual',
-        createdAtMs: 0,
-        immutableGenerationId: 'reviewed-archive-candidate',
+        createdAtMs: nowMs(),
       });
-      if (reviewedGeneration.manifestDigest !== staged.candidate.manifest.digest) {
-        throw new Error('Archive candidate manifest digest differs between staging and immutable-generation validation');
-      }
+      preparedGeneration = candidateGeneration;
 
       const canonicalLocator = archiveLocator(distribution);
       const review = projectPluginInstallationReview({
@@ -210,18 +238,22 @@ export function createDaemonArchivePluginChangePreparer(params: Readonly<{
           curation: { status: 'notApplicable' },
           updatePolicy: 'manual',
         },
-        integrity: reviewedGeneration,
         uiArtifacts: {
           verification: 'verified',
           contributionIds: staged.candidate.generatedUiArtifacts.contributionIds,
         },
       });
+      const installReviewPrincipal = derivePluginInstallReviewPrincipal(review);
       const existingAtPreparation = (
         await createPluginRegistryStateStore({ happyHomeDir: params.happyHomeDir }).read()
       ).plugins[staged.candidate.manifest.id];
       let cleanupPromise: Promise<void> | undefined;
       const cleanup = () => {
-        cleanupPromise ??= cleanupOwnedCandidate({ operationRootPath, candidate: staged.candidate });
+        cleanupPromise ??= cleanupOwnedCandidate({
+          operationRootPath,
+          candidate: staged.candidate,
+          preparedGeneration: candidateGeneration,
+        });
         return cleanupPromise;
       };
 
@@ -256,7 +288,6 @@ export function createDaemonArchivePluginChangePreparer(params: Readonly<{
               trustPolicy: 'prompt',
               installPolicy: 'managed_install',
               resolvedVersion: staged.candidate.manifest.version,
-              resolvedDigest: materialized.integrity,
               installedAt: approvedAtMs,
             };
             const catalogRecord: PluginStateRecord = {
@@ -269,7 +300,6 @@ export function createDaemonArchivePluginChangePreparer(params: Readonly<{
               install: {
                 mode: 'managed_install',
                 manifestVersion: staged.candidate.manifest.version,
-                manifestDigest: staged.candidate.manifest.digest,
                 installedPath: null,
               },
               state: { enabled: true, lastLoadedAtMs: nowMs(), lastError: null },
@@ -277,17 +307,22 @@ export function createDaemonArchivePluginChangePreparer(params: Readonly<{
             const store = createPluginRegistryStateStore({
               happyHomeDir: params.happyHomeDir,
               runtimeLifecycle: params.runtimeLifecycle,
-              onApplied: control?.onApplied,
+              onApplied: (record) => {
+                control?.onApplied();
+                params.onRegistryApplied?.(record);
+              },
             });
             const transaction = await store.install({
               pluginId: staged.candidate.manifest.id,
-              sourceRootPath: staged.candidate.rootPath,
-              manifestRelativePath: PACKAGE_MANIFEST_PATH,
               catalogRecord,
               trust,
               updatePolicy: 'manual',
               optionalAccess,
-              reviewedPackageDigest: reviewedGeneration.packageDigest,
+              availability,
+              admittedIntegrity: materialized.integrity,
+              preparedGeneration: candidateGeneration,
+              installReviewPrincipalDigest: installReviewPrincipal.digest,
+              installReviewPrincipalPresentation: installReviewPrincipal.presentation,
             });
             if (transaction.status !== 'committed' && transaction.status !== 'outcomeUnknown') {
               throw new Error(`Archive installation ended without a committed registry transaction (${transaction.status})`);
@@ -306,7 +341,7 @@ export function createDaemonArchivePluginChangePreparer(params: Readonly<{
               : {
                   kind: 'failed' as const,
                   code: 'plugin_install_failed',
-                  message: error instanceof Error ? error.message : String(error),
+                  message: projectPluginFailureText(error),
                 };
           }
         },
@@ -314,7 +349,11 @@ export function createDaemonArchivePluginChangePreparer(params: Readonly<{
       });
     } catch (error) {
       try {
-        await cleanupOwnedCandidate({ operationRootPath, ...(stagedCandidate ? { candidate: stagedCandidate } : {}) });
+        await cleanupOwnedCandidate({
+          operationRootPath,
+          ...(stagedCandidate ? { candidate: stagedCandidate } : {}),
+          ...(preparedGeneration ? { preparedGeneration } : {}),
+        });
       } catch (cleanupError) {
         throw new AggregateError([error, cleanupError], 'Archive candidate preparation and cleanup both failed');
       }

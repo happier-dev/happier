@@ -100,15 +100,7 @@ describe('public plugin UI build contract', () => {
             expect(source).toContain(`export type { ${typeName} } from './config.js';`);
         }
         expect(source).not.toContain('ExactPluginUiBuildTarget');
-        expect(source).toContain(
-            '/** @preview */\nexport { createReactNativeRepackResolveOptions } from \'../reactNativeBuild.js\';',
-        );
-        expect(source).toContain(
-            '/** @preview */\nexport { buildUiSurfaceTargets } from \'../surface.js\';',
-        );
-        expect(source).toMatch(
-            /\/\*\* @preview \*\/\s*export \{\s*PublicToolchainCompatibilityV1Schema\s*\} from '\.\/toolchainCompatibility\.js';/u,
-        );
+        expect(source).not.toMatch(/@(?:preview|experimental|stable|incubating)\b/u);
         expect(source).not.toContain('PUBLIC_TOOLCHAIN_COMPATIBILITY_V1');
         expectTypeOf<PluginUiArtifactPlatform>()
             .toEqualTypeOf<DirectPluginUiArtifactPlatform>();

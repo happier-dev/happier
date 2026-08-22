@@ -4,7 +4,7 @@ import type {
 } from '@/daemon/connectedServices/daemonAuthBridgeTypes';
 
 import type { ConnectedServiceProviderRuntimeAuthAdapter } from '@/daemon/connectedServices/runtimeAuth/types';
-import { createSessionScopedAuthServices } from './auth';
+import { createSessionHandleAuthService } from './auth';
 
 function createRuntimeAuthAdapter(
     refreshActiveProfile: ConnectedServiceProviderRuntimeAuthAdapter['refreshActiveProfile'],
@@ -25,19 +25,38 @@ function daemonRefreshResult(value: unknown): ConnectedServiceDaemonAuthBridgeRe
     return value as ConnectedServiceDaemonAuthBridgeRefreshResult;
 }
 
-describe('createSessionScopedAuthServices runtime auth refresh', () => {
+describe('createSessionHandleAuthService runtime auth refresh', () => {
+    it('host-stamps the bound Session Agent identity on author refresh requests', async () => {
+        const refreshActiveProfile = vi.fn(async () => ({
+            status: 'refreshed' as const,
+            result: { accessToken: 'fresh' },
+        }));
+        const resolveAdapter = vi.fn(async () => createRuntimeAuthAdapter(refreshActiveProfile));
+        const auth = createSessionHandleAuthService({
+            readSessionId: async () => 'happy-session-1',
+            readAgentId: async () => 'codex',
+            resolveAdapter,
+        });
+
+        await expect(auth.services.refreshRuntimeAuth({
+            serviceId: 'openai-codex',
+            selection: { kind: 'profile', profileId: 'work' },
+        })).resolves.toMatchObject({ status: 'refreshed' });
+
+        expect(resolveAdapter).toHaveBeenCalledWith('codex');
+    });
     it('forwards refresh intent and failed-token proof to the provider adapter', async () => {
         const refreshActiveProfile = vi.fn(async () => ({
             status: 'refreshed' as const,
             result: { accessToken: 'fresh' },
         }));
-        const auth = createSessionScopedAuthServices({
+        const auth = createSessionHandleAuthService({
             readSessionId: async () => 'happy-session-1',
+            readAgentId: async () => 'codex',
             resolveAdapter: async () => createRuntimeAuthAdapter(refreshActiveProfile),
         });
 
         await expect(auth.services.refreshRuntimeAuth({
-            agentId: 'codex',
             serviceId: 'openai-codex',
             refreshAttemptId: 'codex-refresh-attempt-1',
             selection: { kind: 'profile', profileId: 'work' },
@@ -83,22 +102,71 @@ describe('createSessionScopedAuthServices runtime auth refresh', () => {
             expected: { status: 'failed', reason: 'runtime_auth_refresh_attempt_mismatch' },
         },
     ])('fails closed for an adapter $name result', async ({ adapterResult, expected }) => {
-        const auth = createSessionScopedAuthServices({
+        const auth = createSessionHandleAuthService({
             readSessionId: async () => 'happy-session-1',
+            readAgentId: async () => 'pi',
             resolveAdapter: async () => createRuntimeAuthAdapter(async () => adapterResult),
         });
 
         await expect(auth.services.refreshRuntimeAuth({
-            agentId: 'pi',
             serviceId: 'openai',
             refreshAttemptId: 'runtime-auth-attempt-1',
             selection: { kind: 'profile', profileId: 'work' },
         })).resolves.toEqual(expected);
     });
 
-    it('preserves only an exact matching adapter pending attempt', async () => {
-        const auth = createSessionScopedAuthServices({
+    it('rejects non-portable provider refresh payloads at the session service boundary', async () => {
+        const auth = createSessionHandleAuthService({
             readSessionId: async () => 'happy-session-1',
+            readAgentId: async () => 'pi',
+            resolveAdapter: async () => createRuntimeAuthAdapter(async () => ({
+                status: 'refreshed',
+                result: () => 'credential-bearing closure',
+            })),
+        });
+
+        await expect(auth.services.refreshRuntimeAuth({
+            serviceId: 'openai',
+            refreshAttemptId: 'runtime-auth-attempt-1',
+            selection: { kind: 'profile', profileId: 'work' },
+        })).resolves.toEqual({
+            status: 'failed',
+            reason: 'runtime_auth_refresh_invalid_result',
+        });
+    });
+
+    it('normalizes provider failures into the strict public error contract', async () => {
+        const auth = createSessionHandleAuthService({
+            readSessionId: async () => 'happy-session-1',
+            readAgentId: async () => 'pi',
+            resolveAdapter: async () => createRuntimeAuthAdapter(async () => ({
+                status: 'failed',
+                reason: 'provider_refresh_failed',
+                error: Object.assign(new Error('credential expired'), {
+                    code: 'credential_expired',
+                }),
+            })),
+        });
+
+        await expect(auth.services.refreshRuntimeAuth({
+            serviceId: 'openai',
+            refreshAttemptId: 'runtime-auth-attempt-1',
+            selection: { kind: 'profile', profileId: 'work' },
+        })).resolves.toEqual({
+            status: 'failed',
+            reason: 'provider_refresh_failed',
+            error: {
+                name: 'Error',
+                message: 'credential expired',
+                code: 'credential_expired',
+            },
+        });
+    });
+
+    it('preserves only an exact matching adapter pending attempt', async () => {
+        const auth = createSessionHandleAuthService({
+            readSessionId: async () => 'happy-session-1',
+            readAgentId: async () => 'pi',
             resolveAdapter: async () => createRuntimeAuthAdapter(async () => ({
                 status: 'pending',
                 refreshAttemptId: 'runtime-auth-attempt-1',
@@ -106,7 +174,6 @@ describe('createSessionScopedAuthServices runtime auth refresh', () => {
         });
 
         await expect(auth.services.refreshRuntimeAuth({
-            agentId: 'pi',
             serviceId: 'openai',
             refreshAttemptId: 'runtime-auth-attempt-1',
             selection: { kind: 'profile', profileId: 'work' },
@@ -125,8 +192,9 @@ describe('createSessionScopedAuthServices runtime auth refresh', () => {
                 chatgptPlanType: 'plus',
             },
         }));
-        const auth = createSessionScopedAuthServices({
+        const auth = createSessionHandleAuthService({
             readSessionId: async () => 'happy-session-1',
+            readAgentId: async () => 'codex',
             resolveAdapter: async () => createRuntimeAuthAdapter(async () => ({
                     status: 'unsupported',
                     reason: 'provider_refresh_unavailable',
@@ -135,7 +203,6 @@ describe('createSessionScopedAuthServices runtime auth refresh', () => {
         });
 
         await expect(auth.services.refreshRuntimeAuth({
-            agentId: 'codex',
             serviceId: 'openai-codex',
             refreshAttemptId: 'codex-refresh-attempt-1',
             selection: { kind: 'profile', profileId: 'work' },
@@ -190,14 +257,14 @@ describe('createSessionScopedAuthServices runtime auth refresh', () => {
             expected: { status: 'failed', reason: 'runtime_auth_refresh_attempt_mismatch' },
         },
     ])('fails closed for a daemon $name result', async ({ daemonResult, expected }) => {
-        const auth = createSessionScopedAuthServices({
+        const auth = createSessionHandleAuthService({
             readSessionId: async () => 'happy-session-1',
+            readAgentId: async () => 'codex',
             resolveAdapter: async () => createRuntimeAuthAdapter(async () => ({ status: 'unsupported' })),
             refreshViaDaemon: async () => daemonRefreshResult(daemonResult),
         });
 
         await expect(auth.services.refreshRuntimeAuth({
-            agentId: 'codex',
             serviceId: 'openai-codex',
             refreshAttemptId: 'runtime-auth-attempt-1',
             selection: { kind: 'profile', profileId: 'work' },
@@ -206,8 +273,9 @@ describe('createSessionScopedAuthServices runtime auth refresh', () => {
     });
 
     it('maps a daemon authorization rejection to unavailable instead of refresh success or provider failure', async () => {
-        const auth = createSessionScopedAuthServices({
+        const auth = createSessionHandleAuthService({
             readSessionId: async () => 'happy-session-1',
+            readAgentId: async () => 'codex',
             resolveAdapter: async () => createRuntimeAuthAdapter(async () => ({ status: 'unsupported' })),
             refreshViaDaemon: async () => {
                 throw new Error('connected_service_session_refresh_forbidden');
@@ -215,7 +283,6 @@ describe('createSessionScopedAuthServices runtime auth refresh', () => {
         });
 
         await expect(auth.services.refreshRuntimeAuth({
-            agentId: 'codex',
             serviceId: 'openai-codex',
             refreshAttemptId: 'runtime-auth-attempt-1',
             selection: { kind: 'profile', profileId: 'work' },
@@ -230,8 +297,9 @@ describe('createSessionScopedAuthServices runtime auth refresh', () => {
         const refreshViaDaemon = vi.fn();
         const controller = new AbortController();
         controller.abort(new Error('caller deadline'));
-        const auth = createSessionScopedAuthServices({
+        const auth = createSessionHandleAuthService({
             readSessionId: async () => 'happy-session-1',
+            readAgentId: async () => 'codex',
             resolveAdapter: async () => createRuntimeAuthAdapter(async () => ({
                 status: 'unsupported',
                 reason: 'provider_refresh_unavailable',
@@ -240,7 +308,6 @@ describe('createSessionScopedAuthServices runtime auth refresh', () => {
         });
 
         await expect(auth.services.refreshRuntimeAuth({
-            agentId: 'codex',
             serviceId: 'openai-codex',
             refreshAttemptId: 'codex-refresh-attempt-aborted',
             selection: { kind: 'profile', profileId: 'work' },
@@ -259,14 +326,14 @@ describe('createSessionScopedAuthServices runtime auth refresh', () => {
             daemonSettlement.resolve = resolve;
         }));
         const controller = new AbortController();
-        const auth = createSessionScopedAuthServices({
+        const auth = createSessionHandleAuthService({
             readSessionId: async () => 'happy-session-1',
+            readAgentId: async () => 'codex',
             resolveAdapter: async () => createRuntimeAuthAdapter(async () => ({ status: 'unsupported' })),
             refreshViaDaemon,
         });
 
         const settlement = auth.services.refreshRuntimeAuth({
-            agentId: 'codex',
             serviceId: 'openai-codex',
             refreshAttemptId: 'runtime-auth-attempt-admitted',
             selection: { kind: 'profile', profileId: 'work' },
@@ -295,8 +362,9 @@ describe('createSessionScopedAuthServices runtime auth refresh', () => {
         };
         const reportFailure = vi.fn(async () => recovery);
         const resolveAdapter = vi.fn();
-        const auth = createSessionScopedAuthServices({
+        const auth = createSessionHandleAuthService({
             readSessionId: async () => 'happy-session-1',
+            readAgentId: async () => 'opencode',
             resolveAdapter,
             reportFailure,
         });
@@ -315,7 +383,6 @@ describe('createSessionScopedAuthServices runtime auth refresh', () => {
         };
 
         await expect(auth.services.refreshRuntimeAuth({
-            agentId: 'opencode',
             serviceId: 'openai-codex',
             classification,
         })).resolves.toEqual({
@@ -331,6 +398,34 @@ describe('createSessionScopedAuthServices runtime auth refresh', () => {
         });
     });
 
+    it('omits a non-portable recovery report from the strict session result', async () => {
+        const reportFailure = vi.fn(async () => ({
+            handled: true,
+            report: null,
+            statusCode: null,
+            statusMessage: null,
+            retry: () => undefined,
+        }));
+        const auth = createSessionHandleAuthService({
+            readSessionId: async () => 'happy-session-1',
+            readAgentId: async () => 'opencode',
+            resolveAdapter: vi.fn(),
+            reportFailure,
+        });
+
+        await expect(auth.services.refreshRuntimeAuth({
+            serviceId: 'openai-codex',
+            classification: {
+                kind: 'auth_expired',
+                serviceId: 'openai-codex',
+                connectedServiceRecovery: 'available',
+            },
+        })).resolves.toEqual({
+            status: 'unavailable',
+            reason: 'runtime_auth_selection_unavailable',
+        });
+    });
+
     it('does not report native runtime-auth classifications to connected-service recovery when selection is missing', async () => {
         const reportFailure = vi.fn(async () => ({
             handled: true,
@@ -340,14 +435,14 @@ describe('createSessionScopedAuthServices runtime auth refresh', () => {
             ok: true,
         }));
         const resolveAdapter = vi.fn();
-        const auth = createSessionScopedAuthServices({
+        const auth = createSessionHandleAuthService({
             readSessionId: async () => 'happy-session-1',
+            readAgentId: async () => 'claude',
             resolveAdapter,
             reportFailure,
         });
 
         await expect(auth.services.refreshRuntimeAuth({
-            agentId: 'claude',
             serviceId: 'claude-subscription',
             classification: {
                 kind: 'auth_expired',

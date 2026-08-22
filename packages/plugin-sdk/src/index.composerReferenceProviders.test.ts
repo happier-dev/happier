@@ -158,7 +158,8 @@ describe('root composer runtime projection', () => {
         const uiSource = readFileSync(new URL('./ui/index.public.ts', import.meta.url), 'utf8');
         const buildSource = readFileSync(new URL('./ui/build/index.public.ts', import.meta.url), 'utf8');
 
-        expect(rootSource).toContain('defineUiSurface');
+        expect(rootSource).toContain('defineUiSurfaceDefinition');
+        expect(rootSource).not.toContain('export { defineUiSurface }');
         expect(rootSource).toContain('UiSurface');
         expect(rootSource).toContain("from './ui/surface.js'");
         for (const symbol of ['UiRenderer', 'UiHost', 'UiResource']) {

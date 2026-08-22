@@ -11,7 +11,6 @@ describe('resolveActivationSource', () => {
       source: { kind: 'path' },
       pluginId: 'com.acme.development-only',
       manifestPath: '/plugins/com.acme.development-only/.happier-plugin/plugin.json',
-      manifestDigest: 'sha256:development-only',
       daemonEntryPath: null,
       devDaemonEntryPath: '/plugins/com.acme.development-only/src/daemon.ts',
       sourceSpec: {
@@ -41,7 +40,6 @@ describe('resolveActivationSource', () => {
       source: { kind: 'path' },
       pluginId: 'com.acme.reviewed-development',
       manifestPath: '/plugins/com.acme.reviewed-development/.happier-plugin/plugin.json',
-      manifestDigest: 'sha256:reviewed-development',
       daemonEntryPath: '/plugins/com.acme.reviewed-development/dist/daemon.js',
       devDaemonEntryPath: '/plugins/com.acme.reviewed-development/src/daemon.ts',
       sourceSpec: {

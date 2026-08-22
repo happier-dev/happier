@@ -1,8 +1,9 @@
 import { realpath } from 'node:fs/promises';
-import { isAbsolute, relative, resolve } from 'node:path';
+import { resolve } from 'node:path';
 
 import type { PluginSourceSpecV1 } from '@happier-dev/protocol';
 import type { PluginCompatibilityDiagnostic } from '@/plugins/validation/diagnostics/types';
+import { isCanonicalAbsolutePathInsideRoot } from '@/utils/path/expandHomeDirPath';
 
 export type LocalPluginInstallTrustDecision = Readonly<{
   trustPolicy: PluginSourceSpecV1['trustPolicy'];
@@ -11,7 +12,7 @@ export type LocalPluginInstallTrustDecision = Readonly<{
   diagnostics: readonly PluginCompatibilityDiagnostic[];
 }>;
 
-async function isPathInsideRoot(params: Readonly<{
+async function isPluginRootWithinWorkspace(params: Readonly<{
   path: string;
   root?: string;
 }>): Promise<boolean> {
@@ -27,8 +28,7 @@ async function isPathInsideRoot(params: Readonly<{
     return false;
   }
 
-  const relativePath = relative(rootRealPath, params.path);
-  return relativePath === '' || (!!relativePath && !relativePath.startsWith('..') && !isAbsolute(relativePath));
+  return isCanonicalAbsolutePathInsideRoot(rootRealPath, params.path);
 }
 
 export async function resolveLocalPluginInstallTrust(params: Readonly<{
@@ -41,7 +41,7 @@ export async function resolveLocalPluginInstallTrust(params: Readonly<{
 }>): Promise<LocalPluginInstallTrustDecision> {
   const override = params.sourceSpecOverride?.kind === 'path' ? params.sourceSpecOverride : null;
   if (params.dev === true) {
-    const workspaceLocal = await isPathInsideRoot({
+    const workspaceLocal = await isPluginRootWithinWorkspace({
       path: params.pluginRootPath,
       root: params.workspaceRoot,
     });

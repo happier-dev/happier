@@ -43,6 +43,7 @@ describe('isPluginHostAccessRequestAuthorizedBySelection', () => {
             reason: 'List tools from one selected server',
             scope: {
                 serverRefs: [{ pluginId: 'acme.tools', localId: 'runtime' }],
+                discoverySourceRefs: [],
                 operations: ['listTools' as const],
             },
         };

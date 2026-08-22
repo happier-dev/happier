@@ -20,11 +20,89 @@ vi.mock('@/plugins/runtime/reload/singleton', () => ({
 import {
   PLUGIN_ACTION_EXECUTE_PATH,
   PLUGIN_CATALOG_READ_PATH,
+  PLUGIN_CHANGE_LIST_PATH,
+  PLUGIN_CHANGE_STATUS_PATH,
   registerDaemonPluginChangeRoutes,
 } from './controlRoutes';
 import { createPluginInstallationReviewFixture } from '@/plugins/testkit/pluginInstallationReviewFixture';
 
 describe('registerDaemonPluginChangeRoutes', () => {
+  it('projects a daemon-owned pending change status without creating another request', async () => {
+    const app = fastify();
+    const statusPluginChange = vi.fn(async () => ({
+      kind: 'reviewRequired' as const,
+      pendingChangeId: 'pending-1',
+      review: createPluginInstallationReviewFixture(),
+    }));
+    registerDaemonPluginChangeRoutes(app, {
+      service: {
+        requestPluginChange: vi.fn(),
+        decidePluginChange: vi.fn(),
+        statusPluginChange,
+        listPendingPluginChanges: async () => ({ changes: [] }),
+        shutdown: async () => undefined,
+      },
+      requireAuth: async () => undefined,
+    });
+
+    const response = await app.inject({
+      method: 'POST',
+      url: PLUGIN_CHANGE_STATUS_PATH,
+      payload: { pendingChangeId: 'pending-1' },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      kind: 'reviewRequired',
+      pendingChangeId: 'pending-1',
+    });
+    expect(statusPluginChange).toHaveBeenCalledWith({ pendingChangeId: 'pending-1' });
+  });
+
+  it('enumerates the outstanding decisions a present user still owes', async () => {
+    const app = fastify();
+    const review = createPluginInstallationReviewFixture();
+    const listPendingPluginChanges = vi.fn(async () => ({
+      changes: [
+        {
+          kind: 'sourceRootReviewRequired' as const,
+          pendingChangeId: 'pending-1',
+          review: { source: { kind: 'path' as const, locator: '/tmp/agent-authored' } },
+        },
+        { kind: 'reviewRequired' as const, pendingChangeId: 'pending-2', review },
+        { kind: 'applying' as const, pendingChangeId: 'pending-3' },
+      ],
+    }));
+    const requireAuth = vi.fn(async () => undefined);
+    registerDaemonPluginChangeRoutes(app, {
+      service: {
+        requestPluginChange: vi.fn(),
+        decidePluginChange: vi.fn(),
+        statusPluginChange: async () => ({ kind: 'expired' }),
+        listPendingPluginChanges,
+        shutdown: async () => undefined,
+      },
+      requireAuth,
+    });
+
+    const response = await app.inject({ method: 'POST', url: PLUGIN_CHANGE_LIST_PATH, payload: {} });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      changes: [
+        {
+          kind: 'sourceRootReviewRequired',
+          pendingChangeId: 'pending-1',
+          review: { source: { kind: 'path', locator: '/tmp/agent-authored' } },
+        },
+        { kind: 'reviewRequired', pendingChangeId: 'pending-2', review: JSON.parse(JSON.stringify(review)) },
+        { kind: 'applying', pendingChangeId: 'pending-3' },
+      ],
+    });
+    // Enumeration is an authenticated daemon read like every other change route.
+    expect(requireAuth).toHaveBeenCalledTimes(1);
+  });
+
   it('reads installed/current plugin serving state through the authenticated daemon boundary', async () => {
     const app = fastify();
     const readCatalog = vi.fn(async () => [{
@@ -37,6 +115,8 @@ describe('registerDaemonPluginChangeRoutes', () => {
       service: {
         requestPluginChange: vi.fn(),
         decidePluginChange: vi.fn(),
+        statusPluginChange: async () => ({ kind: 'expired' }),
+        listPendingPluginChanges: async () => ({ changes: [] }),
         shutdown: async () => undefined,
       },
       requireAuth,
@@ -77,6 +157,8 @@ describe('registerDaemonPluginChangeRoutes', () => {
       service: {
         requestPluginChange: vi.fn(),
         decidePluginChange: vi.fn(),
+        statusPluginChange: async () => ({ kind: 'expired' }),
+        listPendingPluginChanges: async () => ({ changes: [] }),
         shutdown: async () => undefined,
       },
       requireAuth: async () => undefined,
@@ -128,7 +210,13 @@ describe('registerDaemonPluginChangeRoutes', () => {
     }));
     const requireAuth = vi.fn(async () => undefined);
     registerDaemonPluginChangeRoutes(app, {
-      service: { requestPluginChange, decidePluginChange, shutdown: async () => undefined },
+      service: {
+        requestPluginChange,
+        decidePluginChange,
+        statusPluginChange: async () => ({ kind: 'expired' }),
+        listPendingPluginChanges: async () => ({ changes: [] }),
+        shutdown: async () => undefined,
+      },
       requireAuth,
     });
 
@@ -154,6 +242,96 @@ describe('registerDaemonPluginChangeRoutes', () => {
     expect(requireAuth).toHaveBeenCalledTimes(2);
   });
 
+  it('forwards explicit CLI trust provenance only as typed authenticated actor evidence', async () => {
+    const app = fastify();
+    const decidePluginChange = vi.fn(async () => ({
+      kind: 'committed' as const,
+      pluginId: 'acme.example',
+      desiredGeneration: 'generation-1',
+      appliedGeneration: 'generation-1',
+      pendingSurfaces: [],
+    }));
+    registerDaemonPluginChangeRoutes(app, {
+      service: {
+        requestPluginChange: vi.fn(),
+        decidePluginChange,
+        statusPluginChange: async () => ({ kind: 'expired' }),
+        listPendingPluginChanges: async () => ({ changes: [] }),
+        shutdown: async () => undefined,
+      },
+      requireAuth: async () => undefined,
+    });
+
+    const actorEvidence = {
+      kind: 'authenticatedLocalUser',
+      interactionId: 'explicit-cli-trust-1',
+      occurredAtMs: 1,
+      provenance: {
+        kind: 'explicitCliTrustFlag',
+        command: 'plugins install',
+        flag: '--trust',
+        source: { kind: 'path', locator: '/tmp/example-plugin-source' },
+        pluginId: 'acme.example',
+      },
+    } as const;
+    const response = await app.inject({
+      method: 'POST',
+      url: '/plugins/change/decide',
+      payload: {
+        pendingChangeId: 'pending-1',
+        decision: 'installAndTrust',
+        actorEvidence,
+        optionalSelections: [],
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(decidePluginChange).toHaveBeenCalledWith({
+      pendingChangeId: 'pending-1',
+      decision: 'installAndTrust',
+      actorEvidence,
+      optionalSelections: [],
+    });
+  });
+
+  it('rejects malformed explicit CLI trust provenance before the daemon decision owner', async () => {
+    const app = fastify();
+    const decidePluginChange = vi.fn();
+    registerDaemonPluginChangeRoutes(app, {
+      service: {
+        requestPluginChange: vi.fn(),
+        decidePluginChange,
+        statusPluginChange: async () => ({ kind: 'expired' }),
+        listPendingPluginChanges: async () => ({ changes: [] }),
+        shutdown: async () => undefined,
+      },
+      requireAuth: async () => undefined,
+    });
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/plugins/change/decide',
+      payload: {
+        pendingChangeId: 'pending-1',
+        decision: 'installAndTrust',
+        actorEvidence: {
+          kind: 'authenticatedLocalUser',
+          interactionId: 'explicit-cli-trust-1',
+          occurredAtMs: 1,
+          provenance: {
+            kind: 'explicitCliTrustFlag',
+            command: 'plugins marketplace install',
+            flag: '--trust',
+            source: { kind: 'path', locator: '/tmp/example-plugin-source' },
+          },
+        },
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(decidePluginChange).not.toHaveBeenCalled();
+  });
+
   it('rejects malformed requests before the service owner sees them', async () => {
     const app = fastify();
     const requestPluginChange = vi.fn();
@@ -161,6 +339,8 @@ describe('registerDaemonPluginChangeRoutes', () => {
       service: {
         requestPluginChange,
         decidePluginChange: vi.fn(),
+        statusPluginChange: async () => ({ kind: 'expired' }),
+        listPendingPluginChanges: async () => ({ changes: [] }),
         shutdown: async () => undefined,
       },
       requireAuth: async () => undefined,
@@ -175,6 +355,36 @@ describe('registerDaemonPluginChangeRoutes', () => {
     expect(requestPluginChange).not.toHaveBeenCalled();
   });
 
+  it('accepts a pre-evaluation one-file development request without a plugin id', async () => {
+    const app = fastify();
+    const requestPluginChange = vi.fn(async () => ({
+      kind: 'failed' as const,
+      code: 'fixture',
+    }));
+    registerDaemonPluginChangeRoutes(app, {
+      service: {
+        requestPluginChange,
+        decidePluginChange: vi.fn(),
+        statusPluginChange: async () => ({ kind: 'expired' }),
+        listPendingPluginChanges: async () => ({ changes: [] }),
+        shutdown: async () => undefined,
+      },
+      requireAuth: async () => undefined,
+    });
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/plugins/change/request',
+      payload: { kind: 'development', sourceRootPath: '/tmp/plugin.ts' },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(requestPluginChange).toHaveBeenCalledWith({
+      kind: 'development',
+      sourceRootPath: '/tmp/plugin.ts',
+    });
+  });
+
   it('rejects the retired manual LKG request instead of advertising a broken recovery owner', async () => {
     const app = fastify();
     const requestPluginChange = vi.fn();
@@ -182,6 +392,8 @@ describe('registerDaemonPluginChangeRoutes', () => {
       service: {
         requestPluginChange,
         decidePluginChange: vi.fn(),
+        statusPluginChange: async () => ({ kind: 'expired' }),
+        listPendingPluginChanges: async () => ({ changes: [] }),
         shutdown: async () => undefined,
       },
       requireAuth: async () => undefined,
@@ -207,6 +419,8 @@ describe('registerDaemonPluginChangeRoutes', () => {
       service: {
         requestPluginChange,
         decidePluginChange: vi.fn(),
+        statusPluginChange: async () => ({ kind: 'expired' }),
+        listPendingPluginChanges: async () => ({ changes: [] }),
         shutdown: async () => undefined,
       },
       requireAuth: async () => undefined,
@@ -235,7 +449,13 @@ describe('registerDaemonPluginChangeRoutes', () => {
       pendingSurfaces: [],
     }));
     registerDaemonPluginChangeRoutes(app, {
-      service: { requestPluginChange, decidePluginChange: vi.fn(), shutdown: async () => undefined },
+      service: {
+        requestPluginChange,
+        decidePluginChange: vi.fn(),
+        statusPluginChange: async () => ({ kind: 'expired' }),
+        listPendingPluginChanges: async () => ({ changes: [] }),
+        shutdown: async () => undefined,
+      },
       requireAuth: async () => undefined,
     });
     const expectedMarketplaceListing = {
@@ -280,7 +500,13 @@ describe('registerDaemonPluginChangeRoutes', () => {
     const app = fastify();
     const requestPluginChange = vi.fn(async () => ({ kind: 'failed' as const, code: 'fixture' }));
     registerDaemonPluginChangeRoutes(app, {
-      service: { requestPluginChange, decidePluginChange: vi.fn(), shutdown: async () => undefined },
+      service: {
+        requestPluginChange,
+        decidePluginChange: vi.fn(),
+        statusPluginChange: async () => ({ kind: 'expired' }),
+        listPendingPluginChanges: async () => ({ changes: [] }),
+        shutdown: async () => undefined,
+      },
       requireAuth: async () => undefined,
     });
     const expectedMarketplaceListing = {
@@ -320,7 +546,13 @@ describe('registerDaemonPluginChangeRoutes', () => {
     const app = fastify();
     const requestPluginChange = vi.fn();
     registerDaemonPluginChangeRoutes(app, {
-      service: { requestPluginChange, decidePluginChange: vi.fn(), shutdown: async () => undefined },
+      service: {
+        requestPluginChange,
+        decidePluginChange: vi.fn(),
+        statusPluginChange: async () => ({ kind: 'expired' }),
+        listPendingPluginChanges: async () => ({ changes: [] }),
+        shutdown: async () => undefined,
+      },
       requireAuth: async () => undefined,
     });
 
@@ -364,7 +596,13 @@ describe('registerDaemonPluginChangeRoutes', () => {
     const app = fastify();
     const requestPluginChange = vi.fn(async () => ({ kind: 'failed' as const, code: 'fixture' }));
     registerDaemonPluginChangeRoutes(app, {
-      service: { requestPluginChange, decidePluginChange: vi.fn(), shutdown: async () => undefined },
+      service: {
+        requestPluginChange,
+        decidePluginChange: vi.fn(),
+        statusPluginChange: async () => ({ kind: 'expired' }),
+        listPendingPluginChanges: async () => ({ changes: [] }),
+        shutdown: async () => undefined,
+      },
       requireAuth: async () => undefined,
     });
     const expectedIntegrity = `sha256-${Buffer.alloc(32, 2).toString('base64')}`;
@@ -387,7 +625,13 @@ describe('registerDaemonPluginChangeRoutes', () => {
     const app = fastify();
     const requestPluginChange = vi.fn();
     registerDaemonPluginChangeRoutes(app, {
-      service: { requestPluginChange, decidePluginChange: vi.fn(), shutdown: async () => undefined },
+      service: {
+        requestPluginChange,
+        decidePluginChange: vi.fn(),
+        statusPluginChange: async () => ({ kind: 'expired' }),
+        listPendingPluginChanges: async () => ({ changes: [] }),
+        shutdown: async () => undefined,
+      },
       requireAuth: async () => undefined,
     });
 
@@ -409,7 +653,13 @@ describe('registerDaemonPluginChangeRoutes', () => {
     const app = fastify();
     const requestPluginChange = vi.fn();
     registerDaemonPluginChangeRoutes(app, {
-      service: { requestPluginChange, decidePluginChange: vi.fn(), shutdown: async () => undefined },
+      service: {
+        requestPluginChange,
+        decidePluginChange: vi.fn(),
+        statusPluginChange: async () => ({ kind: 'expired' }),
+        listPendingPluginChanges: async () => ({ changes: [] }),
+        shutdown: async () => undefined,
+      },
       requireAuth: async () => undefined,
     });
 
@@ -447,6 +697,8 @@ describe('registerDaemonPluginChangeRoutes', () => {
       service: {
         requestPluginChange: vi.fn(),
         decidePluginChange,
+        statusPluginChange: async () => ({ kind: 'expired' }),
+        listPendingPluginChanges: async () => ({ changes: [] }),
         shutdown: async () => undefined,
       },
       requireAuth: async () => undefined,
@@ -477,6 +729,8 @@ describe('registerDaemonPluginChangeRoutes', () => {
       service: {
         requestPluginChange: vi.fn(),
         decidePluginChange: vi.fn(),
+        statusPluginChange: async () => ({ kind: 'expired' }),
+        listPendingPluginChanges: async () => ({ changes: [] }),
         shutdown: async () => undefined,
       },
       requireAuth,
@@ -523,6 +777,8 @@ describe('registerDaemonPluginChangeRoutes', () => {
       service: {
         requestPluginChange: vi.fn(),
         decidePluginChange: vi.fn(),
+        statusPluginChange: async () => ({ kind: 'expired' }),
+        listPendingPluginChanges: async () => ({ changes: [] }),
         shutdown: async () => undefined,
       },
       requireAuth: async () => undefined,
@@ -531,7 +787,12 @@ describe('registerDaemonPluginChangeRoutes', () => {
     const response = await app.inject({
       method: 'POST',
       url: PLUGIN_ACTION_EXECUTE_PATH,
-      payload: { actionId: 'acme.example/echo', input: { value: 'hello' }, surface: 'cli' },
+      payload: {
+        actionId: 'acme.example/echo',
+        input: { value: 'hello' },
+        surface: 'cli',
+        expectedContributorImmutableGenerationId: 'generation-g',
+      },
     });
 
     expect(response.statusCode).toBe(200);
@@ -539,6 +800,7 @@ describe('registerDaemonPluginChangeRoutes', () => {
       runtimeRegistry: appliedRegistry,
       actionId: 'acme.example/echo',
       input: { value: 'hello' },
+      expectedContributorImmutableGenerationId: 'generation-g',
       context: { surface: 'cli' },
     });
     expect(appliedRuntimeMock.release).toHaveBeenCalledOnce();

@@ -7,7 +7,6 @@ import {
     AutomationIdV1Schema as canonicalAutomationIdV1Schema,
     AutomationConversationAdmitInputV1Schema as canonicalAutomationConversationAdmitInputV1Schema,
     AutomationConversationAdmitResultV1Schema as canonicalAutomationConversationAdmitResultV1Schema,
-    AUTOMATION_RESULT_DELIVERY_ACTION_REF_V1 as canonicalAutomationResultDeliveryActionRefV1,
     AutomationConversationResultDeliveryV1Schema as canonicalAutomationConversationResultDeliveryV1Schema,
     AutomationResultDeliveryInputV1JsonSchema as canonicalAutomationResultDeliveryInputV1JsonSchema,
     AutomationResultDeliveryInputV1Schema as canonicalAutomationResultDeliveryInputV1Schema,
@@ -54,6 +53,15 @@ const input = {
     source,
     result: { v: 1, kind: 'text', text: 'Completed.' },
     opaqueContext: { route: 'channels' },
+} as const;
+
+/**
+ * A synthetic out-of-tree bridge. The public automations surface names no
+ * plugin, so any plugin may declare itself the reply-delivery target.
+ */
+const thirdPartyDeliveryActionRef = {
+    pluginId: 'acme.slack-bridge',
+    localId: 'automation/reply-deliver-v1',
 } as const;
 
 const conversationAdmissionInput = {
@@ -103,8 +111,6 @@ describe('Automation result-delivery public projection', () => {
             .toBe(canonicalAutomationResultDeliveryInputV1JsonSchema);
         expect(publicAutomations.AutomationResultDeliveryResultV1JsonSchema)
             .toBe(canonicalAutomationResultDeliveryResultV1JsonSchema);
-        expect(publicAutomations.AUTOMATION_RESULT_DELIVERY_ACTION_REF_V1)
-            .toBe(canonicalAutomationResultDeliveryActionRefV1);
         expect(publicAutomations.AutomationConversationResultDeliveryV1Schema)
             .toBe(canonicalAutomationConversationResultDeliveryV1Schema);
         expect(publicAutomations.AutomationConversationAdmitInputV1Schema)
@@ -136,8 +142,13 @@ describe('Automation result-delivery public projection', () => {
         }).success).toBe(true);
         expect(publicAutomations.AutomationConversationResultDeliveryV1Schema.safeParse({
             kind: 'finalResult',
-            actionRef: canonicalAutomationResultDeliveryActionRefV1,
-            opaqueContext: { route: 'channels' },
+            actionRef: thirdPartyDeliveryActionRef,
+            opaqueContext: { route: 'slack' },
+        }).success).toBe(true);
+        expect(publicAutomations.AutomationConversationResultDeliveryV1Schema.safeParse({
+            kind: 'finalResult',
+            actionRef: thirdPartyDeliveryActionRef,
+            opaqueContext: { route: 'slack' },
             unexpected: true,
         }).success).toBe(false);
         expect(publicAutomations.AutomationConversationAdmitInputV1Schema
@@ -186,7 +197,7 @@ describe('Automation result-delivery public projection', () => {
 
         expect(emitted.diagnostics).toEqual([]);
         expect(emitted.outputText).toContain(
-            'export { AUTOMATION_RESULT_DELIVERY_ACTION_REF_V1, AutomationIdV1Schema, } from \'@happier-dev/protocol/automations/result-delivery\';',
+            'export { AutomationIdV1Schema, } from \'@happier-dev/protocol/automations/result-delivery\';',
         );
         expect(emitted.outputText).not.toContain('AutomationIdV1Schema:');
         expect(emitted.outputText).not.toMatch(/\b(?:Zod|_zod)\b/u);

@@ -16,7 +16,10 @@ import { COMMUNITY_NPM_MARKETPLACE_SOURCE } from '@/plugins/store/marketplace/se
 
 import { createDaemonPluginChangeService } from './changeService';
 import type { DaemonPluginChangeService } from './changeService';
-import type { ExpectedMarketplaceListing } from './changeContract';
+import {
+  PluginInstallationReviewSchema,
+  type ExpectedMarketplaceListing,
+} from './changeContract';
 import { createDaemonNpmPluginChangePreparer } from './npmChangePreparer';
 
 const roots: string[] = [];
@@ -36,6 +39,9 @@ async function createNpmPackageFixture(params: Readonly<{
     optional: readonly unknown[];
   }>;
   contributes?: Readonly<Record<string, unknown>>;
+  happierEngine?: string;
+  includeCompatibilityProjection?: boolean;
+  compatibilityProjection?: unknown;
   markerPath: string;
   tarballUrl?: string;
 }>): Promise<Readonly<{
@@ -43,21 +49,34 @@ async function createNpmPackageFixture(params: Readonly<{
   version: string;
   integrity: string;
   manifestDigest: string;
+  metadata: Readonly<{
+    name: string;
+    'dist-tags': Readonly<{ latest: string }>;
+    versions: Readonly<Record<string, unknown>>;
+  }>;
   client: NpmRegistryHttpsClient;
 }>> {
   const packageName = params.packageName ?? '@acme/npm-candidate';
   const pluginId = params.pluginId ?? 'acme.npm-candidate';
   const version = params.version ?? '1.2.3';
-  const manifestRaw = JSON.stringify({
+  const manifest = {
     schemaVersion: 2,
     id: pluginId,
     version,
     displayName: 'Acme npm candidate',
-    engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 },
+    engines: { happier: params.happierEngine ?? '^0.2.0' }, runtime: { apiVersion: 1 },
     entrypoints: params.entrypoints ?? { daemon: './dist/daemon.mjs' },
     hostAccess: params.hostAccess ?? { required: [], optional: [] },
     contributes: params.contributes ?? {},
-  });
+  };
+  const compatibilityProjection = params.includeCompatibilityProjection === false
+    ? undefined
+    : params.compatibilityProjection ?? {
+        version: 1,
+        manifest,
+        uiArtifacts: { version: 1, entries: [] },
+      };
+  const manifestRaw = JSON.stringify(manifest);
   const archive = await createTestNpmTarball([
     {
       name: 'package/package.json',
@@ -66,7 +85,10 @@ async function createNpmPackageFixture(params: Readonly<{
         version,
         keywords: ['happier-plugin'],
         files: ['.happier-plugin', 'dist', 'payload.txt'],
-        happier: { manifest: '.happier-plugin/plugin.json' },
+        happier: {
+          manifest: '.happier-plugin/plugin.json',
+          ...(compatibilityProjection === undefined ? {} : { compatibilityProjection }),
+        },
         scripts: { preinstall: `touch ${params.markerPath}.lifecycle` },
         dependencies: { 'ordinary-runtime-dependency': '^1.0.0' },
       }),
@@ -89,22 +111,27 @@ async function createNpmPackageFixture(params: Readonly<{
     { name: 'package/payload.txt', body: `reviewed bytes ${version}` },
   ]);
   const integrity = sriSha512(archive);
-  const client: NpmRegistryHttpsClient = {
-    getJson: async () => ({
-      name: packageName,
-      'dist-tags': { latest: version },
-      versions: {
-        [version]: {
-          name: packageName,
-          version,
-          dist: {
-            integrity,
-            tarball: params.tarballUrl
-              ?? `https://registry.example.test/${encodeURIComponent(packageName)}/-/candidate-${version}.tgz`,
-          },
+  const metadata = {
+    name: packageName,
+    'dist-tags': { latest: version },
+    versions: {
+      [version]: {
+        name: packageName,
+        version,
+        happier: {
+          manifest: '.happier-plugin/plugin.json',
+          ...(compatibilityProjection === undefined ? {} : { compatibilityProjection }),
+        },
+        dist: {
+          integrity,
+          tarball: params.tarballUrl
+            ?? `https://registry.example.test/${encodeURIComponent(packageName)}/-/candidate-${version}.tgz`,
         },
       },
-    }),
+    },
+  };
+  const client: NpmRegistryHttpsClient = {
+    getJson: async () => metadata,
     getBody: async () => ({ body: Readable.from([archive]), contentLength: archive.byteLength }),
   };
   return {
@@ -112,6 +139,7 @@ async function createNpmPackageFixture(params: Readonly<{
     version,
     integrity,
     manifestDigest: `sha256:${createHash('sha256').update(manifestRaw).digest('hex')}`,
+    metadata,
     client,
   };
 }
@@ -122,6 +150,18 @@ async function candidateRoots(happyHomeDir: string): Promise<readonly string[]> 
     return (await readdir(cacheDir, { withFileTypes: true }))
       .filter((entry) => entry.isDirectory() && entry.name.startsWith('plugin-npm-candidate-'))
       .map((entry) => join(cacheDir, entry.name));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException | null)?.code === 'ENOENT') return [];
+    throw error;
+  }
+}
+
+async function preparedGenerationRoots(happyHomeDir: string): Promise<readonly string[]> {
+  const generationsDir = resolvePluginStorePaths({ happyHomeDir }).generationsDir;
+  try {
+    return (await readdir(generationsDir, { withFileTypes: true }))
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => join(generationsDir, entry.name));
   } catch (error) {
     if ((error as NodeJS.ErrnoException | null)?.code === 'ENOENT') return [];
     throw error;
@@ -391,11 +431,6 @@ describe('createDaemonNpmPluginChangePreparer', () => {
             sourceUrl: marketplaceSource.sourceUrl,
           },
         },
-        integrity: {
-          packageDigest: expect.stringMatching(/^sha256:/),
-          manifestDigest: fixture.manifestDigest,
-          uiArtifactDigest: expect.stringMatching(/^sha256:/),
-        },
         signature: { status: 'notProvided' },
         provenance: { status: 'notProvided' },
         curation: {
@@ -410,6 +445,7 @@ describe('createDaemonNpmPluginChangePreparer', () => {
       },
     });
     if (result.kind !== 'reviewRequired') throw new Error('Expected curated npm Install and trust review');
+    expect(result.review).not.toHaveProperty('integrity');
     await expect(service.decidePluginChange({
       pendingChangeId: result.pendingChangeId,
       decision: 'installAndTrust',
@@ -420,8 +456,14 @@ describe('createDaemonNpmPluginChangePreparer', () => {
     expect((await createPluginRegistryStateStore({ happyHomeDir }).read()).plugins['acme.npm-candidate']).toMatchObject({
       source: { resolvedVersion: fixture.version },
       install: {
-        manifestDigest: fixture.manifestDigest,
         updatePolicy: 'automatic',
+        curatedUpdateSource: {
+          id: marketplaceSource.id,
+          sourceUrl: marketplaceSource.sourceUrl,
+          ...(marketplaceSource.registryProfileId
+            ? { registryProfileId: marketplaceSource.registryProfileId }
+            : {}),
+        },
         trust: {
           distribution: {
             kind: 'npm',
@@ -429,6 +471,11 @@ describe('createDaemonNpmPluginChangePreparer', () => {
             packageName: fixture.packageName,
           },
         },
+      },
+    });
+    await expect(createPluginRegistryStateStore({ happyHomeDir }).readSnapshot()).resolves.toMatchObject({
+      admittedIntegrityByPluginId: {
+        'acme.npm-candidate': fixture.integrity,
       },
     });
     expect(await candidateRoots(happyHomeDir)).toEqual([]);
@@ -440,10 +487,10 @@ describe('createDaemonNpmPluginChangePreparer', () => {
     const hostAccess = {
       required: [],
       optional: [{
-        id: 'token',
-        capability: 'secrets',
-        reason: 'Use the selected token',
-        scope: { secretIds: ['token'], access: ['read'] },
+        id: 'session-read',
+        capability: 'sessions',
+        reason: 'Read the selected sessions',
+        scope: { access: ['read'] },
       }],
     } as const;
     const initialFixture = await createNpmPackageFixture({
@@ -471,7 +518,7 @@ describe('createDaemonNpmPluginChangePreparer', () => {
       service,
       fixture: initialFixture,
       source: marketplaceSource,
-      optionalSelections: [{ accessId: 'token', selected: true }],
+      optionalSelections: [{ accessId: 'session-read', selected: true }],
     });
     const before = (await createPluginRegistryStateStore({ happyHomeDir }).read())
       .plugins['acme.npm-candidate']!;
@@ -495,6 +542,425 @@ describe('createDaemonNpmPluginChangePreparer', () => {
     expect(after.install.optionalAccess).toEqual(before.install.optionalAccess);
     expect(after.install.optionalAccess?.[0]?.selectedAtMs).toBe(10);
     expect(await candidateRoots(happyHomeDir)).toEqual([]);
+  });
+
+  it('reports a newer blocked version through the install review while downloading only the selected compatible artifact', async () => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-npm-compatibility-review-home-'));
+    roots.push(happyHomeDir);
+    const compatibleFixture = await createNpmPackageFixture({
+      markerPath: join(happyHomeDir, 'compatible'),
+      version: '1.2.4',
+    });
+    const incompatibleFixture = await createNpmPackageFixture({
+      markerPath: join(happyHomeDir, 'incompatible'),
+      version: '1.2.5',
+      compatibilityProjection: {
+        version: 1,
+        manifest: {
+          schemaVersion: 2,
+          id: 'acme.npm-candidate',
+          version: '1.2.5',
+          displayName: 'Acme npm candidate',
+          engines: { happier: '>=9999.0.0' },
+          runtime: { apiVersion: 1 },
+          entrypoints: { daemon: './dist/daemon.mjs' },
+          hostAccess: { required: [], optional: [] },
+          contributes: {},
+        },
+        uiArtifacts: { version: 1, entries: [] },
+      },
+    });
+    const bodyRequests: string[] = [];
+    const client: NpmRegistryHttpsClient = {
+      getJson: async () => ({
+        name: compatibleFixture.packageName,
+        'dist-tags': { latest: incompatibleFixture.version },
+        versions: {
+          ...compatibleFixture.metadata.versions,
+          ...incompatibleFixture.metadata.versions,
+        },
+      }),
+      getBody: async (input) => {
+        bodyRequests.push(input.url);
+        if (!input.url.endsWith(`candidate-${compatibleFixture.version}.tgz`)) {
+          throw new Error('An incompatible newer artifact must not be downloaded');
+        }
+        return await compatibleFixture.client.getBody(input);
+      },
+    };
+    const service = createDaemonPluginChangeService({
+      prepare: createDaemonNpmPluginChangePreparer({
+        happyHomeDir,
+        runtimeLifecycle: {
+          prepare: async () => ({ abort: async () => undefined, adopt: async () => undefined }),
+        },
+        createClient: () => client,
+      }),
+    });
+
+    const result = await service.requestPluginChange({
+      kind: 'installNpm',
+      packageName: compatibleFixture.packageName,
+      selector: 'latest',
+      registryOrigin: 'https://registry.example.test',
+    });
+
+    expect(result).toMatchObject({
+      kind: 'reviewRequired',
+      review: {
+        version: compatibleFixture.version,
+        compatibility: {
+          blockedNewerVersions: [{
+            version: incompatibleFixture.version,
+            diagnostics: [expect.objectContaining({
+              code: 'plugin_manifest_semantic_invalid',
+              message: 'Plugin manifest requires a compatible Happier CLI version',
+            })],
+          }],
+        },
+      },
+    });
+    expect(bodyRequests).toEqual([
+      `https://registry.example.test/${encodeURIComponent(compatibleFixture.packageName)}/-/candidate-${compatibleFixture.version}.tgz`,
+    ]);
+    if (result.kind === 'reviewRequired') {
+      await expect(service.decidePluginChange({
+        pendingChangeId: result.pendingChangeId,
+        decision: 'cancel',
+      })).resolves.toEqual({ kind: 'cancelled' });
+    }
+  });
+
+  it('keeps a long rejected daemon entry diagnostic compatible with the daemon review contract', async () => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-npm-bounded-compatibility-review-home-'));
+    roots.push(happyHomeDir);
+    const compatibleFixture = await createNpmPackageFixture({
+      markerPath: join(happyHomeDir, 'compatible'),
+      version: '1.2.4',
+    });
+    const longDaemonEntry = `./${'x'.repeat(40 * 1024)}.unsupported`;
+    const incompatibleFixture = await createNpmPackageFixture({
+      markerPath: join(happyHomeDir, 'incompatible'),
+      version: '1.2.5',
+      compatibilityProjection: {
+        version: 1,
+        manifest: {
+          schemaVersion: 2,
+          id: 'acme.npm-candidate',
+          version: '1.2.5',
+          displayName: 'Acme npm candidate',
+          engines: { happier: '^0.2.0' },
+          runtime: { apiVersion: 1 },
+          entrypoints: { daemon: longDaemonEntry },
+          hostAccess: { required: [], optional: [] },
+          contributes: {},
+        },
+        uiArtifacts: { version: 1, entries: [] },
+      },
+    });
+    const bodyRequests: string[] = [];
+    const client: NpmRegistryHttpsClient = {
+      getJson: async () => ({
+        name: compatibleFixture.packageName,
+        'dist-tags': { latest: incompatibleFixture.version },
+        versions: {
+          ...compatibleFixture.metadata.versions,
+          ...incompatibleFixture.metadata.versions,
+        },
+      }),
+      getBody: async (input) => {
+        bodyRequests.push(input.url);
+        if (!input.url.endsWith(`candidate-${compatibleFixture.version}.tgz`)) {
+          throw new Error('A newer incompatible artifact must not be downloaded');
+        }
+        return await compatibleFixture.client.getBody(input);
+      },
+    };
+    const service = createDaemonPluginChangeService({
+      prepare: createDaemonNpmPluginChangePreparer({
+        happyHomeDir,
+        runtimeLifecycle: {
+          prepare: async () => ({ abort: async () => undefined, adopt: async () => undefined }),
+        },
+        createClient: () => client,
+      }),
+    });
+
+    const result = await service.requestPluginChange({
+      kind: 'installNpm',
+      packageName: compatibleFixture.packageName,
+      selector: 'latest',
+      registryOrigin: 'https://registry.example.test',
+    });
+
+    expect(result).toMatchObject({
+      kind: 'reviewRequired',
+      review: {
+        version: compatibleFixture.version,
+        compatibility: {
+          blockedNewerVersions: [{
+            version: incompatibleFixture.version,
+            diagnostics: [{
+              code: 'plugin_manifest_semantic_invalid',
+              message: 'Plugin daemon entry uses an unsupported extension',
+            }],
+          }],
+        },
+      },
+    });
+    expect(bodyRequests).toEqual([
+      `https://registry.example.test/${encodeURIComponent(compatibleFixture.packageName)}/-/candidate-${compatibleFixture.version}.tgz`,
+    ]);
+    if (result.kind !== 'reviewRequired') throw new Error('Expected a manual installation review');
+    expect(PluginInstallationReviewSchema.safeParse(result.review).success).toBe(true);
+    await expect(service.decidePluginChange({
+      pendingChangeId: result.pendingChangeId,
+      decision: 'cancel',
+    })).resolves.toEqual({ kind: 'cancelled' });
+  });
+
+  it('keeps a long incompatible happier engine diagnostic compatible with the daemon review contract', async () => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-npm-bounded-engine-compatibility-review-home-'));
+    roots.push(happyHomeDir);
+    const compatibleFixture = await createNpmPackageFixture({
+      markerPath: join(happyHomeDir, 'compatible'),
+      version: '1.2.4',
+    });
+    const longHappierEngine = `>=9999.0.0${' '.repeat(37_976)}<10000.0.0`;
+    const incompatibleFixture = await createNpmPackageFixture({
+      markerPath: join(happyHomeDir, 'incompatible'),
+      version: '1.2.5',
+      compatibilityProjection: {
+        version: 1,
+        manifest: {
+          schemaVersion: 2,
+          id: 'acme.npm-candidate',
+          version: '1.2.5',
+          displayName: 'Acme npm candidate',
+          engines: { happier: longHappierEngine },
+          runtime: { apiVersion: 1 },
+          entrypoints: { daemon: './dist/daemon.mjs' },
+          hostAccess: { required: [], optional: [] },
+          contributes: {},
+        },
+        uiArtifacts: { version: 1, entries: [] },
+      },
+    });
+    const bodyRequests: string[] = [];
+    const client: NpmRegistryHttpsClient = {
+      getJson: async () => ({
+        name: compatibleFixture.packageName,
+        'dist-tags': { latest: incompatibleFixture.version },
+        versions: {
+          ...compatibleFixture.metadata.versions,
+          ...incompatibleFixture.metadata.versions,
+        },
+      }),
+      getBody: async (input) => {
+        bodyRequests.push(input.url);
+        if (!input.url.endsWith(`candidate-${compatibleFixture.version}.tgz`)) {
+          throw new Error('A newer incompatible artifact must not be downloaded');
+        }
+        return await compatibleFixture.client.getBody(input);
+      },
+    };
+    const service = createDaemonPluginChangeService({
+      prepare: createDaemonNpmPluginChangePreparer({
+        happyHomeDir,
+        runtimeLifecycle: {
+          prepare: async () => ({ abort: async () => undefined, adopt: async () => undefined }),
+        },
+        createClient: () => client,
+      }),
+    });
+
+    const result = await service.requestPluginChange({
+      kind: 'installNpm',
+      packageName: compatibleFixture.packageName,
+      selector: 'latest',
+      registryOrigin: 'https://registry.example.test',
+    });
+
+    expect(result).toMatchObject({
+      kind: 'reviewRequired',
+      review: {
+        version: compatibleFixture.version,
+        compatibility: {
+          blockedNewerVersions: [{
+            version: incompatibleFixture.version,
+            diagnostics: [{
+              code: 'plugin_manifest_semantic_invalid',
+              message: 'Plugin manifest requires a compatible Happier CLI version',
+            }],
+          }],
+        },
+      },
+    });
+    expect(bodyRequests).toEqual([
+      `https://registry.example.test/${encodeURIComponent(compatibleFixture.packageName)}/-/candidate-${compatibleFixture.version}.tgz`,
+    ]);
+    if (result.kind !== 'reviewRequired') throw new Error('Expected a manual installation review');
+    const diagnostic = result.review.compatibility.blockedNewerVersions?.[0]?.diagnostics[0];
+    expect(diagnostic?.message).not.toContain(longHappierEngine);
+    expect(diagnostic?.message.length).toBeLessThanOrEqual(32_768);
+    expect(PluginInstallationReviewSchema.safeParse(result.review).success).toBe(true);
+    await expect(service.decidePluginChange({
+      pendingChangeId: result.pendingChangeId,
+      decision: 'cancel',
+    })).resolves.toEqual({ kind: 'cancelled' });
+  });
+
+  it('keeps a long incompatible generated UI artifact reason compatible with the daemon review contract', async () => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-npm-bounded-ui-artifact-compatibility-review-home-'));
+    roots.push(happyHomeDir);
+    const compatibleFixture = await createNpmPackageFixture({
+      markerPath: join(happyHomeDir, 'compatible'),
+      version: '1.2.4',
+    });
+    const longContributionId = `generated-ui-${'x'.repeat(32_769)}`;
+    const incompatibleFixture = await createNpmPackageFixture({
+      markerPath: join(happyHomeDir, 'incompatible'),
+      version: '1.2.5',
+      compatibilityProjection: {
+        version: 1,
+        manifest: {
+          schemaVersion: 2,
+          id: 'acme.npm-candidate',
+          version: '1.2.5',
+          displayName: 'Acme npm candidate',
+          engines: { happier: '^0.2.0' },
+          runtime: { apiVersion: 1 },
+          entrypoints: { daemon: './dist/daemon.mjs' },
+          hostAccess: { required: [], optional: [] },
+          contributes: {},
+        },
+        uiArtifacts: {
+          version: 1,
+          entries: [{
+            contributionId: longContributionId,
+            tier: 'hostedWeb',
+            entry: 'web/index.html',
+            files: [{
+              relativePath: 'web/index.html',
+              digest: `sha256:${'a'.repeat(64)}`,
+              byteSize: 1,
+            }],
+            digest: `sha256:${'b'.repeat(64)}`,
+            builtWith: { bundler: 'vite', version: '7.0.0' },
+            hostUiApiVersion: '999.0.0',
+            compat: {},
+          }],
+        },
+      },
+    });
+    const bodyRequests: string[] = [];
+    const client: NpmRegistryHttpsClient = {
+      getJson: async () => ({
+        name: compatibleFixture.packageName,
+        'dist-tags': { latest: incompatibleFixture.version },
+        versions: {
+          ...compatibleFixture.metadata.versions,
+          ...incompatibleFixture.metadata.versions,
+        },
+      }),
+      getBody: async (input) => {
+        bodyRequests.push(input.url);
+        if (!input.url.endsWith(`candidate-${compatibleFixture.version}.tgz`)) {
+          throw new Error('A newer incompatible artifact must not be downloaded');
+        }
+        return await compatibleFixture.client.getBody(input);
+      },
+    };
+    const service = createDaemonPluginChangeService({
+      prepare: createDaemonNpmPluginChangePreparer({
+        happyHomeDir,
+        runtimeLifecycle: {
+          prepare: async () => ({ abort: async () => undefined, adopt: async () => undefined }),
+        },
+        createClient: () => client,
+      }),
+    });
+
+    const result = await service.requestPluginChange({
+      kind: 'installNpm',
+      packageName: compatibleFixture.packageName,
+      selector: 'latest',
+      registryOrigin: 'https://registry.example.test',
+    });
+
+    expect(result).toMatchObject({
+      kind: 'reviewRequired',
+      review: {
+        version: compatibleFixture.version,
+        compatibility: {
+          blockedNewerVersions: [{
+            version: incompatibleFixture.version,
+            diagnostics: [{
+              code: 'plugin_compatibility_projection_invalid',
+              message: 'Generated UI artifact compatibility check failed: generated_ui_host_api_mismatch.',
+            }],
+          }],
+        },
+      },
+    });
+    expect(bodyRequests).toEqual([
+      `https://registry.example.test/${encodeURIComponent(compatibleFixture.packageName)}/-/candidate-${compatibleFixture.version}.tgz`,
+    ]);
+    if (result.kind !== 'reviewRequired') throw new Error('Expected a manual installation review');
+    const diagnostic = result.review.compatibility.blockedNewerVersions?.[0]?.diagnostics[0];
+    expect(diagnostic?.message).not.toContain(longContributionId);
+    expect(diagnostic?.message.length).toBeLessThanOrEqual(32_768);
+    expect(PluginInstallationReviewSchema.safeParse(result.review).success).toBe(true);
+    await expect(service.decidePluginChange({
+      pendingChangeId: result.pendingChangeId,
+      decision: 'cancel',
+    })).resolves.toEqual({ kind: 'cancelled' });
+  });
+
+  it('keeps a long compatible selected happier engine range within the daemon review contract', async () => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-npm-bounded-selected-engine-review-home-'));
+    roots.push(happyHomeDir);
+    const happierEngine = `>=0.0.0${' '.repeat(37_980)}<10000.0.0`;
+    const fixture = await createNpmPackageFixture({
+      markerPath: join(happyHomeDir, 'selected'),
+      happierEngine,
+    });
+    const getBody = vi.fn(fixture.client.getBody);
+    const service = createDaemonPluginChangeService({
+      prepare: createDaemonNpmPluginChangePreparer({
+        happyHomeDir,
+        runtimeLifecycle: {
+          prepare: async () => ({ abort: async () => undefined, adopt: async () => undefined }),
+        },
+        createClient: () => ({ ...fixture.client, getBody }),
+      }),
+    });
+
+    const result = await service.requestPluginChange({
+      kind: 'installNpm',
+      packageName: fixture.packageName,
+      selector: 'latest',
+      registryOrigin: 'https://registry.example.test',
+    });
+
+    expect(result).toMatchObject({
+      kind: 'reviewRequired',
+      review: {
+        version: fixture.version,
+        compatibility: {
+          happier: 'Declared compatible Happier CLI range',
+          runtimeApiVersion: 1,
+        },
+      },
+    });
+    expect(getBody).toHaveBeenCalledTimes(1);
+    if (result.kind !== 'reviewRequired') throw new Error('Expected a manual installation review');
+    expect(result.review.compatibility.happier).not.toContain(happierEngine);
+    expect(PluginInstallationReviewSchema.safeParse(result.review).success).toBe(true);
+    await expect(service.decidePluginChange({
+      pendingChangeId: result.pendingChangeId,
+      decision: 'cancel',
+    })).resolves.toEqual({ kind: 'cancelled' });
   });
 
   it('automatically applies an exact trusted daemon-owned update without a marketplace request DTO', async () => {
@@ -555,20 +1021,155 @@ describe('createDaemonNpmPluginChangePreparer', () => {
       });
   });
 
+  it('does not fetch an automatic update when no generated compatibility projection is available', async () => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-npm-missing-projection-home-'));
+    roots.push(happyHomeDir);
+    const initialFixture = await createNpmPackageFixture({
+      markerPath: join(happyHomeDir, 'initial'),
+      version: '1.2.3',
+    });
+    const updateFixture = await createNpmPackageFixture({
+      markerPath: join(happyHomeDir, 'update'),
+      version: '1.2.4',
+      includeCompatibilityProjection: false,
+    });
+    const marketplaceSource = (await createMarketplaceSourceRegistryStore({ happyHomeDir }).read()).sources[0]!;
+    const runtimeLifecycle = {
+      prepare: async () => ({ abort: async () => undefined, adopt: async () => undefined }),
+    };
+    const initialService = createDaemonPluginChangeService({
+      prepare: createDaemonNpmPluginChangePreparer({
+        happyHomeDir,
+        runtimeLifecycle,
+        createClient: () => initialFixture.client,
+      }),
+    });
+    await installReviewedCuratedCandidate({
+      service: initialService,
+      fixture: initialFixture,
+      source: marketplaceSource,
+    });
+
+    const getBody = vi.fn(updateFixture.client.getBody);
+    const updateClient: NpmRegistryHttpsClient = {
+      ...updateFixture.client,
+      getBody,
+    };
+    const prepareUpdate = createDaemonNpmPluginChangePreparer({
+      happyHomeDir,
+      runtimeLifecycle,
+      createClient: () => updateClient,
+    });
+    const updateService = createDaemonPluginChangeService({
+      prepare: async (request) => await prepareUpdate(request, {
+        installedUpdate: {
+          pluginId: 'acme.npm-candidate',
+          updatePolicy: 'automatic',
+        },
+      }),
+    });
+
+    await expect(updateService.requestPluginChange({
+      kind: 'installNpm',
+      packageName: updateFixture.packageName,
+      registryOrigin: 'https://registry.example.test',
+    })).resolves.toMatchObject({
+      kind: 'failed',
+      code: 'plugin_change_preparation_failed',
+      message: expect.stringMatching(/compatibility projection/i),
+    });
+    expect(getBody).not.toHaveBeenCalled();
+  });
+
+  it('keeps the post-download review exception to an exact present-user selector', async () => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-npm-manual-selector-compatibility-home-'));
+    roots.push(happyHomeDir);
+    const fixture = await createNpmPackageFixture({
+      markerPath: join(happyHomeDir, 'never'),
+      includeCompatibilityProjection: false,
+    });
+    const getBody = vi.fn(fixture.client.getBody);
+    const prepare = createDaemonNpmPluginChangePreparer({
+      happyHomeDir,
+      runtimeLifecycle: {
+        prepare: async () => ({ abort: async () => undefined, adopt: async () => undefined }),
+      },
+      createClient: () => ({ ...fixture.client, getBody }),
+    });
+
+    const exact = await prepare({
+      kind: 'installNpm',
+      packageName: fixture.packageName,
+      selector: fixture.version,
+      registryOrigin: 'https://registry.example.test',
+    });
+    expect(exact.requiresReview).toBe(true);
+    expect(getBody).toHaveBeenCalledOnce();
+    await exact.cleanup();
+
+    for (const selector of [undefined, 'latest', '^1.0.0'] as const) {
+      getBody.mockClear();
+      await expect(prepare({
+        kind: 'installNpm',
+        packageName: fixture.packageName,
+        ...(selector === undefined ? {} : { selector }),
+        registryOrigin: 'https://registry.example.test',
+      })).rejects.toThrow(/compatible generated compatibility projection/i);
+      expect(getBody).not.toHaveBeenCalled();
+    }
+  });
+
+  it('rejects metadata whose generated compatibility projection differs from the staged archive facts', async () => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-npm-projection-mismatch-home-'));
+    roots.push(happyHomeDir);
+    const fixture = await createNpmPackageFixture({
+      markerPath: join(happyHomeDir, 'never'),
+      compatibilityProjection: {
+        version: 1,
+        manifest: {
+          schemaVersion: 2,
+          id: 'acme.npm-candidate',
+          version: '1.2.3',
+          displayName: 'Mismatched metadata projection',
+          engines: { happier: '^0.2.0' },
+          runtime: { apiVersion: 1 },
+          entrypoints: { daemon: './dist/daemon.mjs' },
+          hostAccess: { required: [], optional: [] },
+          contributes: {},
+        },
+        uiArtifacts: { version: 1, entries: [] },
+      },
+    });
+    const prepare = createDaemonNpmPluginChangePreparer({
+      happyHomeDir,
+      runtimeLifecycle: {
+        prepare: async () => ({ abort: async () => undefined, adopt: async () => undefined }),
+      },
+      createClient: () => fixture.client,
+    });
+
+    await expect(prepare({
+      kind: 'installNpm',
+      packageName: fixture.packageName,
+      selector: fixture.version,
+      registryOrigin: 'https://registry.example.test',
+    })).rejects.toThrow(/compatibility projection.*staged/i);
+  });
+
   it('drops a removed optional selection while preserving still-valid selections during an automatic update', async () => {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-npm-optional-contraction-home-'));
     roots.push(happyHomeDir);
     const retainedAccess = {
-      id: 'token',
-      capability: 'secrets',
-      reason: 'Use the selected token',
-      scope: { secretIds: ['token'], access: ['read'] },
+      id: 'session-read',
+      capability: 'sessions',
+      reason: 'Read the selected sessions',
+      scope: { access: ['read'] },
     } as const;
     const removedAccess = {
-      id: 'retired-token',
-      capability: 'secrets',
-      reason: 'Use the retired token',
-      scope: { secretIds: ['retired-token'], access: ['read'] },
+      id: 'session-control',
+      capability: 'sessions',
+      reason: 'Control the selected sessions',
+      scope: { access: ['control'] },
     } as const;
     const initialFixture = await createNpmPackageFixture({
       markerPath: join(happyHomeDir, 'initial'),
@@ -615,7 +1216,7 @@ describe('createDaemonNpmPluginChangePreparer', () => {
     expect(afterSelections).toEqual([before.install.optionalAccess?.[0]]);
   });
 
-  it('requires review when the prior installed manifest no longer matches its durable digest', async () => {
+  it('requires review when the prior installed manifest version no longer matches its persisted release record', async () => {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-npm-prior-manifest-mismatch-home-'));
     roots.push(happyHomeDir);
     const initialFixture = await createNpmPackageFixture({
@@ -668,10 +1269,10 @@ describe('createDaemonNpmPluginChangePreparer', () => {
           scope: { access: ['read'] },
         }],
         optional: [{
-          id: 'secret',
-          capability: 'secrets',
-          reason: 'Use an optional secret',
-          scope: { secretIds: ['token'], access: ['read'] },
+          id: 'session-selection',
+          capability: 'sessions',
+          reason: 'Read the selected sessions',
+          scope: { access: ['read'] },
         }],
       },
     });
@@ -686,10 +1287,10 @@ describe('createDaemonNpmPluginChangePreparer', () => {
           scope: { access: ['read', 'write'] },
         }],
         optional: [{
-          id: 'secret',
-          capability: 'secrets',
-          reason: 'Use an optional secret',
-          scope: { secretIds: ['token'], access: ['read'] },
+          id: 'session-selection',
+          capability: 'sessions',
+          reason: 'Read the selected sessions',
+          scope: { access: ['read'] },
         }],
       },
     });
@@ -704,10 +1305,10 @@ describe('createDaemonNpmPluginChangePreparer', () => {
           scope: { access: ['read'] },
         }],
         optional: [{
-          id: 'secret',
-          capability: 'secrets',
-          reason: 'Use an optional secret',
-          scope: { secretIds: ['token', 'other-token'], access: ['read'] },
+          id: 'session-selection',
+          capability: 'sessions',
+          reason: 'Read and write the selected sessions',
+          scope: { access: ['read', 'write'] },
         }],
       },
     });
@@ -722,15 +1323,15 @@ describe('createDaemonNpmPluginChangePreparer', () => {
           scope: { access: ['read'] },
         }],
         optional: [{
-          id: 'secret',
-          capability: 'secrets',
-          reason: 'Use an optional secret',
-          scope: { secretIds: ['token'], access: ['read'] },
+          id: 'session-selection',
+          capability: 'sessions',
+          reason: 'Read the selected sessions',
+          scope: { access: ['read'] },
         }, {
-          id: 'another-secret',
-          capability: 'secrets',
-          reason: 'Use another optional secret',
-          scope: { secretIds: ['other-token'], access: ['read'] },
+          id: 'session-control',
+          capability: 'sessions',
+          reason: 'Control the selected sessions',
+          scope: { access: ['control'] },
         }],
       },
     });
@@ -1467,7 +2068,7 @@ describe('createDaemonNpmPluginChangePreparer', () => {
     });
   });
 
-  it('rejects staged-byte substitution after review without invoking the runtime or publishing currentness', async () => {
+  it('installs the daemon-custodied reviewed npm candidate when staging bytes change after review', async () => {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-npm-change-home-'));
     roots.push(happyHomeDir);
     const fixture = await createNpmPackageFixture({ markerPath: join(happyHomeDir, 'never') });
@@ -1494,11 +2095,16 @@ describe('createDaemonNpmPluginChangePreparer', () => {
       pendingChangeId: begun.pendingChangeId,
       decision: 'installAndTrust',
       actorEvidence: { kind: 'authenticatedLocalUser', interactionId: 'tampered-review', occurredAtMs: 11 },
-    })).resolves.toEqual({ kind: 'conflict', pluginId: 'acme.npm-candidate' });
+    })).resolves.toMatchObject({ kind: 'committed', pluginId: 'acme.npm-candidate' });
 
-    expect(prepareRuntime).not.toHaveBeenCalled();
-    expect((await createPluginRegistryStateStore({ happyHomeDir }).read()).plugins['acme.npm-candidate']).toBeUndefined();
+    expect(prepareRuntime).toHaveBeenCalledOnce();
+    const installed = (await createPluginRegistryStateStore({ happyHomeDir }).read())
+      .plugins['acme.npm-candidate'];
+    expect(installed).toBeDefined();
+    await expect(readFile(join(installed!.source.resolvedPath, 'payload.txt'), 'utf8'))
+      .resolves.toBe('reviewed bytes 1.2.3');
     expect(await candidateRoots(happyHomeDir)).toEqual([]);
+    expect(await preparedGenerationRoots(happyHomeDir)).toHaveLength(1);
   });
 
   it('rejects when the same installed plugin changes after npm review', async () => {
@@ -1572,6 +2178,7 @@ describe('createDaemonNpmPluginChangePreparer', () => {
 
     expect(prepareRuntime).not.toHaveBeenCalled();
     expect(await candidateRoots(happyHomeDir)).toEqual([]);
+    expect(await preparedGenerationRoots(happyHomeDir)).toEqual([]);
   });
 
   it('cleans a reviewed candidate once when the user cancels', async () => {
@@ -1600,6 +2207,7 @@ describe('createDaemonNpmPluginChangePreparer', () => {
     })).resolves.toEqual({ kind: 'cancelled' });
 
     expect(await candidateRoots(happyHomeDir)).toEqual([]);
+    expect(await preparedGenerationRoots(happyHomeDir)).toEqual([]);
     await expect(service.decidePluginChange({
       pendingChangeId: begun.pendingChangeId,
       decision: 'cancel',

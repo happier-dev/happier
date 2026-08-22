@@ -1,25 +1,29 @@
 import {
-    buildQualifiedPluginContributionKey,
     containsProviderRegisteredSensitiveValue,
-    createPluginContributionIdentity,
+    deriveVoiceCredentialBindingIdentityV1,
     materializeRecipientOperationRequestV1FromOperation,
-    type PluginVoiceProviderContributionV1,
+    type VoiceProviderContribution,
 } from '@happier-dev/protocol';
-import { PluginError } from '@happier-dev/plugin-sdk';
+import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
 import type {
-    PluginContributionRef,
+    PluginContributionRef } from '@happier-dev/plugin-sdk';
+import type {
     PluginFetchCredentialBinding,
-} from '@happier-dev/plugin-sdk/runtime';
+} from '@happier-dev/plugin-sdk/http';
 
 import type { VoiceCredentialResolver } from '@/daemon/voice/credentials/resolver';
 import type {
-    StablePluginFetchCredentialBindingHost,
+    StablePluginHttpCredentialBindingHost,
 } from './service';
+import { createVoiceProviderRecipientContractDigest } from '@/plugins/voiceProviderRecipientContract';
 
 type VoiceProviderDeclaration = Readonly<{
     pluginId: string;
     identity: PluginContributionRef;
-    definition: PluginVoiceProviderContributionV1;
+    definition: VoiceProviderContribution;
+    provenance?: 'first_party' | 'external';
+    source?: Readonly<{ kind: string }>;
+    sourceSpec?: Readonly<{ kind: string; locator: string; trustPolicy?: string }>;
 }>;
 
 function unauthorized(): PluginError {
@@ -37,7 +41,7 @@ function retired(): PluginError {
 }
 
 function assertCurrent(input: Readonly<{
-    seed: Parameters<StablePluginFetchCredentialBindingHost['request']>[0]['seed'];
+    seed: Parameters<StablePluginHttpCredentialBindingHost['request']>[0]['seed'];
     signal: AbortSignal | undefined;
 }>): void {
     if (!input.seed.isGenerationCurrent()) throw retired();
@@ -63,7 +67,7 @@ function findVoiceProviderDeclaration(
 }
 
 function hasExactNetworkScope(input: Readonly<{
-    serviceBinding: Parameters<StablePluginFetchCredentialBindingHost['request']>[0]['serviceBinding'];
+    serviceBinding: Parameters<StablePluginHttpCredentialBindingHost['request']>[0]['serviceBinding'];
     url: string;
     method: string;
 }>): boolean {
@@ -73,7 +77,7 @@ function hasExactNetworkScope(input: Readonly<{
     } catch {
         return false;
     }
-    return input.serviceBinding.availability.fetch === 'available'
+    return input.serviceBinding.availability.http === 'available'
         && (input.serviceBinding.networkScopes ?? []).some((scope) => (
             scope.origins.includes(origin)
             && (scope.methods === undefined || scope.methods.includes(input.method as never))
@@ -117,6 +121,63 @@ function normalizedContentType(headers: Readonly<Record<string, string>>): strin
     return typeof value === 'string' ? value.split(';', 1)[0]!.trim().toLowerCase() : null;
 }
 
+type VoiceAccountOperationResponseDiagnostic = Readonly<{
+    operationPurpose: string;
+    status: number;
+    contentType: 'declared' | 'missing' | 'undeclared';
+    responseBodyBytes: number;
+    finalUrlMatches: boolean;
+    responseContractMatches: boolean;
+    bodyPolicyAccepted: boolean | null;
+}>;
+
+type VoiceAccountResponseDiagnosticRecorder = (
+    seed: Parameters<StablePluginHttpCredentialBindingHost['request']>[0]['seed'],
+    diagnostic: VoiceAccountOperationResponseDiagnostic,
+) => void;
+
+function responseContractDiagnostic(input: Readonly<{
+    operationPurpose: string;
+    declaredContentTypes: readonly string[];
+    expectedFinalUrl: string;
+    response: Awaited<ReturnType<
+        Parameters<StablePluginHttpCredentialBindingHost['request']>[0]['execute']
+    >>;
+    bodyPolicyAccepted: boolean | null;
+}>): VoiceAccountOperationResponseDiagnostic {
+    const contentType = normalizedContentType(input.response.headers);
+    const contentTypeClassification = contentType === null
+        ? 'missing'
+        : input.declaredContentTypes.includes(contentType)
+            ? 'declared'
+            : 'undeclared';
+    const finalUrlMatches = input.response.finalUrl === input.expectedFinalUrl;
+    return Object.freeze({
+        operationPurpose: input.operationPurpose,
+        status: input.response.status,
+        contentType: contentTypeClassification,
+        responseBodyBytes: input.response.body.byteLength,
+        finalUrlMatches,
+        responseContractMatches: input.response.status >= 200
+            && input.response.status < 300
+            && finalUrlMatches
+            && contentTypeClassification === 'declared',
+        bodyPolicyAccepted: input.bodyPolicyAccepted,
+    });
+}
+
+function recordResponseDiagnosticBestEffort(input: Readonly<{
+    record: VoiceAccountResponseDiagnosticRecorder;
+    seed: Parameters<StablePluginHttpCredentialBindingHost['request']>[0]['seed'];
+    diagnostic: VoiceAccountOperationResponseDiagnostic;
+}>): void {
+    try {
+        input.record(input.seed, input.diagnostic);
+    } catch {
+        // Host diagnostics must not change the mediated provider operation.
+    }
+}
+
 function projectJsonResponseMaterial(
     body: Uint8Array,
     maxBytes: number,
@@ -139,7 +200,7 @@ function projectJsonResponseMaterial(
 }
 
 function sanitizeFailure(error: unknown, input: Readonly<{
-    seed: Parameters<StablePluginFetchCredentialBindingHost['request']>[0]['seed'];
+    seed: Parameters<StablePluginHttpCredentialBindingHost['request']>[0]['seed'];
     signal: AbortSignal | undefined;
 }>): PluginError {
     if (!input.seed.isGenerationCurrent()) return retired();
@@ -164,10 +225,11 @@ function sanitizeFailure(error: unknown, input: Readonly<{
     });
 }
 
-export function createVoiceAccountPluginFetchCredentialBindingHost(params: Readonly<{
+export function createVoiceAccountPluginHttpCredentialBindingHost(params: Readonly<{
     voiceProviders: readonly VoiceProviderDeclaration[];
     credentialResolver: VoiceCredentialResolver;
-}>): StablePluginFetchCredentialBindingHost {
+    recordResponseDiagnostic?: VoiceAccountResponseDiagnosticRecorder;
+}>): StablePluginHttpCredentialBindingHost {
     return Object.freeze({
         async request(input) {
             assertCurrent(input);
@@ -180,7 +242,7 @@ export function createVoiceAccountPluginFetchCredentialBindingHost(params: Reado
             }
             const declaration = findVoiceProviderDeclaration(params.voiceProviders, binding.provider);
             if (!declaration || declaration.definition.kind !== 'conversation') throw unauthorized();
-            const operation = declaration.definition.accountMediation?.operations.find(
+            const operation = declaration.definition.credentials?.hostMediated?.operations.find(
                 (candidate) => candidate.id === binding.operation,
             );
             if (!operation) throw unauthorized();
@@ -210,11 +272,27 @@ export function createVoiceAccountPluginFetchCredentialBindingHost(params: Reado
             ) {
                 throw unauthorized();
             }
-            const providerId = buildQualifiedPluginContributionKey(createPluginContributionIdentity(binding.provider));
+            const recipientContractDigest = createVoiceProviderRecipientContractDigest(declaration);
+            if (!recipientContractDigest) throw unauthorized();
+            // The persisted selection identity (contribution, slot and purpose)
+            // is projected from manifest truth so the credential resolver can
+            // consult the Account-owned source selection for this exact target.
+            let credentialIdentity: ReturnType<typeof deriveVoiceCredentialBindingIdentityV1>;
+            try {
+                credentialIdentity = deriveVoiceCredentialBindingIdentityV1({
+                    pluginId: declaration.pluginId,
+                    contribution: declaration.definition,
+                });
+            } catch {
+                throw unauthorized();
+            }
+            if (!credentialIdentity || credentialIdentity.credentialSlotId !== operation.credentialSlotId) {
+                throw unauthorized();
+            }
             try {
                 return await params.credentialResolver.withSecret({
-                    providerId,
-                    credentialSlotId: operation.credentialSlotId,
+                    identity: credentialIdentity,
+                    recipientContractDigest,
                     use: async (sourceCredential) => {
                         assertCurrent(input);
                         if (!hasExactDeclaredOrigin(materialized.url, operation.request.origin)) {
@@ -224,17 +302,27 @@ export function createVoiceAccountPluginFetchCredentialBindingHost(params: Reado
                             ? `Bearer ${sourceCredential}`
                             : sourceCredential;
                         const response = await input.execute(Object.freeze({
-                            [operation.request.credential.name]: credentialValue,
+                            headers: Object.freeze({
+                                [operation.request.credential.name]: credentialValue,
+                            }),
+                            secretHeaderNames: Object.freeze([operation.request.credential.name]),
                         }));
                         assertCurrent(input);
-                        if (
-                            response.status < 200
-                            || response.status >= 300
-                            || response.finalUrl !== materialized.url
-                            || !operation.response.contentTypes.includes(
-                                normalizedContentType(response.headers) ?? '',
-                            )
-                        ) {
+                        const responseDiagnostic = responseContractDiagnostic({
+                            operationPurpose: operation.purpose,
+                            declaredContentTypes: operation.response.contentTypes,
+                            expectedFinalUrl: materialized.url,
+                            response,
+                            bodyPolicyAccepted: null,
+                        });
+                        if (!responseDiagnostic.responseContractMatches) {
+                            if (params.recordResponseDiagnostic) {
+                                recordResponseDiagnosticBestEffort({
+                                    record: params.recordResponseDiagnostic,
+                                    seed: input.seed,
+                                    diagnostic: responseDiagnostic,
+                                });
+                            }
                             throw new PluginError({
                                 code: 'plugin_fetch_voice_account_operation_failed',
                                 message: 'The Voice account operation failed',
@@ -246,6 +334,16 @@ export function createVoiceAccountPluginFetchCredentialBindingHost(params: Reado
                             sourceCredential,
                         );
                         if (!projectedBody) {
+                            if (params.recordResponseDiagnostic) {
+                                recordResponseDiagnosticBestEffort({
+                                    record: params.recordResponseDiagnostic,
+                                    seed: input.seed,
+                                    diagnostic: Object.freeze({
+                                        ...responseDiagnostic,
+                                        bodyPolicyAccepted: false,
+                                    }),
+                                });
+                            }
                             const isClientAuth = operation.purpose.startsWith('voice.client-auth');
                             throw new PluginError({
                                 code: isClientAuth
@@ -267,7 +365,7 @@ export function createVoiceAccountPluginFetchCredentialBindingHost(params: Reado
                     },
                 });
             } catch (error) {
-                if (error instanceof PluginError && (
+                if (isPluginError(error) && (
                     error.code === 'plugin_fetch_voice_account_operation_unauthorized'
                     || error.code === 'plugin_fetch_voice_client_auth_artifact_invalid'
                     || error.code === 'plugin_fetch_voice_catalog_artifact_invalid'

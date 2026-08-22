@@ -14,6 +14,31 @@ export type CurrentDaemonPluginCatalogSnapshot = Readonly<{
   tools: readonly ProjectedPluginToolCatalogEntry[];
 }>;
 
+function projectCurrentDaemonPluginTools(
+  registry: Parameters<typeof projectExecutablePluginToolCatalog>[0],
+): readonly ProjectedPluginToolCatalogEntry[] {
+  const immutableGenerationIdsByPluginId =
+    registry.contributes.immutableGenerationIdsByPluginId ?? {};
+  return Object.freeze(projectExecutablePluginToolCatalog(registry).flatMap((tool) => {
+    const actionPluginId = registry.contributes.actionsById
+      ?.get(tool.actionId)
+      ?.pluginId
+      ?.trim();
+    const immutableGenerationId = actionPluginId
+      ? immutableGenerationIdsByPluginId[actionPluginId]?.trim()
+      : undefined;
+    // A long-lived MCP server must retain the exact Action contributor it
+    // advertised. Without this lease-local fence, a replacement could run
+    // through the old server's Tool catalog.
+    return immutableGenerationId
+      ? [Object.freeze({
+          ...tool,
+          expectedContributorImmutableGenerationId: immutableGenerationId,
+        })]
+      : [];
+  }));
+}
+
 /**
  * Reads the daemon's ordinary installed/current-state view. Durable desired
  * identity comes from the registry snapshot; applied identity and runtime
@@ -47,7 +72,7 @@ export async function readCurrentDaemonPluginCatalogSnapshot(params: Readonly<{
         ),
         lease.registry,
       ),
-      tools: projectExecutablePluginToolCatalog(lease.registry),
+      tools: projectCurrentDaemonPluginTools(lease.registry),
     };
   } finally {
     await lease.release();

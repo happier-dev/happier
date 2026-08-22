@@ -9,6 +9,7 @@ import {
 } from './install/accessScopeRegistry';
 import {
   PluginTrustRecordSchema,
+  PluginCuratedUpdateSourceBindingSchema,
   PluginUpdatePolicySchema,
 } from './install/trustIdentity';
 
@@ -18,7 +19,7 @@ export type PluginCompatibilityStatus = z.infer<typeof PluginCompatibilityStatus
 export const PluginInstallModeSchema = z.enum(['link', 'managed_install']);
 export type PluginInstallMode = z.infer<typeof PluginInstallModeSchema>;
 
-export const PluginStateSourceRecordSchema = PluginSourceSpecV1Schema.extend({
+export const PluginStateSourceRecordSchema = PluginSourceSpecV1Schema.safeExtend({
   resolvedPath: z.string().min(1),
   manifestPath: z.string().min(1),
   devWatch: z.boolean().optional(),
@@ -35,10 +36,11 @@ export type PluginStateCompatibilityRecord = z.infer<typeof PluginStateCompatibi
 export const PluginStateInstallRecordSchema = z.object({
   mode: PluginInstallModeSchema,
   manifestVersion: z.string().min(1),
-  manifestDigest: z.string().min(1).nullable().optional(),
   installedPath: z.string().min(1).nullable().optional(),
   trust: PluginTrustRecordSchema.optional(),
   updatePolicy: PluginUpdatePolicySchema.optional(),
+  /** Present only for reviewed curated automatic-update channels. */
+  curatedUpdateSource: PluginCuratedUpdateSourceBindingSchema.optional(),
   optionalAccess: z.array(PluginAccessSelectionSchema).optional(),
 }).strict();
 export type PluginStateInstallRecord = z.infer<typeof PluginStateInstallRecordSchema>;

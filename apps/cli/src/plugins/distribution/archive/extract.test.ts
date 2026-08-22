@@ -23,7 +23,7 @@ async function writeArchive(entries: readonly TestTarEntry[]): Promise<Readonly<
 }
 
 describe('extractPortableTarGzipArchive', () => {
-  it('streams one verified archive into an operation-owned stage and returns a deterministic file inventory', async () => {
+  it('streams one verified archive into an operation-owned stage with a deterministic per-file inventory but no aggregate root digest', async () => {
     const input = await writeArchive([
       { name: 'package/', type: 'directory' },
       { name: 'package/a.txt', body: 'alpha' },
@@ -46,11 +46,13 @@ describe('extractPortableTarGzipArchive', () => {
       stripRootDirectory: 'package',
     });
 
-    expect(first.inventory.map(({ path, byteLength }) => ({ path, byteLength }))).toEqual([
-      { path: 'a.txt', byteLength: 5 },
-      { path: 'nested/b.txt', byteLength: 4 },
+    expect(first.inventory).toEqual([
+      { path: 'a.txt', byteLength: 5, digest: expect.stringMatching(/^sha256:[a-f0-9]{64}$/u) },
+      { path: 'nested/b.txt', byteLength: 4, digest: expect.stringMatching(/^sha256:[a-f0-9]{64}$/u) },
     ]);
-    expect(second.rootDigest).toBe(first.rootDigest);
+    expect(second.inventory).toEqual(first.inventory);
+    expect(first).not.toHaveProperty('rootDigest');
+    expect(second).not.toHaveProperty('rootDigest');
     expect(await readFile(join(first.rootPath, 'nested/b.txt'), 'utf8')).toBe('beta');
     expect(first.rootPath).not.toBe(second.rootPath);
   });

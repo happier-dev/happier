@@ -3,6 +3,7 @@ import type {
     PluginAccountCollectionDefinition,
     PluginAccountCollectionForDefinition,
 } from './collections.js';
+import { PluginError } from './errors.js';
 import type { JsonValue } from './identity.js';
 import type { DaemonDatabaseStorageScope } from './storage/database.js';
 
@@ -104,6 +105,38 @@ export interface PluginAccountStorageScope {
     collection<TDefinition extends PluginAccountCollectionDefinition>(
         definition: TDefinition,
     ): PluginAccountCollectionForDefinition<TDefinition>;
+}
+
+/**
+ * The context shape `requireAccountStorage` reads: any plugin value carrying
+ * the services bag, which is what every Action handler and runtime already has.
+ */
+export type PluginAccountStorageConsumerContext = Readonly<{
+    services: Readonly<{
+        storage: Readonly<{
+            account?: PluginAccountStorageScope;
+        }>;
+    }>;
+}>;
+
+/**
+ * Narrow admitted Account storage, or fail closed with the caller's own error.
+ *
+ * A plugin that declares Account storage as required is normally refused by the
+ * host before its code runs when that capability is unavailable, so this guard
+ * is for the malformed direct invocation that arrives anyway. It lives here
+ * because three first-party plugins had each written a byte-identical copy of
+ * it; the one thing that ever differed between them was the error identity,
+ * which is why that stays the caller's rather than being flattened into a
+ * single shared code.
+ */
+export function requireAccountStorage(
+    context: PluginAccountStorageConsumerContext,
+    failure: Readonly<{ code: string; message: string }>,
+): PluginAccountStorageScope {
+    const account = context.services.storage.account;
+    if (account === undefined) throw new PluginError(failure);
+    return account;
 }
 
 export interface StorageService {

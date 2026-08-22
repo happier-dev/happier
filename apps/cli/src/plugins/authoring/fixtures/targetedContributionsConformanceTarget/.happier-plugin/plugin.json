@@ -1,0 +1,69 @@
+{
+  "schemaVersion": 2,
+  "id": "acme.targeted-contributions-conformance-target",
+  "version": "1.0.0",
+  "displayName": "Targeted Contributions Conformance Target",
+  "description": "Packed public target that reads its canonical admitted contributors.",
+  "engines": {
+    "happier": "^0.2.0"
+  },
+  "runtime": {
+    "apiVersion": 1
+  },
+  "entrypoints": {
+    "daemon": "./daemon.mjs"
+  },
+  "hostAccess": {
+    "required": [],
+    "optional": []
+  },
+  "contributes": {
+    "actions": [
+      {
+        "id": "verify-targeted-admission",
+        "title": "Verify Targeted Admission",
+        "description": "Reads the target-owned admitted contributor snapshot.",
+        "scopes": [
+          "global"
+        ],
+        "surfaces": [
+          "cli"
+        ],
+        "placementBindings": [
+          "commandPalette"
+        ],
+        "dangerLevel": "safe",
+        "execution": {
+          "target": "daemon"
+        }
+      }
+    ],
+    "pluginContributionPoints": [
+      {
+        "id": "providers",
+        "maxContributionsPerContributor": 1,
+        "protocols": [
+          {
+            "id": "packed-targeted-provider",
+            "version": 1,
+            "operations": {
+              "verify": {
+                "required": true,
+                "input": {
+                  "kind": "contributorDefined"
+                },
+                "resultSchema": {
+                  "type": "object"
+                },
+                "action": {
+                  "surface": "plugin",
+                  "dangerLevel": "safe"
+                }
+              }
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

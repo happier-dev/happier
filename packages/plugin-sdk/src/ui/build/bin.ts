@@ -7,6 +7,8 @@ import { access, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { basename, dirname, extname, isAbsolute, join, resolve, sep, relative } from 'node:path';
 
+import { isCanonicalAbsolutePathInsideRoot } from '@happier-dev/cli-common/path';
+
 import { defineHostedWebViteBuildPreset } from '../hostedWebBuild.js';
 import { defineReactNativeRepackBuildPreset } from '../reactNativeBuild.js';
 import { defineReactNativeWebViteBuildPreset } from '../reactNativeWebBuild.js';
@@ -275,10 +277,10 @@ async function defaultListEmittedFiles(
         }
         throw cause;
     }
-    return files.filter((file) => {
-        const relativePath = relative(context.emittedRoot, file).split(sep).join('/');
-        return relativePath && !relativePath.startsWith('../') && relativePath !== '..';
-    });
+    return files.filter((file) => (
+        isCanonicalAbsolutePathInsideRoot(context.emittedRoot, file)
+        && file !== context.emittedRoot
+    ));
 }
 
 const defaultLoadConfig: PluginBuildUiCliLoadConfigV1 = async ({ projectRoot, configPath }) => {
@@ -501,12 +503,7 @@ function resolveTargetViteConfigPath(
         return undefined;
     }
     const bundlerConfigPath = resolve(projectRoot, target.bundlerConfig);
-    const relativeConfigPath = relative(projectRoot, bundlerConfigPath);
-    if (
-        relativeConfigPath === '..'
-        || relativeConfigPath.startsWith(`..${sep}`)
-        || isAbsolute(relativeConfigPath)
-    ) {
+    if (!isCanonicalAbsolutePathInsideRoot(projectRoot, bundlerConfigPath)) {
         throw new PluginUiBuildError(
             'config_invalid',
             `Plugin UI build target "${target.rendererId}" bundlerConfig must remain inside projectRoot`,
@@ -523,7 +520,7 @@ function createManagedBuildSurfaces(
     versions: ManagedPluginUiBuildVersionsV1,
 ): readonly PluginUiBuildSurfaceV1[] {
     const rawRelativeWorkRoot = relative(projectRoot, workRoot);
-    if (rawRelativeWorkRoot === '..' || rawRelativeWorkRoot.startsWith(`..${sep}`) || isAbsolute(rawRelativeWorkRoot)) {
+    if (!isCanonicalAbsolutePathInsideRoot(projectRoot, workRoot)) {
         throw new PluginUiBuildError('config_invalid', 'Plugin UI build outDir must remain inside projectRoot');
     }
     const relativeWorkRoot = (rawRelativeWorkRoot || '.').split(sep).join('/');

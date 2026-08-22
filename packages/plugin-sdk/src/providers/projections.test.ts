@@ -84,7 +84,7 @@ import type {
     ProviderCapabilitySupport,
     ProviderCatalogCommandFallbackV1,
     ProviderCatalogDeclarationV1,
-    ProviderCatalogParserV1,
+    ProviderCatalogParserId,
     ProviderCatalogProbeV1,
     ProviderCompatibilityCapabilitiesV1,
     ProviderCompatibilityOverrideV1,
@@ -138,7 +138,13 @@ const PROVIDER_EXPORTS = [
     'ProviderCapabilitySupport',
     'ProviderCatalogCommandFallbackV1',
     'ProviderCatalogDeclarationV1',
-    'ProviderCatalogParserV1',
+    'BundledProviderCatalogParserId',
+    'BundledProviderWireProtocol',
+    'ProviderCatalogParseResult',
+    'ProviderCatalogParsedModel',
+    'ProviderCatalogParsedModelLoadState',
+    'ProviderCatalogParser',
+    'ProviderCatalogParserId',
     'ProviderCatalogProbeV1',
     'ProviderCatalogService',
     'ProviderCompatibilityCapabilitiesV1',
@@ -165,6 +171,7 @@ const PROVIDER_EXPORTS = [
     'ProviderModelLoadRequest',
     'ProviderModelLoadResult',
     'ProviderModelLoadDescriptorV1',
+    'ProviderModelLoadStateV1',
     'ProviderModelProjectionRequest',
     'ProviderModelProjectionResult',
     'ProviderModelsRequest',
@@ -322,7 +329,7 @@ type ProjectionTypes = [
     providerProjection.ProviderCapabilitySupport,
     providerProjection.ProviderCatalogCommandFallbackV1,
     providerProjection.ProviderCatalogDeclarationV1,
-    providerProjection.ProviderCatalogParserV1,
+    providerProjection.ProviderCatalogParserId,
     providerProjection.ProviderCatalogProbeV1,
     providerProjection.ProviderCatalogService,
     providerProjection.ProviderCompatibilityCapabilitiesV1,
@@ -412,7 +419,7 @@ describe('final Provider source projection', () => {
             .toEqualTypeOf<ProtocolProviderCatalogCommandFallbackV1>();
         expectTypeOf<ProviderCatalogDeclarationV1>()
             .toEqualTypeOf<ProtocolProviderCatalogDeclarationV1>();
-        expectTypeOf<ProviderCatalogParserV1>()
+        expectTypeOf<ProviderCatalogParserId>()
             .toEqualTypeOf<ProtocolProviderCatalogParserV1>();
         expectTypeOf<ProviderCatalogProbeV1>()
             .toEqualTypeOf<ProtocolProviderCatalogProbeV1>();

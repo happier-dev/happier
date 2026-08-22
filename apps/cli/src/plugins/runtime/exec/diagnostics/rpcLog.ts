@@ -1,5 +1,5 @@
 import { appendFile, rename, rm, stat } from 'node:fs/promises';
-import { isAbsolute, relative, resolve } from 'node:path';
+import { isAbsolute } from 'node:path';
 
 import type {
     ExecClientDiagnosticsV1,
@@ -8,6 +8,7 @@ import type {
 } from '../privateContract';
 
 import { safeJsonStringify } from '@/utils/safeJson';
+import { isCanonicalAbsolutePathInsideRoot } from '@/utils/path/expandHomeDirPath';
 
 import { PluginExecClientError } from '../errors';
 import { sanitizeRpcDiagnosticValue } from './sanitize';
@@ -74,11 +75,6 @@ async function rotateRpcLogIfNeeded(path: string, payload: string, maxBytes: num
     });
 }
 
-function isPathInsideDirectory(path: string, directory: string): boolean {
-    const relativePath = relative(resolve(directory), resolve(path));
-    return relativePath.length === 0 || (!relativePath.startsWith('..') && !isAbsolute(relativePath));
-}
-
 function assertRpcLogPathAllowed(path: string, options: ExecClientRpcLoggerOptions | undefined): void {
     const allowedDirectories = options?.allowedDirectories ?? [];
     if (!isAbsolute(path)) {
@@ -87,7 +83,7 @@ function assertRpcLogPathAllowed(path: string, options: ExecClientRpcLoggerOptio
             'ctx.exec.spawnClient diagnostics rpcLog.path must be an absolute host-approved file path',
         );
     }
-    if (!allowedDirectories.some((directory) => isPathInsideDirectory(path, directory))) {
+    if (!allowedDirectories.some((directory) => isCanonicalAbsolutePathInsideRoot(directory, path))) {
         throw new PluginExecClientError(
             'PLUGIN_EXEC_CLIENT_PROTOCOL_ERROR',
             'ctx.exec.spawnClient diagnostics rpcLog.path is outside the host-approved diagnostics directories',

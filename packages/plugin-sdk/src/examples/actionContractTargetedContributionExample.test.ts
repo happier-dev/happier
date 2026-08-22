@@ -7,6 +7,8 @@ import type { PluginActivationModule } from '@happier-dev/plugin-sdk';
 
 import { parsePluginManifest, type PluginManifest } from '../manifest.js';
 import * as targetedContributionsHost from '../host/targeted-contributions/index.public.js';
+import type { NotificationsService } from '../notifications.js';
+import type { SecretsService } from '../secrets.js';
 import { createPluginTestkit } from '../testing/index.js';
 
 // The examples must consume the current public source entry; publishing the
@@ -14,6 +16,7 @@ import { createPluginTestkit } from '../testing/index.js';
 vi.mock('@happier-dev/plugin-sdk', async () => await import('../index.js'));
 vi.mock('@happier-dev/plugin-sdk/browser', async () => await import('../browser/index.js'));
 vi.mock('@happier-dev/plugin-sdk/http', async () => await import('../http.js'));
+vi.mock('@happier-dev/plugin-sdk/notifications', async () => await import('../notifications/index.js'));
 vi.mock(
     '@happier-dev/plugin-sdk/protocol',
     async () => await import('../protocol/index.js'),
@@ -158,6 +161,8 @@ describe('cross-plugin contribution public authoring example', () => {
                     '@happier-dev/plugin-sdk',
                     '@happier-dev/plugin-sdk/browser',
                     '@happier-dev/plugin-sdk/http',
+                    '@happier-dev/plugin-sdk/notifications',
+                    '@happier-dev/plugin-sdk/secrets',
                     '@happier-dev/triage-sources-protocol/v1',
                 ]
                 : [
@@ -230,7 +235,11 @@ describe('cross-plugin contribution public authoring example', () => {
                 }],
             },
         });
-        expect(target.manifest.hostAccess?.required).toEqual([]);
+        // `definePlugin` emits cold declaration facts only, so a target that
+        // declares no host access omits the family instead of materializing
+        // empty `required`/`optional` arrays; `parsePluginManifest` is the
+        // sole normalizer that supplies them to host consumers.
+        expect(target.manifest.hostAccess).toBeUndefined();
         expect(contributor.manifest).toMatchObject({
             id: 'examples.action-contract-consumer',
             contributes: {
@@ -271,6 +280,174 @@ describe('cross-plugin contribution public authoring example', () => {
         } finally {
             await contributorTestkit.dispose();
         }
+    });
+
+    it('proves a public author command and tool through a registered notification channel and service invocation', async () => {
+        const target = await loadExample('action-contract-producer');
+        const send = vi.fn(async () => ({
+            deliveries: [{
+                deliveryId: 'document-review-delivery',
+                channelId: 'webhook',
+                status: 'accepted' as const,
+                evidence: 'provider' as const,
+            }],
+            replayed: false,
+        }));
+        const notifications = Object.freeze({
+            send,
+            listChannels: async () => ({ items: [] }),
+            listCategories: async () => ({ items: [] }),
+            preferences: async (categoryId: string) => ({
+                categoryId,
+                enabled: true,
+                channelIds: ['webhook'],
+                revision: '1',
+            }),
+            watchPreferences: () => Object.freeze({ dispose(): void {} }),
+        }) satisfies NotificationsService;
+
+        expect(target.manifest).toMatchObject({
+            contributes: {
+                commands: [{
+                    id: 'send-document-review-ready-command',
+                    path: ['document-review', 'notify-ready'],
+                    action: 'send-document-review-ready',
+                }],
+                tools: [{
+                    id: 'send-document-review-ready-tool',
+                    name: 'document_review_notify_ready',
+                    action: 'send-document-review-ready',
+                }],
+                notifications: [{
+                    id: 'document-review-ready',
+                    defaultChannels: ['webhook'],
+                }],
+                notificationChannels: [{
+                    id: 'webhook',
+                    configurable: true,
+                    settings: [{ id: 'endpoint' }],
+                }],
+            },
+        });
+
+        const testkit = await createPluginTestkit({
+            manifest: target.manifest,
+            module: { activate: target.activate },
+            services: { notifications },
+        });
+        try {
+            expect(testkit.registration('notificationChannels', 'webhook')).toBeDefined();
+            await expect(testkit.invokeAction(
+                'send-document-review-ready',
+                null,
+                { surface: 'cli' },
+            )).resolves.toEqual({
+                deliveries: [{
+                    deliveryId: 'document-review-delivery',
+                    channelId: 'webhook',
+                    status: 'accepted',
+                    evidence: 'provider',
+                }],
+                replayed: false,
+            });
+            expect(send).toHaveBeenCalledWith({
+                clientRequestId: 'document-review-ready',
+                categoryId: 'document-review-ready',
+                title: 'Document review ready',
+            }, expect.objectContaining({ signal: expect.any(AbortSignal) }));
+        } finally {
+            await testkit.dispose();
+        }
+    });
+
+    it('rotates a declared plugin secret through the public SecretsService without returning the value', async () => {
+        const target = await loadExample('action-contract-producer');
+
+        expect(target.manifest).toMatchObject({
+            secrets: [{ id: 'document-review-webhook-token' }],
+        });
+
+        const stored = new Map<string, string>();
+        let revisionCounter = 0;
+        const calls: string[] = [];
+        const nextRevision = (): string => {
+            revisionCounter += 1;
+            return `secret-r${revisionCounter}`;
+        };
+        let revision = 'secret-r0';
+        const secrets = Object.freeze({
+            async status(id: string) {
+                calls.push(`status:${id}`);
+                return stored.has(id)
+                    ? { state: 'configured' as const, revision }
+                    : { state: 'missing' as const, revision };
+            },
+            async get(id: string, options?: { reason?: string }) {
+                calls.push(`get:${id}:${options?.reason ?? ''}`);
+                const value = stored.get(id);
+                if (value === undefined) throw new Error('plugin_secret_missing');
+                return value;
+            },
+            async set(id: string, value: string, options?: { expectedRevision?: string }) {
+                calls.push(`set:${id}:${options?.expectedRevision ?? 'none'}`);
+                if (options?.expectedRevision !== undefined && options.expectedRevision !== revision) {
+                    throw new Error('plugin_secret_revision_conflict');
+                }
+                stored.set(id, value);
+                revision = nextRevision();
+                return { revision };
+            },
+            async delete(id: string, options?: { expectedRevision?: string }) {
+                calls.push(`delete:${id}:${options?.expectedRevision ?? 'none'}`);
+                if (options?.expectedRevision !== undefined && options.expectedRevision !== revision) {
+                    throw new Error('plugin_secret_revision_conflict');
+                }
+                stored.delete(id);
+                revision = nextRevision();
+                return { revision };
+            },
+        }) satisfies SecretsService;
+
+        const testkit = await createPluginTestkit({
+            manifest: target.manifest,
+            module: { activate: target.activate },
+            services: { secrets },
+        });
+        try {
+            await expect(testkit.invokeAction(
+                'rotate-document-review-webhook-token',
+                { token: 'first-webhook-token' },
+                { surface: 'cli' },
+            )).resolves.toEqual({ state: 'configured', revision: 'secret-r1' });
+
+            await expect(testkit.invokeAction(
+                'rotate-document-review-webhook-token',
+                { token: 'second-webhook-token' },
+                { surface: 'cli' },
+            )).resolves.toEqual({ state: 'configured', revision: 'secret-r2' });
+
+            await expect(testkit.invokeAction(
+                'rotate-document-review-webhook-token',
+                {},
+                { surface: 'cli' },
+            )).resolves.toEqual({ state: 'missing', revision: 'secret-r3' });
+        } finally {
+            await testkit.dispose();
+        }
+
+        // The incumbent revision is read before every mutation, the read-back
+        // uses a user-readable reason, and no result carries the value.
+        expect(calls).toEqual([
+            'status:document-review-webhook-token',
+            'set:document-review-webhook-token:none',
+            'get:document-review-webhook-token:Confirm the rotated document review webhook credential',
+            'status:document-review-webhook-token',
+            'set:document-review-webhook-token:secret-r1',
+            'get:document-review-webhook-token:Confirm the rotated document review webhook credential',
+            'status:document-review-webhook-token',
+            'delete:document-review-webhook-token:secret-r2',
+        ]);
+        expect(stored.size).toBe(0);
     });
 
     it('declares Triage-shaped source detail through a target-owned descriptor and contributor-owned renderer chain', async () => {

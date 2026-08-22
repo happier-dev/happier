@@ -1,13 +1,33 @@
 import type { PluginSourceTrustPolicyV1 } from '@happier-dev/protocol';
 import type { PluginDistributionIdentity, PluginTrustRecord } from '@/plugins/store/install/trustIdentity';
 
+export type PluginRelativeModuleResolution<TModule> = Readonly<{
+    module: TModule;
+    normalizedModulePath: string;
+    loadMode: 'immutable-js' | 'source-ts';
+}>;
+
+export type PluginRelativeModuleResolver<TModule> = (
+    module: string,
+) => Promise<PluginRelativeModuleResolution<TModule>>;
+
+export type ValidatedAgentSessionRunnerFactoryFactV1 = Readonly<{
+    localAgentId: string;
+    locator: Readonly<{
+        module: string;
+        export: string;
+        runtimeApiVersion: 1;
+        externalSessionsExport?: string;
+    }>;
+    normalizedModulePath: string;
+    loadMode: 'immutable-js' | 'source-ts';
+}>;
+
 export type CommittedPluginExecutionAuthorization = Readonly<{
     pluginId: string;
     immutableGenerationId: string;
     distribution: PluginDistributionIdentity;
     trust: PluginTrustRecord;
-    admittedIntegrity: string;
-    packageDigest: string;
     isCurrent: () => Promise<boolean>;
 }>;
 
@@ -18,6 +38,11 @@ export type FileBackedPluginActivationSource = Readonly<{
     useDevelopmentEntry?: boolean;
     trustPolicy?: PluginSourceTrustPolicyV1;
     committedAuthorization?: CommittedPluginExecutionAuthorization;
+    generationScope?: object;
+    resolveRelativeModule?: PluginRelativeModuleResolver<Record<string, unknown>>;
+    persistValidatedAgentSessionRunnerFactories?: (
+        facts: readonly ValidatedAgentSessionRunnerFactoryFactV1[],
+    ) => Promise<void>;
 }>;
 
 export type BundledPluginActivationSource<TModule> = Readonly<{
@@ -34,8 +59,23 @@ export type BundledPluginActivationSource<TModule> = Readonly<{
      */
     prepare?: () => Promise<void>;
     load: () => Promise<TModule>;
+    resolveRelativeModule?: PluginRelativeModuleResolver<Record<string, unknown>>;
+    persistValidatedAgentSessionRunnerFactories?: (
+        facts: readonly ValidatedAgentSessionRunnerFactoryFactV1[],
+    ) => Promise<void>;
+}>;
+
+export type PreparedPluginActivationSource<TModule> = Readonly<{
+    kind: 'prepared';
+    module: TModule;
+    committedAuthorization: CommittedPluginExecutionAuthorization;
+    resolveRelativeModule?: PluginRelativeModuleResolver<Record<string, unknown>>;
+    persistValidatedAgentSessionRunnerFactories?: (
+        facts: readonly ValidatedAgentSessionRunnerFactoryFactV1[],
+    ) => Promise<void>;
 }>;
 
 export type PluginActivationSource<TModule> =
     | FileBackedPluginActivationSource
-    | BundledPluginActivationSource<TModule>;
+    | BundledPluginActivationSource<TModule>
+    | PreparedPluginActivationSource<TModule>;

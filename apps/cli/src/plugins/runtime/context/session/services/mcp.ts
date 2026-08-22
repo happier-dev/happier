@@ -1,10 +1,19 @@
+import { randomUUID } from 'node:crypto';
+
 import type {
     SessionMcpElicitRequestV1,
     SessionMcpElicitResultV1,
 } from '@happier-dev/agents';
+import type { InteractionsService } from '@happier-dev/plugin-sdk/interactions';
+import { StrictJsonValueSchema } from '@happier-dev/protocol';
 
 import type { ProviderEnforcedPermissionHandler } from '@/agent/permissions/providerEnforced/handler';
 import type { PermissionRequestOwner } from '@/agent/permissions/permissionRequestOwner';
+import {
+    mcpElicitationFormContent,
+    mcpElicitationFormQuestions,
+    parseMcpElicitationFormSchema,
+} from '@/plugins/runtime/invocation/services/mcpElicitationForm';
 
 type SessionMcpScope = Readonly<{
     permissionHandler: Pick<ProviderEnforcedPermissionHandler, 'handleToolCall'>;
@@ -12,6 +21,7 @@ type SessionMcpScope = Readonly<{
 
 export type CreateSessionScopedMcpServicesParams = Readonly<{
     owner?: PermissionRequestOwner | null;
+    interactions?: InteractionsService;
     readScope: (signal?: AbortSignal) => Promise<SessionMcpScope | null>;
 }>;
 
@@ -70,55 +80,44 @@ function canonicalizeMcpToolName(request: SessionMcpElicitRequestV1): string | n
     return `mcp__${serverName}__${toolName}`;
 }
 
-function readContent(value: unknown): Readonly<Record<string, unknown>> | undefined {
-    if (!isRecord(value)) {
-        return undefined;
-    }
-    const answers = value.answers;
-    if (!isRecord(answers)) {
-        return undefined;
-    }
-    return Object.freeze({ ...answers });
-}
-
 function mapPermissionResult(value: unknown): SessionMcpElicitResultV1 {
     const decision = isRecord(value) && typeof value.decision === 'string'
         ? value.decision
         : 'denied';
-    const content = readContent(value);
     if (decision === 'approved' || decision === 'approved_for_session') {
         return Object.freeze({
             status: 'accepted',
             decision,
-            ...(content ? { content } : {}),
         });
     }
     if (decision === 'denied') {
         return Object.freeze({
             status: 'declined',
             decision: 'denied',
-            ...(content ? { content } : {}),
         });
     }
     if (decision === 'abort') {
         return Object.freeze({
             status: 'cancelled',
             decision: 'abort',
-            ...(content ? { content } : {}),
         });
     }
     if (decision === 'approved_execpolicy_amendment') {
         return Object.freeze({
-            status: 'accepted',
-            decision: 'approved',
-            ...(content ? { content } : {}),
+            status: 'failed',
+            reason: 'mcp_elicitation_effect_unsupported',
         });
     }
     return Object.freeze({
         status: 'failed',
         reason: 'mcp_elicitation_result_unrecognized',
-        ...(content ? { content } : {}),
     });
+}
+
+function hasValidMeta(meta: Readonly<Record<string, unknown>> | undefined): boolean {
+    if (meta === undefined) return true;
+    const parsed = StrictJsonValueSchema.safeParse(meta);
+    return parsed.success && isRecord(parsed.data);
 }
 
 export function createSessionScopedMcpServices(
@@ -130,12 +129,84 @@ export function createSessionScopedMcpServices(
     return Object.freeze({
         async elicit(request, options) {
             throwIfAborted(options?.signal);
+            if (!hasValidMeta(request.meta)) {
+                return Object.freeze({
+                    status: 'failed',
+                    reason: 'mcp_elicitation_meta_invalid',
+                });
+            }
             const toolName = canonicalizeMcpToolName(request);
             if (!toolName) {
                 return Object.freeze({
                     status: 'unavailable',
                     reason: 'mcp_elicitation_tool_unavailable',
                 });
+            }
+            if (request.schema !== undefined) {
+                if (!params.interactions) {
+                    return Object.freeze({
+                        status: 'unavailable',
+                        reason: 'mcp_elicitation_interaction_unavailable',
+                    });
+                }
+                try {
+                    const schema = parseMcpElicitationFormSchema(request.schema);
+                    const questions = mcpElicitationFormQuestions(schema);
+                    const title = readTrimmedString(request.prompt) ?? toolName;
+                    if (questions === null) {
+                        const result = await params.interactions.confirm({
+                            kind: 'confirmation',
+                            title: 'MCP request',
+                            message: title,
+                        }, {
+                            ...(options?.signal ? { signal: options.signal } : {}),
+                        });
+                        throwIfAborted(options?.signal);
+                        if (result.status === 'unavailable') {
+                            return Object.freeze({
+                                status: 'unavailable',
+                                reason: 'mcp_elicitation_interaction_unavailable',
+                            });
+                        }
+                        return result.status === 'approved'
+                            ? Object.freeze({
+                                status: 'accepted' as const,
+                                decision: 'approved' as const,
+                                content: Object.freeze({}),
+                            })
+                            : result.status === 'declined'
+                                ? Object.freeze({ status: 'declined' as const, decision: 'denied' as const })
+                                : Object.freeze({ status: 'cancelled' as const, decision: 'abort' as const });
+                    }
+                    const result = await params.interactions.askQuestions({
+                        kind: 'questions',
+                        title,
+                        questions: [...questions],
+                    }, {
+                        ...(options?.signal ? { signal: options.signal } : {}),
+                    });
+                    throwIfAborted(options?.signal);
+                    if (result.status === 'unavailable') {
+                        return Object.freeze({
+                            status: 'unavailable',
+                            reason: 'mcp_elicitation_interaction_unavailable',
+                        });
+                    }
+                    if (result.status !== 'answered') {
+                        return Object.freeze({ status: 'cancelled', decision: 'abort' });
+                    }
+                    return Object.freeze({
+                        status: 'accepted',
+                        decision: 'approved',
+                        content: mcpElicitationFormContent(schema, result.answers),
+                    });
+                } catch {
+                    throwIfAborted(options?.signal);
+                    return Object.freeze({
+                        status: 'failed',
+                        reason: 'mcp_elicitation_schema_invalid',
+                    });
+                }
             }
             const scope = await params.readScope(options?.signal);
             if (!scope) {
@@ -146,24 +217,26 @@ export function createSessionScopedMcpServices(
             }
             const toolCallId = readTrimmedString(request.toolCallId)
                 ?? readTrimmedString(request.requestId)
-                ?? 'mcp-elicitation';
+                ?? `mcp-elicitation:${randomUUID()}`;
             try {
                 const result = await raceWithAbort(
                     scope.permissionHandler.handleToolCall(
                         toolCallId,
                         toolName,
                         request.input,
-                        params.owner ? { owner: params.owner } : undefined,
+                        {
+                            ...(params.owner ? { owner: params.owner } : {}),
+                            ...(options?.signal ? { signal: options.signal } : {}),
+                        },
                     ),
                     options?.signal,
                 );
                 return mapPermissionResult(result);
-            } catch (error) {
+            } catch {
                 throwIfAborted(options?.signal);
                 return Object.freeze({
                     status: 'failed',
                     reason: 'mcp_elicitation_failed',
-                    error,
                 });
             }
         },

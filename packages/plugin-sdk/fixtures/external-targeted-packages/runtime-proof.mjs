@@ -123,6 +123,10 @@ const contribution = contributor.manifest.contributes?.targetedPluginContributio
 if (!targetPointDeclaration || !contribution) {
   throw new Error('Expected one target point and one contributor wire declaration');
 }
+if (!Object.hasOwn(targetPoint, 'semanticCarrier')
+  || Object.getOwnPropertySymbols(targetPoint).length !== 0) {
+  throw new Error('Target point did not expose one ordinary structural semantic carrier');
+}
 if (contribution.operations.inspect !== 'non-protocol-local-action') {
   throw new Error('The contributor lost its arbitrary local Action id');
 }
@@ -134,6 +138,16 @@ if (!targetProtocolDeclaration) {
   throw new Error('Target wire declaration did not contain the contributor protocol identity');
 }
 
+const targetOperationRoles = Object.keys(targetProtocolDeclaration.operations ?? {}).sort();
+const contributorOperationRoles = Object.keys(contribution.operations ?? {}).sort();
+if (targetOperationRoles.length !== 1
+  || targetOperationRoles[0] !== 'inspect'
+  || contributorOperationRoles.length !== 1
+  || contributorOperationRoles[0] !== 'inspect') {
+  throw new Error('Physical-copy target and contributor did not agree on the inspect operation-role census');
+}
+const operations = targetOperationRoles.map((role) => ({ role }));
+
 const surfaces = Object.keys(contribution.surfaces ?? {}).map((role) => {
   const presentation = targetProtocolDeclaration.surfaces?.[role]?.presentation;
   if (presentation !== 'content' && presentation !== 'fill') {
@@ -142,9 +156,10 @@ const surfaces = Object.keys(contribution.surfaces ?? {}).map((role) => {
   return { role, presentation };
 });
 
-const decoded = contributorHost.decodeTargetedContributionPointSemantics(targetPoint, {
+const decoded = contributorHost.decodeTargetedContributionPointSemantics({ ...targetPoint }, {
   protocol: contribution.protocol,
   descriptor: contribution.descriptor,
+  operations,
   surfaces,
 });
 if (!decoded.ok) {

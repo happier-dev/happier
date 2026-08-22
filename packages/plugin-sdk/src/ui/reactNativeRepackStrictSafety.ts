@@ -20,13 +20,9 @@
  * assignment in the FINAL built asset to a strict-safe try/catch (skipping
  * the handful of read-only own props like `length`/`name` — copying them is
  * cosmetic; `__webpack_require__`'s call surface is unaffected either way).
- * `createStrictSafeGuardedRequireRspackPlugin` wraps it as a real
- * rspack/webpack-compatible compiler plugin (duck-typed against the
- * `compiler.hooks.compilation` / `compilation.hooks.processAssets`
- * interface both bundlers share — no hard `@rspack/core` dependency on
- * plugin-sdk, mirroring `hostRuntimeExternalsBuildPlugin.ts`'s no-hard-`vite`
- * pattern) that every reactNative-mode plugin's `rspack.config.mjs` can
- * import and add to its `plugins` array.
+ * `buildUiArtifacts` is the single consumer and applies it to every emitted
+ * JavaScript-carrying file of a `repack` surface, so the patch lands whichever
+ * bundler invocation produced the bytes.
  */
 
 const GUARDED_REQUIRE_UNSAFE_ASSIGNMENT =
@@ -71,70 +67,15 @@ export function containsUnsafeGuardedRequireAssignment(source: string): boolean 
         && !source.includes(GUARDED_REQUIRE_STRICT_SAFE_ASSIGNMENT);
 }
 
-type RspackSource = Readonly<{ source: () => string | Buffer }>;
-
-type RspackRawSourceConstructor = new (source: string) => unknown;
-
-type RspackCompilation = Readonly<{
-    hooks: Readonly<{
-        processAssets: Readonly<{
-            tap: (
-                options: Readonly<{ name: string; stage: number }>,
-                callback: (assets: Readonly<Record<string, RspackSource>>) => void,
-            ) => void;
-        }>;
-    }>;
-    updateAsset: (name: string, newSource: unknown) => void;
-}>;
-
-export type RspackCompatibleCompiler = Readonly<{
-    hooks: Readonly<{
-        compilation: Readonly<{
-            tap: (name: string, callback: (compilation: RspackCompilation) => void) => void;
-        }>;
-    }>;
-    webpack: Readonly<{
-        sources: Readonly<{ RawSource: RspackRawSourceConstructor }>;
-        Compilation: Readonly<{ PROCESS_ASSETS_STAGE_DEV_TOOLING: number }>;
-    }>;
-}>;
-
-const STRICT_SAFE_GUARDED_REQUIRE_PLUGIN_NAME = 'HappierStrictSafeGuardedRequirePlugin';
-
 /**
- * A real rspack/webpack-compatible compiler plugin: rewrites every emitted
- * `.js` asset's `guardedRequire` assignment to the strict-safe form via
- * `applyStrictSafeGuardedRequireTransform`. Duck-typed against the
- * `compiler.hooks.compilation` / `compilation.hooks.processAssets` /
- * `compiler.webpack.{sources.RawSource,Compilation.PROCESS_ASSETS_STAGE_*}`
- * surface both rspack and webpack compilers expose identically — spread (or
- * push) the returned object into a `rspack.config.mjs`'s own `plugins` array.
+ * The single owner of "this emitted Re.Pack asset carries JavaScript".
+ *
+ * Re.Pack emits the container entry and its chunks under artifact-only
+ * extensions (`<platform>.bundle`, `[name].chunk.bundle`) so the host app can
+ * package them through Metro as opaque assets — Metro re-derives asset-ness
+ * from the file name, so a `.js`-terminated artifact would be transformed and
+ * executed instead of delivered. Source maps (`.map`) are data, never code.
  */
-export function createStrictSafeGuardedRequireRspackPlugin(): Readonly<{
-    apply: (compiler: RspackCompatibleCompiler) => void;
-}> {
-    return Object.freeze({
-        apply(compiler: RspackCompatibleCompiler): void {
-            compiler.hooks.compilation.tap(STRICT_SAFE_GUARDED_REQUIRE_PLUGIN_NAME, (compilation) => {
-                compilation.hooks.processAssets.tap(
-                    {
-                        name: STRICT_SAFE_GUARDED_REQUIRE_PLUGIN_NAME,
-                        stage: compiler.webpack.Compilation.PROCESS_ASSETS_STAGE_DEV_TOOLING,
-                    },
-                    (assets) => {
-                        for (const [name, asset] of Object.entries(assets)) {
-                            if (!name.endsWith('.js')) {
-                                continue;
-                            }
-                            const original = String(asset.source());
-                            const { source, patched } = applyStrictSafeGuardedRequireTransform(original);
-                            if (patched) {
-                                compilation.updateAsset(name, new compiler.webpack.sources.RawSource(source));
-                            }
-                        }
-                    },
-                );
-            });
-        },
-    });
+export function carriesReactNativeArtifactJavaScript(assetName: string): boolean {
+    return assetName.endsWith('.js') || assetName.endsWith('.bundle');
 }

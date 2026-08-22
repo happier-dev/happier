@@ -16,6 +16,7 @@ const plugin = definePlugin({
     'prepare-document-review': {
       title: 'Prepare document review',
       surfaces: ['plugin'],
+      execution: { target: 'daemon' },
       inputSchema: triageSourceInspectionInputSchema,
       resultSchema: triageSourceInspectionResultSchema,
       run: async (input) => ({

@@ -46,10 +46,26 @@ export function Label({ testID, children, ...text }: LabelProps): ReactElement {
   return <HappierLabel theme={usePluginTheme()} testID={testID}>{children ?? label}</HappierLabel>;
 }
 
-export type DividerProps = Readonly<{ accessibilityLabel?: string; testID?: string }>;
+export type DividerProps = Readonly<{
+  accessibilityLabel?: string;
+  accessibilityLabelKey?: string;
+  testID?: string;
+}>;
 
 export function Divider(props: DividerProps): ReactElement {
-  return <HappierDivider {...props} color={usePluginTheme().colors.divider} />;
+  const { accessibilityLabel, accessibilityLabelKey, ...rest } = props;
+  const resolvedAccessibilityLabel = resolveAuthorText(
+    usePluginTranslation(),
+    accessibilityLabel,
+    accessibilityLabelKey,
+  );
+  return (
+    <HappierDivider
+      {...rest}
+      accessibilityLabel={resolvedAccessibilityLabel}
+      color={usePluginTheme().colors.divider}
+    />
+  );
 }
 
 export type BadgeProps = AuthorText & Readonly<{ tone?: HappierTone; testID?: string; children?: ReactNode }>;
@@ -76,15 +92,38 @@ export function Badge({ tone = 'neutral', testID, children, ...text }: BadgeProp
 /** A portable author-owned metadata row; visual tokens remain adapter-owned. */
 export type MetadataEntry = Readonly<{
   label: string;
+  labelKey?: string;
   value: string;
   tone?: HappierTone;
   accessibilityLabel?: string;
+  accessibilityLabelKey?: string;
   testID?: string;
 }>;
-export type MetadataProps = Readonly<{ title?: string; entries: readonly MetadataEntry[]; testID?: string }>;
+export type MetadataProps = Readonly<{
+  title?: string;
+  titleKey?: string;
+  entries: readonly MetadataEntry[];
+  testID?: string;
+}>;
 
 export function Metadata(props: MetadataProps): ReactElement {
-  return <HappierMetadata {...props} theme={usePluginTheme()} />;
+  const translate = usePluginTranslation();
+  return (
+    <HappierMetadata
+      title={resolveAuthorText(translate, props.title, props.titleKey)}
+      entries={props.entries.map(({ labelKey, accessibilityLabelKey, ...entry }) => ({
+        ...entry,
+        label: resolveAuthorText(translate, entry.label, labelKey) ?? entry.label,
+        accessibilityLabel: resolveAuthorText(
+          translate,
+          entry.accessibilityLabel,
+          accessibilityLabelKey,
+        ),
+      }))}
+      testID={props.testID}
+      theme={usePluginTheme()}
+    />
+  );
 }
 
 export type LinkProps = Readonly<{ title: string; titleKey?: string; url: string; disabled?: boolean; testID?: string }>;
@@ -105,14 +144,32 @@ export function Link({ title, titleKey, url, disabled, testID }: LinkProps): Rea
   );
 }
 
-export type ProgressProps = Readonly<{ value?: number; label: string; testID?: string }>;
+export type ProgressProps = Readonly<{ value?: number; label: string; labelKey?: string; testID?: string }>;
 
-export function Progress(props: ProgressProps): ReactElement {
-  return <HappierProgress {...props} theme={usePluginTheme()} />;
+export function Progress({ label, labelKey, ...props }: ProgressProps): ReactElement {
+  const resolvedLabel = resolveAuthorText(usePluginTranslation(), label, labelKey) ?? label;
+  return <HappierProgress {...props} label={resolvedLabel} theme={usePluginTheme()} />;
 }
 
-export type BannerProps = Readonly<{ tone?: HappierTone; title: string; description?: string; action?: ReactNode; testID?: string }>;
+export type BannerProps = Readonly<{
+  tone?: HappierTone;
+  title: string;
+  titleKey?: string;
+  description?: string;
+  descriptionKey?: string;
+  action?: ReactNode;
+  testID?: string;
+}>;
 
-export function Banner({ tone = 'info', ...props }: BannerProps): ReactElement {
-  return <HappierBanner {...props} tone={tone} theme={usePluginTheme()} />;
+export function Banner({ tone = 'info', title, titleKey, description, descriptionKey, ...props }: BannerProps): ReactElement {
+  const translate = usePluginTranslation();
+  return (
+    <HappierBanner
+      {...props}
+      title={resolveAuthorText(translate, title, titleKey) ?? title}
+      description={resolveAuthorText(translate, description, descriptionKey)}
+      tone={tone}
+      theme={usePluginTheme()}
+    />
+  );
 }

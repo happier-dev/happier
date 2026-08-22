@@ -257,7 +257,12 @@ describe('protocol-authoring composition algebra', () => {
         expect(source).not.toContain('schemaTypeEvidence');
         expect(source).not.toContain('Reflect.apply');
         expect(source).toContain('canonicalDefineProtocolLiteral');
-        expect(source).toContain("from '@happier-dev/protocol/plugins/actions/json-schema-validation'");
+        // The facade delegates to Protocol's composable-schema owner. That owner is the
+        // AJV-free `protocol-composable-schema` subpath, not the compiler subpath that
+        // re-exports it: reaching the compiler here would put ajv/ajv-formats/fast-uri
+        // into every browser and React Native bundle that authors a schema.
+        expect(source).toContain("from '@happier-dev/protocol/plugins/actions/protocol-composable-schema'");
+        expect(source).not.toContain("from '@happier-dev/protocol/plugins/actions/json-schema-validation'");
     });
 
     it('removes the retired private authoring/adoption dialect after its consumers migrate', async () => {

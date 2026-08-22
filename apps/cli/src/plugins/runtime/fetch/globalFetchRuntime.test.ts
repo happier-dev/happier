@@ -2,6 +2,32 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createGlobalFetchRuntime } from './globalFetchRuntime';
 
+const STABLE_RESPONSE_BODY_CEILING_BYTES = 32 * 1024 * 1024;
+
+function createTrackedStream(chunks: readonly Uint8Array[]) {
+    let pullCount = 0;
+    let cancellationReason: unknown;
+    const body = new ReadableStream<Uint8Array>({
+        pull(controller) {
+            const chunk = chunks[pullCount];
+            pullCount += 1;
+            if (chunk) {
+                controller.enqueue(chunk);
+            } else {
+                controller.close();
+            }
+        },
+        cancel(reason) {
+            cancellationReason = reason;
+        },
+    }, { highWaterMark: 0 });
+    return {
+        body,
+        getCancellationReason: () => cancellationReason,
+        getPullCount: () => pullCount,
+    };
+}
+
 describe('createGlobalFetchRuntime', () => {
     afterEach(() => {
         vi.unstubAllGlobals();
@@ -14,9 +40,9 @@ describe('createGlobalFetchRuntime', () => {
         }));
         vi.stubGlobal('fetch', fetchMock);
 
-        const response = await createGlobalFetchRuntime()({
+        const response = await createGlobalFetchRuntime().request({
             url: 'https://api.example.test/start',
-            metadata: { redirect: 'manual' },
+            redirect: 'manual',
         });
 
         expect(fetchMock).toHaveBeenCalledWith(
@@ -25,5 +51,114 @@ describe('createGlobalFetchRuntime', () => {
         );
         expect(response.status).toBe(302);
         expect(response.headers.location).toBe('https://next.example.test/result');
+        expect(response.body.byteLength).toBe(0);
+    });
+
+    it('stops consuming an oversized streamed response before pulling another chunk', async () => {
+        const body = createTrackedStream([
+            new Uint8Array(STABLE_RESPONSE_BODY_CEILING_BYTES),
+            new Uint8Array([1]),
+            new Uint8Array([2]),
+        ]);
+        vi.stubGlobal('fetch', vi.fn(async () => new Response(body.body)));
+
+        let error: unknown;
+        try {
+            await createGlobalFetchRuntime().request({
+                url: 'https://api.example.test/oversized',
+                redirect: 'error',
+            });
+        } catch (caught) {
+            error = caught;
+        }
+
+        expect(error).toMatchObject({
+            code: 'plugin_fetch_response_too_large',
+        });
+
+        expect(body.getPullCount()).toBe(2);
+        expect(body.getCancellationReason()).toMatchObject({
+            code: 'plugin_fetch_response_too_large',
+        });
+    });
+
+    it('cancels a known oversized body before its first chunk is pulled', async () => {
+        const body = createTrackedStream([new Uint8Array([1])]);
+        vi.stubGlobal('fetch', vi.fn(async () => new Response(body.body, {
+            headers: { 'content-length': String(STABLE_RESPONSE_BODY_CEILING_BYTES + 1) },
+        })));
+
+        let error: unknown;
+        try {
+            await createGlobalFetchRuntime().request({
+                url: 'https://api.example.test/known-oversized',
+                redirect: 'error',
+            });
+        } catch (caught) {
+            error = caught;
+        }
+
+        expect(error).toMatchObject({
+            code: 'plugin_fetch_response_too_large',
+        });
+        expect(body.getPullCount()).toBe(0);
+        expect(body.getCancellationReason()).toMatchObject({
+            code: 'plugin_fetch_response_too_large',
+        });
+    });
+
+    it('returns a response exactly at the buffered ceiling when content length is absent', async () => {
+        const expected = new Uint8Array(STABLE_RESPONSE_BODY_CEILING_BYTES);
+        expected[0] = 1;
+        expected[expected.byteLength - 1] = 2;
+        vi.stubGlobal('fetch', vi.fn(async () => new Response(createTrackedStream([expected]).body)));
+
+        const response = await createGlobalFetchRuntime().request({
+            url: 'https://api.example.test/at-limit',
+            redirect: 'error',
+        });
+
+        expect(response.body).toBeInstanceOf(Uint8Array);
+        expect(response.body.byteLength).toBe(STABLE_RESPONSE_BODY_CEILING_BYTES);
+        expect(response.body[0]).toBe(1);
+        expect(response.body[response.body.byteLength - 1]).toBe(2);
+    });
+
+    it('propagates caller abort to an in-flight streamed response', async () => {
+        const cancellation = new AbortController();
+        let streamController: ReadableStreamDefaultController<Uint8Array> | undefined;
+        let resolvePullStarted: (() => void) | undefined;
+        const pullStarted = new Promise<void>((resolve) => {
+            resolvePullStarted = resolve;
+        });
+        let receivedSignal: AbortSignal | null | undefined;
+        const body = new ReadableStream<Uint8Array>({
+            start(controller) {
+                streamController = controller;
+            },
+            pull() {
+                resolvePullStarted?.();
+                return new Promise<void>(() => undefined);
+            },
+        }, { highWaterMark: 0 });
+        vi.stubGlobal('fetch', vi.fn(async (_url: string, init?: RequestInit) => {
+            receivedSignal = init?.signal;
+            receivedSignal?.addEventListener('abort', () => {
+                const error = new Error('request aborted');
+                error.name = 'AbortError';
+                streamController?.error(error);
+            }, { once: true });
+            return new Response(body);
+        }));
+
+        const pending = createGlobalFetchRuntime().request({
+            url: 'https://api.example.test/slow',
+            redirect: 'error',
+        }, { signal: cancellation.signal });
+        await pullStarted;
+        cancellation.abort();
+
+        await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+        expect(receivedSignal?.aborted).toBe(true);
     });
 });

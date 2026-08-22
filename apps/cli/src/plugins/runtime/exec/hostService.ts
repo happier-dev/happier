@@ -8,6 +8,7 @@ import {
     type InstallablesRegistry,
 } from '@happier-dev/protocol';
 import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process';
+import { PluginError } from '@happier-dev/plugin-sdk';
 import type {
     ExecClientHandleV1,
     ExecClientDisposeReasonV1,
@@ -34,7 +35,11 @@ import type { CatalogAgentLookupId } from '@/agent/catalog/ids';
 import { ensureRuntimeInstallablesForLaunch } from '@/packagedRuntime/installables/ensureForLaunch';
 import { getRuntimeInstallableAdapter } from '@/packagedRuntime/installables/registry';
 
-import { PluginExecClientError, sanitizeExecDiagnosticText } from './errors';
+import {
+    PluginExecClientError,
+    createPluginExecClientExitError,
+    sanitizeExecDiagnosticText,
+} from './errors';
 import { createFramedBytesProcessClient } from './framedBytes';
 import { createJsonRpcProcessClient } from './jsonRpc';
 import { createJsonStreamProcessClient } from './jsonStream';
@@ -86,13 +91,14 @@ export type PluginExecErrorCode =
     | 'PLUGIN_EXEC_UNSUPPORTED_LAUNCH'
     | 'PLUGIN_EXEC_PATH_ONLY_RUNTIME_DENIED';
 
-export class PluginExecError extends Error {
-    readonly code: PluginExecErrorCode;
-
+/**
+ * Launch denials reach plugin authors through `ctx.exec`, so they ARE canonical
+ * PluginErrors. Never assign `name` here - `isPluginError` recognizes the
+ * contract by name+data, not by class identity.
+ */
+export class PluginExecError extends PluginError {
     constructor(code: PluginExecErrorCode, message: string) {
-        super(message);
-        this.name = 'PluginExecError';
-        this.code = code;
+        super({ code, message });
     }
 }
 
@@ -524,6 +530,7 @@ async function createProtocolClientForSpec(
                 handlers: input.handlers?.jsonRpc,
                 hooks: composeJsonRpcDiagnosticHooks(input.hooks?.jsonRpc, rpcLogger),
                 readStderrPreview: spawned.readStderrPreview,
+                onFailure: () => spawned.handle.kill(),
             });
         case 'json-stream':
             assertStrictLfJsonFraming(input);
@@ -672,10 +679,12 @@ export function createPluginExecService(params: CreatePluginExecServiceParams = 
             if (status !== 'disposed') {
                 status = 'exited';
             }
-            settleProtocolExitAfterStdoutDrain(spawned, protocolClient, new PluginExecClientError(
-                'PLUGIN_EXEC_CLIENT_EXITED',
-                'Plugin exec client process exited',
-                { stderrPreview: spawned.readStderrPreview() },
+            settleProtocolExitAfterStdoutDrain(spawned, protocolClient, createPluginExecClientExitError(
+                {
+                    exitCode: result.exitCode,
+                    signal: result.signal,
+                },
+                spawned.readStderrPreview(),
             ));
             publishExit(result);
             void rpcLogger.flush();
@@ -684,16 +693,30 @@ export function createPluginExecService(params: CreatePluginExecServiceParams = 
                 status = 'exited';
             }
             const exitError = error instanceof Error ? error : new Error(String(error));
-            protocolClient.settleExit(exitError);
+            const diagnostic = sanitizeExecDiagnosticText(
+                exitError.message,
+                input.lifecycle?.maxStderrBytes ?? options?.maxStderrBytes ?? 4096,
+                input.lifecycle?.diagnostics?.sanitizer,
+            );
+            const rawStderrPreview = spawned.readStderrPreview();
+            const stderr = sanitizeExecDiagnosticText(
+                rawStderrPreview || exitError.message,
+                input.lifecycle?.maxStderrBytes ?? options?.maxStderrBytes ?? 4096,
+                input.lifecycle?.diagnostics?.sanitizer,
+            );
+            protocolClient.settleExit(createPluginExecClientExitError(
+                {
+                    exitCode: null,
+                    signal: null,
+                    diagnostic,
+                },
+                rawStderrPreview ? stderr : undefined,
+            ));
             const result: ExecRunResultV1 = Object.freeze({
                 exitCode: null,
                 signal: null,
                 stdout: '',
-                stderr: sanitizeExecDiagnosticText(
-                    spawned.readStderrPreview() || exitError.message,
-                    input.lifecycle?.maxStderrBytes ?? options?.maxStderrBytes ?? 4096,
-                    input.lifecycle?.diagnostics?.sanitizer,
-                ),
+                stderr,
             });
             publishExit(result);
             void rpcLogger.flush();

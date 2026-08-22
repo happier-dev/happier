@@ -3,7 +3,10 @@ import type {
   AgentTerminalSessionStateUpdate,
   AttachSurface,
   CheckpointSurface,
+  ForkSurfaceV1,
+  HandoffSurfaceV1,
 } from './projections.js';
+import type { PluginInvocationContext } from '../invocation.js';
 import type { ProviderBoundModelRef } from '@happier-dev/protocol';
 
 export type {
@@ -12,6 +15,46 @@ export type {
   AttachSurface,
   CheckpointSurface,
 } from './projections.js';
+
+/**
+ * Agent-authored fork operations execute only after the host creates a
+ * current, operation-scoped invocation context. The factory itself receives
+ * no services.
+ */
+export type AgentRuntimeForkSurface = Readonly<{
+  evaluateAvailability?: (
+    request: Parameters<NonNullable<ForkSurfaceV1['evaluateAvailability']>>[0],
+    context: PluginInvocationContext,
+  ) => ReturnType<NonNullable<ForkSurfaceV1['evaluateAvailability']>>;
+  fork?: (
+    request: Parameters<NonNullable<ForkSurfaceV1['fork']>>[0],
+    context: PluginInvocationContext,
+  ) => ReturnType<NonNullable<ForkSurfaceV1['fork']>>;
+  resolveReplayChildLaunch?: (
+    request: Parameters<NonNullable<ForkSurfaceV1['resolveReplayChildLaunch']>>[0],
+    context: PluginInvocationContext,
+  ) => ReturnType<NonNullable<ForkSurfaceV1['resolveReplayChildLaunch']>>;
+}>;
+
+/**
+ * Agent-authored handoff operations execute only after the host creates a
+ * current, operation-scoped invocation context. The factory itself receives
+ * no services.
+ */
+export type AgentRuntimeHandoffSurface = Readonly<{
+  evaluateAvailability?: (
+    request: Parameters<NonNullable<HandoffSurfaceV1['evaluateAvailability']>>[0],
+    context: PluginInvocationContext,
+  ) => ReturnType<NonNullable<HandoffSurfaceV1['evaluateAvailability']>>;
+  exportBundle: (
+    request: Parameters<HandoffSurfaceV1['exportBundle']>[0],
+    context: PluginInvocationContext,
+  ) => ReturnType<HandoffSurfaceV1['exportBundle']>;
+  importBundle: (
+    request: Parameters<HandoffSurfaceV1['importBundle']>[0],
+    context: PluginInvocationContext,
+  ) => ReturnType<HandoffSurfaceV1['importBundle']>;
+}>;
 
 export type AgentTerminalLaunchMetadata = Readonly<Partial<{
   terminalRuntime: Readonly<Partial<{
@@ -82,6 +125,8 @@ export interface AgentTerminalSurface {
 
 export interface AgentRuntimeSurfaces {
   readonly terminal?: AgentTerminalSurface;
+  readonly fork?: AgentRuntimeForkSurface;
+  readonly handoff?: AgentRuntimeHandoffSurface;
   readonly attach?: AttachSurface;
   readonly checkpoint?: CheckpointSurface;
 }

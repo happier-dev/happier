@@ -109,10 +109,20 @@ describe('plugin-ui Button renders real React Native pressable semantics', () =>
   });
 
   it('resolves a declared translation key and falls back to author text for an undeclared one', () => {
-    const context = createSurfaceContext({ translations: { 'acme.refresh': 'Rafraîchir' } });
+    const context = createSurfaceContext({ translations: {
+      'acme.refresh': 'Rafraîchir',
+      'acme.refresh.accessible': 'Actualiser les résultats',
+    } });
     const mount = mountSurface(
       <>
-        <Button titleKey="acme.refresh" title="Refresh" onPress={() => {}} testID="translated" />
+        <Button
+          titleKey="acme.refresh"
+          title="Refresh"
+          accessibilityLabel="Refresh results"
+          accessibilityLabelKey="acme.refresh.accessible"
+          onPress={() => {}}
+          testID="translated"
+        />
         <Button titleKey="acme.absent" title="Retry" onPress={() => {}} testID="fallback" />
       </>,
       context,
@@ -121,6 +131,8 @@ describe('plugin-ui Button renders real React Native pressable semantics', () =>
     expect(mount.container.textContent).toContain('Rafraîchir');
     expect(mount.container.textContent).toContain('Retry');
     expect(mount.container.textContent).not.toContain('acme.absent');
+    expect(mount.container.querySelector('[data-testid="translated"]')?.getAttribute('aria-label'))
+      .toBe('Actualiser les résultats');
 
     mount.unmount();
   });

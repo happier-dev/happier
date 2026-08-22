@@ -20,15 +20,22 @@ import {
     compilePluginJsonSchema,
     isValidPluginJsonSchemaValue,
     isDynamicPluginResourceContributionV2,
+    PluginContributionLocalIdSchema,
     normalizePluginDeclarativeDocumentV1,
     PLUGIN_DECLARATIVE_DOCUMENT_CONTENT_TYPE_V1,
 } from '@happier-dev/protocol';
 import type {
     JsonValue,
+    PluginAccountCollectionMigrationRuntimeProjection,
     PluginActivationModule,
     PluginApi,
+    PluginClientApi,
     PluginInvocationContext,
 } from '@happier-dev/plugin-sdk';
+import type {
+    PluginClientActionContext,
+    PluginClientActionHandler,
+} from '@happier-dev/plugin-sdk/actions';
 import type {
     PluginAccountCollection,
     PluginAccountCollectionDefinition,
@@ -73,10 +80,14 @@ const packageJsonPath = join(packageRoot, 'package.json');
 const pluginUiPackageRoot = join(packageRoot, '..', 'plugin-ui');
 const pluginUiPackageJsonPath = join(pluginUiPackageRoot, 'package.json');
 const pluginUiDocsRoot = join(repoRoot, 'apps', 'docs', 'content', 'docs', 'plugins', 'ui');
+const pluginDocsRoot = join(repoRoot, 'apps', 'docs', 'content', 'docs', 'plugins');
+const sdkReadmePath = join(packageRoot, 'README.md');
+const minimalManifestDocumentationPath = join(pluginDocsRoot, 'manifest', 'index.mdx');
 
 type PublicAuthoringSourceActivationEntry = Readonly<{
     manifest: PluginManifest;
     activate: PluginActivationModule['activate'];
+    collectionMigrations: PluginAccountCollectionMigrationRuntimeProjection;
 }>;
 
 async function loadPublicAuthoringSourceActivationEntry(): Promise<PublicAuthoringSourceActivationEntry> {
@@ -87,7 +98,9 @@ async function loadPublicAuthoringSourceActivationEntry(): Promise<PublicAuthori
     const entry = await import(pathToFileURL(
         join(examplesRoot, 'public-authoring', 'index.ts'),
     ).href) as Partial<PublicAuthoringSourceActivationEntry>;
-    if (!entry.manifest || typeof entry.activate !== 'function') {
+    if (!entry.manifest
+        || typeof entry.activate !== 'function'
+        || entry.collectionMigrations === undefined) {
         throw new TypeError('public_authoring_source_entry_missing_activation');
     }
     return entry as PublicAuthoringSourceActivationEntry;
@@ -229,6 +242,8 @@ function createReviewSessionStatusAccountStorage(summary: string | null) {
         async delete() { throw new Error('review_session_status_fixture_delete_not_expected'); },
         async query() { throw new Error('review_session_status_fixture_query_not_expected'); },
         async batch() { throw new Error('review_session_status_fixture_batch_not_expected'); },
+        async limits() { throw new Error('review_session_status_fixture_limits_not_expected'); },
+        async measureBatch() { throw new Error('review_session_status_fixture_measure_batch_not_expected'); },
         watch,
     };
     const kv: AccountKvService = {
@@ -543,6 +558,244 @@ function readFencedCode(
     }
     return block;
 }
+
+type FencedCodeBlock = Readonly<{
+    language: string;
+    source: string;
+}>;
+
+function readFencedCodeBlocks(documentPath: string): readonly FencedCodeBlock[] {
+    const source = readFileSync(documentPath, 'utf8');
+    return [...source.matchAll(/```([^\n]*)\n([\s\S]*?)\n```/gu)].map((match) => ({
+        language: match[1].trim(),
+        source: match[2],
+    }));
+}
+
+function containsDefinePluginCall(source: string): boolean {
+    const sourceFile = ts.createSourceFile(
+        'documented-plugin-example.ts',
+        source,
+        ts.ScriptTarget.Latest,
+        true,
+    );
+    let found = false;
+    const visit = (node: ts.Node): void => {
+        if (ts.isCallExpression(node)
+            && ts.isIdentifier(node.expression)
+            && node.expression.text === 'definePlugin') {
+            found = true;
+            return;
+        }
+        ts.forEachChild(node, visit);
+    };
+    visit(sourceFile);
+    return found;
+}
+
+function propertyName(node: ts.PropertyName | undefined): string | undefined {
+    if (!node) return undefined;
+    if (ts.isIdentifier(node) || ts.isStringLiteral(node) || ts.isNumericLiteral(node)) {
+        return node.text;
+    }
+    return undefined;
+}
+
+function hasDocumentedPluginDaemonEntrypoint(source: string): boolean {
+    const sourceFile = ts.createSourceFile(
+        'documented-plugin-example.ts',
+        source,
+        ts.ScriptTarget.Latest,
+        true,
+    );
+    let found = false;
+    let everyDocumentedPluginHasDaemonEntrypoint = true;
+    const visit = (node: ts.Node): void => {
+        if (
+            ts.isCallExpression(node)
+            && ts.isIdentifier(node.expression)
+            && node.expression.text === 'definePlugin'
+            && ts.isObjectLiteralExpression(node.arguments[0])
+        ) {
+            const entrypoints = node.arguments[0].properties.find((property) => (
+                ts.isPropertyAssignment(property) && propertyName(property.name) === 'entrypoints'
+            ));
+            const hasDaemonEntrypoint = Boolean(
+                entrypoints
+                && ts.isPropertyAssignment(entrypoints)
+                && ts.isObjectLiteralExpression(entrypoints.initializer)
+                && entrypoints.initializer.properties.some((property) => (
+                    ts.isPropertyAssignment(property)
+                    && propertyName(property.name) === 'daemon'
+                    && ts.isStringLiteral(property.initializer)
+                )),
+            );
+            found = true;
+            everyDocumentedPluginHasDaemonEntrypoint &&= hasDaemonEntrypoint;
+        }
+        ts.forEachChild(node, visit);
+    };
+    visit(sourceFile);
+    return found && everyDocumentedPluginHasDaemonEntrypoint;
+}
+
+function collectDocumentationLocalIds(source: string): readonly string[] {
+    const sourceFile = ts.createSourceFile(
+        'documented-plugin-example.ts',
+        source,
+        ts.ScriptTarget.Latest,
+        true,
+    );
+    const values: string[] = [];
+    const localIdMaps = new Set([
+        'actions',
+        'agents',
+        'accountCollections',
+        'backgroundServices',
+        'commands',
+        'events',
+        'hooks',
+        'managedServices',
+        'mcpServers',
+        'notificationChannels',
+        'promptAssets',
+        'resources',
+        'settings',
+        'tools',
+        'webhooks',
+    ]);
+    const visit = (node: ts.Node, parentProperty: string | undefined): void => {
+        if (ts.isCallExpression(node)
+            && ts.isIdentifier(node.expression)
+            && (node.expression.text === 'definePlugin'
+                || node.expression.text === 'defineAccountCollection'
+                || node.expression.text === 'defineUiSurfaceDefinition')) {
+            const parentExpression = node.expression.text;
+            const argument = node.arguments[0];
+            if (argument && ts.isObjectLiteralExpression(argument)) {
+                ts.forEachChild(argument, (child) => visit(child, parentExpression));
+            }
+            return;
+        }
+        if (ts.isPropertyAssignment(node)) {
+            const name = propertyName(node.name);
+            if (name === 'localId' && ts.isStringLiteral(node.initializer)) {
+                values.push(node.initializer.text);
+            }
+            if (name && localIdMaps.has(name) && ts.isObjectLiteralExpression(node.initializer)) {
+                for (const child of node.initializer.properties) {
+                    const childName = propertyName(
+                        ts.isPropertyAssignment(child) || ts.isMethodDeclaration(child)
+                            ? child.name
+                            : undefined,
+                    );
+                    if (childName) values.push(childName);
+                }
+            }
+            if (name === 'id' && parentProperty === 'defineAccountCollection'
+                && ts.isStringLiteral(node.initializer)) {
+                values.push(node.initializer.text);
+            }
+            if (name === 'id' && parentProperty === 'defineUiSurfaceDefinition'
+                && ts.isStringLiteral(node.initializer)) {
+                values.push(node.initializer.text);
+            }
+            ts.forEachChild(node.initializer, (child) => visit(child, name));
+            return;
+        }
+        ts.forEachChild(node, (child) => visit(child, parentProperty));
+    };
+    // The parent marker lets us distinguish a plugin's top-level id from
+    // collection/surface ids while still walking every nested declaration.
+    for (const statement of sourceFile.statements) {
+        if (ts.isVariableStatement(statement)) {
+            ts.forEachChild(statement, (child) => visit(child, undefined));
+        } else {
+            visit(statement, undefined);
+        }
+    }
+    return values;
+}
+
+function collectManifestJsonLocalIds(value: unknown): readonly string[] {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return [];
+    const contributes = (value as Readonly<{ contributes?: unknown }>).contributes;
+    if (!contributes || typeof contributes !== 'object' || Array.isArray(contributes)) return [];
+
+    const values: string[] = [];
+    for (const contribution of Object.values(contributes as Record<string, unknown>)) {
+        if (Array.isArray(contribution)) {
+            for (const row of contribution) {
+                if (!row || typeof row !== 'object' || Array.isArray(row)) continue;
+                const candidate = row as Readonly<{ id?: unknown; action?: unknown; localId?: unknown }>;
+                for (const field of [candidate.id, candidate.action, candidate.localId]) {
+                    if (typeof field === 'string') values.push(field);
+                }
+            }
+        } else if (contribution && typeof contribution === 'object') {
+            for (const key of Object.keys(contribution)) values.push(key);
+        }
+    }
+    return values;
+}
+
+function expectDocumentationLocalId(value: string, location: string): void {
+    expect(
+        PluginContributionLocalIdSchema.safeParse(value).success,
+        `${location} uses non-canonical contribution local id '${value}'`,
+    ).toBe(true);
+}
+
+async function listMdxFiles(dir: string): Promise<readonly string[]> {
+    const entries = await readdir(dir, { withFileTypes: true });
+    const files = await Promise.all(entries.map(async (entry) => {
+        const entryPath = join(dir, entry.name);
+        if (entry.isDirectory()) return listMdxFiles(entryPath);
+        return entry.isFile() && entry.name.endsWith('.mdx') ? [entryPath] : [];
+    }));
+    return files.flat().sort();
+}
+
+async function listPublishedAuthoringDocumentationFiles(): Promise<readonly string[]> {
+    return [
+        ...await listMdxFiles(pluginDocsRoot),
+        sdkReadmePath,
+    ].sort();
+}
+
+function publishedAuthoringDocumentationKey(documentPath: string): string {
+    return documentPath === sdkReadmePath
+        ? 'README.md'
+        : relative(pluginDocsRoot, documentPath);
+}
+
+/**
+ * Complete documentation examples may name a real, separately compiled
+ * companion leaf. Stage that maintained source beside the extracted package
+ * root so this source-level contract exercises the same ESM resolution an
+ * author uses, rather than replacing the import with a test-only stub.
+ */
+const documentedSnippetSupportFiles = new Map<string, readonly Readonly<{
+    source: string;
+    destination: string;
+}>[]>([
+    ['surfaces/external-sessions.mdx#0', [{
+        source: 'advanced-package-root/agent/reviewAgent.ts',
+        destination: 'agent/reviewAgent.ts',
+    }]],
+    ['surfaces/external-sessions.mdx#5', [{
+        source: 'advanced-package-root/agent/reviewAgent.ts',
+        destination: 'agent/reviewAgent.ts',
+    }]],
+    ['surfaces/external-sessions.mdx#6', [{
+        source: 'advanced-package-root/agent/reviewAgent.ts',
+        destination: 'agent/reviewAgent.ts',
+    }]],
+    ['surfaces/external-sessions.mdx#8', [{
+        source: 'advanced-package-root/agent/reviewAgent.ts',
+        destination: 'agent/reviewAgent.ts',
+    }]],
+]);
 
 function shouldCopyExamplePath(source: string): boolean {
     return !source.split(/[\\/]+/u).some((segment) => segment === 'node_modules' || segment === 'dist');
@@ -963,7 +1216,9 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
         const publicAuthoringRoot = join(examplesRoot, 'public-authoring');
         const publicAuthoringEntry = readFileSync(join(publicAuthoringRoot, 'index.ts'), 'utf8');
         expect(existsSync(join(publicAuthoringRoot, '.happier-plugin', 'plugin.json'))).toBe(false);
-        expect(publicAuthoringEntry).toMatch(/export const \{ manifest, activate \} = definePlugin/u);
+        expect(publicAuthoringEntry).toMatch(
+            /export const \{ manifest, activate, collectionMigrations \} = definePlugin/u,
+        );
         expect(readExampleManifest('public-authoring').activation?.events ?? []).not.toContainEqual({ kind: 'startup' });
     });
 
@@ -979,7 +1234,9 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
         expect(sourceManifest.ok).toBe(true);
         if (!sourceManifest.ok) return;
         expect(existsSync(join(examplesRoot, 'public-authoring', '.happier-plugin', 'plugin.json'))).toBe(false);
-        expect(sourceEntry).toMatch(/export const \{ manifest, activate \} = definePlugin\(publicAuthoringDefinition\)/u);
+        expect(sourceEntry).toMatch(
+            /export const \{ manifest, activate, collectionMigrations \} = definePlugin\(publicAuthoringDefinition\)/u,
+        );
         expect(readFileSync(join(examplesRoot, 'public-authoring', 'definition.ts'), 'utf8')).toMatch(
             /export const publicAuthoringDefinition: PublicAuthoringDefinition = \{/u,
         );
@@ -990,6 +1247,12 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
         expect(publicAuthoringEntry.manifest).toBe(actualPublicAuthoringEntry.manifest);
         expect(publicAuthoringEntry.activate).toBe(actualPublicAuthoringEntry.activate);
         expect(publicAuthoringEntry.activate).toBeTypeOf('function');
+        expect(publicAuthoringEntry.collectionMigrations).toEqual({
+            'review-session-statuses': [],
+        });
+        expect(actualPublicAuthoringEntry.collectionMigrations).toBe(
+            publicAuthoringEntry.collectionMigrations,
+        );
 
         const testkit = await createPluginTestkit({
             manifest: sourceManifest.manifest,
@@ -1000,6 +1263,77 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
         } finally {
             await testkit.dispose();
         }
+    });
+
+    it('demonstrates one client Action through the existing Voice activation and mounted native context publisher', async () => {
+        const manifest = readExampleManifest('public-authoring');
+        const clientModule = await import(pathToFileURL(
+            join(examplesRoot, 'public-authoring', 'voiceProvider.ts'),
+        ).href) as Readonly<{
+            activate(api: Pick<PluginClientApi, 'actions' | 'voiceProviders'>): void;
+        }>;
+        const clientActions = new Map<string, unknown>();
+        const voiceProviders = new Map<string, VoiceProviderRuntime>();
+
+        clientModule.activate({
+            actions: {
+                register(id, handler) {
+                    clientActions.set(id, handler);
+                },
+            },
+            voiceProviders: {
+                register(id, runtime) {
+                    voiceProviders.set(id, runtime);
+                },
+            },
+        });
+
+        expect(manifest.contributes.actions).toContainEqual(expect.objectContaining({
+            id: 'open-review-status',
+            surfaces: ['ui', 'voice'],
+            execution: {
+                target: 'client',
+                client: {
+                    artifactId: 'voice-runtime-web',
+                    modulePath: './voiceProvider',
+                    exportName: 'activate',
+                },
+                platforms: ['web'],
+            },
+        }));
+        expect([...clientActions.keys()]).toEqual(['open-review-status']);
+        expect([...voiceProviders.keys()]).toEqual(['credentialed-browser', 'raw-browser']);
+
+        const handler = clientActions.get('open-review-status');
+        const isClientActionHandler = (value: unknown): value is PluginClientActionHandler =>
+            typeof value === 'function';
+        expect(isClientActionHandler(handler)).toBe(true);
+        if (!isClientActionHandler(handler)) {
+            throw new TypeError('public_authoring_client_action_handler_missing');
+        }
+        const openSurface = vi.fn<PluginClientActionContext['ui']['openSurface']>(
+            async () => undefined,
+        );
+        const context = {
+            plugin: { id: 'example.public-authoring', version: '1.0.0' },
+            contribution: {
+                id: 'open-review-status',
+                qualifiedId: 'example.public-authoring:open-review-status',
+            },
+            invocationSurface: 'voice',
+            signal: new AbortController().signal,
+            ui: { openSurface },
+        } satisfies PluginClientActionContext;
+        await handler({}, context);
+        expect(openSurface.mock.calls[0]?.[0]).toBe('review-session-status-details');
+
+        const nativeSurface = readFileSync(
+            join(examplesRoot, 'public-authoring', 'ui', 'reviewPanel.native.tsx'),
+            'utf8',
+        );
+        expect(nativeSurface).toContain('publishCurrentUiContext({');
+        expect(nativeSurface).toContain("action: 'open-review-status'");
+        expect(nativeSurface).toContain('return () => context.hostApi.publishCurrentUiContext(null);');
     });
 
     it('import only published SDK and plugin-ui entry points', async () => {
@@ -1129,7 +1463,15 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
         expect(publicAuthoringDaemon).not.toContain("kind: 'voiceAccountOperation'");
         expect(publicAuthoringManifest.contributes.actions.map(({ id }) => id)).toEqual([
             'review-summary',
+            'external-session-digest',
+            'open-review-status',
         ]);
+        // The External Sessions consumer path is exercised, not stubbed: the
+        // Action asks the host for availability, filters candidates on the
+        // capability the host published, and reads a real transcript page.
+        expect(publicAuthoringDaemon).toContain('context.services.sessions.external');
+        expect(publicAuthoringDaemon).toContain('external.readTranscript(');
+        expect(publicAuthoringDefinitionSource).toContain('run: runExternalSessionDigest');
         expect(publicAuthoringManifest.contributes.voiceProviders.map(({ id }) => id)).toEqual([
             'credentialed-browser',
             'raw-browser',
@@ -1589,15 +1931,21 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
             }
             return renderer.requiredHostMethods;
         };
-        for (const rendererId of ['review-native', 'review-web']) {
-            expect(requiredHostMethods(rendererId)).toEqual([
-                'context',
-                'executeAction',
-                'openSurface',
-                'readResource',
-                'watchResource',
-            ]);
-        }
+        expect(requiredHostMethods('review-native')).toEqual([
+            'context',
+            'executeAction',
+            'openSurface',
+            'publishCurrentUiContext',
+            'readResource',
+            'watchResource',
+        ]);
+        expect(requiredHostMethods('review-web')).toEqual([
+            'context',
+            'executeAction',
+            'openSurface',
+            'readResource',
+            'watchResource',
+        ]);
         for (const rendererId of ['review-openable-native', 'review-openable-web']) {
             expect(requiredHostMethods(rendererId)).toEqual([
                 'context',
@@ -1916,7 +2264,7 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
         expect(manifest.contributes.sessionHeaderActions).toContainEqual({
             id: 'open-project-companion-dashboard',
             title: 'Open Project Companion',
-            command: {
+            action: {
                 kind: 'openSurface',
                 destination: 'project-companion-dashboard',
             },
@@ -2076,10 +2424,11 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
         const voiceModule = await import(pathToFileURL(
             join(examplesRoot, 'public-authoring', 'voiceProvider.ts'),
         ).href) as Readonly<{
-            activate(api: Pick<PluginApi, 'voiceProviders'>): void;
+            activate(api: Pick<PluginClientApi, 'actions' | 'voiceProviders'>): void;
         }>;
         const captured = new Map<string, VoiceProviderRuntime>();
         voiceModule.activate({
+            actions: { register() {} },
             voiceProviders: {
                 register(id, runtime) {
                     captured.set(id, runtime);
@@ -2250,7 +2599,7 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
         const clientModule = await import(pathToFileURL(
             join(examplesRoot, 'public-authoring', 'voiceProvider.ts'),
         ).href) as Readonly<{
-            activate(api: Pick<PluginApi, 'voiceProviders'>): void;
+            activate(api: Pick<PluginClientApi, 'actions' | 'voiceProviders'>): void;
         }>;
         const manifest = readExampleManifest('public-authoring');
         const publicAuthoringEntry = await loadPublicAuthoringSourceActivationEntry();
@@ -2260,6 +2609,7 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
         });
         const captured = new Map<string, VoiceProviderRuntime>();
         const api = {
+            actions: { register() {} },
             voiceProviders: {
                 register(localId: string, runtime: VoiceProviderRuntime) {
                     captured.set(localId, runtime);
@@ -2392,10 +2742,29 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
             join(repoRoot, 'apps', 'docs', 'content', 'docs', 'plugins', 'testing', 'index.mdx'),
             'utf8',
         );
-        const hostedRuntimeUnavailable = 'The hostedWeb scaffold emits the packaged artifact and canonical bootstrap contract; packaged runtime support remains unavailable until the platform-specific frame adapter is present and verified.';
+        // Availability is stated per host, derived from the frame-adapter owner each host
+        // runs. A single global sentence cannot be true: it is wrong for Linux/Wayland (no
+        // adapter) and wrong for Windows and Linux/X11 (direct-Wry child, same as macOS).
+        const hostedRuntimePerHost = 'each host then reports the one physical frame adapter it can construct, so packaged runtime availability is per host rather than a single global claim';
+        const retiredGlobalClaim = 'packaged runtime support remains unavailable until the platform-specific frame adapter is present and verified';
 
-        expect(uiIndex).toContain(hostedRuntimeUnavailable);
-        expect(hostedWeb).toContain(hostedRuntimeUnavailable);
+        expect(uiIndex).toContain(hostedRuntimePerHost);
+        expect(uiIndex).not.toContain(retiredGlobalClaim);
+        expect(hostedWeb).not.toContain(retiredGlobalClaim);
+        expect(uiArtifacts).not.toContain(retiredGlobalClaim);
+        // The published per-host rows must name every desktop cell the frame owner decides,
+        // including the one it refuses, so no reader infers generic packaged-desktop support.
+        for (const perHostRow of [
+            '| Browser | DOM iframe |',
+            '| Packaged desktop — macOS |',
+            '| Packaged desktop — Windows |',
+            '| Packaged desktop — Linux/X11 |',
+            '| Packaged desktop — Linux/Wayland |',
+            'desktop_hosted_artifact_wayland_gtk_container_unimplemented',
+            'desktop_hosted_artifact_linux_display_unavailable',
+        ]) {
+            expect(hostedWeb).toContain(perHostRow);
+        }
         expect(uiIndex).toContain('--ui hostedWeb');
         expect(hostedWeb).toContain('--ui hostedWeb');
         expect(hostedWeb).toContain('createPluginUiRenderContext');
@@ -2404,15 +2773,20 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
         );
         expect(uiArtifacts).toContain("platforms: ['web', 'ios', 'android']");
         expect(uiArtifacts).not.toContain("platforms: ['web']");
-        expect(reactNative).toContain("import { definePlugin, defineUiSurface } from '@happier-dev/plugin-sdk';");
-        expect(reactNative).toContain('const mainSurface = defineUiSurface({');
+        expect(uiArtifacts).toContain("entry: 'src/ui/index.ts'");
+        expect(uiArtifacts).not.toContain("entry: 'ui/index.ts'");
+        expect(reactNative).toContain("import { definePlugin, defineUiSurfaceDefinition } from '@happier-dev/plugin-sdk';");
+        expect(reactNative).toContain('const mainSurface = defineUiSurfaceDefinition({');
         expect(reactNative).toContain("placement: 'appPage'");
         expect(reactNative).toContain("kind: 'reactNative'");
         expect(reactNative).toContain("platforms: ['web', 'ios', 'android']");
-        expect(reactNative).toContain("containerName: 'com_example_my_plugin'");
+        expect(reactNative).toContain("containerName: 'happier_plugin_com_example_my_plugin_main_renderer'");
         expect(reactNative).toContain('surfaces: [mainSurface]');
-        expect(reactNative).toContain("import { buildUiSurfaceTargets, defineBuildConfig } from '@happier-dev/plugin-sdk/ui/build';");
-        expect(reactNative).toContain('targets: [...buildUiSurfaceTargets(mainSurface)]');
+        expect(reactNative).toContain("import { defineBuildConfig } from '@happier-dev/plugin-sdk/ui/build';");
+        expect(reactNative).toContain("entry: 'src/ui/PluginPanel.tsx'");
+        expect(reactNative).toContain("rendererId: 'main-renderer'");
+        expect(reactNative).not.toContain('buildUiSurfaceTargets');
+        expect(reactNative).not.toContain("from './plugin.js'");
         expect(reactNative).not.toContain("container: 'appPage'");
         expect(reactNative).not.toContain("target: { kind: 'app' }");
         expect(reactNative).not.toContain("renderer: 'main-native'");
@@ -2532,6 +2906,193 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
         }
     });
 
+    it('typechecks every complete definePlugin documentation example against the public SDK', async () => {
+        const excludedExamples = new Map<string, string>([
+            [
+                'agent-runtimes/agent-runtime.mdx#0',
+                'shape-only runtime excerpt; its factory is defined in the linked package reference',
+            ],
+            [
+                'examples/agent-runtime-plugin.mdx#0',
+                'shape-only runtime excerpt; its factory is defined in the linked package reference',
+            ],
+            [
+                'api/lifecycle.mdx#0',
+                'illustrative resource-acquisition callback; the helper is intentionally owned by the plugin',
+            ],
+        ]);
+
+        const candidates: Array<Readonly<{
+            key: string;
+            language: 'ts' | 'tsx';
+            source: string;
+        }>> = [];
+        for (const documentPath of await listPublishedAuthoringDocumentationFiles()) {
+            const relativeDocumentPath = publishedAuthoringDocumentationKey(documentPath);
+            for (const [blockIndex, block] of readFencedCodeBlocks(documentPath).entries()) {
+                if (!['ts', 'tsx'].includes(block.language) || !containsDefinePluginCall(block.source)) {
+                    continue;
+                }
+                const language = block.language as 'ts' | 'tsx';
+                candidates.push({
+                    key: `${relativeDocumentPath}#${blockIndex}`,
+                    language,
+                    source: block.source,
+                });
+            }
+        }
+
+        const candidateKeys = candidates.map((candidate) => candidate.key);
+        for (const key of excludedExamples.keys()) {
+            expect(candidateKeys, `${key} exclusion must match a definePlugin code block`).toContain(key);
+        }
+        for (const key of documentedSnippetSupportFiles.keys()) {
+            expect(candidateKeys, `${key} support files must match a definePlugin code block`).toContain(key);
+        }
+        expect(candidates.length).toBeGreaterThan(0);
+        expect(
+            candidateKeys.filter((key) => !excludedExamples.has(key)),
+            'Every published definePlugin example must be compiled or have an explicit owner-level exclusion',
+        ).toHaveLength(candidates.length - excludedExamples.size);
+
+        expect(
+            candidates
+                .filter((candidate) => !hasDocumentedPluginDaemonEntrypoint(candidate.source))
+                .map((candidate) => candidate.key),
+            'Code-defined plugin documentation must name entrypoints.daemon so the canonical author build and pack path can emit its activation module.',
+        ).toEqual([]);
+
+        for (const candidate of candidates) {
+            for (const localId of collectDocumentationLocalIds(candidate.source)) {
+                expectDocumentationLocalId(localId, candidate.key);
+            }
+        }
+        for (const documentPath of await listPublishedAuthoringDocumentationFiles()) {
+            const relativeDocumentPath = publishedAuthoringDocumentationKey(documentPath);
+            for (const [blockIndex, block] of readFencedCodeBlocks(documentPath).entries()) {
+                const location = `${relativeDocumentPath}#${blockIndex}`;
+                if (block.language === 'json') {
+                    let parsed: unknown;
+                    try {
+                        parsed = JSON.parse(block.source);
+                    } catch {
+                        parsed = undefined;
+                    }
+                    for (const localId of collectManifestJsonLocalIds(parsed)) {
+                        expectDocumentationLocalId(localId, location);
+                    }
+                }
+                for (const match of block.source.matchAll(/events\.plugin\.emit\(\s*['"]([^'"]+)['"]/gu)) {
+                    expectDocumentationLocalId(match[1], location);
+                }
+                for (const match of block.source.matchAll(/\blocalId:\s*['"]([^'"]+)['"]/gu)) {
+                    expectDocumentationLocalId(match[1], location);
+                }
+            }
+        }
+
+        const snippets = candidates.filter((candidate) => !excludedExamples.has(candidate.key));
+        const copiedRoot = copyExamplesOutsideWorkspace();
+        try {
+            writeFileSync(join(copiedRoot, 'package.json'), '{"type":"module"}\n', 'utf8');
+            const channelsProtocolRoot = findInstalledPackageRoot('@happier-dev/channels-protocol');
+            expect(channelsProtocolRoot, 'cross-plugin documentation examples need the public feature protocol package').toBeDefined();
+            if (channelsProtocolRoot) {
+                const channelsProtocolDestination = join(
+                    copiedRoot,
+                    'node_modules',
+                    '@happier-dev',
+                    'channels-protocol',
+                );
+                if (!existsSync(channelsProtocolDestination)) {
+                    mkdirSync(join(channelsProtocolDestination, '..'), { recursive: true });
+                    symlinkSync(channelsProtocolRoot, channelsProtocolDestination, 'dir');
+                }
+            }
+
+            const sourceFiles: string[] = [];
+            for (const [index, snippet] of snippets.entries()) {
+                const safeName = snippet.key.replace(/[^A-Za-z0-9._-]+/gu, '__');
+                const sourcePath = join(
+                    copiedRoot,
+                    'documented-plugin-snippets',
+                    `${String(index).padStart(2, '0')}-${safeName}.${snippet.language}`,
+                );
+                mkdirSync(join(sourcePath, '..'), { recursive: true });
+                writeFileSync(sourcePath, `${snippet.source}\n`, 'utf8');
+                for (const supportFile of documentedSnippetSupportFiles.get(snippet.key) ?? []) {
+                    const destination = join(sourcePath, '..', supportFile.destination);
+                    mkdirSync(join(destination, '..'), { recursive: true });
+                    cpSync(join(copiedRoot, supportFile.source), destination);
+                }
+                sourceFiles.push(relative(copiedRoot, sourcePath));
+            }
+
+            const configPath = join(copiedRoot, 'documented-plugin-snippets.tsconfig.json');
+            writeFileSync(configPath, `${JSON.stringify({
+                compilerOptions: {
+                    target: 'ES2022',
+                    module: 'ESNext',
+                    moduleResolution: 'Bundler',
+                    lib: ['ES2022', 'DOM'],
+                    strict: true,
+                    skipLibCheck: true,
+                    jsx: 'preserve',
+                },
+                files: sourceFiles,
+            }, null, 2)}\n`, 'utf8');
+            const typecheck = spawnSync(process.execPath, [
+                join(repoRoot, 'scripts', 'workspaces', 'runTypeScriptCli.mjs'),
+                '-p',
+                configPath,
+                '--noEmit',
+            ], {
+                cwd: copiedRoot,
+                encoding: 'utf8',
+            });
+            expect(
+                typecheck.status,
+                [typecheck.stdout, typecheck.stderr].filter(Boolean).join('\n'),
+            ).toBe(0);
+
+            for (const [index, snippet] of snippets.entries()) {
+                const sourceFile = sourceFiles[index];
+                if (!sourceFile) throw new Error(`Missing compiled documentation source for ${snippet.key}`);
+                const emittedFile = join(copiedRoot, sourceFile.replace(/\.tsx?$/u, '.js'));
+                const documentedModule = await import(pathToFileURL(emittedFile).href) as Readonly<{
+                    manifest?: unknown;
+                }>;
+                const parsed = parsePluginManifest(documentedModule.manifest);
+                expect(
+                    parsed.ok,
+                    parsed.ok
+                        ? undefined
+                        : `${snippet.key}: ${parsed.diagnostics.map((diagnostic) => diagnostic.message).join('; ')}`,
+                ).toBe(true);
+            }
+        } finally {
+            rmSync(copiedRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('parses the advertised minimal cold manifest through the current public manifest contract', () => {
+        const minimalManifestBlock = readFencedCodeBlocks(minimalManifestDocumentationPath).find((block) => (
+            block.language === 'json'
+            && block.source.includes('"schemaVersion": 2')
+            && block.source.includes('"id": "com.example.plugin"')
+        ));
+        expect(minimalManifestBlock, 'The manifest guide must retain one advertised minimal cold manifest.').toBeDefined();
+        if (!minimalManifestBlock) return;
+
+        const parsed = parsePluginManifest(JSON.parse(minimalManifestBlock.source) as unknown);
+        expect(
+            parsed.ok,
+            parsed.ok
+                ? undefined
+                : parsed.diagnostics.map((diagnostic) => diagnostic.message).join('; '),
+        ).toBe(true);
+    });
+
     it('parses the code-defined public authoring manifest with the protocol schema', () => {
         const ingested = parsePluginManifest(publicAuthoringCodeDefinedPlugin.manifest);
 
@@ -2614,6 +3175,20 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
                     id: 'review-summary',
                     surfaces: ['cli', 'agent', 'ui'],
                     scopes: ['global'],
+                }),
+                expect.objectContaining({
+                    id: 'external-session-digest',
+                    surfaces: ['cli', 'agent', 'ui'],
+                    scopes: ['global'],
+                    execution: expect.objectContaining({ target: 'daemon' }),
+                }),
+                expect.objectContaining({
+                    id: 'open-review-status',
+                    surfaces: ['ui', 'voice'],
+                    execution: expect.objectContaining({
+                        target: 'client',
+                        platforms: ['web'],
+                    }),
                 }),
             ]);
             expect(ingested.manifest.contributes.resources).toEqual([

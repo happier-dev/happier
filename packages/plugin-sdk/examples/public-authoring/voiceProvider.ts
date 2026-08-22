@@ -1,4 +1,6 @@
-import type { PluginApi } from '@happier-dev/plugin-sdk';
+import type { PluginClientApi } from '@happier-dev/plugin-sdk';
+import type { PluginClientActionHandler } from '@happier-dev/plugin-sdk/actions';
+import { throwIfAborted } from '@happier-dev/plugin-sdk/async';
 import type {
     VoiceAccountOperationService,
     VoiceProviderRuntime,
@@ -13,6 +15,7 @@ const VOICE_CLIENT_AUTH_URL = 'https://voice.example.test/v1/session';
 const VOICE_CATALOG_URL = 'https://voice.example.test/v1/catalog';
 const VOICE_CLIENT_AUTH_RESPONSE_MAX_BYTES = 32_768;
 const VOICE_CATALOG_RESPONSE_MAX_BYTES = 2_097_152;
+const REVIEW_SESSION_STATUS_VIEW_ID = 'review-session-status-details';
 
 async function* emptyEvents<T>(): AsyncIterable<T> {
     return;
@@ -195,7 +198,7 @@ const accountMediatedBrowserRuntime = {
         return {
             kind: 'sdk_handle',
             async connect(signal: AbortSignal) {
-                signal.throwIfAborted();
+                throwIfAborted(signal);
                 if (!clientAuth) throw new Error('voice_client_auth_artifact_released');
                 connectionState = 'open';
             },
@@ -224,7 +227,7 @@ const rawBrowserRuntime = {
     kind: 'conversation',
     protocol: {
         async prepare({ signal }) {
-            signal.throwIfAborted();
+            throwIfAborted(signal);
             return {
                 kind: 'prepared',
                 session: { config: {}, safeMetadata: {} },
@@ -246,12 +249,12 @@ const rawBrowserRuntime = {
             origin: 'https://voice.example.test',
             headerNames: ['authorization'],
         }, { signal });
-        signal.throwIfAborted();
+        throwIfAborted(signal);
         let connectionState: 'idle' | 'open' | 'closed' = 'idle';
         return {
             kind: 'sdk_handle',
             async connect(connectionSignal: AbortSignal) {
-                connectionSignal.throwIfAborted();
+                throwIfAborted(connectionSignal);
                 connectionState = 'open';
             },
             async sendControl() {},
@@ -275,8 +278,17 @@ const rawBrowserRuntime = {
     microphoneMode: 'provider_managed',
 } satisfies RealtimeVoiceProviderRuntime;
 
-/** Generated web client entry named by `contributes.voiceProviders[].client`. */
-export function activate(api: Pick<PluginApi, 'voiceProviders'>): void {
+const openReviewStatus: PluginClientActionHandler = async (_input, context) => {
+    await context.ui.openSurface(
+        REVIEW_SESSION_STATUS_VIEW_ID,
+        undefined,
+        { signal: context.signal },
+    );
+};
+
+/** Generated web client entry shared by the declared Voice leaves and client Action. */
+export function activate(api: PluginClientApi): void {
+    api.actions.register('open-review-status', openReviewStatus);
     api.voiceProviders.register('credentialed-browser', accountMediatedBrowserRuntime);
     api.voiceProviders.register('raw-browser', rawBrowserRuntime);
 }

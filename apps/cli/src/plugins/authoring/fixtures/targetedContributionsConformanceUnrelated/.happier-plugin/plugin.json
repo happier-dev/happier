@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 2,
+  "id": "acme.targeted-contributions-conformance-unrelated",
+  "version": "1.0.0",
+  "displayName": "Unrelated Packed Prerequisite",
+  "description": "Installed during target admission conformance without contributing to the target.",
+  "engines": {
+    "happier": "^0.2.0"
+  },
+  "runtime": {
+    "apiVersion": 1
+  },
+  "entrypoints": {
+    "daemon": "./daemon.mjs"
+  },
+  "hostAccess": {
+    "required": [],
+    "optional": []
+  },
+  "contributes": {}
+}

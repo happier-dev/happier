@@ -12,7 +12,6 @@ function loadedTranslationPlugin(locale: string, greeting = 'Hello'): LoadedPlug
     pluginId,
     pluginRootPath: `/plugins/${pluginId}`,
     manifestPath: `/plugins/${pluginId}/.happier-plugin/plugin.json`,
-    manifestDigest: 'digest',
     daemonEntryPath: null,
     devDaemonEntryPath: null,
     sourceSpec: { kind: 'path', locator: `/plugins/${pluginId}`, trustPolicy: 'local_trusted', installPolicy: 'link' },
@@ -49,7 +48,6 @@ describe('resolved plugin translation projection', () => {
       source: 'localPath',
       family: 'ui.translations',
       identity: { kind: 'locale', locale: 'en-US' },
-      stability: 'stable',
       registration: 'notRequired',
       runtimeRegistrationFamily: 'ui.translations',
       runtimeRegistrationHost: null,
@@ -58,7 +56,7 @@ describe('resolved plugin translation projection', () => {
     }]);
   });
 
-  it('projects a schema-v2 external plugin translation into the runtime UI bundle and its currentness digest', () => {
+  it('projects a schema-v2 external plugin translation into the runtime UI bundle without an aggregate digest', () => {
     const project = (greeting: string, legacyTitle = 'Legacy V1') => {
       const resolved = projectLoadedPluginContributes({
         loadResult: {
@@ -74,12 +72,10 @@ describe('resolved plugin translation projection', () => {
           source: { kind: 'path' },
           pluginId: 'com.acme.translations',
           manifestPath: '/plugins/com.acme.translations/legacy.json',
-          manifestDigest: `legacy:${legacyTitle}`,
           definition: { locales: { en: { title: legacyTitle } } },
         }],
       });
       return {
-        registryGenerationId: registry.generationId,
         entries: buildPluginProjectionV2({ registry, generation: 1 })
           .familiesById.pluginUi?.entriesById ?? {},
       };
@@ -97,19 +93,12 @@ describe('resolved plugin translation projection', () => {
         'en-US': { greeting: 'Hello from V2' },
       },
     });
-    expect(hello.entries['digest:com.acme.translations']).toMatchObject({
-      contributionKind: 'digest',
-      families: {
-        translations: expect.stringMatching(/^sha256:/u),
-      },
-    });
-    expect(updated.entries['digest:com.acme.translations']).not.toEqual(
-      hello.entries['digest:com.acme.translations'],
+    expect(hello.entries).not.toHaveProperty('digest:com.acme.translations');
+    expect(updated.entries['translations:com.acme.translations']).not.toEqual(
+      hello.entries['translations:com.acme.translations'],
     );
-    expect(updated.registryGenerationId).not.toBe(hello.registryGenerationId);
-    expect(legacyOnlyUpdate.entries['digest:com.acme.translations']).toEqual(
-      hello.entries['digest:com.acme.translations'],
+    expect(legacyOnlyUpdate.entries['translations:com.acme.translations']).toEqual(
+      hello.entries['translations:com.acme.translations'],
     );
-    expect(legacyOnlyUpdate.registryGenerationId).toBe(hello.registryGenerationId);
   });
 });

@@ -26,7 +26,14 @@ import {
   apiSurfaceEntrypointBrowserSourceModule,
   createApiSurfaceGenerationPlan,
   projectApiSurfaceInventory,
+  projectPublishedApiSurfaceInventory,
+  projectRetainedPublishedApiSurfaceInventory,
 } from './apiSurface.mjs';
+import {
+  createPublicSurfaceProgram,
+  declarationPackageMetadata,
+  projectPublicDeclarationReport,
+} from './publicDeclarationReport.mjs';
 import { assertVendoredWorkspaceDeclarationsAreCurrent } from './vendoredWorkspaceDeclarations.mjs';
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
@@ -37,7 +44,10 @@ const MATERIALIZED_PLAN_OUTPUTS = Object.freeze([
   'sourceBarrels',
   'authorApiMarkdown',
   'capabilityMatrix',
+  'publicDeclarationReport',
 ]);
+const PUBLIC_DECLARATION_REPORT_PATH = 'api-declarations.md';
+const PUBLIC_DECLARATION_REPORT_TITLE = 'Plugin SDK public declaration report';
 const API_SURFACE_MATERIALIZED_PLAN_OUTPUTS = Object.freeze([
   'apiSurfaceInventory',
   'packageExports',
@@ -51,6 +61,8 @@ const IN_MEMORY_PLAN_OUTPUTS = Object.freeze([
 const NODE_BUILTIN_MODULES = new Set(
   builtinModules.flatMap((moduleName) => [moduleName, `node:${moduleName}`]),
 );
+const RETIRED_PER_SYMBOL_POSTURE = /@(preview|experimental|stable|incubating)\b/u;
+const PUBLISHER_OWNED_SINCE = /@since\b/u;
 
 function readArgumentValue(args, index, flag) {
   const value = args[index + 1];
@@ -58,11 +70,22 @@ function readArgumentValue(args, index, flag) {
   return value;
 }
 
+function assertPublicationOptions(options) {
+  if (
+    options.previousPublishedInventoryPath !== undefined
+    && options.publishedVersion === undefined
+  ) {
+    throw new Error('--previous-published-inventory requires --published-version');
+  }
+}
+
 export function parseApiSurfaceCliArgs(args, cwd = process.cwd()) {
   let packageRoot = DEFAULT_PACKAGE_ROOT;
   let write = false;
   let check = false;
   let json = false;
+  let publishedVersion;
+  let previousPublishedInventoryPath;
 
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index];
@@ -83,17 +106,30 @@ export function parseApiSurfaceCliArgs(args, cwd = process.cwd()) {
       index += 1;
       continue;
     }
+    if (argument === '--published-version') {
+      publishedVersion = readArgumentValue(args, index, argument);
+      index += 1;
+      continue;
+    }
+    if (argument === '--previous-published-inventory') {
+      previousPublishedInventoryPath = resolve(cwd, readArgumentValue(args, index, argument));
+      index += 1;
+      continue;
+    }
     throw new Error(`Unknown Plugin SDK API surface argument: ${argument}`);
   }
 
   if (write && check) throw new Error('--write and --check are mutually exclusive');
-
-  return Object.freeze({
+  const parsed = Object.freeze({
     packageRoot,
     write,
     check,
     json,
+    publishedVersion,
+    previousPublishedInventoryPath,
   });
+  assertPublicationOptions(parsed);
+  return parsed;
 }
 
 function reportProgress(options, phase) {
@@ -102,7 +138,15 @@ function reportProgress(options, phase) {
 
 export function renderCliSummary(report) {
   const summary = report.summary;
-  return `api-surface ${report.mode}: ${report.status} (planned=${summary.plannedFiles} changed=${summary.changedFiles} written=${summary.writtenFiles})\n`;
+  // A drift exit that only prints counts leaves the reader to diff four
+  // artifacts by hand, so name every file the run would rewrite.
+  return [
+    `api-surface ${report.mode}: ${report.status} (planned=${summary.plannedFiles} changed=${summary.changedFiles} written=${summary.writtenFiles})`,
+    ...report.files
+      .filter((file) => file.changed)
+      .map((file) => `  ${file.written ? 'wrote' : 'drift'} ${file.owner} ${file.path}`),
+    '',
+  ].join('\n');
 }
 
 function isWithinPackageRoot(packageRoot, targetPath) {
@@ -147,6 +191,35 @@ async function optionalLstat(path) {
     if (error?.code === 'ENOENT') return null;
     throw error;
   }
+}
+
+async function readPreviousPublishedApiSurfaceInventory(options) {
+  if (options.publishedVersion === undefined) return undefined;
+  if (options.previousPublishedInventoryPath === undefined) return undefined;
+  return readJson(
+    options.previousPublishedInventoryPath,
+    'previous published API surface inventory',
+  );
+}
+
+async function readRetainedPublishedApiSurfaceInventory(inventoryPath) {
+  const existing = await optionalLstat(inventoryPath);
+  if (!existing) return undefined;
+  // Let the sole output-preflight owner report invalid output kinds. This
+  // metadata reader must not become a parallel output-path validator.
+  if (!existing.isFile()) return undefined;
+  const retainedInventory = await readJson(inventoryPath, 'retained published API surface inventory');
+  if (!Array.isArray(retainedInventory?.symbols)) return retainedInventory;
+  const sinceCount = retainedInventory.symbols.filter((symbol) => (
+    symbol !== null
+    && typeof symbol === 'object'
+    && Object.hasOwn(symbol, 'since')
+  )).length;
+  if (sinceCount === 0) return undefined;
+  if (sinceCount !== retainedInventory.symbols.length) {
+    throw new Error('retained published API surface inventory has incomplete @since provenance');
+  }
+  return retainedInventory;
 }
 
 /**
@@ -1535,47 +1608,6 @@ function isTypeScriptPlatformType(program, referencedType) {
     ));
 }
 
-const DECLARATION_PACKAGE_CACHE = new Map();
-
-function declarationPackageMetadata(sourceFile) {
-  const sourcePath = resolve(sourceFile.fileName);
-  if (DECLARATION_PACKAGE_CACHE.has(sourcePath)) {
-    return DECLARATION_PACKAGE_CACHE.get(sourcePath);
-  }
-  let directory = dirname(sourcePath);
-  while (true) {
-    const packageJsonPath = join(directory, 'package.json');
-    if (ts.sys.fileExists(packageJsonPath)) {
-      try {
-        const packageJson = JSON.parse(ts.sys.readFile(packageJsonPath));
-        if (
-          packageJson
-          && typeof packageJson === 'object'
-          && typeof packageJson.name === 'string'
-        ) {
-          const metadata = Object.freeze({
-            name: packageJson.name,
-            private: packageJson.private === true,
-            root: directory,
-            exports: packageJson.exports,
-          });
-          DECLARATION_PACKAGE_CACHE.set(sourcePath, metadata);
-          return metadata;
-        }
-      } catch {
-        DECLARATION_PACKAGE_CACHE.set(sourcePath, null);
-        return null;
-      }
-    }
-    const parent = dirname(directory);
-    if (parent === directory) {
-      DECLARATION_PACKAGE_CACHE.set(sourcePath, null);
-      return null;
-    }
-    directory = parent;
-  }
-}
-
 function referencedTypeDeclarationBasis(program, referencedType) {
   return [...new Set((referencedType.declarations ?? []).map((declaration) => {
     const sourceFile = declaration.getSourceFile();
@@ -1693,19 +1725,7 @@ function directTypeAliasTargetSymbol(checker, symbol) {
   return null;
 }
 
-function assertAuthorSignatureTypeClosure({ inventory, sources }) {
-  const program = ts.createProgram({
-    rootNames: sources.map((source) => source.absolutePath),
-    options: {
-      allowJs: true,
-      checkJs: false,
-      module: ts.ModuleKind.NodeNext,
-      moduleResolution: ts.ModuleResolutionKind.NodeNext,
-      skipLibCheck: true,
-      strict: true,
-      target: ts.ScriptTarget.ESNext,
-    },
-  });
+function assertAuthorSignatureTypeClosure({ program, inventory, sources }) {
   const checker = program.getTypeChecker();
   const sourceByModule = new Map(sources.map((source) => [source.sourceModule, source]));
   const sourceFileByModule = new Map(
@@ -1898,13 +1918,23 @@ async function commitStagedOutputs(staged, renameFile = rename) {
   }
 }
 
-function publicationSpecStability(statement, publicationSpecModule) {
+function publicationSpecDeprecation(statement, publicationSpecModule) {
   const docs = ts.getJSDocCommentsAndTags(statement);
   const text = docs.length > 0 ? docs[docs.length - 1].getText() : '';
+  const retiredPosture = RETIRED_PER_SYMBOL_POSTURE.exec(text);
+  if (retiredPosture) {
+    throw new Error(
+      `API surface publication spec ${publicationSpecModule} must not use retired per-symbol @${retiredPosture[1]} posture metadata`,
+    );
+  }
+  if (PUBLISHER_OWNED_SINCE.test(text)) {
+    throw new Error(
+      `API surface publication spec ${publicationSpecModule} must not use publisher-owned @since metadata`,
+    );
+  }
   const deprecated = /@deprecated\s+([\s\S]+?);\s*remove when\s+([\s\S]+?)\s*\*\//u.exec(text);
   if (deprecated) {
     return {
-      stability: 'deprecated',
       replacement: deprecated[1].trim(),
       removalCondition: deprecated[2].trim(),
     };
@@ -1914,12 +1944,21 @@ function publicationSpecStability(statement, publicationSpecModule) {
       `API surface publication spec ${publicationSpecModule} must document a deprecation as "@deprecated <replacement>; remove when <condition>"`,
     );
   }
-  // While the SDK is in its documented prepublication hold, no author publication spec
-  // marker can claim a stronger contract. `@preview`, `@stable`, and
-  // `@experimental` all therefore project as Preview. This comes after
-  // deprecation parsing so a genuine replacement/removal contract always
-  // remains authoritative.
-  return { stability: 'preview' };
+  return {};
+}
+
+function assertSourceHasNoRetiredPerSymbolPosture(source) {
+  const retiredPosture = RETIRED_PER_SYMBOL_POSTURE.exec(source.contents);
+  if (retiredPosture) {
+    throw new Error(
+      `API surface source ${source.sourceModule} must not use retired per-symbol @${retiredPosture[1]} posture metadata`,
+    );
+  }
+  if (PUBLISHER_OWNED_SINCE.test(source.contents)) {
+    throw new Error(
+      `API surface source ${source.sourceModule} must not use publisher-owned @since metadata`,
+    );
+  }
 }
 
 /**
@@ -1955,10 +1994,10 @@ function collectPublicationSpecPublications(publicationSpec) {
         `API surface publication spec ${publicationSpec.sourceModule} must re-export package-local modules, not ${moduleSpecifier}`,
       );
     }
-    const stability = publicationSpecStability(statement, publicationSpec.sourceModule);
+    const deprecation = publicationSpecDeprecation(statement, publicationSpec.sourceModule);
     for (const element of statement.exportClause.elements) {
       publications.push(Object.freeze({
-        ...stability,
+        ...deprecation,
         exportName: element.name.text,
         sourceExport: (element.propertyName ?? element.name).text,
         kind: statement.isTypeOnly || element.isTypeOnly ? 'type' : 'value',
@@ -2130,7 +2169,11 @@ async function readPublishedApiSurfaceSource({ packageRoot, physicalPackageRoot 
     const browserSourceModule = apiSurfaceEntrypointBrowserSourceModule(specifier);
     const browserSource = await optionalLstat(resolve(packageRoot, browserSourceModule));
     if (browserSource) {
-      await preflightSourceModule(packageRoot, physicalPackageRoot, browserSourceModule);
+      assertSourceHasNoRetiredPerSymbolPosture(await preflightSourceModule(
+        packageRoot,
+        physicalPackageRoot,
+        browserSourceModule,
+      ));
     }
     entrypoints.push(Object.freeze({
       specifier,
@@ -2148,8 +2191,12 @@ async function readPublishedApiSurfaceSource({ packageRoot, physicalPackageRoot 
 
 async function prepareApiSurfaceMaterialization(
   options,
-  { requireVendoredWorkspaceDeclarations = true } = {},
+  {
+    requireVendoredWorkspaceDeclarations = true,
+    useRetainedPublicationMetadata = true,
+  } = {},
 ) {
+  assertPublicationOptions(options);
   const packageRoot = resolve(options.packageRoot);
   reportProgress(options, 'package-root');
   const packageRootStat = await optionalLstat(packageRoot);
@@ -2182,9 +2229,12 @@ async function prepareApiSurfaceMaterialization(
       preflightSourceModule(packageRoot, physicalPackageRoot, sourceModule)
     )),
   );
+  for (const sourceModule of preflightedSourceModules) {
+    assertSourceHasNoRetiredPerSymbolPosture(sourceModule);
+  }
   reportProgress(options, 'inventory');
   const canonicalSourceExports = projectCanonicalSourceExports(preflightedSourceModules);
-  const inventory = projectApiSurfaceInventory({
+  const sourceInventory = projectApiSurfaceInventory({
     entrypoints: published.entrypoints.map((entrypoint) => ({
       specifier: entrypoint.specifier,
       browserRuntimeTarget: entrypoint.browserRuntimeTarget,
@@ -2198,16 +2248,50 @@ async function prepareApiSurfaceMaterialization(
       })),
     })),
   });
+  const previousPublishedInventory = await readPreviousPublishedApiSurfaceInventory(options);
+  const retainedPublishedInventory = options.publishedVersion === undefined && useRetainedPublicationMetadata
+    ? await readRetainedPublishedApiSurfaceInventory(inventoryPath)
+    : undefined;
+  const inventory = options.publishedVersion !== undefined
+    ? projectPublishedApiSurfaceInventory({
+      inventory: sourceInventory,
+      publishedVersion: options.publishedVersion,
+      previousPublishedInventory,
+    })
+    : retainedPublishedInventory === undefined
+      ? sourceInventory
+      : projectRetainedPublishedApiSurfaceInventory({
+        inventory: sourceInventory,
+        retainedPublishedInventory,
+      });
   const generationPlan = createApiSurfaceGenerationPlan(inventory);
+  // Building the public-surface program is the single most expensive phase, and
+  // the signature-closure assertion and the declaration report must both read
+  // the same one. Create it once, lazily, so the inventory-only readers below
+  // never pay for it.
+  let sharedPublicSurfaceProgram;
+  const publicSurfaceProgram = () => {
+    sharedPublicSurfaceProgram ??= createPublicSurfaceProgram(
+      preflightedSourceModules.map((source) => source.absolutePath),
+    );
+    return sharedPublicSurfaceProgram;
+  };
   return Object.freeze({
     packageRoot,
     physicalPackageRoot,
     inventoryPath,
     packageJsonPath,
     packageJson,
+    publicSurfaceProgram,
     preflightedSourceModules: Object.freeze(preflightedSourceModules),
     canonicalSourceExports,
     inventory,
+    publication: options.publishedVersion === undefined
+      ? undefined
+      : Object.freeze({
+        publishedVersion: options.publishedVersion,
+        previousPublishedInventoryPath: options.previousPublishedInventoryPath,
+      }),
     generationPlan,
   });
 }
@@ -2218,7 +2302,10 @@ async function prepareApiSurfaceMaterialization(
  * inventory or writes public-contract outputs.
  */
 export async function readCurrentApiSurfaceInventory({ packageRoot }) {
-  const prepared = await prepareApiSurfaceMaterialization({ packageRoot });
+  const prepared = await prepareApiSurfaceMaterialization(
+    { packageRoot },
+    { useRetainedPublicationMetadata: false },
+  );
   return prepared.inventory;
 }
 
@@ -2272,6 +2359,7 @@ async function finalizeApiSurfaceMaterialization(
     preflightedSourceModules,
     canonicalSourceExports,
     inventory,
+    publication,
     generationPlan,
   } = prepared;
   reportProgress(options, 'output-preflight');
@@ -2292,6 +2380,7 @@ async function finalizeApiSurfaceMaterialization(
   assertCanonicalSourceProjections(inventory, canonicalSourceExports);
   reportProgress(options, 'author-signature-closure');
   assertAuthorSignatureTypeClosure({
+    program: prepared.publicSurfaceProgram(),
     inventory,
     sources: preflightedSourceModules,
   });
@@ -2318,6 +2407,7 @@ async function finalizeApiSurfaceMaterialization(
     sourceToolingComplete: true,
     packageRoot,
     inventoryPath: prepared.inventoryPath,
+    ...(publication === undefined ? {} : { publication }),
     materializedPlanOutputs,
     inMemoryPlanOutputs: IN_MEMORY_PLAN_OUTPUTS,
     unmaterializedPlanOutputs: Object.freeze([]),
@@ -2364,6 +2454,7 @@ export async function runApiSurfaceSourceHarnessForTests({ packageRoot, onProgre
   });
   const prepared = await prepareApiSurfaceMaterialization(options, {
     requireVendoredWorkspaceDeclarations: false,
+    useRetainedPublicationMetadata: false,
   });
   const report = await finalizeApiSurfaceMaterialization(prepared, options, {
     materializedPlanOutputs: API_SURFACE_MATERIALIZED_PLAN_OUTPUTS,
@@ -2386,13 +2477,29 @@ export async function runApiSurfaceCli(options) {
     packageRoot: prepared.packageRoot,
     apiInventory: prepared.inventory,
   });
+  reportProgress(options, 'declaration-report');
+  const publicDeclarationReport = projectPublicDeclarationReport({
+    program: prepared.publicSurfaceProgram(),
+    packageRoot: prepared.packageRoot,
+    title: PUBLIC_DECLARATION_REPORT_TITLE,
+    rows: prepared.inventory.symbols,
+    bundledDependencies: prepared.packageJson.bundledDependencies ?? [],
+  });
   return finalizeApiSurfaceMaterialization(prepared, options, {
-    additionalOutputs: [Object.freeze({
-      owner: capabilityMatrixOutput.owner,
-      absolutePath: join(prepared.packageRoot, capabilityMatrixOutput.relativePath),
-      relativePath: capabilityMatrixOutput.relativePath,
-      contents: capabilityMatrixOutput.contents,
-    })],
+    additionalOutputs: [
+      Object.freeze({
+        owner: capabilityMatrixOutput.owner,
+        absolutePath: join(prepared.packageRoot, capabilityMatrixOutput.relativePath),
+        relativePath: capabilityMatrixOutput.relativePath,
+        contents: capabilityMatrixOutput.contents,
+      }),
+      Object.freeze({
+        owner: 'publicDeclarationReport',
+        absolutePath: join(prepared.packageRoot, PUBLIC_DECLARATION_REPORT_PATH),
+        relativePath: PUBLIC_DECLARATION_REPORT_PATH,
+        contents: publicDeclarationReport,
+      }),
+    ],
     materializedPlanOutputs: MATERIALIZED_PLAN_OUTPUTS,
   });
 }

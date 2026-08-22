@@ -4,11 +4,11 @@ import { join } from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import type { JsonValue } from '@happier-dev/plugin-sdk';
 import type {
     AgentExternalSessionHooksContribution,
     AgentExternalSessionsContribution,
-    StrictJsonValue,
-} from '@happier-dev/plugin-sdk/experimental/sessions';
+} from '@happier-dev/plugin-sdk/sessions/external';
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import {
     activate as activateClaude,
@@ -19,8 +19,33 @@ import {
     createQualifiedExternalSessionHookIngress,
     type QualifiedExternalSessionHookRuntimeLease,
 } from './qualifiedExternalSessionHookIngress';
+import {
+    createBoundedAgentExternalSessionsContribution,
+    type BoundedAgentExternalSessionsContribution,
+} from '@/session/external/agentExternalSessionsInvocation';
+import { createUnavailablePluginServices } from '@/plugins/runtime/invocation/services/unavailable';
 
 const roots: string[] = [];
+const unavailableInvocationExec = createUnavailablePluginServices().exec;
+
+function bindFixtureExternalSessions(
+    contribution: AgentExternalSessionsContribution,
+): BoundedAgentExternalSessionsContribution {
+    return createBoundedAgentExternalSessionsContribution({
+        contribution,
+        identity: {
+            pluginId: 'happier.agent.fixture',
+            agentId: 'fixture-agent',
+            generation: 'plugin-generation-1',
+            contributionQualifiedId:
+                'happier.agent.fixture/agents/fixture-agent',
+            immutableGenerationId: null,
+        },
+        isCurrent: () => true,
+        retirementSignal: new AbortController().signal,
+        createInvocationExec: async () => unavailableInvocationExec,
+    });
+}
 
 const installationVariant = {
     variantId: 'session-lifecycle-v1',
@@ -72,7 +97,7 @@ const nativePayload = {
     tool_input: { command: 'still only reaches the trusted leaf' },
     transcript_path: '/native/agent/path',
     env: { NATIVE_AGENT_VALUE: 'opaque' },
-} as const satisfies StrictJsonValue;
+} as const satisfies JsonValue;
 
 function createRuntimeLease(
     overrides: Partial<QualifiedExternalSessionHookRuntimeLease> = {},
@@ -94,14 +119,14 @@ function createRuntimeLease(
         resolveInstallation: vi.fn(),
         mapHookEvent,
     };
-    const resolveSource = vi.fn<AgentExternalSessionsContribution['resolveSource']>(
+    const resolveSource = vi.fn<BoundedAgentExternalSessionsContribution['resolveSource']>(
         async () => ({
             ok: true as const,
             value: { source },
         }),
     );
     const resolveLinkIdentity = vi.fn<
-        AgentExternalSessionsContribution['resolveLinkIdentity']
+        BoundedAgentExternalSessionsContribution['resolveLinkIdentity']
     >(async () => ({
         ok: true as const,
         value: {
@@ -114,6 +139,11 @@ function createRuntimeLease(
     return {
         lease: {
             hooks,
+            // The ingress consumes an already-bounded leaf façade. Binding the
+            // canonical wrapper here would add a second, real-clock deadline
+            // authority to cases that drive the ingress on a synthetic clock;
+            // the wrapper is exercised against the real leaf in
+            // `qualifiedExternalSessionHookDaemonIngress.test.ts`.
             externalSessions: {
                 resolveSource,
                 resolveLinkIdentity,
@@ -121,7 +151,7 @@ function createRuntimeLease(
                 listCandidates: vi.fn(),
                 pageTranscript: vi.fn(),
                 readAfterTranscript: vi.fn(),
-            },
+            } satisfies BoundedAgentExternalSessionsContribution,
             generation: 'plugin-generation-1',
             retirementSignal: retirement.signal,
             isCurrent: () => !retirement.signal.aborted,
@@ -292,7 +322,9 @@ describe('qualified External Session hook ingress', () => {
         const retirement = new AbortController();
         const runtime: QualifiedExternalSessionHookRuntimeLease = {
             hooks: registered.externalSessionHooks,
-            externalSessions: registered.externalSessions,
+            externalSessions: bindFixtureExternalSessions(
+                registered.externalSessions,
+            ),
             generation: 'claude-generation-1',
             retirementSignal: retirement.signal,
             isCurrent: () => !retirement.signal.aborted,

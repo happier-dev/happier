@@ -20,6 +20,7 @@
         "surfaces": ["ui"],
         "placementBindings": ["rowAction"],
         "dangerLevel": "safe",
+        "execution": { "target": "daemon" },
         "inputSchema": { "type": "object", "properties": { "id": { "type": "string" } }, "required": ["id"], "additionalProperties": false },
         "resultSchema": { "type": "object", "properties": { "opened": { "type": "boolean" } }, "required": ["opened"], "additionalProperties": false }
       },
@@ -31,6 +32,7 @@
         "surfaces": ["ui"],
         "placementBindings": ["secondary"],
         "dangerLevel": "destructive",
+        "execution": { "target": "daemon" },
         "confirmation": { "title": "Discard all previews?", "body": "Every generated descriptor preview is removed. This cannot be undone.", "confirmLabel": "Discard" },
         "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false },
         "resultSchema": { "type": "object", "properties": { "discarded": { "type": "integer" } }, "required": ["discarded"], "additionalProperties": false }

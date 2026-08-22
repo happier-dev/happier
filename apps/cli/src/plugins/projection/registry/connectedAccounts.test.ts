@@ -70,18 +70,18 @@ describe('connectedAccountProjectionFamily', () => {
       generation: 1,
       registry: {
         connectedAccountDescriptors: [{
-          provenance: 'external', source: { kind: 'bundled' }, pluginId: 'happier.scm.hosting.bitbucket',
+          provenance: 'external', source: { kind: 'bundled' }, pluginId: 'happier.scm.forge.bitbucket',
           definition: {
             id: 'bitbucket-account', title: 'Bitbucket account',
             authentication: manualAuthentication(),
           },
         }],
-        scmHostingProviders: [{ id: 'bitbucket', pluginId: 'happier.scm.hosting.bitbucket', definition: { authService: 'bitbucket-account' } }],
+        scmHostingProviders: [{ id: 'bitbucket', pluginId: 'happier.scm.forge.bitbucket', definition: { authService: 'bitbucket-account' } }],
         pluginDiagnosticsByPluginId: {},
       } as never,
     });
     expect(Object.values(projected.entriesById)).toEqual([
-      expect.objectContaining({ id: 'bitbucket-account', serviceId: 'bitbucket', pluginId: 'happier.scm.hosting.bitbucket' }),
+      expect.objectContaining({ id: 'bitbucket-account', serviceId: 'bitbucket', pluginId: 'happier.scm.forge.bitbucket' }),
     ]);
     expect(JSON.stringify(projected)).not.toContain('hostAdapter');
     expect(JSON.stringify(projected)).not.toContain('clientSecret');
@@ -93,7 +93,7 @@ describe('connectedAccountProjectionFamily', () => {
       generation: 1,
       registry: {
         connectedAccountDescriptors: [{
-          provenance: 'external', source: { kind: 'installed' }, pluginId: 'happier.scm.hosting.bitbucket',
+          provenance: 'external', source: { kind: 'installed' }, pluginId: 'happier.scm.forge.bitbucket',
           definition: {
             id: 'bitbucket-account',
             title: { key: 'plugin.bitbucket.title', fallback: 'Bitbucket Cloud' },
@@ -105,9 +105,9 @@ describe('connectedAccountProjectionFamily', () => {
             capabilities: ['scm.repositories'],
           },
         }],
-        scmHostingProviders: [{ id: 'bitbucket', pluginId: 'happier.scm.hosting.bitbucket', definition: { authService: 'bitbucket-account' } }],
+        scmHostingProviders: [{ id: 'bitbucket', pluginId: 'happier.scm.forge.bitbucket', definition: { authService: 'bitbucket-account' } }],
         pluginDiagnosticsByPluginId: {
-          'happier.scm.hosting.bitbucket': [{ code: 'missing_runtime' }],
+          'happier.scm.forge.bitbucket': [{ code: 'plugin_untrusted', message: 'not admitted' }],
         },
       } as never,
     });
@@ -115,7 +115,7 @@ describe('connectedAccountProjectionFamily', () => {
     expect(Object.values(projected.entriesById)).toEqual([{
       id: 'bitbucket-account',
       serviceId: 'bitbucket',
-      pluginId: 'happier.scm.hosting.bitbucket',
+      pluginId: 'happier.scm.forge.bitbucket',
       provenance: 'external',
       sourceKind: 'installed',
       title: { key: 'plugin.bitbucket.title', fallback: 'Bitbucket Cloud' },
@@ -133,9 +133,72 @@ describe('connectedAccountProjectionFamily', () => {
         }],
       },
       capabilities: ['scm.repositories'],
-      availability: { state: 'blocked', reason: 'plugin_diagnostics' },
-      diagnostics: ['missing_runtime'],
+      availability: { state: 'blocked', reason: 'plugin_declaration_unusable' },
+      diagnostics: ['plugin_untrusted'],
     }]);
+  });
+
+  // UI-T28: the UI that REPAIRS a plugin's configuration must not be gated on
+  // that plugin's runtime being healthy. A failed daemon activation is exactly
+  // the situation in which the user needs to connect the account.
+  it('keeps Connected Account setup reachable when the plugin daemon activation failed', () => {
+    const projected = connectedAccountProjectionFamily.project({
+      generation: 1,
+      registry: {
+        connectedAccountDescriptors: [{
+          provenance: 'external', source: { kind: 'installed' }, pluginId: 'acme.tracker',
+          definition: {
+            id: 'tracker-account', title: 'Tracker account',
+            authentication: manualAuthentication(),
+          },
+        }],
+        scmHostingProviders: [],
+        pluginDiagnosticsByPluginId: {
+          'acme.tracker': [{
+            code: 'plugin_activation_failed',
+            message: "Plugin 'acme.tracker' activation failed: missing API token",
+          }],
+        },
+      } as never,
+    });
+
+    expect(projected.entriesById['acme.tracker/tracker-account']).toEqual(
+      expect.objectContaining({
+        // Reachable: the host can still render and execute the setup flow.
+        availability: { state: 'available', reason: 'resolved' },
+        // …while the runtime failure remains disclosed.
+        diagnostics: ['plugin_activation_failed'],
+      }),
+    );
+  });
+
+  it('blocks Connected Account setup when the declaration itself is unusable', () => {
+    const projected = connectedAccountProjectionFamily.project({
+      generation: 1,
+      registry: {
+        connectedAccountDescriptors: [{
+          provenance: 'external', source: { kind: 'installed' }, pluginId: 'acme.tracker',
+          definition: {
+            id: 'tracker-account', title: 'Tracker account',
+            authentication: manualAuthentication(),
+          },
+        }],
+        scmHostingProviders: [],
+        pluginDiagnosticsByPluginId: {
+          'acme.tracker': [
+            { code: 'plugin_activation_failed', message: 'activation failed' },
+            { code: 'plugin_manifest_semantic_invalid', message: 'manifest is not usable' },
+          ],
+        },
+      } as never,
+    });
+
+    expect(projected.entriesById['acme.tracker/tracker-account']).toEqual(
+      expect.objectContaining({
+        availability: { state: 'blocked', reason: 'plugin_declaration_unusable' },
+        diagnostics: ['plugin_activation_failed', 'plugin_manifest_semantic_invalid'],
+      }),
+    );
   });
 
   it('resolves an auth-service relationship only within the descriptor plugin owner', () => {

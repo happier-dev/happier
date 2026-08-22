@@ -15,6 +15,7 @@ import type {
 } from '../activation.js';
 import type {
     AgentProviderBindingAdapter,
+    AgentDaemonSpawnHooks,
     AgentRuntimeFactory,
     AgentSessionRunnerFactoryLocatorV1,
 } from '../agentRuntime/index.js';
@@ -24,8 +25,18 @@ import type { PromptAssetAdapter } from '../resources.js';
 import type { PluginDynamicResourceRuntime } from '../services/resources.js';
 import type { PluginConnectedAccountRuntime } from '../services/index.js';
 import type { AgentExternalSessionTakeoverContribution } from '../sessions/externalSessionTakeover.js';
-import type { ManagedProviderRuntime } from '../managed-services/contract.js';
+import type {
+    ManagedProviderRuntime,
+    ProviderCatalogParser,
+} from '../managed-services/contract.js';
 import type { VoiceProviderRuntime } from '../voice/projections.js';
+
+/**
+ * A committed Action registration has no independently callable realm. The
+ * target-owning dispatcher first proves daemon versus client currentness, then
+ * adapts this opaque capture to the corresponding public ActionHandler.
+ */
+type CapturedActionHandler = (input: never, context: never) => ReturnType<ActionHandler>;
 
 /**
  * Canonical value map for every manifest-backed runtime registration family.
@@ -33,11 +44,12 @@ import type { VoiceProviderRuntime } from '../voice/projections.js';
  * owner; adding a second hand-maintained family map is a correctness bug.
  */
 export interface PluginRegistrationValueByFamily {
-    actions: ActionHandler;
+    actions: CapturedActionHandler;
     agents: Readonly<{
         factory?: AgentRuntimeFactory;
         providerBinding?: AgentProviderBindingAdapter;
         sessionRunnerFactory?: AgentSessionRunnerFactoryLocatorV1;
+        daemonSpawnHooks?: AgentDaemonSpawnHooks;
         externalSessions?: AgentExternalSessionsContribution;
         externalSessionHooks?: AgentExternalSessionHooksContribution;
         externalSessionObservation?: AgentExternalSessionObservationContribution;
@@ -47,7 +59,14 @@ export interface PluginRegistrationValueByFamily {
     events: PluginEventHandler;
     notificationChannels: PluginNotificationSender;
     connectedAccountDescriptors: PluginConnectedAccountRuntime;
-    providers: ManagedProviderRuntime;
+    /**
+     * The Provider family registers separately-declared fields for one Provider
+     * id: its managed runtime, and the catalog wire formats it contributes.
+     */
+    providers: Readonly<{
+        managedRuntime?: ManagedProviderRuntime;
+        catalogParsers?: Readonly<Record<string, ProviderCatalogParser>>;
+    }>;
     scmHostingProviders: HostingProviderRuntime;
     scmBackends: BackendRuntime;
     'mcp.servers': PluginMcpServerRuntime;

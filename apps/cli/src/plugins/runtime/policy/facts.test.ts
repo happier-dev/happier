@@ -9,18 +9,17 @@ import {
 
 const current = Object.freeze({
   immutableGenerationId: 'generation-7',
-  packageDigest: 'sha256:package',
-  manifestDigest: 'sha256:manifest',
+  desiredImmutableGenerationId: 'generation-7',
+  appliedImmutableGenerationId: 'generation-7',
   distribution: Object.freeze({ kind: 'npm', packageName: '@acme/plugin', channel: 'latest' }),
   applied: true,
   selectedAccess: Object.freeze([]),
 });
 
 describe('resolvePluginFinalPolicyAuthorizationFacts', () => {
-  it('binds every consumer to the same exact package and applied generation facts', () => {
+  it('binds every consumer to the direct applied generation without digest-era currentness copies', () => {
     const authorization = resolvePluginFinalPolicyAuthorizationFacts({
       pluginId: 'acme.plugin',
-      targetManifestDigest: 'sha256:manifest',
       current,
     });
 
@@ -29,13 +28,37 @@ describe('resolvePluginFinalPolicyAuthorizationFacts', () => {
       serviceAvailability: [],
       currentIntent: 'notRequired',
     })).toMatchObject({ outcome: 'visible', code: 'plugin_final_available' });
+    expect(JSON.stringify(authorization.packageTrust)).not.toContain('sha256:');
   });
 
-  it('fails closed when a consumer presents a stale manifest generation', () => {
+  it('keeps a retained target generation distinct from durable desired and applied facts', () => {
     const authorization = resolvePluginFinalPolicyAuthorizationFacts({
       pluginId: 'acme.plugin',
-      targetManifestDigest: 'sha256:stale-manifest',
-      current,
+      current: {
+        ...current,
+        desiredImmutableGenerationId: 'generation-8',
+        appliedImmutableGenerationId: 'generation-7',
+      },
+      targetGenerationMode: 'retained',
+    });
+
+    expect(authorization.generation).toEqual({
+      targetGeneration: 'generation-7',
+      desiredGeneration: 'generation-8',
+      appliedGeneration: 'generation-7',
+      targetGenerationMode: 'retained',
+    });
+    expect(evaluatePluginFinalPolicy({
+      ...authorization,
+      serviceAvailability: [],
+      currentIntent: 'notRequired',
+    })).toMatchObject({ outcome: 'visible', code: 'plugin_final_available' });
+  });
+
+  it('fails closed when a direct current generation is unavailable', () => {
+    const authorization = resolvePluginFinalPolicyAuthorizationFacts({
+      pluginId: 'acme.plugin',
+      current: null,
     });
 
     expect(evaluatePluginFinalPolicy({

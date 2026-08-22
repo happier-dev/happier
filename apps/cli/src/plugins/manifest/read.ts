@@ -1,5 +1,7 @@
-import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
+
+import { formatPluginManifestIngestionDiagnostic } from '@happier-dev/protocol';
+import { decodePluginManifestUtf8 } from '@happier-dev/protocol/plugins/manifest';
 
 import type { PluginCompatibilityDiagnostic } from '@/plugins/validation/diagnostics/types';
 import { ingestCanonicalPluginManifest } from './ingest';
@@ -10,7 +12,6 @@ export type ReadPluginManifestResult =
       ok: true;
       manifestPath: string;
       manifestRawText: string;
-      manifestDigest: string;
       manifest: CanonicalPluginManifest;
     }>
   | Readonly<{
@@ -18,14 +19,14 @@ export type ReadPluginManifestResult =
       diagnostics: readonly PluginCompatibilityDiagnostic[];
     }>;
 
-function hashManifest(raw: string): string {
-  return `sha256:${createHash('sha256').update(raw).digest('hex')}`;
-}
-
-export async function readPluginManifest(params: Readonly<{ manifestPath: string }>): Promise<ReadPluginManifestResult> {
-  let manifestRawText: string;
+export async function readPluginManifest(params: Readonly<{
+  manifestPath: string;
+  manifestAuthority?: 'external' | 'bundled_first_party';
+  enforceEngineCompatibility?: boolean;
+}>): Promise<ReadPluginManifestResult> {
+  let manifestRawBytes: Uint8Array;
   try {
-    manifestRawText = await readFile(params.manifestPath, 'utf8');
+    manifestRawBytes = await readFile(params.manifestPath);
   } catch (error) {
     const code = (error as NodeJS.ErrnoException | null)?.code;
     if (code === 'ENOENT') {
@@ -42,22 +43,38 @@ export async function readPluginManifest(params: Readonly<{ manifestPath: string
     throw error;
   }
 
-  const ingestion = ingestCanonicalPluginManifest(manifestRawText);
+  const ingestion = ingestCanonicalPluginManifest(
+    manifestRawBytes,
+    params.manifestAuthority || params.enforceEngineCompatibility !== undefined
+      ? {
+          ...(params.manifestAuthority
+            ? { manifestAuthority: params.manifestAuthority }
+            : {}),
+          ...(params.enforceEngineCompatibility !== undefined
+            ? {
+                enforceEngineCompatibility:
+                  params.enforceEngineCompatibility,
+              }
+            : {}),
+        }
+      : undefined,
+  );
   if (!ingestion.ok) {
     return {
       ok: false,
       diagnostics: ingestion.diagnostics.map((diagnostic) => ({
         code: 'plugin_manifest_invalid',
-        message: `${diagnostic.code}: ${diagnostic.message}`,
+        message: `${diagnostic.code}: ${formatPluginManifestIngestionDiagnostic(diagnostic)}`,
       })),
     };
   }
+
+  const manifestRawText = decodePluginManifestUtf8(manifestRawBytes);
 
   return {
     ok: true,
     manifestPath: params.manifestPath,
     manifestRawText,
-    manifestDigest: hashManifest(manifestRawText),
     manifest: ingestion.manifest,
   };
 }

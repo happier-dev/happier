@@ -1,19 +1,28 @@
 import type {
     PluginDiagnosticRecordV1,
-    PluginProjectedSettingsFieldV2,
+    PluginActionPresentUserGatePolicy,
+    PluginProjectionBrandAssetV2,
     PluginProjectionInstalledPackageV2,
     PluginProjectionV2,
-    PluginSettingFieldSchemaV2,
-    PluginSettingFieldV2,
+    PluginMachineExecutionOriginV1,
 } from '@happier-dev/protocol';
 import {
     buildQualifiedPluginContributionKey,
     createPluginContributionIdentity,
+    isDynamicPluginResourceContributionV2,
+    PluginAgentCapabilitiesV2Schema,
+    PluginActionDeclaredExecutionV2Schema,
+    PluginActionScopeV2Schema,
+    PluginMachineExecutionOriginV1Schema,
+    PluginSettingsProjectionError,
+    projectPluginSettingsContributionV2,
     PluginResourceKindV2Schema,
 } from '@happier-dev/protocol';
 
 import type { PluginCatalogEntry } from '@/plugins/projection/catalog/installed';
 import type { PluginCompatibilityDiagnostic } from '@/plugins/validation/diagnostics/types';
+import type { PluginFinalPolicyCurrentGeneration } from '@/plugins/runtime/policy/facts';
+import { projectTargetActionPresentUserAuthorizationFacts } from '@/plugins/runtime/policy/evaluate';
 import type {
     ResolvedActionContribution,
     ResolvedContributionRegistry,
@@ -26,6 +35,7 @@ import {
     buildPluginProjectionFamiliesByIdV2,
 } from '@/plugins/projection/families';
 import { managedDependenciesProjectionFamily } from '../managedDependencies';
+import { accountCollectionsProjectionFamily } from '../accountCollections';
 import { mcpProjectionFamily } from '../mcp';
 import { scmBackendProjectionFamily } from '../scmBackends';
 import { scmHostingProviderProjectionFamily } from '../scmHostingProviders';
@@ -37,7 +47,16 @@ import { pluginBrowserProjectionFamily } from '../browser';
 import { providerProjectionFamily } from '../providers';
 import { connectedAccountProjectionFamily } from '../connectedAccounts';
 import { voiceModelPackProjectionFamily, voiceProviderProjectionFamily } from '../voiceDeclarations';
-import { projectPluginContributionIntrospection } from '@/plugins/projection/introspection/project';
+import {
+    composerAttachmentsProjectionFamily,
+    composerControlsProjectionFamily,
+    composerRegionsProjectionFamily,
+} from '../composer';
+import {
+    projectPluginCompatibilityDiagnostics,
+    projectPluginContributionIntrospection,
+} from '@/plugins/projection/introspection/project';
+import { mapPluginSourceToDiagnosticSource } from '@/plugins/projection/introspection/source';
 import type { PluginTargetActivationIntrospectionSnapshot } from '@/plugins/projection/introspection/targetActivationFacts';
 import {
     PluginLocalSettingsDeclarationError,
@@ -97,16 +116,64 @@ function readAgentProviderOwnedEnvironmentKeys(
         : [];
 }
 
-function projectAgentStartupInstructionsCapability(
+function projectAgentCapabilities(
     agent: ResolvedAgentContribution,
 ): PluginProjectionV2['agentsById'][string]['capabilities'] {
     const capabilities = agent.richDefinition?.definition.capabilities;
-    const sessions = capabilities && 'sessions' in capabilities
-        ? capabilities.sessions
-        : undefined;
-    return sessions?.startupInstructions?.versions[0] === 1
-        ? { sessions: { startupInstructions: { versions: [1] } } }
-        : undefined;
+    return capabilities ? PluginAgentCapabilitiesV2Schema.parse(capabilities) : undefined;
+}
+
+/**
+ * Carries the Agent's declared client UI-behavior descriptor onto the wire.
+ * The daemon never interprets it: the client owns the single fail-closed
+ * descriptor interpreter, and this is the only runtime channel an installed
+ * Agent has to reach it.
+ */
+/**
+ * Collects the Agents that own an MCP discovery source.
+ *
+ * Ownership is the declaration's `metadata.agentId` — never the contribution's
+ * plugin-chosen local id — exactly as the daemon's detection resolves it in
+ * `apps/cli/src/mcp/providerDetection/detectProviderMcpServers.ts`.
+ */
+function readAgentIdsOwningMcpDiscoverySources(
+    registry: ResolvedContributionRegistry,
+): ReadonlySet<string> {
+    const agentIds = new Set<string>();
+    for (const source of registry.mcpDiscoverySources ?? []) {
+        const agentId = source.definition.metadata?.agentId;
+        if (typeof agentId === 'string' && agentId.trim().length > 0) agentIds.add(agentId.trim());
+    }
+    return agentIds;
+}
+
+/**
+ * Carries the Agent's declared client UI-behavior descriptor onto the wire.
+ * The daemon never interprets it: the client owns the single fail-closed
+ * descriptor interpreter, and this is the only runtime channel an installed
+ * Agent has to reach it.
+ *
+ * `behavior.mcpServers` is the one exception, and it is derived rather than
+ * declared: whether the MCP settings screen offers this Agent's detected-config
+ * scan is already decided by the discovery source it contributes, which is what
+ * the scan itself runs on. Deriving it here is what lets a contributed Agent
+ * reach that screen by declaring the source alone — the same single declaration
+ * a bundled Agent uses, whose build-time projection derives the flag the same
+ * way.
+ */
+function projectAgentUiBehavior(
+    agent: ResolvedAgentContribution,
+    ownsMcpDiscoverySource: boolean,
+): PluginProjectionV2['agentsById'][string]['ui'] {
+    const ui = agent.richDefinition?.definition.ui;
+    if (!ownsMcpDiscoverySource) return ui;
+    return {
+        ...ui,
+        behavior: {
+            ...(ui?.behavior ?? {}),
+            mcpServers: { supportsDetectedConfigScan: true },
+        },
+    };
 }
 
 function projectAgentExternalSessions(
@@ -146,19 +213,44 @@ function projectAgentExternalSessions(
                 },
                 ...(instances
                     ? {
-                        instances: instances.map((instance) => (
-                            instance.kind === 'connectedServiceProfiles'
-                                ? {
+                        instances: instances.map((instance) => {
+                            if (instance.kind === 'connectedServiceProfiles') {
+                                return {
                                     kind: instance.kind,
                                     serviceId: instance.serviceId,
                                     constants: { ...(instance.constants ?? {}) },
                                     fields: { ...instance.fields },
-                                }
-                                : {
+                                };
+                            }
+                            if (instance.kind === 'agentSetting') {
+                                return {
                                     kind: instance.kind,
+                                    settingId: instance.settingId,
+                                    ...(instance.byServerIdSettingId
+                                        ? { byServerIdSettingId: instance.byServerIdSettingId }
+                                        : {}),
+                                    field: instance.field,
+                                    normalization: instance.normalization,
                                     constants: { ...(instance.constants ?? {}) },
-                                }
-                        )),
+                                };
+                            }
+                            if (instance.kind === 'agentSettingOverride') {
+                                return {
+                                    kind: instance.kind,
+                                    settingId: instance.settingId,
+                                    ...(instance.byServerIdSettingId
+                                        ? { byServerIdSettingId: instance.byServerIdSettingId }
+                                        : {}),
+                                    field: instance.field,
+                                    normalization: instance.normalization,
+                                    constants: { ...(instance.constants ?? {}) },
+                                };
+                            }
+                            return {
+                                kind: instance.kind,
+                                constants: { ...(instance.constants ?? {}) },
+                            };
+                        }),
                     }
                     : {}),
             };
@@ -168,8 +260,8 @@ function projectAgentExternalSessions(
 
 function resolveActionSurfaces(
     surfaces: Readonly<Record<string, unknown>>,
-): ('agent' | 'mcp' | 'cli' | 'ui')[] {
-    const projected = new Set<'agent' | 'mcp' | 'cli' | 'ui'>();
+): ('agent' | 'mcp' | 'cli' | 'ui' | 'plugin' | 'voice')[] {
+    const projected = new Set<'agent' | 'mcp' | 'cli' | 'ui' | 'plugin' | 'voice'>();
     if (surfaces.cli === true) {
         projected.add('cli');
     }
@@ -182,36 +274,38 @@ function resolveActionSurfaces(
     if (surfaces.ui === true) {
         projected.add('ui');
     }
-    if (projected.size === 0) {
-        projected.add('cli');
+    if (surfaces.plugin === true) {
+        projected.add('plugin');
+    }
+    if (surfaces.voice === true) {
+        projected.add('voice');
     }
     return [...projected];
 }
 
 function resolveActionScopes(
     action: ResolvedActionContribution,
-): ('global' | 'settings' | 'session')[] {
-    const surfaces = action.definition.surfaces;
-    if (surfaces.mcp === true || surfaces.agent === true) {
-        return ['session'];
-    }
-    if (surfaces.ui === true || surfaces.voice === true) {
-        return ['settings'];
-    }
-    return ['global'];
+): PluginProjectionV2['actionsById'][string]['scopes'] {
+    // Scope is a manifest-declared semantic fact. Surface only controls where
+    // an Action can be invoked; deriving scope from it silently rewrites the
+    // current qualified Action's host context.
+    return PluginActionScopeV2Schema.array().min(1).parse(
+        action.definition.scopes,
+    );
 }
 
 type PluginContributionMetadata = Readonly<{
     pluginId: string;
+    pluginVersion?: string;
     provenance?: ResolvedContributionProvenance;
     sourceKind?: ResolvedContributionSourceKind;
     displayName?: string;
     manifestPath?: string;
-    manifestDigest?: string;
     sourceSpec?: Readonly<{
         kind?: string;
         locator?: string;
         resolvedVersion?: string;
+        devWatch?: boolean;
     }>;
 }>;
 
@@ -225,12 +319,8 @@ function collectPluginContributionMetadata(
         source?: ResolvedContributionSource;
         pluginId?: string;
         manifestPath?: string;
-        manifestDigest?: string;
-        sourceSpec?: Readonly<{
-            kind?: string;
-            locator?: string;
-            resolvedVersion?: string;
-        }>;
+        sourceSpec?: PluginContributionMetadata['sourceSpec'];
+        pluginVersion?: string;
         displayName?: string;
     }>): void {
         const pluginId = readOptionalString(entry.pluginId);
@@ -246,11 +336,11 @@ function collectPluginContributionMetadata(
             : existing?.sourceKind ?? entry.source?.kind;
         metadata.set(pluginId, {
             pluginId,
+            pluginVersion: readOptionalString(entry.pluginVersion) ?? existing?.pluginVersion,
             provenance: mergedProvenance,
             sourceKind: mergedSourceKind,
             displayName: readOptionalString(entry.displayName) ?? existing?.displayName,
             manifestPath: readOptionalString(entry.manifestPath) ?? existing?.manifestPath,
-            manifestDigest: readOptionalString(entry.manifestDigest) ?? existing?.manifestDigest,
             sourceSpec: entry.sourceSpec ?? existing?.sourceSpec,
         });
     }
@@ -261,7 +351,6 @@ function collectPluginContributionMetadata(
             source: agent.source,
             pluginId: agent.pluginId,
             manifestPath: agent.manifestPath,
-            manifestDigest: agent.manifestDigest,
             sourceSpec: agent.sourceSpec,
             displayName: readAgentTitle(agent),
         });
@@ -293,7 +382,6 @@ function collectPluginContributionMetadata(
             source: provider.source,
             pluginId: provider.pluginId,
             manifestPath: provider.manifestPath,
-            manifestDigest: provider.manifestDigest,
             sourceSpec: provider.sourceSpec,
             displayName: readLocalizedText(provider.definition.title),
         });
@@ -309,7 +397,6 @@ function collectPluginContributionMetadata(
             source: dependency.source,
             pluginId: dependency.pluginId,
             manifestPath: dependency.manifestPath,
-            manifestDigest: dependency.manifestDigest,
             sourceSpec: dependency.sourceSpec,
             displayName: title,
         });
@@ -323,7 +410,6 @@ function collectPluginContributionMetadata(
             source: systemTool.source,
             pluginId: systemTool.pluginId,
             manifestPath: systemTool.manifestPath,
-            manifestDigest: systemTool.manifestDigest,
             sourceSpec: systemTool.sourceSpec,
             displayName: title,
         });
@@ -331,11 +417,90 @@ function collectPluginContributionMetadata(
     for (const server of registry.mcpServers ?? []) {
         upsert(server);
     }
-    for (const provider of registry.mcpDiscoveryProviders ?? []) {
-        upsert(provider);
+    for (const source of registry.mcpDiscoverySources ?? []) {
+        upsert(source);
+    }
+    for (const point of registry.pluginContributionPoints ?? []) {
+        upsert(point);
+    }
+    for (const contribution of registry.targetedPluginContributions ?? []) {
+        upsert(contribution);
+    }
+    for (const attachment of registry.composerAttachments ?? []) {
+        upsert(attachment);
+    }
+    for (const control of registry.composerControls ?? []) {
+        upsert(control);
+    }
+    for (const region of registry.composerRegions ?? []) {
+        upsert(region);
     }
 
     return metadata;
+}
+
+function collectPluginDiagnosticMetadata(params: Readonly<{
+    registry: ResolvedContributionRegistry;
+    installedPackages: readonly PluginCatalogEntry[];
+}>): ReadonlyMap<string, PluginDiagnosticRecordV1['plugin']> {
+    const metadataByPluginId = new Map<string, PluginDiagnosticRecordV1['plugin']>();
+    for (const entry of params.installedPackages) {
+        metadataByPluginId.set(entry.pluginId, {
+            id: entry.pluginId,
+            version: entry.version,
+            source: mapPluginSourceToDiagnosticSource(entry.source),
+        });
+    }
+    for (const metadata of collectPluginContributionMetadata(params.registry).values()) {
+        const sourceKind = metadata.sourceKind ?? metadata.sourceSpec?.kind;
+        if (!metadata.pluginVersion || !sourceKind) continue;
+        const candidate: PluginDiagnosticRecordV1['plugin'] = {
+            id: metadata.pluginId,
+            version: metadata.pluginVersion,
+            source: mapPluginSourceToDiagnosticSource({
+                kind: sourceKind,
+                ...(metadata.sourceSpec?.devWatch === true ? { devWatch: true } : {}),
+            }),
+        };
+        const existing = metadataByPluginId.get(metadata.pluginId);
+        if (existing && (
+            existing.version !== candidate.version || existing.source !== candidate.source
+        )) {
+            throw new Error(`Diagnostic metadata for '${metadata.pluginId}' is not current with its installed package`);
+        }
+        metadataByPluginId.set(metadata.pluginId, candidate);
+    }
+    return metadataByPluginId;
+}
+
+function projectAttributedPluginDiagnostics(params: Readonly<{
+    registry: ResolvedContributionRegistry;
+    installedPackages: readonly PluginCatalogEntry[];
+    diagnosticsByPluginId: Readonly<Record<string, readonly PluginCompatibilityDiagnostic[]>>;
+    occurredAtMs: number;
+}>): readonly PluginDiagnosticRecordV1[] {
+    const metadataByPluginId = collectPluginDiagnosticMetadata(params);
+    const records: PluginDiagnosticRecordV1[] = [];
+    for (const pluginId of Object.keys(params.diagnosticsByPluginId).sort()) {
+        const diagnostics = (params.diagnosticsByPluginId[pluginId] ?? []).filter((diagnostic) => (
+            diagnostic.contribution !== undefined
+        ));
+        if (diagnostics.length === 0) continue;
+        const plugin = metadataByPluginId.get(pluginId);
+        if (!plugin) {
+            throw new Error(`Missing current plugin metadata for attributed diagnostic '${pluginId}'`);
+        }
+        records.push(...projectPluginCompatibilityDiagnostics({
+            diagnostics,
+            plugin,
+            defaultStage: 'normalization',
+            generation: params.registry.immutableGenerationIdsByPluginId?.[pluginId],
+            host: 'daemon',
+            platform: process.platform,
+            occurredAtMs: params.occurredAtMs,
+        }));
+    }
+    return Object.freeze(records);
 }
 
 function buildDiagnostics(params: Readonly<{
@@ -350,6 +515,7 @@ function buildDiagnostics(params: Readonly<{
 
 function toInstalledPackage(
     entry: PluginCatalogEntry,
+    immutableGenerationId: string | undefined,
 ): PluginProjectionInstalledPackageV2 {
     return {
         id: entry.pluginId,
@@ -360,7 +526,7 @@ function toInstalledPackage(
             kind: readOptionalString(entry.source.kind) ?? 'unknown',
             locator: readOptionalString(entry.source.locator) ?? entry.pluginId,
         },
-        digest: readOptionalString(entry.manifestDigest),
+        ...(immutableGenerationId ? { immutableGenerationId } : {}),
     };
 }
 
@@ -368,17 +534,26 @@ function buildInstalledPackagesById(params: Readonly<{
     registry: ResolvedContributionRegistry;
     installedPackages: readonly PluginCatalogEntry[];
     pluginDiagnosticsByPluginId: Readonly<Record<string, readonly PluginCompatibilityDiagnostic[]>>;
+    brandAssetsByPluginId?: Readonly<Record<string, PluginProjectionBrandAssetV2>>;
 }>): PluginProjectionV2['installedPackagesById'] {
     const installedPackagesById: PluginProjectionV2['installedPackagesById'] = {};
     const metadataByPluginId = collectPluginContributionMetadata(params.registry);
+    const brandAssetsByPluginId = params.brandAssetsByPluginId ?? {};
 
     for (const entry of params.installedPackages) {
-        installedPackagesById[entry.pluginId] = toInstalledPackage(entry);
+        const brand = brandAssetsByPluginId[entry.pluginId];
+        const immutableGenerationId = readOptionalString(
+            params.registry.immutableGenerationIdsByPluginId?.[entry.pluginId],
+        );
+        installedPackagesById[entry.pluginId] = brand
+            ? { ...toInstalledPackage(entry, immutableGenerationId), brand }
+            : toInstalledPackage(entry, immutableGenerationId);
     }
 
     const fallbackPluginIds = new Set<string>([
         ...metadataByPluginId.keys(),
         ...Object.keys(params.pluginDiagnosticsByPluginId),
+        ...Object.keys(brandAssetsByPluginId),
     ]);
     for (const pluginId of fallbackPluginIds) {
         if (installedPackagesById[pluginId]) {
@@ -403,6 +578,10 @@ function buildInstalledPackagesById(params: Readonly<{
             : readOptionalString(metadata?.sourceSpec?.locator)
                 ?? readOptionalString(metadata?.manifestPath)
                 ?? pluginId;
+        const brand = brandAssetsByPluginId[pluginId];
+        const immutableGenerationId = readOptionalString(
+            params.registry.immutableGenerationIdsByPluginId?.[pluginId],
+        );
         installedPackagesById[pluginId] = {
             id: pluginId,
             displayName: metadata?.displayName ?? pluginId,
@@ -412,7 +591,8 @@ function buildInstalledPackagesById(params: Readonly<{
                 kind: sourceKind,
                 locator,
             },
-            digest: readOptionalString(metadata?.manifestDigest),
+            ...(immutableGenerationId ? { immutableGenerationId } : {}),
+            ...(brand ? { brand } : {}),
         };
     }
 
@@ -424,6 +604,7 @@ function buildAgentsById(
     generation: number,
 ): PluginProjectionV2['agentsById'] {
     const agentsById: PluginProjectionV2['agentsById'] = {};
+    const agentIdsOwningMcpDiscoverySources = readAgentIdsOwningMcpDiscoverySources(registry);
     for (const agent of registry.agents) {
         const identity = agent.identity;
         if (!identity) {
@@ -431,7 +612,12 @@ function buildAgentsById(
         }
         const projectionDefinition = readAgentProjectionDefinition(agent);
         const externalSessions = projectAgentExternalSessions(agent, generation);
-        const capabilities = projectAgentStartupInstructionsCapability(agent);
+        const capabilities = projectAgentCapabilities(agent);
+        const connectedServiceIds = agent.catalogEntry?.connectedServiceIds ?? [];
+        const uiBehavior = projectAgentUiBehavior(
+            agent,
+            agentIdsOwningMcpDiscoverySources.has(agent.id),
+        );
         agentsById[agent.id] = {
             id: agent.id,
             identity,
@@ -442,10 +628,14 @@ function buildAgentsById(
             settingsBackendId: readOptionalString(projectionDefinition.settingsBackendId),
             catalogAgentId: readAgentProjectionCatalogAgentId(projectionDefinition),
             iconAgentId: readOptionalString(projectionDefinition.iconAgentId),
+            ...(connectedServiceIds.length > 0
+                ? { connectedServiceIds: [...connectedServiceIds] }
+                : {}),
             providerOwnedEnvironmentKeys: [...readAgentProviderOwnedEnvironmentKeys(projectionDefinition)],
             ...(capabilities ? { capabilities } : {}),
             ...(agent.cliMetadata ? { cli: agent.cliMetadata } : {}),
             ...(externalSessions ? { externalSessions } : {}),
+            ...(uiBehavior ? { ui: uiBehavior } : {}),
         };
     }
     return agentsById;
@@ -453,25 +643,83 @@ function buildAgentsById(
 
 function buildActionsById(
     registry: ResolvedContributionRegistry,
+    pluginExecutionOriginsByPluginId?: Readonly<Record<string, PluginMachineExecutionOriginV1>>,
+    resolveActionPresentUserGatePolicy?: (
+        pluginId: string,
+        localId: string,
+    ) => PluginActionPresentUserGatePolicy | null,
+    pluginFinalPolicyCurrentGenerationsById?: ReadonlyMap<string, PluginFinalPolicyCurrentGeneration>,
 ): PluginProjectionV2['actionsById'] {
     const actionsById: PluginProjectionV2['actionsById'] = {};
     for (const action of registry.actions) {
         if (!action.pluginId) {
             continue;
         }
+        // Same owner as manifest ingestion and the raw catalog projection: an
+        // absent realm is the daemon realm, a declared-but-invalid one is not.
+        const execution = PluginActionDeclaredExecutionV2Schema.safeParse(action.definition.execution);
+        if (!execution.success) {
+            throw new Error(
+                `Action '${action.pluginId}/${action.definition.id}' declares an unresolvable execution target`,
+            );
+        }
+        const parsedOrigin = PluginMachineExecutionOriginV1Schema.safeParse(
+            pluginExecutionOriginsByPluginId?.[action.pluginId],
+        );
+        const executionOrigin = parsedOrigin.success
+            && parsedOrigin.data.materializationRef.pluginId === action.pluginId
+            ? parsedOrigin.data
+            : undefined;
+        const localizedPresentation = action.localizedPresentation;
+        const inputHints = localizedPresentation?.inputHints ?? action.definition.inputHints;
+        let authorization: ReturnType<typeof projectTargetActionPresentUserAuthorizationFacts> | undefined;
+        if (pluginFinalPolicyCurrentGenerationsById?.has(action.pluginId)) {
+            try {
+                const resolvedAuthorization = resolveActionPresentUserGatePolicy?.(
+                    action.pluginId,
+                    action.definition.id,
+                )
+                    ?.authorization;
+                if (resolvedAuthorization) {
+                    authorization = projectTargetActionPresentUserAuthorizationFacts(
+                        resolvedAuthorization,
+                        resolvedAuthorization.serviceAvailability,
+                    );
+                }
+            } catch {
+                // The additive wire field fails closed when the current policy
+                // owner cannot resolve all exact Action facts.
+            }
+        }
         actionsById[qualifiedProjectionKey(action.pluginId, action.definition.id)] = {
             id: action.definition.id,
             pluginId: action.pluginId,
-            title: action.definition.title,
-            description: readOptionalString(action.definition.description),
+            title: localizedPresentation?.title ?? action.definition.title,
+            description: localizedPresentation?.description ?? readOptionalString(action.definition.description),
+            ...(action.definition.icon ? { icon: action.definition.icon } : {}),
             scopes: resolveActionScopes(action),
             surfaces: resolveActionSurfaces(action.definition.surfaces),
-            placement: 'detailsPanel',
+            execution: execution.data,
+            ...(executionOrigin
+                ? {
+                    serverIdentityId: executionOrigin.serverIdentityId,
+                    materializationRef: Object.freeze({ ...executionOrigin.materializationRef }),
+                }
+                : {}),
+            ...(action.definition.placementBindings
+                ? { placementBindings: [...action.definition.placementBindings] }
+                : {}),
+            ...(action.definition.slash ? { slash: { tokens: [...action.definition.slash.tokens] } } : {}),
+            inputSchema: action.definition.inputSchema,
+            ...(action.definition.outputSchema ? { outputSchema: action.definition.outputSchema } : {}),
+            ...(inputHints ? { inputHints } : {}),
+            ...(action.definition.priority === undefined ? {} : { priority: action.definition.priority }),
             dangerLevel: action.definition.dangerLevel,
             ...(action.definition.confirmation
                 ? { confirmation: action.definition.confirmation }
                 : {}),
             available: true,
+            ...(authorization ? { authorization } : {}),
         };
     }
     return actionsById;
@@ -524,6 +772,18 @@ function buildResourcesById(
         if (!resource.pluginId) {
             continue;
         }
+        // §3.6.1: a dynamic resource has no package path, and
+        // `PluginProjectedResourceV2Schema.path` is a required wire field. It is
+        // deliberately NOT projected as `path: <id>` — that would disclose a
+        // fabricated package path. Projecting the dynamic arm requires adding
+        // the `source` discriminant to the projection schema, which is a
+        // wire-compatibility decision owned by the EU-4b UI-delivery leg that
+        // makes these entries reachable from the app in the first place.
+        if (isDynamicPluginResourceContributionV2(
+            resource.definition as unknown as Readonly<Record<string, unknown>>,
+        )) {
+            continue;
+        }
         const resourceKind = PluginResourceKindV2Schema.safeParse(resource.definition.type);
         if (!resourceKind.success) {
             throw new Error(
@@ -543,198 +803,6 @@ function buildResourcesById(
     return resourcesById;
 }
 
-type ProjectedSettingsValueType = NonNullable<PluginProjectedSettingsFieldV2['valueSchema']['type']>;
-
-const ALL_PROJECTED_SETTINGS_VALUE_TYPES: readonly ProjectedSettingsValueType[] = [
-    'null',
-    'boolean',
-    'number',
-    'integer',
-    'string',
-    'array',
-    'object',
-];
-
-export class PluginSettingsProjectionError extends Error {
-    readonly code = 'PLUGIN_SETTINGS_PROJECTION_INVALID' as const;
-
-    constructor(
-        message: string,
-        readonly pluginId: string,
-        readonly contributionId: string,
-        readonly fieldId: string | null,
-    ) {
-        super(message);
-        this.name = 'PluginSettingsProjectionError';
-    }
-}
-
-function invalidSettingsProjection(params: Readonly<{
-    pluginId: string;
-    contributionId: string;
-    fieldId?: string | null;
-    reason: string;
-}>): PluginSettingsProjectionError {
-    const fieldContext = params.fieldId ? ` field '${params.fieldId}'` : '';
-    return new PluginSettingsProjectionError(
-        `Cannot project settings contribution '${params.pluginId}/${params.contributionId}'${fieldContext}: ${params.reason}`,
-        params.pluginId,
-        params.contributionId,
-        params.fieldId ?? null,
-    );
-}
-
-function intersectSettingsValueTypes(
-    left: ReadonlySet<ProjectedSettingsValueType>,
-    right: ReadonlySet<ProjectedSettingsValueType>,
-): Set<ProjectedSettingsValueType> {
-    return new Set([...left].filter((type) => right.has(type)));
-}
-
-function resolvePossibleSettingsValueTypes(
-    schema: PluginSettingFieldSchemaV2,
-): Set<ProjectedSettingsValueType> {
-    let possibleTypes = new Set<ProjectedSettingsValueType>(
-        schema.type ? [schema.type] : ALL_PROJECTED_SETTINGS_VALUE_TYPES,
-    );
-
-    if (schema.anyOf) {
-        const alternativeTypes = new Set<ProjectedSettingsValueType>();
-        for (const alternative of schema.anyOf) {
-            for (const type of resolvePossibleSettingsValueTypes(alternative)) {
-                alternativeTypes.add(type);
-            }
-        }
-        possibleTypes = intersectSettingsValueTypes(possibleTypes, alternativeTypes);
-    }
-
-    if (schema.oneOf) {
-        const alternativeTypeCounts = new Map<ProjectedSettingsValueType, number>();
-        for (const alternative of schema.oneOf) {
-            for (const type of resolvePossibleSettingsValueTypes(alternative)) {
-                alternativeTypeCounts.set(type, (alternativeTypeCounts.get(type) ?? 0) + 1);
-            }
-        }
-        const exclusiveAlternativeTypes = new Set<ProjectedSettingsValueType>(
-            [...alternativeTypeCounts]
-                .filter(([, count]) => count === 1)
-                .map(([type]) => type),
-        );
-        possibleTypes = intersectSettingsValueTypes(possibleTypes, exclusiveAlternativeTypes);
-    }
-
-    for (const constraint of schema.allOf ?? []) {
-        possibleTypes = intersectSettingsValueTypes(
-            possibleTypes,
-            resolvePossibleSettingsValueTypes(constraint),
-        );
-    }
-
-    return possibleTypes;
-}
-
-function resolveProjectedSettingsValueType(params: Readonly<{
-    pluginId: string;
-    contributionId: string;
-    fieldId: string;
-    schema: PluginSettingFieldSchemaV2;
-    control?: 'auto' | 'text' | 'textarea' | 'switch' | 'select' | 'multiSelect' | 'number' | 'json';
-}>): ProjectedSettingsValueType {
-    const valueTypes = [...resolvePossibleSettingsValueTypes(params.schema)];
-    if (valueTypes.length === 1) {
-        return valueTypes[0]!;
-    }
-    if (
-        params.control === 'number'
-        && valueTypes.every((type) => type === 'number' || type === 'integer' || type === 'null')
-    ) {
-        return valueTypes.includes('integer') ? 'integer' : 'number';
-    }
-    if (params.control === 'json') {
-        return 'object';
-    }
-
-    throw invalidSettingsProjection({
-        pluginId: params.pluginId,
-        contributionId: params.contributionId,
-        fieldId: params.fieldId,
-        reason: valueTypes.length === 0
-            ? 'schema accepts no declared value types'
-            : `schema can accept multiple value types (${valueTypes.sort().join(', ')})`,
-    });
-}
-
-function projectSettingsField(params: Readonly<{
-    pluginId: string;
-    contributionId: string;
-    field: PluginSettingFieldV2;
-}>): PluginProjectedSettingsFieldV2 {
-    const valueType = resolveProjectedSettingsValueType({
-        pluginId: params.pluginId,
-        contributionId: params.contributionId,
-        fieldId: params.field.id,
-        schema: params.field.schema,
-        control: params.field.presentation?.control,
-    });
-    if (params.field.secret === true && valueType !== 'string') {
-        throw invalidSettingsProjection({
-            pluginId: params.pluginId,
-            contributionId: params.contributionId,
-            fieldId: params.field.id,
-            reason: `secret fields must resolve to string, received '${valueType}'`,
-        });
-    }
-    const requestedControl = params.field.presentation?.control;
-    const control: PluginProjectedSettingsFieldV2['control'] = params.field.secret === true
-        ? 'password'
-        : requestedControl && requestedControl !== 'auto'
-            ? requestedControl
-            : valueType === 'boolean'
-                ? 'switch'
-                : valueType === 'string'
-                    ? 'text'
-                    : valueType === 'number' || valueType === 'integer'
-                        ? 'number'
-                        : 'json';
-    const displayKey = readLocalizedText(params.field.title);
-    if (!displayKey) {
-        throw invalidSettingsProjection({
-            pluginId: params.pluginId,
-            contributionId: params.contributionId,
-            fieldId: params.field.id,
-            reason: 'title has no displayable text',
-        });
-    }
-    const descriptionKey = readLocalizedText(params.field.description);
-
-    return {
-        id: params.field.id,
-        kind: 'settings.field',
-        version: '1.0.0',
-        valueSchema: params.field.schema,
-        valueType,
-        control,
-        displayKey,
-        ...(descriptionKey ? { descriptionKey } : {}),
-        ...(params.field.presentation ? { presentation: params.field.presentation } : {}),
-        ...(params.field.availability ? { availability: params.field.availability } : {}),
-        ...(params.field.analytics ? { analytics: params.field.analytics } : {}),
-        ...(params.field.presentation?.order !== undefined
-            ? { order: params.field.presentation.order }
-            : {}),
-        capabilityGates: [],
-        permissionGates: [],
-        redaction: params.field.secret === true ? 'secret' : 'none',
-        clearWhenEmpty: params.field.secret === true ? 'omit' : 'persist',
-        ...(valueType === 'boolean' && typeof params.field.default === 'boolean'
-            ? { defaultBooleanValue: params.field.default }
-            : {}),
-        ...(params.field.secret !== true && params.field.default !== undefined
-            ? { defaultValue: params.field.default }
-            : {}),
-    };
-}
-
 function buildSettingsById(
     registry: ResolvedContributionRegistry,
 ): PluginProjectionV2['settingsById'] {
@@ -749,44 +817,20 @@ function buildSettingsById(
         });
     } catch (error) {
         if (!(error instanceof PluginLocalSettingsDeclarationError)) throw error;
-        throw invalidSettingsProjection({
-            pluginId: error.pluginId,
-            contributionId: error.contributionId,
-            ...(error.fieldId ? { fieldId: error.fieldId } : {}),
-            reason: error.reason,
-        });
+        const fieldContext = error.fieldId ? ` field '${error.fieldId}'` : '';
+        throw new PluginSettingsProjectionError(
+            `Cannot project settings contribution '${error.pluginId}/${error.contributionId}'${fieldContext}: ${error.reason}`,
+            error.pluginId,
+            error.contributionId,
+            error.fieldId ?? null,
+        );
     }
     for (const declaration of declarations) {
-        settingsById[qualifiedProjectionKey(declaration.pluginId, declaration.definition.id)] = {
-            id: declaration.definition.id,
-            pluginId: declaration.pluginId,
-            version: declaration.definition.version,
-            title: readLocalizedText(declaration.definition.title) ?? declaration.definition.id,
-            ...(declaration.definition.description
-                ? { description: readLocalizedText(declaration.definition.description) }
-                : {}),
-            storageScope: declaration.definition.scope,
-            presentation: declaration.definition.presentation,
-            target: declaration.definition.target.kind === 'plugin'
-                ? { kind: 'plugin' }
-                : {
-                    kind: 'agent',
-                    agent: typeof declaration.definition.target.agent === 'string'
-                        ? { pluginId: declaration.pluginId, localId: declaration.definition.target.agent }
-                        : declaration.definition.target.agent,
-                },
-            fields: declaration.definition.fields.map((field) => {
-                const projected = projectSettingsField({
-                    pluginId: declaration.pluginId,
-                    contributionId: declaration.definition.id,
-                    field,
-                });
-                const groupId = declaration.definition.presentation.sections.find((section) => (
-                    section.fields.includes(field.id)
-                ))?.id;
-                return groupId ? { ...projected, groupId } : projected;
-            }),
-        };
+        settingsById[qualifiedProjectionKey(declaration.pluginId, declaration.definition.id)] =
+            projectPluginSettingsContributionV2({
+                pluginId: declaration.pluginId,
+                definition: declaration.definition,
+            });
     }
     return settingsById;
 }
@@ -796,7 +840,18 @@ export function buildPluginProjectionV2(params: Readonly<{
     generation: number;
     installedPackages?: readonly PluginCatalogEntry[];
     pluginDiagnosticsByPluginId?: Readonly<Record<string, readonly PluginCompatibilityDiagnostic[]>>;
+    /** Immutable admitted brand facts from the Resource owner, never paths or bytes. */
+    brandAssetsByPluginId?: Readonly<Record<string, PluginProjectionBrandAssetV2>>;
     pluginUiHostRuntime?: PluginUiProjectionHostRuntimeContext;
+    /** Exact machine materialization facts for the same registry lease. */
+    pluginExecutionOriginsByPluginId?: Readonly<Record<string, PluginMachineExecutionOriginV1>>;
+    /** Read-only current manifest Action policy owner for the same runtime lease. */
+    resolveActionPresentUserGatePolicy?: (
+        pluginId: string,
+        localId: string,
+    ) => PluginActionPresentUserGatePolicy | null;
+    /** Current applied-policy facts; absent partial fixtures fail projection closed. */
+    pluginFinalPolicyCurrentGenerationsById?: ReadonlyMap<string, PluginFinalPolicyCurrentGeneration>;
     introspectionRuntimeSnapshot?: PluginTargetActivationIntrospectionSnapshot;
     scmRuntimeAvailability?: Readonly<{
         backendIds: ReadonlySet<string>;
@@ -811,6 +866,19 @@ export function buildPluginProjectionV2(params: Readonly<{
         );
     }
     const runtimeDiagnosticRecords = params.introspectionRuntimeSnapshot?.diagnosticRecords ?? [];
+    const attributedDiagnosticRecords = projectAttributedPluginDiagnostics({
+        registry: params.registry,
+        installedPackages,
+        diagnosticsByPluginId: pluginDiagnosticsByPluginId,
+        occurredAtMs: Date.now(),
+    });
+    const diagnostics = buildDiagnostics({
+        installedPackages,
+        diagnosticRecords: [
+            ...attributedDiagnosticRecords,
+            ...runtimeDiagnosticRecords,
+        ],
+    });
     const familyDescriptors = [
         providerProjectionFamily,
         connectedAccountProjectionFamily,
@@ -822,6 +890,10 @@ export function buildPluginProjectionV2(params: Readonly<{
         pluginBrowserProjectionFamily,
         voiceModelPackProjectionFamily,
         voiceProviderProjectionFamily,
+        accountCollectionsProjectionFamily,
+        composerAttachmentsProjectionFamily,
+        composerControlsProjectionFamily,
+        composerRegionsProjectionFamily,
     ];
 
     return {
@@ -831,12 +903,20 @@ export function buildPluginProjectionV2(params: Readonly<{
             registry: params.registry,
             installedPackages,
             pluginDiagnosticsByPluginId,
+            ...(params.brandAssetsByPluginId
+                ? { brandAssetsByPluginId: params.brandAssetsByPluginId }
+                : {}),
         }),
         agentsById: buildAgentsById(params.registry, params.generation),
         // The V2 wire field remains for mixed-version readers, but the host no
         // longer projects a parallel backend/runtime registry.
         backendsById: {},
-        actionsById: buildActionsById(params.registry),
+        actionsById: buildActionsById(
+            params.registry,
+            params.pluginExecutionOriginsByPluginId,
+            params.resolveActionPresentUserGatePolicy,
+            params.pluginFinalPolicyCurrentGenerationsById,
+        ),
         toolsById: buildToolsById(params.registry),
         commandsById: buildCommandsById(params.registry),
         resourcesById: buildResourcesById(params.registry),
@@ -844,21 +924,19 @@ export function buildPluginProjectionV2(params: Readonly<{
         familiesById: buildPluginProjectionFamiliesByIdV2({
             registry: params.registry,
             generation: params.generation,
+            pluginDiagnosticsByPluginId,
+            ...(params.pluginExecutionOriginsByPluginId
+                ? { pluginExecutionOriginsByPluginId: params.pluginExecutionOriginsByPluginId }
+                : {}),
             pluginUiHostRuntime: params.pluginUiHostRuntime,
             scmRuntimeAvailability: params.scmRuntimeAvailability,
         }, familyDescriptors),
         contributionIntrospection: projectPluginContributionIntrospection({
             generation: params.generation,
             candidates: params.registry.introspectionContributions ?? [],
-            diagnostics: buildDiagnostics({
-                installedPackages,
-                diagnosticRecords: runtimeDiagnosticRecords,
-            }),
+            diagnostics,
             runtimeFactsByQualifiedId: params.introspectionRuntimeSnapshot?.runtimeFactsByQualifiedId,
         }),
-        diagnostics: buildDiagnostics({
-            installedPackages,
-            diagnosticRecords: runtimeDiagnosticRecords,
-        }),
+        diagnostics,
     };
 }

@@ -6,9 +6,6 @@ import type { ManagedExecutableRef } from '@happier-dev/protocol';
 
 export type HttpMethod = 'GET' | 'HEAD' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'OPTIONS';
 export const MAX_PLUGIN_FETCH_REDIRECTS = 10;
-export const MAX_PLUGIN_FETCH_REQUEST_BODY_BYTES = 16 * 1024 * 1024;
-export const MAX_PLUGIN_FETCH_RESPONSE_BODY_BYTES = 32 * 1024 * 1024;
-export const MAX_PLUGIN_FETCH_HEADER_BYTES = 64 * 1024;
 
 export type PluginFetchCredentialBinding =
     Readonly<{
@@ -144,7 +141,7 @@ export interface PluginProcessHandle extends Disposable {
 }
 
 export interface PluginJsonRpcClient extends Disposable {
-    request(method: string, params?: JsonValue, options?: { signal?: AbortSignal; timeoutMs?: number }): Promise<JsonValue>;
+    request(method: string, params?: JsonValue, options?: { signal?: AbortSignal; timeoutMs?: number | null }): Promise<JsonValue>;
     notify(method: string, params?: JsonValue): Promise<void>;
     onNotification(listener: (message: { method: string; params?: JsonValue }) => void | Promise<void>): Disposable;
     onRequest(method: string, listener: (request: { id: string | number; method: string; params?: JsonValue }) => JsonValue | Promise<JsonValue>): Disposable;

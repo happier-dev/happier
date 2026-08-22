@@ -17,7 +17,11 @@ import {
   type VoiceRealtimeJsonValue as CanonicalVoiceRealtimeJsonValue,
   type VoiceRealtimeToolCallV1,
   type VoiceRealtimeToolResultV1 as CanonicalVoiceRealtimeToolResultV1,
+  type VoiceRuntimePlatform as CanonicalVoiceRuntimePlatform,
   type VoiceTranscriptCanonicalEventV1,
+  type VoiceTranscriptLadderMapper as CanonicalVoiceTranscriptLadderMapper,
+  type VoiceTranscriptLadderMode as CanonicalVoiceTranscriptLadderMode,
+  type VoiceTranscriptLadderObservation as CanonicalVoiceTranscriptLadderObservation,
 } from '@happier-dev/protocol/voice/realtime';
 import type {
   VoiceSpeechOperationContext as ProtocolVoiceSpeechOperationContext,
@@ -82,6 +86,10 @@ import {
   type VoiceRealtimeJsonValue,
   type VoiceRealtimeToolResultV1,
   type VoiceGuidanceAvailability,
+  type VoiceRuntimePlatform,
+  type VoiceTranscriptLadderMapper,
+  type VoiceTranscriptLadderMode,
+  type VoiceTranscriptLadderObservation,
 } from './client.js';
 import type {
   SpeechProviderRuntime,
@@ -96,12 +104,7 @@ describe('Voice author source contract', () => {
   it('publishes neutral Voice composition from the actual /voice package entry', () => {
     const voiceBarrel = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
 
-    expect(voiceBarrel).toContain(
-      "/** @preview */\nexport { createVoiceRecordSchema } from './projections.js';",
-    );
-    expect(voiceBarrel).toContain(
-      "/** @preview */\nexport { withVoiceSchemaField } from './projections.js';",
-    );
+    expect(voiceBarrel).not.toMatch(/@(?:preview|experimental|stable|incubating)\b/u);
     expect(voiceBarrel).not.toContain('@happier-dev/plugin-sdk/protocol');
     expect(createVoiceRecordSchema).toBe(canonicalCreateVoiceRecordSchema);
     expect(withVoiceSchemaField).toBe(canonicalWithVoiceSchemaField);
@@ -202,6 +205,23 @@ describe('Voice author source contract', () => {
     expectTypeOf(credentialSlotId).toEqualTypeOf<VoiceCredentialSlotId>();
   });
 
+  it('projects Protocol-owned effectful tool custody closed by default', () => {
+    const provider = VoiceProviderContributionSchema.parse({
+      id: 'conversation',
+      title: 'Conversation',
+      kind: 'conversation',
+      roles: ['realtime_conversation'],
+      platforms: ['web'],
+      capabilities: { turn: { cancelResponse: false, bargeIn: false } },
+      client: { artifactId: 'voice-runtime-web', modulePath: './voice', exportName: 'activate' },
+    });
+    if (provider.kind !== 'conversation') throw new Error('Expected a conversation Voice provider');
+
+    expect(provider.capabilities).toMatchObject({
+      tools: { effectCalls: 'none' },
+    });
+  });
+
   it('projects the canonical Voice header materialization request without a local structural alias', () => {
     expectTypeOf<ConnectedAccountHttpHeadersRequest>()
       .toEqualTypeOf<ProtocolConnectedAccountHttpHeadersRequest>();
@@ -284,6 +304,22 @@ describe('Voice author source contract', () => {
       VoiceRealtimeCanonicalEvent,
       { type: 'provider_event' }
     >>().toEqualTypeOf<never>();
+  });
+
+  it('re-exports the Protocol-owned transcript ladder instead of restating it', () => {
+    expectTypeOf<VoiceTranscriptLadderMode>().toEqualTypeOf<CanonicalVoiceTranscriptLadderMode>();
+    expectTypeOf<VoiceTranscriptLadderObservation>()
+      .toEqualTypeOf<CanonicalVoiceTranscriptLadderObservation>();
+    expectTypeOf<VoiceTranscriptLadderMapper>().toEqualTypeOf<CanonicalVoiceTranscriptLadderMapper>();
+  });
+
+  it('keeps the client runtime platform a subset of the canonical declared platforms', () => {
+    /*
+     * Narrower on purpose — the host collapses every desktop shell to the web bundle — but never
+     * divergent: a platform this seam names must be one the canonical enum knows.
+     */
+    expectTypeOf<VoiceRuntimePlatform>().toMatchTypeOf<CanonicalVoiceRuntimePlatform>();
+    expectTypeOf<VoiceRuntimePlatform>().not.toEqualTypeOf<CanonicalVoiceRuntimePlatform>();
   });
 
   it('projects the strict Agent realtime runtime-version declaration by canonical identity', () => {

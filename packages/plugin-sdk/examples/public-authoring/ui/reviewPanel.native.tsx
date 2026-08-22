@@ -55,7 +55,27 @@ function ReviewFrame({
     );
 }
 
-function ReviewOverview() {
+function ReviewOverview({ context }: Readonly<{ context: RenderContext }>) {
+    React.useEffect(() => {
+        context.hostApi.publishCurrentUiContext({
+            entity: {
+                kind: 'review',
+                label: 'Review assistant',
+                summary: 'Review guidance and status are available on this mounted surface.',
+            },
+            detail: { source: 'public-authoring-review-overview' },
+            commands: [{
+                title: 'Open review status',
+                description: 'Open the existing review-status destination on this client.',
+                command: {
+                    kind: 'executeAction',
+                    action: 'open-review-status',
+                },
+            }],
+        });
+        return () => context.hostApi.publishCurrentUiContext(null);
+    }, [context.hostApi]);
+
     return (
         <ReviewFrame>
             <Card padding="large">
@@ -356,7 +376,7 @@ function ReviewPanel(context: RenderContext) {
             : <ReviewOpenableContentPanel context={context} handle={reference.handle} />;
     }
 
-    return <ReviewOverview />;
+    return <ReviewOverview context={context} />;
 }
 
 export const renderSurface = defineUiSurface(ReviewPanel);

@@ -1,9 +1,11 @@
-import { readFile } from 'node:fs/promises';
+import { readdir, readFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 import ts from 'typescript';
+
+import { PUBLIC_TOOLCHAIN_SCAFFOLD_BINDINGS_V1 } from './ui/build/publicToolchainCompatibility.js';
 
 const workspaceRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const pluginSourceRoot = join(workspaceRoot, 'packages', 'plugins');
@@ -51,10 +53,9 @@ function isProtocolModuleSpecifier(value: ts.Expression | undefined): value is t
 
 async function readProtocolImports(path: string): Promise<readonly string[]> {
   const source = await readFile(path, 'utf8');
-  // Scan every production source first, then build a full AST only for the
-  // few files whose real module specifier reaches Protocol. This preserves the
-  // exhaustive fence without making its runtime depend on every plugin file's
-  // AST construction.
+  // Pre-process first and build a full AST only when a real module specifier
+  // reaches Protocol, so naming the package in a comment neither counts as a
+  // reach nor costs an AST.
   if (!ts.preProcessFile(source, true, true).importedFiles.some((entry) => (
     isProtocolModulePath(entry.fileName)
   ))) return [];
@@ -142,6 +143,107 @@ async function readPublicSdkOwners(symbols: readonly string[]): Promise<Readonly
   }));
 }
 
+/**
+ * The host workspace packages a first-party plugin runtime source still reaches,
+ * keyed by plugin directory.
+ *
+ * The public plugin toolchain binds an external author to
+ * `@happier-dev/plugin-sdk` (and `@happier-dev/plugin-ui` for a React Native UI
+ * plugin) and to no other Happier package, so every specifier listed here is a
+ * capability a bundled plugin has and an external one cannot reach. Shrinking
+ * this map is the work; a new reach is a C1 regression and fails the fence
+ * below instead of landing silently.
+ */
+const EXPECTED_PLUGIN_RUNTIME_HOST_PACKAGE_REACHES: Readonly<Record<string, readonly string[]>> = {
+  // Claude Agent policy the Claude plugin owns end to end, plus the one
+  // host-recognised dialog-choice discriminant. `apps/cli`'s permission handler
+  // and `apps/ui`'s AskUserQuestion renderer read that exact string, so Protocol
+  // is its only shared owner; an external plugin declares its own request source
+  // rather than emitting another plugin's identity.
+  claude: [
+    '@happier-dev/agents',
+    '@happier-dev/agents/providers/claude-model-options',
+    '@happier-dev/protocol/agents/claude',
+  ],
+  elevenlabs: ['@happier-dev/agents'],
+  opencode: ['@happier-dev/agents/request-auth'],
+  pi: ['@happier-dev/agents/request-auth'],
+};
+
+/** The Happier packages the plugin scaffold actually installs for an author. */
+function readAuthorReachableHappierPackages(): ReadonlySet<string> {
+  return new Set(
+    Object.keys(PUBLIC_TOOLCHAIN_SCAFFOLD_BINDINGS_V1.dependencies)
+      .filter((name) => name.startsWith('@happier-dev/')),
+  );
+}
+
+async function readHostWorkspacePackageNames(): Promise<readonly string[]> {
+  const packagesRoot = join(workspaceRoot, 'packages');
+  const names: string[] = [];
+  for (const entry of await readdir(packagesRoot, { withFileTypes: true })) {
+    if (!entry.isDirectory() || entry.name === 'plugins' || entry.name === 'node_modules') continue;
+    let manifest: Readonly<{ name?: unknown; private?: unknown }>;
+    try {
+      manifest = JSON.parse(await readFile(join(packagesRoot, entry.name, 'package.json'), 'utf8'));
+    } catch {
+      continue;
+    }
+    if (manifest.private !== true || typeof manifest.name !== 'string') continue;
+    names.push(manifest.name);
+  }
+  return names;
+}
+
+async function* walkPluginRuntimeSources(directory: string): AsyncGenerator<string> {
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    if (entry.name === 'node_modules' || entry.name === 'dist') continue;
+    const path = join(directory, entry.name);
+    if (entry.isDirectory()) {
+      yield* walkPluginRuntimeSources(path);
+      continue;
+    }
+    if (!/\.tsx?$/u.test(entry.name)) continue;
+    if (/\.(?:test|test-support|testkit)\.tsx?$/u.test(entry.name)) continue;
+    yield path;
+  }
+}
+
+/**
+ * Every host workspace package specifier reached from a first-party plugin's
+ * shipped sources. Module specifiers come from the TypeScript pre-processor, so
+ * a package name mentioned inside a comment is not counted as a reach.
+ */
+async function measurePluginRuntimeHostPackageReaches(
+  authorPackages: ReadonlySet<string>,
+): Promise<Readonly<Record<string, readonly string[]>>> {
+  const hostPackages = (await readHostWorkspacePackageNames())
+    .filter((name) => !authorPackages.has(name));
+  const reaches: Record<string, Set<string>> = {};
+  for (const entry of await readdir(pluginSourceRoot, { withFileTypes: true })) {
+    if (!entry.isDirectory() || entry.name === 'node_modules') continue;
+    const sourceRoot = join(pluginSourceRoot, entry.name, 'src');
+    try {
+      await readdir(sourceRoot);
+    } catch {
+      continue;
+    }
+    for await (const path of walkPluginRuntimeSources(sourceRoot)) {
+      const source = await readFile(path, 'utf8');
+      for (const imported of ts.preProcessFile(source, true, true).importedFiles) {
+        const owner = hostPackages.find((name) => (
+          imported.fileName === name || imported.fileName.startsWith(`${name}/`)
+        ));
+        if (!owner) continue;
+        (reaches[entry.name] ??= new Set()).add(imported.fileName);
+      }
+    }
+  }
+  return Object.fromEntries(
+    Object.keys(reaches).sort().map((plugin) => [plugin, [...reaches[plugin]!].sort()]),
+  );
+}
+
 describe('first-party plugin public SDK import fence', () => {
   it('keeps first-party Agent runtime event tests on the canonical public SDK entrypoint', async () => {
     for (const [relativePath, expectedImports] of Object.entries(AGENT_RUNTIME_EVENT_TEST_IMPORTS)) {
@@ -201,5 +303,37 @@ describe('first-party plugin public SDK import fence', () => {
     for (const symbol of Object.keys(expectedOwners)) {
       expect(rootImports).not.toContain(symbol);
     }
+  });
+
+  it('keeps every first-party plugin runtime source inside the public author toolchain', async () => {
+    const authorPackages = readAuthorReachableHappierPackages();
+    expect([...authorPackages].sort()).toEqual([
+      '@happier-dev/plugin-sdk',
+      '@happier-dev/plugin-ui',
+    ]);
+
+    const measured = await measurePluginRuntimeHostPackageReaches(authorPackages);
+    expect(measured).toEqual(EXPECTED_PLUGIN_RUNTIME_HOST_PACKAGE_REACHES);
+  });
+
+  it('keeps Protocol out of first-party plugin runtime sources apart from the host-recognised Claude dialog source', async () => {
+    const reaches = await measurePluginRuntimeHostPackageReaches(
+      readAuthorReachableHappierPackages(),
+    );
+    const protocolReaches = Object.fromEntries(
+      Object.entries(reaches)
+        .map(([plugin, specifiers]) => [
+          plugin,
+          specifiers.filter((specifier) => isProtocolModulePath(specifier)),
+        ] as const)
+        .filter(([, specifiers]) => specifiers.length > 0),
+    );
+    expect(Object.keys(protocolReaches)).toEqual(['claude']);
+
+    const symbols = await readProtocolImports(join(
+      pluginSourceRoot,
+      'claude/src/agent/runtime/terminal/unified/resumeChoice/startup.ts',
+    ));
+    expect(symbols).toEqual(['CLAUDE_UNIFIED_TERMINAL_DIALOG_CHOICE_REQUEST_SOURCE']);
   });
 });

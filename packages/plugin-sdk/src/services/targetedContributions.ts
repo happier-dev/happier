@@ -18,6 +18,12 @@ export type TargetedContributionPointRef<TContribution = unknown> = Readonly<{
         id: string;
         version: number;
     }>;
+    /**
+     * Target-produced executable semantics for the host-only cold projection.
+     * This is an ordinary cross-copy data carrier, parsed by the semantic
+     * decoder; it is never canonical manifest JSON or invocation authority.
+     */
+    semanticCarrier?: unknown;
     /** Compile-time evidence only; no contributor implementation crosses the manifest boundary. */
     readonly __targetedContribution?: TContribution;
 }>;

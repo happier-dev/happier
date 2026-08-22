@@ -10,7 +10,7 @@ const fixture = {
   engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 },
   entrypoints: { daemon: './dist/plugin.js' },
   contributes: {
-    actions: [{ id: 'run', title: 'Run', scopes: ['session'], surfaces: ['cli'], placement: 'primary', dangerLevel: 'safe' }],
+    actions: [{ id: 'run', title: 'Run', scopes: ['session'], surfaces: ['cli'], execution: { target: 'daemon' }, placementBindings: ['primary'], dangerLevel: 'safe' }],
     tools: [{ id: 'run-tool', title: 'Run', name: 'run', action: 'run' }],
   },
 } as const;

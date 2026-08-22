@@ -34,6 +34,7 @@ describe('downloadResolvedNpmArtifact', () => {
         registryOrigin: 'https://registry.example.test',
         packageName: 'plugin',
         version: '1.0.0',
+        versionMetadata: {},
         integrity: sri(bytes),
         tarballUrl: 'https://registry.example.test/plugin/-/plugin-1.0.0.tgz',
         signatures: [],
@@ -44,7 +45,14 @@ describe('downloadResolvedNpmArtifact', () => {
     });
 
     expect(await readFile(destinationPath)).toEqual(bytes);
-    expect(result).toMatchObject({ artifactPath: destinationPath, byteLength: bytes.byteLength, registrySignature: { status: 'absent' } });
+    expect(result).toMatchObject({
+      artifactPath: destinationPath,
+      byteLength: bytes.byteLength,
+      // The registry's source SRI is SHA-512 here. Availability needs the
+      // exact verified tarball's canonical SHA-256, not a re-encoded SRI.
+      archiveDigestSha256: `sha256:${createHash('sha256').update(bytes).digest('hex')}`,
+      registrySignature: { status: 'absent' },
+    });
   });
 
   it('removes partial output and rejects integrity or byte-limit failures', async () => {
@@ -55,6 +63,7 @@ describe('downloadResolvedNpmArtifact', () => {
     await expect(downloadResolvedNpmArtifact({
       resolved: {
         registryOrigin: 'https://registry.example.test', packageName: 'plugin', version: '1.0.0',
+        versionMetadata: {},
         integrity: sri(Buffer.from('different')), tarballUrl: 'https://registry.example.test/plugin.tgz', signatures: [],
       },
       destinationPath: join(dir, 'bad-integrity.tgz'), maxBytes: 100, client: bodyClient(bytes),
@@ -64,6 +73,7 @@ describe('downloadResolvedNpmArtifact', () => {
     await expect(downloadResolvedNpmArtifact({
       resolved: {
         registryOrigin: 'https://registry.example.test', packageName: 'plugin', version: '1.0.0',
+        versionMetadata: {},
         integrity: sri(bytes), tarballUrl: 'https://registry.example.test/plugin.tgz', signatures: [],
       },
       destinationPath: join(dir, 'too-large.tgz'), maxBytes: bytes.byteLength - 1, client: bodyClient(bytes),
@@ -82,6 +92,7 @@ describe('downloadResolvedNpmArtifact', () => {
     await expect(downloadResolvedNpmArtifact({
       resolved: {
         registryOrigin: 'https://registry.example.test', packageName: 'plugin', version: '1.0.0',
+        versionMetadata: {},
         integrity: sri(bytes), tarballUrl: 'https://registry.example.test/plugin.tgz', signatures: [],
       },
       destinationPath, maxBytes: 100, client: bodyClient(bytes),
@@ -102,6 +113,7 @@ describe('downloadResolvedNpmArtifact', () => {
     await expect(downloadResolvedNpmArtifact({
       resolved: {
         registryOrigin: 'https://registry.example.test', packageName: 'plugin', version: '1.0.0', integrity,
+        versionMetadata: {},
         tarballUrl: 'https://registry.example.test/plugin.tgz', signatures: [{ keyid, sig: signature }],
       },
       destinationPath: join(dir, 'signed.tgz'), maxBytes: 100, client: bodyClient(bytes),
@@ -125,6 +137,7 @@ describe('downloadResolvedNpmArtifact', () => {
     await expect(downloadResolvedNpmArtifact({
       resolved: {
         registryOrigin: 'https://registry.example.test', packageName: 'plugin', version: '1.0.0', integrity,
+        versionMetadata: {},
         tarballUrl: 'https://registry.example.test/plugin.tgz', signatures: [{ keyid, sig: signature }],
       },
       destinationPath: join(dir, 'historical.tgz'), maxBytes: 100, client: bodyClient(bytes),
@@ -141,6 +154,7 @@ describe('downloadResolvedNpmArtifact', () => {
     await expect(downloadResolvedNpmArtifact({
       resolved: {
         registryOrigin: 'https://registry.example.test', packageName: 'plugin', version: '1.0.0', integrity: sri(bytes),
+        versionMetadata: {},
         tarballUrl: 'https://registry.example.test/plugin.tgz', signatures: [{ keyid: 'SHA256:missing', sig: 'bad' }],
       },
       destinationPath, maxBytes: 100, client: bodyClient(bytes), registryKeys: [],
@@ -156,6 +170,7 @@ describe('downloadResolvedNpmArtifact', () => {
     await expect(downloadResolvedNpmArtifact({
       resolved: {
         registryOrigin: 'https://registry.example.test', packageName: 'plugin', version: '1.0.0', integrity: sri(bytes),
+        versionMetadata: {},
         tarballUrl: 'https://registry.example.test/plugin.tgz', signatures: [{ keyid, sig: 'future-signature' }],
         provenance: { status: 'absent' },
       },

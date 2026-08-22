@@ -1,32 +1,60 @@
 import { Buffer } from 'node:buffer';
 
+import {
+    ConnectedAccountMaterializationRequestSchema,
+    type QualifiedConnectedAccountPurposeV1,
+} from '@happier-dev/protocol/connect/connected-account-purposes';
+import {
+    QualifiedConnectedAccountRefSchema,
+} from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 import type {
-    PluginConnectedAccountBindingSummary,
-    PluginConnectedAccountMaterialization,
-    PluginConnectedAccountMaterializationRequest,
-    PluginConnectedAccountsService,
+    ConnectedServiceCredentialRevisionV1,
+} from '@happier-dev/protocol/connect/connected-service-schemas';
+import type {
+    ConnectedAccountMaterializationRequest,
+    ConnectedAccountsService,
+    ConnectedAccountBindingSummary as PluginConnectedAccountBindingSummary,
+    ConnectedAccountListedAccount as PluginConnectedAccountListedAccount,
+    ConnectedAccountListedState as PluginConnectedAccountListedState,
+    ConnectedAccountMaterialization as PluginConnectedAccountMaterialization,
+    ConnectedAccountMetadataList as PluginConnectedAccountMetadataList,
+    ConnectedAccountRef as PluginConnectedAccountRef,
+} from '@happier-dev/plugin-sdk/connected-accounts';
+import type {
     PluginContributionRef,
-} from '@happier-dev/plugin-sdk/runtime';
-import { PluginError, type Disposable } from '@happier-dev/plugin-sdk';
-import type {
-    QualifiedConnectedAccountPurposeV1,
-} from '@happier-dev/protocol';
-
+} from '@happier-dev/plugin-sdk';
+import { isPluginError, PluginError, type Disposable } from '@happier-dev/plugin-sdk';
 import type {
     PluginConnectedAccountBindingScope,
     PluginInvocationServicesSeed,
 } from './types';
+import { PLUGIN_LOG_MAX_SECRET_COMPONENT_BYTES } from './logger';
+import { readCredentialRedactionValues } from './credentialRedactionValues';
 import type { HostCurrentSessionUiServices } from '@/agent/runtime/state/currentSessionUiTypes';
+import type { PermissionRequestOwner } from '@/agent/permissions/permissionRequestOwner';
 import { clonePluginPlainData } from '../../plainData';
+import {
+    normalizeConnectedAccountConfiguredBase,
+} from '@/plugins/runtime/connectedAccounts/configuredOrigins';
 
 export type StablePluginConnectedAccountsAuthorizedPurpose = Readonly<{
     purpose: QualifiedConnectedAccountPurposeV1;
     serviceRefs: readonly PluginContributionRef[];
 }>;
 
+/**
+ * Host-private receipt bridge for an enclosing raw-credential callback. The
+ * canonical Connected Account owner remains the sole producer of revisions.
+ */
+export type ConnectedAccountMaterializationCredentialRevisionBasis = Readonly<{
+    expectedCredentialRevision: ConnectedServiceCredentialRevisionV1 | null;
+    captureCredentialRevision(credentialRevision: ConnectedServiceCredentialRevisionV1): void;
+}>;
+
 export type StablePluginConnectedAccountsOwner = Readonly<{
     getBinding(
         input: StablePluginConnectedAccountsAuthorizedPurpose & Readonly<{
+            exactPurposeBindingSubjectId?: string;
             sessionId?: string;
             signal: AbortSignal;
         }>,
@@ -35,19 +63,51 @@ export type StablePluginConnectedAccountsOwner = Readonly<{
         input: StablePluginConnectedAccountsAuthorizedPurpose & Readonly<{
             assertGenerationCurrent(): void;
             currentSession?: HostCurrentSessionUiServices;
+            permissionOwner?: PermissionRequestOwner;
             reason: string;
             signal: AbortSignal;
         }>,
     ): Promise<PluginConnectedAccountBindingSummary>;
     materialize(
         input: StablePluginConnectedAccountsAuthorizedPurpose & Readonly<{
+            exactPurposeBindingSubjectId?: string;
             sessionId?: string;
-            request: PluginConnectedAccountMaterializationRequest;
+            expectedAccount?: PluginConnectedAccountRef;
+            credentialRevisionBasis?: ConnectedAccountMaterializationCredentialRevisionBasis;
+            request: ConnectedAccountMaterializationRequest;
+            signal: AbortSignal;
+        }>,
+    ): Promise<PluginConnectedAccountMaterialization>;
+    /**
+     * Bounded metadata projection of the purpose's exact current target. The
+     * seam clamps `limit` before dispatch; the owner reports its own elision
+     * through an explicit complete-or-truncated status.
+     */
+    listAccounts(
+        input: StablePluginConnectedAccountsAuthorizedPurpose & Readonly<{
+            exactPurposeBindingSubjectId?: string;
+            sessionId?: string;
+            limit: number;
+            signal: AbortSignal;
+        }>,
+    ): Promise<PluginConnectedAccountMetadataList>;
+    /**
+     * Materializes one account admitted by the exact current target. The owner
+     * re-verifies target membership and currentness around credential
+     * materialization and never mutates the selected binding.
+     */
+    materializeListedAccount(
+        input: StablePluginConnectedAccountsAuthorizedPurpose & Readonly<{
+            exactPurposeBindingSubjectId?: string;
+            sessionId?: string;
+            account: PluginConnectedAccountRef;
+            request: ConnectedAccountMaterializationRequest;
             signal: AbortSignal;
         }>,
     ): Promise<PluginConnectedAccountMaterialization>;
     watch(
         input: StablePluginConnectedAccountsAuthorizedPurpose & Readonly<{
+            exactPurposeBindingSubjectId?: string;
             sessionId?: string;
             listener(): Promise<void>;
         }>,
@@ -58,13 +118,17 @@ export type StablePluginConnectedAccountsHost = Readonly<{
     bind(
         seed: PluginInvocationServicesSeed,
         scopes: readonly PluginConnectedAccountBindingScope[],
-    ): PluginConnectedAccountsService;
+        options?: Readonly<{
+            exactPurposeBindingSubjectId?: string;
+        }>,
+    ): ConnectedAccountsService;
     /** Synchronously disposes every watch owned by this executable registry generation. */
     retire(): void;
 }>;
 
 export type StablePluginConnectedAccountsHostOptions = Readonly<{
-    registerForRedaction(seed: PluginInvocationServicesSeed, value: string): void;
+    registerRawForRedaction(seed: PluginInvocationServicesSeed, value: string): void;
+    registerExactForRedaction(seed: PluginInvocationServicesSeed, value: string): void;
 }>;
 
 function generationRetired(): PluginError {
@@ -90,7 +154,7 @@ function operationDenied(purpose: string, operation: 'select' | 'use'): PluginEr
 
 function materializationKindDenied(
     purpose: string,
-    kind: PluginConnectedAccountMaterializationRequest['kind'],
+    kind: ConnectedAccountMaterializationRequest['kind'],
 ): PluginError {
     return new PluginError({
         code: 'plugin_host_access_operation_denied',
@@ -102,6 +166,13 @@ function materializationOutOfScope(): PluginError {
     return new PluginError({
         code: 'plugin_connected_account_binding_out_of_scope',
         message: 'Connected Accounts owner returned materialization outside the request authorization',
+    });
+}
+
+function listingOutOfScope(): PluginError {
+    return new PluginError({
+        code: 'plugin_connected_account_binding_out_of_scope',
+        message: 'Connected Accounts owner returned a listing outside the request authorization',
     });
 }
 
@@ -180,29 +251,38 @@ function registerMaterializationForRedaction(
     options: StablePluginConnectedAccountsHostOptions | undefined,
 ): void {
     if (!options) return;
+    const registerString = (value: string): void => {
+        if (value.length === 0) return;
+        options.registerRawForRedaction(seed, value);
+        for (const redactionValue of readCredentialRedactionValues({
+            authorizationValue: value,
+            maximumAuthorizationTokenBytes:
+                PLUGIN_LOG_MAX_SECRET_COMPONENT_BYTES,
+        })) {
+            if (redactionValue === value) continue;
+            options.registerRawForRedaction(seed, redactionValue);
+        }
+    };
     if (materialization.kind === 'httpHeaders') {
         for (const value of Object.values(materialization.headers)) {
-            options.registerForRedaction(seed, value);
+            registerString(value);
         }
         return;
     }
     if (materialization.kind === 'environment') {
         for (const value of Object.values(materialization.env)) {
-            options.registerForRedaction(seed, value);
+            registerString(value);
         }
         return;
     }
     for (const bytes of Object.values(materialization.files)) {
         if (bytes.byteLength === 0) continue;
         const buffer = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-        options.registerForRedaction(seed, buffer.toString('base64'));
-        options.registerForRedaction(seed, buffer.toString('base64url'));
-        options.registerForRedaction(seed, buffer.toString('hex'));
+        options.registerExactForRedaction(seed, buffer.toString('base64'));
+        options.registerExactForRedaction(seed, buffer.toString('base64url'));
+        options.registerExactForRedaction(seed, buffer.toString('hex'));
         try {
-            options.registerForRedaction(
-                seed,
-                new TextDecoder('utf-8', { fatal: true }).decode(bytes),
-            );
+            registerString(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
         } catch {
             // Opaque binary files have no exact UTF-8 string form to redact.
         }
@@ -213,23 +293,16 @@ function isUnknownRecord(value: unknown): value is Readonly<Record<string, unkno
     return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
-function hasExactOwnKeys(
-    value: Readonly<Record<string, unknown>>,
-    keys: readonly string[],
-): boolean {
-    const expected = new Set(keys);
-    const actual = Reflect.ownKeys(value);
-    return actual.length === expected.size
-        && actual.every((key) => typeof key === 'string' && expected.has(key));
-}
-
-function isStringArray(value: unknown): value is readonly string[] {
-    return Array.isArray(value) && value.every((entry) => typeof entry === 'string');
+function isAbortSignalLike(value: unknown): value is AbortSignal {
+    return isUnknownRecord(value)
+        && typeof value.addEventListener === 'function'
+        && typeof value.removeEventListener === 'function'
+        && typeof value.aborted === 'boolean';
 }
 
 function snapshotMaterializationRequest(
-    request: PluginConnectedAccountMaterializationRequest,
-): PluginConnectedAccountMaterializationRequest {
+    request: unknown,
+): ConnectedAccountMaterializationRequest {
     let snapshot: unknown;
     try {
         snapshot = clonePluginPlainData(request, {
@@ -237,39 +310,65 @@ function snapshotMaterializationRequest(
             invalid: () => materializationOutOfScope(),
         });
     } catch (error) {
-        if (error instanceof PluginError) throw error;
+        if (isPluginError(error)) throw error;
         throw materializationOutOfScope();
     }
-    if (!isUnknownRecord(snapshot) || typeof snapshot.kind !== 'string') {
+    const parsed = ConnectedAccountMaterializationRequestSchema.safeParse(snapshot);
+    if (!parsed.success) throw materializationOutOfScope();
+    return parsed.data;
+}
+
+function snapshotAccount(
+    account: unknown,
+    label: string,
+): PluginConnectedAccountRef | undefined {
+    if (account === undefined) return undefined;
+    let snapshot: unknown;
+    try {
+        snapshot = clonePluginPlainData(account, {
+            path: `Connected Accounts ${label}`,
+            invalid: () => materializationOutOfScope(),
+        });
+    } catch (error) {
+        if (isPluginError(error)) throw error;
         throw materializationOutOfScope();
     }
+    const parsed = QualifiedConnectedAccountRefSchema.safeParse(snapshot);
+    if (!parsed.success) throw materializationOutOfScope();
+    return Object.freeze({
+        service: Object.freeze({ ...parsed.data.service }),
+        accountId: parsed.data.accountId,
+    });
+}
+
+function snapshotMaterializationOptions(
+    options: unknown,
+): Readonly<{
+    signal?: AbortSignal;
+    expectedAccount?: PluginConnectedAccountRef;
+}> {
     if (
-        snapshot.kind === 'httpHeaders'
-        && hasExactOwnKeys(snapshot, ['kind', 'origin', 'headerNames'])
-        && typeof snapshot.origin === 'string'
-        && isStringArray(snapshot.headerNames)
+        !isUnknownRecord(options)
+        || Object.prototype.hasOwnProperty.call(options, 'account')
     ) {
-        return snapshot as PluginConnectedAccountMaterializationRequest;
+        throw materializationOutOfScope();
     }
-    if (
-        snapshot.kind === 'environment'
-        && hasExactOwnKeys(snapshot, ['kind', 'keys'])
-        && isStringArray(snapshot.keys)
-    ) {
-        return snapshot as PluginConnectedAccountMaterializationRequest;
+    const hasExpectedAccount = Object.prototype.hasOwnProperty.call(options, 'expectedAccount');
+    const expectedAccount = hasExpectedAccount
+        ? snapshotAccount(options.expectedAccount, 'expected account')
+        : undefined;
+    const signal = options.signal;
+    if (signal !== undefined && !isAbortSignalLike(signal)) {
+        throw materializationOutOfScope();
     }
-    if (
-        snapshot.kind === 'files'
-        && hasExactOwnKeys(snapshot, ['kind', 'fileIds'])
-        && isStringArray(snapshot.fileIds)
-    ) {
-        return snapshot as PluginConnectedAccountMaterializationRequest;
-    }
-    throw materializationOutOfScope();
+    return Object.freeze({
+        ...(signal ? { signal } : {}),
+        ...(expectedAccount ? { expectedAccount } : {}),
+    });
 }
 
 function snapshotMaterialization(
-    request: PluginConnectedAccountMaterializationRequest,
+    request: ConnectedAccountMaterializationRequest,
     materialization: unknown,
 ): PluginConnectedAccountMaterialization {
     if (!isUnknownRecord(materialization) || materialization.kind !== request.kind) {
@@ -278,11 +377,18 @@ function snapshotMaterialization(
     if (request.kind === 'httpHeaders') {
         if (!isUnknownRecord(materialization.headers)) throw materializationOutOfScope();
         const requestedNames = new Set(request.headerNames.map((name) => name.toLowerCase()));
+        const returnedNames = new Set<string>();
         const headerEntries: Array<readonly [string, string]> = [];
         for (const [name, value] of Object.entries(materialization.headers)) {
-            if (typeof value !== 'string' || !requestedNames.has(name.toLowerCase())) {
+            const normalizedName = name.toLowerCase();
+            if (
+                typeof value !== 'string'
+                || !requestedNames.has(normalizedName)
+                || returnedNames.has(normalizedName)
+            ) {
                 throw materializationOutOfScope();
             }
+            returnedNames.add(normalizedName);
             headerEntries.push([name, value]);
         }
         return Object.freeze({
@@ -320,6 +426,203 @@ function snapshotMaterialization(
     });
 }
 
+/**
+ * The bounded metadata listing has no resumable cursor, so its ceiling is the
+ * same authorized-inventory bound the interactive selection and Action-form
+ * owners already enforce. A caller-supplied limit is clamped into it.
+ */
+export const CONNECTED_ACCOUNT_METADATA_LIST_MAX_LIMIT = 256;
+const CONNECTED_ACCOUNT_LISTED_ORIGIN_MAX = 32;
+const CONNECTED_ACCOUNT_LISTED_DISPLAY_NAME_MAX_LENGTH = 512;
+const CONNECTED_ACCOUNT_LISTED_STATES = Object.freeze({
+    connected: true,
+    expired: true,
+    reconnectRequired: true,
+    unavailable: true,
+} satisfies Record<PluginConnectedAccountListedState, true>);
+
+function isListedAccountState(
+    value: unknown,
+): value is PluginConnectedAccountListedState {
+    return typeof value === 'string'
+        && Object.hasOwn(CONNECTED_ACCOUNT_LISTED_STATES, value);
+}
+
+function clampListLimit(limit: unknown): number {
+    if (limit === undefined) return CONNECTED_ACCOUNT_METADATA_LIST_MAX_LIMIT;
+    if (
+        typeof limit !== 'number'
+        || !Number.isSafeInteger(limit)
+        || limit < 1
+    ) {
+        throw listingOutOfScope();
+    }
+    return Math.min(limit, CONNECTED_ACCOUNT_METADATA_LIST_MAX_LIMIT);
+}
+
+function snapshotListRequest(
+    request: unknown,
+): Readonly<{ purpose: string; limit: number }> {
+    if (!isUnknownRecord(request)) throw listingOutOfScope();
+    for (const key of Reflect.ownKeys(request)) {
+        if (key !== 'purpose' && key !== 'limit') throw listingOutOfScope();
+    }
+    const purpose = request.purpose;
+    if (typeof purpose !== 'string') throw listingOutOfScope();
+    return Object.freeze({ purpose, limit: clampListLimit(request.limit) });
+}
+
+/**
+ * Host-normalized credential-free HTTPS origin. The canonical configured-origin
+ * owner already enforces this shape on write; re-checking it here keeps an owner
+ * regression from disclosing a credential-bearing or non-canonical URL.
+ */
+function assertListedOrigin(origin: unknown): string {
+    if (typeof origin !== 'string' || origin.length === 0) throw listingOutOfScope();
+    let url: URL;
+    try {
+        url = new URL(origin);
+    } catch {
+        throw listingOutOfScope();
+    }
+    if (
+        url.protocol !== 'https:'
+        || url.username !== ''
+        || url.password !== ''
+        || url.origin !== origin
+    ) {
+        throw listingOutOfScope();
+    }
+    return origin;
+}
+
+/**
+ * Host-normalized credential-free HTTPS service base. It re-checks the exact
+ * shape the canonical configured-endpoint owner produced, delegating the rule
+ * itself so no second base normalizer exists.
+ */
+function assertListedBase(base: unknown): Readonly<{ base: string; origin: string }> {
+    if (typeof base !== 'string' || base.length === 0) throw listingOutOfScope();
+    let normalized: Readonly<{ base: string; origin: string }>;
+    try {
+        normalized = normalizeConnectedAccountConfiguredBase(base);
+    } catch {
+        throw listingOutOfScope();
+    }
+    if (normalized.base !== base) throw listingOutOfScope();
+    return normalized;
+}
+
+function snapshotListedAccount(
+    scope: PluginConnectedAccountBindingScope,
+    listed: unknown,
+): PluginConnectedAccountListedAccount {
+    if (!isUnknownRecord(listed)) throw listingOutOfScope();
+    const account = snapshotAccount(listed.account, 'listed account');
+    if (!account) throw listingOutOfScope();
+    const serviceAuthorized = scope.serviceRefs.some((service) => (
+        service.pluginId === account.service.pluginId
+        && service.localId === account.service.localId
+    ));
+    if (!serviceAuthorized) throw listingOutOfScope();
+    const displayName = listed.displayName;
+    if (
+        typeof displayName !== 'string'
+        || displayName.length === 0
+        || displayName.length > CONNECTED_ACCOUNT_LISTED_DISPLAY_NAME_MAX_LENGTH
+    ) {
+        throw listingOutOfScope();
+    }
+    const state = listed.state;
+    if (!isListedAccountState(state)) throw listingOutOfScope();
+    const origins = listed.connectedAccountOrigins;
+    if (!Array.isArray(origins) || origins.length > CONNECTED_ACCOUNT_LISTED_ORIGIN_MAX) {
+        throw listingOutOfScope();
+    }
+    const uniqueOrigins = new Set<string>();
+    for (const origin of origins) {
+        const normalized = assertListedOrigin(origin);
+        if (uniqueOrigins.has(normalized)) throw listingOutOfScope();
+        uniqueOrigins.add(normalized);
+    }
+    const bases = listed.connectedAccountBases;
+    if (!Array.isArray(bases) || bases.length > CONNECTED_ACCOUNT_LISTED_ORIGIN_MAX) {
+        throw listingOutOfScope();
+    }
+    const uniqueBases = new Set<string>();
+    for (const base of bases) {
+        const normalized = assertListedBase(base);
+        if (uniqueBases.has(normalized.base)) throw listingOutOfScope();
+        // A base a source would route by must live under an origin HostAccess
+        // already admits, so the two facts can never disagree.
+        if (!uniqueOrigins.has(normalized.origin)) throw listingOutOfScope();
+        uniqueBases.add(normalized.base);
+    }
+    // Both facts are one projection: an account with an admitted origin always
+    // publishes the base a source routes by.
+    if ((uniqueOrigins.size === 0) !== (uniqueBases.size === 0)) throw listingOutOfScope();
+    return Object.freeze({
+        account,
+        displayName,
+        state,
+        connectedAccountOrigins: Object.freeze([...uniqueOrigins]),
+        connectedAccountBases: Object.freeze([...uniqueBases]),
+    });
+}
+
+function snapshotMetadataList(
+    scope: PluginConnectedAccountBindingScope,
+    limit: number,
+    result: unknown,
+): PluginConnectedAccountMetadataList {
+    if (!isUnknownRecord(result)) throw listingOutOfScope();
+    const status = result.status;
+    if (status !== 'complete' && status !== 'truncated') throw listingOutOfScope();
+    const accounts = result.accounts;
+    if (!Array.isArray(accounts) || accounts.length > limit) throw listingOutOfScope();
+    const seen = new Set<string>();
+    const listed: PluginConnectedAccountListedAccount[] = [];
+    for (const entry of accounts) {
+        const snapshot = snapshotListedAccount(scope, entry);
+        const key = JSON.stringify([
+            snapshot.account.service.pluginId,
+            snapshot.account.service.localId,
+            snapshot.account.accountId,
+        ]);
+        if (seen.has(key)) throw listingOutOfScope();
+        seen.add(key);
+        listed.push(snapshot);
+    }
+    return Object.freeze({
+        status,
+        accounts: Object.freeze(listed),
+    });
+}
+
+function snapshotListedMaterializationRequest(
+    request: unknown,
+): Readonly<{
+    purpose: string;
+    account: PluginConnectedAccountRef;
+    materialization: ConnectedAccountMaterializationRequest;
+}> {
+    if (!isUnknownRecord(request)) throw materializationOutOfScope();
+    for (const key of Reflect.ownKeys(request)) {
+        if (key !== 'purpose' && key !== 'account' && key !== 'materialization') {
+            throw materializationOutOfScope();
+        }
+    }
+    const purpose = request.purpose;
+    if (typeof purpose !== 'string') throw materializationOutOfScope();
+    const account = snapshotAccount(request.account, 'listed account');
+    if (!account) throw materializationOutOfScope();
+    return Object.freeze({
+        purpose,
+        account,
+        materialization: snapshotMaterializationRequest(request.materialization),
+    });
+}
+
 export function createStablePluginConnectedAccountsHost(
     owner: StablePluginConnectedAccountsOwner,
     hostOptions?: StablePluginConnectedAccountsHostOptions,
@@ -329,9 +632,11 @@ export function createStablePluginConnectedAccountsHost(
         retire() {
             for (const subscription of [...activeWatchSubscriptions]) subscription.dispose();
         },
-        bind(seed, authorizedScopes): PluginConnectedAccountsService {
+        bind(seed, authorizedScopes, bindOptions): ConnectedAccountsService {
             const scopes = new Map(authorizedScopes.map((scope) => [scope.purpose, scope]));
-            return Object.freeze<PluginConnectedAccountsService>({
+            const exactPurposeBindingSubjectId =
+                bindOptions?.exactPurposeBindingSubjectId?.trim() || null;
+            return Object.freeze<ConnectedAccountsService>({
                 async getBinding(purpose, options = {}) {
                     assertCurrent(seed);
                     const scope = resolveScope(scopes, purpose, 'use');
@@ -340,6 +645,9 @@ export function createStablePluginConnectedAccountsHost(
                     try {
                         const summary = await owner.getBinding({
                             ...authorizedPurpose(seed, scope),
+                            ...(exactPurposeBindingSubjectId
+                                ? { exactPurposeBindingSubjectId }
+                                : {}),
                             ...(seed.session ? { sessionId: seed.session.id } : {}),
                             signal: signals.signal,
                         });
@@ -353,6 +661,9 @@ export function createStablePluginConnectedAccountsHost(
                     assertCurrent(seed);
                     const purpose = input.purpose;
                     assertCurrent(seed);
+                    if (exactPurposeBindingSubjectId) {
+                        throw operationDenied(purpose, 'select');
+                    }
                     const scope = resolveScope(scopes, purpose, 'select');
                     const reason = input.reason;
                     assertCurrent(seed);
@@ -363,6 +674,11 @@ export function createStablePluginConnectedAccountsHost(
                             ...authorizedPurpose(seed, scope),
                             assertGenerationCurrent: () => assertCurrent(seed),
                             ...(seed.currentSession ? { currentSession: seed.currentSession } : {}),
+                            permissionOwner: Object.freeze({
+                                kind: 'plugin',
+                                pluginId: seed.plugin.id,
+                                runtimeId: seed.contribution.qualifiedId,
+                            }),
                             reason,
                             signal: signals.signal,
                         });
@@ -376,21 +692,97 @@ export function createStablePluginConnectedAccountsHost(
                     assertCurrent(seed);
                     const requestSnapshot = snapshotMaterializationRequest(request);
                     assertCurrent(seed);
+                    const optionSnapshot = snapshotMaterializationOptions(options);
+                    assertCurrent(seed);
                     const scope = resolveScope(scopes, purpose, 'use');
                     if (scope.materializationKinds?.includes(requestSnapshot.kind) !== true) {
                         throw materializationKindDenied(purpose, requestSnapshot.kind);
                     }
-                    const signals = combineSignals(seed.signal, options.signal);
+                    const signals = combineSignals(seed.signal, optionSnapshot.signal);
                     assertCurrent(seed);
                     try {
                         const result = await owner.materialize({
                             ...authorizedPurpose(seed, scope),
+                            ...(exactPurposeBindingSubjectId
+                                ? { exactPurposeBindingSubjectId }
+                                : {}),
                             ...(seed.session ? { sessionId: seed.session.id } : {}),
+                            ...(optionSnapshot.expectedAccount
+                                ? { expectedAccount: optionSnapshot.expectedAccount }
+                                : {}),
                             request: requestSnapshot,
                             signal: signals.signal,
                         });
                         assertCurrent(seed);
                         const snapshot = snapshotMaterialization(requestSnapshot, result);
+                        registerMaterializationForRedaction(snapshot, seed, hostOptions);
+                        assertCurrent(seed);
+                        return snapshot;
+                    } finally {
+                        signals.dispose();
+                    }
+                },
+                async listAccounts(request, options = {}) {
+                    assertCurrent(seed);
+                    const requestSnapshot = snapshotListRequest(request);
+                    assertCurrent(seed);
+                    const scope = resolveScope(scopes, requestSnapshot.purpose, 'use');
+                    const signals = combineSignals(seed.signal, options.signal);
+                    assertCurrent(seed);
+                    try {
+                        const result = await owner.listAccounts({
+                            ...authorizedPurpose(seed, scope),
+                            ...(exactPurposeBindingSubjectId
+                                ? { exactPurposeBindingSubjectId }
+                                : {}),
+                            ...(seed.session ? { sessionId: seed.session.id } : {}),
+                            limit: requestSnapshot.limit,
+                            signal: signals.signal,
+                        });
+                        assertCurrent(seed);
+                        return snapshotMetadataList(scope, requestSnapshot.limit, result);
+                    } finally {
+                        signals.dispose();
+                    }
+                },
+                async materializeListedAccount(request, options = {}) {
+                    assertCurrent(seed);
+                    const requestSnapshot = snapshotListedMaterializationRequest(request);
+                    assertCurrent(seed);
+                    const scope = resolveScope(scopes, requestSnapshot.purpose, 'use');
+                    if (
+                        scope.materializationKinds?.includes(
+                            requestSnapshot.materialization.kind,
+                        ) !== true
+                    ) {
+                        throw materializationKindDenied(
+                            requestSnapshot.purpose,
+                            requestSnapshot.materialization.kind,
+                        );
+                    }
+                    const serviceAuthorized = scope.serviceRefs.some((service) => (
+                        service.pluginId === requestSnapshot.account.service.pluginId
+                        && service.localId === requestSnapshot.account.service.localId
+                    ));
+                    if (!serviceAuthorized) throw materializationOutOfScope();
+                    const signals = combineSignals(seed.signal, options.signal);
+                    assertCurrent(seed);
+                    try {
+                        const result = await owner.materializeListedAccount({
+                            ...authorizedPurpose(seed, scope),
+                            ...(exactPurposeBindingSubjectId
+                                ? { exactPurposeBindingSubjectId }
+                                : {}),
+                            ...(seed.session ? { sessionId: seed.session.id } : {}),
+                            account: requestSnapshot.account,
+                            request: requestSnapshot.materialization,
+                            signal: signals.signal,
+                        });
+                        assertCurrent(seed);
+                        const snapshot = snapshotMaterialization(
+                            requestSnapshot.materialization,
+                            result,
+                        );
                         registerMaterializationForRedaction(snapshot, seed, hostOptions);
                         assertCurrent(seed);
                         return snapshot;
@@ -474,6 +866,9 @@ export function createStablePluginConnectedAccountsHost(
                     };
                     const ownerSubscription = owner.watch({
                         ...authorizedPurpose(seed, scope),
+                        ...(exactPurposeBindingSubjectId
+                            ? { exactPurposeBindingSubjectId }
+                            : {}),
                         ...(seed.session ? { sessionId: seed.session.id } : {}),
                         listener: schedule,
                     });

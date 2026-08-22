@@ -1,0 +1,62 @@
+{
+  "schemaVersion": 2,
+  "id": "acme.packed-external-sessions",
+  "version": "1.0.0",
+  "displayName": "Packed External Sessions Fixture",
+  "description": "Dependency-closed external Agent contributing the External Sessions auxiliary",
+  "engines": {
+    "happier": "^0.2.0"
+  },
+  "runtime": {
+    "apiVersion": 1
+  },
+  "activation": {
+    "events": [
+      {
+        "kind": "startup"
+      }
+    ]
+  },
+  "entrypoints": {
+    "daemon": "./dist/daemon.js"
+  },
+  "hostAccess": {
+    "required": [],
+    "optional": []
+  },
+  "contributes": {
+    "agents": [
+      {
+        "id": "packed-external-agent",
+        "title": "Packed External Sessions Agent",
+        "capabilities": {
+          "surfaces": ["externalSessions"]
+        },
+        "surfaces": {
+          "externalSession": {
+            "sources": [
+              {
+                "sourceKind": "packedFixtureStore",
+                "schema": {
+                  "fields": [
+                    { "name": "kind", "kind": "literal", "value": "packedFixtureStore" },
+                    { "name": "scope", "kind": "enum", "values": ["primary"] }
+                  ]
+                },
+                "key": {
+                  "segments": [
+                    { "kind": "literal", "value": "packedFixtureStore" },
+                    { "kind": "field", "field": "scope" }
+                  ]
+                },
+                "instances": [
+                  { "kind": "default", "constants": { "scope": "primary" } }
+                ]
+              }
+            ]
+          }
+        }
+      }
+    ]
+  }
+}

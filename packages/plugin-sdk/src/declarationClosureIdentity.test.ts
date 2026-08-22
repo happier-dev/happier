@@ -1344,7 +1344,6 @@ describe('normal SDK declaration closure identities', () => {
         const moduleSpecifier = '@happier-dev/protocol/automations/result-delivery';
 
         for (const name of [
-            'AUTOMATION_RESULT_DELIVERY_ACTION_REF_V1',
             'AutomationIdV1Schema',
         ]) {
             expect(reexportedName(sourceFile, moduleSpecifier, name)).toBe(name);

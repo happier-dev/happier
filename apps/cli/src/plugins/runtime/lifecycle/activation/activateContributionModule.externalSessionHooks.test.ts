@@ -3,16 +3,17 @@ import type {
     AgentExternalSessionHooksContribution,
     AgentExternalSessionObservationContribution,
     AgentExternalSessionsContribution,
-} from '@happier-dev/plugin-sdk/experimental/sessions';
+} from '@happier-dev/plugin-sdk/sessions/external';
 import type {
     AgentRuntimeFactory,
-} from '@happier-dev/plugin-sdk/agent-runtime';
+} from '@happier-dev/plugin-sdk/agents/runtime';
 import type { PluginApi } from '@happier-dev/plugin-sdk';
 
 import { ingestCanonicalPluginManifest } from '../../../manifest/ingest';
 import type { ActivationTarget } from './targets';
 import { activateContributionModule } from './activateContributionModule';
 import {
+    createDeclarativeAcpAgentRuntimeRegistry,
     createTargetAgentRuntimeRegistry,
 } from '../contributions/targetAgents';
 
@@ -117,7 +118,11 @@ const observation: AgentExternalSessionObservationContribution = {
     ),
 };
 
-function externalSessionManifest() {
+function externalSessionManifest(
+    runtimeKind: 'custom' | 'acp' = 'custom',
+    options: Readonly<{ includeExternalSessions?: boolean }> = {},
+) {
+    const includeExternalSessions = options.includeExternalSessions !== false;
     const result = ingestCanonicalPluginManifest({
         schemaVersion: 2,
         id: PLUGIN_ID,
@@ -130,44 +135,58 @@ function externalSessionManifest() {
             agents: [{
                 id: AGENT_ID,
                 title: 'Assistant',
-                runtime: { kind: 'custom' },
+                runtime: runtimeKind === 'custom'
+                    ? { kind: 'custom' }
+                    : {
+                        kind: 'acp',
+                        transport: {
+                            kind: 'tcp',
+                            host: '127.0.0.1',
+                            port: 4242,
+                        },
+                },
                 primary: 'sessions',
                 capabilities: {
-                    surfaces: ['externalSessions'],
+                    ...(includeExternalSessions
+                        ? { surfaces: ['externalSessions'] }
+                        : {}),
                     sessions: {
                         open: ['create'],
                         delivery: ['newTurn'],
                         cancel: true,
                     },
                 },
-                surfaces: {
-                    externalSession: {
-                        externalLinkedTakeover: {
-                            writerSafety: 'unsupported',
+                ...(includeExternalSessions
+                    ? {
+                        surfaces: {
+                            externalSession: {
+                                externalLinkedTakeover: {
+                                    writerSafety: 'unsupported',
+                                },
+                                sources: [{
+                                    sourceKind: 'fixture',
+                                    schema: {
+                                        fields: [{
+                                            name: 'kind',
+                                            kind: 'literal',
+                                            value: 'fixture',
+                                        }],
+                                    },
+                                    key: {
+                                        segments: [{
+                                            kind: 'literal',
+                                            value: 'fixture',
+                                        }],
+                                    },
+                                    instances: [{
+                                        kind: 'default',
+                                        constants: {},
+                                    }],
+                                }],
+                            },
                         },
-                        sources: [{
-                            sourceKind: 'fixture',
-                            schema: {
-                                passthrough: false,
-                                fields: [{
-                                    name: 'kind',
-                                    kind: 'literal',
-                                    value: 'fixture',
-                                }],
-                            },
-                            key: {
-                                segments: [{
-                                    kind: 'literal',
-                                    value: 'fixture',
-                                }],
-                            },
-                            instances: [{
-                                kind: 'default',
-                                constants: {},
-                            }],
-                        }],
-                    },
-                },
+                    }
+                    : {}),
             }],
         },
     });
@@ -183,7 +202,6 @@ function target(manifest: ReturnType<typeof externalSessionManifest>): Activatio
         source: { kind: 'path' },
         pluginId: PLUGIN_ID,
         manifestPath: `/plugins/${PLUGIN_ID}/plugin.json`,
-        manifestDigest: 'fixture-manifest-digest',
         daemonEntryPath: `/plugins/${PLUGIN_ID}/daemon.js`,
         devDaemonEntryPath: null,
         sourceSpec: {
@@ -222,7 +240,14 @@ function register(
     hooks: AgentExternalSessionHooksContribution,
 ): void {
     if (name === 'runtime') {
-        api.agents.register(AGENT_ID, agentRuntimeFactory);
+        api.agents.register(AGENT_ID, agentRuntimeFactory, {
+            sessionRunnerFactory: {
+                module: './agent-runtime.js',
+                export: 'agentRuntimeFactory',
+                runtimeApiVersion: 1,
+                externalSessionsExport: 'externalSessions',
+            },
+        });
     } else if (name === 'externalSessions') {
         api.agents.registerExternalSessions(AGENT_ID, externalSessions);
     } else if (name === 'hooks') {
@@ -233,6 +258,154 @@ function register(
 }
 
 describe('real-loader External Session hook aggregate conformance', () => {
+    it('activates and preserves declarative ACP auxiliary facets without a primary factory or runner locator', async () => {
+        const manifest = externalSessionManifest('acp');
+        const hooks = createHooks();
+        const resolveRelativeModule = vi.fn();
+        const result = await activateContributionModule({
+            pluginId: PLUGIN_ID,
+            generation: 'generation-7',
+            manifest,
+            moduleNamespace: {
+                activate(api: PluginApi) {
+                    api.agents.registerExternalSessions(
+                        AGENT_ID,
+                        externalSessions,
+                    );
+                    api.agents.registerExternalSessionHooks(AGENT_ID, hooks);
+                    api.agents.registerExternalSessionObservation(
+                        AGENT_ID,
+                        observation,
+                    );
+                },
+            },
+            isGenerationCurrent: () => true,
+            resolveRelativeModule,
+        });
+
+        expect(result.status).toBe('active');
+        expect(result.validatedAgentSessionRunnerFactories).toEqual([]);
+        expect(resolveRelativeModule).not.toHaveBeenCalled();
+        expect(result.registrations).toEqual([
+            expect.objectContaining({
+                family: 'agents',
+                localId: AGENT_ID,
+                value: expect.objectContaining({
+                    externalSessions: expect.any(Object),
+                    externalSessionHooks: expect.any(Object),
+                    externalSessionObservation: expect.any(Object),
+                }),
+            }),
+        ]);
+        expect(result.registrations[0]?.value).not.toHaveProperty('factory');
+        expect(result.registrations[0]?.value).not.toHaveProperty(
+            'sessionRunnerFactory',
+        );
+
+        const retirement = new AbortController();
+        const immutableGenerationIdsByPluginId = new Map([
+            [PLUGIN_ID, 'immutable-generation-7'],
+        ]);
+        const agents = [{
+            id: AGENT_ID,
+            identity: { pluginId: PLUGIN_ID, localId: AGENT_ID },
+            provenance: 'external' as const,
+            source: { kind: 'path' as const },
+            definition: {
+                kindVersion: 1 as const,
+                id: AGENT_ID,
+                ownedBackendIds: [],
+            },
+            richDefinition: {
+                provenance: 'external' as const,
+                definition: manifest.contributes.agents![0]!,
+            },
+            pluginId: PLUGIN_ID,
+            sourceSpec: {
+                kind: 'path' as const,
+                locator: `/plugins/${PLUGIN_ID}`,
+                trustPolicy: 'local_trusted' as const,
+                installPolicy: 'link' as const,
+                resolvedVersion: '1.0.0',
+            },
+        }];
+        const registered = createTargetAgentRuntimeRegistry({
+            agents,
+            activationTargets: [target(manifest)],
+            targetRegistrations: result.registrations.map((registration) => ({
+                pluginId: PLUGIN_ID,
+                generation: 'generation-7',
+                registration,
+            })),
+            immutableGenerationIdsByPluginId,
+            isGenerationActive: () => true,
+            retirementSignal: retirement.signal,
+            onDuplicate: vi.fn(),
+        });
+        const registry = createDeclarativeAcpAgentRuntimeRegistry({
+            agents,
+            registered,
+            generation: 'generation-7',
+            immutableGenerationIdsByPluginId,
+            isGenerationActive: () => true,
+            retirementSignal: retirement.signal,
+        });
+        const lease = registry.get(AGENT_ID);
+        if (!lease?.hasPrimaryRuntime) {
+            throw new Error('Expected a primary Agent runtime lease');
+        }
+        expect(lease.sessionRunnerFactoryBinding).toEqual({
+            kind: 'host_declarative_acp_v1',
+            v: 1,
+            pluginId: PLUGIN_ID,
+            pluginVersion: '1.0.0',
+            agentId: AGENT_ID,
+            qualifiedAgentId: `${PLUGIN_ID}/agents/${AGENT_ID}`,
+            localAgentId: AGENT_ID,
+            immutableGenerationId: 'immutable-generation-7',
+        });
+        expect(lease).not.toHaveProperty('issueRunnerExecutionGrant');
+        expect(lease).not.toHaveProperty('manifestDigest');
+        expect(lease?.externalSessions).toBe(
+            registered.get(AGENT_ID)?.externalSessions,
+        );
+        expect(lease?.externalSessionHooks).toBe(
+            registered.get(AGENT_ID)?.externalSessionHooks,
+        );
+        expect(lease?.externalSessionObservation).toBe(
+            registered.get(AGENT_ID)?.externalSessionObservation,
+        );
+        await result.dispose();
+    });
+
+    it('rejects a competing primary factory for a declarative ACP auxiliary registration', async () => {
+        const result = await activateContributionModule({
+            pluginId: PLUGIN_ID,
+            generation: 'generation-7',
+            manifest: externalSessionManifest('acp'),
+            moduleNamespace: {
+                activate(api: PluginApi) {
+                    api.agents.register(AGENT_ID, agentRuntimeFactory);
+                    api.agents.registerExternalSessions(
+                        AGENT_ID,
+                        externalSessions,
+                    );
+                },
+            },
+            isGenerationCurrent: () => true,
+        });
+
+        expect(result.status).toBe('unavailable');
+        expect(result.registrations).toEqual([]);
+        expect(result.validatedAgentSessionRunnerFactories).toEqual([]);
+        expect(result.diagnostics).toEqual([
+            expect.objectContaining({
+                code: 'plugin_activation_failed',
+                message: expect.stringMatching(/competing primary Agent runtime factory/iu),
+            }),
+        ]);
+    });
+
     it.each(permutations(REGISTRATION_NAMES).map((order) => [
         order.join(' → '),
         order,
@@ -251,6 +424,14 @@ describe('real-loader External Session hook aggregate conformance', () => {
                     },
                 },
                 isGenerationCurrent: () => true,
+                resolveRelativeModule: async (module) => {
+                    expect(module).toBe('./agent-runtime.js');
+                    return {
+                        module: { agentRuntimeFactory, externalSessions },
+                        normalizedModulePath: 'agent-runtime.js',
+                        loadMode: 'immutable-js',
+                    };
+                },
             });
 
             expect(result.status).toBe('active');
@@ -313,6 +494,201 @@ describe('real-loader External Session hook aggregate conformance', () => {
             )).toBe(true);
 
             await result.dispose();
+        },
+    );
+
+    it('attests the exact same-module External Sessions companion registered for the Agent', async () => {
+        const locator = {
+            module: './agent-runtime.js',
+            export: 'agentRuntimeFactory',
+            runtimeApiVersion: 1 as const,
+            externalSessionsExport: 'externalSessions',
+        };
+        const resolveRelativeModule = vi.fn(async () => ({
+            module: { agentRuntimeFactory, externalSessions },
+            normalizedModulePath: 'agent-runtime.js',
+            loadMode: 'immutable-js' as const,
+        }));
+        const persistValidatedAgentSessionRunnerFactories = vi.fn();
+
+        const result = await activateContributionModule({
+            pluginId: PLUGIN_ID,
+            generation: 'generation-companion',
+            manifest: externalSessionManifest(),
+            moduleNamespace: {
+                activate(api: PluginApi) {
+                    api.agents.register(AGENT_ID, agentRuntimeFactory, {
+                        sessionRunnerFactory: locator,
+                    });
+                    api.agents.registerExternalSessions(
+                        AGENT_ID,
+                        externalSessions,
+                    );
+                },
+            },
+            isGenerationCurrent: () => true,
+            resolveRelativeModule,
+            persistValidatedAgentSessionRunnerFactories,
+        });
+
+        expect(result.status, JSON.stringify(result.diagnostics)).toBe('active');
+        expect(resolveRelativeModule).toHaveBeenCalledTimes(1);
+        expect(result.validatedAgentSessionRunnerFactories).toEqual([{
+            localAgentId: AGENT_ID,
+            locator,
+            normalizedModulePath: 'agent-runtime.js',
+            loadMode: 'immutable-js',
+        }]);
+        expect(persistValidatedAgentSessionRunnerFactories).toHaveBeenCalledWith(
+            result.validatedAgentSessionRunnerFactories,
+        );
+    });
+
+    it('rejects a registered External Sessions companion whose runner locator omits its named export', async () => {
+        const persistValidatedAgentSessionRunnerFactories = vi.fn();
+        const result = await activateContributionModule({
+            pluginId: PLUGIN_ID,
+            generation: 'generation-companion-omitted-locator-export',
+            manifest: externalSessionManifest(),
+            moduleNamespace: {
+                activate(api: PluginApi) {
+                    api.agents.register(AGENT_ID, agentRuntimeFactory, {
+                        sessionRunnerFactory: {
+                            module: './agent-runtime.js',
+                            export: 'agentRuntimeFactory',
+                            runtimeApiVersion: 1,
+                        },
+                    });
+                    api.agents.registerExternalSessions(
+                        AGENT_ID,
+                        externalSessions,
+                    );
+                },
+            },
+            isGenerationCurrent: () => true,
+            resolveRelativeModule: async () => ({
+                module: { agentRuntimeFactory, externalSessions },
+                normalizedModulePath: 'agent-runtime.js',
+                loadMode: 'immutable-js',
+            }),
+            persistValidatedAgentSessionRunnerFactories,
+        });
+
+        expect(result.status).toBe('unavailable');
+        expect(result.registrations).toEqual([]);
+        expect(result.validatedAgentSessionRunnerFactories).toEqual([]);
+        expect(result.diagnostics).toEqual([
+            expect.objectContaining({
+                code: 'plugin_activation_failed',
+                message: expect.stringMatching(
+                    /External Sessions.*externalSessionsExport/iu,
+                ),
+            }),
+        ]);
+        expect(persistValidatedAgentSessionRunnerFactories)
+            .not.toHaveBeenCalled();
+    });
+
+    it('rejects a named companion locator when neither the Agent nor its runner leaf supplies it', async () => {
+        const persistValidatedAgentSessionRunnerFactories = vi.fn();
+        const result = await activateContributionModule({
+            pluginId: PLUGIN_ID,
+            generation: 'generation-companion-undefined-on-both-sides',
+            manifest: externalSessionManifest('custom', {
+                includeExternalSessions: false,
+            }),
+            moduleNamespace: {
+                activate(api: PluginApi) {
+                    api.agents.register(AGENT_ID, agentRuntimeFactory, {
+                        sessionRunnerFactory: {
+                            module: './agent-runtime.js',
+                            export: 'agentRuntimeFactory',
+                            runtimeApiVersion: 1,
+                            externalSessionsExport: 'externalSessions',
+                        },
+                    });
+                },
+            },
+            isGenerationCurrent: () => true,
+            resolveRelativeModule: async () => ({
+                module: { agentRuntimeFactory },
+                normalizedModulePath: 'agent-runtime.js',
+                loadMode: 'immutable-js',
+            }),
+            persistValidatedAgentSessionRunnerFactories,
+        });
+
+        expect(result.status).toBe('unavailable');
+        expect(result.registrations).toEqual([]);
+        expect(result.validatedAgentSessionRunnerFactories).toEqual([]);
+        expect(result.diagnostics).toEqual([
+            expect.objectContaining({
+                code: 'plugin_activation_failed',
+                message: expect.stringMatching(/External Sessions.*does not match/iu),
+            }),
+        ]);
+        expect(persistValidatedAgentSessionRunnerFactories)
+            .not.toHaveBeenCalled();
+    });
+
+    it.each([
+        ['missing', undefined],
+        ['different object with the same callbacks', { ...externalSessions }],
+        ['different', {
+            ...externalSessions,
+            resolveSource: async ({ source }: Parameters<
+                AgentExternalSessionsContribution['resolveSource']
+            >[0]) => ({ ok: true as const, value: { source } }),
+        }],
+    ] as const)(
+        'rejects a %s same-module External Sessions companion export before persistence',
+        async (_label, selectedCompanion) => {
+            const persistValidatedAgentSessionRunnerFactories = vi.fn();
+            const result = await activateContributionModule({
+                pluginId: PLUGIN_ID,
+                generation: 'generation-companion-mismatch',
+                manifest: externalSessionManifest(),
+                moduleNamespace: {
+                    activate(api: PluginApi) {
+                        api.agents.register(AGENT_ID, agentRuntimeFactory, {
+                            sessionRunnerFactory: {
+                                module: './agent-runtime.js',
+                                export: 'agentRuntimeFactory',
+                                runtimeApiVersion: 1,
+                                externalSessionsExport: 'externalSessions',
+                            },
+                        });
+                        api.agents.registerExternalSessions(
+                            AGENT_ID,
+                            externalSessions,
+                        );
+                    },
+                },
+                isGenerationCurrent: () => true,
+                resolveRelativeModule: async () => ({
+                    module: {
+                        agentRuntimeFactory,
+                        ...(selectedCompanion === undefined
+                            ? {}
+                            : { externalSessions: selectedCompanion }),
+                    },
+                    normalizedModulePath: 'agent-runtime.js',
+                    loadMode: 'immutable-js',
+                }),
+                persistValidatedAgentSessionRunnerFactories,
+            });
+
+            expect(result.status).toBe('unavailable');
+            expect(result.registrations).toEqual([]);
+            expect(result.validatedAgentSessionRunnerFactories).toEqual([]);
+            expect(result.diagnostics).toEqual([
+                expect.objectContaining({
+                    code: 'plugin_activation_failed',
+                    message: expect.stringMatching(/External Sessions.*does not match/iu),
+                }),
+            ]);
+            expect(persistValidatedAgentSessionRunnerFactories)
+                .not.toHaveBeenCalled();
         },
     );
 

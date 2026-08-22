@@ -1,3 +1,5 @@
+import { isDeepStrictEqual } from 'node:util';
+
 import type { ManagedExecutableRef } from '@happier-dev/protocol';
 import type {
     InstallableDependencyDescriptor,
@@ -8,9 +10,9 @@ import { resolveEffectiveInstallablePolicy } from '@happier-dev/protocol/install
 import type {
     ManagedDependencyReady,
     ManagedDependencyStatus,
-    PluginManagedDependenciesService,
-} from '@happier-dev/plugin-sdk/runtime';
-import { PluginError } from '@happier-dev/plugin-sdk';
+    ManagedDependenciesService,
+} from '@happier-dev/plugin-sdk/managed-services';
+import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
 
 import type { RuntimeInstallableAdapter } from '@/packagedRuntime/installables/registry';
 import type {
@@ -18,6 +20,17 @@ import type {
     ManagedDependencySourceModelEntry,
     V2ManagedDependencySourceModel,
 } from './managedDependencySourceModel';
+import {
+    mergeRunnerManagedDependencyRetentionV1,
+    type RunnerManagedDependencySourceCandidateV1,
+    type RunnerManagedDependencyRetentionV1,
+} from '../../runner/runnerManagedDependencyRetention';
+import type {
+    AgentSessionRunnerBindingV1,
+} from '../../runner/agentSessionRunnerFactoryBinding';
+import type {
+    PluginHostAccessRequestV2,
+} from '@happier-dev/protocol';
 
 type ResolvedExecutableLease = Readonly<{
     command: string;
@@ -27,9 +40,26 @@ type ResolvedExecutableLease = Readonly<{
 }>;
 
 export interface StablePluginManagedDependenciesHost {
-    bind(pluginId: string): PluginManagedDependenciesService;
+    bind(pluginId: string): ManagedDependenciesService;
     resolveExecutable(executable: ManagedExecutableRef, requestingPluginId: string): Promise<ResolvedExecutableLease>;
     retireGeneration(generationId: string): Promise<void>;
+    snapshotRunnerRetention(
+        binding: AgentSessionRunnerBindingV1,
+        hostAccessRequests: readonly Readonly<{
+            request: PluginHostAccessRequestV2;
+            required: boolean;
+        }>[],
+    ): RunnerManagedDependencyRetentionV1;
+    reserveRunnerRetention(
+        binding: AgentSessionRunnerBindingV1,
+        hostAccessRequests: readonly Readonly<{
+            request: PluginHostAccessRequestV2;
+            required: boolean;
+        }>[],
+    ): Readonly<{
+        retention: RunnerManagedDependencyRetentionV1;
+        release(): void;
+    }>;
 }
 
 type LegacyDescriptorOwner = Readonly<{
@@ -86,7 +116,40 @@ function qualifiedKey(pluginId: string | undefined, localId: string): string {
     return pluginId ? `${pluginId}/${localId}` : localId;
 }
 
-function readRef(executable: ManagedExecutableRef, requestingPluginId: string): Readonly<{
+export function resolveRunnerManagedDependencyQualifiedIds(
+    binding: AgentSessionRunnerBindingV1,
+    hostAccessRequests: readonly Readonly<{
+        request: PluginHostAccessRequestV2;
+        required: boolean;
+    }>[],
+): readonly string[] {
+    return Object.freeze([
+        ...new Set(hostAccessRequests.flatMap(
+            ({ request }) => request.capability === 'process'
+                ? request.scope.executables.flatMap((executable) => {
+                    if (executable.kind !== 'managedDependency') {
+                        return [];
+                    }
+                    const identity = typeof executable.id === 'string'
+                        ? {
+                            pluginId: binding.pluginId,
+                            localId: executable.id,
+                        }
+                        : executable.id;
+                    return [qualifiedKey(
+                        identity.pluginId,
+                        identity.localId,
+                    )];
+                })
+                : [],
+        )),
+    ].sort());
+}
+
+function readRef(
+    executable: Extract<ManagedExecutableRef, Readonly<{ kind: 'managedDependency' }>>,
+    requestingPluginId: string,
+): Readonly<{
     pluginId: string;
     localId: string;
 }> {
@@ -123,6 +186,8 @@ function readVersion(status: unknown, ...keys: readonly string[]): string | null
 export function createStablePluginManagedDependenciesHost(params: Readonly<{
     installablesRegistry: InstallablesRegistry;
     sourceModel?: V2ManagedDependencySourceModel;
+    immutableGenerationIdsByPluginId?:
+        ReadonlyMap<string, string>;
     getSettings(): unknown;
     resolveAdapter(
         key: string,
@@ -131,6 +196,7 @@ export function createStablePluginManagedDependenciesHost(params: Readonly<{
     resolveSourceAdapter?(input: Readonly<{
         dependency: ManagedDependencySourceModelDependency;
         source: ManagedDependencySourceModelEntry;
+        sourceInstallable?: InstallableDependencyDescriptor;
     }>): Promise<RuntimeInstallableAdapter>;
     removeManagedInstall(input: Readonly<{
         descriptor: InstallableDependencyDescriptor;
@@ -142,10 +208,85 @@ export function createStablePluginManagedDependenciesHost(params: Readonly<{
         adapter: RuntimeInstallableAdapter;
         signal?: AbortSignal;
     }>): Promise<void>;
+    readLiveRunnerRetention?():
+        Promise<RunnerManagedDependencyRetentionV1>;
     env?: NodeJS.ProcessEnv;
 }>): StablePluginManagedDependenciesHost {
+    function isCanonicalV2ManagedSource(
+        owner: V2DescriptorOwner,
+        source: ManagedDependencySourceModelEntry,
+    ): boolean {
+        if (source.declaration.kind !== 'managedPypiWheelAsset') return true;
+        return sourceInstallableFor(owner, source) !== null;
+    }
+
+    function sourceInstallableFor(
+        owner: V2DescriptorOwner,
+        source: ManagedDependencySourceModelEntry,
+    ): InstallableRegistryContribution | null {
+        if (
+            !params.sourceModel
+            || source.declaration.kind !== 'managedPypiWheelAsset'
+        ) return null;
+        const winner = params.installablesRegistry.descriptorsByKey[
+            source.declaration.installId
+        ];
+        const expectedProvenance = owner.dependency.provenance === 'first_party'
+            ? 'bundled_first_party_plugin'
+            : 'external_plugin';
+        const descriptor = winner?.descriptor;
+        const expectedSource = Object.freeze({
+            kind: 'managed_pypi_wheel_asset' as const,
+            distribution: source.declaration.distribution,
+            versionSpecifier: source.declaration.versionSpecifier,
+            assetPathByPlatform: source.declaration.assetPathByPlatform,
+            executable: true as const,
+            ...(source.declaration.compatibilityProbe
+                ? { compatibilityProbe: source.declaration.compatibilityProbe }
+                : {}),
+            installConsent: source.declaration.installConsent,
+            autoUpdateMode: source.declaration.autoUpdateMode,
+            ...(source.declaration.trustedPublisher
+                ? { trustedPublisher: source.declaration.trustedPublisher }
+                : {}),
+        });
+        if (
+            !winner
+            || !descriptor
+            || winner.owner.provenance !== expectedProvenance
+            || winner.owner.pluginId !== owner.dependency.identity.pluginId
+            || winner.owner.manifestPath !== owner.dependency.manifestPath
+            || descriptor.id !== source.declaration.installId
+            || descriptor.key !== source.declaration.installId
+            || descriptor.capabilityId !== source.declaration.installId
+            || descriptor.binary.commands.length !== 1
+            || descriptor.binary.commands[0] !== owner.dependency.definition.executable
+            || !isDeepStrictEqual(descriptor.source, expectedSource)
+        ) return null;
+        return winner;
+    }
+
+    const projectedV2RegistryContributions = new Map<
+        InstallableRegistryContribution,
+        V2DescriptorOwner
+    >();
+    for (const dependency of params.sourceModel?.snapshot().dependencies ?? []) {
+        const owner = Object.freeze({
+            kind: 'v2' as const,
+            qualifiedKey: dependency.qualifiedId,
+            dependency,
+        });
+        for (const source of dependency.sources) {
+            const sourceInstallable = sourceInstallableFor(owner, source);
+            if (sourceInstallable) {
+                projectedV2RegistryContributions.set(sourceInstallable, owner);
+            }
+        }
+    }
+
     const ownersByQualifiedKey = new Map<string, DescriptorOwner>();
     for (const contribution of params.installablesRegistry.descriptors) {
+        if (projectedV2RegistryContributions.has(contribution)) continue;
         const key = qualifiedKey(contribution.owner.pluginId, contribution.descriptor.key);
         ownersByQualifiedKey.set(key, Object.freeze({ kind: 'legacy', qualifiedKey: key, contribution }));
         if (contribution.owner.provenance === 'built_in') {
@@ -173,6 +314,238 @@ export function createStablePluginManagedDependenciesHost(params: Readonly<{
     const removals = new Map<string, Promise<void>>();
     const inspections = new Map<string, Promise<ManagedDependencyStatus>>();
     const activeLeases = new Map<string, number>();
+    const pendingRunnerRetentionByQualifiedId =
+        new Map<string, number>();
+    const pendingRunnerRetentionBySourceGenerationId =
+        new Map<string, number>();
+    let pendingRunnerReservations = 0;
+    let generationRetirementReserved = false;
+
+    const snapshotRunnerRetention = (
+        binding: AgentSessionRunnerBindingV1,
+        hostAccessRequests: readonly Readonly<{
+            request: PluginHostAccessRequestV2;
+            required: boolean;
+        }>[],
+    ): RunnerManagedDependencyRetentionV1 => {
+        const qualifiedDependencyIds =
+            resolveRunnerManagedDependencyQualifiedIds(
+                binding,
+                hostAccessRequests,
+            );
+        const sourceCandidatesByIdentity = new Map<
+            string,
+            RunnerManagedDependencySourceCandidateV1
+        >();
+        const addSourceCandidate = (owner: V2DescriptorOwner): void => {
+            const immutableGenerationId =
+                params.immutableGenerationIdsByPluginId?.get(
+                    owner.dependency.identity.pluginId,
+                );
+            if (!immutableGenerationId) {
+                return fail(
+                    'plugin_managed_dependency_retention_generation_unavailable',
+                    'Managed dependency immutable source generation is unavailable',
+                );
+            }
+            const sourceCandidate = Object.freeze({
+                qualifiedDependencyId: owner.qualifiedKey,
+                immutableGenerationId,
+                manifestAuthority:
+                    owner.dependency.provenance === 'first_party'
+                        ? 'bundled_first_party' as const
+                        : 'external' as const,
+            });
+            sourceCandidatesByIdentity.set(
+                JSON.stringify([
+                    sourceCandidate.qualifiedDependencyId,
+                    sourceCandidate.immutableGenerationId,
+                ]),
+                sourceCandidate,
+            );
+        };
+        for (const qualifiedId of qualifiedDependencyIds) {
+            const owner = ownersByQualifiedKey.get(qualifiedId);
+            if (!owner) {
+                return fail(
+                    'plugin_managed_dependency_undeclared',
+                    'Retained Runner Agent declaration references an undeclared managed dependency',
+                );
+            }
+            if (owner.kind !== 'v2') continue;
+            addSourceCandidate(owner);
+            for (const source of owner.dependency.sources) {
+                if (
+                    source.declaration.kind
+                        !== 'managedPypiWheelAsset'
+                ) continue;
+                const winner = params.installablesRegistry.descriptorsByKey[
+                    source.declaration.installId
+                ];
+                if (!winner) continue;
+                const winnerOwner =
+                    projectedV2RegistryContributions.get(winner);
+                if (!winnerOwner) {
+                    return fail(
+                        'plugin_managed_dependency_retention_generation_unavailable',
+                        'Managed dependency collision winner has no immutable source generation',
+                    );
+                }
+                addSourceCandidate(winnerOwner);
+            }
+        }
+        const sourceCandidates = [
+            ...sourceCandidatesByIdentity.values(),
+        ].sort((left, right) => (
+            left.qualifiedDependencyId.localeCompare(
+                right.qualifiedDependencyId,
+            ) || left.immutableGenerationId.localeCompare(
+                right.immutableGenerationId,
+            ) || left.manifestAuthority.localeCompare(
+                right.manifestAuthority,
+            )
+        ));
+        const sourceGenerationIds = [
+            ...new Set(sourceCandidates.map(
+                ({ immutableGenerationId }) => immutableGenerationId,
+            )),
+        ].sort();
+        return mergeRunnerManagedDependencyRetentionV1({
+            v: 1,
+            sourceGenerationIds,
+            qualifiedDependencyIds: [...qualifiedDependencyIds],
+            sourceCandidates,
+        });
+    };
+
+    const readLiveRunnerRetention = async ():
+    Promise<RunnerManagedDependencyRetentionV1> =>
+        params.readLiveRunnerRetention
+            ? await params.readLiveRunnerRetention()
+            : mergeRunnerManagedDependencyRetentionV1();
+
+    const reserveRunnerRetention = (
+        binding: AgentSessionRunnerBindingV1,
+        hostAccessRequests: readonly Readonly<{
+            request: PluginHostAccessRequestV2;
+            required: boolean;
+        }>[],
+    ): Readonly<{
+        retention: RunnerManagedDependencyRetentionV1;
+        release(): void;
+    }> => {
+        if (
+            removals.size > 0
+            || generationRetirementReserved
+        ) {
+            fail(
+                'plugin_managed_dependency_busy',
+                'Managed dependency retention cannot attach during destructive work',
+            );
+        }
+        const retention = snapshotRunnerRetention(
+            binding,
+            hostAccessRequests,
+        );
+        pendingRunnerReservations += 1;
+        for (
+            const qualifiedId of
+            retention.qualifiedDependencyIds
+        ) {
+            pendingRunnerRetentionByQualifiedId.set(
+                qualifiedId,
+                (
+                    pendingRunnerRetentionByQualifiedId.get(
+                        qualifiedId,
+                    ) ?? 0
+                ) + 1,
+            );
+        }
+        for (
+            const generationId of
+            retention.sourceGenerationIds
+        ) {
+            pendingRunnerRetentionBySourceGenerationId.set(
+                generationId,
+                (
+                    pendingRunnerRetentionBySourceGenerationId.get(
+                        generationId,
+                    ) ?? 0
+                ) + 1,
+            );
+        }
+        let released = false;
+        return Object.freeze({
+            retention,
+            release() {
+                if (released) return;
+                released = true;
+                pendingRunnerReservations -= 1;
+                for (
+                    const qualifiedId of
+                    retention.qualifiedDependencyIds
+                ) {
+                    const next = (
+                        pendingRunnerRetentionByQualifiedId.get(
+                            qualifiedId,
+                        ) ?? 1
+                    ) - 1;
+                    if (next <= 0) {
+                        pendingRunnerRetentionByQualifiedId.delete(
+                            qualifiedId,
+                        );
+                    } else {
+                        pendingRunnerRetentionByQualifiedId.set(
+                            qualifiedId,
+                            next,
+                        );
+                    }
+                }
+                for (
+                    const generationId of
+                    retention.sourceGenerationIds
+                ) {
+                    const next = (
+                        pendingRunnerRetentionBySourceGenerationId.get(
+                            generationId,
+                        ) ?? 1
+                    ) - 1;
+                    if (next <= 0) {
+                        pendingRunnerRetentionBySourceGenerationId.delete(
+                            generationId,
+                        );
+                    } else {
+                        pendingRunnerRetentionBySourceGenerationId.set(
+                            generationId,
+                            next,
+                        );
+                    }
+                }
+            },
+        });
+    };
+
+    const assertDependencyNotRunnerRetained = async (
+        owner: DescriptorOwner,
+    ): Promise<void> => {
+        const retained = await readLiveRunnerRetention();
+        if (
+            (
+                pendingRunnerRetentionByQualifiedId.get(
+                    owner.qualifiedKey,
+                ) ?? 0
+            ) > 0
+            ||
+            retained.qualifiedDependencyIds.includes(
+                owner.qualifiedKey,
+            )
+        ) {
+            fail(
+                'plugin_managed_dependency_in_use',
+                'Managed dependency is retained by a live Agent runner',
+            );
+        }
+    };
 
     function resolveOwner(pluginId: string, id: string): DescriptorOwner | null {
         return ownersByQualifiedKey.get(qualifiedKey(pluginId, id))
@@ -192,7 +565,10 @@ export function createStablePluginManagedDependenciesHost(params: Readonly<{
     }
 
     function v2ExecutableSources(owner: V2DescriptorOwner): readonly ManagedDependencySourceModelEntry[] {
-        return owner.dependency.sources.filter((source) => source.disposition === 'executable');
+        return owner.dependency.sources.filter((source) => (
+            source.disposition === 'executable'
+            && isCanonicalV2ManagedSource(owner, source)
+        ));
     }
 
     function v2ManualFallbackCode(owner: V2DescriptorOwner): string | null {
@@ -217,6 +593,12 @@ export function createStablePluginManagedDependenciesHost(params: Readonly<{
         if (owner.kind === 'legacy') return legacyUnsupportedCode(owner.contribution.descriptor);
         if (owner.dependency.availability.state === 'unavailable') return owner.dependency.availability.code;
         if (v2ExecutableSources(owner).length > 0) return null;
+        if (owner.dependency.sources.some((source) => (
+            source.declaration.kind === 'managedPypiWheelAsset'
+            && !isCanonicalV2ManagedSource(owner, source)
+        ))) {
+            return 'plugin_managed_dependency_source_conflict';
+        }
         return v2ManualFallbackCode(owner) ?? 'plugin_managed_dependency_source_unsupported';
     }
 
@@ -245,13 +627,20 @@ export function createStablePluginManagedDependenciesHost(params: Readonly<{
         let sourceAdapterFailure: PluginError | null = null;
         for (const source of v2ExecutableSources(owner)) {
             try {
+                const sourceInstallable = sourceInstallableFor(owner, source);
                 candidates.push(Object.freeze({
-                    adapter: await params.resolveSourceAdapter({ dependency: owner.dependency, source }),
+                    adapter: await params.resolveSourceAdapter({
+                        dependency: owner.dependency,
+                        source,
+                        ...(sourceInstallable
+                            ? { sourceInstallable: sourceInstallable.descriptor }
+                            : {}),
+                    }),
                     sourceId: source.sourceId,
                     source,
                 }));
             } catch (error) {
-                if (!sourceAdapterFailure && error instanceof PluginError) {
+                if (!sourceAdapterFailure && isPluginError(error)) {
                     sourceAdapterFailure = error;
                 }
                 // A host may support only a subset of declared source kinds. Continue in source order.
@@ -319,7 +708,7 @@ export function createStablePluginManagedDependenciesHost(params: Readonly<{
         try {
             resolvedAdapters = await adapterCandidatesFor(owner);
         } catch (error) {
-            if (error instanceof PluginError) {
+            if (isPluginError(error)) {
                 return Object.freeze({ state: 'unsupported', id: publicId, code: error.code });
             }
             return Object.freeze({ state: 'failed', id: publicId, code: 'plugin_managed_dependency_status_failed' });
@@ -369,7 +758,7 @@ export function createStablePluginManagedDependenciesHost(params: Readonly<{
                 if (signal?.aborted) {
                     return fail('plugin_managed_dependency_aborted', 'Managed dependency operation was aborted');
                 }
-                failureCode = error instanceof PluginError ? error.code : 'plugin_managed_dependency_status_failed';
+                failureCode = isPluginError(error) ? error.code : 'plugin_managed_dependency_status_failed';
             }
         }
         if (sawMissing) {
@@ -479,7 +868,7 @@ export function createStablePluginManagedDependenciesHost(params: Readonly<{
                 ...(after.executable ? { executable: after.executable } : {}),
             });
         }).catch((error: unknown) => {
-            if (error instanceof PluginError) throw error;
+            if (isPluginError(error)) throw error;
             return fail('plugin_managed_dependency_install_failed', 'Managed dependency installation failed');
         });
         const flight = Object.freeze({ operation, promise: mutation });
@@ -491,8 +880,8 @@ export function createStablePluginManagedDependenciesHost(params: Readonly<{
         }
     }
 
-    function bind(pluginId: string): PluginManagedDependenciesService {
-        const service: PluginManagedDependenciesService = {
+    function bind(pluginId: string): ManagedDependenciesService {
+        const service: ManagedDependenciesService = {
             async status(id, options) {
                 assertNotAborted(options?.signal);
                 const owner = resolveOwner(pluginId, id);
@@ -506,7 +895,7 @@ export function createStablePluginManagedDependenciesHost(params: Readonly<{
                 try {
                     assertV2Current(owner);
                 } catch (error) {
-                    if (error instanceof PluginError && error.code === 'plugin_managed_dependency_generation_retired') {
+                    if (isPluginError(error) && error.code === 'plugin_managed_dependency_generation_retired') {
                         return Object.freeze({ state: 'unsupported' as const, id, code: error.code });
                     }
                     throw error;
@@ -545,6 +934,7 @@ export function createStablePluginManagedDependenciesHost(params: Readonly<{
                 const existing = removals.get(owner.qualifiedKey);
                 if (existing) return await waitWithAbort(existing, options?.signal);
                 const removal = Promise.resolve().then(async () => {
+                    await assertDependencyNotRunnerRetained(owner);
                     assertV2Current(owner);
                     if (owner.kind === 'legacy') {
                         await params.removeManagedInstall({ descriptor: owner.contribution.descriptor });
@@ -561,7 +951,7 @@ export function createStablePluginManagedDependenciesHost(params: Readonly<{
                         adapter: selected.adapter,
                     });
                 }).catch((error: unknown) => {
-                    if (error instanceof PluginError) throw error;
+                    if (isPluginError(error)) throw error;
                     return fail('plugin_managed_dependency_remove_failed', 'Managed dependency removal failed');
                 });
                 removals.set(owner.qualifiedKey, removal);
@@ -627,20 +1017,61 @@ export function createStablePluginManagedDependenciesHost(params: Readonly<{
 
     async function retireGeneration(generationId: string): Promise<void> {
         if (!params.sourceModel) return;
-        if (params.sourceModel.generationId !== generationId) {
-            params.sourceModel.retireGeneration(generationId);
-            return;
+        if (generationRetirementReserved) {
+            fail(
+                'plugin_managed_dependency_busy',
+                'Managed dependency generation retirement is already in progress',
+            );
         }
-        const modelKeys = new Set(params.sourceModel.snapshot().dependencies.map((dependency) => dependency.qualifiedId));
-        const busy = [...modelKeys].some((key) => (
-            (activeLeases.get(key) ?? 0) > 0
-            || mutations.has(key)
-            || removals.has(key)
-            || inspections.has(key)
-        ));
-        if (busy) fail('plugin_managed_dependency_in_use', 'Managed dependency generation is still in use');
-        params.sourceModel.retireGeneration(generationId);
+        generationRetirementReserved = true;
+        try {
+            const retained = await readLiveRunnerRetention();
+            const localImmutableSourceGenerationIds = new Set(
+                params.sourceModel.snapshot().dependencies.flatMap(
+                    (dependency) => {
+                        const immutableGenerationId =
+                            params.immutableGenerationIdsByPluginId?.get(
+                                dependency.identity.pluginId,
+                            );
+                        return immutableGenerationId
+                            ? [immutableGenerationId]
+                            : [];
+                    },
+                ),
+            );
+            if (
+                pendingRunnerReservations > 0
+                || retained.sourceGenerationIds.some(
+                    (immutableGenerationId) =>
+                        localImmutableSourceGenerationIds.has(
+                            immutableGenerationId,
+                        ),
+                )
+            ) {
+                fail(
+                    'plugin_managed_dependency_in_use',
+                    'Managed dependency generation is retained by a live Agent runner',
+                );
+            }
+            const modelKeys = new Set(params.sourceModel.snapshot().dependencies.map((dependency) => dependency.qualifiedId));
+            const busy = [...modelKeys].some((key) => (
+                (activeLeases.get(key) ?? 0) > 0
+                || mutations.has(key)
+                || removals.has(key)
+                || inspections.has(key)
+            ));
+            if (busy) fail('plugin_managed_dependency_in_use', 'Managed dependency generation is still in use');
+            params.sourceModel.retire();
+        } finally {
+            generationRetirementReserved = false;
+        }
     }
 
-    return Object.freeze({ bind, resolveExecutable, retireGeneration });
+    return Object.freeze({
+        bind,
+        resolveExecutable,
+        retireGeneration,
+        snapshotRunnerRetention,
+        reserveRunnerRetention,
+    });
 }

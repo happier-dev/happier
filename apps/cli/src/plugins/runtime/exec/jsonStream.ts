@@ -51,6 +51,7 @@ export function createJsonStreamProcessClient(params: CreateJsonStreamProcessCli
     const maxFrameBytes = params.maxFrameBytes ?? DEFAULT_MAX_FRAME_BYTES;
     let disposedError: Error | null = null;
     let closedSettled = false;
+    let cleanStreamEndCanYieldToProcessExit = false;
     let resolveClosed: () => void = () => undefined;
     let rejectClosed: (error: Error) => void = () => undefined;
     let detachLineReader: () => void = () => undefined;
@@ -76,11 +77,13 @@ export function createJsonStreamProcessClient(params: CreateJsonStreamProcessCli
         stdout.off('close', onStreamEnd);
         stdout.off('error', onStreamError);
         if (error) {
+            cleanStreamEndCanYieldToProcessExit = false;
             disposedError = error;
             rejectClosed(error);
             return;
         }
         disposedError = createClosedError();
+        cleanStreamEndCanYieldToProcessExit = true;
         resolveClosed();
     }
 
@@ -224,9 +227,23 @@ export function createJsonStreamProcessClient(params: CreateJsonStreamProcessCli
     return Object.freeze({
         client,
         dispose(error = new PluginExecClientError('PLUGIN_EXEC_CLIENT_DISPOSED', 'Plugin exec client was disposed')) {
+            if (cleanStreamEndCanYieldToProcessExit) {
+                cleanStreamEndCanYieldToProcessExit = false;
+                disposedError = error;
+                return;
+            }
+            cleanStreamEndCanYieldToProcessExit = false;
             failClient(error);
         },
         settleExit(error: Error) {
+            if (cleanStreamEndCanYieldToProcessExit) {
+                if (error instanceof PluginExecClientError && error.cleanProcessExit === true) {
+                    return;
+                }
+                cleanStreamEndCanYieldToProcessExit = false;
+                disposedError = error;
+                return;
+            }
             if (!closedSettled) {
                 failClient(error);
             }

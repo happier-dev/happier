@@ -5,15 +5,26 @@ import { describe, expect, it } from 'vitest';
 
 import { runPackedPluginTest } from './packedTest';
 
-const fixtureRoot = fileURLToPath(
+const consumerFixtureRoot = fileURLToPath(
   new URL('./fixtures/connectedAccountsConformance', import.meta.url),
 );
+const producerFixtureRoot = fileURLToPath(
+  new URL('./fixtures/connectedAccountsConformanceProducer', import.meta.url),
+);
+const collisionPeerFixtureRoot = fileURLToPath(
+  new URL('./fixtures/connectedAccountsCollisionPeer', import.meta.url),
+);
+
+const consumerPluginId = 'acme.connected-accounts-conformance-consumer';
+const producerPluginId = 'acme.connected-accounts-conformance-producer';
+const collisionPeerPluginId = 'acme.connected-accounts-collision-peer';
 
 describe('packed public Connected Accounts conformance', () => {
-  it('crosses the production invocation host and preserves only durable selection across restart', async () => {
+  it('keeps producer registration separate from consumer materialization and preserves only durable selection across restart', async () => {
     const result = await runPackedPluginTest({
-      projectRoot: fixtureRoot,
-      connectedAccountsFixturePluginId: 'acme.connected-accounts-conformance',
+      projectRoot: consumerFixtureRoot,
+      prerequisiteLocators: [producerFixtureRoot, collisionPeerFixtureRoot],
+      connectedAccountsFixturePluginId: consumerPluginId,
       connectedAccountPurposeRemovalReaddActionLocalId: 'verify-removal-readd',
       expectedRedactedValues: [
         'Bearer packed-header-secret',
@@ -25,18 +36,56 @@ describe('packed public Connected Accounts conformance', () => {
     expect(result, JSON.stringify(result)).toMatchObject({
       ok: true,
       mode: 'packed',
-      pluginId: 'acme.connected-accounts-conformance',
-        invocation: {
-          actionId: 'acme.connected-accounts-conformance/verify',
-          result: {
-            phase: 'replacement-generation',
+      pluginId: consumerPluginId,
+      prerequisitePlugins: [
+        { pluginId: producerPluginId },
+        { pluginId: collisionPeerPluginId },
+      ],
+      initialInvocation: {
+        actionId: `${consumerPluginId}/verify`,
+        result: {
+          phase: 'initial',
+          binding: {
+            purpose: 'fixed',
             service: {
-              pluginId: 'acme.connected-accounts-conformance',
+              pluginId: producerPluginId,
               localId: 'vault',
             },
-            durableSelection: true,
-            rematerialized: true,
-            watchWasNonDurable: true,
+            account: {
+              service: {
+                pluginId: producerPluginId,
+                localId: 'vault',
+              },
+              accountId: 'fixed',
+            },
+          },
+          expectedAccountMatchedCurrentBinding: true,
+          expectedAccountRejectedSupersededBinding: true,
+          expectedAccountRevalidatedAfterMaterialization: true,
+          groupCurrentnessRejected: true,
+        },
+      },
+      invocation: {
+        actionId: `${consumerPluginId}/verify`,
+        result: {
+          phase: 'replacement-generation',
+          binding: {
+            purpose: 'fixed',
+            service: {
+              pluginId: producerPluginId,
+              localId: 'vault',
+            },
+            account: {
+              service: {
+                pluginId: producerPluginId,
+                localId: 'vault',
+              },
+              accountId: 'fixed',
+            },
+          },
+          durableSelection: true,
+          rematerialized: true,
+          watchWasNonDurable: true,
         },
       },
       daemon: {
@@ -46,8 +95,14 @@ describe('packed public Connected Accounts conformance', () => {
       publicationRemovalReadd: {
         removed: true,
         readded: true,
+        target: expect.objectContaining({
+          plugin: expect.objectContaining({ id: consumerPluginId }),
+          admission: expect.objectContaining({
+            decision: 'installAndTrust',
+          }),
+        }),
         invocation: {
-          actionId: 'acme.connected-accounts-conformance/verify-removal-readd',
+          actionId: `${consumerPluginId}/verify-removal-readd`,
           result: {
             phase: 'removal-readd',
             durableSelectionWasAbsent: true,
@@ -59,12 +114,21 @@ describe('packed public Connected Accounts conformance', () => {
     if (!result.ok || !result.invocation?.result || typeof result.invocation.result !== 'object') {
       throw new Error('Packed Connected Accounts fixture did not return its selected service identity');
     }
-    const service = (result.invocation.result as {
-      service?: { pluginId?: unknown; localId?: unknown };
-    }).service;
+    expect(result.publicationRemovalReadd?.target).toEqual(result.target);
+    const binding = (result.invocation.result as {
+      binding?: {
+        service?: { pluginId?: unknown; localId?: unknown };
+        account?: { service?: { pluginId?: unknown; localId?: unknown }; accountId?: unknown };
+      };
+    }).binding;
+    const service = binding?.service;
     expect(service).toEqual({
-      pluginId: 'acme.connected-accounts-conformance',
+      pluginId: producerPluginId,
       localId: 'vault',
+    });
+    expect(binding?.account).toEqual({
+      service,
+      accountId: 'fixed',
     });
     expect(ConnectedServiceIdSchema.safeParse(service?.localId).success).toBe(false);
   }, 180_000);

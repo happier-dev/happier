@@ -104,7 +104,7 @@ async function writeEnabledLocalPathPluginState(params: Readonly<{
         manifestPath: join(params.pluginRoot, '.happier-plugin', 'plugin.json'),
       },
       compatibility: { status: 'unknown', diagnostics: [] },
-      install: { mode: 'link', manifestVersion: '1.0.0', manifestDigest: null, installedPath: null },
+      install: { mode: 'link', manifestVersion: '1.0.0', installedPath: null },
       state: { enabled: true },
     },
   });

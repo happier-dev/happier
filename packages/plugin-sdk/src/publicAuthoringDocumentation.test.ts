@@ -10,13 +10,6 @@ type ApiSurfaceInventory = Readonly<{
     }>[];
 }>;
 
-type CapabilityMatrix = Readonly<{
-    manifestFamilies: readonly Readonly<{
-        manifestFamily: string;
-        availabilityDisposition: 'available' | 'deferred' | 'retired';
-    }>[];
-}>;
-
 type DocumentationEntrypointRow = Readonly<{
     specifier: string;
     purpose: string;
@@ -48,12 +41,19 @@ const webhooksGuidePath = join(
     'webhooks.mdx',
 );
 const pluginTestingGuidePath = join(pluginDocumentationRoot, 'testing', 'index.mdx');
+const pluginTestingNavigationPath = join(pluginDocumentationRoot, 'testing', 'meta.json');
+const pluginDiagnosticsGuidePath = join(pluginDocumentationRoot, 'testing', 'diagnostics.mdx');
 const activationGuidePath = join(documentationRoot, 'activation.mdx');
 const actionsGuidePath = join(documentationRoot, 'actions-tools-commands.mdx');
+const agentModeGuidePath = join(pluginDocumentationRoot, 'guides', 'agent-modes.mdx');
+const agentRuntimeGuidePath = join(pluginDocumentationRoot, 'agent-runtimes', 'agent-runtime.mdx');
 const capabilitiesGuidePath = join(manifestDocumentationRoot, 'capabilities-and-permissions.mdx');
 const contributionsGuidePath = join(manifestDocumentationRoot, 'contributions.mdx');
 const manifestGuidePath = join(manifestDocumentationRoot, 'index.mdx');
 const installTrustGuidePath = join(pluginDocumentationRoot, 'packaging', 'install-trust.mdx');
+const packagingNavigationPath = join(pluginDocumentationRoot, 'packaging', 'meta.json');
+const authoringCliGuidePath = join(pluginDocumentationRoot, 'packaging', 'authoring-cli.mdx');
+const versioningGuidePath = join(pluginDocumentationRoot, 'packaging', 'versioning-compat.mdx');
 const settingsGuidePath = join(
     repoRoot,
     'apps',
@@ -63,6 +63,16 @@ const settingsGuidePath = join(
     'plugins',
     'services',
     'settings.mdx',
+);
+const notificationsGuidePath = join(
+    repoRoot,
+    'apps',
+    'docs',
+    'content',
+    'docs',
+    'plugins',
+    'services',
+    'notifications.mdx',
 );
 
 function publicSpecifier(entrypoint: string): string {
@@ -109,9 +119,20 @@ describe('Plugin SDK public authoring documentation', () => {
 
     it('explains the Preview posture and the distinct resource and host workflows', () => {
         const guide = readFileSync(entrypointGuidePath, 'utf8');
+        const sdkReadme = readFileSync(join(sdkRoot, 'README.md'), 'utf8');
+        const versioningGuide = readFileSync(versioningGuidePath, 'utf8');
 
-        expect(guide).toContain('**Developer Preview** source contracts');
+        expect(guide).toContain('one package-level **Developer Preview** source contract');
+        expect(guide).toContain('does not create a separate stability tier per export');
         expect(guide).toContain('prepublication hold');
+        expect(sdkReadme).toContain('one package-level **Developer Preview** source contract');
+        expect(sdkReadme).toContain('remains `private: true` at `0.0.0` and is unpublished');
+        expect(sdkReadme).toContain('No public version or released-semver policy');
+        expect(sdkReadme).toContain('not a per-symbol stability tier');
+        expect(sdkReadme).not.toContain('The approved first public version is `0.1.0`');
+        expect(sdkReadme).not.toContain('generated API inventory uses `preview`');
+        expect(versioningGuide).toContain('No\npublic version is established by the current source tree');
+        expect(versioningGuide).toContain('Source declarations and host wiring establish source readiness, not external\navailability');
         expect(guide).toContain('## One `/resources` path, three resource workflows');
         expect(guide).toContain('`PromptAsset*` and `PromptRegistry*`');
         expect(guide).toContain('`ResourcesService`');
@@ -144,10 +165,14 @@ describe('Plugin SDK public authoring documentation', () => {
 
         expect(navigation.pages).not.toContain('host-actions');
         expect(manifestNavigation.pages).toContain('capabilities-and-permissions');
-        expect(activationGuide).toContain('Ordinary plugin modules use `definePlugin(...)`');
+        expect(activationGuide).toContain('Ordinary root/daemon plugin modules use `definePlugin(...)`');
+        expect(activationGuide).toContain('A client-target Action is different');
         expect(activationGuide).toContain('## Low-level ABI conformance');
         expect(activationGuide).toContain('not a second normal authoring path');
         expect(actionsGuide).toContain('context.services.actions.execute(...)');
+        expect(actionsGuide).toContain('Commands remain deferred for external');
+        expect(actionsGuide).toContain('Exact packed external proof must cover Action invocation');
+        expect(actionsGuide).not.toContain('Commands are available in Developer Preview');
         expect(capabilitiesGuide).toContain('host-owned Agent-session terminal');
         expect(capabilitiesGuide).toContain('`requestInterceptors` is a trusted installation-wide declaration');
         expect(capabilitiesGuide).toContain('`network.intercept` is not a public HostAccess capability');
@@ -203,7 +228,7 @@ describe('Plugin SDK public authoring documentation', () => {
         expect(guide).not.toContain('defineTargetedContributionPoint');
     });
 
-    it('projects the capability matrix into author guidance and keeps available collection and webhook tasks actionable', () => {
+    it('keeps source-ready Tools and Commands externally deferred while collection and webhook tasks stay actionable', () => {
         const navigation = JSON.parse(readFileSync(taskGuideNavigationPath, 'utf8')) as Readonly<{
             pages: readonly string[];
         }>;
@@ -219,36 +244,20 @@ describe('Plugin SDK public authoring documentation', () => {
         const accountCollectionsGuide = readFileSync(accountCollectionsGuidePath, 'utf8');
         const webhooksGuide = readFileSync(webhooksGuidePath, 'utf8');
         const installTrustGuide = readFileSync(installTrustGuidePath, 'utf8');
-        const capabilityMatrix = JSON.parse(readFileSync(
-            join(sdkRoot, 'capability-matrix.json'),
-            'utf8',
-        )) as CapabilityMatrix;
-        const availabilityByFamily = new Map(capabilityMatrix.manifestFamilies.map((family) => [
-            family.manifestFamily,
-            family.availabilityDisposition,
-        ]));
-
         expect(navigation.pages).toContain('account-collections');
         expect(navigation.pages).toContain('webhooks');
-        expect(availabilityByFamily.get('accountCollections')).toBe('available');
-        expect(availabilityByFamily.get('webhooks')).toBe('available');
-        expect(availabilityByFamily.get('tools')).toBe('deferred');
-        expect(availabilityByFamily.get('commands')).toBe('deferred');
-        expect(availabilityByFamily.get('sessionHeaderActions')).toBe('deferred');
-        expect(availabilityByFamily.get('openableContentViewers')).toBe('deferred');
-        expect(availabilityByFamily.get('mcp.servers')).toBe('deferred');
-        expect(availabilityByFamily.get('composerReferences')).toBe('deferred');
-        expect(availabilityByFamily.get('composerAttachments')).toBe('deferred');
-        expect(availabilityByFamily.get('composerControls')).toBe('deferred');
-        expect(availabilityByFamily.get('composerRegions')).toBe('deferred');
         expect(contributionsGuide).toContain('capability-matrix.json');
         expect(contributionsGuide).toContain('Deferred — conformance only');
-        expect(contributionsGuide).toContain('`tools`, `commands`,\n`sessionHeaderActions`, `openableContentViewers`, and `mcp.servers`');
+        expect(contributionsGuide).toContain('`tools` and `commands` have source declarations and host wiring');
+        expect(contributionsGuide).toContain('both remain externally deferred until exact packed lifecycle proof');
+        expect(contributionsGuide).toContain('`sessionHeaderActions`, `openableContentViewers`, and `mcp.servers`');
         expect(contributionsGuide).toContain('`composer.references`,\n`composer.attachments`, `composer.controls`, and `composer.regions`');
         expect(contributionsGuide).toContain('mcp.servers');
         expect(publicAuthoringReadme).toContain('capability-matrix.json');
         expect(publicAuthoringReadme).toContain('conformance-only');
+        expect(publicAuthoringReadme).toContain('Tools and Commands require exact packed external\nlifecycle proof');
         expect(publicAuthoringDefinition).toContain('Deferred — conformance-only surface');
+        expect(publicAuthoringDefinition).toContain('Deferred — source-wired but awaiting exact packed external lifecycle proof');
         expect(accountCollectionsGuide).toContain('static manifest identity');
         expect(accountCollectionsGuide).toContain('candidate-local');
         expect(accountCollectionsGuide).toContain('one ordered source-to-target chain');
@@ -264,6 +273,24 @@ describe('Plugin SDK public authoring documentation', () => {
         expect(installTrustGuide).toContain('`outcome_unknown`');
     });
 
+    it('documents notification category, channel, and service authoring as an available capability', () => {
+        const guide = readFileSync(notificationsGuidePath, 'utf8');
+        const apiGuide = readFileSync(join(documentationRoot, 'index.mdx'), 'utf8');
+        const entrypointGuide = readFileSync(entrypointGuidePath, 'utf8');
+
+        expect(guide).toContain('capability-matrix.json');
+        expect(guide).toContain('notificationChannels');
+        expect(guide).toContain('NotificationSender');
+        expect(guide).toContain('context.services.notifications.send');
+        expect(guide).toContain('context.ui.notify(');
+        expect(guide).toContain('examples/action-contract-producer');
+        expect(guide).not.toContain('host-internal');
+        expect(guide).not.toContain('remains deferred');
+        expect(apiGuide).toContain('- notification channels\n');
+        expect(apiGuide).not.toContain('notification channels (deferred; host-internal)');
+        expect(entrypointGuide).toContain('Host-mediated notification service, channel sender, and preference result types');
+    });
+
     it('documents the composed targeted proof', () => {
         const testingGuide = readFileSync(pluginTestingGuidePath, 'utf8');
 
@@ -271,5 +298,68 @@ describe('Plugin SDK public authoring documentation', () => {
             'happier plugins test ./target --packed --with-plugin ./contributor',
         );
         expect(testingGuide).toContain('--sdk-registry <origin>');
+    });
+
+    it('routes errors through one public diagnostics guide and the cross-bundle PluginError guard', () => {
+        const navigation = JSON.parse(readFileSync(pluginTestingNavigationPath, 'utf8')) as Readonly<{
+            pages: readonly string[];
+        }>;
+        const diagnosticsGuide = readFileSync(pluginDiagnosticsGuidePath, 'utf8');
+        const actionsGuide = readFileSync(actionsGuidePath, 'utf8');
+
+        expect(navigation.pages).toContain('diagnostics');
+        expect(diagnosticsGuide).toContain("from '@happier-dev/plugin-sdk'");
+        expect(diagnosticsGuide).toContain('isPluginError(error)');
+        expect(diagnosticsGuide).toContain('separately bundled SDK copies');
+        expect(diagnosticsGuide).toContain('`code`');
+        expect(diagnosticsGuide).toContain('`retryable`');
+        expect(diagnosticsGuide).toContain('`details`');
+        expect(diagnosticsGuide).toContain('`remediation`');
+        expect(diagnosticsGuide).toContain('`diagnostics`');
+        expect(diagnosticsGuide).toContain('`actionHandlerInvocation`');
+        expect(actionsGuide).toContain('[Diagnostics](/plugins/testing/diagnostics)');
+    });
+
+    it('links Session-Agent authors to the compiled and packed advanced package reference', () => {
+        const agentModeGuide = readFileSync(agentModeGuidePath, 'utf8');
+        const agentRuntimeGuide = readFileSync(agentRuntimeGuidePath, 'utf8');
+
+        for (const guide of [agentModeGuide, agentRuntimeGuide]) {
+            expect(guide).toContain('advanced-package-root');
+            expect(guide).toContain('happier plugins author typecheck .');
+            expect(guide).toContain('happier plugins author build .');
+            expect(guide).toContain('happier plugins test . --packed');
+        }
+    });
+
+    it('keeps the complete plugin command lifecycle in one authoring CLI reference', () => {
+        const navigation = JSON.parse(readFileSync(packagingNavigationPath, 'utf8')) as Readonly<{
+            pages: readonly string[];
+        }>;
+        const guide = readFileSync(authoringCliGuidePath, 'utf8');
+
+        expect(navigation.pages).toContain('authoring-cli');
+        for (const command of [
+            'happier plugins install',
+            'happier plugins create',
+            'happier plugins dev',
+            'happier plugins test',
+            'happier plugins author install',
+            'happier plugins author typecheck',
+            'happier plugins author build',
+            'happier plugins author test',
+            'happier plugins pack',
+            'happier plugins doctor',
+            'happier plugins reload',
+            'happier plugins change status',
+            'happier plugins change approve',
+            'happier plugins change reject',
+        ]) {
+            expect(guide).toContain(command);
+        }
+        expect(guide).toContain('same pending ID');
+        expect(guide).toContain('same daemon lifetime');
+        expect(guide).toContain('`--packed`');
+        expect(guide).toContain('`--sdk-registry <origin>`');
     });
 });

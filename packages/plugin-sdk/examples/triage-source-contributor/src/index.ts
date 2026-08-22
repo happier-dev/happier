@@ -16,6 +16,7 @@ const plugin = definePlugin({
     'inspect-triage-source': {
       title: 'Inspect Triage source',
       surfaces: ['plugin'],
+      execution: { target: 'daemon' },
       inputSchema: triageSourceInspectionInputSchema,
       resultSchema: triageSourceInspectionResultSchema,
       run: async (input) => ({

@@ -1,14 +1,16 @@
 import { copyFile, lstat, mkdir, readdir, realpath, rm } from 'node:fs/promises';
-import { isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { join, resolve } from 'node:path';
 
 import {
   normalizePluginSdkRegistryOrigin,
   runManagedPluginPnpm,
   type ManagedPluginPnpmRunResult,
 } from '@/plugins/authoring/toolchain';
+import { isCanonicalAbsolutePathInsideRoot as isPathInsideRoot } from '@/utils/path/expandHomeDirPath';
 import { createDaemonPluginCandidateOperationRoot } from './candidateStorage';
 
-const EXCLUDED_SOURCE_DIRECTORY_NAMES = new Set(['.git', 'dist', 'node_modules']);
+const PLUGIN_DEVELOPMENT_DEPENDENCY_DIRECTORY_NAME = 'node_modules';
+const EXCLUDED_SOURCE_DIRECTORY_NAMES = new Set(['.git', 'dist', PLUGIN_DEVELOPMENT_DEPENDENCY_DIRECTORY_NAME]);
 const EXCLUDED_PACKAGE_MANAGER_FILE_NAMES = new Set([
   '.pnpmfile.cjs',
   '.pnpmfile.js',
@@ -17,6 +19,15 @@ const EXCLUDED_PACKAGE_MANAGER_FILE_NAMES = new Set([
   'pnpm-workspace.yaml',
 ]);
 const INSTALL_ONLY_FILE_NAMES = new Set(['.npmrc', 'pnpm-lock.yaml']);
+
+async function hasAuthorProvidedPnpmLockfile(rootPath: string): Promise<boolean> {
+  try {
+    return (await lstat(join(rootPath, 'pnpm-lock.yaml'))).isFile();
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException | null)?.code === 'ENOENT') return false;
+    throw error;
+  }
+}
 
 export type MaterializedPluginDevelopmentCandidate = Readonly<{
   rootPath: string;
@@ -29,10 +40,11 @@ export type RunManagedPluginPnpmBoundary = (params: Readonly<{
   sdkRegistryOrigin?: string | null;
 }>) => Promise<ManagedPluginPnpmRunResult>;
 
-function isPathInsideRoot(rootPath: string, candidatePath: string): boolean {
-  const relativePath = relative(rootPath, candidatePath);
-  return relativePath === ''
-    || (relativePath !== '..' && !relativePath.startsWith(`..${sep}`) && !isAbsolute(relativePath));
+export function isPluginDevelopmentMaterializedDependencyPath(
+  relativePath: string,
+): boolean {
+  return relativePath === PLUGIN_DEVELOPMENT_DEPENDENCY_DIRECTORY_NAME
+    || relativePath.startsWith(`${PLUGIN_DEVELOPMENT_DEPENDENCY_DIRECTORY_NAME}/`);
 }
 
 async function copySelectedSourceTree(params: Readonly<{
@@ -82,7 +94,7 @@ async function removeInstallationInputs(rootPath: string): Promise<void> {
 }
 
 async function removeUnusedPackageExecutables(rootPath: string): Promise<void> {
-  // Daemon activation imports the installed production dependency closure but
+  // Daemon activation imports the installed development dependency closure but
   // never executes dependency package bins. pnpm represents those bins as
   // symlinks, so discard the unused surface before enforcing the regular-file
   // immutable-generation contract below.
@@ -118,34 +130,39 @@ export async function materializePluginDevelopmentCandidate(
     happyHomeDir: string;
     sourceRootPath: string;
     sdkRegistryOrigin?: string | null;
+    destinationRootPath?: string;
   }>,
   dependencies: Readonly<{
     runManagedPluginPnpm?: RunManagedPluginPnpmBoundary;
   }> = {},
 ): Promise<MaterializedPluginDevelopmentCandidate> {
   const sourceRootPath = await realpath(resolve(params.sourceRootPath));
-  const operationRootPath = await createDaemonPluginCandidateOperationRoot({
-    happyHomeDir: params.happyHomeDir,
-    kind: 'development',
-  });
-  const candidateRootPath = join(operationRootPath, 'plugin');
+  const operationRootPath = params.destinationRootPath
+    ? null
+    : await createDaemonPluginCandidateOperationRoot({
+        happyHomeDir: params.happyHomeDir,
+        kind: 'development',
+      });
+  const candidateRootPath = params.destinationRootPath
+    ? resolve(params.destinationRootPath)
+    : join(operationRootPath!, 'plugin');
   let cleaned = false;
   const cleanup = async (): Promise<void> => {
     if (cleaned) return;
     cleaned = true;
-    await rm(operationRootPath, { recursive: true, force: true });
+    await rm(operationRootPath ?? candidateRootPath, { recursive: true, force: true });
   };
 
   try {
-    await mkdir(candidateRootPath);
+    if (!params.destinationRootPath) await mkdir(candidateRootPath);
     await copySelectedSourceTree({ sourceRootPath, candidateRootPath });
+    const hasAuthorProvidedLockfile = await hasAuthorProvidedPnpmLockfile(candidateRootPath);
     const managedPnpm = await (dependencies.runManagedPluginPnpm ?? runManagedPluginPnpm)({
       projectRoot: candidateRootPath,
       args: [
         'install',
-        '--prod',
         '--ignore-scripts',
-        '--frozen-lockfile',
+        ...(hasAuthorProvidedLockfile ? ['--frozen-lockfile'] : []),
         '--config.node-linker=hoisted',
         '--package-import-method=copy',
       ],

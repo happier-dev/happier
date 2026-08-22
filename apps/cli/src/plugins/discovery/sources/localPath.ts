@@ -1,19 +1,26 @@
 import { realpath, stat } from 'node:fs/promises';
-import { basename, dirname, isAbsolute, resolve } from 'node:path';
+import { basename, dirname, resolve } from 'node:path';
 
 import type { PluginSourceSpecV1 } from '@happier-dev/protocol';
 
 import type { PluginCompatibilityDiagnostic } from '@/plugins/validation/diagnostics/types';
+import { resolveLocalPluginSourceManifestAuthority } from '@/plugins/manifest/bundledFirstPartyAuthority';
 import { readPluginManifest } from '@/plugins/manifest/read';
 import type { CanonicalPluginManifest } from '@/plugins/manifest/types';
 import { PLUGIN_MANIFEST_RELATIVE_PATH } from '@/plugins/store/paths';
-import { expandHomeDirPath } from '@/utils/path/expandHomeDirPath';
+import { resolveAbsolutePathFromWorkingDirectory } from '@/utils/path/expandHomeDirPath';
 
 export type ResolvedLocalPathPluginSourceSuccess = Readonly<{
   ok: true;
   pluginRootPath: string;
   manifestPath: string;
-  manifestDigest: string;
+  /**
+   * The authority this exact source root carries, decided once here from what
+   * the path actually is. Every later reader of these same bytes - the daemon
+   * candidate staged from them, and the installed manifest they became -
+   * inherits this decision instead of re-defaulting to `external`.
+   */
+  manifestAuthority: 'external' | 'bundled_first_party';
   manifest: CanonicalPluginManifest;
   sourceSpec: PluginSourceSpecV1;
 }>;
@@ -28,9 +35,8 @@ export type ResolvedLocalPathPluginSource =
   | ResolvedLocalPathPluginSourceFailure;
 
 async function resolveCanonicalPath(locator: string): Promise<string | null> {
-  const expanded = expandHomeDirPath(String(locator ?? '').trim());
-  if (!expanded) return null;
-  const absolute = isAbsolute(expanded) ? expanded : resolve(expanded);
+  const absolute = resolveAbsolutePathFromWorkingDirectory(locator);
+  if (absolute === null) return null;
   try {
     return await realpath(absolute);
   } catch (error) {
@@ -70,7 +76,17 @@ function resolveManifestLocation(canonicalPath: string, isFilePath: boolean): Re
   };
 }
 
-export async function resolveLocalPathPluginSource(params: Readonly<{ locator: string }>): Promise<ResolvedLocalPathPluginSource> {
+export async function resolveLocalPathPluginSource(params: Readonly<{
+  locator: string;
+  /**
+   * The authority already derived for the canonical source root these exact
+   * bytes came from. An operation-local copy of a first-party source root is
+   * still that root's bytes, but it no longer sits inside the checkout the
+   * canonical predicate inspects, so the copy inherits the decision instead of
+   * silently re-defaulting to `external`.
+   */
+  inheritedManifestAuthority?: 'external' | 'bundled_first_party';
+}>): Promise<ResolvedLocalPathPluginSource> {
   const rawLocator = String(params.locator ?? '').trim();
   if (/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//u.test(rawLocator)) {
     try {
@@ -107,7 +123,9 @@ export async function resolveLocalPathPluginSource(params: Readonly<{ locator: s
   const pathStat = await stat(canonicalPath);
   const sourceLocator = pathStat.isFile() ? canonicalPath : undefined;
   const { pluginRootPath, manifestPath } = resolveManifestLocation(canonicalPath, pathStat.isFile());
-  const manifestRead = await readPluginManifest({ manifestPath });
+  const manifestAuthority = params.inheritedManifestAuthority
+    ?? await resolveLocalPluginSourceManifestAuthority({ pluginRootPath });
+  const manifestRead = await readPluginManifest({ manifestPath, manifestAuthority });
   if (!manifestRead.ok) {
     return manifestRead;
   }
@@ -116,14 +134,13 @@ export async function resolveLocalPathPluginSource(params: Readonly<{ locator: s
     ok: true,
     pluginRootPath,
     manifestPath: manifestRead.manifestPath,
-    manifestDigest: manifestRead.manifestDigest,
+    manifestAuthority,
     manifest: manifestRead.manifest,
     sourceSpec: {
       kind: 'path',
       locator: sourceLocator ?? pluginRootPath,
       trustPolicy: 'prompt',
       installPolicy: 'link',
-      resolvedDigest: manifestRead.manifestDigest,
       resolvedVersion: manifestRead.manifest.version,
     },
   };

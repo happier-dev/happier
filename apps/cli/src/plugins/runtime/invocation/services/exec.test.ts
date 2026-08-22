@@ -1,9 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { ManagedExecutableRef } from '@happier-dev/plugin-sdk/runtime';
+import { PluginError } from '@happier-dev/plugin-sdk';
+import type { ManagedExecutableRef } from '@happier-dev/plugin-sdk/managed-services';
 
 import {
     adaptStablePluginExecLegacyProcessHandle,
+    authorizePluginExecLaunchForHost,
+    createStableRunnerPluginExecService,
     createStablePluginExecService,
     resolvePluginExecManagedDependencyForHost,
     resolvePluginExecSystemToolForHost,
@@ -30,6 +33,259 @@ function createService(options?: Readonly<{ current?: () => boolean; controller?
 }
 
 describe('createStablePluginExecService', () => {
+    it('authorizes an exact launch for a runner without spawning in the daemon owner', async () => {
+        const release = vi.fn();
+        const service = createStablePluginExecService({
+            allowedExecutables: [executable],
+            allowedEnvKeys: ['FIXTURE_VALUE'],
+            allowedCwdScopes: [{
+                root: 'workspace',
+                pathPrefix: 'project',
+                access: ['read'],
+            }],
+            environment: {
+                FIXTURE_VALUE: 'host',
+                UNDECLARED_VALUE: 'hidden',
+            },
+            signal: new AbortController().signal,
+            isGenerationCurrent: () => true,
+            async resolveExecutable() {
+                return {
+                    command: '/resolved/tool',
+                    args: ['--host-prefix'],
+                    env: { RESOLVED_VALUE: 'resolved' },
+                    allowedArguments: ['--allowed'],
+                    release,
+                };
+            },
+            async resolvePath(path) {
+                expect(path).toEqual({
+                    root: 'workspace',
+                    relativePath: 'project',
+                });
+                return '/workspace/project';
+            },
+        });
+
+        const launch = await authorizePluginExecLaunchForHost(
+            service,
+            {
+                executable,
+                args: ['--allowed'],
+                cwd: {
+                    root: 'workspace',
+                    relativePath: 'project',
+                },
+                env: { FIXTURE_VALUE: 'request' },
+                stdin: new Uint8Array([1, 2]),
+                maxStdoutBytes: 4_096,
+            },
+        );
+
+        expect(launch).toMatchObject({
+            command: '/resolved/tool',
+            args: ['--host-prefix', '--allowed'],
+            cwd: '/workspace/project',
+            env: {
+                FIXTURE_VALUE: 'request',
+                RESOLVED_VALUE: 'resolved',
+            },
+            stdin: new Uint8Array([1, 2]),
+            maxStdoutBytes: 4_096,
+        });
+        expect(release).not.toHaveBeenCalled();
+        launch.release();
+        launch.release();
+        expect(release).toHaveBeenCalledOnce();
+    });
+
+    it('spawns through the runner process owner only after exact host authorization', async () => {
+        const release = vi.fn();
+        const authorizeLaunch = vi.fn(async () => ({
+            command: process.execPath,
+            args: ['-e', 'process.stdout.write("runner")'],
+            env: {},
+            release,
+        }));
+        const service = createStableRunnerPluginExecService({
+            signal: new AbortController().signal,
+            isGenerationCurrent: () => true,
+            agentCli: {
+                async checkReadiness(request) {
+                    return {
+                        launchable: request.candidates.map(
+                            (agentId) => ({ agentId }),
+                        ),
+                    };
+                },
+            },
+            async resolveSystemTool(request) {
+                return {
+                    resolutionId: 'resolution-1',
+                    result: {
+                        executable: {
+                            kind: 'systemTool',
+                            id: request.toolId,
+                        },
+                        executablePath: '/daemon/resolved/tool',
+                    },
+                };
+            },
+            authorizeLaunch,
+        });
+
+        const result = await service.run({
+            executable,
+        });
+
+        expect(Buffer.from(result.stdout).toString('utf8'))
+            .toBe('runner');
+        expect(authorizeLaunch).toHaveBeenCalledOnce();
+        expect(authorizeLaunch).toHaveBeenCalledWith(
+            expect.objectContaining({ executable }),
+            undefined,
+            undefined,
+        );
+        expect(release).toHaveBeenCalledOnce();
+    });
+
+    it('keeps runner probes public and substitutes plain and protocol-client child launches', async () => {
+        const placeholder =
+            'happier_runner_placeholder_AAAAAAAAAAAAAAAAAAAAAAAAAAA';
+        const credential = 'runner-owned-secret';
+        const transformAgentChildLaunchEnvironment = vi.fn(
+            (environment: Readonly<Record<string, string>>) =>
+                Object.freeze({
+                    ...environment,
+                    PROVIDER_KEY:
+                        environment.PROVIDER_KEY === placeholder
+                            ? credential
+                            : environment.PROVIDER_KEY,
+                }),
+        );
+        const service = createStableRunnerPluginExecService({
+            signal: new AbortController().signal,
+            isGenerationCurrent: () => true,
+            agentCli: {
+                async checkReadiness(request) {
+                    return {
+                        launchable: request.candidates.map(
+                            (agentId) => ({ agentId }),
+                        ),
+                    };
+                },
+            },
+            async resolveSystemTool(request) {
+                return {
+                    resolutionId: 'resolution-provider-child',
+                    result: {
+                        executable: {
+                            kind: 'systemTool',
+                            id: request.toolId,
+                        },
+                        executablePath: process.execPath,
+                    },
+                };
+            },
+            transformAgentChildLaunchEnvironment,
+            async authorizeLaunch(request) {
+                return Object.freeze({
+                    command: process.execPath,
+                    args: Object.freeze([...(request.args ?? [])]),
+                    env: Object.freeze({ PROVIDER_KEY: placeholder }),
+                    release() {},
+                });
+            },
+        });
+
+        const probe = await service.run({
+            executable,
+            args: ['-e', 'process.stdout.write(process.env.PROVIDER_KEY ?? "")'],
+        });
+        expect(Buffer.from(probe.stdout).toString('utf8'))
+            .toBe(placeholder);
+        expect(transformAgentChildLaunchEnvironment)
+            .not.toHaveBeenCalled();
+
+        const plainChild = await service.spawn({
+            executable,
+            args: ['-e', 'process.exit(process.env.PROVIDER_KEY === "runner-owned-secret" ? 0 : 17)'],
+        });
+        await expect(plainChild.wait()).resolves.toMatchObject({
+            termination: {
+                observed: { kind: 'exit', exitCode: 0 },
+            },
+        });
+        expect(transformAgentChildLaunchEnvironment)
+            .toHaveBeenCalledTimes(1);
+
+        const child = await service.clients.spawn({
+            kind: 'jsonRpc',
+            launch: {
+                executable,
+                args: ['-e', [
+                    'const readline = require("node:readline");',
+                    'const lines = readline.createInterface({ input: process.stdin });',
+                    'lines.on("line", (line) => {',
+                    ' const message = JSON.parse(line);',
+                    ' process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: message.id, result: process.env.PROVIDER_KEY }) + "\\n");',
+                    '});',
+                ].join('')],
+            },
+            framing: 'jsonLines',
+            maxFrameBytes: 4_096,
+        });
+        await expect(child.client.request('credential/read'))
+            .resolves.toBe(credential);
+        expect(transformAgentChildLaunchEnvironment)
+            .toHaveBeenCalledTimes(2);
+        await child.dispose();
+    });
+
+    it('releases exact runner authorization when child environment substitution fails', async () => {
+        const release = vi.fn();
+        const service = createStableRunnerPluginExecService({
+            signal: new AbortController().signal,
+            isGenerationCurrent: () => true,
+            agentCli: {
+                async checkReadiness(request) {
+                    return {
+                        launchable: request.candidates.map(
+                            (agentId) => ({ agentId }),
+                        ),
+                    };
+                },
+            },
+            async resolveSystemTool(request) {
+                return {
+                    resolutionId: 'resolution-substitution-failure',
+                    result: {
+                        executable: {
+                            kind: 'systemTool',
+                            id: request.toolId,
+                        },
+                        executablePath: process.execPath,
+                    },
+                };
+            },
+            transformAgentChildLaunchEnvironment() {
+                throw new Error('missing exact Provider placeholder');
+            },
+            async authorizeLaunch() {
+                return Object.freeze({
+                    command: process.execPath,
+                    args: Object.freeze([]),
+                    env: Object.freeze({}),
+                    release,
+                });
+            },
+        });
+
+        await expect(service.spawn({ executable }))
+            .rejects.toMatchObject({ code: 'plugin_exec_spawn_failed' });
+        expect(release).toHaveBeenCalledOnce();
+    });
+
     it('resolves the exact invocation-local system-tool launch for its host composer', async () => {
         const service = createStablePluginExecService({
             allowedExecutables: [executable],
@@ -80,7 +336,15 @@ describe('createStablePluginExecService', () => {
             signal: new AbortController().signal,
             isGenerationCurrent: () => true,
             resolveExecutable: async (ref) => {
-                expect(ref).toEqual(managedDependency);
+                if (
+                    ref.kind !== 'managedDependency'
+                    || ref.id !== managedDependency.id
+                ) {
+                    throw new PluginError({
+                        code: 'plugin_managed_dependency_undeclared',
+                        message: 'Managed dependency is not registered with the host',
+                    });
+                }
                 return {
                     command: process.execPath,
                     args: ['fixture-adapter'],
@@ -107,7 +371,7 @@ describe('createStablePluginExecService', () => {
         await expect(resolvePluginExecManagedDependencyForHost(
             service,
             'fixture.other',
-        )).rejects.toMatchObject({ code: 'plugin_exec_access_denied' });
+        )).rejects.toMatchObject({ code: 'plugin_managed_dependency_undeclared' });
     });
 
     it('releases a managed-dependency host grant when its generation retires during resolution', async () => {
@@ -270,7 +534,7 @@ describe('createStablePluginExecService', () => {
         const result = await service.run({
             executable,
             args: ['-e', 'process.stdin.resume(); process.stdin.on("end", () => process.stdout.write("closed"))'],
-            timeoutMs: 250,
+            timeoutMs: 5_000,
         });
 
         expect(result.termination).toEqual({
@@ -280,20 +544,74 @@ describe('createStablePluginExecService', () => {
         expect(Buffer.from(result.stdout).toString('utf8')).toBe('closed');
     });
 
-    it('rejects undeclared executable and environment authority before resolving or spawning', async () => {
-        const service = createService();
+    it('diagnoses ambient declaration mismatches while preserving executable lookup, cwd resolution, and env validity', async () => {
+        const otherExecutable = Object.freeze({
+            kind: 'systemTool' as const,
+            id: 'fixture.other',
+        });
+        const mismatches: unknown[] = [];
+        const service = createStablePluginExecService({
+            allowedExecutables: [executable],
+            allowedEnvKeys: ['DECLARED_VALUE'],
+            allowedCwdScopes: [{
+                root: 'workspace',
+                pathPrefix: 'declared',
+                access: ['read'],
+            }],
+            environment: { DECLARED_VALUE: 'default', HIDDEN_VALUE: 'hidden' },
+            signal: new AbortController().signal,
+            isGenerationCurrent: () => true,
+            async resolveExecutable(ref) {
+                if (ref.kind === 'systemTool' && ref.id === 'missing') {
+                    throw new PluginError({
+                        code: 'plugin_system_tool_undeclared',
+                        message: 'System tool is not registered with the host',
+                    });
+                }
+                return { command: process.execPath };
+            },
+            async resolvePath(path) {
+                expect(path).toEqual({ root: 'workspace', relativePath: 'outside-disclosure' });
+                return '/workspace/outside-disclosure';
+            },
+            recordDisclosureMismatch(mismatch) {
+                mismatches.push(mismatch);
+                throw new Error('diagnostic sink failed');
+            },
+        });
 
-        await expect(service.spawn({
-            executable: { kind: 'systemTool', id: 'fixture.other' },
-        })).rejects.toMatchObject({ code: 'plugin_exec_access_denied' });
-        await expect(service.spawn({
-            executable,
-            env: { UNDECLARED_SECRET: 'value' },
-        })).rejects.toMatchObject({ code: 'plugin_exec_environment_denied' });
-        await expect(service.spawn({
-            executable,
-            cwd: { root: 'workspace', relativePath: 'private' },
-        })).rejects.toMatchObject({ code: 'plugin_exec_cwd_denied' });
+        const launch = await authorizePluginExecLaunchForHost(service, {
+            executable: otherExecutable,
+            cwd: { root: 'workspace', relativePath: 'outside-disclosure' },
+            env: { UNDECLARED_VALUE: 'request' },
+        });
+        expect(launch).toMatchObject({
+            command: process.execPath,
+            cwd: '/workspace/outside-disclosure',
+            env: {
+                DECLARED_VALUE: 'default',
+                UNDECLARED_VALUE: 'request',
+            },
+        });
+        expect(launch.env).not.toHaveProperty('HIDDEN_VALUE');
+        expect(mismatches).toEqual([
+            { capability: 'process', executable: otherExecutable },
+            { capability: 'environment', keys: ['UNDECLARED_VALUE'] },
+            {
+                capability: 'filesystem',
+                path: { root: 'workspace', relativePath: 'outside-disclosure' },
+                access: 'read',
+            },
+        ]);
+        launch.release();
+
+        await expect(authorizePluginExecLaunchForHost(service, {
+            executable: { kind: 'systemTool', id: 'missing' },
+        })).rejects.toMatchObject({ code: 'plugin_system_tool_undeclared' });
+        await expect(authorizePluginExecLaunchForHost(service, {
+            executable: otherExecutable,
+            env: { 'INVALID-NAME': 'value' },
+        })).rejects.toMatchObject({ code: 'plugin_exec_invalid_environment' });
     });
 
     it('enforces the declared system-tool argument allowlist before spawning', async () => {

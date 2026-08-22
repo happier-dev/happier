@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import type {
     HostCurrentSessionInteractionsService,
@@ -12,7 +12,7 @@ import type {
     HostSessionQuestionsResult,
 } from '@/agent/runtime/state/currentSessionUiTypes';
 
-import { createPluginInvocationUi } from './ui';
+import { createPluginInteractionsService } from './interactions';
 
 class TestInteractions implements HostCurrentSessionInteractionsService {
     constructor(
@@ -33,196 +33,92 @@ class TestInteractions implements HostCurrentSessionInteractionsService {
     }
 }
 
-describe('plugin invocation tool approval', () => {
-    it('returns unavailable without a bound current session and cancelled when the invocation aborts', async () => {
-        const subject = { kind: 'tool' as const, name: 'Bash', input: {} };
-        const unavailable = createPluginInvocationUi({
+describe('plugin invocation transient approval', () => {
+    it('returns the exact unavailable terminal without a bound current session', async () => {
+        const interactions = createPluginInteractionsService({
             currentSession: null,
             signal: new AbortController().signal,
             isGenerationCurrent: () => true,
-        });
-        await expect(unavailable.requestApproval({
-            title: 'Run Bash?',
-            subject,
-        })).resolves.toMatchObject({
-            status: 'unavailable',
-            diagnostic: { code: 'plugin_ui_unavailable' },
+            createOperationId: () => 'fallback-approval',
         });
 
-        const controller = new AbortController();
-        const cancelled = createPluginInvocationUi({
+        await expect(interactions.requestApproval({
+            kind: 'approval',
+            title: 'Run Bash?',
+            subject: { kind: 'tool', name: 'Bash', input: {} },
+        })).resolves.toEqual({
+            requestId: 'fallback-approval',
+            kind: 'approval',
+            status: 'unavailable',
+        });
+    });
+
+    it('forwards only author intent and preserves the exact current-session result', async () => {
+        const request = {
+            kind: 'approval' as const,
+            title: 'Run Bash?',
+            description: 'Print the working directory',
+            subject: { kind: 'tool' as const, name: 'Bash', input: { command: 'pwd' } },
+            allowSessionPersistence: true,
+        };
+        const handle = vi.fn(async (): Promise<HostSessionApprovalResult> => ({
+            requestId: 'host-approval',
+            kind: 'approval',
+            status: 'approved',
+            persistence: 'session',
+        }));
+        const interactions = createPluginInteractionsService({
+            currentSession: { interactions: new TestInteractions(handle) },
+            signal: new AbortController().signal,
+            isGenerationCurrent: () => true,
+        });
+
+        await expect(interactions.requestApproval(request)).resolves.toEqual({
+            requestId: 'host-approval',
+            kind: 'approval',
+            status: 'approved',
+            persistence: 'session',
+        });
+        expect(handle).toHaveBeenCalledWith(request, expect.objectContaining({ signal: expect.any(AbortSignal) }));
+    });
+
+    it('settles requester abort and generation retirement with distinct exact terminals', async () => {
+        const request = {
+            kind: 'approval' as const,
+            title: 'Run Bash?',
+            subject: { kind: 'tool' as const, name: 'Bash', input: {} },
+        };
+        const invocationController = new AbortController();
+        const pending = createPluginInteractionsService({
             currentSession: {
                 interactions: new TestInteractions(async (_request, options) => {
                     await new Promise<never>((_resolve, reject) => {
-                        options?.signal?.addEventListener(
-                            'abort',
-                            () => reject(new Error('invocation stopped')),
-                            { once: true },
-                        );
+                        options?.signal?.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
                     });
                     throw new Error('unreachable');
                 }),
             },
-            signal: controller.signal,
+            signal: invocationController.signal,
             isGenerationCurrent: () => true,
-            createOperationId: () => 'host-approval-cancelled',
+            createOperationId: () => 'fallback-aborted',
+        }).requestApproval(request);
+        invocationController.abort();
+        await expect(pending).resolves.toEqual({
+            requestId: 'fallback-aborted',
+            kind: 'approval',
+            status: 'requesterAborted',
         });
-        const pending = cancelled.requestApproval({
-            title: 'Run Bash?',
-            subject,
-        });
-        controller.abort();
-        await expect(pending).resolves.toEqual({ status: 'cancelled' });
-    });
 
-    it('projects only tool approval intent and keeps session persistence host-decided', async () => {
-        const requests: HostSessionApprovalRequest[] = [];
-        const results: HostSessionApprovalResult[] = [
-            { kind: 'approval', status: 'approved' },
-            {
-                kind: 'approval',
-                status: 'approved',
-                effects: {
-                    persistApprovals: [{ scope: 'session', toolName: 'Bash' }],
-                },
-            },
-            { kind: 'approval', status: 'approved' },
-            { kind: 'approval', status: 'denied', rationale: 'Read-only mode' },
-            { kind: 'approval', status: 'cancelled' },
-            {
-                kind: 'approval',
-                status: 'unavailable',
-                diagnostic: {
-                    code: 'interaction_unavailable',
-                    severity: 'warning',
-                    message: 'No current client',
-                },
-            },
-        ];
-        const ui = createPluginInvocationUi({
-            currentSession: {
-                interactions: new TestInteractions(async (request) => {
-                    if (request.kind !== 'approval') throw new Error(`Unexpected ${request.kind} interaction`);
-                    requests.push(request);
-                    const result = results.shift();
-                    if (!result) throw new Error('Missing approval result fixture');
-                    return result;
-                }),
-            },
+        const retired = createPluginInteractionsService({
+            currentSession: { interactions: new TestInteractions(async () => { throw new Error('must not invoke'); }) },
             signal: new AbortController().signal,
-            isGenerationCurrent: () => true,
-            createOperationId: (() => {
-                let sequence = 0;
-                return () => `host-approval-${++sequence}`;
-            })(),
+            isGenerationCurrent: () => false,
+            createOperationId: () => 'fallback-retired',
         });
-        const subject = { kind: 'tool' as const, name: 'Bash', input: { command: 'pwd' } };
-
-        await expect(ui.requestApproval({ title: 'Run Bash?', subject }))
-            .resolves.toEqual({ status: 'approved', persistence: 'once' });
-        await expect(ui.requestApproval({
-            title: 'Run Bash?',
-            description: 'Print the working directory',
-            subject,
-            allowSessionPersistence: true,
-        })).resolves.toEqual({ status: 'approved', persistence: 'session' });
-        await expect(ui.requestApproval({
-            title: 'Run Bash?',
-            subject,
-            allowSessionPersistence: true,
-        })).resolves.toEqual({ status: 'approved', persistence: 'once' });
-        await expect(ui.requestApproval({ title: 'Run Bash?', subject }))
-            .resolves.toEqual({ status: 'denied', rationale: 'Read-only mode' });
-        await expect(ui.requestApproval({ title: 'Run Bash?', subject }))
-            .resolves.toEqual({ status: 'cancelled' });
-        await expect(ui.requestApproval({ title: 'Run Bash?', subject }))
-            .resolves.toEqual({
-                status: 'unavailable',
-                diagnostic: {
-                    code: 'interaction_unavailable',
-                    severity: 'warning',
-                    message: 'No current client',
-                },
-            });
-
-        expect(requests).toEqual([
-            {
-                kind: 'approval',
-                requestId: 'host-approval-1',
-                title: 'Run Bash?',
-                subject,
-            },
-            {
-                kind: 'approval',
-                requestId: 'host-approval-2',
-                title: 'Run Bash?',
-                description: 'Print the working directory',
-                subject,
-                allowedPersistenceScopes: ['session'],
-            },
-            {
-                kind: 'approval',
-                requestId: 'host-approval-3',
-                title: 'Run Bash?',
-                subject,
-                allowedPersistenceScopes: ['session'],
-            },
-            {
-                kind: 'approval',
-                requestId: 'host-approval-4',
-                title: 'Run Bash?',
-                subject,
-            },
-            {
-                kind: 'approval',
-                requestId: 'host-approval-5',
-                title: 'Run Bash?',
-                subject,
-            },
-            {
-                kind: 'approval',
-                requestId: 'host-approval-6',
-                title: 'Run Bash?',
-                subject,
-            },
-        ]);
-    });
-
-    it('fails closed on malformed and ambiguous approval effects', async () => {
-        const subject = { kind: 'tool' as const, name: 'Bash', input: {} };
-        for (const result of [
-            {
-                kind: 'approval',
-                status: 'approved',
-                effects: { persistApprovals: [{ scope: 'workspace', toolName: 'Bash' }] },
-            },
-            {
-                kind: 'approval',
-                status: 'approved',
-                effects: { replaceInput: { command: 'rm -rf .' } },
-            },
-            {
-                kind: 'approval',
-                status: 'approved',
-                effects: { persistApprovals: [{ scope: 'session', toolName: 'Other' }] },
-            },
-        ] as HostSessionApprovalResult[]) {
-            const ui = createPluginInvocationUi({
-                currentSession: {
-                    interactions: new TestInteractions(async () => result),
-                },
-                signal: new AbortController().signal,
-                isGenerationCurrent: () => true,
-                createOperationId: () => 'host-approval',
-            });
-            await expect(ui.requestApproval({
-                title: 'Run Bash?',
-                subject,
-                allowSessionPersistence: true,
-            })).resolves.toMatchObject({
-                status: 'unavailable',
-                diagnostic: { code: 'plugin_ui_approval_unavailable' },
-            });
-        }
+        await expect(retired.requestApproval(request)).resolves.toEqual({
+            requestId: 'fallback-retired',
+            kind: 'approval',
+            status: 'generationRetired',
+        });
     });
 });

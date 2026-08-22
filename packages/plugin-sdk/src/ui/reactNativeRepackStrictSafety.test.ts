@@ -2,9 +2,8 @@ import { describe, expect, it } from 'vitest';
 
 import {
     applyStrictSafeGuardedRequireTransform,
+    carriesReactNativeArtifactJavaScript,
     containsUnsafeGuardedRequireAssignment,
-    createStrictSafeGuardedRequireRspackPlugin,
-    type RspackCompatibleCompiler,
 } from './reactNativeRepackStrictSafety';
 
 // The exact literal Re.Pack's `RepackTargetPlugin` GuardedRequireRuntimeModule
@@ -97,52 +96,14 @@ describe('containsUnsafeGuardedRequireAssignment', () => {
     });
 });
 
-describe('createStrictSafeGuardedRequireRspackPlugin', () => {
-    it('patches every .js asset containing the unsafe assignment via processAssets and leaves others untouched', () => {
-        class FakeRawSource {
-            constructor(public readonly value: string) {}
+describe('carriesReactNativeArtifactJavaScript', () => {
+    it('claims the artifact-only extensions Re.Pack emits code under, and no source map', () => {
+        for (const codeAsset of ['ios.bundle', 'PluginPanel.chunk.bundle', 'unrelated.js']) {
+            expect(carriesReactNativeArtifactJavaScript(codeAsset)).toBe(true);
         }
-        const updatedAssets: Record<string, FakeRawSource> = {};
-        const registeredCallback: {
-            current?: (assets: Record<string, { source: () => string }>) => void;
-        } = {};
-        const compiler: RspackCompatibleCompiler = {
-            hooks: {
-                compilation: {
-                    tap: (_name, callback) => {
-                        callback({
-                            hooks: {
-                                processAssets: {
-                                    tap: (_options, cb) => {
-                                        registeredCallback.current = cb;
-                                    },
-                                },
-                            },
-                            updateAsset: (name, newSource) => {
-                                updatedAssets[name] = newSource as FakeRawSource;
-                            },
-                        });
-                    },
-                },
-            },
-            webpack: {
-                sources: { RawSource: FakeRawSource as unknown as new (source: string) => unknown },
-                Compilation: { PROCESS_ASSETS_STAGE_DEV_TOOLING: 3000 },
-            },
-        };
-
-        const plugin = createStrictSafeGuardedRequireRspackPlugin();
-        plugin.apply(compiler);
-        expect(registeredCallback.current).toBeTypeOf('function');
-
-        registeredCallback.current?.({
-            'ios.bundle.js': { source: () => REAL_GUARDED_REQUIRE_RUNTIME_SNIPPET },
-            'ios.bundle.js.map': { source: () => '{"version":3}' },
-            'unrelated.js': { source: () => 'export const x = 1;' },
-        });
-
-        expect(Object.keys(updatedAssets)).toEqual(['ios.bundle.js']);
-        expect(updatedAssets['ios.bundle.js']?.value).toContain('try { guardedWebpackRequire[key]');
+        for (const dataAsset of ['ios.bundle.map', 'unrelated.js.map', 'assets/logo.png']) {
+            expect(carriesReactNativeArtifactJavaScript(dataAsset)).toBe(false);
+        }
     });
 });
 

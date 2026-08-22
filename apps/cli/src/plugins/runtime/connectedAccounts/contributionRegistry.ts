@@ -1,10 +1,10 @@
 import {
     PluginConnectedAccountDescriptorContributionV2Schema,
-    PLUGIN_MANIFEST_INPUT_LIMITS,
     buildQualifiedPluginContributionKey,
     createPluginContributionIdentity,
 } from '@happier-dev/protocol';
-import type { PluginConnectedAccountRuntime, PluginContributionRef } from '@happier-dev/plugin-sdk/runtime';
+import type { ConnectedAccountRuntime as PluginConnectedAccountRuntime } from '@happier-dev/plugin-sdk/connected-accounts';
+import type { PluginContributionRef } from '@happier-dev/plugin-sdk';
 
 import type { ResolvedConnectedAccountDescriptorContribution } from '@/plugins/projection/registry/types';
 
@@ -75,33 +75,28 @@ function snapshotQualifiedRef(value: PluginContributionRef): PluginContributionR
     }
 }
 
-function assertBoundedPlainDataGraph(value: unknown): void {
+function assertPlainDataGraph(value: unknown): void {
     const seen = new Set<object>();
-    const pending: Array<Readonly<{ value: unknown; depth: number }>> = [{ value, depth: 0 }];
-    let nodes = 0;
+    const pending: unknown[] = [value];
     while (pending.length > 0) {
         const current = pending.pop()!;
-        nodes += 1;
-        if (nodes > PLUGIN_MANIFEST_INPUT_LIMITS.nodes || current.depth > PLUGIN_MANIFEST_INPUT_LIMITS.depth) {
-            throw new TypeError('Connected-account descriptor exceeds the registry structural budget');
-        }
-        if (current.value === null || typeof current.value !== 'object') continue;
-        if (seen.has(current.value)) throw new TypeError('Connected-account descriptor must not be cyclic');
-        seen.add(current.value);
-        const prototype = Object.getPrototypeOf(current.value);
-        if (Array.isArray(current.value)) {
+        if (current === null || typeof current !== 'object') continue;
+        if (seen.has(current)) throw new TypeError('Connected-account descriptor must not be cyclic');
+        seen.add(current);
+        const prototype = Object.getPrototypeOf(current);
+        if (Array.isArray(current)) {
             if (prototype !== Array.prototype) throw new TypeError('Connected-account descriptor arrays must use the built-in prototype');
         } else if (prototype !== Object.prototype && prototype !== null) {
             throw new TypeError('Connected-account descriptor records must be plain objects');
         }
-        for (const key of Reflect.ownKeys(current.value)) {
-            if (Array.isArray(current.value) && key === 'length') continue;
+        for (const key of Reflect.ownKeys(current)) {
+            if (Array.isArray(current) && key === 'length') continue;
             if (typeof key !== 'string') throw new TypeError('Connected-account descriptor symbol fields are not allowed');
-            const property = Object.getOwnPropertyDescriptor(current.value, key);
+            const property = Object.getOwnPropertyDescriptor(current, key);
             if (!property || !property.enumerable || !('value' in property)) {
                 throw new TypeError(`Connected-account descriptor field '${key}' must be an own enumerable data property`);
             }
-            pending.push({ value: property.value, depth: current.depth + 1 });
+            pending.push(property.value);
         }
     }
 }
@@ -109,7 +104,7 @@ function assertBoundedPlainDataGraph(value: unknown): void {
 function snapshotDescriptor(
     contribution: ResolvedConnectedAccountDescriptorContribution,
 ): ResolvedConnectedAccountDescriptorContribution['definition'] {
-    assertBoundedPlainDataGraph(contribution.definition);
+    assertPlainDataGraph(contribution.definition);
     const parsed = PluginConnectedAccountDescriptorContributionV2Schema.parse(contribution.definition);
     const pending: object[] = [parsed];
     while (pending.length > 0) {
@@ -126,6 +121,8 @@ function guardRuntime(params: Readonly<{
     runtime: PluginConnectedAccountRuntime;
     assertCurrent(): void;
 }>): PluginConnectedAccountRuntime {
+    const guardedObjects = new WeakMap<object, object>();
+    const guardedCallbacksByReceiver = new WeakMap<object, WeakMap<Function, Function>>();
     const guardCall = async (
         callback: (...args: readonly unknown[]) => unknown,
         receiver: object,
@@ -142,32 +139,42 @@ function guardRuntime(params: Readonly<{
             params.assertCurrent();
         }
     };
-    const guardedModes = Object.freeze(Object.fromEntries(
-        Object.entries(params.runtime.authentication.modes).map(([modeId, mode]) => [
-            modeId,
-            Object.freeze(Object.fromEntries(
-                Object.entries(mode).map(([key, value]) => [
-                    key,
-                    typeof value === 'function'
-                        ? (...args: readonly unknown[]) => guardCall(value, mode, args)
-                        : value,
-                ]),
-            )),
-        ]),
-    )) as PluginConnectedAccountRuntime['authentication']['modes'];
-    const authentication = Object.freeze({
-        ...params.runtime.authentication,
-        modes: guardedModes,
-    });
-    const runtime = Object.freeze(Object.fromEntries(
-        Object.entries(params.runtime).map(([key, value]) => {
-            if (key === 'authentication') return [key, authentication];
-            return [key, typeof value === 'function'
-                ? (...args: readonly unknown[]) => guardCall(value, params.runtime, args)
-                : value];
-        }),
-    ));
-    return runtime as unknown as PluginConnectedAccountRuntime;
+
+    // Commit owns the callback/static-data snapshot. This lease adds only the
+    // current-generation fence, so it must not rebuild another runtime object
+    // graph or make plain-own enumeration part of the consumer contract.
+    const guardValue = (value: unknown, receiver?: object): unknown => {
+        if (typeof value === 'function') {
+            if (!receiver) return value;
+            let guardedCallbacks = guardedCallbacksByReceiver.get(receiver);
+            if (!guardedCallbacks) {
+                guardedCallbacks = new WeakMap<Function, Function>();
+                guardedCallbacksByReceiver.set(receiver, guardedCallbacks);
+            }
+            const cached = guardedCallbacks.get(value);
+            if (cached) return cached;
+            const guarded = Object.freeze((...args: readonly unknown[]) => guardCall(
+                value as (...args: readonly unknown[]) => unknown,
+                receiver,
+                args,
+            ));
+            guardedCallbacks.set(value, guarded);
+            return guarded;
+        }
+        if (typeof value !== 'object' || value === null) return value;
+        const owner = value as object;
+        const cached = guardedObjects.get(owner);
+        if (cached) return cached;
+        const guarded = new Proxy(Object.freeze({}), {
+            get(_target, property) {
+                return guardValue(Reflect.get(owner, property, owner), owner);
+            },
+        });
+        guardedObjects.set(owner, guarded);
+        return guarded;
+    };
+
+    return guardValue(params.runtime) as PluginConnectedAccountRuntime;
 }
 
 export function createConnectedAccountContributionRegistry(params: Readonly<{
@@ -177,9 +184,30 @@ export function createConnectedAccountContributionRegistry(params: Readonly<{
     activateOnDemand(ref: PluginContributionRef): Promise<void>;
     readRegistrations(): readonly ConnectedAccountRuntimeRegistration[];
     isGenerationCurrent(pluginId: string): boolean;
+    /**
+     * Reports a descriptor this generation could not admit, so the host can tell
+     * the operator which plugin lost its Connected Accounts. The registry itself
+     * owns no logging channel.
+     */
+    onDescriptorUnavailable?(ref: PluginContributionRef): void;
 }>): Readonly<{
     list(): readonly ConnectedAccountContributionRegistryEntry[];
-    resolve(ref: PluginContributionRef): Promise<ConnectedAccountRuntimeLease>;
+    /**
+     * Resolves the qualified service's runtime lease for this registry generation.
+     *
+     * Returns `null` when the service is not resolvable here — no declared
+     * descriptor, a descriptor quarantined because its plugin has no admitted
+     * generation identity, or an owning plugin that did not publish its runtime
+     * after on-demand activation. All are the same caller-visible fact: this
+     * generation has no usable runtime for the service.
+     *
+     * Throws `ConnectedAccountRuntimeInvocationNotStartedError` when the
+     * generation is retired or disposed. That is a currentness fact, not
+     * unavailability: the caller must reload rather than conclude the service
+     * does not exist. Genuine faults (activation failure, duplicate
+     * registration, descriptor/runtime mismatch) keep throwing as themselves.
+     */
+    resolve(ref: PluginContributionRef): Promise<ConnectedAccountRuntimeLease | null>;
     dispose(): void;
 }> {
     const descriptorsByKey = new Map<string, Readonly<{
@@ -191,24 +219,36 @@ export function createConnectedAccountContributionRegistry(params: Readonly<{
         const pluginId = contribution.pluginId?.trim();
         if (!pluginId) throw new TypeError('Connected-account descriptors require a plugin-qualified owner');
         const descriptor = snapshotDescriptor(contribution);
+        const ref = Object.freeze({ pluginId, localId: descriptor.id });
         const immutableGenerationId = params.immutableGenerationIdsByPluginId.get(pluginId)?.trim();
         if (!immutableGenerationId) {
-            throw new TypeError('Connected-account descriptors require an immutable plugin generation identity');
+            // One plugin whose generation the host could not admit must not deny
+            // every other plugin its Connected Accounts. Omitting the descriptor
+            // is strictly more closed than admitting it without a verified
+            // identity: `resolve` reports this service as unresolvable and the
+            // per-invocation identity fence downstream is unchanged.
+            params.onDescriptorUnavailable?.(ref);
+            continue;
         }
-        const ref = Object.freeze({ pluginId, localId: descriptor.id });
         const key = qualifiedKey(ref);
         if (descriptorsByKey.has(key)) throw new Error(`Duplicate connected-account descriptor '${key}'`);
         descriptorsByKey.set(key, Object.freeze({ ref, descriptor, immutableGenerationId }));
     }
     let disposed = false;
 
+    function isCurrentGeneration(pluginId: string): boolean {
+        return !disposed && params.isGenerationCurrent(pluginId);
+    }
+
     function assertCurrent(pluginId: string): void {
-        if (disposed || !params.isGenerationCurrent(pluginId)) {
+        if (!isCurrentGeneration(pluginId)) {
             throw new Error(`Connected-account registry generation '${params.generation}' is no longer current`);
         }
     }
 
     function readRegistration(ref: PluginContributionRef): ConnectedAccountRuntimeRegistration | null {
+        // Registration-scope commit already validated this runtime against the
+        // canonical descriptor declaration before the target became current.
         const matches = params.readRegistrations().filter((registration) => (
             registration.pluginId === ref.pluginId
             && registration.localId === ref.localId
@@ -217,35 +257,7 @@ export function createConnectedAccountContributionRegistry(params: Readonly<{
         if (matches.length > 1) {
             throw new Error(`Duplicate current-generation registration '${qualifiedKey(ref)}'`);
         }
-        const registration = matches[0] ?? null;
-        if (registration) {
-            const declared = descriptorsByKey.get(qualifiedKey(ref));
-            if (!declared) {
-                throw new Error(`Connected-account runtime '${qualifiedKey(ref)}' has no executable descriptor`);
-            }
-            const descriptor = declared.descriptor;
-            const declaredModesById = new Map(
-                descriptor.authentication.modes.map((mode) => [mode.id, mode] as const),
-            );
-            const registeredModes = Object.entries(registration.runtime.authentication.modes);
-            if (
-                registeredModes.length !== declaredModesById.size
-                || registeredModes.some(([modeId, runtime]) => (
-                    declaredModesById.get(modeId)?.kind !== runtime.kind
-                ))
-            ) {
-                throw new Error(`Connected-account runtime '${qualifiedKey(ref)}' authentication modes do not match its descriptor`);
-            }
-            if (registeredModes.some(([modeId, runtime]) => {
-                const declaredMode = declaredModesById.get(modeId);
-                const requiresProviderReconciliation =
-                    declaredMode?.outcomeReconciliation === 'providerCheck';
-                return requiresProviderReconciliation !== (typeof runtime.reconcile === 'function');
-            })) {
-                throw new Error(`Connected-account runtime '${qualifiedKey(ref)}' reconciliation reachability does not match its descriptor`);
-            }
-        }
-        return registration;
+        return matches[0] ?? null;
     }
 
     return Object.freeze({
@@ -255,16 +267,20 @@ export function createConnectedAccountContributionRegistry(params: Readonly<{
         },
         async resolve(ref) {
             const qualifiedRef = snapshotQualifiedRef(ref);
-            assertCurrent(qualifiedRef.pluginId);
+            if (!isCurrentGeneration(qualifiedRef.pluginId)) {
+                throw new ConnectedAccountRuntimeInvocationNotStartedError();
+            }
             const declared = descriptorsByKey.get(qualifiedKey(qualifiedRef));
-            if (!declared) throw new Error(`Unknown connected-account service '${qualifiedKey(qualifiedRef)}'`);
+            if (!declared) return null;
             let registration = readRegistration(qualifiedRef);
             if (!registration) {
                 await params.activateOnDemand(qualifiedRef);
-                assertCurrent(qualifiedRef.pluginId);
+                if (!isCurrentGeneration(qualifiedRef.pluginId)) {
+                    throw new ConnectedAccountRuntimeInvocationNotStartedError();
+                }
                 registration = readRegistration(qualifiedRef);
             }
-            if (!registration) throw new Error(`Connected-account service '${qualifiedKey(qualifiedRef)}' did not publish its required runtime`);
+            if (!registration) return null;
             const runtime = guardRuntime({
                 runtime: registration.runtime,
                 assertCurrent: () => assertCurrent(qualifiedRef.pluginId),
@@ -275,10 +291,7 @@ export function createConnectedAccountContributionRegistry(params: Readonly<{
                 immutableGenerationId: declared.immutableGenerationId,
                 descriptor: declared.descriptor,
                 runtime,
-                isCurrent: () => (
-                    !disposed
-                    && params.isGenerationCurrent(qualifiedRef.pluginId)
-                ),
+                isCurrent: () => isCurrentGeneration(qualifiedRef.pluginId),
             });
         },
         dispose() { disposed = true; },

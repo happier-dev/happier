@@ -195,7 +195,6 @@ describe('pluginCatalog', () => {
             install: {
               mode: 'link',
               manifestVersion: '1.0.0',
-              manifestDigest: 'bundled:@happier-dev/plugins-bundled@0.0.0',
               installedPath: null,
             },
             state: {
@@ -399,6 +398,7 @@ describe('pluginCatalog', () => {
       expect(entries[0].enabled).toBe(true);
       expect(entries[0].source.kind).toBe('path');
       expect(entries[0].source.locator).toBe(canonicalSourceRoot);
+      expect(entries[0].admittedIntegrity).toBeNull();
       expect(entries[0].manifest?.id).toBe(SAMPLE_PLUGIN_ID);
       expect(entries[0].contributionIntrospection.contributions.length).toBeGreaterThan(0);
     } finally {
@@ -447,7 +447,7 @@ describe('pluginCatalog', () => {
     }
   });
 
-  it('fails closed when current linked manifest bytes no longer match the persisted digest', async () => {
+  it('uses the current normalized manifest without exposing persisted raw digest currentness', async () => {
     const home = await createTempDir('happier-plugin-catalog-digest-');
     const sourceRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-digest-source-'));
     await materializeCatalogPluginFixture(sourceRoot, 'acme.digest-bound');
@@ -466,14 +466,16 @@ describe('pluginCatalog', () => {
       const [entry] = await readInstalledPluginCatalog({ happyHomeDir: home });
       expect(entry).toMatchObject({
         pluginId: 'acme.digest-bound',
-        manifest: null,
-        diagnostics: [
-          expect.objectContaining({
-            code: 'plugin_manifest_semantic_invalid',
-            message: expect.stringMatching(/digest/i),
-          }),
-        ],
+        description: 'tampered after persisted digest',
+        manifest: expect.objectContaining({
+          id: 'acme.digest-bound',
+        }),
       });
+      expect(entry).not.toHaveProperty('manifestDigest');
+      expect(entry.diagnostics).not.toContainEqual(expect.objectContaining({
+        code: 'plugin_manifest_semantic_invalid',
+        message: expect.stringMatching(/digest/i),
+      }));
     } finally {
       await removeTempDir(sourceRoot);
       await removeTempDir(home);
@@ -559,7 +561,6 @@ describe('pluginCatalog', () => {
             install: {
               mode: 'managed_install',
               manifestVersion: '1.0.0',
-              manifestDigest: null,
               installedPath: '/plugins/acme.descriptor-only',
             },
             state: {
@@ -618,7 +619,6 @@ describe('pluginCatalog', () => {
             install: {
               mode: 'link',
               manifestVersion: '1.0.0',
-              manifestDigest: null,
               installedPath: null,
             },
             state: {

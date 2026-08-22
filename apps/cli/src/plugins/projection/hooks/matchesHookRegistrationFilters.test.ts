@@ -25,7 +25,6 @@ function createRegistration(
     source: { kind: 'path' },
     pluginId: 'acme.filters',
     manifestPath: '/plugins/acme/.happier-plugin/plugin.json',
-    manifestDigest: 'sha256:test',
     daemonEntryPath: '/plugins/acme/daemon.mjs',
     sourceSpec: { kind: 'path', locator: '/plugins/acme' },
     definition: {

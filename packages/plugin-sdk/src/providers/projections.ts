@@ -109,12 +109,19 @@ export const resolveSessionModelSelectionIntentV1: (
 ) => ReturnType<typeof canonicalResolveSessionModelSelectionIntentV1> =
     canonicalResolveSessionModelSelectionIntentV1;
 
+// `ProviderCatalogParser` (below) is the parse function an author implements.
+// The protocol's `ProviderCatalogParserV1` is the catalog-format *identifier*
+// a declared probe names, so it is published under the SDK's `…Id` identifier
+// convention (`ProviderLocalId`, `ProviderConnectionId`) rather than as a
+// version suffix that would read as the same concept.
 export type {
+    BundledProviderCatalogParserV1 as BundledProviderCatalogParserId,
+    BundledProviderWireProtocol,
     CapabilitySupport as ProviderCapabilitySupport,
     ProviderApiKeyCredentialRequirementV1,
     ProviderCatalogCommandFallbackV1,
     ProviderCatalogDeclarationV1,
-    ProviderCatalogParserV1,
+    ProviderCatalogParserV1 as ProviderCatalogParserId,
     ProviderCatalogProbeV1,
     ProviderCompatibilityCapabilitiesV1,
     ProviderCompatibilityOverrideV1,
@@ -127,6 +134,7 @@ export type {
     ProviderLegacyProfileMigrationDescriptorV1,
     ProviderManagedRuntimeDeclarationV1 as ProviderManagedRuntimeDeclaration,
     ProviderModelLoadDescriptorV1,
+    ProviderModelLoadStateV1,
     ProviderWireProtocol,
 } from '@happier-dev/protocol/providers';
 
@@ -136,6 +144,10 @@ export type {
     ManagedProviderRuntime,
     ManagedProviderRuntimeContext,
     ManagedProviderStartRequest,
+    ProviderCatalogParsedModel,
+    ProviderCatalogParsedModelLoadState,
+    ProviderCatalogParseResult,
+    ProviderCatalogParser,
     ProviderLocalId,
     ProvidersRegistrationApi,
 } from '../managed-services/contract.js';

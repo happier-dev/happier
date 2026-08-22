@@ -64,6 +64,7 @@ type ActionChromeProps = Readonly<{
   disabled?: boolean;
   /** Overrides the accessible name when the visible label is an abbreviation. */
   accessibilityLabel?: string;
+  accessibilityLabelKey?: string;
   testID?: string;
 }>;
 
@@ -90,6 +91,7 @@ function ActionButton({
   disabled,
   busy,
   accessibilityLabel,
+  accessibilityLabelKey,
   testID,
   onPress,
 }: ActionButtonProps): ReactElement {
@@ -108,6 +110,7 @@ function ActionButton({
       disabled={disabled}
       busy={busy}
       accessibilityLabel={accessibilityLabel}
+      accessibilityLabelKey={accessibilityLabelKey}
       testID={testID}
       onPress={onPress}
     />

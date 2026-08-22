@@ -28,6 +28,8 @@ export type PluginCatalogEntry = Readonly<{
   pluginId: string;
   desiredGeneration: string | null;
   appliedGeneration: string | null;
+  /** Verified NPM/archive acquisition SRI; local paths use appliedGeneration custody. */
+  admittedIntegrity: string | null;
   rollbackAvailability?: 'available' | 'unavailable';
   title: string;
   description: string | null;
@@ -37,7 +39,6 @@ export type PluginCatalogEntry = Readonly<{
   install: PluginStateInstallRecord;
   compatibility: PluginStateCompatibilityRecord;
   manifestPath: string;
-  manifestDigest: string | null;
   manifest: CanonicalPluginManifest | null;
   contributionIntrospection: PluginContributionIntrospectionProjectionV1;
   diagnostics: readonly PluginCompatibilityDiagnostic[];
@@ -153,6 +154,7 @@ function readResolvedManifest(
 function buildCatalogEntry(params: Readonly<{
   pluginId: string;
   desiredGeneration: string | null;
+  admittedIntegrity: string | null;
   rollbackAvailability: 'available' | 'unavailable';
   record: PluginStateRecord;
   manifest: CanonicalPluginManifest | null;
@@ -168,6 +170,7 @@ function buildCatalogEntry(params: Readonly<{
     pluginId: params.pluginId,
     desiredGeneration: params.desiredGeneration,
     appliedGeneration: null,
+    admittedIntegrity: params.admittedIntegrity,
     rollbackAvailability: params.rollbackAvailability,
     title,
     description: readText(params.manifest?.description) ?? null,
@@ -177,7 +180,6 @@ function buildCatalogEntry(params: Readonly<{
     install: params.record.install,
     compatibility: params.record.compatibility,
     manifestPath: params.manifestPath,
-    manifestDigest: params.record.install.manifestDigest ?? params.record.source.resolvedDigest ?? null,
     manifest: params.manifest,
     contributionIntrospection: projectPluginCatalogEntryIntrospection({
       pluginId: params.pluginId,
@@ -202,11 +204,13 @@ async function resolvePluginCatalogEntryFromRecord(
   record: PluginStateRecord,
   desiredGeneration: string | null = null,
   rollbackAvailability: 'available' | 'unavailable' = 'unavailable',
+  admittedIntegrity: string | null = null,
 ): Promise<PluginCatalogEntry> {
   if (record.install.mode !== 'managed_install' && record.source.kind !== 'path') {
     return buildCatalogEntry({
       pluginId,
       desiredGeneration,
+      admittedIntegrity,
       rollbackAvailability,
       record,
       manifest: null,
@@ -250,22 +254,11 @@ async function resolvePluginCatalogEntryFromRecord(
       } satisfies ResolvedPluginSource;
 
   const resolvedManifest = readResolvedManifest(pluginId, sourceResolution);
-  const persistedManifestDigest = record.install.manifestDigest ?? record.source.resolvedDigest ?? null;
-  const manifestDigestMismatch = sourceResolution.ok
-    && typeof persistedManifestDigest === 'string'
-    && /^sha256:[0-9a-f]{64}$/iu.test(persistedManifestDigest)
-    && sourceResolution.manifestDigest.toLowerCase() !== persistedManifestDigest.toLowerCase();
-  const integrityDiagnostics: readonly PluginCompatibilityDiagnostic[] = manifestDigestMismatch
-    ? [{
-        code: 'plugin_manifest_semantic_invalid',
-        message: `Current manifest digest for '${pluginId}' does not match its persisted install digest`,
-      }]
-    : [];
   const daemonEntryDiagnostics = await (async (): Promise<readonly PluginCompatibilityDiagnostic[]> => {
     if (!sourceResolution.ok) {
       return [];
     }
-    if (!resolvedManifest.manifest || manifestDigestMismatch) {
+    if (!resolvedManifest.manifest) {
       return [];
     }
 
@@ -282,14 +275,14 @@ async function resolvePluginCatalogEntryFromRecord(
   return buildCatalogEntry({
     pluginId,
     desiredGeneration,
+    admittedIntegrity,
     rollbackAvailability,
     record,
-    manifest: manifestDigestMismatch ? null : resolvedManifest.manifest,
+    manifest: resolvedManifest.manifest,
     manifestPath: sourceResolution.ok ? sourceResolution.manifestPath : record.source.manifestPath,
     diagnostics: [
       ...record.compatibility.diagnostics,
       ...resolvedManifest.diagnostics,
-      ...integrityDiagnostics,
       ...daemonEntryDiagnostics,
     ],
   });
@@ -299,6 +292,7 @@ async function projectInstalledPluginCatalog(
   state: PluginStateFileV1,
   pluginGenerations: Readonly<Record<string, Readonly<{ immutableGenerationId: string }>>>,
   rollbackAvailabilityByPluginId: Readonly<Record<string, 'available' | 'unavailable'>>,
+  admittedIntegrityByPluginId: Readonly<Record<string, string>>,
 ): Promise<readonly PluginCatalogEntry[]> {
   const entries: PluginCatalogEntry[] = [];
 
@@ -308,6 +302,7 @@ async function projectInstalledPluginCatalog(
       record,
       pluginGenerations[pluginId]?.immutableGenerationId ?? null,
       rollbackAvailabilityByPluginId[pluginId] ?? 'unavailable',
+      admittedIntegrityByPluginId[pluginId] ?? null,
     ));
   }
 
@@ -325,6 +320,7 @@ export async function readInstalledPluginCatalogSnapshot(params?: Readonly<{
       snapshot.state,
       snapshot.pluginGenerations,
       snapshot.rollbackAvailabilityByPluginId,
+      snapshot.admittedIntegrityByPluginId,
     ),
   });
 }
@@ -397,7 +393,6 @@ export async function installPluginFromLocator(params: Readonly<{
       install: {
         mode: 'link',
         manifestVersion: installResult.manifestVersion,
-        manifestDigest: installResult.manifestDigest,
         installedPath: installResult.installedPath,
       },
       state: {

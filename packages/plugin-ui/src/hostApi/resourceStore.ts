@@ -27,15 +27,27 @@ export type PluginUiResourceClient = Readonly<{
  * Adapt the public Surface host API once at the surface boundary. The store
  * itself deliberately has no knowledge of `version()` or any unrelated host
  * method, so a non-Surface contextual mount uses the same Resource owner.
+ *
+ * Watch admission is deliberately NOT sampled from `version().methods` here.
+ * The mounted host API outlives a daemon reconnect and narrows/re-advertises
+ * its daemon-owned methods live, so a method set read once at mount is a
+ * snapshot of *current* availability, never a capability fact; caching its
+ * negative turns an outage at mount time into a session-long loss of live
+ * Resources. Only the member's own absence is structural, and the host decides
+ * the rest at each open attempt — `unsupported_method` when it can never serve
+ * the subscription, a retryable failure while it merely cannot serve it yet.
+ * Both transports refuse an unadvertised method locally, so this costs no
+ * round trip.
  */
 export function createPluginUiHostApiResourceClient(
   hostApi: PluginUiHostApi,
 ): PluginUiResourceClient {
+  const watchResource = typeof hostApi.watchResource === 'function'
+    ? hostApi.watchResource.bind(hostApi)
+    : undefined;
   return Object.freeze({
     readResource: hostApi.readResource.bind(hostApi),
-    ...(hostApi.version().methods.includes('watchResource')
-      ? { watchResource: hostApi.watchResource.bind(hostApi) }
-      : {}),
+    ...(watchResource ? { watchResource } : {}),
   });
 }
 

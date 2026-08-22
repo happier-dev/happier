@@ -1,7 +1,19 @@
 import type { QualifiedConnectedAccountRef } from '../connectedAccounts.js';
 import type { ComposerStagedMediaContentV1 } from '../composer.js';
 import type { JsonValue, PluginJsonValueV2 } from '../identity.js';
-import type { PluginLocalizedStringV2 } from '../manifest.js';
+import type {
+    PluginDeclarativeNodeV2 as PluginManifestDeclarativeNodeV2,
+    PluginDeclarativeToneV2 as PluginManifestDeclarativeToneV2,
+    PluginLocalizedStringV2,
+} from '../manifest.js';
+import type {
+    CurrentUiCommandDeclarationV1 as ProtocolCurrentUiCommandDeclarationV1,
+    CurrentUiCommandDescriptorV1 as ProtocolCurrentUiCommandDescriptorV1,
+    CurrentUiContextBoundedIncompletenessV1 as ProtocolCurrentUiContextBoundedIncompletenessV1,
+    CurrentUiContextEntityV1 as ProtocolCurrentUiContextEntityV1,
+    CurrentUiContextSnapshotV1 as ProtocolCurrentUiContextSnapshotV1,
+    PluginUiContextEnrichmentV1 as ProtocolPluginUiContextEnrichmentV1,
+} from '@happier-dev/protocol/plugins/ui/client';
 
 /** Type-only public projection; Host API payloads remain ordinary JSON values. */
 type DeepReadonly<T> = T extends readonly (infer TItem)[]
@@ -25,9 +37,9 @@ export type {
 /**
  * Declaration-only projections for public UI author contracts.
  *
- * Protocol remains the sole parser, normalizer, and runtime-value owner. These
- * structural spellings keep public SDK declarations portable without exposing
- * Protocol or validator implementation types.
+ * Protocol remains the sole parser, normalizer, and runtime-value owner. SDK
+ * retains declaration-only projections where it owns the public surface, and
+ * aliases Protocol DTOs instead of copying their strict grammar.
  */
 export type PluginUiSchema<T> = Readonly<{
     parse(value: unknown): T;
@@ -41,6 +53,30 @@ export type PluginUiJsonObjectV1 = { readonly [key: string]: PluginUiJsonValueV1
 
 export type PluginUiPlatform = 'android' | 'desktop' | 'ios' | 'web';
 export type PluginUiChannel = 'development' | 'desktop' | 'internal' | 'store';
+
+/**
+ * The one plugin-UI tone vocabulary, named once for every public field that
+ * carries it.
+ *
+ * It was previously restated inline at four call sites, and one of them
+ * diverged: the view badge omitted `accent` while the canonical
+ * `PluginUiDestinationBadgeV1Schema` admits it, so an author could not express
+ * a value the host parses. `PluginUiAttachmentToneV1` is the single canonical
+ * narrowing (`PluginUiToneV1Schema.exclude(['accent'])`) derived from this name
+ * rather than typed out a second time. Like `PluginUiIconTokenV1`, the members
+ * are written here so an author's `.d.ts` stays portable; `uiPublicContract.test.ts`
+ * asserts both against Protocol's owner so neither can drift again.
+ */
+export type PluginUiToneV1 =
+    | 'neutral'
+    | 'info'
+    | 'success'
+    | 'warning'
+    | 'danger'
+    | 'accent';
+
+/** The one canonical narrowing: Composer attachment presentation excludes `accent`. */
+export type PluginUiAttachmentToneV1 = Exclude<PluginUiToneV1, 'accent'>;
 
 export type PluginUiIconTokenV1 =
     | 'action'
@@ -66,6 +102,7 @@ export type PluginUiIconTokenV1 =
 
 export type PluginUiHostMethodV1 =
     | 'context'
+    | 'publishCurrentUiContext'
     | 'watchContext'
     | 'executeAction'
     | 'readResource'
@@ -96,6 +133,23 @@ export type PluginUiContributionIdentityV1 = Readonly<{
     pluginId: string;
     localId: string;
 }>;
+
+/** Protocol owns this grammar and its strict parser; SDK exposes only type aliases. */
+export type CurrentUiContextEntityV1 = ProtocolCurrentUiContextEntityV1;
+export type CurrentUiCommandDeclarationV1 = ProtocolCurrentUiCommandDeclarationV1;
+export type CurrentUiCommandDescriptorV1 = ProtocolCurrentUiCommandDescriptorV1;
+export type CurrentUiContextBoundedIncompletenessV1 = ProtocolCurrentUiContextBoundedIncompletenessV1;
+export type PluginUiContextEnrichmentV1 = ProtocolPluginUiContextEnrichmentV1;
+export type CurrentUiContextSnapshotV1 = ProtocolCurrentUiContextSnapshotV1;
+export type PluginUiSemanticCommandV1 = CurrentUiCommandDeclarationV1['command'];
+export type PluginUiSemanticExecuteActionCommandV1 = Extract<
+    PluginUiSemanticCommandV1,
+    { kind: 'executeAction' }
+>;
+export type PluginUiSemanticOpenSurfaceCommandV1 = Extract<
+    PluginUiSemanticCommandV1,
+    { kind: 'openSurface' }
+>;
 
 export type PluginUiContainerV1 =
     | 'appPage'
@@ -460,7 +514,7 @@ export type ComposerAttachmentPresentationV1 = DeepReadonly<{
     label: string;
     description?: string;
     icon?: PluginUiIconTokenV1;
-    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger';
+    tone?: PluginUiAttachmentToneV1;
     typeLabel: string;
 }>;
 export type ComposerAttachmentViewV1 = DeepReadonly<{
@@ -503,7 +557,7 @@ export type ComposerAttachmentAuthorPresentationV1 = DeepReadonly<{
     label: string;
     description?: string;
     icon?: PluginUiIconTokenV1;
-    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger';
+    tone?: PluginUiAttachmentToneV1;
 }>;
 export type ComposerAttachmentAuthorValueV1 = DeepReadonly<{
     key: string;
@@ -665,7 +719,7 @@ export type PluginHostedWebContributionV1 = {
         descriptionKey?: string;
         labelKey?: string;
         iconToken?: PluginUiIconTokenV1;
-        tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent';
+        tone?: PluginUiToneV1;
         developerFallback?: string;
     };
     sandbox: {
@@ -680,23 +734,12 @@ export type PluginHostedWebContributionV1 = {
     fallback: unknown;
 };
 
-export type PluginUiDeclarativeToneV2 = 'neutral' | 'info' | 'success' | 'warning' | 'danger';
-export type PluginUiDeclarativeNodeV2 =
-    | { kind: 'text'; text: PluginLocalizedStringV2; tone?: PluginUiDeclarativeToneV2 }
-    | { kind: 'markdown'; text: PluginLocalizedStringV2 }
-    | {
-        kind: 'stack';
-        direction?: 'vertical' | 'horizontal';
-        gap?: 'small' | 'medium' | 'large';
-        children: PluginUiDeclarativeNodeV2[];
-    }
-    | {
-        kind: 'group';
-        title?: PluginLocalizedStringV2;
-        description?: PluginLocalizedStringV2;
-        children: PluginUiDeclarativeNodeV2[];
-    }
-    | { kind: string; readonly [key: string]: unknown };
+/**
+ * UI authoring names the same closed grammar Protocol parses. These aliases
+ * deliberately add no UI-local tone vocabulary or catch-all node member.
+ */
+export type PluginUiDeclarativeToneV2 = PluginManifestDeclarativeToneV2;
+export type PluginUiDeclarativeNodeV2 = PluginManifestDeclarativeNodeV2;
 
 /** One settings destination declaration before host catalog projection. */
 export type PluginUiSettingsPageV1 = {
@@ -771,7 +814,7 @@ export type PluginUiPageHeaderActionV1 = {
     description?: PluginLocalizedStringV2;
     icon?: PluginUiIconTokenV1;
     order?: number;
-    command: unknown;
+    action: unknown;
 };
 
 export type PluginUiViewV2Input = PluginUiViewDestinationBindingInputV2 & {
@@ -780,7 +823,7 @@ export type PluginUiViewV2Input = PluginUiViewDestinationBindingInputV2 & {
     fallbackRenderers?: string[];
     title?: PluginLocalizedStringV2;
     icon?: PluginUiIconTokenV1;
-    badge?: { label: PluginLocalizedStringV2; tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' };
+    badge?: { label: PluginLocalizedStringV2; tone?: PluginUiToneV1 };
     groupHint?: 'navigation' | 'sessions';
     rankHint?: number;
     instancePolicy?: 'singleton' | 'multiple';
@@ -803,7 +846,7 @@ export type PluginSessionHeaderActionDescriptor = {
     description?: PluginLocalizedStringV2;
     icon?: PluginUiIconTokenV1;
     order?: number;
-    command: unknown;
+    action: unknown;
     availability?: unknown;
 };
 
@@ -881,6 +924,7 @@ export type PublicToolchainCompatibilityV1 = {
         reactNativeCommunityCli: PublicToolchainAuthoringDependencyV1;
         rspack: PublicToolchainAuthoringDependencyV1;
         swcHelpers: PublicToolchainAuthoringDependencyV1;
+        typescript: PublicToolchainAuthoringDependencyV1;
         typescriptNative: PublicToolchainAuthoringDependencyV1;
         viteReactPlugin: PublicToolchainAuthoringDependencyV1;
     };

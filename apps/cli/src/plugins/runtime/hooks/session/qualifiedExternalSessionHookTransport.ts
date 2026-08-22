@@ -4,7 +4,7 @@ import { join } from 'node:path';
 
 import type {
     AgentExternalSessionHookInstallationVariant,
-} from '@happier-dev/plugin-sdk/experimental/sessions';
+} from '@happier-dev/plugin-sdk/sessions/external';
 import { buildShellCommand } from '@happier-dev/agents/process/shellCommand';
 
 import {
@@ -22,6 +22,7 @@ import type {
     QualifiedExternalSessionHookDeliveryInput,
     QualifiedExternalSessionHookDeliveryResult,
     QualifiedExternalSessionHookPrincipalInput,
+    QualifiedExternalSessionHookPrincipalState,
 } from './qualifiedExternalSessionHookIngress';
 import { startSessionHookServerWithPersistedPortTakeover } from './server';
 
@@ -55,6 +56,9 @@ export type QualifiedExternalSessionHookTransportIngress = Readonly<{
     createPrincipal(
         input: QualifiedExternalSessionHookPrincipalInput,
     ): Readonly<{ principalRef: string; token: string }>;
+    readPrincipal(
+        principalRef: string,
+    ): Readonly<{ state: QualifiedExternalSessionHookPrincipalState }>;
     enable(principalRef: string): Readonly<{ state: string }>;
     disable(principalRef: string): Readonly<{ state: string }>;
     revoke(principalRef: string): Readonly<{ state: string }>;
@@ -118,6 +122,9 @@ export type QualifiedExternalSessionHookListener = Readonly<{
     rotateCredential(
         input: CredentialInput,
     ): Promise<QualifiedExternalSessionHookCredential>;
+    readCredentialState(
+        input: QualifiedExternalSessionHookDurableCredentialIdentity,
+    ): Readonly<{ state: QualifiedExternalSessionHookPrincipalState }>;
     enable(eventPrincipalRef: string): Readonly<{ state: string }>;
     disable(eventPrincipalRef: string): Readonly<{ state: string }>;
     disableDurableCredential(
@@ -471,6 +478,12 @@ export async function startQualifiedExternalSessionHookListener(
         restoreCredential,
         async rotateCredential(input) {
             return await materializeCredential(input, true);
+        },
+        readCredentialState(input) {
+            return params.ingress.readPrincipal(eventPrincipalRef(
+                input.installationPrincipalRef,
+                input.eventId,
+            ));
         },
         enable(eventRef) {
             return params.ingress.enable(eventRef);

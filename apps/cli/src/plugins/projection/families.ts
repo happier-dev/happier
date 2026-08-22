@@ -2,14 +2,31 @@ import {
     assertPluginProjectionFamilyIdsV2,
     listPluginProjectionFamilyIdsV2,
     type PluginContributionCatalogEntryV2,
+    type PluginMachineExecutionOriginV1,
     type PluginProjectedFamilyV2,
 } from '@happier-dev/protocol';
 
+import type { PluginCompatibilityDiagnostic } from '@/plugins/validation/diagnostics/types';
 import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
 
 export type PluginProjectionFamilyContextV2 = Readonly<{
     registry: ResolvedContributionRegistry;
     generation: number;
+    /**
+     * The RESOLVED per-plugin diagnostics for this projection, which include
+     * runtime activation facts the static contribution registry cannot carry.
+     * `buildPluginProjectionV2` already resolves this set for
+     * `installedPackagesById` and the top-level `diagnostics`; families read the
+     * same set so a plugin's health cannot be described two different ways
+     * inside one projection.
+     */
+    pluginDiagnosticsByPluginId?: Readonly<Record<string, readonly PluginCompatibilityDiagnostic[]>>;
+    /**
+     * Exact per-plugin source materializations for this projection lease. The
+     * UI family consumes these verbatim; absent facts deliberately stay absent
+     * rather than becoming a machine-level fallback.
+     */
+    pluginExecutionOriginsByPluginId?: Readonly<Record<string, PluginMachineExecutionOriginV1>>;
     pluginUiHostRuntime?: unknown;
     scmRuntimeAvailability?: Readonly<{
         backendIds: ReadonlySet<string>;

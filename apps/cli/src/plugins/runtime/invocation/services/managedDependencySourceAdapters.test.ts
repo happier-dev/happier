@@ -1,27 +1,32 @@
 import { describe, expect, it } from 'vitest';
 
 import type { ResolvedInstallableContribution } from '@/plugins/projection/registry/types';
+import { resolveExecutableManagedDependenciesRegistry } from '@/plugins/projection/registry/managedDependencyExecutables';
 
 import { createProductionManagedDependencySourceAdapter } from './managedDependencySourceAdapters';
 import { createV2ManagedDependencySourceModel } from './managedDependencySourceModel';
 
 function antigravityContribution(
-    sourceKind: 'bundled' | 'path' = 'bundled',
+    sourceKind: 'bundled' | 'package' = 'bundled',
 ): ResolvedInstallableContribution {
     return {
         provenance: sourceKind === 'bundled' ? 'first_party' : 'external',
         source: { kind: sourceKind },
         pluginId: 'happier.agent.antigravity',
         manifestPath: `${sourceKind}:happier.agent.antigravity`,
-        manifestDigest: 'sha256:antigravity',
         daemonEntryPath: null,
         sourceSpec: {
             kind: sourceKind,
             locator: sourceKind === 'bundled'
                 ? '@happier-dev/plugins-antigravity'
-                : '/plugins/antigravity',
-            trustPolicy: 'local_trusted',
-            installPolicy: 'link',
+                : '@acme/antigravity',
+            trustPolicy: sourceKind === 'bundled' ? 'local_trusted' : 'prompt',
+            installPolicy: sourceKind === 'bundled' ? 'copy' : 'managed_install',
+            ...(sourceKind === 'package'
+                ? {
+                    resolvedVersion: '1.0.0',
+                }
+                : {}),
         },
         definition: {
             id: 'localharness',
@@ -51,7 +56,6 @@ function antigravityContribution(
 
 function sourceFrom(contribution: ResolvedInstallableContribution) {
     const model = createV2ManagedDependencySourceModel({
-        generationId: 'generation:managed-pypi',
         platform: process.platform === 'win32' ? 'win32' : process.platform === 'darwin' ? 'darwin' : 'linux',
         architecture: process.arch,
         contributions: [contribution],
@@ -60,10 +64,27 @@ function sourceFrom(contribution: ResolvedInstallableContribution) {
         pluginId: 'happier.agent.antigravity',
         localId: 'localharness',
     });
-    return { dependency, source: dependency.sources[0]! };
+    const sourceInstallable = resolveExecutableManagedDependenciesRegistry(
+        [contribution],
+        {
+            platform: process.platform,
+            architecture: process.arch,
+        },
+    ).descriptorsByKey['dep.antigravity.localharness']?.descriptor;
+    if (!sourceInstallable) throw new Error('Expected canonical managed PyPI source installable');
+    return { dependency, source: dependency.sources[0]!, sourceInstallable };
 }
 
 describe('createProductionManagedDependencySourceAdapter', () => {
+    it('refuses a managed PyPI source without its canonical source-acquisition installable', async () => {
+        const { sourceInstallable: _sourceInstallable, ...input } = sourceFrom(
+            antigravityContribution(),
+        );
+
+        await expect(createProductionManagedDependencySourceAdapter(input))
+            .rejects.toMatchObject({ code: 'plugin_managed_dependency_source_invalid' });
+    });
+
     it('adapts a bundled managed PyPI wheel declaration through the canonical install owner', async () => {
         const adapter = await createProductionManagedDependencySourceAdapter(
             sourceFrom(antigravityContribution()),
@@ -102,11 +123,12 @@ describe('createProductionManagedDependencySourceAdapter', () => {
         });
     });
 
-    it('rejects the trusted-code source for non-bundled plugins', async () => {
+    it('adapts a trusted installed external package without a provenance capability gate', async () => {
         await expect(createProductionManagedDependencySourceAdapter(
-            sourceFrom(antigravityContribution('path')),
-        )).rejects.toMatchObject({
-            code: 'plugin_managed_dependency_source_disallowed',
+            sourceFrom(antigravityContribution('package')),
+        )).resolves.toMatchObject({
+            key: 'dep.antigravity.localharness',
+            capabilityId: 'dep.antigravity.localharness',
         });
     });
 });

@@ -79,6 +79,13 @@ export type AgentSessionRuntimeEvent = {
   | {
       kind: 'provider-session-id';
       providerSessionId: string;
+      /**
+       * Where this Agent keeps its own session log for `providerSessionId` on
+       * THIS machine, when the runtime knows the path. It rides the same event
+       * as the id whose conversation it names, and it is a pointer offered to a
+       * successor Agent rather than a gate on resuming.
+       */
+      nativeSessionLogPath?: string;
     }
   | ({
       turnId: string;

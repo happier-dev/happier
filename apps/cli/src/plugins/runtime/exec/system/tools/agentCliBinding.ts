@@ -6,13 +6,11 @@ import type {
   SystemToolResolveRequestV1,
 } from '@/plugins/runtime/exec/privateContract';
 import type { AgentCliRuntimeDescriptor } from '@happier-dev/cli-common/agents';
+import { PluginError } from '@happier-dev/plugin-sdk';
 import { resolveAgentCliLaunchSpecForRuntime } from '@/packagedRuntime/managedTools/agentCliLaunchSpec';
 
 import type { PluginExecSystemToolDefinition } from './definitions';
-import {
-    createPluginExecSystemToolResolver,
-    PluginExecSystemToolError,
-} from './resolveGrant';
+import { createPluginExecSystemToolResolver } from './resolveGrant';
 
 export type AgentCliSystemToolBinding = Readonly<{
     toolId: string;
@@ -29,10 +27,10 @@ export function createAgentCliHostResolutionEnvironment(params: Readonly<{
 }
 
 function failUnavailable(agentId: string, detail: string): never {
-    throw new PluginExecSystemToolError(
-        'PLUGIN_EXEC_SYSTEM_TOOL_UNAVAILABLE',
-        `Agent CLI system tool for '${agentId}' is unavailable: ${detail}`,
-    );
+    throw new PluginError({
+        code: 'plugin_exec_system_tool_unavailable',
+        message: `Agent CLI system tool for '${agentId}' is unavailable: ${detail}`,
+    });
 }
 
 function sameArgs(left: readonly string[], right: readonly string[]): boolean {

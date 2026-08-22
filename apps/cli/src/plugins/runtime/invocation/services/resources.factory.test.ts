@@ -11,7 +11,7 @@ import { createProductionPluginInvocationServiceOwners } from './production';
 describe('plugin resources invocation factory seam', () => {
     it('advertises and binds resources only when the exact generation owner is installed', async () => {
         const resources = await createStablePluginResourcesOwner({
-            registry: { generationId: 'registry:7', resources: [] },
+            registry: { resources: [] },
             generations: new Map([['acme.alpha', {
                 pluginId: 'acme.alpha', immutableGenerationId: 'alpha-7', rootPath: '/plugins/acme.alpha', files: [],
             }]]),
@@ -21,7 +21,6 @@ describe('plugin resources invocation factory seam', () => {
             events: {
                 broker: createStablePluginEventsBroker(),
                 declarationsByPluginId: new Map(),
-                permissionDeclarationsByPluginId: new Map(),
                 activePluginIds: new Set(),
             },
             resources,
@@ -44,7 +43,7 @@ describe('plugin resources invocation factory seam', () => {
 
     it('projects an installed resources owner through the production binding resolver', async () => {
         const resources = await createStablePluginResourcesOwner({
-            registry: { generationId: 'registry:7', resources: [] },
+            registry: { resources: [] },
             generations: new Map([['acme.alpha', {
                 pluginId: 'acme.alpha', immutableGenerationId: 'alpha-7', rootPath: '/plugins/acme.alpha', files: [],
             }]]),

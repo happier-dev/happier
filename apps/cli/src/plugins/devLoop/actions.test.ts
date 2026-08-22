@@ -1,10 +1,11 @@
-import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createPluginStateStore } from '@/plugins/store/state.testkit';
+import { createPluginInstallationReviewFixture } from '@/plugins/testkit/pluginInstallationReviewFixture';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 
 import { executePluginDevLoopAction } from './actions';
@@ -126,11 +127,16 @@ describe('executePluginDevLoopAction', () => {
     }
   });
 
-  it('does not start an opaque Install and trust review the ActionSpec consumer cannot decide', async () => {
+  it('returns a truthful pending source-root review without deciding it', async () => {
     const home = await createTempDir('happier-plugin-dev-loop-action-');
     const workspaceRoot = await createTempDir('happier-plugin-dev-loop-workspace-');
     const pluginRoot = await createTempDir('happier-plugin-dev-loop-source-', workspaceRoot);
     await materializeDevPlugin(pluginRoot);
+    daemonControl.request.mockResolvedValue({
+      kind: 'sourceRootReviewRequired',
+      pendingChangeId: 'pending-source-root-1',
+      review: { source: { kind: 'path', locator: pluginRoot } },
+    });
 
     try {
       const install = await executePluginDevLoopAction({
@@ -143,13 +149,74 @@ describe('executePluginDevLoopAction', () => {
       expect(install).toMatchObject({
         ok: false,
         kind: 'plugins_install',
-        diagnostics: [{
-          code: 'plugin_install_review_unavailable',
-          message: expect.stringMatching(/CLI.*Install.*Trust/i),
-        }],
+        outcome: 'reviewRequired',
+        pendingReview: {
+          kind: 'sourceRootReviewRequired',
+          pendingChangeId: 'pending-source-root-1',
+          review: { source: { kind: 'path', locator: pluginRoot } },
+        },
       });
-      expect(daemonControl.request).not.toHaveBeenCalled();
+      expect(install).not.toHaveProperty('pendingChangeId');
+      expect(install).not.toHaveProperty('review');
+      expect(daemonControl.request).toHaveBeenCalledTimes(1);
+      expect(daemonControl.request).toHaveBeenCalledWith({
+        kind: 'installPath',
+        locator: pluginRoot,
+        development: true,
+      });
       expect(daemonControl.decide).not.toHaveBeenCalled();
+      expect((await createPluginStateStore({ happyHomeDir: home }).read()).plugins).toEqual({});
+    } finally {
+      await removeTempDir(workspaceRoot);
+      await removeTempDir(home);
+    }
+  });
+
+  it('returns a truthful pending package review without self-approval', async () => {
+    const home = await createTempDir('happier-plugin-dev-loop-action-');
+    const workspaceRoot = await createTempDir('happier-plugin-dev-loop-workspace-');
+    const pluginRoot = await createTempDir('happier-plugin-dev-loop-source-', workspaceRoot);
+    await materializeDevPlugin(pluginRoot);
+    const review = createPluginInstallationReviewFixture({
+      pluginId: 'acme.dev-loop',
+      displayName: 'Acme Dev Loop',
+      source: { kind: 'path', locator: pluginRoot },
+      updateChannel: { kind: 'path', locator: pluginRoot, development: false },
+    });
+    daemonControl.request.mockResolvedValue({
+      kind: 'reviewRequired',
+      pendingChangeId: 'pending-package-review-1',
+      review,
+    });
+
+    try {
+      const install = await executePluginDevLoopAction({
+        actionId: 'plugins.install',
+        input: { path: pluginRoot, force: true },
+        happyHomeDir: home,
+        workspaceRoot,
+      });
+
+      expect(install).toMatchObject({
+        ok: false,
+        kind: 'plugins_install',
+        outcome: 'reviewRequired',
+        pendingReview: {
+          kind: 'reviewRequired',
+          pendingChangeId: 'pending-package-review-1',
+          review,
+        },
+      });
+      expect(install).not.toHaveProperty('pendingChangeId');
+      expect(install).not.toHaveProperty('review');
+      expect(daemonControl.request).toHaveBeenCalledTimes(1);
+      expect(daemonControl.request).toHaveBeenCalledWith({
+        kind: 'installPath',
+        locator: pluginRoot,
+        development: false,
+      });
+      expect(daemonControl.decide).not.toHaveBeenCalled();
+      expect((await createPluginStateStore({ happyHomeDir: home }).read()).plugins).toEqual({});
     } finally {
       await removeTempDir(workspaceRoot);
       await removeTempDir(home);
@@ -337,7 +404,8 @@ describe('executePluginDevLoopAction', () => {
 
   it('routes development reload through the daemon change owner without self-approval', async () => {
     const home = await createTempDir('happier-plugin-dev-loop-action-');
-    const sourceRoot = '/plugins/acme.broken';
+    const sourceRoot = await createTempDir('happier-plugin-dev-loop-source-');
+    await materializeDevPlugin(sourceRoot, 'acme.broken');
     await createPluginStateStore({ happyHomeDir: home }).write({
       t: 'happier_plugin_state_v1',
       schemaVersion: 1,
@@ -360,6 +428,7 @@ describe('executePluginDevLoopAction', () => {
     daemonControl.request.mockResolvedValue({
       kind: 'failed' as const,
       code: 'plugin_change_failed',
+      message: "Development entrypoint './src/daemon.ts' failed to compile: Unexpected token",
     });
 
     try {
@@ -370,14 +439,155 @@ describe('executePluginDevLoopAction', () => {
       })).resolves.toMatchObject({
         ok: false,
         kind: 'plugins_reload',
-        diagnostics: [{ code: 'plugin_change_failed' }],
+        diagnostics: [{
+          code: 'plugin_change_failed',
+          message: "Development entrypoint './src/daemon.ts' failed to compile: Unexpected token",
+        }],
       });
       expect(daemonControl.request).toHaveBeenCalledWith({
         kind: 'development',
         pluginId: 'acme.broken',
-        sourceRootPath: sourceRoot,
+        sourceRootPath: await realpath(sourceRoot),
       });
     } finally {
+      await removeTempDir(sourceRoot);
+      await removeTempDir(home);
+    }
+  });
+
+  it('keeps the source inspector realpath when a reloaded catalog locator is a symlink', async () => {
+    const home = await createTempDir('happier-plugin-dev-loop-action-');
+    const workspaceRoot = await createTempDir('happier-plugin-dev-loop-workspace-');
+    const sourceRoot = await createTempDir('happier-plugin-dev-loop-source-', workspaceRoot);
+    const linkedSourceRoot = join(workspaceRoot, 'linked-plugin-source');
+    await materializeDevPlugin(sourceRoot, 'acme.realpath');
+    await symlink(sourceRoot, linkedSourceRoot, process.platform === 'win32' ? 'junction' : 'dir');
+    await createPluginStateStore({ happyHomeDir: home }).write({
+      t: 'happier_plugin_state_v1',
+      schemaVersion: 1,
+      plugins: {
+        'acme.realpath': {
+          source: {
+            kind: 'path',
+            locator: linkedSourceRoot,
+            resolvedPath: '/plugins/generations/acme-realpath-1',
+            manifestPath: '/plugins/generations/acme-realpath-1/.happier-plugin/plugin.json',
+            trustPolicy: 'prompt',
+            installPolicy: 'link',
+          },
+          compatibility: { status: 'compatible', diagnostics: [] },
+          install: { mode: 'link', manifestVersion: '1.0.0' },
+          state: { enabled: true },
+        },
+      },
+    });
+    daemonControl.request.mockResolvedValue({
+      kind: 'failed' as const,
+      code: 'plugin_change_failed',
+    });
+
+    try {
+      await executePluginDevLoopAction({
+        actionId: 'plugins.reload',
+        input: { pluginId: 'acme.realpath' },
+        happyHomeDir: home,
+      });
+
+      expect(daemonControl.request).toHaveBeenCalledWith(expect.objectContaining({
+        kind: 'development',
+        pluginId: 'acme.realpath',
+        sourceRootPath: await realpath(sourceRoot),
+      }));
+    } finally {
+      await removeTempDir(workspaceRoot);
+      await removeTempDir(home);
+    }
+  });
+
+  it('submits one Agent development snapshot through the daemon change owner without starting a watcher or self-approval', async () => {
+    const home = await createTempDir('happier-plugin-dev-loop-action-');
+    const sourceRoot = await createTempDir('happier-plugin-dev-loop-source-');
+    await materializeDevPlugin(sourceRoot, 'acme.one-shot');
+    daemonControl.request.mockResolvedValue({
+      kind: 'sourceRootReviewRequired',
+      pendingChangeId: 'pending-one-shot-1',
+      review: { source: { kind: 'path', locator: sourceRoot } },
+    });
+
+    try {
+      const result = await executePluginDevLoopAction({
+        actionId: 'plugins.dev' as any,
+        input: { projectRoot: sourceRoot },
+        happyHomeDir: home,
+      });
+
+      expect(result).toMatchObject({
+        ok: false,
+        kind: 'plugins_dev',
+        outcome: 'reviewRequired',
+        pendingReview: {
+          kind: 'sourceRootReviewRequired',
+          pendingChangeId: 'pending-one-shot-1',
+          review: { source: { kind: 'path', locator: sourceRoot } },
+        },
+      });
+      expect(result).not.toHaveProperty('pendingChangeId');
+      expect(result).not.toHaveProperty('review');
+      expect(daemonControl.request).toHaveBeenCalledWith({
+        kind: 'development',
+        pluginId: 'acme.one-shot',
+        sourceRootPath: await realpath(sourceRoot),
+      });
+      expect(daemonControl.decide).not.toHaveBeenCalled();
+    } finally {
+      await removeTempDir(sourceRoot);
+      await removeTempDir(home);
+    }
+  });
+
+  it('falls back to the rejection kind when the daemon reports no diagnosable cause', async () => {
+    const home = await createTempDir('happier-plugin-dev-loop-action-');
+    const sourceRoot = await createTempDir('happier-plugin-dev-loop-source-');
+    await materializeDevPlugin(sourceRoot, 'acme.broken');
+    await createPluginStateStore({ happyHomeDir: home }).write({
+      t: 'happier_plugin_state_v1',
+      schemaVersion: 1,
+      plugins: {
+        'acme.broken': {
+          source: {
+            kind: 'path',
+            locator: sourceRoot,
+            resolvedPath: '/plugins/generations/acme-broken-1',
+            manifestPath: '/plugins/generations/acme-broken-1/.happier-plugin/plugin.json',
+            trustPolicy: 'prompt',
+            installPolicy: 'link',
+          },
+          compatibility: { status: 'compatible', diagnostics: [] },
+          install: { mode: 'link', manifestVersion: '1.0.0' },
+          state: { enabled: true },
+        },
+      },
+    });
+    daemonControl.request.mockResolvedValue({
+      kind: 'unavailable' as const,
+      code: 'plugin_change_service_unavailable',
+    });
+
+    try {
+      await expect(executePluginDevLoopAction({
+        actionId: 'plugins.reload',
+        input: { pluginId: 'acme.broken' },
+        happyHomeDir: home,
+      })).resolves.toMatchObject({
+        ok: false,
+        kind: 'plugins_reload',
+        diagnostics: [{
+          code: 'plugin_change_service_unavailable',
+          message: 'The daemon rejected the development reload (unavailable).',
+        }],
+      });
+    } finally {
+      await removeTempDir(sourceRoot);
       await removeTempDir(home);
     }
   });

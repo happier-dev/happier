@@ -4,6 +4,8 @@ import { join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { isPluginError } from '@happier-dev/plugin-sdk';
+
 import { createPluginExecSystemToolResolver } from './resolveGrant';
 
 const temporaryRoots = new Set<string>();
@@ -109,12 +111,22 @@ describe('createPluginExecSystemToolResolver', () => {
             registerGrant() {},
         });
 
-        await expect(resolver.resolve({
+        const failure = await resolver.resolve({
             toolId: 'javascript-tool',
             purpose: 'Do not broaden generic system tools',
             preferredPath: entryPoint,
-        })).rejects.toMatchObject({
-            code: 'PLUGIN_EXEC_SYSTEM_TOOL_UNAVAILABLE',
+        }).then(
+            () => undefined,
+            (error: unknown) => error,
+        );
+
+        expect(isPluginError(failure)).toBe(true);
+        expect(failure).toMatchObject({
+            code: 'plugin_exec_system_tool_unavailable',
+            diagnostics: [{
+                code: 'system_tool_missing',
+                severity: 'error',
+            }],
         });
     });
 });

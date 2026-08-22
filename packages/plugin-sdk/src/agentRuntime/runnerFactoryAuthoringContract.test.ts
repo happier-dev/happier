@@ -18,6 +18,9 @@ import {
 
 import type {
   AgentExecutionRunRuntimeFactory,
+  AgentDaemonSpawnConnectedServicesV1,
+  AgentDaemonSpawnHooks,
+  AgentDaemonSpawnRuntimeSelectionV1,
   AgentRuntime,
   AgentRuntimeFactory,
   AgentRuntimeRegistrationOptions,
@@ -75,12 +78,26 @@ const emptyRuntime = undefined as never; /* @sdk-negative-type-case-end */
       .not.toHaveProperty('token');
   });
 
-  it('carries the locator through the one Agent registration options object', () => {
+  it('carries bounded daemon spawn hooks through the one Agent registration options object', () => {
     expectTypeOf<keyof AgentRuntimeRegistrationOptions>().toEqualTypeOf<
-      'providerBinding' | 'sessionRunnerFactory'
+      'providerBinding' | 'sessionRunnerFactory' | 'daemonSpawnHooks'
     >();
     expectTypeOf<NonNullable<AgentRuntimeRegistrationOptions['sessionRunnerFactory']>>()
       .toEqualTypeOf<AgentSessionRunnerFactoryLocatorV1>();
+    expectTypeOf<NonNullable<AgentRuntimeRegistrationOptions['daemonSpawnHooks']>>()
+      .toEqualTypeOf<AgentDaemonSpawnHooks>();
+    expectTypeOf<keyof AgentDaemonSpawnHooks>().toEqualTypeOf<
+      'resolveRuntimePrerequisites' | 'augmentEnv'
+    >();
+    expectTypeOf<AgentDaemonSpawnRuntimeSelectionV1>()
+      .toHaveProperty('connectedServices');
+    expectTypeOf<AgentDaemonSpawnRuntimeSelectionV1>()
+      .toHaveProperty('tools');
+    expectTypeOf<AgentDaemonSpawnRuntimeSelectionV1>()
+      .not.toHaveProperty('daemon');
+    expectTypeOf<AgentDaemonSpawnRuntimeSelectionV1>()
+      .not.toHaveProperty('process');
+    expectTypeOf<AgentDaemonSpawnConnectedServicesV1['v']>().toEqualTypeOf<1>();
   });
 
   it('projects the registration and locator types through the normal Agent runtime surface', () => {
@@ -91,6 +108,9 @@ const emptyRuntime = undefined as never; /* @sdk-negative-type-case-end */
     expect([
       'AgentRuntimeRegistrationOptions',
       'AgentSessionRunnerFactoryLocatorV1',
+      'AgentDaemonSpawnHooks',
+      'AgentDaemonSpawnRuntimeSelectionV1',
+      'AgentDaemonSpawnConnectedServicesV1',
     ].filter((name) => !agentRuntimeSurface.has(name))).toEqual([]);
   });
 });

@@ -339,6 +339,35 @@ describe('sectioned virtualized List', () => {
     mount.unmount();
   });
 
+  it('composes a sectioned list with no selection out of nothing but list items', () => {
+    resetCapture();
+    const context = createSurfaceContext();
+    const blocked = sections[0]!;
+    const mount = mountThroughReactNativeWeb(
+      <PluginUiProvider hostApi={createHostApiStub(context)} context={context}>
+        <List
+          accessibilityLabel="Reviews"
+          sections={[{ key: blocked.key, title: blocked.title, data: blocked.data.slice(0, 2) }]}
+          keyForItem={(item: Entry) => item.id}
+          renderItem={(item: Entry) => <List.Item title={item.label} />}
+        />
+      </PluginUiProvider>,
+    );
+
+    const list = mount.container.querySelector<HTMLElement>('[role="list"]');
+    expect(list).not.toBeNull();
+    const composedRoles = new Set(
+      Array.from(list?.querySelectorAll<HTMLElement>('[role]') ?? [])
+        .map((element) => element.getAttribute('role')),
+    );
+    // A `list` admits list items, not groups. The section header is the one
+    // permitted child that can name the section here, so borrowing the
+    // listbox's `group` would make this control's structure invalid.
+    expect(composedRoles).toEqual(new Set(['listitem']));
+    expect(list?.querySelector('[role="listitem"]')?.getAttribute('aria-label')).toBe('Blocked');
+    mount.unmount();
+  });
+
   it('renders the empty slot instead of bare headings when every section is empty', () => {
     resetCapture();
     const context = createSurfaceContext();

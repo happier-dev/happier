@@ -1,22 +1,31 @@
 import {
     AGENT_SESSION_RUNTIME_EVENT_KINDS_V1,
     HAPPIER_HOST_EVENT_PREFIX_V1,
+    HostEventTargetV1Schema,
+    hostEventIdForSemanticEventV1,
+    parseHostEventPayloadV1,
+    type HostEventEnvelopeV1,
+    type HostEventIdV1,
+    type HostEventTargetV1,
+    type HostSemanticEventV1,
     type ParsedPluginEventContributionV1,
     PluginContributionIdentityV1Schema,
     PluginContributionLocalIdSchema,
-    type PluginPermissionDeclarationV1,
     readHostEventNamespaceV1,
 } from '@happier-dev/protocol';
-import { PluginError, type Disposable, type JsonValue, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
-import { type PluginContributionRef, type PluginEventEmitResult, type PluginEventsService } from '@happier-dev/plugin-sdk/runtime';
+import { isPluginError, PluginError, type Disposable, type JsonValue, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import type {
+    HostEvents,
+    PluginEventEmitResult,
+    PluginEvents,
+} from '@happier-dev/plugin-sdk/events';
+import type {
+    PluginContributionRef } from '@happier-dev/plugin-sdk';
 
 import type { HostRuntimeLimitMeasurementRecorder } from '@/agent/runtime/state/runtimeLimitMeasurement';
 
 import { validatePluginEventPayloadSchema } from '../../context/eventPayloadSchema';
-import {
-    clonePluginPlainData,
-    PLUGIN_RUNTIME_JSON_VALUE_LIMITS,
-} from '../../plainData';
+import { clonePluginPlainData } from '../../plainData';
 import type { PluginInvocationServicesSeed } from './types';
 
 export const STABLE_PLUGIN_EVENT_QUEUE_LIMITS = Object.freeze({
@@ -52,9 +61,28 @@ type BrokerSubscription = {
     readonly identity: EventPublicationIdentity;
     readonly listener: (event: DeliveredPluginEvent) => void | Promise<void>;
     readonly isCurrent: () => boolean;
+    readonly isEffectCapable: () => boolean;
     readonly priority: number;
     readonly orderKey: string;
     readonly queue: Array<Readonly<{ publication: BrokerPublication; bytes: number }>>;
+    pendingDeliveries: number;
+    pendingBytes: number;
+    processing: boolean;
+    disposed: boolean;
+};
+
+type HostBrokerSubscription = {
+    readonly target: Readonly<{
+        eventId: HostEventTargetV1['eventId'];
+        scope:
+            | Readonly<{ kind: 'session'; sessionId: string }>
+            | Readonly<{ kind: 'event-session' }>
+            | Readonly<{ kind: 'account' }>;
+    }>;
+    readonly listener: (event: HostEventEnvelopeV1) => void | Promise<void>;
+    readonly isCurrent: () => boolean;
+    readonly isEffectCapable: () => boolean;
+    readonly queue: Array<Readonly<{ event: HostEventEnvelopeV1; bytes: number }>>;
     pendingDeliveries: number;
     pendingBytes: number;
     processing: boolean;
@@ -70,8 +98,19 @@ export type StablePluginEventsBroker = Readonly<{
         identity: EventPublicationIdentity;
         listener: (event: DeliveredPluginEvent) => void | Promise<void>;
         isCurrent: () => boolean;
+        isEffectCapable?: () => boolean;
         priority?: number;
         orderKey?: string;
+    }>): Disposable;
+    publishHostEvent(event: HostSemanticEventV1): void;
+    publishHostEventEnvelope(event: HostEventEnvelopeV1): void;
+    subscribeHost(params: Readonly<{
+        target: HostEventTargetV1;
+        currentSessionId?: string;
+        bindCurrentSessionToEvent?: true;
+        listener: (event: HostEventEnvelopeV1) => void | Promise<void>;
+        isCurrent: () => boolean;
+        isEffectCapable?: () => boolean;
     }>): Disposable;
 }>;
 
@@ -102,7 +141,7 @@ function readEventRef(value: unknown): PluginContributionRef {
         }
         return Object.freeze(parsed.data);
     } catch (error) {
-        if (error instanceof PluginError) throw error;
+        if (isPluginError(error)) throw error;
         throw eventError('plugin_events_invalid_ref', 'Plugin event reference is invalid');
     }
 }
@@ -159,8 +198,17 @@ export function createStablePluginEventsBroker(params?: Readonly<{
         error: unknown;
     }>) => void;
     recordRuntimeLimitMeasurement?: HostRuntimeLimitMeasurementRecorder;
+    onHostListenerError?: (error: Readonly<{
+        event: HostEventEnvelopeV1;
+        error: unknown;
+    }>) => void;
+    onHostDeliveryDropped?: (diagnostic: Readonly<{
+        eventId: HostEventEnvelopeV1['eventId'];
+        reason: 'delivery_limit' | 'byte_limit';
+    }>) => void;
 }>): StablePluginEventsBroker {
     const subscriptions = new Set<BrokerSubscription>();
+    const hostSubscriptions = new Set<HostBrokerSubscription>();
     const recordRuntimeLimitMeasurement = params?.recordRuntimeLimitMeasurement;
     let sequence = 0;
 
@@ -184,6 +232,11 @@ export function createStablePluginEventsBroker(params?: Readonly<{
                     if (!subscription.isCurrent()) {
                         disposeSubscription(subscription);
                         return;
+                    }
+                    if (!subscription.isEffectCapable()) {
+                        subscription.pendingDeliveries -= 1;
+                        subscription.pendingBytes -= queued.bytes;
+                        continue;
                     }
                     try {
                         await subscription.listener(queued.publication.event);
@@ -211,6 +264,108 @@ export function createStablePluginEventsBroker(params?: Readonly<{
         })();
     };
 
+    const disposeHostSubscription = (subscription: HostBrokerSubscription): void => {
+        if (subscription.disposed) return;
+        subscription.disposed = true;
+        subscription.queue.length = 0;
+        subscription.pendingDeliveries = 0;
+        subscription.pendingBytes = 0;
+        hostSubscriptions.delete(subscription);
+    };
+
+    const drainHost = (subscription: HostBrokerSubscription): void => {
+        if (subscription.processing || subscription.disposed) return;
+        subscription.processing = true;
+        void (async () => {
+            try {
+                while (!subscription.disposed) {
+                    const queued = subscription.queue.shift();
+                    if (!queued) return;
+                    if (!subscription.isCurrent()) {
+                        disposeHostSubscription(subscription);
+                        return;
+                    }
+                    if (!subscription.isEffectCapable()) {
+                        subscription.pendingDeliveries -= 1;
+                        subscription.pendingBytes -= queued.bytes;
+                        continue;
+                    }
+                    try {
+                        await subscription.listener(queued.event);
+                    } catch (error) {
+                        try {
+                            params?.onHostListenerError?.({ event: queued.event, error });
+                        } catch {
+                            // Host Event diagnostics are failure-isolated from lifecycle producers.
+                        }
+                    } finally {
+                        if (!subscription.disposed) {
+                            subscription.pendingDeliveries -= 1;
+                            subscription.pendingBytes -= queued.bytes;
+                        }
+                    }
+                }
+            } finally {
+                subscription.processing = false;
+                if (!subscription.disposed && subscription.queue.length > 0) drainHost(subscription);
+            }
+        })();
+    };
+
+    const publishHostEventEnvelope = (input: HostEventEnvelopeV1): void => {
+        const target = HostEventTargetV1Schema.safeParse({
+            eventId: input.eventId,
+            scope: input.scope,
+        });
+        if (!target.success || target.data.scope.kind === 'current-session') {
+            throw eventError('plugin_host_events_invalid_event', 'Host Event envelope is invalid');
+        }
+        const payload = parseHostEventPayloadV1(input.eventId, input.payload);
+        const event = Object.freeze({
+            eventId: input.eventId,
+            scope: Object.freeze({ ...input.scope }),
+            payload,
+        }) as HostEventEnvelopeV1;
+        const bytes = Buffer.byteLength(JSON.stringify(event), 'utf8');
+        for (const subscription of hostSubscriptions) {
+            if (!subscription.isCurrent()) {
+                disposeHostSubscription(subscription);
+                continue;
+            }
+            if (!subscription.isEffectCapable()) continue;
+            if (subscription.target.eventId !== event.eventId) continue;
+            if (
+                subscription.target.scope.kind === 'session'
+                && (
+                    event.scope.kind !== 'session'
+                    || subscription.target.scope.sessionId !== event.scope.sessionId
+                )
+            ) continue;
+            if (
+                subscription.target.scope.kind === 'account'
+                && event.scope.kind !== 'account'
+            ) continue;
+            const reason = bytes > STABLE_PLUGIN_EVENT_QUEUE_LIMITS.pendingBytesPerSubscription
+                ? 'byte_limit' as const
+                : subscription.pendingDeliveries + 1 > STABLE_PLUGIN_EVENT_QUEUE_LIMITS.pendingDeliveriesPerSubscription
+                    || subscription.pendingBytes + bytes > STABLE_PLUGIN_EVENT_QUEUE_LIMITS.pendingBytesPerSubscription
+                    ? 'delivery_limit' as const
+                    : null;
+            if (reason) {
+                try {
+                    params?.onHostDeliveryDropped?.({ eventId: event.eventId, reason });
+                } catch {
+                    // Dropped-delivery diagnostics never affect the canonical producer.
+                }
+                continue;
+            }
+            subscription.queue.push(Object.freeze({ event, bytes }));
+            subscription.pendingDeliveries += 1;
+            subscription.pendingBytes += bytes;
+            drainHost(subscription);
+        }
+    };
+
     return Object.freeze({
         async emit(input): Promise<PluginEventEmitResult> {
             if (!Number.isSafeInteger(sequence + 1)) {
@@ -228,6 +383,7 @@ export function createStablePluginEventsBroker(params?: Readonly<{
                     disposeSubscription(subscription);
                     continue;
                 }
+                if (!subscription.isEffectCapable()) continue;
                 if (sameRef(subscription.ref, event.ref)) targets.push(subscription);
             }
             targets.sort((left, right) => (
@@ -293,6 +449,9 @@ export function createStablePluginEventsBroker(params?: Readonly<{
                 identity: subscriptionParams.identity,
                 listener: subscriptionParams.listener,
                 isCurrent: subscriptionParams.isCurrent,
+                isEffectCapable:
+                    subscriptionParams.isEffectCapable
+                    ?? (() => true),
                 priority: subscriptionParams.priority ?? 0,
                 orderKey: subscriptionParams.orderKey ?? '',
                 queue: [],
@@ -308,6 +467,74 @@ export function createStablePluginEventsBroker(params?: Readonly<{
                 },
             });
         },
+        publishHostEvent(input): void {
+            const eventId = hostEventIdForSemanticEventV1(input);
+            const payload = parseHostEventPayloadV1(eventId, input);
+            if (!('sessionId' in payload)) {
+                throw eventError('plugin_host_events_invalid_event', 'Runtime Host Event has no Session scope');
+            }
+            const sessionId = payload.sessionId;
+            publishHostEventEnvelope(Object.freeze({
+                eventId,
+                scope: { kind: 'session' as const, sessionId },
+                payload,
+            }) as HostEventEnvelopeV1);
+        },
+        publishHostEventEnvelope(input): void {
+            publishHostEventEnvelope(input);
+        },
+        subscribeHost(subscriptionParams): Disposable {
+            const parsed = HostEventTargetV1Schema.safeParse(subscriptionParams.target);
+            if (!parsed.success) {
+                throw eventError('plugin_host_events_invalid_target', 'Host Event subscription target is invalid');
+            }
+            const target: HostBrokerSubscription['target'] | null = parsed.data.scope.kind === 'current-session'
+                ? subscriptionParams.currentSessionId
+                    ? Object.freeze({
+                        eventId: parsed.data.eventId,
+                        scope: Object.freeze({ kind: 'session' as const, sessionId: subscriptionParams.currentSessionId }),
+                    })
+                    : subscriptionParams.bindCurrentSessionToEvent
+                        ? Object.freeze({
+                            eventId: parsed.data.eventId,
+                            scope: Object.freeze({ kind: 'event-session' as const }),
+                        })
+                        : null
+                : parsed.data.scope.kind === 'account'
+                    ? Object.freeze({
+                        eventId: parsed.data.eventId,
+                        scope: Object.freeze({ kind: 'account' as const }),
+                    })
+                    : Object.freeze({
+                    eventId: parsed.data.eventId,
+                    scope: Object.freeze({
+                        kind: 'session' as const,
+                        sessionId: parsed.data.scope.sessionId,
+                    }),
+                    });
+            if (!target) {
+                throw eventError('plugin_host_events_current_session_unavailable', 'A current-session Host Event target requires a bound session');
+            }
+            const subscription: HostBrokerSubscription = {
+                target,
+                listener: subscriptionParams.listener,
+                isCurrent: subscriptionParams.isCurrent,
+                isEffectCapable:
+                    subscriptionParams.isEffectCapable
+                    ?? (() => true),
+                queue: [],
+                pendingDeliveries: 0,
+                pendingBytes: 0,
+                processing: false,
+                disposed: false,
+            };
+            hostSubscriptions.add(subscription);
+            return Object.freeze({
+                dispose() {
+                    disposeHostSubscription(subscription);
+                },
+            });
+        },
     });
 }
 
@@ -316,7 +543,6 @@ type EventDeclarationMap = ReadonlyMap<string, readonly ParsedPluginEventContrib
 export type PluginInvocationEventsHost = Readonly<{
     broker: StablePluginEventsBroker;
     declarationsByPluginId: EventDeclarationMap;
-    permissionDeclarationsByPluginId: ReadonlyMap<string, readonly PluginPermissionDeclarationV1[]>;
     activePluginIds: ReadonlySet<string>;
 }>;
 
@@ -337,21 +563,10 @@ function hasDeclaredSubscription(
 ): boolean {
     return declarations.get(pluginId)?.some((candidate) => (
         candidate.kind === 'subscription'
-        && (typeof candidate.event === 'string'
-            ? pluginId === ref.pluginId && candidate.event === ref.localId
-            : candidate.event.pluginId === ref.pluginId && candidate.event.localId === ref.localId)
-    )) === true;
-}
-
-function hasCrossPluginRight(
-    permissions: ReadonlyMap<string, readonly PluginPermissionDeclarationV1[]>,
-    pluginId: string,
-    targetPluginId: string,
-): boolean {
-    if (pluginId === targetPluginId) return true;
-    return permissions.get(pluginId)?.some((permission) => (
-        permission.capability === 'events.plugin.subscribe'
-        && permission.scope === targetPluginId
+        && candidate.target.kind === 'plugin'
+        && (typeof candidate.target.event === 'string'
+            ? pluginId === ref.pluginId && candidate.target.event === ref.localId
+            : candidate.target.event.pluginId === ref.pluginId && candidate.target.event.localId === ref.localId)
     )) === true;
 }
 
@@ -359,12 +574,10 @@ function readJsonPayload(payload: unknown): JsonValue {
     try {
         return clonePluginPlainData(payload, {
             path: 'payload',
-            limits: PLUGIN_RUNTIME_JSON_VALUE_LIMITS,
             invalid: (message) => eventError('plugin_events_invalid_payload', message),
-            limitExceeded: (message) => eventError('plugin_events_invalid_payload', message),
         }) as JsonValue;
     } catch (error) {
-        if (error instanceof PluginError) throw error;
+        if (isPluginError(error)) throw error;
         throw eventError('plugin_events_invalid_payload', 'Plugin event payload must contain bounded strict JSON data');
     }
 }
@@ -381,9 +594,12 @@ function resolveDeclaredSubscriptionRef(
     pluginId: string,
     declaration: Extract<ParsedPluginEventContributionV1, Readonly<{ kind: 'subscription' }>>,
 ): PluginContributionRef {
-    return typeof declaration.event === 'string'
-        ? Object.freeze({ pluginId, localId: declaration.event })
-        : Object.freeze({ ...declaration.event });
+    if (declaration.target.kind !== 'plugin') {
+        throw eventError('plugin_events_invalid_target', 'Plugin event subscription target is not a plugin event');
+    }
+    return typeof declaration.target.event === 'string'
+        ? Object.freeze({ pluginId, localId: declaration.target.event })
+        : Object.freeze({ ...declaration.target.event });
 }
 
 /** Bind committed manifest subscription registrations to the canonical daemon-local broker. */
@@ -391,13 +607,18 @@ export function bindDeclaredEventSubscriptions(params: Readonly<{
     host: PluginInvocationEventsHost;
     registrations: readonly DeclaredEventSubscriptionRegistration[];
     isGenerationCurrent(registration: DeclaredEventSubscriptionRegistration): boolean;
+    isEffectCapable?(registration: DeclaredEventSubscriptionRegistration): boolean;
     createContext(input: Readonly<{
         pluginId: string;
         pluginVersion: string;
         generation: string;
         localId: string;
+        sessionId?: string;
         signal: AbortSignal;
-    }>): PluginInvocationContext;
+    }>): Readonly<{
+        context: PluginInvocationContext;
+        complete(): void;
+    }>;
 }>): Disposable {
     const bindings: Array<Readonly<{ controller: AbortController; disposable: Disposable }>> = [];
     let disposed = false;
@@ -413,17 +634,69 @@ export function bindDeclaredEventSubscriptions(params: Readonly<{
                     `Plugin subscription '${registration.pluginId}/${registration.localId}' is not declared`,
                 );
             }
+            if (declaration.target.kind === 'host') {
+                const controller = new AbortController();
+                const identity = Object.freeze({
+                    pluginId: registration.pluginId,
+                    pluginVersion: registration.pluginVersion,
+                    contributionId: registration.localId,
+                    contributionQualifiedId: `${registration.pluginId}/events/${encodeURIComponent(registration.localId)}`,
+                    generation: registration.generation,
+                    correlationId: `${registration.pluginId}/events/${registration.localId}`,
+                    surface: 'cli' as const,
+                });
+                const isCurrent = (): boolean => (
+                    !disposed
+                    && !controller.signal.aborted
+                    && params.isGenerationCurrent(registration)
+                );
+                const isEffectCapable = (): boolean => (
+                    isCurrent()
+                    && (params.isEffectCapable?.(registration) ?? true)
+                );
+                const disposable = params.host.broker.subscribeHost({
+                    target: HostEventTargetV1Schema.parse({
+                        eventId: declaration.target.eventId,
+                        scope: declaration.target.scope,
+                    }),
+                    bindCurrentSessionToEvent: true,
+                    isCurrent,
+                    isEffectCapable,
+                    async listener(event) {
+                        if (!isEffectCapable()) return;
+                        if (declaration.filterSchema) {
+                            const filter = validatePluginEventPayloadSchema({
+                                payloadSchema: declaration.filterSchema,
+                                payload: event.payload,
+                            });
+                            if (!filter.success) return;
+                        }
+                        const invocation = params.createContext({
+                            pluginId: registration.pluginId,
+                            pluginVersion: registration.pluginVersion,
+                            generation: registration.generation,
+                            localId: registration.localId,
+                            ...(event.scope.kind === 'session'
+                                ? { sessionId: event.scope.sessionId }
+                                : {}),
+                            signal: controller.signal,
+                        });
+                        try {
+                            if (!isEffectCapable()) return;
+                            await registration.handler(event.payload as JsonValue, invocation.context);
+                        } finally {
+                            invocation.complete();
+                        }
+                    },
+                });
+                bindings.push(Object.freeze({ controller, disposable }));
+                continue;
+            }
             const ref = resolveDeclaredSubscriptionRef(registration.pluginId, declaration);
             if (!params.host.activePluginIds.has(ref.pluginId) || !readPublishedEvent(params.host.declarationsByPluginId, ref)) {
                 throw eventError(
                     'plugin_events_target_unavailable',
                     `Plugin event target '${ref.pluginId}/${ref.localId}' is unavailable`,
-                );
-            }
-            if (!hasCrossPluginRight(params.host.permissionDeclarationsByPluginId, registration.pluginId, ref.pluginId)) {
-                throw eventError(
-                    'plugin_events_subscription_denied',
-                    `Plugin subscription to '${ref.pluginId}/${ref.localId}' is denied`,
                 );
             }
             const controller = new AbortController();
@@ -441,14 +714,19 @@ export function bindDeclaredEventSubscriptions(params: Readonly<{
                 && !controller.signal.aborted
                 && params.isGenerationCurrent(registration)
             );
+            const isEffectCapable = (): boolean => (
+                isCurrent()
+                && (params.isEffectCapable?.(registration) ?? true)
+            );
             const disposable = params.host.broker.subscribe({
                 ref,
                 identity,
                 priority: declaration.priority ?? 0,
                 orderKey: `${registration.pluginId}\u0000${registration.localId}`,
                 isCurrent,
+                isEffectCapable,
                 async listener(event) {
-                    if (!isCurrent()) return;
+                    if (!isEffectCapable()) return;
                     if (declaration.filterSchema) {
                         const filter = validatePluginEventPayloadSchema({
                             payloadSchema: declaration.filterSchema,
@@ -456,15 +734,19 @@ export function bindDeclaredEventSubscriptions(params: Readonly<{
                         });
                         if (!filter.success) return;
                     }
-                    const context = params.createContext({
+                    const invocation = params.createContext({
                         pluginId: registration.pluginId,
                         pluginVersion: registration.pluginVersion,
                         generation: registration.generation,
                         localId: registration.localId,
                         signal: controller.signal,
                     });
-                    if (!isCurrent()) return;
-                    await registration.handler(event.payload, context);
+                    try {
+                        if (!isEffectCapable()) return;
+                        await registration.handler(event.payload, invocation.context);
+                    } finally {
+                        invocation.complete();
+                    }
                 },
             });
             bindings.push(Object.freeze({ controller, disposable }));
@@ -497,9 +779,9 @@ export function bindDeclaredEventSubscriptions(params: Readonly<{
     });
 }
 
-export function createPluginInvocationEventsService(params: Readonly<{
+export function createPluginInvocationPluginEventsService(params: Readonly<{
     seed: PluginInvocationServicesSeed;
-}> & PluginInvocationEventsHost): PluginEventsService {
+}> & PluginInvocationEventsHost): PluginEvents {
     const ensureCurrent = (signal?: AbortSignal): void => {
         if (signal?.aborted || params.seed.signal.aborted || !params.seed.isGenerationCurrent()) {
             throw eventError('plugin_events_generation_retired', 'Plugin event invocation generation is no longer current');
@@ -569,13 +851,6 @@ export function createPluginInvocationEventsService(params: Readonly<{
             if (!hasDeclaredSubscription(params.declarationsByPluginId, params.seed.plugin.id, normalizedRef)) {
                 throw eventError('plugin_events_subscription_undeclared', `Plugin subscription to '${normalizedRef.pluginId}/${normalizedRef.localId}' is not declared`);
             }
-            if (!hasCrossPluginRight(
-                params.permissionDeclarationsByPluginId,
-                params.seed.plugin.id,
-                normalizedRef.pluginId,
-            )) {
-                throw eventError('plugin_events_subscription_denied', `Plugin subscription to '${normalizedRef.pluginId}/${normalizedRef.localId}' is denied`);
-            }
             const disposable = params.broker.subscribe({
                 ref: normalizedRef,
                 identity,
@@ -584,6 +859,60 @@ export function createPluginInvocationEventsService(params: Readonly<{
             });
             const abort = () => { void disposable.dispose(); };
             params.seed.signal.addEventListener('abort', abort, { once: true });
+            if (params.seed.signal.aborted || !params.seed.isGenerationCurrent()) {
+                params.seed.signal.removeEventListener('abort', abort);
+                try {
+                    void disposable.dispose();
+                } catch {
+                    // The generation fence is authoritative even if best-effort cleanup fails.
+                }
+                throw eventError('plugin_events_generation_retired', 'Plugin event invocation generation is no longer current');
+            }
+            let disposed = false;
+            return Object.freeze({
+                dispose() {
+                    if (disposed) return;
+                    disposed = true;
+                    params.seed.signal.removeEventListener('abort', abort);
+                    return disposable.dispose();
+                },
+            });
+        },
+    });
+}
+
+export function createPluginInvocationHostEventsService(params: Readonly<{
+    seed: PluginInvocationServicesSeed;
+    broker: StablePluginEventsBroker;
+}>): HostEvents {
+    return Object.freeze({
+        subscribe<Id extends HostEventIdV1>(
+            target: HostEventTargetV1<Id>,
+            listener: (event: HostEventEnvelopeV1<Id>) => void | Promise<void>,
+        ): Disposable {
+            if (params.seed.signal.aborted || !params.seed.isGenerationCurrent()) {
+                throw eventError('plugin_events_generation_retired', 'Plugin event invocation generation is no longer current');
+            }
+            if (typeof listener !== 'function') {
+                throw eventError('plugin_host_events_invalid_listener', 'Host Event listener must be callable');
+            }
+            const disposable = params.broker.subscribeHost({
+                target,
+                ...(params.seed.session ? { currentSessionId: params.seed.session.id } : {}),
+                listener: (event) => listener(event as HostEventEnvelopeV1<Id>),
+                isCurrent: () => !params.seed.signal.aborted && params.seed.isGenerationCurrent(),
+            });
+            const abort = () => { void disposable.dispose(); };
+            params.seed.signal.addEventListener('abort', abort, { once: true });
+            if (params.seed.signal.aborted || !params.seed.isGenerationCurrent()) {
+                params.seed.signal.removeEventListener('abort', abort);
+                try {
+                    void disposable.dispose();
+                } catch {
+                    // The generation fence is authoritative even if best-effort cleanup fails.
+                }
+                throw eventError('plugin_events_generation_retired', 'Plugin event invocation generation is no longer current');
+            }
             let disposed = false;
             return Object.freeze({
                 dispose() {

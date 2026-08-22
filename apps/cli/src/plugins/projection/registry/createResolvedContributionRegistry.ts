@@ -3,13 +3,14 @@ import type { PluginCompatibilityDiagnostic } from '@/plugins/validation/diagnos
 import {
     buildQualifiedPluginContributionKey,
     createPluginContributionIdentity,
-    derivePluginUiArtifactCacheKeyV1,
     qualifyPluginEventIdV1,
 } from '@happier-dev/protocol';
 
+import { buildPluginContributionIntrospectionQualifiedId } from '@/plugins/projection/introspection/project';
 import { resolveBuiltInContributions } from './resolveBuiltInContributions';
 import type {
     ResolvedActionContribution,
+    ResolvedAccountCollectionContribution,
     ResolvedBrowserActionContribution,
     ResolvedBrowserTargetContribution,
     ResolvedCommandContribution,
@@ -18,16 +19,18 @@ import type {
     ResolvedContributionRegistry,
     ResolvedCatalogEntry,
     ResolvedExecutionRunProfileContribution,
+    ResolvedAutomationEligibleEvent,
+    ResolvedAutomationEligibleEventAction,
     ResolvedEventContribution,
     ResolvedInstallableContribution,
-    ResolvedMcpDiscoveryProviderContribution,
+    ResolvedMcpDiscoverySourceContribution,
     ResolvedMcpServerContribution,
     ResolvedNotificationCategoryContribution,
     ResolvedNotificationChannelContribution,
+    ResolvedOpenableContentViewerContribution,
     ResolvedProviderContribution,
     ResolvedPromptAssetContribution,
     ResolvedHostedWebContribution,
-    ResolvedReactNativeBundleContribution,
     ResolvedRequestInterceptorContribution,
     ResolvedSettingsContribution,
     ResolvedScmBackendContribution,
@@ -35,17 +38,25 @@ import type {
     ResolvedAgentContribution,
     ResolvedResourceContribution,
     ResolvedSessionHeaderActionContribution,
-    ResolvedSurfacePlacementContribution,
+    ResolvedTranscriptActivityContribution,
     ResolvedStructuredMessageContribution,
     ResolvedSystemToolContribution,
     ResolvedToolContribution,
-    ResolvedUiArtifactContribution,
+    ResolvedComposerReferenceContribution,
+    ResolvedComposerAttachmentContribution,
+    ResolvedComposerControlContribution,
+    ResolvedComposerRegionContribution,
+    ResolvedUiSettingsGroupV2Contribution,
+    ResolvedUiSettingsPageV2Contribution,
     ResolvedUiTranslationBundleV2Contribution,
     ResolvedUiTranslationsContribution,
     ResolvedActivationTarget,
     ResolvedVoiceModelPackContribution,
     ResolvedVoiceProviderContribution,
+    ResolvedPluginContributionPointDeclaration,
+    ResolvedTargetedPluginContributionDeclaration,
 } from './types';
+import { resolveAdmittedTargetedContributions } from './targetedContributions';
 import { resolveLocalSettingsDeclarations } from '@/plugins/settings/localSettingsContributions';
 import {
     isExecutableManagedDependency,
@@ -66,13 +77,103 @@ function resolveContributionRegistryKey(contribution: Readonly<{
         : contribution.definition.id;
 }
 
+function resolveAccountCollectionContributionRegistryKey(
+    contribution: ResolvedAccountCollectionContribution,
+): string {
+    const { definition, identity, pluginId } = contribution;
+    if (
+        definition.pluginId !== pluginId
+        || identity.pluginId !== pluginId
+        || identity.localId !== definition.collectionId
+    ) {
+        throw new Error(`Account collection contribution identity is inconsistent for '${pluginId}/${definition.collectionId}'`);
+    }
+    return buildQualifiedPluginContributionKey(identity);
+}
+
+type ResolvedComposerContribution = Readonly<{
+    pluginId: string;
+    identity: Readonly<{ pluginId: string; localId: string }>;
+    definition: Readonly<{ id: string }>;
+}>;
+
+function resolveComposerContributionRegistryKey(
+    contribution: ResolvedComposerContribution,
+): string {
+    const { definition, identity, pluginId } = contribution;
+    if (
+        identity.pluginId !== pluginId
+        || identity.localId !== definition.id
+    ) {
+        throw new Error(`Composer contribution identity is inconsistent for '${pluginId}/${definition.id}'`);
+    }
+    return buildQualifiedPluginContributionKey(identity);
+}
+
+function freezeComposerContributions<T extends ResolvedComposerContribution>(
+    contributions: readonly T[],
+): readonly T[] {
+    const seen = new Set<string>();
+    const sorted = [...contributions].sort((left, right) => (
+        resolveComposerContributionRegistryKey(left)
+            .localeCompare(resolveComposerContributionRegistryKey(right))
+    ));
+    for (const contribution of sorted) {
+        const key = resolveComposerContributionRegistryKey(contribution);
+        if (seen.has(key)) {
+            throw new Error(`Duplicate Composer contribution '${key}'`);
+        }
+        seen.add(key);
+    }
+    return Object.freeze(sorted);
+}
+
 export function createResolvedContributionRegistry(inputs: ResolvedContributionInputs): ResolvedContributionRegistry {
+    const materializationIdsByPluginId = Object.freeze(Object.fromEntries(
+        Object.entries(inputs.materializationIdsByPluginId ?? {}).flatMap(([pluginId, materializationId]) => (
+            typeof materializationId === 'string' && materializationId.trim().length > 0
+                ? [[pluginId, materializationId] as const]
+                : []
+        )),
+    ));
+    const immutableGenerationIdsByPluginId = Object.freeze(Object.fromEntries(
+        Object.entries(inputs.immutableGenerationIdsByPluginId ?? {}).flatMap(([pluginId, immutableGenerationId]) => (
+            typeof immutableGenerationId === 'string' && immutableGenerationId.trim().length > 0
+                ? [[pluginId, immutableGenerationId] as const]
+                : []
+        )),
+    ));
     const introspectionContributions = Object.freeze([...(inputs.introspectionContributions ?? [])].sort((left, right) => (
         resolveIntrospectionCandidateSortKey(left).localeCompare(resolveIntrospectionCandidateSortKey(right))
     )));
     const uiViewsV2 = Object.freeze([...(inputs.uiViewsV2 ?? [])]);
+    const openableContentViewers: readonly ResolvedOpenableContentViewerContribution[] = Object.freeze([
+        ...(inputs.openableContentViewers ?? []),
+    ].sort((left, right) => (
+        buildQualifiedPluginContributionKey(left.identity).localeCompare(buildQualifiedPluginContributionKey(right.identity))
+    )));
+    const uiSettingsGroupsV2: readonly ResolvedUiSettingsGroupV2Contribution[] = Object.freeze([
+        ...(inputs.uiSettingsGroupsV2 ?? []),
+    ]);
+    const uiSettingsPagesV2: readonly ResolvedUiSettingsPageV2Contribution[] = Object.freeze([
+        ...(inputs.uiSettingsPagesV2 ?? []),
+    ]);
     const uiRenderersV2 = Object.freeze([...(inputs.uiRenderersV2 ?? [])]);
+    assertUniquePluginUiBindings('destination', [...uiViewsV2, ...uiSettingsPagesV2]);
+    assertUniquePluginUiBindings('renderer', uiRenderersV2);
     const uiTranslationsV2 = Object.freeze([...(inputs.uiTranslationsV2 ?? [])].sort(compareUiTranslationsV2Contributes));
+    const composerReferences: readonly ResolvedComposerReferenceContribution[] = freezeComposerContributions(
+        inputs.composerReferences ?? [],
+    );
+    const composerAttachments: readonly ResolvedComposerAttachmentContribution[] = freezeComposerContributions(
+        inputs.composerAttachments ?? [],
+    );
+    const composerControls: readonly ResolvedComposerControlContribution[] = freezeComposerContributions(
+        inputs.composerControls ?? [],
+    );
+    const composerRegions: readonly ResolvedComposerRegionContribution[] = freezeComposerContributions(
+        inputs.composerRegions ?? [],
+    );
     const inputAgents = inputs.agents ?? [];
     const providers = Object.freeze([...(inputs.providers ?? [])].sort((left, right) =>
         buildQualifiedPluginContributionKey(left.identity).localeCompare(buildQualifiedPluginContributionKey(right.identity))
@@ -95,10 +196,8 @@ export function createResolvedContributionRegistry(inputs: ResolvedContributionI
     const uiTranslations = Object.freeze([...(inputs.uiTranslations ?? [])].sort(compareUiTranslationsContributes));
     const structuredMessages = Object.freeze([...(inputs.structuredMessages ?? [])].sort(compareStructuredMessageContributes));
     const sessionHeaderActions = Object.freeze([...(inputs.sessionHeaderActions ?? [])].sort(compareSessionHeaderActionContributes));
-    const surfacePlacements = Object.freeze([...(inputs.surfacePlacements ?? [])].sort(compareSurfacePlacementContributes));
+    const transcriptActivities = Object.freeze([...(inputs.transcriptActivities ?? [])].sort(compareTranscriptActivityContributes));
     const hostedWeb = Object.freeze([...(inputs.hostedWeb ?? [])].sort(compareHostedWebContributes));
-    const reactNativeBundles = Object.freeze([...(inputs.reactNativeBundles ?? [])].sort(compareReactNativeBundleContributes));
-    const uiArtifacts = Object.freeze([...(inputs.uiArtifacts ?? [])].sort(compareUiArtifactContributes));
     const browserTargets = Object.freeze([...(inputs.browserTargets ?? [])].sort(compareBrowserTargetContributes));
     const browserActions = Object.freeze([...(inputs.browserActions ?? [])].sort(compareBrowserActionContributes));
     const settings = Object.freeze([...(inputs.settings ?? [])].sort(compareSettingsContributes));
@@ -107,7 +206,7 @@ export function createResolvedContributionRegistry(inputs: ResolvedContributionI
     const events = Object.freeze([...(inputs.events ?? [])].sort(compareEventContributes));
     const executionRunProfiles = Object.freeze([...(inputs.executionRunProfiles ?? [])].sort(compareExecutionRunProfileContributes));
     const mcpServers = Object.freeze([...(inputs.mcpServers ?? [])].sort(compareMcpServerContributes));
-    const mcpDiscoveryProviders = Object.freeze([...(inputs.mcpDiscoveryProviders ?? [])].sort(compareMcpDiscoveryProviderContributes));
+    const mcpDiscoverySources = Object.freeze([...(inputs.mcpDiscoverySources ?? [])].sort(compareMcpDiscoverySourceContributes));
     const managedDependenciesResult = resolveInstallableContributions(
         inputs.managedDependencies ?? [],
         inputs.pluginDiagnosticsByPluginId ?? {},
@@ -133,6 +232,35 @@ export function createResolvedContributionRegistry(inputs: ResolvedContributionI
     const voiceProviders = Object.freeze([...(inputs.voiceProviders ?? [])].sort((left, right) => (
         buildQualifiedPluginContributionKey(left.identity).localeCompare(buildQualifiedPluginContributionKey(right.identity))
     )));
+    const accountCollections = Object.freeze([...(inputs.accountCollections ?? [])].sort((left, right) => (
+        resolveAccountCollectionContributionRegistryKey(left)
+            .localeCompare(resolveAccountCollectionContributionRegistryKey(right))
+    )));
+    const pluginContributionPoints: readonly ResolvedPluginContributionPointDeclaration[] = Object.freeze([
+        ...(inputs.pluginContributionPoints ?? []),
+    ]);
+    const targetedPluginContributions: readonly ResolvedTargetedPluginContributionDeclaration[] = Object.freeze([
+        ...(inputs.targetedPluginContributions ?? []),
+    ]);
+    const targetedAdmission = resolveAdmittedTargetedContributions({
+        pluginContributionPoints,
+        targetedPluginContributions,
+        actions,
+        uiRenderersV2,
+        immutableGenerationIdsByPluginId,
+    });
+    const pluginDiagnosticsByPluginId = mergePluginDiagnostics(
+        scmBackendsResult.pluginDiagnosticsByPluginId,
+        targetedAdmission.diagnosticsByPluginId,
+    );
+    const accountCollectionKeys = new Set<string>();
+    for (const accountCollection of accountCollections) {
+        const key = resolveAccountCollectionContributionRegistryKey(accountCollection);
+        if (accountCollectionKeys.has(key)) {
+            throw new Error(`Duplicate account collection contribution '${key}'`);
+        }
+        accountCollectionKeys.add(key);
+    }
     const activationTargets = Object.freeze([...(inputs.activationTargets ?? [])].sort(compareActivationTargets));
     const actionsById = new Map<string, ResolvedActionContribution>();
     const toolsById = new Map<string, ResolvedToolContribution>();
@@ -141,10 +269,8 @@ export function createResolvedContributionRegistry(inputs: ResolvedContributionI
     const promptAssetsById = new Map<string, ResolvedPromptAssetContribution>();
     const structuredMessagesById = new Map<string, ResolvedStructuredMessageContribution>();
     const sessionHeaderActionsById = new Map<string, ResolvedSessionHeaderActionContribution>();
-    const surfacePlacementsById = new Map<string, ResolvedSurfacePlacementContribution>();
+    const transcriptActivitiesById = new Map<string, ResolvedTranscriptActivityContribution>();
     const hostedWebById = new Map<string, ResolvedHostedWebContribution>();
-    const reactNativeBundlesById = new Map<string, ResolvedReactNativeBundleContribution>();
-    const uiArtifactsById = new Map<string, ResolvedUiArtifactContribution>();
     const browserTargetsById = new Map<string, ResolvedBrowserTargetContribution>();
     const browserActionsById = new Map<string, ResolvedBrowserActionContribution>();
     const settingsById = new Map<string, ResolvedSettingsContribution>();
@@ -230,12 +356,12 @@ export function createResolvedContributionRegistry(inputs: ResolvedContributionI
         sessionHeaderActionsById.set(id, action);
     }
 
-    for (const placement of surfacePlacements) {
-        const id = resolvePluginUiContributionRegistryId(placement);
-        if (surfacePlacementsById.has(id)) {
-            throw new Error(`Duplicate surface placement contribution '${id}'`);
+    for (const activity of transcriptActivities) {
+        const id = resolvePluginUiContributionRegistryId(activity);
+        if (transcriptActivitiesById.has(id)) {
+            throw new Error(`Duplicate transcript Activity contribution '${id}'`);
         }
-        surfacePlacementsById.set(id, placement);
+        transcriptActivitiesById.set(id, activity);
     }
 
     for (const contribution of hostedWeb) {
@@ -244,32 +370,6 @@ export function createResolvedContributionRegistry(inputs: ResolvedContributionI
             throw new Error(`Duplicate hosted web contribution '${id}'`);
         }
         hostedWebById.set(id, contribution);
-    }
-
-    for (const contribution of reactNativeBundles) {
-        // RN-WEB-LOADER / LEDGER DEC-6 comment on `reactNativeBundles.ts` names the
-        // intent: a `reactNative` surface is ONE logical contribution `id` with an
-        // ADDITIONAL bundle entry per platform (mirrors the pre-existing ios+android
-        // multi-entry pattern). The dedupe key must therefore include the artifact
-        // platform, not just `pluginId:id` — otherwise a second platform entry
-        // sharing the same logical id (e.g. the SAME surface declared for both `ios`
-        // and `web`) throws here as a false "duplicate contribution", which is the
-        // exact gap RN-DOGFOOD found by reading this file directly. Platform-aware
-        // selection among these siblings happens once, downstream, in
-        // `ui/projection.ts#projectReactNativeBundles` (the single resolution point).
-        const id = resolvePluginReactNativeBundleRegistryId(contribution);
-        if (reactNativeBundlesById.has(id)) {
-            throw new Error(`Duplicate React Native bundle contribution '${id}'`);
-        }
-        reactNativeBundlesById.set(id, contribution);
-    }
-
-    for (const artifact of uiArtifacts) {
-        const id = resolvePluginUiContributionRegistryId(artifact);
-        if (uiArtifactsById.has(id)) {
-            throw new Error(`Duplicate UI artifact contribution '${id}'`);
-        }
-        uiArtifactsById.set(id, artifact);
     }
 
     for (const target of browserTargets) {
@@ -321,6 +421,12 @@ export function createResolvedContributionRegistry(inputs: ResolvedContributionI
         eventsById.set(eventRegistryId, event);
     }
 
+    const automationEligibleEvents = deriveAutomationEligibleEvents({
+        events,
+        actionsById,
+        immutableGenerationIdsByPluginId,
+    });
+
     for (const profile of executionRunProfiles) {
         const key = resolveContributionRegistryKey(profile);
         if (executionRunProfilesById.has(key)) {
@@ -361,45 +467,16 @@ export function createResolvedContributionRegistry(inputs: ResolvedContributionI
     }
     return Object.freeze({
         introspectionContributions,
-        generationId: buildRegistryGenerationId({
-            agents: inputAgents,
-            providers,
-            catalogEntries: standaloneCatalogEntries,
-            actions,
-            tools,
-            commands,
-            resources,
-            promptAssets,
-            uiTranslationsV2,
-            uiTranslations,
-            structuredMessages,
-            sessionHeaderActions,
-            surfacePlacements,
-            hostedWeb,
-            reactNativeBundles,
-            uiArtifacts,
-            browserTargets,
-            browserActions,
-            settings,
-            notifications,
-            notificationChannels,
-            events,
-            executionRunProfiles,
-            mcpServers,
-            mcpDiscoveryProviders,
-            managedDependencies,
-            systemTools,
-            scmHostingProviders,
-            scmBackends,
-            connectedAccountDescriptors,
-            requestInterceptors,
-            voiceModelPacks,
-            voiceProviders,
-            activationTargets,
-        }),
         uiViewsV2,
+        openableContentViewers,
+        uiSettingsGroupsV2,
+        uiSettingsPagesV2,
         uiRenderersV2,
         uiTranslationsV2,
+        composerReferences,
+        composerAttachments,
+        composerControls,
+        composerRegions,
         agents: inputAgents,
         providers,
         actions,
@@ -410,19 +487,18 @@ export function createResolvedContributionRegistry(inputs: ResolvedContributionI
         uiTranslations,
         structuredMessages,
         sessionHeaderActions,
-        surfacePlacements,
+        transcriptActivities,
         hostedWeb,
-        reactNativeBundles,
-        uiArtifacts,
         browserTargets,
         browserActions,
         settings,
         notifications,
         notificationChannels,
         events,
+        automationEligibleEvents,
         executionRunProfiles,
         mcpServers,
-        mcpDiscoveryProviders,
+        mcpDiscoverySources,
         managedDependencies,
         systemTools,
         scmHostingProviders,
@@ -431,7 +507,15 @@ export function createResolvedContributionRegistry(inputs: ResolvedContributionI
         requestInterceptors,
         voiceModelPacks,
         voiceProviders,
+        accountCollections,
+        pluginContributionPoints,
+        targetedPluginContributions,
+        readAdmittedTargetedContributions(request) {
+            return targetedAdmission.read(request);
+        },
         activationTargets,
+        materializationIdsByPluginId,
+        immutableGenerationIdsByPluginId,
         actionsById: Object.freeze(actionsById),
         toolsById: Object.freeze(toolsById),
         commandsById: Object.freeze(commandsById),
@@ -439,10 +523,8 @@ export function createResolvedContributionRegistry(inputs: ResolvedContributionI
         promptAssetsById: Object.freeze(promptAssetsById),
         structuredMessagesById: Object.freeze(structuredMessagesById),
         sessionHeaderActionsById: Object.freeze(sessionHeaderActionsById),
-        surfacePlacementsById: Object.freeze(surfacePlacementsById),
+        transcriptActivitiesById: Object.freeze(transcriptActivitiesById),
         hostedWebById: Object.freeze(hostedWebById),
-        reactNativeBundlesById: Object.freeze(reactNativeBundlesById),
-        uiArtifactsById: Object.freeze(uiArtifactsById),
         browserTargetsById: Object.freeze(browserTargetsById),
         browserActionsById: Object.freeze(browserActionsById),
         settingsById: Object.freeze(settingsById),
@@ -458,7 +540,7 @@ export function createResolvedContributionRegistry(inputs: ResolvedContributionI
         catalogEntriesById: Object.freeze(catalogEntriesById),
         agentDefinitionsById,
         providersByContributionKey: Object.freeze(providersByContributionKey),
-        pluginDiagnosticsByPluginId: scmBackendsResult.pluginDiagnosticsByPluginId,
+        pluginDiagnosticsByPluginId,
     });
 }
 
@@ -471,6 +553,128 @@ function readEventRegistryId(event: ResolvedEventContribution): string {
     return event.definition.id;
 }
 
+function readRequiredContributionString(value: unknown): string | null {
+    const normalized = typeof value === 'string' ? value.trim() : '';
+    return normalized.length > 0 ? normalized : null;
+}
+
+function readEventPresentationText(value: unknown): string | null {
+    const direct = readRequiredContributionString(value);
+    if (direct) return direct;
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    return readRequiredContributionString((value as Readonly<{ fallback?: unknown }>).fallback);
+}
+
+/**
+ * Binds one Event-declared plugin Action without any catalog search fallback.
+ * Manifest ingestion owns declaration/schema validity; this cold owner only
+ * retains an exact, same-generation Action handle while it is still current.
+ */
+function resolveCurrentAutomationEventAction(params: Readonly<{
+    actionRef: Readonly<{ pluginId: string; localId: string }> | undefined;
+    pluginId: string;
+    immutableGenerationId: string;
+    actionsById: ReadonlyMap<string, ResolvedActionContribution>;
+    immutableGenerationIdsByPluginId: Readonly<Record<string, string>>;
+}>): ResolvedAutomationEligibleEventAction | null {
+    const actionRef = params.actionRef;
+    if (!actionRef || actionRef.pluginId !== params.pluginId) return null;
+    const identity = createPluginContributionIdentity({
+        pluginId: actionRef.pluginId,
+        localId: actionRef.localId,
+    });
+    const id = buildQualifiedPluginContributionKey(identity);
+    const action = params.actionsById.get(id);
+    const actionImmutableGenerationId = action?.pluginId
+        ? readRequiredContributionString(params.immutableGenerationIdsByPluginId[action.pluginId])
+        : null;
+    if (
+        !action
+        || action.pluginId !== params.pluginId
+        || action.definition.surfaces.plugin !== true
+        || actionImmutableGenerationId !== params.immutableGenerationId
+    ) {
+        return null;
+    }
+    const title = readRequiredContributionString(action.definition.title);
+    if (!title) return null;
+    return Object.freeze({
+        id,
+        identity,
+        immutableGenerationId: params.immutableGenerationId,
+        title,
+        description: readRequiredContributionString(action.definition.description),
+        inputSchema: action.definition.inputSchema,
+        inputHints: action.definition.inputHints,
+    });
+}
+
+/**
+ * The Event composer consumes this single cold registry-derived view. It does
+ * not interpret raw manifests, scan Actions by local id, or activate a plugin.
+ * Manifest admission owns reference/result-schema semantics; this owner only
+ * proves that the exact currently resolved Action and immutable generation
+ * still exist together.
+ */
+function deriveAutomationEligibleEvents(params: Readonly<{
+    events: readonly ResolvedEventContribution[];
+    actionsById: ReadonlyMap<string, ResolvedActionContribution>;
+    immutableGenerationIdsByPluginId: Readonly<Record<string, string>>;
+}>): readonly ResolvedAutomationEligibleEvent[] {
+    const eligible: ResolvedAutomationEligibleEvent[] = [];
+    for (const event of params.events) {
+        if (event.definition.kind !== 'event' || event.definition.automation?.eligible !== true) continue;
+        const pluginId = readRequiredContributionString(event.pluginId);
+        const localId = readRequiredContributionString(event.definition.localId);
+        const setupActionRef = event.definition.automation.source.setupActionRef;
+        const immutableGenerationId = pluginId
+            ? readRequiredContributionString(params.immutableGenerationIdsByPluginId[pluginId])
+            : null;
+        if (
+            !pluginId
+            || !localId
+            || !setupActionRef
+            || setupActionRef.pluginId !== pluginId
+            || !immutableGenerationId
+        ) {
+            continue;
+        }
+        const eventTitle = readEventPresentationText(event.definition.title);
+        const setupAction = resolveCurrentAutomationEventAction({
+            actionRef: setupActionRef,
+            pluginId,
+            immutableGenerationId,
+            actionsById: params.actionsById,
+            immutableGenerationIdsByPluginId: params.immutableGenerationIdsByPluginId,
+        });
+        if (!eventTitle || !setupAction) continue;
+        const eventIdentity = createPluginContributionIdentity({ pluginId, localId });
+        const historyGapResetAction = resolveCurrentAutomationEventAction({
+            actionRef: event.definition.automation.source.historyGapResetActionRef,
+            pluginId,
+            immutableGenerationId,
+            actionsById: params.actionsById,
+            immutableGenerationIdsByPluginId: params.immutableGenerationIdsByPluginId,
+        });
+        eligible.push(Object.freeze({
+            event: Object.freeze({
+                id: readEventRegistryId(event),
+                identity: eventIdentity,
+                immutableGenerationId,
+                title: eventTitle,
+                description: readEventPresentationText(event.definition.description),
+                ...(event.definition.payloadSchema === undefined
+                    ? {}
+                    : { payloadSchema: event.definition.payloadSchema }),
+                automation: event.definition.automation,
+            }),
+            setupAction,
+            ...(historyGapResetAction === null ? {} : { historyGapResetAction }),
+        }));
+    }
+    return Object.freeze(eligible.sort((left, right) => left.event.id.localeCompare(right.event.id)));
+}
+
 function clonePluginDiagnostics(
     pluginDiagnosticsByPluginId: Readonly<Record<string, readonly PluginCompatibilityDiagnostic[]>>,
 ): Record<string, PluginCompatibilityDiagnostic[]> {
@@ -480,6 +684,21 @@ function clonePluginDiagnostics(
             [...diagnostics],
         ]),
     );
+}
+
+function mergePluginDiagnostics(
+    ...sources: readonly Readonly<Record<string, readonly PluginCompatibilityDiagnostic[]>>[]
+): Readonly<Record<string, readonly PluginCompatibilityDiagnostic[]>> {
+    const diagnosticsByPluginId: Record<string, PluginCompatibilityDiagnostic[]> = {};
+    for (const source of sources) {
+        for (const [pluginId, diagnostics] of Object.entries(source).sort(([left], [right]) => (
+            left.localeCompare(right)
+        ))) {
+            diagnosticsByPluginId[pluginId] = diagnosticsByPluginId[pluginId] ?? [];
+            diagnosticsByPluginId[pluginId]!.push(...diagnostics);
+        }
+    }
+    return freezePluginDiagnostics(diagnosticsByPluginId);
 }
 
 function appendScmHostingProviderDiagnostic(
@@ -729,15 +948,41 @@ export function createMergedContributionRegistry(
         resources: Object.freeze([...(builtIn.resources ?? []), ...(plugin.resources ?? [])]),
         promptAssets: Object.freeze([...(builtIn.promptAssets ?? []), ...(plugin.promptAssets ?? [])]),
         uiViewsV2: Object.freeze([...(builtIn.uiViewsV2 ?? []), ...(plugin.uiViewsV2 ?? [])]),
+        openableContentViewers: Object.freeze([
+            ...(builtIn.openableContentViewers ?? []),
+            ...(plugin.openableContentViewers ?? []),
+        ]),
+        uiSettingsGroupsV2: Object.freeze([
+            ...(builtIn.uiSettingsGroupsV2 ?? []),
+            ...(plugin.uiSettingsGroupsV2 ?? []),
+        ]),
+        uiSettingsPagesV2: Object.freeze([
+            ...(builtIn.uiSettingsPagesV2 ?? []),
+            ...(plugin.uiSettingsPagesV2 ?? []),
+        ]),
         uiRenderersV2: Object.freeze([...(builtIn.uiRenderersV2 ?? []), ...(plugin.uiRenderersV2 ?? [])]),
         uiTranslationsV2: Object.freeze([...(builtIn.uiTranslationsV2 ?? []), ...(plugin.uiTranslationsV2 ?? [])]),
+        composerReferences: Object.freeze([
+            ...(builtIn.composerReferences ?? []),
+            ...(plugin.composerReferences ?? []),
+        ]),
+        composerAttachments: Object.freeze([
+            ...(builtIn.composerAttachments ?? []),
+            ...(plugin.composerAttachments ?? []),
+        ]),
+        composerControls: Object.freeze([
+            ...(builtIn.composerControls ?? []),
+            ...(plugin.composerControls ?? []),
+        ]),
+        composerRegions: Object.freeze([
+            ...(builtIn.composerRegions ?? []),
+            ...(plugin.composerRegions ?? []),
+        ]),
         uiTranslations: Object.freeze([...(builtIn.uiTranslations ?? []), ...(plugin.uiTranslations ?? [])]),
-        structuredMessages: Object.freeze([...(builtIn.structuredMessages ?? []), ...(plugin.structuredMessages ?? [])]),
+        structuredMessages: Object.freeze([...(builtIn.structuredMessages ?? [])]),
         sessionHeaderActions: Object.freeze([...(builtIn.sessionHeaderActions ?? []), ...(plugin.sessionHeaderActions ?? [])]),
-        surfacePlacements: Object.freeze([...(builtIn.surfacePlacements ?? []), ...(plugin.surfacePlacements ?? [])]),
+        transcriptActivities: Object.freeze([...(builtIn.transcriptActivities ?? []), ...(plugin.transcriptActivities ?? [])]),
         hostedWeb: Object.freeze([...(builtIn.hostedWeb ?? []), ...(plugin.hostedWeb ?? [])]),
-        reactNativeBundles: Object.freeze([...(builtIn.reactNativeBundles ?? []), ...(plugin.reactNativeBundles ?? [])]),
-        uiArtifacts: Object.freeze([...(builtIn.uiArtifacts ?? []), ...(plugin.uiArtifacts ?? [])]),
         browserTargets: Object.freeze([...(builtIn.browserTargets ?? []), ...(plugin.browserTargets ?? [])]),
         browserActions: Object.freeze([...(builtIn.browserActions ?? []), ...(plugin.browserActions ?? [])]),
         settings: Object.freeze([...(builtIn.settings ?? []), ...(plugin.settings ?? [])]),
@@ -746,9 +991,9 @@ export function createMergedContributionRegistry(
         events: Object.freeze([...(builtIn.events ?? []), ...(plugin.events ?? [])]),
         executionRunProfiles: Object.freeze([...(builtIn.executionRunProfiles ?? []), ...(plugin.executionRunProfiles ?? [])]),
         mcpServers: Object.freeze([...(builtIn.mcpServers ?? []), ...(plugin.mcpServers ?? [])]),
-        mcpDiscoveryProviders: Object.freeze([
-            ...(builtIn.mcpDiscoveryProviders ?? []),
-            ...(plugin.mcpDiscoveryProviders ?? []),
+        mcpDiscoverySources: Object.freeze([
+            ...(builtIn.mcpDiscoverySources ?? []),
+            ...(plugin.mcpDiscoverySources ?? []),
         ]),
         managedDependencies: Object.freeze([...(builtIn.managedDependencies ?? []), ...(plugin.managedDependencies ?? [])]),
         systemTools: Object.freeze([...(builtIn.systemTools ?? []), ...(plugin.systemTools ?? [])]),
@@ -758,7 +1003,24 @@ export function createMergedContributionRegistry(
         connectedAccountDescriptors: Object.freeze([...(builtIn.connectedAccountDescriptors ?? []), ...(plugin.connectedAccountDescriptors ?? [])]),
         voiceModelPacks: Object.freeze([...(builtIn.voiceModelPacks ?? []), ...(plugin.voiceModelPacks ?? [])]),
         voiceProviders: Object.freeze([...(builtIn.voiceProviders ?? []), ...(plugin.voiceProviders ?? [])]),
+        accountCollections: Object.freeze([...(builtIn.accountCollections ?? []), ...(plugin.accountCollections ?? [])]),
+        pluginContributionPoints: Object.freeze([
+            ...(builtIn.pluginContributionPoints ?? []),
+            ...(plugin.pluginContributionPoints ?? []),
+        ]),
+        targetedPluginContributions: Object.freeze([
+            ...(builtIn.targetedPluginContributions ?? []),
+            ...(plugin.targetedPluginContributions ?? []),
+        ]),
         activationTargets: Object.freeze([...(builtIn.activationTargets ?? []), ...(plugin.activationTargets ?? [])]),
+        materializationIdsByPluginId: Object.freeze({
+            ...(builtIn.materializationIdsByPluginId ?? {}),
+            ...(plugin.materializationIdsByPluginId ?? {}),
+        }),
+        immutableGenerationIdsByPluginId: Object.freeze({
+            ...(builtIn.immutableGenerationIdsByPluginId ?? {}),
+            ...(plugin.immutableGenerationIdsByPluginId ?? {}),
+        }),
         pluginDiagnosticsByPluginId: Object.freeze({
             ...(builtIn.pluginDiagnosticsByPluginId ?? {}),
             ...(plugin.pluginDiagnosticsByPluginId ?? {}),
@@ -860,10 +1122,21 @@ function resolvePluginUiContributionRegistryId(
     return `${contribution.pluginId ?? 'unknown'}:${contribution.definition.id}`;
 }
 
-function resolvePluginReactNativeBundleRegistryId(
-    contribution: ResolvedReactNativeBundleContribution,
-): string {
-    return `${resolvePluginUiContributionRegistryId(contribution)}:${contribution.definition.bundle.platform}`;
+function assertUniquePluginUiBindings(
+    kind: 'destination' | 'renderer',
+    contributions: readonly Readonly<{
+        pluginId?: string;
+        definition: Readonly<{ id: string }>;
+    }>[],
+): void {
+    const ids = new Set<string>();
+    for (const contribution of contributions) {
+        const id = resolvePluginUiContributionRegistryId(contribution);
+        if (ids.has(id)) {
+            throw new Error(`Duplicate UI ${kind} binding '${id}'`);
+        }
+        ids.add(id);
+    }
 }
 
 function comparePluginUiContributionById(
@@ -903,8 +1176,8 @@ function compareUiTranslationsV2Contributes(
     if (left.definition.locale !== right.definition.locale) {
         return left.definition.locale.localeCompare(right.definition.locale);
     }
-    const leftOwner = `${left.manifestPath ?? ''}\0${left.manifestDigest ?? ''}\0${JSON.stringify(left.definition)}`;
-    const rightOwner = `${right.manifestPath ?? ''}\0${right.manifestDigest ?? ''}\0${JSON.stringify(right.definition)}`;
+    const leftOwner = `${left.manifestPath ?? ''}\0${JSON.stringify(left.definition)}`;
+    const rightOwner = `${right.manifestPath ?? ''}\0${JSON.stringify(right.definition)}`;
     return leftOwner.localeCompare(rightOwner);
 }
 
@@ -922,9 +1195,9 @@ function compareSessionHeaderActionContributes(
     return comparePluginUiContributionById(left, right);
 }
 
-function compareSurfacePlacementContributes(
-    left: ResolvedSurfacePlacementContribution,
-    right: ResolvedSurfacePlacementContribution,
+function compareTranscriptActivityContributes(
+    left: ResolvedTranscriptActivityContribution,
+    right: ResolvedTranscriptActivityContribution,
 ): number {
     return comparePluginUiContributionById(left, right);
 }
@@ -932,20 +1205,6 @@ function compareSurfacePlacementContributes(
 function compareHostedWebContributes(
     left: ResolvedHostedWebContribution,
     right: ResolvedHostedWebContribution,
-): number {
-    return comparePluginUiContributionById(left, right);
-}
-
-function compareReactNativeBundleContributes(
-    left: ResolvedReactNativeBundleContribution,
-    right: ResolvedReactNativeBundleContribution,
-): number {
-    return comparePluginUiContributionById(left, right);
-}
-
-function compareUiArtifactContributes(
-    left: ResolvedUiArtifactContribution,
-    right: ResolvedUiArtifactContribution,
 ): number {
     return comparePluginUiContributionById(left, right);
 }
@@ -1039,106 +1298,7 @@ function compareActivationTargets(left: ResolvedActivationTarget, right: Resolve
 }
 
 function resolveIntrospectionCandidateSortKey(candidate: NonNullable<ResolvedContributionInputs['introspectionContributions']>[number]): string {
-    const identity = candidate.identity;
-    const identityValue = identity.kind === 'localId'
-        ? identity.localId
-        : identity.kind === 'locale'
-            ? identity.locale
-            : identity.domainId;
-    return `${candidate.pluginId}/${candidate.family}/${identityValue}`;
-}
-
-function buildRegistryGenerationId(params: Readonly<{
-    agents: readonly ResolvedAgentContribution[];
-    providers: readonly ResolvedProviderContribution[];
-    catalogEntries?: readonly ResolvedCatalogEntry[];
-    actions: readonly ResolvedActionContribution[];
-    tools: readonly ResolvedToolContribution[];
-    commands: readonly ResolvedCommandContribution[];
-    resources: readonly ResolvedResourceContribution[];
-    promptAssets: readonly ResolvedPromptAssetContribution[];
-    uiTranslationsV2: readonly ResolvedUiTranslationBundleV2Contribution[];
-    uiTranslations: readonly ResolvedUiTranslationsContribution[];
-    structuredMessages: readonly ResolvedStructuredMessageContribution[];
-    sessionHeaderActions: readonly ResolvedSessionHeaderActionContribution[];
-    surfacePlacements: readonly ResolvedSurfacePlacementContribution[];
-    hostedWeb: readonly ResolvedHostedWebContribution[];
-    reactNativeBundles: readonly ResolvedReactNativeBundleContribution[];
-    uiArtifacts: readonly ResolvedUiArtifactContribution[];
-    browserTargets: readonly ResolvedBrowserTargetContribution[];
-    browserActions: readonly ResolvedBrowserActionContribution[];
-    settings: readonly ResolvedSettingsContribution[];
-    notifications: readonly ResolvedNotificationCategoryContribution[];
-    notificationChannels: readonly ResolvedNotificationChannelContribution[];
-    events: readonly ResolvedEventContribution[];
-    executionRunProfiles: readonly ResolvedExecutionRunProfileContribution[];
-    mcpServers: readonly ResolvedMcpServerContribution[];
-    mcpDiscoveryProviders: readonly ResolvedMcpDiscoveryProviderContribution[];
-    managedDependencies: readonly ResolvedInstallableContribution[];
-    systemTools: readonly ResolvedSystemToolContribution[];
-    requestInterceptors: readonly ResolvedRequestInterceptorContribution[];
-    scmHostingProviders: readonly ResolvedScmHostingProviderContribution[];
-    scmBackends: readonly ResolvedScmBackendContribution[];
-    connectedAccountDescriptors: readonly ResolvedConnectedAccountDescriptorContribution[];
-    voiceModelPacks: readonly ResolvedVoiceModelPackContribution[];
-    voiceProviders: readonly ResolvedVoiceProviderContribution[];
-    activationTargets: readonly ResolvedActivationTarget[];
-}>): string {
-    const v2TranslationPluginIds = new Set(params.uiTranslationsV2.map((bundle) => bundle.pluginId));
-    const parts = [
-        ...params.agents.map((agent) => `agent:${agent.provenance}:${agent.source.kind}:${agent.id}:${agent.manifestDigest ?? ''}`),
-        ...params.providers.map((provider) => `provider:${buildQualifiedPluginContributionKey(provider.identity)}:${provider.manifestDigest ?? ''}`),
-        ...(params.catalogEntries ?? []).map((catalogEntry) => `catalog:${catalogEntry.id}:${catalogEntry.cliSubcommand}`),
-        ...params.actions.map((action) => `action:${action.provenance}:${action.source.kind}:${action.pluginId ?? ''}:${action.definition.id}:${action.manifestDigest ?? ''}`),
-        ...params.tools.map((tool) => `tool:${tool.provenance}:${tool.source.kind}:${tool.pluginId ?? ''}:${tool.definition.id}:${tool.definition.name}:${tool.manifestDigest ?? ''}`),
-        ...params.commands.map((command) => `command:${command.provenance}:${command.source.kind}:${command.pluginId ?? ''}:${command.definition.id}:${command.definition.path.join('/')}:${command.manifestDigest ?? ''}`),
-        ...params.resources.map((resource) => `resource:${resource.provenance}:${resource.source.kind}:${resource.definition.id}:${resource.manifestDigest ?? ''}`),
-        ...params.promptAssets.map((asset) => `promptAsset:${buildQualifiedPluginContributionKey(asset.identity)}:${asset.manifestDigest}`),
-        ...params.uiTranslationsV2.map((bundle) => `uiTranslationsV2:${bundle.pluginId}:${bundle.definition.locale}:${bundle.manifestDigest ?? ''}:${JSON.stringify(bundle.definition.messages)}`),
-        ...params.uiTranslations
-            .filter((bundle) => !bundle.pluginId || !v2TranslationPluginIds.has(bundle.pluginId))
-            .map((bundle) => `uiTranslations:${bundle.provenance}:${bundle.source.kind}:${bundle.pluginId ?? ''}:${bundle.manifestDigest ?? ''}`),
-        ...params.structuredMessages.map((message) => `structuredMessage:${message.provenance}:${message.source.kind}:${message.pluginId ?? ''}:${message.definition.id}:${message.definition.kind}:${message.manifestDigest ?? ''}`),
-        ...params.sessionHeaderActions.map((action) => `sessionHeaderAction:${action.provenance}:${action.source.kind}:${action.pluginId ?? ''}:${action.definition.id}:${action.manifestDigest ?? ''}`),
-        ...params.surfacePlacements.map((placement) => `surfacePlacement:${placement.provenance}:${placement.source.kind}:${placement.pluginId ?? ''}:${placement.definition.id}:${placement.definition.placement}:${placement.manifestDigest ?? ''}`),
-        ...params.hostedWeb.map((web) => `hostedWeb:${web.provenance}:${web.source.kind}:${web.pluginId ?? ''}:${web.definition.id}:${web.manifestDigest ?? ''}`),
-        ...params.reactNativeBundles.map((bundle) => `reactNativeBundle:${bundle.provenance}:${bundle.source.kind}:${bundle.pluginId ?? ''}:${bundle.definition.id}:${resolveReactNativeBundleIdentity(bundle.definition.bundle)}:${bundle.manifestDigest ?? ''}`),
-        ...params.uiArtifacts.map((artifact) => `uiArtifact:${artifact.provenance}:${artifact.source.kind}:${artifact.pluginId ?? ''}:${artifact.definition.id}:${resolveUiArtifactIdentity(artifact)}:${artifact.manifestDigest ?? ''}`),
-        ...params.browserTargets.map((target) => `browserTarget:${target.provenance}:${target.source.kind}:${target.pluginId ?? ''}:${target.definition.id}:${target.definition.url}:${target.manifestDigest ?? ''}`),
-        ...params.browserActions.map((action) => `browserAction:${action.provenance}:${action.source.kind}:${action.pluginId ?? ''}:${action.definition.id}:${JSON.stringify(action.definition.target)}:${action.manifestDigest ?? ''}`),
-        ...params.settings.map((setting) => `settings:${setting.provenance}:${setting.source.kind}:${setting.definition.id}:${setting.manifestDigest ?? ''}`),
-        ...params.notifications.map((notification) => `notification:${notification.provenance}:${notification.source.kind}:${notification.definition.id}:${notification.manifestDigest ?? ''}`),
-        ...params.notificationChannels.map((channel) => `notificationChannel:${channel.provenance}:${channel.source.kind}:${channel.definition.id}:${channel.manifestDigest ?? ''}`),
-        ...params.events.map((event) => `event:${event.provenance}:${event.source.kind}:${event.definition.id}:${event.manifestDigest ?? ''}`),
-        ...params.executionRunProfiles.map((profile) => `executionRunProfile:${profile.provenance}:${profile.source.kind}:${profile.definition.id}:${profile.manifestDigest ?? ''}`),
-        ...params.mcpServers.map((server) => `mcpServer:${server.provenance}:${server.source.kind}:${server.definition.id}:${server.manifestDigest ?? ''}`),
-        ...params.mcpDiscoveryProviders.map((provider) => `mcpDiscoveryProvider:${provider.provenance}:${provider.source.kind}:${provider.definition.id}:${provider.manifestDigest ?? ''}`),
-        ...params.managedDependencies.map((installable) => `managedDependency:${installable.provenance}:${installable.source.kind}:${installable.pluginId ?? ''}:${installable.definition.id}:${JSON.stringify(installable.definition)}:${installable.manifestDigest ?? ''}`),
-        ...params.systemTools.map((tool) => `systemTool:${tool.provenance}:${tool.source.kind}:${tool.definition.id}:${JSON.stringify(tool.definition)}:${tool.manifestDigest ?? ''}`),
-        ...params.requestInterceptors.map((interceptor) => `requestInterceptor:${interceptor.provenance}:${interceptor.source.kind}:${interceptor.definition.id}:${interceptor.definition.priority ?? 0}:${interceptor.manifestDigest ?? ''}`),
-        ...params.scmHostingProviders.map((provider) => `scmHostingProvider:${provider.provenance}:${provider.source.kind}:${provider.definition.id}:${provider.manifestDigest ?? ''}`),
-        ...params.scmBackends.map((backend) => `scmBackend:${backend.provenance}:${backend.source.kind}:${backend.definition.id}:${backend.manifestDigest ?? ''}`),
-        ...params.connectedAccountDescriptors.map((descriptor) => `connectedAccount:${descriptor.provenance}:${descriptor.source.kind}:${descriptor.definition.id}:${descriptor.manifestDigest ?? ''}`),
-        ...params.voiceModelPacks.map((pack) => `voiceModelPack:${buildQualifiedPluginContributionKey(pack.identity)}:${pack.manifestDigest ?? ''}`),
-        ...params.voiceProviders.map((provider) => `voiceProvider:${buildQualifiedPluginContributionKey(provider.identity)}:${provider.manifestDigest ?? ''}`),
-        ...params.activationTargets.map((target) => `activate:${target.provenance}:${target.source.kind}:${target.pluginId}:${target.manifestDigest}:${target.daemonEntryPath}`),
-    ].sort();
-    return `registry:${parts.join('|')}`;
-}
-
-function resolveReactNativeBundleIdentity(
-    bundle: ResolvedReactNativeBundleContribution['definition']['bundle'],
-): string {
-    return bundle.integrity?.digest ?? `devHotReload:${bundle.platform}:${bundle.channel}`;
-}
-
-function resolveUiArtifactIdentity(
-    artifact: ResolvedUiArtifactContribution,
-): string {
-    return derivePluginUiArtifactCacheKeyV1({
-        ...artifact.definition,
-        pluginId: artifact.pluginId ?? '',
-    });
+    return buildPluginContributionIntrospectionQualifiedId(candidate);
 }
 
 function compareMcpServerContributes(
@@ -1148,9 +1308,9 @@ function compareMcpServerContributes(
     return left.definition.id.localeCompare(right.definition.id);
 }
 
-function compareMcpDiscoveryProviderContributes(
-    left: ResolvedMcpDiscoveryProviderContribution,
-    right: ResolvedMcpDiscoveryProviderContribution,
+function compareMcpDiscoverySourceContributes(
+    left: ResolvedMcpDiscoverySourceContribution,
+    right: ResolvedMcpDiscoverySourceContribution,
 ): number {
     return left.definition.id.localeCompare(right.definition.id);
 }

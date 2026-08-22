@@ -25,12 +25,19 @@ async function materializePlugin(rootDir: string): Promise<void> {
           },
           {
             id: 'workspace', capability: 'filesystem', reason: 'Read the workspace.',
-            scope: { locations: [{ root: 'workspace' }], access: ['read'] },
+            scope: { locations: [{ root: 'workspace' }], access: ['read', 'delete'] },
+          },
+          {
+            id: 'gateway', capability: 'network.client', reason: 'Maintain the gateway connection.',
+            scope: {
+              targets: [{ kind: 'fixedOrigin', origin: 'https://gateway.example.test' }],
+              transports: ['websocket'],
+            },
           },
         ],
         optional: [
           {
-            id: 'synced-storage', capability: 'storage.synced', reason: 'Synchronize state when selected.',
+            id: 'synced-storage', capability: 'storage.account', reason: 'Synchronize state when selected.',
             scope: { enabled: true },
           },
         ],
@@ -41,7 +48,7 @@ async function materializePlugin(rootDir: string): Promise<void> {
 }
 
 describe('buildPluginInstallApprovalPreview', () => {
-  it('summarizes local plugin identity, source provenance, digest, and declared permissions before install', async () => {
+  it('summarizes local plugin identity, source provenance, and declared permissions before install', async () => {
     const workspaceRoot = await createTempDir('happier-plugin-install-preview-workspace-');
     const pluginRoot = await createTempDir('happier-plugin-install-preview-source-', workspaceRoot);
     await materializePlugin(pluginRoot);
@@ -82,20 +89,58 @@ describe('buildPluginInstallApprovalPreview', () => {
             locator: expect.stringContaining('happier-plugin-install-preview-source-'),
             dev: true,
             force: true,
-            trustPolicy: 'local_trusted',
+            trustPolicy: 'prompt',
             installPolicy: 'link',
           }),
           provenance: expect.objectContaining({
             sourceKind: 'path',
             manifestPath: expect.stringContaining(join('happier-plugin-install-preview-source-')),
-            manifestDigest: expect.stringMatching(/^sha256:/),
           }),
           permissions: {
-            required: ['network:https://example.test', 'filesystem.read:*'],
-            optional: ['storage.synced'],
+            required: [
+              {
+                id: 'network',
+                capability: 'network',
+                reason: 'Call the fixture API.',
+                authorizationClass: 'cooperativeDisclosure',
+                normalizedScope: {
+                  targets: [{ kind: 'fixedOrigin', origin: 'https://example.test' }],
+                  methods: ['GET'],
+                },
+              },
+              {
+                id: 'workspace',
+                capability: 'filesystem',
+                reason: 'Read the workspace.',
+                authorizationClass: 'cooperativeDisclosure',
+                normalizedScope: {
+                  locations: [{ root: 'workspace' }],
+                  access: ['delete', 'read'],
+                },
+              },
+              {
+                id: 'gateway',
+                capability: 'network.client',
+                reason: 'Maintain the gateway connection.',
+                authorizationClass: 'cooperativeDisclosure',
+                normalizedScope: {
+                  targets: [{ kind: 'fixedOrigin', origin: 'https://gateway.example.test' }],
+                  transports: ['websocket'],
+                  privateNetwork: false,
+                },
+              },
+            ],
+            optional: [{
+              id: 'synced-storage',
+              capability: 'storage.account',
+              reason: 'Synchronize state when selected.',
+              authorizationClass: 'hostResourceSelection',
+              normalizedScope: { enabled: true },
+            }],
           },
         }),
       }));
+      expect(preview).not.toHaveProperty('pluginInstall.provenance.manifestDigest');
     } finally {
       await removeTempDir(workspaceRoot);
     }

@@ -7,9 +7,10 @@ function createRegistry(
   toolAvailability: Readonly<Record<string, unknown>> = {
     when: { fact: 'plugin.enabled', operator: 'equals', value: true },
   },
+  provenance: 'external' | 'first_party' = 'external',
 ) {
   const action = {
-    provenance: 'external',
+    provenance,
     pluginId: 'acme.review.plugin',
     definition: {
       id: 'acme.review.plugin/review-start',
@@ -18,7 +19,7 @@ function createRegistry(
   return {
     contributes: {
       tools: [{
-        provenance: 'external',
+        provenance,
         pluginId: 'acme.review.plugin',
         definition: {
           id: 'review-tool',
@@ -81,9 +82,9 @@ describe('projectExecutablePluginToolCatalog', () => {
       inputHints: {
         fields: [{
           path: 'scope',
-          title: { fallback: 'Scope' },
+          title: 'Scope',
           widget: 'select',
-          options: [{ value: 'diff', label: { fallback: 'Diff' } }],
+          options: [{ value: 'diff', label: 'Diff' }],
         }],
       },
       safety: 'danger',
@@ -97,6 +98,15 @@ describe('projectExecutablePluginToolCatalog', () => {
 
   it('does not publish a tool whose target action policy is not visible', () => {
     expect(projectExecutablePluginToolCatalog(createRegistry('denied'))).toEqual([]);
+  });
+
+  it('projects a bundled declaration through the same current action and policy admission', () => {
+    const availability = {
+      when: { fact: 'plugin.enabled', operator: 'equals', value: true },
+    };
+    expect(projectExecutablePluginToolCatalog(createRegistry('visible', availability, 'first_party')))
+      .toEqual(projectExecutablePluginToolCatalog(createRegistry('visible', availability)));
+    expect(projectExecutablePluginToolCatalog(createRegistry('denied', availability, 'first_party'))).toEqual([]);
   });
 
   it('does not publish a tool whose own availability policy is not visible', () => {

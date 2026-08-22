@@ -45,7 +45,7 @@ describe('SCM hosting-provider plugin contributions', () => {
                 id: 'bitbucket',
                 provenance: 'first_party',
                 source: { kind: 'bundled' },
-                pluginId: 'happier.scm.hosting.bitbucket',
+                pluginId: 'happier.scm.forge.bitbucket',
                 definition: {
                     id: 'bitbucket',
                     title: 'Bitbucket',
@@ -58,9 +58,9 @@ describe('SCM hosting-provider plugin contributions', () => {
 
         const projection = buildPluginProjectionV2({ registry, generation: 3 });
 
-        expect(projection.familiesById.scmHostingProviders?.entriesById['happier.scm.hosting.bitbucket/bitbucket']).toEqual(
+        expect(projection.familiesById.scmHostingProviders?.entriesById['happier.scm.forge.bitbucket/bitbucket']).toEqual(
             expect.objectContaining({
-                id: 'happier.scm.hosting.bitbucket/bitbucket',
+                id: 'happier.scm.forge.bitbucket/bitbucket',
                 localId: 'bitbucket',
                 displayName: 'Bitbucket',
                 capabilities: expect.objectContaining({
@@ -76,7 +76,6 @@ describe('SCM hosting-provider plugin contributions', () => {
                     pluginId: 'acme.scm',
                     pluginRootPath: '/plugins/acme-scm',
                     manifestPath: '/plugins/acme-scm/.happier-plugin/plugin.json',
-                    manifestDigest: 'sha256:acme',
                     daemonEntryPath: null,
                     sourceSpec,
                     devDaemonEntryPath: null,
@@ -148,7 +147,6 @@ describe('SCM hosting-provider plugin contributions', () => {
                     source: { kind: 'path' },
                     pluginId: 'acme.scm.two',
                     manifestPath: '/plugins/acme-shadow/.happier-plugin/plugin.json',
-                    manifestDigest: 'sha256:shadow',
                     daemonEntryPath: null,
                     sourceSpec,
                     devDaemonEntryPath: null,
@@ -190,7 +188,6 @@ describe('SCM hosting-provider plugin contributions', () => {
                     source: { kind: 'path' },
                     pluginId: 'acme.scm',
                     manifestPath: '/plugins/acme-scm/.happier-plugin/plugin.json',
-                    manifestDigest: 'sha256:acme',
                     daemonEntryPath: null,
                     sourceSpec,
                     devDaemonEntryPath: null,
@@ -232,7 +229,7 @@ describe('SCM hosting-provider plugin contributions', () => {
                     id: 'scm.github',
                     provenance: 'first_party',
                     source: { kind: 'bundled' },
-                    pluginId: 'happier.scm.hosting.github',
+                    pluginId: 'happier.scm.forge.github',
                     definition: {
                         id: 'scm.github',
                         kind: 'github',
@@ -250,11 +247,11 @@ describe('SCM hosting-provider plugin contributions', () => {
         });
 
         expect(registry.agents).toEqual([]);
-        expect(projection.familiesById.scmHostingProviders?.entriesById['happier.scm.hosting.github/scm.github']).toEqual(
+        expect(projection.familiesById.scmHostingProviders?.entriesById['happier.scm.forge.github/scm.github']).toEqual(
             expect.objectContaining({
-                id: 'happier.scm.hosting.github/scm.github',
+                id: 'happier.scm.forge.github/scm.github',
                 localId: 'scm.github',
-                pluginId: 'happier.scm.hosting.github',
+                pluginId: 'happier.scm.forge.github',
                 kind: 'github',
                 displayName: 'GitHub',
                 capabilities: expect.objectContaining({

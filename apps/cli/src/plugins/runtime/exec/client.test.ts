@@ -360,6 +360,47 @@ describe('A.13p spawned protocol client runtime', () => {
         expect(logText).toContain('[REDACTED_PROVIDER_RESUME_ID]');
     });
 
+    it('allows an approved JSON-RPC diagnostics path whose name begins with two dots', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-spawn-client-rpc-dot-log-'));
+        tempDirs.add(root);
+        const logPath = join(root, '..build-rpc.log');
+        const shellPath = await firstExecutablePath(['/bin/sh', '/usr/bin/sh']);
+        const exec = createPluginExecService({
+            allowedExecutablePaths: [shellPath],
+            rpcLogAllowedDirectories: [root],
+        });
+        const spec = {
+            launch: {
+                kind: 'binary',
+                executablePath: shellPath,
+                args: ['-c', 'while IFS= read -r line; do printf "%s\\n" \'{"jsonrpc":"2.0","id":1,"result":{"ok":true}}\'; done'],
+            },
+            transport: {
+                kind: 'stdio',
+                framing: { kind: 'strict-lf-json' },
+                encoding: 'utf8',
+            },
+            protocol: { kind: 'json-rpc-2.0' },
+            lifecycle: {
+                diagnostics: {
+                    rpcLog: {
+                        kind: 'file',
+                        path: logPath,
+                    },
+                },
+            },
+        } satisfies ExecJsonRpcClientSpecV1;
+        const handle = await exec.spawnClient(spec);
+        try {
+            await expect(handle.client.request('child/ok', {})).resolves.toEqual({ ok: true });
+        } finally {
+            await handle.dispose();
+        }
+
+        const logStats = await stat(logPath);
+        expect(logStats.isFile()).toBe(true);
+    });
+
     it('rejects JSON-RPC diagnostics file paths outside host-approved directories', async () => {
         const root = await mkdtemp(join(tmpdir(), 'happier-spawn-client-rpc-log-reject-'));
         tempDirs.add(root);
@@ -425,6 +466,40 @@ describe('A.13p spawned protocol client runtime', () => {
                 code: 'PLUGIN_EXEC_CLIENT_PROTOCOL_ERROR',
                 stderrPreview: expect.not.stringContaining(secret),
             });
+        } finally {
+            await handle.dispose();
+        }
+    });
+
+    it('terminates the spawned process when malformed JSON fatally closes its protocol client', async () => {
+        const shellPath = await firstExecutablePath(['/bin/sh', '/usr/bin/sh']);
+        const exec = createPluginExecService({ allowedExecutablePaths: [shellPath] });
+        const handle = await exec.spawnClient({
+            launch: {
+                kind: 'binary',
+                executablePath: shellPath,
+                args: ['-c', 'while IFS= read -r line; do printf "not-json\\n"; sleep 5; done'],
+            },
+            transport: {
+                kind: 'stdio',
+                framing: { kind: 'strict-lf-json' },
+                encoding: 'utf8',
+            },
+            protocol: { kind: 'json-rpc-2.0' },
+        });
+        const exits: unknown[] = [];
+        handle.onExit((result) => exits.push(result));
+
+        try {
+            await expect(handle.client.request('child/fail', {})).rejects.toMatchObject({
+                code: 'PLUGIN_EXEC_CLIENT_PROTOCOL_ERROR',
+            });
+            await expect.poll(() => handle.status, { timeout: 1_000 }).toBe('exited');
+            await expect(handle.process.exit).resolves.toMatchObject({
+                exitCode: null,
+                signal: expect.any(String),
+            });
+            expect(exits).toHaveLength(1);
         } finally {
             await handle.dispose();
         }
@@ -910,6 +985,37 @@ describe('A.13p spawned protocol client runtime', () => {
         });
     });
 
+    it('rejects only the matching request when a newline-complete response is malformed', async () => {
+        const onFailure = vi.fn();
+        const { stdout, protocol } = createInMemoryJsonRpcProcess({ onFailure });
+
+        const malformed = protocol.client.request('child/malformed', {});
+        stdout.write('{"jsonrpc":"2.0","id":1,"result":{"payload":"unterminated}\n');
+
+        await expect(malformed).rejects.toMatchObject({
+            code: 'PLUGIN_EXEC_CLIENT_PROTOCOL_ERROR',
+        });
+
+        const after = protocol.client.request('child/after', {});
+        stdout.write('{"jsonrpc":"2.0","id":2,"result":{"alive":true}}\n');
+        await expect(after).resolves.toEqual({ alive: true });
+        expect(onFailure).not.toHaveBeenCalled();
+        protocol.dispose();
+    });
+
+    it('fatally rejects a malformed child request even when its id matches a pending host request', async () => {
+        const onFailure = vi.fn();
+        const { stdout, protocol } = createInMemoryJsonRpcProcess({ onFailure });
+
+        const pending = protocol.client.request('child/pending', {});
+        stdout.write('{"jsonrpc":"2.0","id":1,"method":"host/request","params":{"payload":"unterminated}\n');
+
+        await expect(pending).rejects.toMatchObject({
+            code: 'PLUGIN_EXEC_CLIENT_PROTOCOL_ERROR',
+        });
+        expect(onFailure).toHaveBeenCalledTimes(1);
+    });
+
     it('bounds unresolved outgoing JSON-RPC request correlation', async () => {
         const { protocol } = createInMemoryJsonRpcProcess();
         const pending = Array.from({ length: 256 }, (_, index) => (
@@ -1013,6 +1119,26 @@ describe('A.13p spawned protocol client runtime', () => {
             code: 'PLUGIN_EXEC_CLIENT_REQUEST_TIMEOUT',
         });
         protocol.dispose();
+    });
+
+    it('leaves a dispatched request pending when its timeout is explicitly disabled', async () => {
+        vi.useFakeTimers();
+        const { stdout, protocol } = createInMemoryJsonRpcProcess();
+        try {
+            let settled = false;
+            const pending = protocol.client.request('child/slow', {}, { timeoutMs: null }).finally(() => {
+                settled = true;
+            });
+
+            await vi.advanceTimersByTimeAsync(26);
+            expect(settled).toBe(false);
+
+            stdout.write('{"jsonrpc":"2.0","id":1,"result":{"ok":true}}\n');
+            await expect(pending).resolves.toEqual({ ok: true });
+        } finally {
+            protocol.dispose();
+            vi.useRealTimers();
+        }
     });
 
     it('does not write JSON-RPC requests when the request signal is already aborted', async () => {
@@ -1282,6 +1408,11 @@ describe('A.13p spawned protocol client runtime', () => {
         });
 
         await expect(handle.process.exit).rejects.toBeTruthy();
+
+        await expect(handle.client.request('after/spawn-failure', {})).rejects.toMatchObject({
+            code: 'PLUGIN_EXEC_CLIENT_EXITED',
+            message: expect.stringContaining('failed'),
+        });
 
         await expect.poll(() => handle.status).toBe('exited');
         await expect.poll(() => exitResults.length).toBe(1);

@@ -58,16 +58,19 @@ export type {
   AgentAcpAuthenticationSelection,
   AgentAcpCompletionEvidenceOutcome,
   AgentAcpExtensionContext,
+  AgentAcpInFlightSteerDefinition,
   AgentAcpModel,
   AgentAcpModelControls,
   AgentAcpModelOption,
   AgentAcpNotificationExtension,
+  AgentAcpPromptUsageDefinition,
   AgentAcpRequestExtension,
   AgentAcpRuntimeDefinition,
   AgentAcpRuntimeComposer,
   AgentAcpRuntimeExtensions,
   AgentAcpRuntimeOptions,
   AgentAcpToolUpdateContentSanitizer,
+  AgentAcpToolUpdatePolicy,
   AgentRuntimeProtocolComposers,
 } from './acp.js';
 export type {
@@ -182,6 +185,15 @@ export type {
   AgentProviderCredentialTransport,
 } from './providerBinding.js';
 export type {
+  AgentDaemonResolvedToolV1,
+  AgentDaemonRunToolResultV1,
+  AgentDaemonSpawnConnectedServiceBindingV1,
+  AgentDaemonSpawnConnectedServicesV1,
+  AgentDaemonSpawnDiagnosticV1,
+  AgentDaemonSpawnHooks,
+  AgentDaemonSpawnRuntimeSelectionV1,
+  AgentDaemonSpawnToolResolutionContextV1,
+  AgentDaemonSpawnValidationResult,
   AgentRuntimeRegistrationOptions,
   AgentSessionRunnerFactoryLocatorV1,
 } from './registration.js';
@@ -214,6 +226,8 @@ export type {
 } from './session.js';
 export type {
   AgentRuntimeSurfaces,
+  AgentRuntimeForkSurface,
+  AgentRuntimeHandoffSurface,
   AgentTerminalControlPresentation,
   AgentTerminalLaunchMetadata,
   AgentTerminalLaunchPlan,

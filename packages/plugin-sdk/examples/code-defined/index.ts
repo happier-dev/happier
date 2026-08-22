@@ -7,6 +7,7 @@ export const { manifest, activate } = definePlugin({
     actions: {
         echo: {
             title: 'Echo',
+            execution: { target: 'daemon' },
             inputSchema: {
                 type: 'object',
                 properties: { text: { type: 'string' } },

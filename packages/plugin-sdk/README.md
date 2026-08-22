@@ -6,22 +6,25 @@ builds, and the plugin testkit.
 
 ## Public SDK release posture
 
-The approved first public version is `0.1.0`. Every public path is
-**Developer Preview** until 1.0:
+The SDK has one package-level **Developer Preview** source contract. The
+workspace package remains `private: true` at `0.0.0` and is unpublished while
+the publication gates are open. No public version or released-semver policy is
+established by the current source tree, and a workspace build must not be
+presented as a published SDK.
 
-- patch releases should not intentionally break documented contracts;
-- a documented 0.x minor may include breaking changes with migration notes;
-- preview status does not waive correctness, installability, lifecycle cleanup,
-  security disclosure, examples, or documentation.
+Developer Preview is not a per-symbol stability tier. The publisher-generated
+API inventory is the exact public census and retains publication-derived
+`@since` metadata; structured deprecation remains separate. A future published
+artifact's generated `capability-matrix.json` is the availability authority for
+that exact artifact. Source exports, examples, host wiring, and source-only
+tests establish source readiness, not packed or public availability.
 
-The generated API inventory uses `preview` for author-visible symbols (apart
-from structured `deprecated` rows); it is release posture, not a per-symbol
-maturity claim. For each public family's availability and maintained proving
-consumer or explicit deferred disposition, use the generated
-`capability-matrix.json`.
-
-The workspace package remains `private: true` and version `0.0.0` while the
-publication gates are open. Do not present a workspace build as a published SDK.
+Tool and Command declarations are currently deferred for external authors.
+Both require exact packed external proof through their canonical host catalogs,
+including replacement, disable, and uninstall currentness, before their
+generated availability metadata or public docs can advertise them as usable.
+Preview status does not waive correctness, installability, lifecycle cleanup,
+security disclosure, examples, or documentation.
 
 ## Cross-plugin protocol authoring
 
@@ -205,9 +208,11 @@ import {
 export const { manifest, activate } = definePlugin({
   id: 'com.example.echo',
   version: '0.1.0',
+  entrypoints: { daemon: './dist/index.js', development: './src/index.ts' },
   actions: {
     echo: {
       title: 'Echo',
+      execution: { target: 'daemon' },
       inputSchema: defineProtocolObject({
         text: defineProtocolString({ minLength: 1 }),
       }, { policy: 'closed' }),
@@ -311,6 +316,13 @@ The exact terminal statuses are `userCancelled`, `requesterAborted`, `timedOut`,
 `sessionEnded`, `generationRetired`, `hostRestarted`, and `unavailable`. They are
 returned in the kind-specific result unions, rather than being remapped into
 legacy interaction `PluginError` codes.
+
+The host owns whether a request has a deadline at all. An interactive prompt in
+the exact current Session has none: it waits for the person and can only end in
+an answer/decision, `userCancelled`, `requesterAborted`, `generationRetired`,
+`sessionEnded`, or `unavailable`. `timedOut` is reachable only where the host
+binds a deadline, such as a present-user application invocation that carries its
+own invocation budget.
 
 `context.services.sessions.current.setDisplayTitle(title)` is the bounded,
 current-session capability for durable Session titles. Handles from

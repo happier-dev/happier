@@ -1,44 +1,26 @@
-/** @preview */
 export type { AgentContribution } from '../agents.js';
-/** @preview */
+export type { AgentDefinitionCapabilityFacts } from '../agents.js';
+export type { AgentLocalControlDeclaration } from '../agents.js';
 export type { AgentModelConfig } from '../agents.js';
-/** @preview */
 export type { AgentModelDescriptor } from '../agents.js';
-/** @preview */
 export type { AgentModelNonAcpApplyScope } from '../agents.js';
-/** @preview */
 export type { AgentModelOption } from '../agents.js';
-/** @preview */
 export type { AgentModelOptionOverrideRule } from '../agents.js';
-/** @preview */
 export type { AgentModelOptionValueId } from '../agents.js';
-/** @preview */
 export type { AgentProfile } from '../agents.js';
-/** @preview */
 export { AgentSurfaceOperationCatalogV1 } from '../agents.js';
-/** @preview */
-export { CLAUDE_EFFORT_LEVELS } from '../agents.js';
-/** @preview */
-export { CLAUDE_UNIFIED_TERMINAL_DIALOG_CHOICE_REQUEST_SOURCE } from '../agents.js';
-/** @preview */
-export { CURRENT_FLAGSHIP_CLAUDE_MODEL_ID } from '../agents.js';
-/** @preview */
-export type { ClaudeEffortLevel } from '../agents.js';
-/** @preview */
+export type { AuthoredAgentCapabilitiesV2 } from '../agents.js';
+export type { AuthoredAgentCapabilitySurfaceV2 } from '../agents.js';
+export type { AuthoredAgentSessionCapabilitiesV2 } from '../agents.js';
+export type { AuthoredAgentSessionOpenRouteV2 } from '../agents.js';
 export type { EnvironmentVariable } from '../agents.js';
-/** @preview */
 export { PluginAgentCapabilitiesV1Schema } from '../agents.js';
-/** @preview */
+export type { PluginAgentCapabilitiesV2 } from '../agents.js';
+export type { PluginAgentCapabilitySurfaceV2 } from '../agents.js';
 export type { PluginAgentDefinition } from '../definePlugin.js';
-/** @preview */
+export type { PluginAgentExecutionRunCapabilitiesV2 } from '../agents.js';
+export type { PluginAgentSessionCapabilitiesV2 } from '../agents.js';
 export type { PluginCustomAgentDeclaration } from '../definePlugin.js';
-/** @preview */
 export type { PluginHostOwnedAgentDeclaration } from '../definePlugin.js';
-/** @preview */
 export { buildAgentTargetKeyV2 } from '../agents.js';
-/** @preview */
-export { buildClaudeModelOptions } from '../agents.js';
-/** @preview */
-export { formatClaudeEffortLevelLabel } from '../agents.js';
-/** @preview */
-export { normalizeClaudeEffortLevel } from '../agents.js';
+export { projectAgentCapabilitiesV2FromDefinition } from '../agents.js';

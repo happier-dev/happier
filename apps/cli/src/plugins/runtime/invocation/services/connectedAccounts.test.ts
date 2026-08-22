@@ -1,12 +1,15 @@
 import { describe, expect, it, vi } from 'vitest';
 import type {
-    PluginConnectedAccountBindingSummary,
-    PluginConnectedAccountMaterialization,
+    ConnectedAccountMaterializationRequest,
+    ConnectedAccountBindingSummary as PluginConnectedAccountBindingSummary,
+    ConnectedAccountListedAccount as PluginConnectedAccountListedAccount,
+    ConnectedAccountMaterialization as PluginConnectedAccountMaterialization,
+    ConnectedAccountMetadataList as PluginConnectedAccountMetadataList,
     PluginConnectedAccountMaterializationKind,
-    PluginConnectedAccountMaterializationRequest,
-} from '@happier-dev/plugin-sdk/runtime';
+} from '@happier-dev/plugin-sdk/connected-accounts';
 
 import {
+    CONNECTED_ACCOUNT_METADATA_LIST_MAX_LIMIT,
     createStablePluginConnectedAccountsHost,
     type StablePluginConnectedAccountsOwner,
 } from './connectedAccounts';
@@ -62,6 +65,10 @@ function bindingSummary(): PluginConnectedAccountBindingSummary {
     return Object.freeze({
         purpose: scope.purpose,
         service: scope.serviceRefs[0]!,
+        account: Object.freeze({
+            service: scope.serviceRefs[0]!,
+            accountId: 'account-1',
+        }),
         target: Object.freeze({ kind: 'group', displayName: 'Primary upstreams' }),
     });
 }
@@ -73,11 +80,39 @@ function materialization(): PluginConnectedAccountMaterialization {
     });
 }
 
+function listedAccount(
+    overrides: Partial<PluginConnectedAccountListedAccount> = {},
+): PluginConnectedAccountListedAccount {
+    return Object.freeze({
+        account: Object.freeze({
+            service: scope.serviceRefs[0]!,
+            accountId: 'account-1',
+        }),
+        displayName: 'Primary account',
+        state: 'connected' as const,
+        connectedAccountOrigins: Object.freeze(['https://eu.example.test']),
+        connectedAccountBases: Object.freeze(['https://eu.example.test']),
+        ...overrides,
+    });
+}
+
+function metadataList(
+    overrides: Partial<PluginConnectedAccountMetadataList> = {},
+): PluginConnectedAccountMetadataList {
+    return Object.freeze({
+        status: 'complete' as const,
+        accounts: Object.freeze([listedAccount()]),
+        ...overrides,
+    });
+}
+
 function createOwner(overrides: Partial<StablePluginConnectedAccountsOwner> = {}): StablePluginConnectedAccountsOwner {
     return {
         getBinding: vi.fn(async () => bindingSummary()),
         requestSelection: vi.fn(async () => bindingSummary()),
         materialize: vi.fn(async () => materialization()),
+        listAccounts: vi.fn(async () => metadataList()),
+        materializeListedAccount: vi.fn(async () => materialization()),
         watch: vi.fn(() => Object.freeze({ dispose() {} })),
         ...overrides,
     };
@@ -113,6 +148,110 @@ describe('stable plugin Connected Accounts host', () => {
         expect(owner.materialize).toHaveBeenCalledWith(expect.objectContaining({
             request: expect.objectContaining({ kind: 'httpHeaders' }),
         }));
+    });
+
+    it('binds an immutable exact purpose subject and denies selection for managed Provider operations', async () => {
+        const owner = createOwner();
+        const { seed } = createSeed();
+        const service = createStablePluginConnectedAccountsHost(owner).bind(
+            seed,
+            [scope],
+            { exactPurposeBindingSubjectId: 'managed-provider-operation:operation-1' },
+        );
+
+        await service.getBinding(scope.purpose);
+        await service.materialize(scope.purpose, {
+            kind: 'httpHeaders',
+            origin: 'https://api.example.test',
+            headerNames: ['authorization'],
+        });
+        await expect(service.requestSelection({
+            purpose: scope.purpose,
+            reason: 'Must not mutate a captured operation binding',
+        })).rejects.toMatchObject({
+            code: 'plugin_host_access_operation_denied',
+        });
+        expect(owner.requestSelection).not.toHaveBeenCalled();
+        expect(owner.getBinding).toHaveBeenCalledWith(expect.objectContaining({
+            exactPurposeBindingSubjectId: 'managed-provider-operation:operation-1',
+        }));
+        expect(owner.materialize).toHaveBeenCalledWith(expect.objectContaining({
+            exactPurposeBindingSubjectId: 'managed-provider-operation:operation-1',
+        }));
+    });
+
+    it('forwards an expected account only as a current-binding comparison precondition', async () => {
+        const owner = createOwner();
+        const { seed } = createSeed();
+        const service = createStablePluginConnectedAccountsHost(owner).bind(seed, [scope]);
+        const expectedAccount = Object.freeze({
+            service: scope.serviceRefs[0]!,
+            accountId: 'bot:123',
+        });
+
+        await expect(service.materialize(scope.purpose, {
+            kind: 'httpHeaders',
+            origin: 'https://api.example.test',
+            headerNames: ['authorization'],
+        }, { expectedAccount })).resolves.toEqual({
+            kind: 'httpHeaders',
+            headers: { authorization: 'Bearer secret' },
+        });
+
+        expect(owner.materialize).toHaveBeenCalledWith(expect.objectContaining({
+            expectedAccount,
+        }));
+    });
+
+    it('rejects a legacy exact-account payload before it reaches the owner', async () => {
+        const owner = createOwner();
+        const { seed } = createSeed();
+        const service = createStablePluginConnectedAccountsHost(owner).bind(seed, [scope]);
+        const account = Object.freeze({
+            service: scope.serviceRefs[0]!,
+            accountId: 'bot:exact',
+        });
+        const request = {
+            kind: 'httpHeaders' as const,
+            origin: 'https://api.example.test',
+            headerNames: ['authorization'],
+        };
+        const call = Reflect.apply(service.materialize, service, [
+            scope.purpose,
+            request,
+            Object.freeze({ account }),
+        ]);
+
+        await expect(call).rejects.toMatchObject({
+            code: 'plugin_connected_account_binding_out_of_scope',
+        });
+        expect(owner.materialize).not.toHaveBeenCalled();
+    });
+
+    it('rejects a legacy exact-account payload even when a current-binding comparison is present', async () => {
+        const owner = createOwner();
+        const { seed } = createSeed();
+        const service = createStablePluginConnectedAccountsHost(owner).bind(seed, [scope]);
+        const account = Object.freeze({
+            service: scope.serviceRefs[0]!,
+            accountId: 'bot:exact',
+        });
+        const request = {
+            kind: 'httpHeaders' as const,
+            origin: 'https://api.example.test',
+            headerNames: ['authorization'],
+        };
+
+        const call = Reflect.apply(service.materialize, service, [
+            scope.purpose,
+            request,
+            Object.freeze({ expectedAccount: account, account }),
+        ]);
+
+        await expect(call).rejects.toMatchObject({
+            code: 'plugin_connected_account_binding_out_of_scope',
+        });
+        expect(owner.materialize).not.toHaveBeenCalled();
     });
 
     it('passes the existing current-session interaction owner only to explicit selection', async () => {
@@ -204,7 +343,7 @@ describe('stable plugin Connected Accounts host', () => {
     it('requires prior exact materialization-kind authority before calling the owner', async () => {
         const cases: readonly Readonly<{
             kind: PluginConnectedAccountMaterializationKind;
-            request: PluginConnectedAccountMaterializationRequest;
+            request: ConnectedAccountMaterializationRequest;
             result: PluginConnectedAccountMaterialization;
         }>[] = [
             {
@@ -270,7 +409,7 @@ describe('stable plugin Connected Accounts host', () => {
                 kindReads += 1;
                 return kindReads === 1 ? 'files' : 'environment';
             },
-        }) as unknown as PluginConnectedAccountMaterializationRequest;
+        }) as unknown as ConnectedAccountMaterializationRequest;
         const owner = createOwner({
             materialize: vi.fn(async (input) => {
                 if (input.request.kind === 'environment') {
@@ -437,7 +576,7 @@ describe('stable plugin Connected Accounts host', () => {
         expect(owner.materialize).not.toHaveBeenCalled();
     });
 
-    it('registers every materialized credential form for generation-scoped log redaction', async () => {
+    it('registers bounded reversible variants for every materialized credential form', async () => {
         const registerForRedaction = vi.fn();
         const owner = createOwner({
             materialize: vi.fn(async (input) => {
@@ -446,6 +585,7 @@ describe('stable plugin Connected Accounts host', () => {
                         kind: 'httpHeaders' as const,
                         headers: Object.freeze({
                             authorization: 'Bearer header-secret',
+                            'proxy-authorization': 'Basic dXNlcjpwYXNzd29yZA==',
                             'x-account': 'account-secret',
                         }),
                     });
@@ -467,13 +607,14 @@ describe('stable plugin Connected Accounts host', () => {
         });
         const { seed } = createSeed();
         const service = createStablePluginConnectedAccountsHost(owner, {
-            registerForRedaction,
+            registerRawForRedaction: registerForRedaction,
+            registerExactForRedaction: registerForRedaction,
         }).bind(seed, [scope]);
 
         await service.materialize(scope.purpose, {
             kind: 'httpHeaders',
             origin: 'https://api.example.test',
-            headerNames: ['authorization', 'x-account'],
+            headerNames: ['authorization', 'proxy-authorization', 'x-account'],
         });
         await service.materialize(scope.purpose, {
             kind: 'environment',
@@ -487,6 +628,11 @@ describe('stable plugin Connected Accounts host', () => {
         expect(registerForRedaction.mock.calls.map(([, value]) => value)).toEqual(
             expect.arrayContaining([
                 'Bearer header-secret',
+                'header-secret',
+                'Basic dXNlcjpwYXNzd29yZA==',
+                'dXNlcjpwYXNzd29yZA==',
+                'user:password',
+                'password',
                 'account-secret',
                 'environment-secret',
                 'file-secret',
@@ -497,7 +643,53 @@ describe('stable plugin Connected Accounts host', () => {
                 'fbfffe',
             ]),
         );
+        expect(registerForRedaction.mock.calls.map(([, value]) => value))
+            .not.toContain('user');
         expect(registerForRedaction.mock.calls.every(([registeredSeed]) => registeredSeed === seed)).toBe(true);
+    });
+
+    it.each([
+        {
+            caseName: 'malformed decoded credential syntax',
+            header: 'Basic dXNlci1vbmx5',
+            token: 'dXNlci1vbmx5',
+        },
+        {
+            caseName: 'noncanonical base64',
+            header: 'Basic dXNlcjpwYXNzd29yZA',
+            token: 'dXNlcjpwYXNzd29yZA',
+        },
+        {
+            caseName: 'non-UTF-8 decoded bytes',
+            header: 'Basic //4=',
+            token: '//4=',
+        },
+    ])('registers only the raw Basic header and token for $caseName', async ({ header, token }) => {
+        const registerRawForRedaction = vi.fn();
+        const registerExactForRedaction = vi.fn();
+        const owner = createOwner({
+            materialize: vi.fn(async () => Object.freeze({
+                kind: 'httpHeaders' as const,
+                headers: Object.freeze({ authorization: header }),
+            })),
+        });
+        const { seed } = createSeed();
+        const service = createStablePluginConnectedAccountsHost(owner, {
+            registerRawForRedaction,
+            registerExactForRedaction,
+        }).bind(seed, [scope]);
+
+        await service.materialize(scope.purpose, {
+            kind: 'httpHeaders',
+            origin: 'https://api.example.test',
+            headerNames: ['authorization'],
+        });
+
+        expect(registerRawForRedaction.mock.calls).toEqual([
+            [seed, header],
+            [seed, token],
+        ]);
+        expect(registerExactForRedaction).not.toHaveBeenCalled();
     });
 
     it('returns bounded point-in-time copies and registers redaction from those copies', async () => {
@@ -519,7 +711,8 @@ describe('stable plugin Connected Accounts host', () => {
         });
         const { seed } = createSeed();
         const service = createStablePluginConnectedAccountsHost(owner, {
-            registerForRedaction,
+            registerRawForRedaction: registerForRedaction,
+            registerExactForRedaction: registerForRedaction,
         }).bind(seed, [scope]);
 
         const headers = await service.materialize(scope.purpose, {
@@ -634,6 +827,55 @@ describe('stable plugin Connected Accounts host', () => {
         }
     });
 
+    it('rejects case-colliding producer header names before registering redaction', async () => {
+        const registerRawForRedaction = vi.fn();
+        const registerExactForRedaction = vi.fn();
+        const owner = createOwner({
+            materialize: vi.fn(async () => ({
+                kind: 'httpHeaders' as const,
+                headers: {
+                    Authorization: 'Bearer first-secret',
+                    authorization: 'Bearer second-secret',
+                },
+            })),
+        });
+        const { seed } = createSeed();
+        const service = createStablePluginConnectedAccountsHost(owner, {
+            registerRawForRedaction,
+            registerExactForRedaction,
+        }).bind(seed, [scope]);
+
+        await expect(service.materialize(scope.purpose, {
+            kind: 'httpHeaders',
+            origin: 'https://api.example.test',
+            headerNames: ['authorization'],
+        })).rejects.toMatchObject({
+            code: 'plugin_connected_account_binding_out_of_scope',
+        });
+        expect(registerRawForRedaction).not.toHaveBeenCalled();
+        expect(registerExactForRedaction).not.toHaveBeenCalled();
+    });
+
+    it('preserves one allowed producer header casing variant', async () => {
+        const owner = createOwner({
+            materialize: vi.fn(async () => ({
+                kind: 'httpHeaders' as const,
+                headers: { Authorization: 'Bearer secret' },
+            })),
+        });
+        const { seed } = createSeed();
+        const service = createStablePluginConnectedAccountsHost(owner).bind(seed, [scope]);
+
+        await expect(service.materialize(scope.purpose, {
+            kind: 'httpHeaders',
+            origin: 'https://api.example.test',
+            headerNames: ['authorization'],
+        })).resolves.toEqual({
+            kind: 'httpHeaders',
+            headers: { Authorization: 'Bearer secret' },
+        });
+    });
+
     it('rechecks generation currentness after snapshotting a crafted producer result', async () => {
         const invocation = createSeed();
         const result = Object.defineProperty({
@@ -674,12 +916,12 @@ describe('stable plugin Connected Accounts host', () => {
         const invocation = createSeed();
         const service = createStablePluginConnectedAccountsHost(owner)
             .bind(invocation.seed, [scope]);
-
         const pending = service.materialize(scope.purpose, {
             kind: 'httpHeaders',
             origin: 'https://api.example.test',
             headerNames: ['authorization'],
         });
+        void pending.catch(() => undefined);
         await vi.waitFor(() => expect(owner.materialize).toHaveBeenCalledOnce());
         invocation.retire();
         resolveMaterialization(materialization());
@@ -825,5 +1067,237 @@ describe('stable plugin Connected Accounts host', () => {
         host.retire();
 
         expect(dispose).toHaveBeenCalledOnce();
+    });
+
+    it('projects a bounded purpose-scoped metadata listing and clamps its requested limit', async () => {
+        const owner = createOwner();
+        const { seed } = createSeed();
+        const service = createStablePluginConnectedAccountsHost(owner).bind(seed, [scope]);
+
+        await expect(service.listAccounts({ purpose: scope.purpose, limit: 10_000 }))
+            .resolves.toEqual({
+                status: 'complete',
+                accounts: [{
+                    account: { service: scope.serviceRefs[0]!, accountId: 'account-1' },
+                    displayName: 'Primary account',
+                    state: 'connected',
+                    connectedAccountOrigins: ['https://eu.example.test'],
+                    connectedAccountBases: ['https://eu.example.test'],
+                }],
+            });
+        expect(owner.listAccounts).toHaveBeenCalledWith(expect.objectContaining({
+            purpose: {
+                consumer: { pluginId: 'acme.consumer', localId: 'run' },
+                purpose: scope.purpose,
+            },
+            serviceRefs: scope.serviceRefs,
+            limit: CONNECTED_ACCOUNT_METADATA_LIST_MAX_LIMIT,
+        }));
+    });
+
+    it('preserves an explicitly truncated listing rather than reporting a complete result', async () => {
+        const owner = createOwner({
+            listAccounts: vi.fn(async () => metadataList({ status: 'truncated' })),
+        });
+        const { seed } = createSeed();
+        const service = createStablePluginConnectedAccountsHost(owner).bind(seed, [scope]);
+
+        await expect(service.listAccounts({ purpose: scope.purpose }))
+            .resolves.toMatchObject({ status: 'truncated' });
+    });
+
+    it('denies a listing for an undeclared purpose and for a select-only scope', async () => {
+        const owner = createOwner();
+        const { seed } = createSeed();
+        const service = createStablePluginConnectedAccountsHost(owner).bind(seed, [
+            { ...scope, purpose: 'select_only', operations: Object.freeze(['select' as const]) },
+        ]);
+
+        await expect(service.listAccounts({ purpose: scope.purpose })).rejects.toMatchObject({
+            code: 'plugin_connected_account_purpose_undeclared',
+        });
+        await expect(service.listAccounts({ purpose: 'select_only' })).rejects.toMatchObject({
+            code: 'plugin_host_access_operation_denied',
+        });
+        expect(owner.listAccounts).not.toHaveBeenCalled();
+    });
+
+    it('rejects an owner listing that escapes the authorized service scope', async () => {
+        const owner = createOwner({
+            listAccounts: vi.fn(async () => metadataList({
+                accounts: Object.freeze([listedAccount({
+                    account: Object.freeze({
+                        service: Object.freeze({ pluginId: 'acme.accounts', localId: 'anthropic' }),
+                        accountId: 'account-2',
+                    }),
+                })]),
+            })),
+        });
+        const { seed } = createSeed();
+        const service = createStablePluginConnectedAccountsHost(owner).bind(seed, [scope]);
+
+        await expect(service.listAccounts({ purpose: scope.purpose })).rejects.toMatchObject({
+            code: 'plugin_connected_account_binding_out_of_scope',
+        });
+    });
+
+    it('rejects a listed origin that is not an exact credential-free HTTPS origin', async () => {
+        const owner = createOwner({
+            listAccounts: vi.fn(async () => metadataList({
+                accounts: Object.freeze([listedAccount({
+                    connectedAccountOrigins: Object.freeze(['https://user:secret@eu.example.test']),
+                    connectedAccountBases: Object.freeze(['https://user:secret@eu.example.test']),
+                })]),
+            })),
+        });
+        const { seed } = createSeed();
+        const service = createStablePluginConnectedAccountsHost(owner).bind(seed, [scope]);
+
+        await expect(service.listAccounts({ purpose: scope.purpose })).rejects.toMatchObject({
+            code: 'plugin_connected_account_binding_out_of_scope',
+        });
+    });
+
+    it('projects a path-prefixed configured base alongside the origin HostAccess governs', async () => {
+        const owner = createOwner({
+            listAccounts: vi.fn(async () => metadataList({
+                accounts: Object.freeze([listedAccount({
+                    connectedAccountOrigins: Object.freeze(['https://dev.azure.test']),
+                    connectedAccountBases: Object.freeze(['https://dev.azure.test/acme']),
+                })]),
+            })),
+        });
+        const { seed } = createSeed();
+        const service = createStablePluginConnectedAccountsHost(owner).bind(seed, [scope]);
+
+        await expect(service.listAccounts({ purpose: scope.purpose }))
+            .resolves.toMatchObject({
+                accounts: [{
+                    connectedAccountOrigins: ['https://dev.azure.test'],
+                    connectedAccountBases: ['https://dev.azure.test/acme'],
+                }],
+            });
+    });
+
+    it.each([
+        [Object.freeze(['https://elsewhere.test/acme'])],
+        [Object.freeze(['https://dev.azure.test/acme?project=secret'])],
+        [Object.freeze(['https://dev.azure.test/acme/'])],
+        [Object.freeze([] as readonly string[])],
+    ])('rejects a listed base the admitted origins do not account for (%s)', async (bases) => {
+        const owner = createOwner({
+            listAccounts: vi.fn(async () => metadataList({
+                accounts: Object.freeze([listedAccount({
+                    connectedAccountOrigins: Object.freeze(['https://dev.azure.test']),
+                    connectedAccountBases: bases,
+                })]),
+            })),
+        });
+        const { seed } = createSeed();
+        const service = createStablePluginConnectedAccountsHost(owner).bind(seed, [scope]);
+
+        await expect(service.listAccounts({ purpose: scope.purpose })).rejects.toMatchObject({
+            code: 'plugin_connected_account_binding_out_of_scope',
+        });
+    });
+
+    it('materializes one exact listed account without turning it into a selector', async () => {
+        const owner = createOwner();
+        const { seed } = createSeed();
+        const service = createStablePluginConnectedAccountsHost(owner).bind(seed, [scope]);
+
+        await expect(service.materializeListedAccount({
+            purpose: scope.purpose,
+            account: { service: scope.serviceRefs[0]!, accountId: 'account-1' },
+            materialization: {
+                kind: 'httpHeaders',
+                origin: 'https://eu.example.test',
+                headerNames: ['authorization'],
+            },
+        })).resolves.toEqual(materialization());
+
+        expect(owner.materializeListedAccount).toHaveBeenCalledWith(expect.objectContaining({
+            account: { service: scope.serviceRefs[0]!, accountId: 'account-1' },
+            request: expect.objectContaining({ kind: 'httpHeaders' }),
+        }));
+        expect(owner.materialize).not.toHaveBeenCalled();
+        expect(owner.getBinding).not.toHaveBeenCalled();
+    });
+
+    it('rejects an exact-listed materialization outside the authorized service scope', async () => {
+        const owner = createOwner();
+        const { seed } = createSeed();
+        const service = createStablePluginConnectedAccountsHost(owner).bind(seed, [scope]);
+
+        await expect(service.materializeListedAccount({
+            purpose: scope.purpose,
+            account: {
+                service: { pluginId: 'acme.accounts', localId: 'anthropic' },
+                accountId: 'account-2',
+            },
+            materialization: { kind: 'environment', keys: ['TOKEN'] },
+        })).rejects.toMatchObject({
+            code: 'plugin_connected_account_binding_out_of_scope',
+        });
+        expect(owner.materializeListedAccount).not.toHaveBeenCalled();
+    });
+
+    it('requires prior materialization-kind authority for an exact-listed materialization', async () => {
+        const owner = createOwner();
+        const { seed } = createSeed();
+        const service = createStablePluginConnectedAccountsHost(owner).bind(seed, [
+            { ...scope, materializationKinds: Object.freeze(['environment' as const]) },
+        ]);
+
+        await expect(service.materializeListedAccount({
+            purpose: scope.purpose,
+            account: { service: scope.serviceRefs[0]!, accountId: 'account-1' },
+            materialization: {
+                kind: 'httpHeaders',
+                origin: 'https://eu.example.test',
+                headerNames: ['authorization'],
+            },
+        })).rejects.toMatchObject({
+            code: 'plugin_host_access_operation_denied',
+        });
+        expect(owner.materializeListedAccount).not.toHaveBeenCalled();
+    });
+
+    it('registers redaction for an exact-listed materialization result', async () => {
+        const registerRawForRedaction = vi.fn();
+        const registerExactForRedaction = vi.fn();
+        const owner = createOwner();
+        const { seed } = createSeed();
+        const service = createStablePluginConnectedAccountsHost(owner, {
+            registerRawForRedaction,
+            registerExactForRedaction,
+        }).bind(seed, [scope]);
+
+        await service.materializeListedAccount({
+            purpose: scope.purpose,
+            account: { service: scope.serviceRefs[0]!, accountId: 'account-1' },
+            materialization: {
+                kind: 'httpHeaders',
+                origin: 'https://eu.example.test',
+                headerNames: ['authorization'],
+            },
+        });
+
+        expect(registerRawForRedaction).toHaveBeenCalledWith(seed, 'Bearer secret');
+    });
+
+    it('fails a listing whose invocation retires while the owner is pending', async () => {
+        const invocation = createSeed();
+        const owner = createOwner({
+            listAccounts: vi.fn(async () => {
+                invocation.retire();
+                return metadataList();
+            }),
+        });
+        const service = createStablePluginConnectedAccountsHost(owner).bind(invocation.seed, [scope]);
+
+        await expect(service.listAccounts({ purpose: scope.purpose })).rejects.toMatchObject({
+            code: 'plugin_final_generation_retired',
+        });
     });
 });

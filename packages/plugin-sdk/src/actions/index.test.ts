@@ -172,7 +172,24 @@ function actionServiceProtocolTypeSpecifiers(): readonly string[] {
         .sort();
 }
 
+function definePluginActionDeclarationSource(): string {
+    return readFileSync(fileURLToPath(new URL('../definePlugin.ts', import.meta.url)), 'utf8');
+}
+
 describe('ActionsService source contract', () => {
+    it('keeps Action declaration field projections rooted in the public ActionContribution type', () => {
+        const declarationSource = definePluginActionDeclarationSource();
+        const publicActionsSource = readFileSync(fileURLToPath(new URL('./index.public.ts', import.meta.url)), 'utf8');
+
+        expect(publicActionsSource).toContain("export type { ActionContribution } from './service.js';");
+        expect(declarationSource).toContain(
+            "import type { ActionContribution as PublicActionContribution } from './actions/service.js';",
+        );
+        expect(declarationSource).toContain("inputHints?: NonNullable<PublicActionContribution['inputHints']>;");
+        expect(declarationSource).toContain("availability?: NonNullable<PublicActionContribution['availability']>;");
+        expect(declarationSource).not.toContain('PluginActionManifestContribution');
+    });
+
     it('projects the exact strict execution-origin validator through /actions', () => {
         expect(PluginMachineExecutionOriginV1Schema)
             .toBe(canonicalPluginMachineExecutionOriginV1Schema);

@@ -1,4 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { definePlugin } from '@happier-dev/plugin-sdk';
+import { defineContributionProtocol } from '@happier-dev/plugin-sdk/contributions';
+import { defineProtocolObject } from '@happier-dev/plugin-sdk/protocol';
 
 import { BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS } from '../sources/generatedBundledPlugins';
 import { loadBundledPluginLocators, type BundledPluginLocator } from './locators';
@@ -16,7 +19,6 @@ function locator(overrides: Partial<BundledPluginLocator> = {}): BundledPluginLo
             contributes: {},
         },
         manifestPath: 'bundled:happier.provider.fixture',
-        manifestDigest: 'bundled:@happier-dev/plugins-fixture@1.0.0',
         daemonEntryPath: null,
         sourceSpec: {
             kind: 'bundled',
@@ -40,6 +42,37 @@ describe('bundled plugin locators', () => {
         ]);
     });
 
+    it('retains exact bundled target point refs outside the canonical JSON manifest', () => {
+        const target = definePlugin({
+            id: 'happier.provider.fixture',
+            version: '1.0.0',
+            contributionPoints: {
+                providers: defineContributionProtocol({
+                    id: 'fixture-provider',
+                    version: 1,
+                    operations: {
+                        connect: {
+                            required: true,
+                            input: { kind: 'contributorDefined' },
+                            resultSchema: defineProtocolObject({}, { policy: 'closed' }),
+                            action: { surface: 'plugin', dangerLevel: 'safe' },
+                        },
+                    },
+                }).point(),
+            },
+        });
+
+        const [loaded] = loadBundledPluginLocators([locator({ manifest: target.manifest })]);
+
+        expect(loaded?.semanticPointRefs?.[0]).toBe(target.contributionPoints.providers);
+        expect(loaded?.semanticPointRefs?.[0]?.semanticCarrier).toBe(
+            target.contributionPoints.providers.semanticCarrier,
+        );
+        expect(Object.getOwnPropertySymbols(target.manifest.contributes.pluginContributionPoints)).toEqual([]);
+        expect(loaded?.manifest.contributes.pluginContributionPoints[0]).not.toHaveProperty('semanticCarrier');
+        expect(JSON.stringify(loaded?.manifest)).not.toContain('semanticCarrier');
+    });
+
     it('rejects a locator whose daemon binding disagrees with the ingested manifest', () => {
         expect(() => loadBundledPluginLocators([
             locator({ daemonEntryPath: '@happier-dev/plugins-fixture' }),
@@ -52,17 +85,53 @@ describe('bundled plugin locators', () => {
         );
     });
 
-    it('keeps the executable OpenAI Voice manifest and generated daemon locator aligned', () => {
-        const openAiLocator = BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS.find(
-            ({ pluginId }) => pluginId === 'happier.voice.openai',
+    it.each([
+        ['happier.voice.openai', '@happier-dev/plugins-openai'],
+        ['happier.voice.elevenlabs', null],
+    ])('keeps the %s manifest and generated daemon locator aligned', (
+        pluginId,
+        daemonEntryPath,
+    ) => {
+        const locator = BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS.find(
+            (candidate) => candidate.pluginId === pluginId,
         );
 
-        expect(openAiLocator).toBeDefined();
-        expect(loadBundledPluginLocators([openAiLocator!])).toEqual([
+        expect(locator).toBeDefined();
+        expect(loadBundledPluginLocators([locator!])).toEqual([
             expect.objectContaining({
-                pluginId: 'happier.voice.openai',
-                daemonEntryPath: '@happier-dev/plugins-openai',
+                pluginId,
+                daemonEntryPath,
             }),
         ]);
     });
+
+    // The four forge plugins are activated under the `happier.scm.forge.*`
+    // identity. The bundled locator table is generated from their manifests, so
+    // a source-only id change would leave the daemon resolving an id no
+    // manifest owns; asserting both halves here catches that split directly.
+    it.each([
+        'happier.scm.forge.github',
+        'happier.scm.forge.gitlab',
+        'happier.scm.forge.bitbucket',
+        'happier.scm.forge.azure-devops',
+    ])('activates %s under its forge identity', (pluginId) => {
+        const locator = BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS.find(
+            (candidate) => candidate.pluginId === pluginId,
+        );
+
+        expect(locator).toBeDefined();
+        expect(locator!.manifest).toMatchObject({ id: pluginId });
+        expect(loadBundledPluginLocators([locator!])).toEqual([
+            expect.objectContaining({ pluginId }),
+        ]);
+    });
+
+    it('retains no forge locator under the retired hosting identity', () => {
+        expect(
+            BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS
+                .filter((candidate) => candidate.pluginId.startsWith('happier.scm.hosting.'))
+                .map((candidate) => candidate.pluginId),
+        ).toEqual([]);
+    });
+
 });

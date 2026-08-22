@@ -2,6 +2,7 @@ import {
     createCatalogHostSessionRuntimeConfig,
     createCatalogHostSessionRuntimePlan,
 } from '@/agent/runtime/session/loop/catalogPlan';
+import type { HostSessionRuntimeFactoryResult } from '@/agent/runtime/session/loop/factoryResult';
 import type {
     HostRuntimeReplacementLifecycle,
     HostSessionRuntimeConfig,
@@ -45,10 +46,12 @@ import {
 } from '@happier-dev/protocol';
 import { resolveBackendTargetFromSessionMetadata } from '@/session/backendTargets/resolveBackendTargetFromSessionMetadata';
 import type {
-    AgentSessionHostServices,
-} from '@happier-dev/plugin-sdk/agent-runtime';
-import type { AgentSessionRuntimeEventV1 } from '@happier-dev/protocol/runtime';
+  AgentSessionHostServices,
+  AgentSessionModelsSnapshot,
+  AgentSessionModelsSource,
+} from '@happier-dev/plugin-sdk/agents/runtime';
 import type { NativeForkSource } from '@/session/shared/spawnSessionContract';
+import type { ProviderBindingLaunchHandoffV1 } from '@/plugins/runtime/providerBindings/handoff';
 import { logger } from '@/ui/logger';
 import {
     readReleasedStartupOverridesCacheV1,
@@ -77,18 +80,29 @@ import {
     buildPluginSessionLaunchParams,
 } from './sessionLaunch';
 
-type AgentSessionModelsSource = Parameters<AgentSessionHostServices['models']['bind']>[0];
-type AgentSessionModelsSnapshot = ReturnType<AgentSessionModelsSource['read']>;
-
 type NativeAgentSessionOpenIntent =
     | Readonly<{ kind: 'create' }>
     | Readonly<{ kind: 'resume'; providerSessionId: string; importHistory: boolean }>
     | Readonly<{ kind: 'fork'; source: NativeForkSource }>;
 
+type NativeAgentSessionRuntimeCreation = Readonly<{
+    operations: PluginRuntimeHookOperations;
+    admittedProviderBindingHandoff?: ProviderBindingLaunchHandoffV1 | null;
+}>;
+
 type NativeAgentSessionRuntimeCreate = (
     intent: NativeAgentSessionOpenIntent,
     hostRuntime: HostSessionRuntimeFactoryParams,
-) => PluginRuntimeHookOperations | Promise<PluginRuntimeHookOperations>;
+) => PluginRuntimeHookOperations
+    | NativeAgentSessionRuntimeCreation
+    | Promise<PluginRuntimeHookOperations | NativeAgentSessionRuntimeCreation>;
+
+function normalizeNativeAgentSessionRuntimeCreation(
+    created: PluginRuntimeHookOperations | NativeAgentSessionRuntimeCreation,
+): NativeAgentSessionRuntimeCreation {
+    if ('operations' in created) return created;
+    return { operations: created };
+}
 
 function normalizeNonEmptyString(value: unknown): string | null {
     if (typeof value !== 'string') return null;
@@ -96,40 +110,38 @@ function normalizeNonEmptyString(value: unknown): string | null {
     return trimmed.length > 0 ? trimmed : null;
 }
 
-function resolveNativeAgentVendorResumeIdField(
-    agent: ResolvedAgentContribution,
-    policyAgentId: string,
-): string | null {
-    const definition = agent.richDefinition?.definition;
-    if (definition && typeof definition === 'object' && !Array.isArray(definition)) {
-        const core = (definition as Readonly<Record<string, unknown>>).core;
-        if (core && typeof core === 'object' && !Array.isArray(core)) {
-            const resume = (core as Readonly<Record<string, unknown>>).resume;
-            if (resume && typeof resume === 'object' && !Array.isArray(resume)) {
-                const declared = normalizeNonEmptyString(
-                    (resume as Readonly<Record<string, unknown>>).vendorResumeIdField,
-                );
-                if (declared) return declared;
-            }
-        }
-    }
-
+/**
+ * The catalog-declared flat `<vendor>SessionId` slot, which exists for bundled
+ * Agents only.
+ *
+ * `null` is the normal answer for a contributed Agent and no longer means its
+ * native id is dropped: the identity subscription publishes the id without a
+ * flat key and the session-state binding routes it to the agent-agnostic
+ * runtime-descriptor slot, which is what the resume readers consult.
+ *
+ * (A previous revision also probed `richDefinition.definition.core.resume`.
+ * `richDefinition.definition` is a strict `PluginAgentContributionV2` for both
+ * provenances and declares no `core`, so that branch could never fire.)
+ */
+function resolveNativeAgentVendorResumeIdField(policyAgentId: string): string | null {
     const bundledAgentId = normalizeBuiltInAgentId(policyAgentId);
     if (!bundledAgentId) return null;
-    return normalizeNonEmptyString(getAgentResumeConfig(bundledAgentId).vendorResumeIdField);
+    return normalizeNonEmptyString(getAgentResumeConfig(bundledAgentId)?.vendorResumeIdField);
 }
 
 function bindReplaceableNativeAgentSessionOperations(params: Readonly<{
-    initialOperations: PluginRuntimeHookOperations;
-    recreateOperations?: (intent: RuntimeTurnSessionOpenIntent) => Promise<PluginRuntimeHookOperations>;
+    initialRuntime: NativeAgentSessionRuntimeCreation;
+    recreateOperations?: (
+        intent: RuntimeTurnSessionOpenIntent,
+    ) => Promise<NativeAgentSessionRuntimeCreation>;
 }>): PluginRuntimeHookOperations & Readonly<{
     setRuntimeReplacementLifecycle?: (lifecycle: HostRuntimeReplacementLifecycle) => void;
 }> {
     if (!params.recreateOperations) {
-        return params.initialOperations;
+        return params.initialRuntime.operations;
     }
 
-    let currentOperations = params.initialOperations;
+    let currentOperations = params.initialRuntime.operations;
     const hasRollbackConversation = currentOperations.rollbackConversation !== undefined;
     const hasRefreshGoal = currentOperations.refreshGoal !== undefined;
     const hasSetGoal = currentOperations.setGoal !== undefined;
@@ -140,19 +152,16 @@ function bindReplaceableNativeAgentSessionOperations(params: Readonly<{
     const hasConsumeUsageLimitResetCredit = currentOperations.consumeUsageLimitResetCredit !== undefined;
     const hasInterruptPendingInputAndRun =
         currentOperations.interruptPendingInputAndRun !== undefined;
-    const hasCanonicalAgentSessionEventProducer =
-        currentOperations.subscribeCanonicalAgentSessionEvents !== undefined;
     let runtimeClosed = false;
     let runtimeBindingEpoch = 0;
+    let stableRuntimeOperations: PluginRuntimeHookOperations | null = null;
     let replacementLifecycle: HostRuntimeReplacementLifecycle | null = null;
     const runtimeEventHandlers = new Set<RuntimeTurnMessageHandler>();
     let runtimeEventUnsubscribe: (() => void) | null = null;
-    const canonicalEventHandlers = new Set<(event: AgentSessionRuntimeEventV1) => void>();
-    let canonicalEventUnsubscribe: (() => void) | null = null;
     let promptAcceptedHandler: PluginRuntimePromptAcceptedHandler | null = null;
     let promptDeliveryOutcomeHandler: ((outcome: PluginRuntimePromptDeliveryOutcome) => void) | null = null;
     let promptTerminallyRejectedHandler: PluginRuntimePromptAcceptedHandler | null = null;
-    const hasModelsSource = params.initialOperations.models !== undefined;
+    const hasModelsSource = params.initialRuntime.operations.models !== undefined;
     const modelSubscribers = new Set<(snapshot: AgentSessionModelsSnapshot) => void>();
     let modelSourceUnsubscribe: ReturnType<AgentSessionModelsSource['subscribe']> | null = null;
     let modelSnapshot: AgentSessionModelsSnapshot = Object.freeze({ models: null });
@@ -221,26 +230,10 @@ function bindReplaceableNativeAgentSessionOperations(params: Readonly<{
         });
     };
 
-    const detachCanonicalEvents = (): void => {
-        const unsubscribe = canonicalEventUnsubscribe;
-        canonicalEventUnsubscribe = null;
-        unsubscribe?.();
-    };
-
-    const attachCanonicalEvents = (): void => {
-        detachCanonicalEvents();
-        if (canonicalEventHandlers.size === 0 || !currentOperations.subscribeCanonicalAgentSessionEvents) return;
-        const bindingEpoch = runtimeBindingEpoch;
-        canonicalEventUnsubscribe = currentOperations.subscribeCanonicalAgentSessionEvents((event) => {
-            if (runtimeClosed || bindingEpoch !== runtimeBindingEpoch) return;
-            for (const handler of canonicalEventHandlers) handler(event);
-        });
-    };
-
     const detachRuntimeSources = (): void => {
         let firstError: unknown;
         let hasError = false;
-        for (const detach of [detachRuntimeEvents, detachCanonicalEvents, detachModelSource]) {
+        for (const detach of [detachRuntimeEvents, detachModelSource]) {
             try {
                 detach();
             } catch (error) {
@@ -274,11 +267,6 @@ function bindReplaceableNativeAgentSessionOperations(params: Readonly<{
     };
 
     const reapplyRuntimeHandlers = (): void => {
-        if (canonicalEventHandlers.size > 0
-            && hasCanonicalAgentSessionEventProducer
-            && !currentOperations.subscribeCanonicalAgentSessionEvents) {
-            throw new Error('Recreated plugin session runtime dropped its activated canonical Activity producer');
-        }
         if (promptAcceptedHandler && !currentOperations.setOnPromptAcceptedByProvider) {
             throw new Error('Recreated plugin session runtime dropped its provider-acceptance seam after the host registered a provider-acceptance handler');
         }
@@ -290,17 +278,22 @@ function bindReplaceableNativeAgentSessionOperations(params: Readonly<{
 
     const recreateClosedRuntime = async (intent: RuntimeTurnSessionOpenIntent): Promise<boolean> => {
         if (!runtimeClosed) return false;
-        const nextOperations = await params.recreateOperations?.(intent);
-        if (!nextOperations) return false;
-        currentOperations = nextOperations;
-        runtimeBindingEpoch += 1;
+        const nextRuntime = await params.recreateOperations?.(intent);
+        if (!nextRuntime) return false;
+        const nextOperations = nextRuntime.operations;
         try {
+            if (nextRuntime.admittedProviderBindingHandoff) {
+                await replacementLifecycle?.onSuccessorProviderBindingAdmitted?.(
+                    nextRuntime.admittedProviderBindingHandoff,
+                );
+            }
+            currentOperations = nextOperations;
+            runtimeBindingEpoch += 1;
             reapplyRuntimeHandlers();
             await replacementLifecycle?.onSuccessorBound();
             runtimeClosed = false;
             if (hasModelsSource) attachModelSource();
             attachRuntimeEvents();
-            attachCanonicalEvents();
             return true;
         } catch (error) {
             runtimeBindingEpoch += 1;
@@ -310,35 +303,16 @@ function bindReplaceableNativeAgentSessionOperations(params: Readonly<{
                 // Preserve the binding failure while still disposing the rejected successor.
             }
             runtimeClosed = true;
-            await currentOperations.resetOrDisposeRuntime().catch(() => undefined);
+            await nextOperations.resetOrDisposeRuntime().catch(() => undefined);
             throw error;
         }
     };
 
-    return Object.freeze({
+    stableRuntimeOperations = Object.freeze({
         setRuntimeReplacementLifecycle(lifecycle: HostRuntimeReplacementLifecycle) {
             replacementLifecycle = lifecycle;
         },
         ...(stableModels ? { models: stableModels } : {}),
-        ...(hasCanonicalAgentSessionEventProducer
-            ? {
-                subscribeCanonicalAgentSessionEvents(handler: (event: AgentSessionRuntimeEventV1) => void) {
-                    canonicalEventHandlers.add(handler);
-                    try {
-                        if (canonicalEventHandlers.size === 1) attachCanonicalEvents();
-                    } catch (error) {
-                        canonicalEventHandlers.delete(handler);
-                        throw error;
-                    }
-                    return () => {
-                        canonicalEventHandlers.delete(handler);
-                        if (canonicalEventHandlers.size === 0) {
-                            detachCanonicalEvents();
-                        }
-                    };
-                },
-            }
-            : {}),
         get permissionCapability() {
             return currentOperations.permissionCapability;
         },
@@ -357,6 +331,7 @@ function bindReplaceableNativeAgentSessionOperations(params: Readonly<{
         supportsInFlightSteer: () => currentOperations.supportsInFlightSteer?.() ?? false,
         isTurnInFlight: () => currentOperations.isTurnInFlight?.() ?? false,
         canSteerPrompt: () => currentOperations.canSteerPrompt?.() ?? false,
+        canInterruptForPendingInput: () => currentOperations.canInterruptForPendingInput?.() ?? true,
         notifyPromptQueuedDuringTurn: () => currentOperations.notifyPromptQueuedDuringTurn?.(),
         async applyConfigDeltaInFlight(
             delta: Parameters<PluginRuntimeApplyConfigDeltaInFlight>[0],
@@ -574,6 +549,7 @@ function bindReplaceableNativeAgentSessionOperations(params: Readonly<{
             }
         },
     });
+    return stableRuntimeOperations;
 }
 
 export function resolvePublicSessionModelSelection(params: Readonly<{
@@ -787,10 +763,9 @@ function createNativeAgentDeferredStartupConfig(params: Readonly<{
                     launchControlMetadata: opts.launchControlMetadata,
                     existingSessionId: normalizeOptionalString(opts.existingSessionId) ?? undefined,
                     sessionAttachFilePath: normalizeOptionalString(opts.sessionAttachFilePath) ?? undefined,
-                    allowOfflineStub: true,
                     startupSideEffectsOrder: 'persist-first',
-                    onBackgroundStartFailure: (error) => {
-                        logger.debug(`${timingLogPrefix} Background attach failed (non-fatal)`, error);
+                    onBackgroundStartFailure: () => {
+                        logger.debug(`${timingLogPrefix} Deferred Session startup failed`);
                     },
                 });
             },
@@ -878,6 +853,9 @@ export async function createPluginSessionRuntimePlan(params: Readonly<{
                 displayName,
                 flavor: params.backend.id,
                 policyAgentId,
+                providerRequirements:
+                    params.agent.richDefinition?.definition
+                        .providerRequirements,
                 ...(params.agent.catalogEntry?.runtimeActivityApplicability !== undefined
                     ? { runtimeActivityApplicability: params.agent.catalogEntry.runtimeActivityApplicability }
                     : {}),
@@ -912,7 +890,8 @@ export async function createNativeAgentHostSessionRuntimePlan(params: Readonly<{
     createSessionRuntime: NativeAgentSessionRuntimeCreate;
     sessionInput: PluginSessionBindingInput;
     registeredAgentIdentity?: RegisteredExternalAgentIdentity;
-    daemonAgentRuntimeCarrierRetirementSignal?: AbortSignal;
+    isMediatorPluginCurrent?: (pluginId: string) => boolean;
+    isMediatorContributionCurrent?: HostSessionRuntimeConfig['isMediatorContributionCurrent'];
     agentSessionRealtimeVoiceAuthority?:
         HostSessionRuntimeConfig['agentSessionRealtimeVoiceAuthority'];
 }>): Promise<HostSessionRuntimePlan> {
@@ -929,7 +908,7 @@ export async function createNativeAgentHostSessionRuntimePlan(params: Readonly<{
         footerName: displayName,
         accentColor: 'cyan',
     });
-    const providerSessionMetadataKey = resolveNativeAgentVendorResumeIdField(params.agent, policyAgentId);
+    const providerSessionMetadataKey = resolveNativeAgentVendorResumeIdField(policyAgentId);
 
     return createCatalogHostSessionRuntimePlan({
         agentId: params.backend.id,
@@ -940,17 +919,20 @@ export async function createNativeAgentHostSessionRuntimePlan(params: Readonly<{
                 displayName,
                 flavor: params.backend.id,
                 policyAgentId,
+                providerRequirements:
+                    params.agent.richDefinition?.definition
+                        .providerRequirements,
                 ...(params.agentSessionRealtimeVoiceAuthority
                     ? {
                         agentSessionRealtimeVoiceAuthority:
                             params.agentSessionRealtimeVoiceAuthority,
                     }
                     : {}),
-                ...(params.daemonAgentRuntimeCarrierRetirementSignal
-                    ? {
-                        daemonAgentRuntimeCarrierRetirementSignal:
-                            params.daemonAgentRuntimeCarrierRetirementSignal,
-                    }
+                ...(params.isMediatorPluginCurrent
+                    ? { isMediatorPluginCurrent: params.isMediatorPluginCurrent }
+                    : {}),
+                ...(params.isMediatorContributionCurrent
+                    ? { isMediatorContributionCurrent: params.isMediatorContributionCurrent }
                     : {}),
                 ...createNativeAgentDeferredStartupConfig({
                     backend: params.backend,
@@ -964,25 +946,41 @@ export async function createNativeAgentHostSessionRuntimePlan(params: Readonly<{
                 formatPromptErrorMessage: (error) => `Error: ${error instanceof Error ? error.message : String(error)}`,
                 ...(providerSessionMetadataKey ? { providerSessionMetadataKey } : {}),
                 createNativeRuntime: async (runtimeParams) => {
-                    const initialOperations = await params.createSessionRuntime(
-                        resolveInitialNativeAgentSessionOpenIntent(params.sessionInput),
-                        runtimeParams,
+                    const initialRuntime = normalizeNativeAgentSessionRuntimeCreation(
+                        await params.createSessionRuntime(
+                            resolveInitialNativeAgentSessionOpenIntent(params.sessionInput),
+                            runtimeParams,
+                        ),
                     );
-                    return bindReplaceableNativeAgentSessionOperations({
-                        initialOperations,
+                    const operations = bindReplaceableNativeAgentSessionOperations({
+                        initialRuntime,
                         recreateOperations: async (intent) => {
-                            return await params.createSessionRuntime(
-                                intent.kind === 'resume'
-                                    ? Object.freeze({
-                                        kind: 'resume',
-                                        providerSessionId: intent.providerSessionId,
-                                        importHistory: intent.importHistory,
-                                    })
-                                    : Object.freeze({ kind: 'create' }),
-                                runtimeParams,
+                            return normalizeNativeAgentSessionRuntimeCreation(
+                                await params.createSessionRuntime(
+                                    intent.kind === 'resume'
+                                        ? Object.freeze({
+                                            kind: 'resume',
+                                            providerSessionId: intent.providerSessionId,
+                                            importHistory: intent.importHistory,
+                                        })
+                                        : Object.freeze({ kind: 'create' }),
+                                    runtimeParams,
+                                ),
                             );
                         },
                     });
+                    return {
+                        operations,
+                        nativeRuntime: operations,
+                        ...(initialRuntime.admittedProviderBindingHandoff
+                            ? {
+                                admittedProviderBindingHandoff:
+                                    initialRuntime.admittedProviderBindingHandoff,
+                            }
+                            : {}),
+                    } satisfies HostSessionRuntimeFactoryResult<
+                        PluginRuntimeHookOperations
+                    >;
                 },
             },
         }),

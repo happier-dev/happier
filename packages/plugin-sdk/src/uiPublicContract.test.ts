@@ -5,6 +5,43 @@ import type {
     UiHost,
     UiResource,
 } from './ui.js';
+import type { PluginDeclarativeNodeV2 as CanonicalPluginDeclarativeNodeV2 } from '@happier-dev/protocol/plugins/manifest';
+import type {
+    ComposerAttachmentAuthorPresentationV1,
+    ComposerAttachmentPresentationV1,
+    PluginUiChannel,
+    PluginUiDeclarativeNodeV2,
+    PluginUiDeclarativeToneV2,
+    PluginUiIconTokenV1,
+    PluginUiViewV2Input,
+} from './ui/publicContract.js';
+import type { ContributionSurfaceIcon } from './targetedContributionAuthoring.js';
+import type {
+    PluginUiIconTokenV1 as CanonicalPluginUiIconTokenV1,
+    PluginUiToneV1 as CanonicalPluginUiToneV1,
+} from '@happier-dev/protocol/plugins/contributions/ui/tokens';
+import type { PluginUiChannelV1 as CanonicalPluginUiChannelV1 } from '@happier-dev/protocol/plugins/ui';
+
+type CanonicalPluginUiDeclarativeToneV2 = NonNullable<
+    Extract<CanonicalPluginDeclarativeNodeV2, Readonly<{ kind: 'text' }>>['tone']
+>;
+/**
+ * Protocol owns the declarative grammar; `src/manifest.ts` declares an
+ * SDK-local projection of it so an external author's own emitted `.d.ts` never
+ * names Protocol's declaration site (which they cannot resolve — see the
+ * comment on that projection). These assertions are the only thing keeping the
+ * two in step, so they compare every union member individually as well as the
+ * whole union: a whole-union `toEqualTypeOf` failure collapses into one
+ * unreadable message, and the per-member form names the exact arm that drifted.
+ */
+type SdkDeclarativeNodeOfKind<TKind extends PluginUiDeclarativeNodeV2['kind']> =
+    Extract<PluginUiDeclarativeNodeV2, { kind: TKind }>;
+type CanonicalDeclarativeNodeOfKind<TKind extends CanonicalPluginDeclarativeNodeV2['kind']> =
+    Extract<CanonicalPluginDeclarativeNodeV2, Readonly<{ kind: TKind }>>;
+/* @sdk-negative-type-case:src-uiPublicContract-test-ts-declarative-node-kind:ZGVjbGFyYXRpdmUgbm9kZSBraW5kcyBhcmUgY2xvc2VkIGJ5IHRoZSBjYW5vbmljYWwgUHJvdG9jb2wgZ3JhbW1hci4=:Y29uc3QgaW52YWxpZERlY2xhcmF0aXZlTm9kZTogUGx1Z2luVWlEZWNsYXJhdGl2ZU5vZGVWMiA9IHsga2luZDogJ3VuYm91bmRlZCcgfTs= */
+void undefined; /* @sdk-negative-type-case-end */
+/* @sdk-negative-type-case:src-uiPublicContract-test-ts-declarative-tone:ZGVjbGFyYXRpdmUgdGV4dCB0b25lcyBhcmUgY2xvc2VkIGJ5IHRoZSBjYW5vbmljYWwgUHJvdG9jb2wgZ3JhbW1hci4=:Y29uc3QgaW52YWxpZERlY2xhcmF0aXZlVG9uZTogUGx1Z2luVWlEZWNsYXJhdGl2ZU5vZGVWMiA9IHsga2luZDogJ3RleHQnLCB0ZXh0OiAnTm90IGNhbm9uaWNhbCcsIHRvbmU6ICduZXV0cmFsJyB9Ow== */
+void undefined; /* @sdk-negative-type-case-end */
 /* @sdk-negative-type-case:src-uiPublicContract-test-ts-44:LS0gc3VwcG9ydGVkIFVJIGNvbnRyYWN0cyB1c2UgdW5zdWZmaXhlZCBuYW1lcy4:aW1wb3J0IHR5cGUgeyBQbHVnaW5Ib3N0ZWRXZWJDb250cmlidXRpb25WMSB9IGZyb20gJy4vdWkuanMnOw */
 type PluginHostedWebContributionV1 = never; /* @sdk-negative-type-case-end */
 /* @sdk-negative-type-case:src-uiPublicContract-test-ts-45:LS0gZXhlY3V0YWJsZSBhcnRpZmFjdCByb3dzIGFyZSBnZW5lcmF0ZWQgYnVpbGQgb3V0cHV0LCBub3Qgbm9ybWFsIFVJIGF1dGhvcmluZyBBUEku:aW1wb3J0IHR5cGUgeyBQbHVnaW5VaUFydGlmYWN0Q29udHJpYnV0aW9uIH0gZnJvbSAnLi91aS5qcyc7 */
@@ -66,7 +103,29 @@ type createPluginServiceReferenceAdapter = never; /* @sdk-negative-type-case-end
 import type {
     PluginHostedWebBridgeEnvelopeV1 as ExperimentalBridgeEnvelope,
 } from './experimental/uiHostedWebBridgeV1.js';
-import type { PluginDeclarativeCollectionListNodeV2 } from './manifest.js';
+import type {
+    PluginCollectionProjectedScalarFieldRefV1,
+    PluginCollectionRowCommandV1,
+    PluginContributionReference,
+    PluginDeclarativeActionNodeV2,
+    PluginDeclarativeActionPanelNodeV2,
+    PluginDeclarativeActionVariantV2,
+    PluginDeclarativeCollectionListNodeV2,
+    PluginDeclarativeComposerApplyEffectV1,
+    PluginDeclarativeControlV2,
+    PluginDeclarativeItemNodeV2,
+    PluginDeclarativeListNodeV2,
+    PluginDeclarativeMetadataEntryV2,
+    PluginDeclarativeMetadataNodeV2,
+    PluginDeclarativeRowNodeV2,
+    PluginDeclarativeSectionNodeV2,
+    PluginDeclarativeStateNodeV2,
+    PluginDeclarativeStateV2,
+    PluginDeclarativeTargetedSurfaceNodeV2,
+    PluginDeclarativeTargetedSurfaceReferenceV1,
+    PluginDeclarativeToneV2,
+    PluginLocalizedStringV2,
+} from './manifest.js';
 /**
  * EU-4b graduation proof. `watchResource` and its invalidation event now have a
  * real host producer end to end, so both are published on `./ui` and reached
@@ -149,6 +208,126 @@ describe('UI/testing public type contract', () => {
     it('keeps the concise author host and resource vocabulary identical to the canonical UI types', () => {
         expectTypeOf<UiHost>().toEqualTypeOf<PluginUiHostApi>();
         expectTypeOf<UiResource>().toEqualTypeOf<ResourceContent>();
+    });
+
+    it('projects Protocol’s closed declarative node and tone grammar without a UI-local dialect', () => {
+        expectTypeOf<PluginUiDeclarativeNodeV2['kind']>()
+            .toEqualTypeOf<CanonicalPluginDeclarativeNodeV2['kind']>();
+        expectTypeOf<SdkDeclarativeNodeOfKind<'text'>>()
+            .toEqualTypeOf<CanonicalDeclarativeNodeOfKind<'text'>>();
+        expectTypeOf<SdkDeclarativeNodeOfKind<'markdown'>>()
+            .toEqualTypeOf<CanonicalDeclarativeNodeOfKind<'markdown'>>();
+        expectTypeOf<SdkDeclarativeNodeOfKind<'stack'>>()
+            .toEqualTypeOf<CanonicalDeclarativeNodeOfKind<'stack'>>();
+        expectTypeOf<SdkDeclarativeNodeOfKind<'group'>>()
+            .toEqualTypeOf<CanonicalDeclarativeNodeOfKind<'group'>>();
+        expectTypeOf<SdkDeclarativeNodeOfKind<'field'>>()
+            .toEqualTypeOf<CanonicalDeclarativeNodeOfKind<'field'>>();
+        expectTypeOf<SdkDeclarativeNodeOfKind<'status'>>()
+            .toEqualTypeOf<CanonicalDeclarativeNodeOfKind<'status'>>();
+        expectTypeOf<SdkDeclarativeNodeOfKind<'action'>>()
+            .toEqualTypeOf<CanonicalDeclarativeNodeOfKind<'action'>>();
+        expectTypeOf<SdkDeclarativeNodeOfKind<'list'>>()
+            .toEqualTypeOf<CanonicalDeclarativeNodeOfKind<'list'>>();
+        expectTypeOf<SdkDeclarativeNodeOfKind<'section'>>()
+            .toEqualTypeOf<CanonicalDeclarativeNodeOfKind<'section'>>();
+        expectTypeOf<SdkDeclarativeNodeOfKind<'item'>>()
+            .toEqualTypeOf<CanonicalDeclarativeNodeOfKind<'item'>>();
+        expectTypeOf<SdkDeclarativeNodeOfKind<'state'>>()
+            .toEqualTypeOf<CanonicalDeclarativeNodeOfKind<'state'>>();
+        expectTypeOf<SdkDeclarativeNodeOfKind<'targetedSurface'>>()
+            .toEqualTypeOf<CanonicalDeclarativeNodeOfKind<'targetedSurface'>>();
+        expectTypeOf<SdkDeclarativeNodeOfKind<'metadata'>>()
+            .toEqualTypeOf<CanonicalDeclarativeNodeOfKind<'metadata'>>();
+        expectTypeOf<SdkDeclarativeNodeOfKind<'actionPanel'>>()
+            .toEqualTypeOf<CanonicalDeclarativeNodeOfKind<'actionPanel'>>();
+        expectTypeOf<SdkDeclarativeNodeOfKind<'collectionList'>>()
+            .toEqualTypeOf<CanonicalDeclarativeNodeOfKind<'collectionList'>>();
+        expectTypeOf<PluginUiDeclarativeNodeV2>().toEqualTypeOf<CanonicalPluginDeclarativeNodeV2>();
+        expectTypeOf<PluginUiDeclarativeToneV2>().toEqualTypeOf<CanonicalPluginUiDeclarativeToneV2>();
+        // Every named export the SDK derives from the grammar is pinned too, so
+        // one drifting projection cannot hide behind an equal whole union.
+        expectTypeOf<PluginDeclarativeActionNodeV2>()
+            .toEqualTypeOf<CanonicalDeclarativeNodeOfKind<'action'>>();
+        expectTypeOf<PluginDeclarativeActionPanelNodeV2>()
+            .toEqualTypeOf<CanonicalDeclarativeNodeOfKind<'actionPanel'>>();
+        expectTypeOf<PluginDeclarativeCollectionListNodeV2>()
+            .toEqualTypeOf<CanonicalDeclarativeNodeOfKind<'collectionList'>>();
+        expectTypeOf<PluginDeclarativeComposerApplyEffectV1>()
+            .toEqualTypeOf<NonNullable<CanonicalDeclarativeNodeOfKind<'action'>['effect']>>();
+        expectTypeOf<PluginDeclarativeControlV2>()
+            .toEqualTypeOf<CanonicalDeclarativeNodeOfKind<'field'>['control']>();
+        expectTypeOf<PluginDeclarativeItemNodeV2>()
+            .toEqualTypeOf<CanonicalDeclarativeNodeOfKind<'item'>>();
+        expectTypeOf<PluginDeclarativeListNodeV2>()
+            .toEqualTypeOf<CanonicalDeclarativeNodeOfKind<'list'>>();
+        expectTypeOf<PluginDeclarativeMetadataNodeV2>()
+            .toEqualTypeOf<CanonicalDeclarativeNodeOfKind<'metadata'>>();
+        expectTypeOf<PluginDeclarativeSectionNodeV2>()
+            .toEqualTypeOf<CanonicalDeclarativeNodeOfKind<'section'>>();
+        expectTypeOf<PluginDeclarativeStateNodeV2>()
+            .toEqualTypeOf<CanonicalDeclarativeNodeOfKind<'state'>>();
+        expectTypeOf<PluginDeclarativeTargetedSurfaceNodeV2>()
+            .toEqualTypeOf<CanonicalDeclarativeNodeOfKind<'targetedSurface'>>();
+        expectTypeOf<PluginDeclarativeTargetedSurfaceReferenceV1>()
+            .toEqualTypeOf<CanonicalDeclarativeNodeOfKind<'targetedSurface'>['surface']>();
+        expectTypeOf<PluginDeclarativeToneV2>().toEqualTypeOf<CanonicalPluginUiDeclarativeToneV2>();
+        // The grammar's own leaf vocabularies, derived from the same canonical
+        // union rather than reached through a second Protocol import path.
+        expectTypeOf<PluginDeclarativeActionVariantV2>()
+            .toEqualTypeOf<NonNullable<CanonicalDeclarativeNodeOfKind<'action'>['variant']>>();
+        expectTypeOf<PluginDeclarativeStateV2>()
+            .toEqualTypeOf<CanonicalDeclarativeNodeOfKind<'state'>['state']>();
+        expectTypeOf<PluginDeclarativeMetadataEntryV2>()
+            .toEqualTypeOf<CanonicalDeclarativeNodeOfKind<'metadata'>['entries'][number]>();
+        expectTypeOf<PluginDeclarativeRowNodeV2>()
+            .toEqualTypeOf<CanonicalDeclarativeNodeOfKind<'section'>['children'][number]>();
+        expectTypeOf<PluginCollectionRowCommandV1>()
+            .toEqualTypeOf<NonNullable<CanonicalDeclarativeNodeOfKind<'collectionList'>['primaryCommand']>>();
+        expectTypeOf<PluginCollectionProjectedScalarFieldRefV1>()
+            .toEqualTypeOf<CanonicalDeclarativeNodeOfKind<'collectionList'>['projection']['titleField']>();
+        // The author-facing localized string and contribution reference are the
+        // grammar's own leaves; a `Readonly<>` flip here is invisible to
+        // assignability but silently breaks the projection above.
+        expectTypeOf<PluginLocalizedStringV2>()
+            .toEqualTypeOf<CanonicalDeclarativeNodeOfKind<'text'>['text']>();
+        expectTypeOf<PluginContributionReference>()
+            .toEqualTypeOf<NonNullable<CanonicalDeclarativeNodeOfKind<'item'>['action']>>();
+    });
+
+    it('projects Protocol’s canonical UI tone vocabulary on every public tone-carrying field', () => {
+        // `PluginUiDestinationBadgeV1Schema.tone` IS the full `PluginUiToneV1Schema`
+        // (accent included), so a public badge type that omits `accent` denies an
+        // author a value the canonical parser admits.
+        expectTypeOf<NonNullable<PluginUiViewV2Input['badge']>['tone']>()
+            .toEqualTypeOf<CanonicalPluginUiToneV1 | undefined>();
+        // Composer attachment presentation is the one canonical narrowing
+        // (`PluginUiToneV1Schema.exclude(['accent'])`), expressed as a derivation
+        // of the same owner rather than a second hand-copied list.
+        expectTypeOf<ComposerAttachmentAuthorPresentationV1['tone']>()
+            .toEqualTypeOf<Exclude<CanonicalPluginUiToneV1, 'accent'> | undefined>();
+        expectTypeOf<ComposerAttachmentPresentationV1['tone']>()
+            .toEqualTypeOf<Exclude<CanonicalPluginUiToneV1, 'accent'> | undefined>();
+    });
+
+    it('projects Protocol’s canonical icon-token and UI-channel vocabularies once each', () => {
+        // The tone comment above promised this file already held these; it did
+        // not. `PluginUiIconTokenV1` was anchored only by the value assignment
+        // in `src/ui.ts` (`readonly PluginUiIconTokenV1[] = PLUGIN_UI_ICON_TOKENS_V1`),
+        // and `ContributionSurfaceIcon` — a byte-identical third copy of the same
+        // 20 tokens — had no anchor at all. It types the `icon` of
+        // `ContributionSurfaceFallback`, i.e. the `kind: 'state'` declarative node
+        // whose canonical parser (`DeclarativeStateNodeSchema`) reads
+        // `PluginUiIconTokenV1Schema.optional()`. A token added to Protocol would
+        // therefore reach `PluginUiIconTokenV1` under compiler pressure and leave
+        // `ContributionSurfaceIcon` behind, denying an author a value the host
+        // parses — the same failure the `accent` tone already produced once.
+        expectTypeOf<PluginUiIconTokenV1>().toEqualTypeOf<CanonicalPluginUiIconTokenV1>();
+        expectTypeOf<ContributionSurfaceIcon>().toEqualTypeOf<CanonicalPluginUiIconTokenV1>();
+        // `PluginUiPlatform` is anchored, its file neighbour `PluginUiChannel` was
+        // not, though `PluginUiCompatibilityV1Schema` reads both from the same
+        // Protocol module.
+        expectTypeOf<PluginUiChannel>().toEqualTypeOf<CanonicalPluginUiChannelV1>();
     });
 
     it('is enforced by the TypeScript imports in this module', () => {

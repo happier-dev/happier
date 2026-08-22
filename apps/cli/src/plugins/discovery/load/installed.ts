@@ -2,6 +2,7 @@ import { resolve } from 'node:path';
 
 import type { PluginSourceSpecV1 } from '@happier-dev/protocol';
 import type { PluginUiArtifactsManifestV1 } from '@happier-dev/protocol/plugins/ui';
+import type { TargetedContributionPointRef } from '@happier-dev/plugin-sdk';
 
 import type { PluginStateFileV1, PluginStateSourceRecord } from '@/plugins/store/state';
 import { createPluginRegistryStateStore } from '@/plugins/store/registry/currentState';
@@ -22,10 +23,15 @@ export type LoadedPlugin = Readonly<{
   pluginId: string;
   pluginRootPath: string;
   manifestPath: string;
-  manifestDigest: string;
   daemonEntryPath: string | null;
   devDaemonEntryPath: string | null;
   generatedUiArtifactsManifest?: PluginUiArtifactsManifestV1;
+  /**
+   * Same-process refs retained only for bundled targets authored through
+   * `definePlugin`. External JSON loading remains structural; the executable
+   * registry may hydrate its current committed module definition separately.
+   */
+  semanticPointRefs?: readonly TargetedContributionPointRef<unknown>[];
   manifest: CanonicalPluginManifest;
   sourceSpec: PluginSourceSpecV1;
 }>;
@@ -33,6 +39,8 @@ export type LoadedPlugin = Readonly<{
 export type LoadInstalledPluginsResult = Readonly<{
   loadedPlugins: readonly LoadedPlugin[];
   diagnosticsByPluginId: Readonly<Record<string, readonly PluginCompatibilityDiagnostic[]>>;
+  /** Current committed epochs aligned with the loaded registry snapshot. */
+  materializationIdsByPluginId?: Readonly<Record<string, string>>;
 }>;
 
 // Backwards compatible resolution: older plugin state records may store a manifestPath override
@@ -47,11 +55,13 @@ function mergeLoadedPluginSourceSpec(params: Readonly<{
     resolvedPath: params.resolvedSource.pluginRootPath,
     manifestPath: params.resolvedSource.manifestPath,
     resolvedVersion: params.resolvedSource.manifest.version,
-    resolvedDigest: params.resolvedSource.manifestDigest,
   };
 }
 
-export async function loadPluginsFromState(state: PluginStateFileV1): Promise<LoadInstalledPluginsResult> {
+export async function loadPluginsFromState(
+  state: PluginStateFileV1,
+  materializationIdsByPluginId: Readonly<Record<string, string>> = {},
+): Promise<LoadInstalledPluginsResult> {
   const loadedPlugins: LoadedPlugin[] = [];
   const diagnosticsByPluginId: Record<string, readonly PluginCompatibilityDiagnostic[]> = {};
   const loadedByManifestId = new Map<string, {
@@ -161,7 +171,6 @@ export async function loadPluginsFromState(state: PluginStateFileV1): Promise<Lo
       pluginId,
       pluginRootPath: resolvedSource.pluginRootPath,
       manifestPath: resolvedSource.manifestPath,
-      manifestDigest: resolvedSource.manifestDigest,
       daemonEntryPath: daemonEntryResolution.daemonEntryPath,
       devDaemonEntryPath: daemonEntryResolution.devDaemonEntryPath,
       ...(generatedUiArtifactsManifest ? { generatedUiArtifactsManifest } : {}),
@@ -183,10 +192,12 @@ export async function loadPluginsFromState(state: PluginStateFileV1): Promise<Lo
   return {
     loadedPlugins: Object.freeze(loadedPlugins),
     diagnosticsByPluginId: Object.freeze(diagnosticsByPluginId),
+    materializationIdsByPluginId: Object.freeze({ ...materializationIdsByPluginId }),
   };
 }
 
 export async function loadInstalledPlugins(params?: Readonly<{ happyHomeDir?: string }>): Promise<LoadInstalledPluginsResult> {
   const stateStore = createPluginRegistryStateStore({ happyHomeDir: params?.happyHomeDir });
-  return await loadPluginsFromState(await stateStore.read());
+  const snapshot = await stateStore.readSnapshot();
+  return await loadPluginsFromState(snapshot.state, snapshot.materializationIdsByPluginId);
 }

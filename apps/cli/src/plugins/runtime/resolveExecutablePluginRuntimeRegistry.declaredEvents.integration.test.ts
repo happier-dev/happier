@@ -7,9 +7,10 @@ import { describe, expect, it, vi } from 'vitest';
 import { seedCurrentLocalPathPluginFixture } from '@/plugins/store/registry/currentState.testkit';
 
 import { resolveExecutablePluginRuntimeRegistry } from './resolveExecutablePluginRuntimeRegistry';
+import { createPluginReloadController } from './reload/controller';
 
 describe('executable plugin declared event ownership', () => {
-    it('binds a manifest subscription to its real handler and retires it across reload', async () => {
+    it('cuts declared handlers over at publication while an old registry lease delays disposal', async () => {
         const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-declared-events-home-'));
         const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-declared-events-plugin-'));
         const marker = globalThis as typeof globalThis & {
@@ -39,7 +40,7 @@ describe('executable plugin declared event ownership', () => {
                 }, {
                     id: 'watch-changed',
                     kind: 'subscription',
-                    event: 'changed',
+                    target: { kind: 'plugin', event: 'changed' },
                 }],
             },
         }), 'utf8');
@@ -57,6 +58,8 @@ describe('executable plugin declared event ownership', () => {
 
         let firstRuntime: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
         let secondRuntime: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
+        let firstLease: Awaited<ReturnType<ReturnType<typeof createPluginReloadController>['acquireRuntimeRegistry']>> | null = null;
+        let reloadController: ReturnType<typeof createPluginReloadController> | null = null;
         try {
             firstRuntime = await resolveExecutablePluginRuntimeRegistry({ happyHomeDir });
             expect(firstRuntime.pluginDiagnosticsByPluginId['acme.declared-events']).toEqual([]);
@@ -77,19 +80,25 @@ describe('executable plugin declared event ownership', () => {
                 diagnostics: [],
             })]);
             expect(firstRuntime.activatedPluginIds.has('acme.declared-events')).toBe(true);
+            reloadController = createPluginReloadController({
+                resolveRuntimeRegistry: async () => firstRuntime!,
+            });
+            firstLease = await reloadController.acquireRuntimeRegistry();
             const firstPublisher = firstRuntime.createPluginEventsService?.({
                 pluginId: 'acme.declared-events',
                 pluginVersion: '1.0.0',
             });
             expect(firstPublisher).not.toBeNull();
-            await firstPublisher!.emit('changed', { revision: 1 });
+            await firstPublisher!.emit('changed', { revision: 0 });
             await vi.waitFor(() => expect(marker.__HAPPIER_DECLARED_EVENT_DELIVERIES).toEqual([
-                { revision: 1 },
+                { revision: 0 },
             ]));
-            await firstRuntime.dispose();
-            firstRuntime = null;
 
-            secondRuntime = await resolveExecutablePluginRuntimeRegistry({ happyHomeDir });
+            secondRuntime = await resolveExecutablePluginRuntimeRegistry({
+                happyHomeDir,
+                generation: 2,
+                stableEventsBroker: firstRuntime.stableEventsBroker,
+            });
             await secondRuntime.activateContributionsOnDemand([{
                 pluginId: 'acme.declared-events',
                 family: 'events',
@@ -100,14 +109,31 @@ describe('executable plugin declared event ownership', () => {
                 pluginVersion: '1.0.0',
             });
             expect(secondPublisher).not.toBeNull();
+            await secondPublisher!.emit('changed', { revision: 1 });
+            await vi.waitFor(() => expect(marker.__HAPPIER_DECLARED_EVENT_DELIVERIES).toEqual([
+                { revision: 0 },
+                { revision: 1 },
+            ]));
+
+            await reloadController.adoptPreparedRuntimeRegistry({
+                registry: secondRuntime,
+                changedPluginIds: [],
+                durableRevision: 1,
+                runningSessionDisposition: 'retainRunningSessions',
+            });
             await secondPublisher!.emit('changed', { revision: 2 });
             await vi.waitFor(() => expect(marker.__HAPPIER_DECLARED_EVENT_DELIVERIES).toEqual([
+                { revision: 0 },
                 { revision: 1 },
                 { revision: 2 },
             ]));
         } finally {
-            await firstRuntime?.dispose();
-            await secondRuntime?.dispose();
+            await firstLease?.release();
+            await reloadController?.shutdown();
+            if (!reloadController) {
+                await firstRuntime?.dispose();
+                await secondRuntime?.dispose();
+            }
             delete marker.__HAPPIER_DECLARED_EVENT_DELIVERIES;
             await rm(happyHomeDir, { recursive: true, force: true });
             await rm(pluginRoot, { recursive: true, force: true });

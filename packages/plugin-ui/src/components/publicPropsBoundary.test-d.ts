@@ -1,6 +1,6 @@
 import type { ButtonProps, IconButtonProps } from './Button.js';
 import { usePluginUiFocusTarget } from '../index.js';
-import type { PluginUiFocusTarget } from '../index.js';
+import type { PluginTranslationValues, PluginUiFocusTarget } from '../index.js';
 import type { FormProps, SelectProps, TextFieldProps } from './Form.js';
 import type { HeadingProps, MetadataEntry } from './Foundation.js';
 import type { RowProps, ScreenProps, StackProps } from './Layout.js';
@@ -14,6 +14,7 @@ import type {
 } from './List.js';
 import type { MenuGroup, MenuRadioGroup } from './Overlay.js';
 import type { StatusProps } from './Status.js';
+import type { TextProps } from './Text.js';
 
 type Assert<Condition extends true> = Condition;
 
@@ -32,6 +33,10 @@ type _AuthorFormFieldDoesNotExposeHostOptionSources = Assert<
 
 type _AuthorFocusTargetIsOpaque = Assert<IsEqual<keyof PluginUiFocusTarget, 'focus'>>;
 type _AuthorFocusTargetHookIsPublic = Assert<IsEqual<typeof usePluginUiFocusTarget, () => PluginUiFocusTarget>>;
+type _AuthorTextInterpolationValuesArePublic = Assert<IsEqual<
+  TextProps['values'],
+  PluginTranslationValues | undefined
+>>;
 
 type _AuthorButtonFocusTarget = Assert<IsEqual<ButtonProps['focusTarget'], PluginUiFocusTarget | undefined>>;
 type _AuthorIconButtonFocusTarget = Assert<IsEqual<IconButtonProps['focusTarget'], PluginUiFocusTarget | undefined>>;
@@ -137,6 +142,7 @@ type _AuthorItemGroupPropKeysAreCurated = Assert<IsEqual<keyof ItemGroupProps,
   | 'children'
   | 'accessibilityRole'
   | 'accessibilityLabel'
+  | 'accessibilityLabelKey'
   | 'testID'
   | 'style'
 >>;
@@ -146,6 +152,8 @@ type _MetadataEntryKeysAreCurated = Assert<IsEqual<keyof MetadataEntry,
   | 'value'
   | 'tone'
   | 'accessibilityLabel'
+  | 'accessibilityLabelKey'
+  | 'labelKey'
   | 'testID'
 >>;
 

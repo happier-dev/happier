@@ -10,6 +10,7 @@ import type {
 } from './acpTypes.js';
 import type {
   AgentConfigurationScalar,
+  AgentSessionInput,
   AgentSessionOpenRequest,
   AgentSessionProviderCheckpoint,
   AgentSessionRuntime,
@@ -86,6 +87,13 @@ export type AgentAcpAuthenticationDefinition =
 
 export type AgentAcpToolUpdateContentSanitizer = <T extends { content?: unknown }>(update: T) => T;
 
+export type AgentAcpToolUpdatePolicy = Readonly<{
+  /** Minimum interval between admitted `in_progress` updates for one provider tool-call id. */
+  minInProgressIntervalMs?: number;
+  /** Maximum retained characters per provider-authored string, preserving the newest tail. */
+  maxStringChars?: number;
+}>;
+
 /**
  * Deliberately has no `overridesWhenOn`, unlike the runtime mirror `AgentSessionModelOption` in
  * `./context.ts`. The asymmetry is honest, not an oversight: nothing in the ACP corridor beneath
@@ -108,6 +116,7 @@ export type AgentAcpModel = Readonly<{
   id: string;
   name: string;
   description?: string;
+  contextWindowTokens?: number;
   modelOptions?: readonly AgentAcpModelOption[];
 }>;
 
@@ -132,6 +141,23 @@ export type AgentAcpModelControls = Readonly<{
   }>): AgentAcpModel | null;
 }>;
 
+export type AgentAcpInFlightSteerDefinition = Readonly<{
+  method: string;
+  buildParams(input: Readonly<{
+    providerSessionId: string;
+    inputIds: readonly [string, ...string[]];
+    input: AgentSessionInput;
+  }>): JsonValue;
+  isAccepted(response: JsonValue): boolean;
+}>;
+
+export type AgentAcpPromptUsageDefinition = Readonly<{
+  projectPromptUsage(input: Readonly<{
+    usage: JsonValue;
+    promptResponse: JsonValue;
+  }>): JsonValue | null;
+}>;
+
 export type AgentAcpRuntimeDefinition = Readonly<{
   auth?: AgentAcpAuthenticationDefinition;
   parameterizedModelPicker?: boolean;
@@ -143,6 +169,7 @@ export type AgentAcpRuntimeDefinition = Readonly<{
   stderrRules?: AgentAcpStderrRules;
   toolNameResolver?: AgentAcpToolNameResolver;
   sanitizeToolUpdateContent?: AgentAcpToolUpdateContentSanitizer;
+  toolUpdates?: AgentAcpToolUpdatePolicy;
   generatedMedia?: Readonly<{
     projectTerminalOutput(input: Readonly<{
       rawOutput: unknown;
@@ -150,6 +177,10 @@ export type AgentAcpRuntimeDefinition = Readonly<{
       toolName: string;
     }>): readonly Readonly<{ rootPath: string; path: string }>[] | null;
   }>;
+  delivery?: Readonly<{
+    steer?: AgentAcpInFlightSteerDefinition;
+  }>;
+  usage?: AgentAcpPromptUsageDefinition;
   history?: Readonly<{
     projectUserMessageProviderCheckpoint(input: JsonValue): AgentSessionProviderCheckpoint | null;
     fork?: Readonly<{

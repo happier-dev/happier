@@ -1,8 +1,8 @@
 {
   "schemaVersion": 2,
-  "id": "acme.connected-accounts-conformance",
+  "id": "acme.connected-accounts-conformance-consumer",
   "version": "1.0.0",
-  "displayName": "Connected Accounts Conformance",
+  "displayName": "Connected Accounts Conformance Consumer",
   "description": "Packed third-party conformance consumer for the public Connected Accounts API.",
   "engines": {
     "happier": "^0.2.0"
@@ -28,7 +28,10 @@
         "reason": "Use the fixed conformance account.",
         "scope": {
           "serviceRefs": [
-            "vault"
+            {
+              "pluginId": "acme.connected-accounts-conformance-producer",
+              "localId": "vault"
+            }
           ],
           "operations": [
             "select",
@@ -47,7 +50,10 @@
         "reason": "Use the conformance account group.",
         "scope": {
           "serviceRefs": [
-            "vault"
+            {
+              "pluginId": "acme.connected-accounts-conformance-producer",
+              "localId": "vault"
+            }
           ],
           "operations": [
             "select",
@@ -64,8 +70,14 @@
         "reason": "Choose one service for a multi-service purpose.",
         "scope": {
           "serviceRefs": [
-            "vault",
-            "archive"
+            {
+              "pluginId": "acme.connected-accounts-conformance-producer",
+              "localId": "vault"
+            },
+            {
+              "pluginId": "acme.connected-accounts-conformance-producer",
+              "localId": "archive"
+            }
           ],
           "operations": [
             "select",
@@ -79,7 +91,10 @@
         "reason": "Exercise selection-only authorization.",
         "scope": {
           "serviceRefs": [
-            "vault"
+            {
+              "pluginId": "acme.connected-accounts-conformance-producer",
+              "localId": "vault"
+            }
           ],
           "operations": [
             "select"
@@ -92,7 +107,10 @@
         "reason": "Exercise use-only authorization.",
         "scope": {
           "serviceRefs": [
-            "vault"
+            {
+              "pluginId": "acme.connected-accounts-conformance-producer",
+              "localId": "vault"
+            }
           ],
           "operations": [
             "use"
@@ -105,7 +123,10 @@
         "reason": "Exercise binding replacement.",
         "scope": {
           "serviceRefs": [
-            "vault"
+            {
+              "pluginId": "acme.connected-accounts-conformance-producer",
+              "localId": "vault"
+            }
           ],
           "operations": [
             "select",
@@ -122,7 +143,10 @@
         "reason": "Exercise binding revocation.",
         "scope": {
           "serviceRefs": [
-            "vault"
+            {
+              "pluginId": "acme.connected-accounts-conformance-producer",
+              "localId": "vault"
+            }
           ],
           "operations": [
             "select",
@@ -139,7 +163,10 @@
         "reason": "Exercise materializer replacement.",
         "scope": {
           "serviceRefs": [
-            "vault"
+            {
+              "pluginId": "acme.connected-accounts-conformance-producer",
+              "localId": "vault"
+            }
           ],
           "operations": [
             "select",
@@ -154,58 +181,6 @@
     "optional": []
   },
   "contributes": {
-    "connectedAccountDescriptors": [
-      {
-        "id": "vault",
-        "title": "Acme Vault conformance account",
-        "authentication": {
-          "defaultModeId": "manual",
-          "modes": [
-            {
-              "id": "manual",
-              "kind": "manual",
-              "outcomeReconciliation": "none",
-              "fields": [
-                {
-                  "id": "token",
-                  "title": "Acme Vault conformance token",
-                  "schema": {
-                    "type": "string",
-                    "minLength": 1
-                  },
-                  "secret": true
-                }
-              ]
-            }
-          ]
-        }
-      },
-      {
-        "id": "archive",
-        "title": "Acme Archive conformance account",
-        "authentication": {
-          "defaultModeId": "manual",
-          "modes": [
-            {
-              "id": "manual",
-              "kind": "manual",
-              "outcomeReconciliation": "none",
-              "fields": [
-                {
-                  "id": "token",
-                  "title": "Acme Archive conformance token",
-                  "schema": {
-                    "type": "string",
-                    "minLength": 1
-                  },
-                  "secret": true
-                }
-              ]
-            }
-          ]
-        }
-      }
-    ],
     "actions": [
       {
         "id": "verify",
@@ -217,8 +192,10 @@
         "surfaces": [
           "cli"
         ],
-        "placement": "commandPalette",
         "dangerLevel": "safe",
+        "execution": {
+          "target": "daemon"
+        },
         "hostAccess": [
           "fixed",
           "group",
@@ -240,8 +217,10 @@
         "surfaces": [
           "cli"
         ],
-        "placement": "commandPalette",
         "dangerLevel": "safe",
+        "execution": {
+          "target": "daemon"
+        },
         "hostAccess": [
           "fixed"
         ]

@@ -1,12 +1,12 @@
-import { join, relative, resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 
 import { encodePluginIdForFilesystem } from '@happier-dev/protocol';
+import { isCanonicalAbsolutePathInsideRoot } from '@/utils/path/expandHomeDirPath';
 
 function assertPathWithinRoot(rootDir: string, candidatePath: string, label: string): void {
     const normalizedRoot = resolve(rootDir);
     const normalizedCandidate = resolve(candidatePath);
-    const relativePath = relative(normalizedRoot, normalizedCandidate);
-    if (relativePath === '..' || relativePath.startsWith('../') || relativePath.startsWith('..\\')) {
+    if (!isCanonicalAbsolutePathInsideRoot(normalizedRoot, normalizedCandidate)) {
         throw new Error(`Resolved plugin install path escaped the plugin install root for ${label}`);
     }
 }

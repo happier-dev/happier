@@ -1,25 +1,35 @@
-import { chmod, mkdtemp, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import type { PluginServiceId, PluginStorageTransaction } from '@happier-dev/plugin-sdk/runtime';
+import {
+    COMPOSER_MEDIA_CONTENT_CAPABILITY_V1,
+    PluginError,
+    type PluginServiceId,
+} from '@happier-dev/plugin-sdk';
+import type { StorageTransaction } from '@happier-dev/plugin-sdk/storage';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
     createLoggerAndEventsAvailablePluginInvocationServiceBinding,
-    createLoggerFilesystemEventsAndExecServiceBinding,
+    createLoggerAndFilesystemServiceBinding,
+    createLoggerEventsAndExecServiceBinding,
     createPluginInvocationServicesFactory,
     createUnavailablePluginInvocationServiceBinding,
     createUnavailablePluginServicesFactory,
 } from './factory';
+import { createPluginActionCallerMaterializationFixture } from './actionCaller.testkit';
 import type { PluginInvocationLogRecord } from './logger';
+import type { PluginActionsHostExecutor } from './actions';
 import { createStablePluginEventsBroker } from './events';
 import { PLUGIN_SERVICE_DESCRIPTORS } from './unavailable';
-import { createStablePluginFetchHost } from '@/plugins/runtime/fetch/service';
+import { createStablePluginHttpHost } from '@/plugins/runtime/fetch/service';
 import { resolvePluginStorePaths } from '@/plugins/store/paths';
 import { createPluginAgentCliReadinessService } from '@/plugins/runtime/context/agents';
 import { createPluginExecSystemToolResolver } from '@/plugins/runtime/exec/system/tools/resolveGrant';
 import { createPluginStorageOwner } from '@/plugins/runtime/context/storage';
+
+const seedMaterialization = createPluginActionCallerMaterializationFixture('acme.alpha');
 
 const seed = Object.freeze({
     plugin: Object.freeze({ id: 'acme.alpha', version: '1.2.3' }),
@@ -27,16 +37,201 @@ const seed = Object.freeze({
     generation: '7',
     correlationId: 'correlation-host-owned',
     surface: 'cli' as const,
+    resolveCurrentPluginMaterializationRef:
+        seedMaterialization.resolveCurrentPluginMaterializationRef,
     signal: new AbortController().signal,
     isGenerationCurrent: () => true,
 });
 
 describe('unavailable plugin invocation services factory', () => {
+    it('exposes the local storage taxonomy and omits unadmitted Account data', async () => {
+        const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-plugin-invocation-storage-taxonomy-'));
+        const services = createPluginInvocationServicesFactory({
+            loggerSink: { write: () => {} },
+            events: {
+                broker: createStablePluginEventsBroker(),
+                declarationsByPluginId: new Map(),
+                activePluginIds: new Set<string>(),
+            },
+            storagePaths: resolvePluginStorePaths({ happyHomeDir }),
+        })(seed, createLoggerAndEventsAvailablePluginInvocationServiceBinding('7', 'binding'));
+
+        const storage = services.storage as unknown as Readonly<Record<string, unknown>>;
+        expect(Object.keys(storage).sort()).toEqual([
+            'daemon',
+            'daemonSession',
+            'ephemeral',
+        ]);
+        expect(storage).not.toHaveProperty('local');
+        expect(storage).not.toHaveProperty('session');
+        expect(storage).not.toHaveProperty('synced');
+
+        const daemon = services.storage.daemon;
+        await daemon.set('durable', { value: 1 });
+        await expect(daemon.get('durable')).resolves.toEqual({ value: 1 });
+
+        await daemon.set('ordered/a', true);
+        await daemon.set('ordered/c', true);
+        const firstPage = await daemon.list({ prefix: 'ordered/', limit: 1 });
+        expect(firstPage.items).toEqual([{ key: 'ordered/a' }]);
+        expect(firstPage.nextCursor).toEqual(expect.any(String));
+        await expect(daemon.list({ prefix: 'ordered/', cursor: '1' }))
+            .rejects.toMatchObject({ code: 'PLUGIN_STORAGE_CURSOR_INVALID' });
+
+        await daemon.delete('ordered/a');
+        await expect(daemon.list({
+            prefix: 'ordered/',
+            limit: 1,
+            cursor: firstPage.nextCursor!,
+        })).resolves.toEqual({ items: [{ key: 'ordered/c' }] });
+
+        expect(storage.account).toBeUndefined();
+    });
+
     it('keeps concrete and unavailable service creation on the canonical descriptor owner', () => {
         for (const descriptor of Object.values(PLUGIN_SERVICE_DESCRIPTORS)) {
             expect(descriptor).toHaveProperty('createAvailable');
             expect(typeof Reflect.get(descriptor, 'createAvailable')).toBe('function');
         }
+    });
+
+    it('projects Composer content through the canonical service descriptor and fails closed when unbound', async () => {
+        const services = createUnavailablePluginServicesFactory()(
+            seed,
+            createUnavailablePluginInvocationServiceBinding('7', 'binding'),
+        );
+
+        expect(PLUGIN_SERVICE_DESCRIPTORS.composerContent).toMatchObject({
+            id: 'composerContent',
+            publicProperty: 'composerContent',
+            availabilityOwner: 'host',
+        });
+        expect(services.availability('composerContent')).toEqual({
+            status: 'unavailable',
+            code: 'plugin_service_unavailable',
+        });
+        expect(services.composerContent.capabilities()).toEqual({
+            [COMPOSER_MEDIA_CONTENT_CAPABILITY_V1]: {
+                status: 'unavailable',
+                code: 'plugin_service_unavailable',
+            },
+        });
+        expect(() => services.composerContent.stageMedia({
+            source: { root: 'workspace', relativePath: 'photo.png' },
+        })).toThrow(expect.objectContaining({ code: 'plugin_service_unavailable' }));
+    });
+
+    it('binds Composer content through the descriptor with the canonical PluginPath filesystem reader', async () => {
+        const workspace = await mkdtemp(join(tmpdir(), 'happier-plugin-composer-content-factory-'));
+        const bind = vi.fn(() => Object.freeze({
+            capabilities: () => Object.freeze({
+                [COMPOSER_MEDIA_CONTENT_CAPABILITY_V1]: Object.freeze({ status: 'available' as const }),
+            }),
+            stageMedia: vi.fn(async () => {
+                throw new Error('stageMedia was not expected in this descriptor test');
+            }),
+        }));
+        const filesystemRoots = {
+            pluginData: workspace,
+            workspace,
+            projects: new Map<string, string>(),
+        };
+        const factoryParams = {
+            loggerSink: { write: () => {} },
+            filesystemRoots,
+            composerContent: { bind },
+        } satisfies Parameters<typeof createPluginInvocationServicesFactory>[0];
+
+        try {
+            const services = createPluginInvocationServicesFactory(factoryParams)(
+                seed,
+                createLoggerAndFilesystemServiceBinding(
+                    '7',
+                    'binding',
+                    [{
+                        request: {
+                            id: 'workspace-read',
+                            capability: 'filesystem',
+                            reason: 'Stage media from the selected workspace',
+                            scope: {
+                                locations: [{ root: 'workspace' }],
+                                access: ['read'],
+                            },
+                        },
+                    }],
+                    filesystemRoots,
+                ),
+            );
+
+            expect(services.availability('composerContent')).toEqual({ status: 'available' });
+            expect(services.composerContent.capabilities()).toEqual({
+                [COMPOSER_MEDIA_CONTENT_CAPABILITY_V1]: { status: 'available' },
+            });
+            expect(bind).toHaveBeenCalledWith(expect.objectContaining({
+                seed,
+                fileSystem: expect.objectContaining({ readFile: expect.any(Function) }),
+            }));
+        } finally {
+            await rm(workspace, { recursive: true, force: true });
+        }
+    });
+
+    it('fails closed for the contributed-Action execution-origin method when Actions are unavailable', () => {
+        const services = createUnavailablePluginServicesFactory()(
+            seed,
+            createUnavailablePluginInvocationServiceBinding('7', 'binding'),
+        );
+
+        expect(Object.keys(services.actions).sort()).toEqual([
+            'execute',
+            'executeAdmittedTargetedOperation',
+            'executeAdmittedTargetedOperationWithExecutionOrigin',
+            'executeWithExecutionOrigin',
+        ]);
+        expect(() => services.actions.executeWithExecutionOrigin(
+            { pluginId: 'acme.target', localId: 'publish' },
+            { title: 'Ready' },
+        )).toThrow(expect.objectContaining({ code: 'plugin_service_unavailable' }));
+    });
+
+    it('projects the host-stamped hook interception bypass only into hook ActionsService seeds', async () => {
+        const execute = vi.fn(async (
+            ..._args: Parameters<PluginActionsHostExecutor['execute']>
+        ) => ({
+            ok: true as const,
+            result: { v: 1, ok: true as const, hits: [] },
+        }));
+        const createServices = createPluginInvocationServicesFactory({
+            loggerSink: { write: () => {} },
+            events: {
+                broker: createStablePluginEventsBroker(),
+                declarationsByPluginId: new Map(),
+                activePluginIds: new Set(),
+            },
+            actionExecutor: { execute },
+            invokeContributedAction: vi.fn(async () => {
+                throw new Error('Contributed action invocation was not expected');
+            }),
+        });
+        const binding = createLoggerAndEventsAvailablePluginInvocationServiceBinding('7', 'binding');
+        const input = {
+            machineId: 'machine-1',
+            query: {
+                v: 1 as const,
+                query: 'owner',
+                scope: { type: 'global' as const },
+                mode: 'hints' as const,
+            },
+        };
+
+        await createServices(seed, binding).actions.execute('memory.search', input);
+        await createServices(Object.freeze({
+            ...seed,
+            bypassActionInterception: true as const,
+        }), binding).actions.execute('memory.search', input);
+
+        expect(execute.mock.calls[0]?.[2]).not.toHaveProperty('bypassActionInterception');
+        expect(execute.mock.calls[1]?.[2]).toMatchObject({ bypassActionInterception: true });
     });
 
     it('rejects stale generation bindings', () => {
@@ -46,7 +241,46 @@ describe('unavailable plugin invocation services factory', () => {
             .toThrow(/generation/i);
     });
 
-    it('composes available logger and events with the other thirteen unavailable services', async () => {
+    it('keeps the unavailable Sessions service shape-identical to the six-method External Sessions author service', async () => {
+        const services = createUnavailablePluginServicesFactory()(
+            seed,
+            createUnavailablePluginInvocationServiceBinding('7', 'binding'),
+        );
+        const external = services.sessions.external;
+        const ref = Object.freeze({
+            agentId: 'codex',
+            sourceId: 'codex-home',
+            remoteSessionId: 'remote-session-1',
+        });
+
+        expect(Object.keys(external).sort()).toEqual([
+            'attach',
+            'capabilities',
+            'followTranscript',
+            'list',
+            'readTranscript',
+            'takeover',
+        ]);
+        expect(await external.capabilities()).toEqual({
+            list: { status: 'unavailable', code: 'plugin_service_unavailable' },
+            attach: { status: 'unavailable', code: 'plugin_service_unavailable' },
+            takeover: { status: 'unavailable', code: 'plugin_service_unavailable' },
+            transcript: { status: 'unavailable', code: 'plugin_service_unavailable' },
+            follow: { status: 'unavailable', code: 'plugin_service_unavailable' },
+        });
+        await expect(external.followTranscript(ref, {}, () => {}))
+            .resolves.toEqual({ status: 'unavailable', code: 'plugin_service_unavailable' });
+        expect(() => external.list()).toThrow(expect.objectContaining({ code: 'plugin_service_unavailable' }));
+        expect(() => external.attach(ref)).toThrow(expect.objectContaining({ code: 'plugin_service_unavailable' }));
+        expect(() => external.readTranscript(ref, { mode: 'page', direction: 'older' }))
+            .toThrow(expect.objectContaining({ code: 'plugin_service_unavailable' }));
+        expect(() => external.takeover(ref, {
+            targetStorageMode: 'external-linked',
+            idempotencyKey: 'takeover-1',
+        })).toThrow(expect.objectContaining({ code: 'plugin_service_unavailable' }));
+    });
+
+    it('composes available logger and events with every other service unavailable', async () => {
         const records: PluginInvocationLogRecord[] = [];
         const services = createPluginInvocationServicesFactory({
             loggerSink: { write: (record) => { records.push(record); } },
@@ -54,7 +288,6 @@ describe('unavailable plugin invocation services factory', () => {
             events: {
                 broker: createStablePluginEventsBroker(),
                 declarationsByPluginId: new Map(),
-                permissionDeclarationsByPluginId: new Map(),
                 activePluginIds: new Set<string>(),
             },
         })(seed, createLoggerAndEventsAvailablePluginInvocationServiceBinding('7', 'binding'));
@@ -66,22 +299,65 @@ describe('unavailable plugin invocation services factory', () => {
             code: 'plugin_service_unavailable',
         });
         expect(Object.keys(services.logger).sort()).toEqual(['debug', 'diagnostic', 'error', 'info', 'warn']);
-        expect(Object.keys(services.events).sort()).toEqual(['emit', 'subscribe']);
+        expect(Object.keys(services.events).sort()).toEqual(['host', 'plugin']);
         expect(Object.isFrozen(services.logger)).toBe(true);
         services.logger.error('keeps severity');
         expect(records).toHaveLength(1);
         expect(records[0]).toMatchObject({ level: 'error', context: { plugin: { id: 'acme.alpha' } } });
 
         const unavailableIds = [
-            'storage', 'settings', 'secrets', 'fetch', 'fs', 'exec', 'managed',
-            'sessions', 'resources', 'mcp', 'notifications', 'connectedAccounts',
+            'storage', 'settings', 'secrets', 'http', 'fs', 'exec', 'providers', 'managedServices',
+            'sessions', 'resources', 'mcp', 'notifications', 'connectedAccounts', 'actions',
+            'targetedContributions', 'composerContent',
         ] as const;
         for (const serviceId of unavailableIds) {
             expect(services.availability(serviceId)).toMatchObject({ status: 'unavailable' });
         }
-        await expect(services.events.emit('undeclared', null)).rejects.toMatchObject({
+        await expect(services.events.plugin.emit('undeclared', null)).rejects.toMatchObject({
             code: 'plugin_events_undeclared',
         });
+    });
+
+    it('binds targeted contribution observation only through its stable host owner', async () => {
+        const readCurrent = vi.fn(async () => Object.freeze({
+            generation: 'immutable-target-a',
+            contributions: Object.freeze([]),
+        }));
+        const observeForSelf = vi.fn(() => Object.freeze({
+            dispose: vi.fn(),
+            readCurrent,
+        }));
+        const bind = vi.fn(() => Object.freeze({ observeForSelf }));
+        const services = createPluginInvocationServicesFactory({
+            loggerSink: { write: () => {} },
+            events: {
+                broker: createStablePluginEventsBroker(),
+                declarationsByPluginId: new Map(),
+                activePluginIds: new Set<string>(),
+            },
+            targetedContributions: { bind },
+        })(seed, createLoggerAndEventsAvailablePluginInvocationServiceBinding('7', 'binding'));
+
+        const observation = services.targetedContributions.observeForSelf(
+            {
+                targetPluginId: 'acme.alpha',
+                id: 'providers',
+                protocol: { id: 'example-providers', version: 1 },
+            },
+            { onInvalidated: () => {} },
+        );
+
+        expect(services.availability('targetedContributions')).toEqual({ status: 'available' });
+        expect(bind).toHaveBeenCalledWith({
+            pluginId: 'acme.alpha',
+            signal: seed.signal,
+            isCurrent: seed.isGenerationCurrent,
+        });
+        await expect(observation.readCurrent()).resolves.toEqual({
+            generation: 'immutable-target-a',
+            contributions: [],
+        });
+        expect(observeForSelf).toHaveBeenCalledOnce();
     });
 
     it('projects native executable readiness through the existing Agent CLI and system-tool owners', async () => {
@@ -114,7 +390,6 @@ describe('unavailable plugin invocation services factory', () => {
             events: {
                 broker: createStablePluginEventsBroker(),
                 declarationsByPluginId: new Map(),
-                permissionDeclarationsByPluginId: new Map(),
                 activePluginIds: new Set(),
             },
             exec: {
@@ -129,7 +404,7 @@ describe('unavailable plugin invocation services factory', () => {
                 },
                 resolvePath: async () => root,
             },
-        })(seed, createLoggerFilesystemEventsAndExecServiceBinding(
+        })(seed, createLoggerEventsAndExecServiceBinding(
             '7',
             'binding',
             [{
@@ -141,7 +416,6 @@ describe('unavailable plugin invocation services factory', () => {
                     scope: { executables: [executable] },
                 },
             }],
-            { pluginData: root, workspace: root, projects: new Map() },
         ));
 
         const readiness = await services.exec.agentCli.checkReadiness({
@@ -169,7 +443,7 @@ describe('unavailable plugin invocation services factory', () => {
             toolId: 'undeclared',
             purpose: 'must not bypass the binding',
             cwd: root,
-        })).rejects.toMatchObject({ code: 'plugin_exec_access_denied' });
+        })).rejects.toMatchObject({ code: 'plugin_exec_system_tool_undeclared' });
         expect(registeredGrants).toHaveLength(1);
     });
 
@@ -179,7 +453,6 @@ describe('unavailable plugin invocation services factory', () => {
         const events = {
             broker: createStablePluginEventsBroker(),
             declarationsByPluginId: new Map(),
-            permissionDeclarationsByPluginId: new Map(),
             activePluginIds: new Set<string>(),
         };
         const binding = createLoggerAndEventsAvailablePluginInvocationServiceBinding('7', 'binding');
@@ -191,14 +464,14 @@ describe('unavailable plugin invocation services factory', () => {
 
         const first = createServices(seed, binding);
         expect(first.availability('storage')).toEqual({ status: 'available' });
-        await first.storage.local.set('counter', 1);
+        await first.storage.daemon.set('counter', 1);
 
         const restarted = createPluginInvocationServicesFactory({
             loggerSink: { write: () => {} },
             events,
             storagePaths: resolvePluginStorePaths({ happyHomeDir }),
         })(seed, binding);
-        expect(await restarted.storage.local.get('counter')).toBe(1);
+        expect(await restarted.storage.daemon.get('counter')).toBe(1);
 
         const sibling = createPluginInvocationServicesFactory({
             loggerSink: { write: () => {} },
@@ -209,7 +482,7 @@ describe('unavailable plugin invocation services factory', () => {
             plugin: Object.freeze({ id: 'acme.beta', version: '1.2.3' }),
             contribution: Object.freeze({ id: 'run', qualifiedId: 'acme.beta/actions/run' }),
         }, binding);
-        expect(await sibling.storage.local.get('counter')).toBeNull();
+        expect(await sibling.storage.daemon.get('counter')).toBeNull();
     });
 
     it('keeps host-owned settings records outside the plugin storage key surface', async () => {
@@ -218,26 +491,25 @@ describe('unavailable plugin invocation services factory', () => {
         await createPluginStorageOwner({
             pluginId: seed.plugin.id,
             paths: storagePaths,
-        }).local.set('@happier/settings/v1', { revision: 1 });
+        }).daemon.set('@happier/settings/v1', { revision: 1 });
         const services = createPluginInvocationServicesFactory({
             loggerSink: { write: () => {} },
             events: {
                 broker: createStablePluginEventsBroker(),
                 declarationsByPluginId: new Map(),
-                permissionDeclarationsByPluginId: new Map(),
                 activePluginIds: new Set<string>(),
             },
             storagePaths,
         })(seed, createLoggerAndEventsAvailablePluginInvocationServiceBinding('7', 'binding'));
 
-        await expect(services.storage.local.get('@happier/settings/v1'))
+        await expect(services.storage.daemon.get('@happier/settings/v1'))
             .rejects.toMatchObject({ code: 'plugin_storage_reserved_key' });
-        await expect(services.storage.local.set('@happier/settings/v1', { revision: 99 }))
+        await expect(services.storage.daemon.set('@happier/settings/v1', { revision: 99 }))
             .rejects.toMatchObject({ code: 'plugin_storage_reserved_key' });
-        await expect(services.storage.local.transaction(async (transaction) => {
+        await expect(services.storage.daemon.transaction(async (transaction) => {
             await transaction.delete('@happier/settings/v1');
         })).rejects.toMatchObject({ code: 'plugin_storage_reserved_key' });
-        await expect(services.storage.local.list()).resolves.toEqual({ items: [] });
+        await expect(services.storage.daemon.list()).resolves.toEqual({ items: [] });
     });
 
     it('derives ordinary host-owned storage availability from the canonical service descriptor', async () => {
@@ -247,38 +519,42 @@ describe('unavailable plugin invocation services factory', () => {
             events: {
                 broker: createStablePluginEventsBroker(),
                 declarationsByPluginId: new Map(),
-                permissionDeclarationsByPluginId: new Map(),
                 activePluginIds: new Set<string>(),
             },
             storagePaths: resolvePluginStorePaths({ happyHomeDir }),
         })(seed, createLoggerAndEventsAvailablePluginInvocationServiceBinding('7', 'binding'));
 
         expect(services.availability('storage')).toEqual({ status: 'available' });
-        await services.storage.local.set('descriptor-owned', true);
-        await expect(services.storage.local.get('descriptor-owned')).resolves.toBe(true);
+        await services.storage.daemon.set('descriptor-owned', true);
+        await expect(services.storage.daemon.get('descriptor-owned')).resolves.toBe(true);
     });
 
     it('binds settings only through the canonical stable settings host', async () => {
         const binding = createLoggerAndEventsAvailablePluginInvocationServiceBinding('7', 'binding');
-        const snapshot = Object.freeze({ revision: '0', values: Object.freeze({ endpoint: 'https://example.test' }) });
+        const snapshot = Object.freeze({
+            scope: Object.freeze({ kind: 'daemon' as const }),
+            revision: '0',
+            values: Object.freeze({ endpoint: 'https://example.test' }),
+        });
         const createServices = createPluginInvocationServicesFactory({
             loggerSink: { write: () => {} },
             events: {
                 broker: createStablePluginEventsBroker(),
                 declarationsByPluginId: new Map(),
-                permissionDeclarationsByPluginId: new Map(),
                 activePluginIds: new Set<string>(),
             },
             settings: {
                 hasPlugin: (pluginId) => pluginId === 'acme.alpha',
                 bind: (candidateSeed) => candidateSeed.plugin.id === 'acme.alpha'
                     ? Object.freeze({
+                        forScope: () => Object.freeze({
                         snapshot: async () => snapshot,
                         get: async () => null,
-                        set: async () => ({ revision: '1' }),
-                        reset: async () => ({ revision: '1' }),
+                        set: async () => ({ scope: snapshot.scope, revision: '1' }),
+                        reset: async () => ({ scope: snapshot.scope, revision: '1' }),
                         describe: () => Object.freeze([]),
                         watch: () => Object.freeze({ dispose: () => {} }),
+                        }),
                     })
                     : null,
             },
@@ -286,21 +562,24 @@ describe('unavailable plugin invocation services factory', () => {
 
         const services = createServices(seed, binding);
         expect(services.availability('settings')).toEqual({ status: 'available' });
-        await expect(services.settings.snapshot()).resolves.toBe(snapshot);
+        await expect(services.settings.forScope({ kind: 'daemon' }).snapshot()).resolves.toBe(snapshot);
     });
 
-    it('materializes fetch only through the canonical stable host and exact network binding', async () => {
-        const adapter = vi.fn(async () => Object.freeze({
-            ok: true,
-            status: 200,
-            statusText: 'OK',
-            finalUrl: 'https://api.example.test/result',
-            headers: Object.freeze({ 'content-type': 'application/octet-stream' }),
-            body: null,
-            text: async () => '',
-            json: async () => null,
-            arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer,
-        }));
+    it('materializes HTTP only through the canonical stable host and exact network binding', async () => {
+        const adapter = Object.freeze({
+            request: vi.fn(async () => Object.freeze({
+                status: 200,
+                finalUrl: 'https://api.example.test/result',
+                headers: Object.freeze({ 'content-type': 'application/octet-stream' }),
+                body: new Uint8Array([1, 2, 3]),
+            })),
+            async openWebSocket(): Promise<never> {
+                throw new PluginError({
+                    code: 'plugin_websocket_test_adapter_unavailable',
+                    message: 'WebSocket is unavailable in this HTTP request fixture',
+                });
+            },
+        });
         const binding = createLoggerAndEventsAvailablePluginInvocationServiceBinding('7', 'binding', [{
             required: true,
             request: {
@@ -318,14 +597,14 @@ describe('unavailable plugin invocation services factory', () => {
             events: {
                 broker: createStablePluginEventsBroker(),
                 declarationsByPluginId: new Map(),
-                permissionDeclarationsByPluginId: new Map(),
                 activePluginIds: new Set<string>(),
             },
-            fetch: createStablePluginFetchHost({ adapter }),
+            http: createStablePluginHttpHost({ adapter }),
         })(seed, binding);
 
-        expect(services.availability('fetch')).toEqual({ status: 'available' });
-        await expect(services.fetch.request({
+        expect(services.availability('http')).toEqual({ status: 'available' });
+        expect(services).not.toHaveProperty('fetch');
+        await expect(services.http.request({
             url: 'https://api.example.test/data',
             method: 'GET',
             redirect: 'error',
@@ -335,7 +614,7 @@ describe('unavailable plugin invocation services factory', () => {
             headers: { 'content-type': 'application/octet-stream' },
             body: new Uint8Array([1, 2, 3]),
         });
-        expect(adapter).toHaveBeenCalledOnce();
+        expect(adapter.request).toHaveBeenCalledOnce();
     });
 
     it('commits ordinary storage transactions atomically and fences ended or stale transaction handles', async () => {
@@ -347,33 +626,32 @@ describe('unavailable plugin invocation services factory', () => {
             events: {
                 broker: createStablePluginEventsBroker(),
                 declarationsByPluginId: new Map(),
-                permissionDeclarationsByPluginId: new Map(),
                 activePluginIds: new Set<string>(),
             },
             storagePaths: resolvePluginStorePaths({ happyHomeDir }),
         })({ ...seed, isGenerationCurrent: () => current }, binding);
 
-        await expect(services.storage.local.transaction(async (transaction) => {
+        await expect(services.storage.daemon.transaction(async (transaction) => {
             await transaction.set('first', 1);
             await transaction.set('second', 2);
             throw new Error('abort transaction');
         })).rejects.toThrow('abort transaction');
-        expect(await services.storage.local.get('first')).toBeNull();
-        expect(await services.storage.local.get('second')).toBeNull();
+        expect(await services.storage.daemon.get('first')).toBeNull();
+        expect(await services.storage.daemon.get('second')).toBeNull();
 
-        let endedHandle: PluginStorageTransaction | null = null;
-        await services.storage.local.transaction(async (transaction) => {
+        let endedHandle: StorageTransaction | null = null;
+        await services.storage.daemon.transaction(async (transaction) => {
             endedHandle = transaction;
             await transaction.set('first', 1);
         });
         await expect(endedHandle!.get('first')).rejects.toMatchObject({ code: 'plugin_storage_transaction_ended' });
 
-        await expect(services.storage.local.transaction(async (transaction) => {
+        await expect(services.storage.daemon.transaction(async (transaction) => {
             await transaction.set('first', 3);
             current = false;
         })).rejects.toMatchObject({ code: 'plugin_generation_stale' });
         current = true;
-        expect(await services.storage.local.get('first')).toBe(1);
+        expect(await services.storage.daemon.get('first')).toBe(1);
 
         const rejectBeforeDeadlock = async (operation: Promise<unknown>): Promise<unknown> => await Promise.race([
             operation.then(
@@ -382,31 +660,31 @@ describe('unavailable plugin invocation services factory', () => {
             ),
             new Promise((resolve) => setTimeout(() => resolve({ timedOut: true }), 2_000)),
         ]);
-        expect(await rejectBeforeDeadlock(services.storage.local.transaction(async () => {
-            await services.storage.local.set('reentrant', true);
+        expect(await rejectBeforeDeadlock(services.storage.daemon.transaction(async () => {
+            await services.storage.daemon.set('reentrant', true);
         }))).toMatchObject({ code: 'plugin_storage_transaction_reentry' });
-        expect(await rejectBeforeDeadlock(services.storage.local.transaction(async () => {
+        expect(await rejectBeforeDeadlock(services.storage.daemon.transaction(async () => {
             await services.storage.ephemeral.transaction(async () => undefined);
         }))).toMatchObject({ code: 'plugin_storage_transaction_reentry' });
 
-        await services.storage.local.transaction(async (transaction) => {
+        await services.storage.daemon.transaction(async (transaction) => {
             await transaction.set('first', 2);
             await services.storage.ephemeral.set('independent', true);
         });
-        expect(await services.storage.local.get('first')).toBe(2);
+        expect(await services.storage.daemon.get('first')).toBe(2);
         expect(await services.storage.ephemeral.get('independent')).toBe(true);
 
-        await services.storage.local.set('counter', 0);
+        await services.storage.daemon.set('counter', 0);
         let callbackCount = 0;
         await Promise.all(Array.from({ length: 8 }, async () => {
-            await services.storage.local.transaction(async (transaction) => {
+            await services.storage.daemon.transaction(async (transaction) => {
                 callbackCount += 1;
                 const value = await transaction.get<number>('counter') ?? 0;
                 await transaction.set('counter', value + 1);
             });
         }));
         expect(callbackCount).toBe(8);
-        expect(await services.storage.local.get('counter')).toBe(8);
+        expect(await services.storage.daemon.get('counter')).toBe(8);
     });
 
     it('rejects a logger factory binding that does not admit exactly the logger', () => {
@@ -415,7 +693,6 @@ describe('unavailable plugin invocation services factory', () => {
             events: {
                 broker: createStablePluginEventsBroker(),
                 declarationsByPluginId: new Map(),
-                permissionDeclarationsByPluginId: new Map(),
                 activePluginIds: new Set(),
             },
         });
@@ -464,14 +741,13 @@ describe('unavailable plugin invocation services factory', () => {
             events: {
                 broker: createStablePluginEventsBroker(),
                 declarationsByPluginId: new Map(),
-                permissionDeclarationsByPluginId: new Map(),
                 activePluginIds: new Set(),
             },
             exec: {
                 resolveExecutable: async () => ({ command: process.execPath }),
                 resolvePath: async () => { throw new Error('unexpected path'); },
             },
-        })(seed, createLoggerFilesystemEventsAndExecServiceBinding(
+        })(seed, createLoggerEventsAndExecServiceBinding(
             '7',
             'binding',
             [{
@@ -483,7 +759,6 @@ describe('unavailable plugin invocation services factory', () => {
                     scope: { executables: [executable], envKeys: ['FIXTURE_VALUE'] },
                 },
             }],
-            { pluginData: '/tmp/plugin', workspace: '/tmp/workspace', projects: new Map() },
         ));
 
         expect(services.availability('exec')).toEqual({ status: 'available' });

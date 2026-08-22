@@ -26,7 +26,10 @@ async function writeSource(path, source) {
 async function createFixtureRoot() {
   const root = await mkdtemp(join(tmpdir(), 'happier-public-toolchain-'));
   await writeJson(join(root, 'package.json'), {
-    devDependencies: { '@typescript/native': 'npm:typescript@7.0.2' },
+    devDependencies: {
+      '@typescript/native': 'npm:typescript@7.0.2',
+      typescript: '5.9.3',
+    },
   });
   await writeJson(join(root, 'apps', 'cli', 'package.json'), {
     name: '@happier-dev/cli',
@@ -86,6 +89,12 @@ async function createFixtureRoot() {
       '@typescript/native': '0.0.0',
       '@vitejs/plugin-react': '0.0.0',
       vite: '0.0.0',
+    },
+  });
+  await writeJson(join(root, 'packages', 'tests', 'fixtures', 'plugin-platform', 'packed-targeted-contribution-projection', 'contributor', 'package.json'), {
+    name: 'packed-targeted-projection-contributor',
+    devDependencies: {
+      typescript: '0.0.0',
     },
   });
   await mkdir(join(root, 'packages', 'protocol', 'src', 'plugins', 'ui'), { recursive: true });
@@ -151,6 +160,8 @@ async function createFixtureRoot() {
     '  version "25.0.10"',
     '"@typescript/native@npm:typescript@7.0.2":',
     '  version "7.0.2"',
+    'typescript@5.9.3:',
+    '  version "5.9.3"',
     '"@vitejs/plugin-react@4.7.0":',
     '  version "4.7.0"',
     'react@19.2.0:',
@@ -257,6 +268,7 @@ test('derives the one public packet from manifests, lock facts, Protocol facts, 
       reactNativeCommunityCli: { packageName: '@react-native-community/cli', dependencySpec: '20.1.2', resolvedVersion: '20.1.2' },
       rspack: { packageName: '@rspack/core', dependencySpec: '2.1.3', resolvedVersion: '2.1.3' },
       swcHelpers: { packageName: '@swc/helpers', dependencySpec: '0.5.23', resolvedVersion: '0.5.23' },
+      typescript: { packageName: 'typescript', dependencySpec: '5.9.3', resolvedVersion: '5.9.3' },
       typescriptNative: { packageName: '@typescript/native', dependencySpec: 'npm:typescript@7.0.2', resolvedVersion: '7.0.2' },
       viteReactPlugin: { packageName: '@vitejs/plugin-react', dependencySpec: '4.7.0', resolvedVersion: '4.7.0' },
     },
@@ -273,6 +285,18 @@ test('derives the one public packet from manifests, lock facts, Protocol facts, 
     /import type \{ PublicToolchainCompatibilityV1 \} from '\.\/toolchainCompatibility\.js';/u,
   );
   assert.doesNotMatch(rendered, /@happier-dev\/protocol/u);
+});
+
+test('projects the current action authority keys into the generated minimal cold manifest', async () => {
+  const root = await createFixtureRoot();
+  const manifestDocumentation = await readFile(
+    join(root, 'apps', 'docs', 'content', 'docs', 'plugins', 'manifest', 'index.mdx'),
+    'utf8',
+  );
+
+  assert.match(manifestDocumentation, /"execution": \{ "target": "daemon" \}/u);
+  assert.match(manifestDocumentation, /"placementBindings": \["commandPalette"\]/u);
+  assert.doesNotMatch(manifestDocumentation, /"placement": "commandPalette"/u);
 });
 
 test('fails closed when a package manifest and the candidate host disagree about React Native', async () => {
@@ -356,6 +380,16 @@ test('keeps every generated example and external-fixture package dependency on t
     'private-sdk-subpath',
     'package.json',
   );
+  const stalePackedTargetPath = join(
+    root,
+    'packages',
+    'tests',
+    'fixtures',
+    'plugin-platform',
+    'packed-targeted-contribution-projection',
+    'contributor',
+    'package.json',
+  );
   await writeJson(staleExamplePath, {
     name: '@example/stale-react-native',
     dependencies: {
@@ -371,6 +405,10 @@ test('keeps every generated example and external-fixture package dependency on t
     name: '@example/stale-private-sdk-subpath',
     dependencies: { '@happier-dev/plugin-sdk': '0.2.9' },
   });
+  await writeJson(stalePackedTargetPath, {
+    name: 'packed-targeted-projection-contributor',
+    devDependencies: { typescript: '0.0.0' },
+  });
 
   const stale = spawnSync(process.execPath, [GENERATOR_PATH, '--repo-root', root, '--check'], {
     encoding: 'utf8',
@@ -382,9 +420,10 @@ test('keeps every generated example and external-fixture package dependency on t
     encoding: 'utf8',
   });
   assert.equal(write.status, 0, write.stderr);
-  const [examplePackage, fixturePackage] = await Promise.all([
+  const [examplePackage, fixturePackage, packedTargetPackage] = await Promise.all([
     readFile(staleExamplePath, 'utf8').then(JSON.parse),
     readFile(staleFixturePath, 'utf8').then(JSON.parse),
+    readFile(stalePackedTargetPath, 'utf8').then(JSON.parse),
   ]);
   assert.equal(examplePackage.dependencies['@happier-dev/plugin-sdk'], packet.pluginSdk.version);
   assert.equal(examplePackage.dependencies['@happier-dev/plugin-ui'], packet.pluginUi.version);
@@ -393,6 +432,54 @@ test('keeps every generated example and external-fixture package dependency on t
   assert.equal(examplePackage.devDependencies.vite, packet.framework.vite);
   assert.equal(examplePackage.peerDependencies.react, packet.framework.react);
   assert.equal(fixturePackage.dependencies['@happier-dev/plugin-sdk'], packet.pluginSdk.version);
+  assert.equal(packedTargetPackage.devDependencies.typescript, packet.authoringDependencies.typescript.dependencySpec);
+
+  const current = spawnSync(process.execPath, [GENERATOR_PATH, '--repo-root', root, '--check'], {
+    encoding: 'utf8',
+  });
+  assert.equal(current.status, 0, current.stderr);
+});
+
+test('adds project-local TypeScript only for package-owned TypeScript UI build configs', async () => {
+  const root = await createFixtureRoot();
+  const packet = await derivePublicToolchainCompatibilityV1({ repoRoot: root });
+  const outputPath = join(root, 'packages', 'plugin-sdk', 'src', 'ui', 'build', 'publicToolchainCompatibility.generated.ts');
+  const uiBuildPackagePath = join(root, 'packages', 'plugin-sdk', 'examples', 'typescript-ui-build', 'package.json');
+  const nonUiPackagePath = join(root, 'packages', 'plugin-sdk', 'examples', 'no-ui-build', 'package.json');
+  await writeFile(outputPath, renderPublicToolchainCompatibilityModule(packet), 'utf8');
+  await writeJson(uiBuildPackagePath, {
+    name: '@example/typescript-ui-build',
+    devDependencies: { '@typescript/native': 'npm:typescript@7.0.2' },
+  });
+  await writeSource(
+    join(root, 'packages', 'plugin-sdk', 'examples', 'typescript-ui-build', 'pluginUiBuild.ts'),
+    'export default {};\n',
+  );
+  await writeJson(nonUiPackagePath, {
+    name: '@example/no-ui-build',
+    devDependencies: { '@typescript/native': 'npm:typescript@7.0.2' },
+  });
+  await writeSource(
+    join(root, 'packages', 'plugin-sdk', 'examples', 'no-ui-build', 'src', 'index.ts'),
+    'export {};\n',
+  );
+
+  const missingTypeScript = spawnSync(process.execPath, [GENERATOR_PATH, '--repo-root', root, '--check'], {
+    encoding: 'utf8',
+  });
+  assert.notEqual(missingTypeScript.status, 0);
+  assert.match(missingTypeScript.stderr, /consumer package output is stale/i);
+
+  const write = spawnSync(process.execPath, [GENERATOR_PATH, '--repo-root', root, '--write'], {
+    encoding: 'utf8',
+  });
+  assert.equal(write.status, 0, write.stderr);
+  const [uiBuildPackage, nonUiPackage] = await Promise.all([
+    readFile(uiBuildPackagePath, 'utf8').then(JSON.parse),
+    readFile(nonUiPackagePath, 'utf8').then(JSON.parse),
+  ]);
+  assert.equal(uiBuildPackage.devDependencies.typescript, packet.authoringDependencies.typescript.dependencySpec);
+  assert.equal(nonUiPackage.devDependencies.typescript, undefined);
 
   const current = spawnSync(process.execPath, [GENERATOR_PATH, '--repo-root', root, '--check'], {
     encoding: 'utf8',

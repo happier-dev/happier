@@ -14,6 +14,7 @@ import {
   useComposer,
   useComposerView,
   usePluginHostApi,
+  usePluginTranslation,
   usePluginUiFocusTarget,
   useSurfaceContext,
 } from '@happier-dev/plugin-ui';
@@ -84,7 +85,8 @@ function ExternalAuthoringSemanticSurface() {
   const [reviewScope, setReviewScope] = useState<'current' | 'all'>('current');
   const [reviewSection, setReviewSection] = useState<'summary' | 'history'>('summary');
   const saveFocusTarget = usePluginUiFocusTarget();
-  const reviewLabel = `Save external review (${locale})`;
+  const translate = usePluginTranslation();
+  const reviewLabel = `${translate('external.review.save', 'Save external review')} (${locale})`;
 
   useEffect(() => {
     let active = true;

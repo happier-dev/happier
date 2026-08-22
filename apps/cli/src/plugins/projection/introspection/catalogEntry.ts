@@ -5,7 +5,7 @@ import type {
 
 import type { CanonicalPluginManifest } from '@/plugins/manifest/types';
 import type { PluginCompatibilityDiagnostic } from '@/plugins/validation/diagnostics/types';
-import { enrichPluginDiagnosticRecord, projectPluginContributionIntrospection } from './project';
+import { projectPluginCompatibilityDiagnostics, projectPluginContributionIntrospection } from './project';
 import { projectManifestContributionIntrospection } from './manifest';
 import { mapPluginSourceToDiagnosticSource } from './source';
 
@@ -33,18 +33,14 @@ export function projectPluginCatalogEntryIntrospection(params: Readonly<{
     });
   }
 
-  const diagnostics = params.diagnostics.map((diagnostic, ordinal) => enrichPluginDiagnosticRecord({
-    code: diagnostic.code,
-    severity: 'error',
-    message: diagnostic.message,
-  }, {
-    ordinal,
+  const diagnostics = projectPluginCompatibilityDiagnostics({
+    diagnostics: params.diagnostics,
     plugin: { id: params.pluginId, version: params.pluginVersion, source },
-    stage: 'discovery',
+    defaultStage: 'discovery',
     host: params.host,
     platform: params.platform,
     occurredAtMs: params.occurredAtMs,
-  }));
+  });
   return projectPluginContributionIntrospection({
     generation: params.generation,
     candidates: [],

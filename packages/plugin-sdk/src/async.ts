@@ -3,6 +3,7 @@ export {
     raceWithTimeout,
     sleep,
     sleepWithSignal,
+    throwIfAborted,
 } from './timeout.js';
 export type { CoalescedScheduler } from './runtime/coalescedScheduler.js';
 export { createCoalescedScheduler } from './runtime/coalescedScheduler.js';

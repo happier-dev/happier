@@ -40,4 +40,14 @@ describe('Agent runtime optional surfaces source contract', () => {
     expectTypeOf<NonNullable<CheckpointReceipt['sessionStateUpdates']>[number]['fieldId']>()
       .toEqualTypeOf<'identity.runtimeDescriptor' | 'identity.providerSessionId'>();
   });
+
+  it('keeps fork and handoff author-owned at the canonical AgentRuntime surface with operation-time invocation context', () => {
+    const surfacesSource = readFileSync(fileURLToPath(new URL('./surfaces.ts', import.meta.url)), 'utf8');
+
+    expect(surfacesSource).toContain('export type AgentRuntimeForkSurface');
+    expect(surfacesSource).toContain('export type AgentRuntimeHandoffSurface');
+    expect(surfacesSource).toContain('readonly fork?: AgentRuntimeForkSurface;');
+    expect(surfacesSource).toContain('readonly handoff?: AgentRuntimeHandoffSurface;');
+    expect(surfacesSource).toContain('context: PluginInvocationContext');
+  });
 });

@@ -1,20 +1,33 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { PluginError } from '@happier-dev/plugin-sdk';
-import type { ActionHandler } from '@happier-dev/plugin-sdk/runtime';
+import {
+    COMPOSER_MEDIA_CONTENT_CAPABILITY_V1,
+    isPluginError,
+    PluginError,
+} from '@happier-dev/plugin-sdk';
+import type { ActionHandler } from '@happier-dev/plugin-sdk/actions';
 import type { PluginManifest } from '@happier-dev/plugin-sdk/manifest';
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
-import type { PluginHostAccessRequestV2 } from '@happier-dev/protocol';
+import type { MessageActionAvailableSnapshotV1, PluginHostAccessRequestV2 } from '@happier-dev/protocol';
 import type {
     HostCurrentSessionInteractionsService,
 } from '@/agent/runtime/state/currentSessionUiTypes';
 import {
     createNativeAgentCurrentSessionUiServices,
 } from '@/agent/runtime/registry/engineRegistry/nativeAgentSessionInteractions';
+import type { HostCurrentSessionPresentationService } from '@/agent/runtime/state/currentSessionUiTypes';
 
 import { createTargetActionInvocationRegistry } from './targetActionRegistry';
 import { createTargetActionHostBindingResolver } from '../hostAccess/resolve';
-import { createUnavailablePluginServicesFactory } from './services/factory';
+import {
+    createUnavailablePluginServicesFactory,
+} from './services/factory';
+import { createProductionPluginInvocationServiceOwners } from './services/production';
+import {
+    createPluginInvocationLogger,
+    createPluginInvocationSecretRedactor,
+    type PluginInvocationLogRecord,
+} from './services/logger';
 
 function isJsonRecord(value: unknown): value is Readonly<Record<string, unknown>> {
     return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -74,13 +87,107 @@ function createRegistry(
 }
 
 describe('target action invocation registry', () => {
+    it('binds one Connected Account operation to the target correlation and disposes it at settlement', async () => {
+        const dispose = vi.fn();
+        let operationInput: Readonly<{
+            correlationId: string;
+            isCurrent(): boolean;
+        }> | undefined;
+        const bindConnectedAccountActionOperation = vi.fn(async (input: Readonly<{
+            correlationId: string;
+            isCurrent(): boolean;
+        }>) => {
+            operationInput = input;
+            return Object.freeze({
+                exactPurposeBindingSubjectId: `operation:${input.correlationId}`,
+                dispose,
+            });
+        });
+        const createServices = vi.fn(createUnavailablePluginServicesFactory());
+        const handler = vi.fn(async () => {
+            expect(operationInput?.isCurrent()).toBe(true);
+            return { echoed: 'bound' };
+        });
+        const registry = createRegistry({
+            createServices,
+            bindConnectedAccountActionOperation,
+            actions: [{ ...action(), handler }],
+        });
+
+        await expect(registry.invoke({
+            pluginId: 'acme.alpha',
+            localId: 'run',
+            input: { value: 'x' },
+            surface: 'cli',
+        })).resolves.toEqual({ status: 'executed', value: { echoed: 'bound' } });
+
+        expect(bindConnectedAccountActionOperation).toHaveBeenCalledWith(expect.objectContaining({
+            pluginId: 'acme.alpha',
+            localId: 'run',
+            input: { value: 'x' },
+            correlationId: expect.any(String),
+        }));
+        expect(createServices).toHaveBeenCalledWith(expect.objectContaining({
+            correlationId: operationInput?.correlationId,
+        }), expect.objectContaining({
+            exactPurposeBindingSubjectId: `operation:${operationInput?.correlationId}`,
+        }));
+        expect(handler).toHaveBeenCalledOnce();
+        expect(dispose).toHaveBeenCalledOnce();
+        expect(operationInput?.isCurrent()).toBe(false);
+    });
+
+    it('rechecks an admitted target generation after async pre-handler operation binding', async () => {
+        let currentTargetGeneration = 'target-generation-g';
+        const handler = vi.fn(async () => ({ echoed: 'should-not-run' }));
+        const registry = createRegistry({
+            actions: [{ ...action(), handler }],
+            resolveCurrentPluginImmutableGenerationId: async (pluginId) => (
+                pluginId === 'acme.target' ? currentTargetGeneration : null
+            ),
+            bindConnectedAccountActionOperation: async () => {
+                currentTargetGeneration = 'target-generation-h';
+                return null;
+            },
+        });
+
+        await expect(registry.invoke({
+            pluginId: 'acme.alpha',
+            localId: 'run',
+            input: { value: 'x' },
+            surface: 'cli',
+            caller: {
+                kind: 'plugin',
+                pluginId: 'acme.target',
+                contribution: {
+                    id: 'request',
+                    qualifiedId: 'acme.target/actions/request',
+                },
+                materialization: {
+                    pluginId: 'acme.target',
+                    machineId: 'machine-target',
+                    materializationId: 'target-materialization-g',
+                },
+            },
+            expectedAdmittedTargetGeneration: {
+                pluginId: 'acme.target',
+                immutableGenerationId: 'target-generation-g',
+            },
+        })).resolves.toMatchObject({
+            status: 'failed',
+            code: 'plugin_action_generation_retired',
+            actionHandlerInvocation: 'notStarted',
+        });
+        expect(handler).not.toHaveBeenCalled();
+    });
+
     it('binds context.ui to the validated active session presentation even when public session inventory is unavailable', async () => {
         const notify = vi.fn(async () => ({ status: 'applied' as const, revision: 'r1' }));
         const presentation = {
             notify,
             setStatus: vi.fn(),
             setWidget: vi.fn(),
-            setSurfaceTitle: vi.fn(),
+            purgeOwner: vi.fn(),
             replaceComposerText: vi.fn(),
         };
         const registry = createRegistry({
@@ -95,6 +202,7 @@ describe('target action invocation registry', () => {
             actions: [{
                 ...action(),
                 handler: async (_input, context) => {
+                    if (!context.ui) throw new Error('expected current-session UI');
                     await context.ui.notify('Hello');
                     return { echoed: context.session?.id ?? '' };
                 },
@@ -111,13 +219,72 @@ describe('target action invocation registry', () => {
         expect(notify).toHaveBeenCalledTimes(1);
     });
 
+    it('stamps transient presentation rows from the exact target-action invocation and retires only that owner', async () => {
+        const setStatus = vi.fn<HostCurrentSessionPresentationService['setStatus']>(async () => (
+            { status: 'applied' as const, revision: 'r1' }
+        ));
+        const purgeOwner = vi.fn(async () => ({ status: 'applied' as const, revision: 'r2' }));
+        const presentation = Object.freeze({
+            notify: vi.fn(async () => ({ status: 'applied' as const, revision: 'r1' })),
+            setStatus,
+            setWidget: vi.fn(async () => ({ status: 'applied' as const, revision: 'r1' })),
+            purgeOwner,
+            replaceComposerText: vi.fn(async () => ({ status: 'applied' as const, revision: 'r1' })),
+        });
+        const currentSessionUi = createNativeAgentCurrentSessionUiServices({
+            permissionHandler: null,
+            pluginId: 'acme.alpha',
+            contributionId: 'run',
+            runtimeId: 'run',
+            sessionId: 'session-1',
+            generationId: '7',
+            presentation,
+        });
+        const registry = createRegistry({
+            resolveCurrentSessionUi: (sessionId) => sessionId === 'session-1'
+                ? currentSessionUi
+                : null,
+            actions: [{
+                ...action(),
+                immutableGenerationId: 'immutable-generation-alpha',
+                handler: async (_input, context) => {
+                    if (!context.ui) throw new Error('expected current-session UI');
+                    await context.ui.status.set('progress', 'Running');
+                    return { echoed: context.session?.id ?? '' };
+                },
+            }],
+        });
+
+        await expect(registry.invoke({
+            pluginId: 'acme.alpha',
+            localId: 'run',
+            input: { value: 'x' },
+            surface: 'cli',
+            sessionId: 'session-1',
+        })).resolves.toEqual({ status: 'executed', value: { echoed: 'session-1' } });
+
+        const statusRequest = setStatus.mock.calls[0]?.[0];
+        if (!statusRequest) throw new Error('Expected a status presentation request');
+        expect(statusRequest.owner).toMatchObject({
+            pluginId: 'acme.alpha',
+            contributionId: 'run',
+            generationId: 'immutable-generation-alpha',
+            invocationId: expect.any(String),
+        });
+        await vi.waitFor(() => {
+            expect(purgeOwner).toHaveBeenCalledWith(expect.objectContaining({
+                owner: statusRequest.owner,
+            }));
+        });
+    });
+
     it('binds target-action services and context.ui to the same validated current-session interaction owner', async () => {
         const handleToolCall = vi.fn(async () => ({ decision: 'approved' as const }));
         const presentation = Object.freeze({
             notify: vi.fn(async () => ({ status: 'applied' as const, revision: 'r1' })),
             setStatus: vi.fn(),
             setWidget: vi.fn(),
-            setSurfaceTitle: vi.fn(),
+            purgeOwner: vi.fn(),
             replaceComposerText: vi.fn(),
         });
         const currentSession = createNativeAgentCurrentSessionUiServices({
@@ -127,19 +294,28 @@ describe('target action invocation registry', () => {
             runtimeId: 'run',
             sessionId: 'session-1',
             generationId: '7',
+            interactionDeadlineMs: 1_000,
             isCurrent: () => true,
+            signal: new AbortController().signal,
             presentation,
         });
-        const createServices = vi.fn(createUnavailablePluginServicesFactory());
+        const serviceOwners = createProductionPluginInvocationServiceOwners({
+            loggerSink: { write: () => {} },
+        });
+        const createServices = vi.fn(serviceOwners.createServices);
         const registry = createRegistry({
             createServices,
+            resolveHostBinding: serviceOwners.resolveHostBinding,
             resolveCurrentSessionUi: (sessionId) => (
                 sessionId === 'session-1' ? currentSession : null
             ),
             actions: [{
                 ...action(),
                 handler: async (_input, context) => ({
-                    echoed: String(await context.ui.confirm('Use the selected account?')),
+                    echoed: (await context.services.interactions.confirm({
+                        kind: 'confirmation',
+                        message: 'Use the selected account?',
+                    })).status,
                 }),
             }],
         });
@@ -150,12 +326,13 @@ describe('target action invocation registry', () => {
             input: { value: 'x' },
             surface: 'cli',
             sessionId: 'session-1',
-        })).resolves.toEqual({ status: 'executed', value: { echoed: 'true' } });
+        })).resolves.toEqual({ status: 'executed', value: { echoed: 'approved' } });
         expect(handleToolCall).toHaveBeenCalledOnce();
         expect(createServices).toHaveBeenCalledWith(
             expect.objectContaining({ currentSession }),
             expect.any(Object),
         );
+        await serviceOwners.dispose();
     });
 
     it('fails closed when late-bound package authorization no longer matches the registered action', async () => {
@@ -229,9 +406,10 @@ describe('target action invocation registry', () => {
                 handler: async (input, context) => {
                     captured = context;
                     expect(Object.keys(context.services).sort()).toEqual([
-                        'availability', 'connectedAccounts', 'events', 'exec', 'fetch', 'fs', 'logger',
-                        'managed', 'mcp', 'notifications', 'resources', 'secrets', 'sessions',
+                        'actions', 'availability', 'composerContent', 'connectedAccounts', 'events', 'exec', 'fs', 'http',
+                        'interactions', 'logger', 'managedServices', 'mcp', 'notifications', 'providers', 'resources', 'secrets', 'sessions',
                         'settings', 'storage',
+                        'targetedContributions',
                     ]);
                     expect(context.services.availability('logger')).toEqual({
                         status: 'unavailable',
@@ -241,50 +419,98 @@ describe('target action invocation registry', () => {
                         status: 'unavailable',
                         code: 'plugin_service_unavailable',
                     });
-                    expect(() => context.services.storage.local.get('x')).toThrowError(PluginError);
+                    expect(() => context.services.storage.daemon.get('x')).toThrowError(PluginError);
                     expect(() => context.services.logger.info('not admitted')).toThrowError(PluginError);
-                    await expect(context.ui.confirm('Proceed?')).rejects.toMatchObject({
-                        name: 'PluginError',
-                        code: 'plugin_ui_unavailable',
+                    await expect(context.services.interactions.confirm({
+                        kind: 'confirmation',
+                        message: 'Proceed?',
+                    })).resolves.toMatchObject({
+                        kind: 'confirmation',
+                        status: 'unavailable',
                     });
                     const serviceShape = {
                         logger: ['debug', 'diagnostic', 'error', 'info', 'warn'],
-                        storage: ['ephemeral', 'local', 'session', 'synced'],
-                        settings: ['describe', 'get', 'reset', 'set', 'snapshot', 'watch'],
+                        storage: ['ephemeral', 'daemonSession', 'daemon'],
+                        settings: ['forScope'],
                         secrets: ['delete', 'get', 'set', 'status'],
-                        events: ['emit', 'subscribe'],
-                        fetch: ['request'],
+                        events: ['host', 'plugin'],
+                        http: ['openWebSocket', 'request'],
                         fs: ['list', 'readFile', 'remove', 'stat', 'writeFile'],
                         exec: ['agentCli', 'clients', 'run', 'spawn', 'systemTools'],
-                        managed: ['dependencies', 'servers'],
-                        sessions: ['current', 'get', 'list', 'subagents', 'watch'],
+                        managedServices: ['dependencies', 'supervise'],
+                        sessions: ['current', 'external', 'get', 'list', 'subagents', 'watch'],
                         resources: ['describe', 'read', 'watch'],
                         mcp: ['connect', 'discover', 'list'],
                         notifications: ['listCategories', 'listChannels', 'preferences', 'send', 'watchPreferences'],
-                        connectedAccounts: ['getBinding', 'materialize', 'requestSelection', 'watch'],
+                        connectedAccounts: [
+                            'getBinding',
+                            'listAccounts',
+                            'materialize',
+                            'materializeListedAccount',
+                            'requestSelection',
+                            'watch',
+                        ],
+                        composerContent: ['capabilities', 'stageMedia'],
+                        targetedContributions: ['observeForSelf'],
                     } as const;
                     for (const [serviceId, expectedKeys] of Object.entries(serviceShape)) {
-                        const service = context.services[serviceId as keyof typeof serviceShape];
+                        const service = Reflect.get(context.services, serviceId) as object;
                         expect(Object.keys(service).sort(), serviceId).toEqual([...expectedKeys].sort());
                         expect(Object.isFrozen(service), serviceId).toBe(true);
                         const assertUnavailableLeaves = async (value: Readonly<Record<string, unknown>>, path: string): Promise<void> => {
                             for (const [key, member] of Object.entries(value)) {
                                 const memberPath = `${path}.${key}`;
                                 if (typeof member === 'function') {
+                                    if (memberPath === 'composerContent.capabilities') {
+                                        expect(member()).toEqual({
+                                            [COMPOSER_MEDIA_CONTENT_CAPABILITY_V1]: {
+                                                status: 'unavailable',
+                                                code: 'plugin_service_unavailable',
+                                            },
+                                        });
+                                        continue;
+                                    }
+                                    if (memberPath === 'sessions.external.capabilities') {
+                                        await expect(member()).resolves.toEqual({
+                                            list: { status: 'unavailable', code: 'plugin_service_unavailable' },
+                                            attach: { status: 'unavailable', code: 'plugin_service_unavailable' },
+                                            takeover: { status: 'unavailable', code: 'plugin_service_unavailable' },
+                                            transcript: { status: 'unavailable', code: 'plugin_service_unavailable' },
+                                            follow: { status: 'unavailable', code: 'plugin_service_unavailable' },
+                                        });
+                                        continue;
+                                    }
+                                    if (memberPath === 'sessions.external.followTranscript') {
+                                        await expect(member()).resolves.toEqual({
+                                            status: 'unavailable',
+                                            code: 'plugin_service_unavailable',
+                                        });
+                                        continue;
+                                    }
                                     try {
                                         const returned = member();
                                         if (returned instanceof Promise) {
                                             await expect(returned, memberPath).rejects.toMatchObject({
                                                 name: 'PluginError',
-                                                code: 'plugin_service_unavailable',
+                                                code: serviceId === 'managedServices'
+                                                    ? 'plugin_managed_service_unavailable'
+                                                    : 'plugin_service_unavailable',
                                             });
                                             continue;
                                         }
                                         throw new Error(`${memberPath} returned instead of throwing`);
                                     } catch (error) {
                                         expect(error, memberPath).toBeInstanceOf(PluginError);
-                                        expect(error, memberPath).toMatchObject({ code: 'plugin_service_unavailable' });
+                                        expect(error, memberPath).toMatchObject({
+                                            code: serviceId === 'managedServices'
+                                                ? 'plugin_managed_service_unavailable'
+                                                : 'plugin_service_unavailable',
+                                        });
                                     }
+                                    continue;
+                                }
+                                if (member === null) {
+                                    expect(memberPath).toBe('sessions.current');
                                     continue;
                                 }
                                 expect(member && typeof member === 'object', memberPath).toBe(true);
@@ -292,22 +518,34 @@ describe('target action invocation registry', () => {
                                 await assertUnavailableLeaves(member as Readonly<Record<string, unknown>>, memberPath);
                             }
                         };
+                        if (serviceId === 'settings') {
+                            const scoped = context.services.settings.forScope({ kind: 'daemon' });
+                            expect(Object.keys(scoped).sort()).toEqual([
+                                'describe', 'get', 'reset', 'set', 'snapshot', 'watch',
+                            ]);
+                            expect(Object.isFrozen(scoped)).toBe(true);
+                            await assertUnavailableLeaves(
+                                scoped as unknown as Readonly<Record<string, unknown>>,
+                                'settings.forScope',
+                            );
+                            continue;
+                        }
                         await assertUnavailableLeaves(service as unknown as Readonly<Record<string, unknown>>, serviceId);
                     }
-                    expect(Object.keys(context.services.storage.local).sort()).toEqual([
-                        'consistency', 'delete', 'get', 'list', 'set', 'transaction',
+                    expect(Object.keys(context.services.storage.daemon).sort()).toEqual([
+                        'consistency', 'database', 'delete', 'get', 'list', 'set', 'transaction',
                     ]);
                     expect(Object.keys(context.services.exec.clients)).toEqual(['spawn']);
-                    expect(Object.keys(context.services.managed.dependencies).sort()).toEqual(['ensure', 'remove', 'status', 'update']);
-                    expect(Object.keys(context.services.managed.servers)).toEqual(['supervise']);
-                    expect(Object.keys(context.services.sessions.current).sort()).toEqual([
-                        'availability', 'media', 'send', 'summary', 'watch',
-                    ]);
+                    const managedServices = Reflect.get(context.services, 'managedServices') as Readonly<{
+                        dependencies: object;
+                    }>;
+                    expect(Object.keys(managedServices.dependencies).sort()).toEqual(['ensure', 'remove', 'status', 'update']);
+                    expect(context.services.sessions.current).toBeNull();
                     expect(Object.keys(context.services.sessions.subagents).sort()).toEqual([
                         'capabilities', 'get', 'list', 'observe', 'watch',
                     ]);
                     try {
-                        await context.services.storage.local.get('x');
+                        await context.services.storage.daemon.get('x');
                     } catch (error) {
                         expect(error).toMatchObject({ code: 'plugin_service_unavailable' });
                     }
@@ -428,6 +666,134 @@ describe('target action invocation registry', () => {
         expect(beta).toHaveBeenCalledTimes(3);
     });
 
+    it('redacts materialized credential representations from failed action results without changing successful values', async () => {
+        const authorizationHeader = 'Bearer synthetic-action-result-token';
+        const token = 'synthetic-action-result-token';
+        const encodedHeader = encodeURIComponent(authorizationHeader);
+        const environmentCredential = 'environment action credential';
+        const encodedEnvironmentCredential = Buffer.from(environmentCredential).toString('base64');
+        const secretRedactor = createPluginInvocationSecretRedactor();
+        const createServicesBase = createUnavailablePluginServicesFactory();
+        const lateRecords: PluginInvocationLogRecord[] = [];
+        const lateLoggers: ReturnType<typeof createPluginInvocationLogger>[] = [];
+        const completedScopes: Array<Readonly<{
+            pluginId: string;
+            generation: string;
+            correlationId: string;
+        }>> = [];
+        const registry = createRegistry({
+            createServices(seed, binding) {
+                const scope = {
+                    pluginId: seed.plugin.id,
+                    generation: seed.generation,
+                    correlationId: seed.correlationId,
+                };
+                secretRedactor.beginInvocation(
+                    scope,
+                    seed.redactionLifetimeSignal ?? seed.signal,
+                );
+                secretRedactor.registerRaw(scope, authorizationHeader);
+                secretRedactor.registerRaw(scope, token);
+                secretRedactor.registerExact(scope, encodedEnvironmentCredential);
+                const logger = createPluginInvocationLogger({
+                    seed,
+                    sink: { write: (record) => { lateRecords.push(record); } },
+                    secretRedactor,
+                });
+                lateLoggers.push(logger);
+                return Object.freeze({
+                    ...createServicesBase(seed, binding),
+                    logger,
+                });
+            },
+            redactDiagnosticText(scope, value) {
+                return secretRedactor.redact(scope, value);
+            },
+            completeDiagnosticScope(scope) {
+                completedScopes.push(scope);
+                secretRedactor.completeInvocation(scope);
+            },
+            actions: [{
+                ...action(),
+                handler: async (input) => {
+                    const value = isJsonRecord(input) ? input.value : null;
+                    if (value === 'fail') {
+                        throw new Error(`upstream rejected ${token} (${encodedHeader})`);
+                    }
+                    if (value === 'coded-fail') {
+                        throw new PluginError({
+                            code: token,
+                            message: `upstream rejected ${encodedHeader}`,
+                        });
+                    }
+                    if (value === 'environment-fail') {
+                        throw new Error(`environment rejected ${encodedEnvironmentCredential}`);
+                    }
+                    return { echoed: token };
+                },
+            }],
+        });
+
+        await expect(registry.invoke({
+            pluginId: 'acme.alpha',
+            localId: 'run',
+            input: { value: 'fail' },
+            surface: 'cli',
+        })).resolves.toEqual({
+            status: 'failed',
+            code: 'plugin_action_execution_failed',
+            message: 'upstream rejected [REDACTED] ([REDACTED])',
+        });
+        // A canonical PluginError publishes its `retryable` signal and payload
+        // to the caller, and the same scoped credential redactor that owns the
+        // code and message reaches every string inside that payload.
+        await expect(registry.invoke({
+            pluginId: 'acme.alpha',
+            localId: 'run',
+            input: { value: 'coded-fail' },
+            surface: 'cli',
+        })).resolves.toEqual({
+            status: 'failed',
+            code: 'plugin_action_execution_failed',
+            message: 'upstream rejected [REDACTED]',
+            retryable: false,
+            data: {
+                name: 'PluginError',
+                code: '[REDACTED]',
+                message: 'upstream rejected [REDACTED]',
+            },
+        });
+        await expect(registry.invoke({
+            pluginId: 'acme.alpha',
+            localId: 'run',
+            input: { value: 'environment-fail' },
+            surface: 'cli',
+        })).resolves.toEqual({
+            status: 'failed',
+            code: 'plugin_action_execution_failed',
+            message: 'environment rejected [REDACTED]',
+        });
+        await expect(registry.invoke({
+            pluginId: 'acme.alpha',
+            localId: 'run',
+            input: { value: 'success' },
+            surface: 'cli',
+        })).resolves.toEqual({
+            status: 'executed',
+            value: { echoed: token },
+        });
+        lateLoggers.at(-1)?.info(`late ${token}`);
+        expect(lateRecords).toEqual([]);
+        expect(completedScopes).toHaveLength(4);
+        for (const scope of completedScopes) {
+            expect(secretRedactor.redact(scope, encodedEnvironmentCredential))
+                .toBe(encodedEnvironmentCredential);
+        }
+
+        registry.dispose();
+        secretRedactor.retireGeneration('7', 'acme.alpha');
+    });
+
     it('admits safe actions without prompting and fails closed for unresolved policy inputs', async () => {
         const handler = vi.fn(async () => ({ echoed: 'no' }));
         const local = createRegistry({ actions: [{ ...action(), handler }] });
@@ -524,6 +890,42 @@ describe('target action invocation registry', () => {
             .resolves.toMatchObject({ status: 'executed' });
         expect(requestCurrentIntent).toHaveBeenCalledTimes(1);
         expect(handler).toHaveBeenCalledTimes(1);
+    });
+
+    it('rechecks a mounted caller after current-intent resolution and before the target handler', async () => {
+        let callerCurrent = true;
+        let settleIntent: (value: Readonly<{ status: 'approved'; fingerprint: string }>) => void = () => {
+            throw new Error('current intent was not requested');
+        };
+        const handler = vi.fn(async () => ({ echoed: 'should-not-run' }));
+        const requestCurrentIntent = vi.fn(({ fingerprint }: Readonly<{ fingerprint: string }>) => (
+            new Promise<Readonly<{ status: 'approved'; fingerprint: string }>>((resolve) => {
+                settleIntent = resolve;
+            })
+        ));
+        const registry = createRegistry({
+            actions: [{ ...action({ dangerLevel: 'writesRemote' }), handler }],
+        });
+
+        const pending = registry.invoke({
+            pluginId: 'acme.alpha',
+            localId: 'run',
+            input: { value: 'x' },
+            surface: 'cli',
+            requestCurrentIntent,
+            isMountedCallerCurrent: () => callerCurrent,
+        });
+        await vi.waitFor(() => expect(requestCurrentIntent).toHaveBeenCalledOnce());
+        callerCurrent = false;
+        const fingerprint = requestCurrentIntent.mock.calls[0]?.[0]?.fingerprint;
+        if (typeof fingerprint !== 'string') throw new Error('expected current-intent fingerprint');
+        settleIntent({ status: 'approved', fingerprint });
+
+        await expect(pending).resolves.toMatchObject({
+            status: 'unavailable',
+            code: 'plugin_mounted_caller_unavailable',
+        });
+        expect(handler).not.toHaveBeenCalled();
     });
 
     it('rejects a decision when refresh replaces the registered generation while intent is pending', async () => {
@@ -626,11 +1028,20 @@ describe('target action invocation registry', () => {
         registry.dispose();
         resolveHandler({ echoed: 'x' });
 
-        await expect(invocation).resolves.toMatchObject({ status: 'unavailable', code: 'plugin_action_generation_retired' });
+        const retiredAfterHandlerStart = await invocation;
+        expect(retiredAfterHandlerStart).toMatchObject({
+            status: 'unavailable',
+            code: 'plugin_action_generation_retired',
+        });
+        expect(retiredAfterHandlerStart).not.toHaveProperty('actionHandlerInvocation');
         expect(handler).toHaveBeenCalledTimes(1);
 
         await expect(registry.invoke({ pluginId: 'acme.alpha', localId: 'run', input: { value: 'x' }, surface: 'cli' }))
-            .resolves.toMatchObject({ status: 'unavailable', code: 'plugin_action_generation_retired' });
+            .resolves.toMatchObject({
+                status: 'unavailable',
+                code: 'plugin_action_generation_retired',
+                actionHandlerInvocation: 'notStarted',
+            });
 
         const aborted = new AbortController();
         aborted.abort(new Error('caller stopped'));
@@ -653,7 +1064,89 @@ describe('target action invocation registry', () => {
         await expect(invocation).resolves.toMatchObject({ status: 'unavailable', code: 'plugin_action_aborted' });
     });
 
-    it('does not relabel a successfully committed handler result after caller cancellation', async () => {
+    it('settles an ignored caller abort without waiting for the handler and discards late success exactly once', async () => {
+        let resolveHandler!: (value: { echoed: string }) => void;
+        const caller = new AbortController();
+        const completeDiagnosticScope = vi.fn();
+        const alpha = vi.fn(() => new Promise<{ echoed: string }>((resolve) => {
+            resolveHandler = resolve;
+        }));
+        const beta = vi.fn(async () => ({ echoed: 'beta healthy' }));
+        const registry = createRegistry({
+            completeDiagnosticScope,
+            actions: [
+                { ...action(), handler: alpha },
+                { ...action(), pluginId: 'acme.beta', handler: beta },
+            ],
+        });
+        const invocation = registry.invoke({
+            pluginId: 'acme.alpha', localId: 'run', input: { value: 'x' }, surface: 'cli', signal: caller.signal,
+        });
+        await vi.waitFor(() => expect(alpha).toHaveBeenCalledOnce());
+
+        caller.abort(new Error('caller stopped'));
+
+        await vi.waitFor(
+            () => expect(completeDiagnosticScope).toHaveBeenCalledOnce(),
+            { timeout: 1_000 },
+        );
+        await expect(invocation).resolves.toMatchObject({
+            status: 'unavailable',
+            code: 'plugin_action_aborted',
+        });
+        expect(completeDiagnosticScope).toHaveBeenCalledOnce();
+
+        resolveHandler({ echoed: 'late' });
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(completeDiagnosticScope).toHaveBeenCalledOnce();
+        await expect(registry.invoke({
+            pluginId: 'acme.beta', localId: 'run', input: { value: 'x' }, surface: 'cli',
+        })).resolves.toEqual({ status: 'executed', value: { echoed: 'beta healthy' } });
+        expect(beta).toHaveBeenCalledOnce();
+    }, 2_000);
+
+    it('observes and discards a late handler rejection after caller cancellation', async () => {
+        let rejectHandler!: (error: Error) => void;
+        const caller = new AbortController();
+        const handler = vi.fn(() => new Promise<never>((_resolve, reject) => {
+            rejectHandler = reject;
+        }));
+        const registry = createRegistry({ actions: [{ ...action(), handler }] });
+        const invocation = registry.invoke({
+            pluginId: 'acme.alpha', localId: 'run', input: { value: 'x' }, surface: 'cli', signal: caller.signal,
+        });
+        await vi.waitFor(() => expect(handler).toHaveBeenCalledOnce());
+
+        caller.abort(new Error('caller stopped'));
+        await expect(invocation).resolves.toMatchObject({
+            status: 'unavailable',
+            code: 'plugin_action_aborted',
+        });
+
+        rejectHandler(new Error('late handler rejection'));
+        await Promise.resolve();
+        await Promise.resolve();
+    });
+
+    it('settles a generation retirement without waiting for an abort-ignoring handler', async () => {
+        const handler = vi.fn(() => new Promise<never>(() => {}));
+        const registry = createRegistry({ actions: [{ ...action(), handler }] });
+        const invocation = registry.invoke({
+            pluginId: 'acme.alpha', localId: 'run', input: { value: 'x' }, surface: 'cli',
+        });
+        await vi.waitFor(() => expect(handler).toHaveBeenCalledOnce());
+
+        registry.dispose();
+
+        await expect(invocation).resolves.toMatchObject({
+            status: 'unavailable',
+            code: 'plugin_action_generation_retired',
+        });
+    });
+
+    it('discards a successful handler result that settles after caller cancellation', async () => {
         let resolveHandler!: (value: { echoed: string }) => void;
         const caller = new AbortController();
         const registry = createRegistry({
@@ -669,7 +1162,29 @@ describe('target action invocation registry', () => {
         caller.abort(new Error('caller stopped'));
         resolveHandler({ echoed: 'x' });
 
+        await expect(invocation).resolves.toMatchObject({
+            status: 'unavailable',
+            code: 'plugin_action_aborted',
+        });
+    });
+
+    it('retains a successful result that settled before caller cancellation', async () => {
+        let resolveHandler!: (value: { echoed: string }) => void;
+        const caller = new AbortController();
+        const registry = createRegistry({
+            actions: [{
+                ...action(),
+                handler: () => new Promise<{ echoed: string }>((resolve) => { resolveHandler = resolve; }),
+            }],
+        });
+        const invocation = registry.invoke({
+            pluginId: 'acme.alpha', localId: 'run', input: { value: 'x' }, surface: 'cli', signal: caller.signal,
+        });
+        await vi.waitFor(() => expect(resolveHandler).toBeTypeOf('function'));
+
+        resolveHandler({ echoed: 'x' });
         await expect(invocation).resolves.toEqual({ status: 'executed', value: { echoed: 'x' } });
+        caller.abort(new Error('caller stopped'));
     });
 });
 
@@ -686,7 +1201,8 @@ describe('SDK testkit and production action invocation parity', () => {
                 title: 'Run',
                 scopes: ['global'],
                 surfaces: ['cli'],
-                placement: 'commandPalette',
+                execution: { target: 'daemon' },
+                placementBindings: ['commandPalette'],
                 dangerLevel: 'safe',
                 inputSchema: {
                     type: 'object',
@@ -747,7 +1263,7 @@ describe('SDK testkit and production action invocation parity', () => {
     }
 
     function normalizeTestkitResult(error: unknown) {
-        if (error instanceof PluginError) {
+        if (isPluginError(error)) {
             const status = error.code.includes('_schema_invalid') ? 'invalid' as const
                 : error.code === 'plugin_action_aborted' || error.code === 'plugin_action_generation_retired'
                     ? 'unavailable' as const
@@ -860,4 +1376,39 @@ describe('SDK testkit and production action invocation parity', () => {
             });
         });
     }
+
+    it('delivers a host-stamped message-action snapshot through the SDK invocation context', async () => {
+        const messageAction = Object.freeze({
+            sessionId: 'session-1',
+            messageId: 'message-1',
+            observedRevision: 'message-updated-at:1',
+            role: 'agent',
+            contentCategory: 'text',
+            seq: 7,
+            visibleText: 'Current message text',
+            structuredPresentationSummary: null,
+            provenanceCategory: 'owner',
+        } satisfies MessageActionAvailableSnapshotV1);
+        const registry = createRegistry({
+            actions: [{
+                ...action({ surfaces: ['cli', 'ui'] }),
+                handler: async (_input, context) => {
+                    expect(context.messageAction).toEqual(messageAction);
+                    expect(Object.isFrozen(context.messageAction)).toBe(true);
+                    return { echoed: context.messageAction?.visibleText ?? '' };
+                },
+            }],
+        });
+
+        await expect(registry.invoke({
+            pluginId: 'acme.alpha',
+            localId: 'run',
+            input: { value: 'x' },
+            surface: 'ui',
+            messageAction,
+        } as never)).resolves.toEqual({
+            status: 'executed',
+            value: { echoed: 'Current message text' },
+        });
+    });
 });

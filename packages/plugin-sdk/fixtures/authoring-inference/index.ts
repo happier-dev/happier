@@ -41,6 +41,7 @@ export const { manifest, activate } = definePlugin({
   actions: {
     echo: {
       title: 'Echo',
+      execution: { target: 'daemon' },
       inputSchema,
       resultSchema,
       run: async (input) => ({ echoed: input.text }),
@@ -259,6 +260,7 @@ if (false) {
     actions: {
       invalid: {
         title: 'Invalid',
+        execution: { target: 'daemon' },
         inputSchema,
         resultSchema,
         // @ts-expect-error The result schema requires a string.
@@ -273,6 +275,7 @@ if (false) {
     actions: {
       invalid: {
         title: 'Invalid',
+        execution: { target: 'daemon' },
         inputSchema,
         // @ts-expect-error The input schema supplies text, not a numeric count.
         run: async (input: { count: number }) => ({ count: input.count }),

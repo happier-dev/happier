@@ -41,7 +41,7 @@ describe('Plugin invocation context', () => {
         void surfaceIsRequired;
 
         expectTypeOf<PluginInvocationSurface>().toEqualTypeOf<
-            'cli' | 'mcp' | 'agent' | 'ui' | 'background' | 'plugin'
+            'cli' | 'mcp' | 'agent' | 'ui' | 'voice' | 'background' | 'plugin'
         >();
         expectTypeOf<PluginInvocationCaller>().toEqualTypeOf<
             | Readonly<{
@@ -49,7 +49,7 @@ describe('Plugin invocation context', () => {
                 pluginId: string;
                 contribution: PluginInvocationContributionIdentity;
                 materialization: PluginMachineMaterializationRefV1;
-                originSurface?: 'cli' | 'mcp' | 'agent' | 'ui' | 'background';
+                originSurface?: 'cli' | 'mcp' | 'agent' | 'ui' | 'voice' | 'background';
             }>
             | Readonly<{
                 kind: 'host';

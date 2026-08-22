@@ -1,4 +1,6 @@
-import { isAbsolute, relative, resolve, win32 } from 'node:path';
+import { isAbsolute, resolve, win32 } from 'node:path';
+
+import { isCanonicalAbsolutePathInsideRoot } from '@/utils/path/expandHomeDirPath';
 
 export type ResolvePortablePluginRelativePathResult = Readonly<
   | { ok: true; path: string }
@@ -24,8 +26,7 @@ export function resolvePortablePluginRelativePath(input: Readonly<{
   }
 
   const resolvedPath = resolve(input.rootPath, portableValue);
-  const relativePath = relative(input.rootPath, resolvedPath);
-  if (relativePath === '..' || relativePath.startsWith('../') || relativePath.startsWith('..\\') || isAbsolute(relativePath)) {
+  if (!isCanonicalAbsolutePathInsideRoot(resolve(input.rootPath), resolvedPath)) {
     return {
       ok: false,
       message: `${input.label} '${input.value}' escapes the plugin root`,

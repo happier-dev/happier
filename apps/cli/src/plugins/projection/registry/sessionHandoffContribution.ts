@@ -1,6 +1,3 @@
-import type { HandoffSurfaceV1 } from '@happier-dev/agents';
-import type { PluginExecService } from '@happier-dev/plugin-sdk/runtime';
-
 import type { SessionHandoffContribution } from './agentRuntimeContribution';
 
 type UnknownRecord = Readonly<Record<string, unknown>>;
@@ -15,12 +12,13 @@ function readFunction<TFunction extends (...args: never[]) => unknown>(
     return typeof value === 'function' ? value as TFunction : null;
 }
 
+/**
+ * Session-handoff catalog contributions retain only metadata projection leaves.
+ * Runtime operations are registered by the AgentRuntime itself so every plugin
+ * receives its invocation services from the current runtime lease.
+ */
 export function readSessionHandoffContribution(value: unknown): SessionHandoffContribution | null {
     if (!isRecord(value)) return null;
-    const surface = readFunction<NonNullable<SessionHandoffContribution['surface']>>(value.surface);
-    const resolveReplayChildLaunch = readFunction<
-        NonNullable<SessionHandoffContribution['resolveReplayChildLaunch']>
-    >(value.resolveReplayChildLaunch);
     const agentBundleRecords = isRecord(value.agentBundleRecords) ? value.agentBundleRecords : null;
     const extract = readFunction<
         NonNullable<NonNullable<SessionHandoffContribution['agentBundleRecords']>['extract']>
@@ -29,58 +27,18 @@ export function readSessionHandoffContribution(value: unknown): SessionHandoffCo
     const buildRuntimeLocalMetadata = readFunction<
         NonNullable<NonNullable<SessionHandoffContribution['runtimeLocalMetadata']>['build']>
     >(runtimeLocalMetadata?.build);
-    if (!surface && !resolveReplayChildLaunch && !extract && !buildRuntimeLocalMetadata) return null;
+    const nativeSessionLog = isRecord(value.nativeSessionLog) ? value.nativeSessionLog : null;
+    const resolveNativeSessionLogPath = readFunction<
+        NonNullable<NonNullable<SessionHandoffContribution['nativeSessionLog']>['resolvePath']>
+    >(nativeSessionLog?.resolvePath);
+    if (!extract && !buildRuntimeLocalMetadata && !resolveNativeSessionLogPath) return null;
     return {
-        ...(surface ? { surface } : {}),
-        ...(resolveReplayChildLaunch ? { resolveReplayChildLaunch } : {}),
         ...(extract ? { agentBundleRecords: { extract } } : {}),
         ...(buildRuntimeLocalMetadata
             ? { runtimeLocalMetadata: { build: buildRuntimeLocalMetadata } }
             : {}),
-    };
-}
-
-export function resolveSessionHandoffSurface(
-    contribution: SessionHandoffContribution | null,
-    createExec: (workspaceRoot: string) => PluginExecService,
-): HandoffSurfaceV1 | null {
-    const createSurface = contribution?.surface;
-    if (!createSurface) return null;
-
-    const resolveSurface = (workspaceRoot: string): HandoffSurfaceV1 | null => {
-        const surface = createSurface({ exec: createExec(workspaceRoot) });
-        return surface
-            && typeof surface.exportBundle === 'function'
-            && typeof surface.importBundle === 'function'
-            ? surface
-            : null;
-    };
-    const initialSurface = resolveSurface(process.cwd());
-    if (!initialSurface) return null;
-
-    return Object.freeze({
-        ...(initialSurface.evaluateAvailability
-            ? { evaluateAvailability: initialSurface.evaluateAvailability }
+        ...(resolveNativeSessionLogPath
+            ? { nativeSessionLog: { resolvePath: resolveNativeSessionLogPath } }
             : {}),
-        async exportBundle(request) {
-            const surface = resolveSurface(request.directory);
-            return surface
-                ? await surface.exportBundle(request)
-                : {
-                    ok: false,
-                    code: 'handoff_failed',
-                    message: 'Agent handoff export surface became unavailable',
-                };
-        },
-        async importBundle(request) {
-            const surface = resolveSurface(request.targetDirectory);
-            return surface
-                ? await surface.importBundle(request)
-                : {
-                    ok: false,
-                    code: 'handoff_failed',
-                    message: 'Agent handoff import surface became unavailable',
-                };
-        },
-    });
+    };
 }

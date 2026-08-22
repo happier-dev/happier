@@ -1,14 +1,17 @@
-import { readdir, readFile, realpath } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { lstat, readdir, readFile, realpath } from 'node:fs/promises';
 import { join, relative, resolve, sep } from 'node:path';
 
 import { startFileWatcher } from '@/integrations/watcher/startFileWatcher';
+import { PLUGIN_DEVELOPMENT_DEPENDENCY_INPUT_PATHS } from '@/plugins/authoring/developmentDependencyInputs';
 import { resolvePluginDaemonEntryPath } from '@/plugins/manifest/daemonEntry';
-import { readPluginManifest } from '@/plugins/manifest/read';
+import { resolvePluginAuthoringSource } from './sourceModule';
 
 export type PluginDevelopmentSourceRequest = Readonly<{
   kind: 'development';
-  pluginId: string;
+  pluginId?: string;
   projectRoot: string;
+  changedPaths?: readonly string[];
   sdkRegistryOrigin?: string;
 }>;
 
@@ -26,6 +29,13 @@ export type PluginDevelopmentSourceDiagnostic = Readonly<{
 export type PluginDevelopmentSourceObservation =
   | Readonly<{
       ok: true;
+      sourceKind: 'singleFile' | 'packageRoot';
+      /**
+       * Both code-defined and legacy manifest roots are observed here only;
+       * the daemon owns their development closure and UI artifact production.
+       */
+      authoringKind?: 'code' | 'manifest';
+      sourceRootPath: string;
       request: PluginDevelopmentSourceRequest;
       developmentEntryPath: string;
       observedRelativePaths: readonly string[];
@@ -46,7 +56,34 @@ export type PluginDevelopmentSourceObserverHandle = Readonly<{
   stop(): void;
 }>;
 
+/**
+ * The observer keeps its signature baseline only after the sole development
+ * candidate owner has accepted the observed source view. Retaining the prior
+ * baseline makes the next observation include every still-unadopted input,
+ * which prevents a source-only retry from being mistaken for a safe
+ * dependency-preserving update.
+ */
+export type PluginDevelopmentSourceObservationDelivery = 'adopted' | 'retained';
+
 const EXCLUDED_DIRECTORY_NAMES = new Set(['.git', 'dist', 'node_modules']);
+
+async function readDependencyInputSignatures(
+  projectRoot: string,
+): Promise<ReadonlyMap<string, string | null>> {
+  const entries = await Promise.all(PLUGIN_DEVELOPMENT_DEPENDENCY_INPUT_PATHS.map(async (relativePath) => {
+    try {
+      const contents = await readFile(join(projectRoot, relativePath));
+      return [relativePath, createHash('sha256').update(contents).digest('hex')] as const;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException | null)?.code === 'ENOENT') {
+        return [relativePath, null] as const;
+      }
+      const code = (error as NodeJS.ErrnoException | null)?.code ?? 'unknown';
+      return [relativePath, `unreadable:${code}`] as const;
+    }
+  }));
+  return new Map(entries);
+}
 
 function toPortableRelativePath(rootPath: string, path: string): string {
   return relative(rootPath, path).split(sep).join('/');
@@ -121,6 +158,35 @@ async function inventoryProject(rootPath: string): Promise<Readonly<{
   };
 }
 
+async function readObservedFileSignatures(
+  observation: Extract<PluginDevelopmentSourceObservation, { ok: true }>,
+): Promise<ReadonlyMap<string, string>> {
+  const entries = await Promise.all(observation.observedRelativePaths.map(async (relativePath) => {
+    const absolutePath = join(observation.sourceRootPath, ...relativePath.split('/'));
+    try {
+      const metadata = await lstat(absolutePath);
+      if (metadata.isSymbolicLink() || !metadata.isFile()) return null;
+      return [
+        relativePath,
+        `${metadata.dev}:${metadata.ino}:${metadata.size}:${metadata.mtimeMs}:${metadata.ctimeMs}`,
+      ] as const;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException | null)?.code === 'ENOENT') return null;
+      throw error;
+    }
+  }));
+  return new Map(entries.filter((entry): entry is NonNullable<typeof entry> => entry !== null));
+}
+
+function diffObservedFileSignatures(
+  previous: ReadonlyMap<string, string>,
+  next: ReadonlyMap<string, string>,
+): string[] {
+  return [...new Set([...previous.keys(), ...next.keys()])]
+    .filter((relativePath) => previous.get(relativePath) !== next.get(relativePath))
+    .sort();
+}
+
 export async function inspectPluginDevelopmentSource(input: Readonly<{
   projectRoot: string;
   sdkRegistryOrigin?: string;
@@ -138,17 +204,55 @@ export async function inspectPluginDevelopmentSource(input: Readonly<{
     };
   }
 
-  const manifestPath = join(projectRoot, '.happier-plugin', 'plugin.json');
-  const manifestResult = await readPluginManifest({ manifestPath });
-  if (!manifestResult.ok) {
+  const sourceResolution = await resolvePluginAuthoringSource(projectRoot);
+  if (!sourceResolution.ok) {
     return {
       ok: false,
-      diagnostics: manifestResult.diagnostics.map((entry) => diagnostic(
+      diagnostics: sourceResolution.diagnostics.map((entry) => diagnostic(
         'plugin_dev_manifest_invalid',
         entry.message,
       )),
     };
   }
+
+  if (sourceResolution.kind === 'code') {
+    const { entry } = sourceResolution;
+    try {
+      const inventory = entry.kind === 'singleFile'
+        ? { files: [entry.entryPath], directories: [entry.entryPath] }
+        : await inventoryProject(entry.packageRoot);
+      const declaredDependencies = entry.kind === 'singleFile'
+        ? Object.freeze({})
+        : await readDeclaredDependencies(join(entry.packageRoot, 'package.json'));
+      return {
+        ok: true,
+        sourceKind: entry.kind,
+        authoringKind: 'code',
+        sourceRootPath: entry.packageRoot,
+        request: {
+          kind: 'development',
+          projectRoot: entry.locator,
+          ...(input.sdkRegistryOrigin ? { sdkRegistryOrigin: input.sdkRegistryOrigin } : {}),
+        },
+        developmentEntryPath: entry.entryPath,
+        observedRelativePaths: inventory.files.map((path) => toPortableRelativePath(entry.packageRoot, path)),
+        declaredDependencies,
+        observedDirectoryPaths: inventory.directories,
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        diagnostics: [diagnostic(
+          'plugin_dev_package_invalid',
+          error instanceof Error ? error.message : 'Plugin package metadata is invalid.',
+        )],
+      };
+    }
+  }
+
+  const resolvedSource = sourceResolution.source;
+  projectRoot = resolvedSource.pluginRootPath;
+  const manifestResult = resolvedSource;
 
   const developmentEntrypoint = manifestResult.manifest.entrypoints?.development;
   if (!developmentEntrypoint) {
@@ -207,6 +311,9 @@ export async function inspectPluginDevelopmentSource(input: Readonly<{
     const inventory = await inventoryProject(projectRoot);
     return {
       ok: true,
+      sourceKind: 'packageRoot',
+      authoringKind: 'manifest',
+      sourceRootPath: projectRoot,
       request: {
         kind: 'development',
         pluginId: manifestResult.manifest.id,
@@ -230,13 +337,18 @@ export async function inspectPluginDevelopmentSource(input: Readonly<{
 }
 
 const defaultStartWatchingDirectory: StartWatchingPluginDirectory = (directoryPath, onChange) => {
-  return startFileWatcher(directoryPath, onChange, { emitInitial: false });
+  return startFileWatcher(directoryPath, onChange, {
+    emitInitial: false,
+    reportEventPath: true,
+  });
 };
 
 export async function startPluginDevelopmentSourceObserver(input: Readonly<{
   projectRoot: string;
   sdkRegistryOrigin?: string;
-  onObservation(observation: PluginDevelopmentSourceObservation): void | Promise<void>;
+  onObservation(
+    observation: PluginDevelopmentSourceObservation,
+  ): PluginDevelopmentSourceObservationDelivery | Promise<PluginDevelopmentSourceObservationDelivery>;
   debounceMs?: number;
   startWatchingDirectory?: StartWatchingPluginDirectory;
 }>): Promise<PluginDevelopmentSourceObserverHandle> {
@@ -247,6 +359,8 @@ export async function startPluginDevelopmentSourceObserver(input: Readonly<{
   let stopped = false;
   let refreshing = false;
   let refreshAgain = false;
+  let dependencyInputSignatures: ReadonlyMap<string, string | null> | undefined;
+  let observedFileSignatures: ReadonlyMap<string, string> | undefined;
 
   const reconcileDirectories = (directoryPaths: readonly string[]): void => {
     if (stopped) return;
@@ -267,19 +381,6 @@ export async function startPluginDevelopmentSourceObserver(input: Readonly<{
     reconcileDirectories(observation.observedDirectoryPaths);
   };
 
-  const reconcileProjectWatches = async (): Promise<void> => {
-    if (stopped) return;
-    try {
-      const projectRoot = await realpath(resolve(input.projectRoot));
-      const inventory = await inventoryProject(projectRoot);
-      reconcileDirectories(inventory.directories);
-    } catch {
-      // The observation below owns user-facing filesystem diagnostics. A later
-      // parent-directory event can recreate the project only when its root is
-      // still watchable, so there is no safe synthetic watch to add here.
-    }
-  };
-
   const refresh = async (): Promise<void> => {
     if (stopped) return;
     if (refreshing) {
@@ -288,13 +389,57 @@ export async function startPluginDevelopmentSourceObserver(input: Readonly<{
     }
     refreshing = true;
     try {
-      await reconcileProjectWatches();
-      const observation = await inspectPluginDevelopmentSource({
+      let observation = await inspectPluginDevelopmentSource({
         projectRoot: input.projectRoot,
         ...(input.sdkRegistryOrigin ? { sdkRegistryOrigin: input.sdkRegistryOrigin } : {}),
       });
+      let nextObservedFileSignatures: ReadonlyMap<string, string> | undefined;
+      let nextDependencyInputSignatures: ReadonlyMap<string, string | null> | undefined;
+      if (observation.ok) {
+        const previousObservedFileSignatures = observedFileSignatures;
+        nextObservedFileSignatures = await readObservedFileSignatures(observation);
+        nextDependencyInputSignatures = observation.sourceKind === 'singleFile'
+          ? new Map<string, string | null>()
+          : await readDependencyInputSignatures(observation.sourceRootPath);
+        const portableChangedPaths = previousObservedFileSignatures
+          ? diffObservedFileSignatures(previousObservedFileSignatures, nextObservedFileSignatures)
+          : [];
+        if (dependencyInputSignatures) {
+          for (const [relativePath, signature] of nextDependencyInputSignatures) {
+            if (dependencyInputSignatures.get(relativePath) !== signature) {
+              portableChangedPaths.push(relativePath);
+            }
+          }
+        }
+        portableChangedPaths.sort();
+        if (previousObservedFileSignatures) {
+          observation = {
+            ...observation,
+            request: {
+              ...observation.request,
+              changedPaths: Object.freeze([...new Set(portableChangedPaths)]),
+            },
+          };
+        }
+      }
       reconcileWatches(observation);
-      await input.onObservation(observation);
+      if (observation.ok && observation.request.changedPaths?.length === 0) {
+        return;
+      }
+      // A refresh already in flight when the handle is stopped must not deliver:
+      // the caller has released the observer and no longer owns the consequences
+      // of a change request raised on its behalf.
+      if (stopped) return;
+      const delivery = await input.onObservation(observation);
+      if (
+        observation.ok
+        && delivery === 'adopted'
+        && nextObservedFileSignatures
+        && nextDependencyInputSignatures
+      ) {
+        observedFileSignatures = nextObservedFileSignatures;
+        dependencyInputSignatures = nextDependencyInputSignatures;
+      }
     } finally {
       refreshing = false;
       if (refreshAgain && !stopped) {

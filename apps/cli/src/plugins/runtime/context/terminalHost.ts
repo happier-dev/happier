@@ -1,6 +1,7 @@
 import type {
     AgentSessionHostServices,
-} from '@happier-dev/plugin-sdk/agent-runtime';
+} from '@happier-dev/plugin-sdk/agents/runtime';
+import { PluginError } from '@happier-dev/plugin-sdk';
 import type {
     TerminalHostAdapter,
     TerminalHostHandle,
@@ -34,6 +35,7 @@ import {
 import { buildScopedProcessEnv } from '@/utils/processEnv/buildScopedProcessEnv';
 import { finalizeSessionChildEnvironment } from '@/session/runtime/control/finalizeSessionChildEnvironment';
 import { selectTrustedSessionControlEnvironment } from '@/session/runtime/control/sessionControlEnvironment';
+import { projectPluginFailureText } from '@/plugins/runtime/lifecycle/utils';
 import { logger } from '@/ui/logger';
 
 type AgentTerminalHostService = NonNullable<AgentSessionHostServices['terminalHost']>;
@@ -45,6 +47,36 @@ type AgentTerminalHostResolveResult = Awaited<ReturnType<AgentTerminalHostServic
 type AgentTerminalHostResolutionReason =
     Extract<AgentTerminalHostResolveResult, { reason: unknown }>['reason'];
 
+const AGENT_CHILD_LAUNCH_ENVIRONMENT_TRANSFORMERS = new WeakMap<
+    AgentTerminalHostService,
+    (environment: Readonly<Record<string, string>>) =>
+        Readonly<Record<string, string>>
+>();
+
+export function installAgentChildLaunchEnvironmentTransformerForTerminalHost(
+    service: AgentTerminalHostService,
+    transform: (
+        environment: Readonly<Record<string, string>>,
+    ) => Readonly<Record<string, string>>,
+): Readonly<{ dispose(): void }> {
+    if (AGENT_CHILD_LAUNCH_ENVIRONMENT_TRANSFORMERS.has(service)) {
+        throw new Error(
+            'Agent child launch environment transformer is already installed',
+        );
+    }
+    AGENT_CHILD_LAUNCH_ENVIRONMENT_TRANSFORMERS.set(service, transform);
+    return Object.freeze({
+        dispose() {
+            if (
+                AGENT_CHILD_LAUNCH_ENVIRONMENT_TRANSFORMERS.get(service)
+                === transform
+            ) {
+                AGENT_CHILD_LAUNCH_ENVIRONMENT_TRANSFORMERS.delete(service);
+            }
+        },
+    });
+}
+
 export type PluginTerminalHostErrorCode =
     | 'PLUGIN_TERMINAL_HOST_CAPABILITY_REQUIRED'
     | 'PLUGIN_TERMINAL_HOST_SCOPE_RETIRED'
@@ -54,13 +86,14 @@ export type PluginTerminalHostErrorCode =
     | 'PLUGIN_TERMINAL_HOST_HANDLE_KIND_MISMATCH'
     | 'PLUGIN_TERMINAL_HOST_UNSUPPORTED_LAUNCH';
 
-export class PluginTerminalHostError extends Error {
-    readonly code: PluginTerminalHostErrorCode;
-
+/**
+ * Terminal-host failures reach plugin authors through the Agent session host
+ * services, so they ARE canonical PluginErrors. Never assign `name` here -
+ * `isPluginError` recognizes the contract by name+data, not by class identity.
+ */
+export class PluginTerminalHostError extends PluginError {
     constructor(code: PluginTerminalHostErrorCode, message: string) {
-        super(message);
-        this.name = 'PluginTerminalHostError';
-        this.code = code;
+        super({ code, message });
     }
 }
 
@@ -93,16 +126,12 @@ type ActiveTerminalHost = Readonly<{
 }>;
 
 const TERMINAL_HOST_CAPABILITY = 'terminalHost';
-const TERMINAL_HOST_CONTROL_PERMISSION = 'terminal.host.control';
 
 function assertCapability(params: CreatePluginTerminalHostServiceParams): void {
-    if (
-        !params.hasCapability(TERMINAL_HOST_CAPABILITY)
-        || !params.hasCapability(TERMINAL_HOST_CONTROL_PERMISSION)
-    ) {
+    if (!params.hasCapability(TERMINAL_HOST_CAPABILITY)) {
         throw new PluginTerminalHostError(
             'PLUGIN_TERMINAL_HOST_CAPABILITY_REQUIRED',
-            `ctx.terminalHost requires '${TERMINAL_HOST_CAPABILITY}' runtime capability and '${TERMINAL_HOST_CONTROL_PERMISSION}' permission`,
+            `ctx.terminalHost requires the manifest-derived '${TERMINAL_HOST_CAPABILITY}' runtime capability`,
         );
     }
 }
@@ -220,7 +249,7 @@ export function createPluginTerminalHostService(
 ): AgentTerminalHostService {
     const activeHosts = new Map<TerminalHostHandle, ActiveTerminalHost>();
 
-    return Object.freeze({
+    const service: AgentTerminalHostService = Object.freeze({
         async resolve(request: Parameters<AgentTerminalHostService['resolve']>[0]) {
             assertCapability(params);
             return toPublicResolution(await params.resolveTerminalHost(request.preference));
@@ -241,6 +270,13 @@ export function createPluginTerminalHostService(
                     'ctx.terminalHost could not resolve an agent CLI launch command',
                 );
             }
+            const mergedSpawnEnvironment = mergeLaunchEnv(
+                launch.env,
+                request.launch.env,
+                request.launch.unsetEnvKeys,
+            );
+            const transform =
+                AGENT_CHILD_LAUNCH_ENVIRONMENT_TRANSFORMERS.get(service);
             const createdHandle = await resolution.adapter.createOrAttachHost({
                 sessionName: request.sessionName,
                 workingDirectory: request.workingDirectory,
@@ -249,11 +285,9 @@ export function createPluginTerminalHostService(
                     ...launch.args,
                     ...(request.launch.args ?? []),
                 ],
-                spawnEnv: mergeLaunchEnv(
-                    launch.env,
-                    request.launch.env,
-                    request.launch.unsetEnvKeys,
-                ),
+                spawnEnv: transform
+                    ? transform(mergedSpawnEnvironment)
+                    : mergedSpawnEnvironment,
                 ...(request.launch.unsetEnvKeys
                     ? { unsetEnvKeys: request.launch.unsetEnvKeys }
                     : {}),
@@ -307,6 +341,7 @@ export function createPluginTerminalHostService(
             activeHosts.delete(handle);
         },
     });
+    return service;
 }
 
 async function resolveDefaultTerminalHost(
@@ -399,7 +434,10 @@ export function createDefaultPluginTerminalHostService(
                     attachmentInfo,
                 }).catch((error) => {
                     // Host retirement is already irreversible; provider cleanup remains advisory.
-                    logger.warn('[PLUGIN TERMINAL HOST] Provider artifacts could not be cleaned after exact host retirement', error);
+                    logger.warn(
+                        '[PLUGIN TERMINAL HOST] Provider artifacts could not be cleaned after exact host retirement',
+                        { error: projectPluginFailureText(error) },
+                    );
                 });
             }
         },

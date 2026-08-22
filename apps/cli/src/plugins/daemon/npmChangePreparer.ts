@@ -3,6 +3,7 @@ import { join } from 'node:path';
 
 import {
   type PluginSourceSpecV1,
+  pluginCompatibilityProjectionEqualV1,
 } from '@happier-dev/protocol';
 
 import {
@@ -29,9 +30,11 @@ import {
   type StagedNpmArtifactCandidate,
 } from '@/plugins/distribution/npm/stage';
 import {
+  createPluginCuratedUpdateSourceBinding,
   createNpmPluginDistributionIdentity,
   createPluginTrustRecord,
   isPluginTrustRecordAuthorized,
+  type PluginCuratedUpdateSourceBinding,
   type PluginUpdatePolicy,
 } from '@/plugins/store/install/trustIdentity';
 import {
@@ -43,17 +46,21 @@ import {
   PluginRegistryCandidateConflictError,
   type PluginRegistryRuntimeLifecycle,
 } from '@/plugins/store/registry/currentState';
+import type { PluginRegistryCommitRecord } from '@/plugins/store/registry/commitRecord';
 import {
-  createImmutablePluginGenerationRecordFromSource,
+  prepareOwnedImmutablePluginGeneration,
+  type OwnedPreparedImmutablePluginGeneration,
 } from '@/plugins/store/registry/generationStore';
+import { resolvePluginStorePaths } from '@/plugins/store/paths';
 import type { PluginStateRecord } from '@/plugins/store/state';
 import { COMMUNITY_NPM_MARKETPLACE_SOURCE } from '@/plugins/store/marketplace/service';
 import { createMarketplaceSourceRegistryStore } from '@/plugins/store/marketplace/sources/store';
 
 import type {
   PluginChangeRequest,
-  PreparedDaemonPluginChange,
+  PreparedDaemonPluginChangeCandidate,
 } from './changeContract';
+import { derivePluginInstallReviewPrincipal } from './installReviewPrincipal';
 import {
   projectPluginInstallationReview,
   type PluginInstallationReviewSourceFacts,
@@ -61,6 +68,9 @@ import {
 import { projectPluginTransactionChangeResult } from './transactionChangeResult';
 import { createSelectedPluginOptionalAccess } from './optionalAccessSelections';
 import { createDaemonPluginCandidateOperationRoot } from './candidateStorage';
+import { createVerifiedPortablePluginInstallationAvailability } from '@/plugins/availability/releaseFacts';
+import { projectPluginFailureText } from '@/plugins/runtime/lifecycle/utils';
+import { DaemonPluginChangePreparationError } from './changeService';
 
 const PACKAGE_MANIFEST_PATH = '.happier-plugin/plugin.json';
 
@@ -87,14 +97,21 @@ async function canApplyAutomaticNpmUpdate(params: Readonly<{
   candidate: CanonicalPluginManifest;
   distribution: ReturnType<typeof createNpmPluginDistributionIdentity>;
   updatePolicy: 'automatic' | 'manual' | 'pinned';
-  approvedUpdateBasis: boolean;
+  automaticUpdateAuthorized: boolean;
+  curatedUpdateSource: PluginCuratedUpdateSourceBinding | undefined;
 }>): Promise<boolean> {
   const existing = params.existing;
   if (
     !existing
-    || !params.approvedUpdateBasis
+    || !params.automaticUpdateAuthorized
     || params.updatePolicy !== 'automatic'
     || existing.install.updatePolicy !== 'automatic'
+    || !params.curatedUpdateSource
+    || !existing.install.curatedUpdateSource
+    || !curatedUpdateSourceBindingsEqual(
+      existing.install.curatedUpdateSource,
+      params.curatedUpdateSource,
+    )
     || !isPluginTrustRecordAuthorized(existing.install.trust, {
       pluginId: params.candidate.id,
       distribution: params.distribution,
@@ -105,8 +122,8 @@ async function canApplyAutomaticNpmUpdate(params: Readonly<{
   const previous = await readPluginManifest({ manifestPath: existing.source.manifestPath });
   if (
     !previous.ok
-    || previous.manifestDigest !== existing.install.manifestDigest
     || previous.manifest.id !== params.candidate.id
+    || previous.manifest.version !== existing.install.manifestVersion
     || hasReviewSensitivePluginUpdate(previous.manifest, params.candidate)
   ) {
     return false;
@@ -134,6 +151,24 @@ function assertMarketplaceRequestMatchesListing(
   }
 }
 
+async function assertCuratedUpdateSourceBindingCurrent(
+  happyHomeDir: string,
+  binding: PluginCuratedUpdateSourceBinding,
+): Promise<void> {
+  const source = (await createMarketplaceSourceRegistryStore({ happyHomeDir }).read()).sources.find(
+    (entry) => entry.id === binding.id,
+  ) ?? null;
+  if (
+    !source
+    || !source.enabled
+    || source.origin !== 'curated'
+    || source.sourceUrl !== binding.sourceUrl
+    || (source.registryProfileId ?? undefined) !== binding.registryProfileId
+  ) {
+    throw new NpmRegistryProfileOperationError('source_changed');
+  }
+}
+
 async function assertMarketplaceSourceBindingCurrent(
   happyHomeDir: string,
   request: Extract<PluginChangeRequest, { kind: 'installNpm' }>,
@@ -150,18 +185,14 @@ async function assertMarketplaceSourceBindingCurrent(
     }
     return;
   }
-  const source = (await createMarketplaceSourceRegistryStore({ happyHomeDir }).read()).sources.find(
-    (entry) => entry.id === expected.source.id,
-  ) ?? null;
-  if (
-    !source
-    || !source.enabled
-    || source.origin !== 'curated'
-    || source.sourceUrl !== expected.source.sourceUrl
-    || (source.registryProfileId ?? undefined) !== expected.registryProfileId
-  ) {
-    throw new NpmRegistryProfileOperationError('source_changed');
-  }
+  await assertCuratedUpdateSourceBindingCurrent(
+    happyHomeDir,
+    createPluginCuratedUpdateSourceBinding({
+      id: expected.source.id,
+      sourceUrl: expected.source.sourceUrl,
+      ...(expected.registryProfileId ? { registryProfileId: expected.registryProfileId } : {}),
+    }),
+  );
 }
 
 function assertStagedCandidateMatchesMarketplaceListing(
@@ -202,6 +233,29 @@ function npmArtifactRequestFor(
   };
 }
 
+function curatedUpdateSourceFromMarketplaceListing(
+  request: Extract<PluginChangeRequest, { kind: 'installNpm' }>,
+): PluginCuratedUpdateSourceBinding | undefined {
+  const expected = request.expectedMarketplaceListing;
+  if (!expected || expected.source.kind !== 'curated' || expected.updatePolicy !== 'automatic') {
+    return undefined;
+  }
+  return createPluginCuratedUpdateSourceBinding({
+    id: expected.source.id,
+    sourceUrl: expected.source.sourceUrl,
+    ...(expected.registryProfileId ? { registryProfileId: expected.registryProfileId } : {}),
+  });
+}
+
+function curatedUpdateSourceBindingsEqual(
+  left: PluginCuratedUpdateSourceBinding,
+  right: PluginCuratedUpdateSourceBinding,
+): boolean {
+  return left.id === right.id
+    && left.sourceUrl === right.sourceUrl
+    && left.registryProfileId === right.registryProfileId;
+}
+
 function projectNpmSignature(
   candidate: StagedNpmArtifactCandidate,
 ): Extract<PluginInstallationReviewSourceFacts, { kind: 'npm' }>['signature'] {
@@ -231,8 +285,16 @@ function projectNpmProvenance(
 async function cleanupOwnedCandidate(params: Readonly<{
   operationRootPath: string;
   candidate?: StagedNpmArtifactCandidate;
+  preparedGeneration?: OwnedPreparedImmutablePluginGeneration;
 }>): Promise<void> {
   let cleanupError: unknown;
+  if (params.preparedGeneration) {
+    try {
+      await params.preparedGeneration.cleanup();
+    } catch (error) {
+      cleanupError = error;
+    }
+  }
   if (params.candidate) {
     try {
       await cleanupStagedNpmArtifactCandidate(params.candidate);
@@ -251,13 +313,14 @@ async function cleanupOwnedCandidate(params: Readonly<{
 export function createDaemonNpmPluginChangePreparer(params: Readonly<{
   happyHomeDir: string;
   runtimeLifecycle: PluginRegistryRuntimeLifecycle;
+  onRegistryApplied?: (record: PluginRegistryCommitRecord) => void;
   npmRegistryProfiles?: NpmRegistryProfileArtifactService;
   createClient?: CreateNpmRegistryClient;
   nowMs?: () => number;
 }>): (
   request: PluginChangeRequest,
   context?: DaemonNpmPluginChangePreparationContext,
-) => Promise<PreparedDaemonPluginChange> {
+) => Promise<PreparedDaemonPluginChangeCandidate> {
   const npmRegistryProfiles = params.npmRegistryProfiles
     ?? createNpmRegistryProfileService({ happyHomeDir: params.happyHomeDir });
   const createClient = params.createClient ?? createNpmRegistryHttpsClient;
@@ -269,12 +332,49 @@ export function createDaemonNpmPluginChangePreparer(params: Readonly<{
     }
     assertMarketplaceRequestMatchesListing(request);
     await assertMarketplaceSourceBindingCurrent(params.happyHomeDir, request);
+    const installedUpdate = context?.installedUpdate;
+    const automaticInstalledUpdate = installedUpdate?.updatePolicy === 'automatic';
+    const requestedUpdatePolicy = installedUpdate?.updatePolicy
+      ?? request.expectedMarketplaceListing?.updatePolicy
+      ?? 'manual';
+    const marketplaceCuratedUpdateSource = curatedUpdateSourceFromMarketplaceListing(request);
+    const updateTargetPluginId = installedUpdate?.pluginId
+      ?? request.expectedMarketplaceListing?.pluginId;
+    const existingAtAdmission = updateTargetPluginId
+      ? (await createPluginRegistryStateStore({ happyHomeDir: params.happyHomeDir }).read())
+        .plugins[updateTargetPluginId]
+      : undefined;
+    const persistedCuratedUpdateSource = existingAtAdmission?.install.updatePolicy === 'automatic'
+      ? existingAtAdmission.install.curatedUpdateSource
+      : undefined;
+    const automaticUpdateAuthorized = requestedUpdatePolicy === 'automatic'
+      && persistedCuratedUpdateSource !== undefined
+      && (
+        automaticInstalledUpdate
+        || (
+          marketplaceCuratedUpdateSource !== undefined
+          && curatedUpdateSourceBindingsEqual(
+            persistedCuratedUpdateSource,
+            marketplaceCuratedUpdateSource,
+          )
+        )
+      );
+    if (installedUpdate?.updatePolicy === 'automatic' && !automaticUpdateAuthorized) {
+      throw new DaemonPluginChangePreparationError(
+        'plugin_update_trust_unavailable',
+        `Plugin '${installedUpdate.pluginId}' has no reviewed curated source binding for automatic updates`,
+      );
+    }
+    if (automaticUpdateAuthorized && persistedCuratedUpdateSource) {
+      await assertCuratedUpdateSourceBindingCurrent(params.happyHomeDir, persistedCuratedUpdateSource);
+    }
 
     const operationRootPath = await createDaemonPluginCandidateOperationRoot({
       happyHomeDir: params.happyHomeDir,
       kind: 'npm',
     });
     let stagedCandidate: StagedNpmArtifactCandidate | undefined;
+    let preparedGeneration: OwnedPreparedImmutablePluginGeneration | undefined;
     try {
       let resolvedRegistryProfileId: string | undefined;
       const downloaded = await npmRegistryProfiles.runArtifactRequest(npmArtifactRequestFor(request), async (access) => {
@@ -292,6 +392,7 @@ export function createDaemonNpmPluginChangePreparer(params: Readonly<{
           },
           destinationPath: join(operationRootPath, 'candidate.tgz'),
           artifactMaxBytes: DEFAULT_PORTABLE_ARCHIVE_LIMITS.maxExpandedBytes,
+          ...(automaticUpdateAuthorized ? { requireCompatibleProjection: true } : {}),
           client,
         });
       });
@@ -304,15 +405,39 @@ export function createDaemonNpmPluginChangePreparer(params: Readonly<{
       }
       stagedCandidate = staged.candidate;
       assertStagedCandidateMatchesMarketplaceListing(request, staged.candidate);
+      if (
+        downloaded.compatibility?.projection
+        && !pluginCompatibilityProjectionEqualV1(
+          downloaded.compatibility.projection,
+          staged.candidate.compatibilityProjection,
+        )
+      ) {
+        throw new Error('Npm compatibility projection does not match staged archive facts');
+      }
+      const availability = createVerifiedPortablePluginInstallationAvailability({
+        sourceClass: 'registryPackage',
+        archiveDigestSha256: staged.candidate.archiveDigestSha256,
+        manifest: staged.candidate.manifest.value,
+        generatedUiArtifacts: staged.candidate.generatedUiArtifacts.manifest,
+        packageAssetArchive: staged.candidate.packageAssetArchive.descriptor,
+      });
 
       const expectedMarketplaceListing = request.expectedMarketplaceListing;
       const existingAtPreparation = (
         await createPluginRegistryStateStore({ happyHomeDir: params.happyHomeDir }).read()
       ).plugins[staged.candidate.manifest.id];
-      const installedUpdate = context?.installedUpdate;
-      const updatePolicy = installedUpdate?.updatePolicy
-        ?? expectedMarketplaceListing?.updatePolicy
-        ?? 'manual';
+      const updatePolicy = requestedUpdatePolicy;
+      const curatedUpdateSource = automaticInstalledUpdate
+        ? persistedCuratedUpdateSource
+        : updatePolicy === 'automatic'
+          ? curatedUpdateSourceFromMarketplaceListing(request)
+          : undefined;
+      if (updatePolicy === 'automatic' && !curatedUpdateSource) {
+        throw new DaemonPluginChangePreparationError(
+          'plugin_update_trust_unavailable',
+          `Plugin '${staged.candidate.manifest.id}' has no reviewed curated source binding for automatic updates`,
+        );
+      }
 
       const distribution = createNpmPluginDistributionIdentity({
         registryOrigin: staged.candidate.source.registryOrigin,
@@ -331,18 +456,16 @@ export function createDaemonNpmPluginChangePreparer(params: Readonly<{
           `Installed npm update channel changed while preparing '${installedUpdate.pluginId}'`,
         );
       }
-      const reviewedGeneration = await createImmutablePluginGenerationRecordFromSource({
+      const candidateGeneration = await prepareOwnedImmutablePluginGeneration({
+        paths: resolvePluginStorePaths({ happyHomeDir: params.happyHomeDir }),
         pluginId: staged.candidate.manifest.id,
         sourceRootPath: staged.candidate.rootPath,
         manifestRelativePath: PACKAGE_MANIFEST_PATH,
         distribution,
         updatePolicy,
-        createdAtMs: 0,
-        immutableGenerationId: 'reviewed-npm-candidate',
+        createdAtMs: nowMs(),
       });
-      if (reviewedGeneration.manifestDigest !== staged.candidate.manifest.digest) {
-        throw new Error('Npm candidate manifest digest differs between staging and immutable-generation validation');
-      }
+      preparedGeneration = candidateGeneration;
       const review = projectPluginInstallationReview({
         manifest: staged.candidate.manifest.value,
         source: {
@@ -376,25 +499,32 @@ export function createDaemonNpmPluginChangePreparer(params: Readonly<{
           ...(expectedMarketplaceListing
             ? { marketplaceSource: expectedMarketplaceListing.source }
             : {}),
+          ...(downloaded.compatibility?.blockedNewerVersions.length
+            ? { blockedNewerVersions: downloaded.compatibility.blockedNewerVersions }
+            : {}),
           updatePolicy,
         },
-        integrity: reviewedGeneration,
         uiArtifacts: {
           verification: 'verified',
           contributionIds: staged.candidate.generatedUiArtifacts.contributionIds,
         },
       });
+      const installReviewPrincipal = derivePluginInstallReviewPrincipal(review);
       const requiresReview = !(await canApplyAutomaticNpmUpdate({
         existing: existingAtPreparation,
         candidate: staged.candidate.manifest.value,
         distribution,
         updatePolicy,
-        approvedUpdateBasis: Boolean(installedUpdate)
-          || expectedMarketplaceListing?.review.status === 'approved',
+        automaticUpdateAuthorized,
+        curatedUpdateSource,
       }));
       let cleanupPromise: Promise<void> | undefined;
       const cleanup = () => {
-        cleanupPromise ??= cleanupOwnedCandidate({ operationRootPath, candidate: staged.candidate });
+        cleanupPromise ??= cleanupOwnedCandidate({
+          operationRootPath,
+          candidate: staged.candidate,
+          preparedGeneration: candidateGeneration,
+        });
         return cleanupPromise;
       };
 
@@ -409,6 +539,12 @@ export function createDaemonNpmPluginChangePreparer(params: Readonly<{
           }
           try {
             await assertMarketplaceSourceBindingCurrent(params.happyHomeDir, request);
+            if (curatedUpdateSource) {
+              await assertCuratedUpdateSourceBindingCurrent(
+                params.happyHomeDir,
+                curatedUpdateSource,
+              );
+            }
             const existingAtApply = (
               await createPluginRegistryStateStore({ happyHomeDir: params.happyHomeDir }).read()
             ).plugins[staged.candidate.manifest.id];
@@ -464,7 +600,6 @@ export function createDaemonNpmPluginChangePreparer(params: Readonly<{
               trustPolicy: 'prompt',
               installPolicy: 'managed_install',
               resolvedVersion: staged.candidate.source.version,
-              resolvedDigest: staged.candidate.source.integrity,
               installedAt: existingAtApply?.source.installedAt ?? approvedAtMs,
             };
             const catalogRecord: PluginStateRecord = {
@@ -477,25 +612,30 @@ export function createDaemonNpmPluginChangePreparer(params: Readonly<{
               install: {
                 mode: 'managed_install',
                 manifestVersion: staged.candidate.manifest.version,
-                manifestDigest: staged.candidate.manifest.digest,
                 installedPath: null,
+                ...(curatedUpdateSource ? { curatedUpdateSource } : {}),
               },
               state: { enabled: true, lastLoadedAtMs: nowMs(), lastError: null },
             };
             const store = createPluginRegistryStateStore({
               happyHomeDir: params.happyHomeDir,
               runtimeLifecycle: params.runtimeLifecycle,
-              onApplied: control?.onApplied,
+              onApplied: (record) => {
+                control?.onApplied();
+                params.onRegistryApplied?.(record);
+              },
             });
             const transaction = await store.install({
               pluginId: staged.candidate.manifest.id,
-              sourceRootPath: staged.candidate.rootPath,
-              manifestRelativePath: PACKAGE_MANIFEST_PATH,
               catalogRecord,
               trust,
               updatePolicy,
               optionalAccess,
-              reviewedPackageDigest: reviewedGeneration.packageDigest,
+              availability,
+              admittedIntegrity: staged.candidate.source.integrity,
+              preparedGeneration: candidateGeneration,
+              installReviewPrincipalDigest: installReviewPrincipal.digest,
+              installReviewPrincipalPresentation: installReviewPrincipal.presentation,
             });
             if (transaction.status !== 'committed' && transaction.status !== 'outcomeUnknown') {
               throw new Error(`Npm installation ended without a committed registry transaction (${transaction.status})`);
@@ -515,7 +655,7 @@ export function createDaemonNpmPluginChangePreparer(params: Readonly<{
               : {
                   kind: 'failed' as const,
                   code: 'plugin_install_failed',
-                  message: error instanceof Error ? error.message : String(error),
+                  message: projectPluginFailureText(error),
                 };
           }
         },
@@ -523,7 +663,11 @@ export function createDaemonNpmPluginChangePreparer(params: Readonly<{
       });
     } catch (error) {
       try {
-        await cleanupOwnedCandidate({ operationRootPath, ...(stagedCandidate ? { candidate: stagedCandidate } : {}) });
+        await cleanupOwnedCandidate({
+          operationRootPath,
+          ...(stagedCandidate ? { candidate: stagedCandidate } : {}),
+          ...(preparedGeneration ? { preparedGeneration } : {}),
+        });
       } catch (cleanupError) {
         throw new AggregateError([error, cleanupError], 'Npm candidate preparation and cleanup both failed');
       }

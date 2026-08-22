@@ -1,8 +1,9 @@
 import type {
-    PluginConnectedAccountAuthenticationContext,
-    PluginConnectedAccountRuntime,
+    ConnectedAccountAuthenticationContext as PluginConnectedAccountAuthenticationContext,
+    ConnectedAccountRuntime as PluginConnectedAccountRuntime } from '@happier-dev/plugin-sdk/connected-accounts';
+import type {
     PluginContributionRef,
-} from '@happier-dev/plugin-sdk/runtime';
+} from '@happier-dev/plugin-sdk';
 import {
     QualifiedConnectedAccountIdSchema,
     type PluginConnectedAccountAuthenticationModeV2,
@@ -11,6 +12,10 @@ import {
 import {
     ConnectedAccountRuntimeInvocationNotStartedError,
 } from './contributionRegistry';
+import {
+    cloneBoundedConnectedAccountDiagnostic,
+    readStrictConnectedAccountProducerRecord,
+} from './producerResultSnapshot';
 
 type MaybePromise<T> = T | Promise<T>;
 type PluginConnectedAccountCredentialStore =
@@ -171,6 +176,7 @@ export type ConnectedAccountOAuthTransactionOwner = Readonly<{
         attemptId: string;
         service: PluginContributionRef;
         snapshot: ConnectedAccountOAuthTransactionSnapshot;
+        callbackUrl?: string;
     }>): Promise<ConnectedAccountOAuthTransaction>;
     read?(
         attemptId: string,
@@ -316,6 +322,31 @@ function sameAccount(left: PluginConnectedAccountRef, right: PluginConnectedAcco
     return sameService(left.service, right.service) && left.accountId === right.accountId;
 }
 
+/**
+ * Classifies a rejected `runtime.admit` / `runtime.isCurrent` call.
+ *
+ * The contribution registry answers a retired or disposed generation with the
+ * typed `ConnectedAccountRuntimeInvocationNotStartedError` instead of an
+ * absent lease, so a caller can tell "reload and retry" from "this generation
+ * has no usable runtime for the service". Discarding the error collapses both
+ * into `connected_account_runtime_unavailable` and hides that fact from the
+ * connect surface. The typed error maps onto the same drift response this
+ * owner already returns when the non-throwing currentness check reports the
+ * admission is stale; every other rejection stays unavailable. Neither outcome
+ * admits an attempt, so the reason becomes legible without loosening
+ * fail-closed admission.
+ */
+function runtimeAdmissionFailure(error: unknown): Readonly<{
+    status: 'conflict' | 'unavailable';
+    code:
+        | 'connected_account_runtime_generation_changed'
+        | 'connected_account_runtime_unavailable';
+}> {
+    return error instanceof ConnectedAccountRuntimeInvocationNotStartedError
+        ? { status: 'conflict', code: error.code }
+        : { status: 'unavailable', code: 'connected_account_runtime_unavailable' };
+}
+
 function createAttemptCredentialStore(): PluginConnectedAccountCredentialStore & Readonly<{
     snapshot(): Readonly<Record<string, string>>;
     clear(): void;
@@ -401,54 +432,8 @@ function isSafeProviderUrl(value: unknown): value is string {
     }
 }
 
-function readStrictRecord(
-    value: unknown,
-    allowedKeys: readonly string[],
-    requiredKeys: readonly string[],
-): Readonly<Record<string, unknown>> | null {
-    if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
-    const prototype = Object.getPrototypeOf(value);
-    if (prototype !== Object.prototype && prototype !== null) return null;
-    const keys = Reflect.ownKeys(value);
-    if (
-        keys.some((key) => typeof key !== 'string' || !allowedKeys.includes(key))
-        || requiredKeys.some((key) => !keys.includes(key))
-    ) return null;
-    const output: Record<string, unknown> = Object.create(null) as Record<string, unknown>;
-    for (const key of keys as string[]) {
-        const property = Object.getOwnPropertyDescriptor(value, key);
-        if (!property || !property.enumerable || !('value' in property)) return null;
-        output[key] = property.value;
-    }
-    return output;
-}
-
-function cloneBoundedDiagnostic(value: unknown): Readonly<Record<string, unknown>> | null {
-    const record = readStrictRecord(
-        value,
-        ['code', 'severity', 'message'],
-        ['code'],
-    );
-    if (
-        !record
-        || !isBoundedString(record.code, 256)
-        || (
-            record.severity !== undefined
-            && record.severity !== 'info'
-            && record.severity !== 'warning'
-            && record.severity !== 'error'
-        )
-        || (record.message !== undefined && !isBoundedString(record.message, 4_096))
-    ) return null;
-    return Object.freeze({
-        code: record.code,
-        ...(record.severity === undefined ? {} : { severity: record.severity }),
-        ...(record.message === undefined ? {} : { message: record.message }),
-    });
-}
-
 function isProviderResult(value: unknown): value is ProviderResult {
-    const record = readStrictRecord(value, [
+    const record = readStrictConnectedAccountProducerRecord(value, [
         'status',
         'accountId',
         'providerIdentity',
@@ -471,7 +456,7 @@ function validateProviderResult(
     value: unknown,
     nowMs: number,
 ): ProviderResult | null {
-    const envelope = readStrictRecord(value, [
+    const envelope = readStrictConnectedAccountProducerRecord(value, [
         'status',
         'accountId',
         'providerIdentity',
@@ -511,7 +496,11 @@ function validateProviderResult(
         const providerIdentity = record.providerIdentity;
         const providerIdentityRecord = providerIdentity === undefined
             ? null
-            : readStrictRecord(providerIdentity, ['accountId', 'email'], []);
+            : readStrictConnectedAccountProducerRecord(
+                providerIdentity,
+                ['accountId', 'email'],
+                [],
+            );
         if (
             providerIdentity !== undefined
             && (
@@ -610,7 +599,7 @@ function validateProviderResult(
             : null;
     }
     if (status === 'rejected' || status === 'unavailable' || status === 'outcomeUnknown') {
-        const diagnostic = cloneBoundedDiagnostic(record.diagnostic);
+        const diagnostic = cloneBoundedConnectedAccountDiagnostic(record.diagnostic);
         return operation.kind !== 'cancel'
             && Reflect.ownKeys(record).every((key) => (
                 typeof key === 'string' && ['status', 'diagnostic'].includes(key)
@@ -1007,11 +996,8 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                 service: input.service,
                 modeId: input.modeId,
             });
-        } catch {
-            return {
-                status: 'unavailable',
-                code: 'connected_account_runtime_unavailable',
-            };
+        } catch (error) {
+            return runtimeAdmissionFailure(error);
         }
         if (
             !sameService(admitted.service, input.service)
@@ -2354,7 +2340,10 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
             }
             result = {
                 status: 'outcomeUnknown',
-                diagnostic: { code: 'connected_account_provider_operation_interrupted' },
+                diagnostic: {
+                    code: 'connected_account_provider_operation_interrupted',
+                    severity: 'error',
+                },
             };
         }
         return await handleProviderResult(
@@ -2427,6 +2416,9 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                 attemptId: attempt.id,
                 service: attempt.admission.service,
                 snapshot: snapshotOAuthTransaction(attempt, 'starting'),
+                ...(attempt.admission.descriptor.callbackUrl
+                    ? { callbackUrl: attempt.admission.descriptor.callbackUrl }
+                    : {}),
             });
         } catch {
             finishDurableOperation();
@@ -2634,13 +2626,12 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                     service: snapshot.service,
                     modeId: snapshot.modeId,
                 });
-            } catch {
+            } catch (error) {
                 const ownershipFailure = attemptOwnershipFailure(restoration);
                 if (ownershipFailure) return { response: ownershipFailure };
                 return await cleanUpTerminal({
-                    status: 'unavailable',
+                    ...runtimeAdmissionFailure(error),
                     attemptId,
-                    code: 'connected_account_runtime_unavailable',
                 });
             }
             const afterAdmission = attemptOwnershipFailure(restoration);
@@ -2648,13 +2639,12 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
             let runtimeCurrent: boolean;
             try {
                 runtimeCurrent = await params.runtime.isCurrent(admitted);
-            } catch {
+            } catch (error) {
                 const ownershipFailure = attemptOwnershipFailure(restoration);
                 if (ownershipFailure) return { response: ownershipFailure };
                 return await cleanUpTerminal({
-                    status: 'unavailable',
+                    ...runtimeAdmissionFailure(error),
                     attemptId,
-                    code: 'connected_account_runtime_unavailable',
                 });
             }
             const afterRuntime = attemptOwnershipFailure(restoration);
@@ -3025,14 +3015,13 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                         service: snapshot.service,
                         modeId: snapshot.modeId,
                     });
-                } catch {
+                } catch (error) {
                     const ownershipFailure =
                         attemptOwnershipFailure(restoration);
                     if (ownershipFailure) return ownershipFailure;
                     return await cleanUpTerminal({
-                        status: 'unavailable',
+                        ...runtimeAdmissionFailure(error),
                         attemptId: input.attemptId,
-                        code: 'connected_account_runtime_unavailable',
                     });
                 }
                 const afterAdmission = attemptOwnershipFailure(restoration);
@@ -3040,14 +3029,13 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                 let runtimeCurrent: boolean;
                 try {
                     runtimeCurrent = await params.runtime.isCurrent(admitted);
-                } catch {
+                } catch (error) {
                     const ownershipFailure =
                         attemptOwnershipFailure(restoration);
                     if (ownershipFailure) return ownershipFailure;
                     return await cleanUpTerminal({
-                        status: 'unavailable',
+                        ...runtimeAdmissionFailure(error),
                         attemptId: input.attemptId,
-                        code: 'connected_account_runtime_unavailable',
                     });
                 }
                 const afterRuntime = attemptOwnershipFailure(restoration);
@@ -3264,14 +3252,13 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
             let runtimeCurrent: boolean;
             try {
                 runtimeCurrent = await params.runtime.isCurrent(attempt.admission);
-            } catch {
+            } catch (error) {
                 const ownershipFailure = attemptOwnershipFailure(attempt);
                 if (ownershipFailure) return ownershipFailure;
                 attempt.phase = 'configurationRequired';
                 return {
-                    status: 'unavailable',
+                    ...runtimeAdmissionFailure(error),
                     attemptId: input.attemptId,
-                    code: 'connected_account_runtime_unavailable',
                 };
             }
             if (!runtimeCurrent) {

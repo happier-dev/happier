@@ -1,0 +1,56 @@
+{
+  "schemaVersion": 2,
+  "id": "acme.connected-accounts-collision-peer",
+  "version": "1.0.0",
+  "displayName": "Connected Accounts Collision Peer",
+  "description": "Packed third-party Connected Accounts runtime peer for qualified service identity collision conformance.",
+  "engines": {
+    "happier": "^0.2.0"
+  },
+  "runtime": {
+    "apiVersion": 1
+  },
+  "entrypoints": {
+    "daemon": "./daemon.mjs"
+  },
+  "activation": {
+    "events": [
+      {
+        "kind": "startup"
+      }
+    ]
+  },
+  "hostAccess": {
+    "required": [],
+    "optional": []
+  },
+  "contributes": {
+    "connectedAccountDescriptors": [
+      {
+        "id": "vault",
+        "title": "Collision Peer Vault account",
+        "authentication": {
+          "defaultModeId": "manual",
+          "modes": [
+            {
+              "id": "manual",
+              "kind": "manual",
+              "outcomeReconciliation": "none",
+              "fields": [
+                {
+                  "id": "token",
+                  "title": "Collision Peer Vault token",
+                  "schema": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "secret": true
+                }
+              ]
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

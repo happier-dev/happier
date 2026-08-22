@@ -831,6 +831,62 @@ describe('ConnectedAccountConfigurationOwner', () => {
         expect(harness.replace.mock.calls[0]![0]).not.toHaveProperty('consequence');
     });
 
+    it('revokes only the exact configured snapshot after its replacement commits', async () => {
+        const otherService = Object.freeze({ pluginId: 'acme.accounts', localId: 'personal' });
+        const target = Object.freeze({ kind: 'service' as const, service, modeId: 'oauth' });
+        const unrelatedTarget = Object.freeze({
+            kind: 'service' as const,
+            service: otherService,
+            modeId: 'oauth',
+        });
+        const harness = createHarness([{
+            target,
+            record: {
+                revision: 'revision-work-1',
+                values: { endpoint: 'https://work.example.test' },
+                secretRefs: { clientSecret: 'saved-secret-work' },
+            },
+        }, {
+            target: unrelatedTarget,
+            record: {
+                revision: 'revision-personal-1',
+                values: { endpoint: 'https://personal.example.test' },
+                secretRefs: { clientSecret: 'saved-secret-personal' },
+            },
+        }]);
+        const mode = configuredMode('service');
+        const admitted = await harness.owner.admit({
+            intent: 'connect',
+            service,
+            mode,
+            ...generation,
+        });
+        const unrelated = await harness.owner.admit({
+            intent: 'connect',
+            service: otherService,
+            mode,
+            ...generation,
+        });
+        if (admitted.status !== 'ready') throw new Error('Expected configured snapshot');
+        if (unrelated.status !== 'ready') throw new Error('Expected unrelated configured snapshot');
+        const signal = harness.owner.currentnessSignal(admitted.snapshot);
+        const unrelatedSignal = harness.owner.currentnessSignal(unrelated.snapshot);
+
+        const replacement = await harness.owner.replaceForControl({
+            target,
+            mode,
+            expectedRevision: 'revision-work-1',
+            values: { endpoint: 'https://next-work.example.test' },
+            secretValues: { clientSecret: 'replacement-secret' },
+            ...generation,
+        });
+        if (replacement.status !== 'committed') throw new Error('Expected configuration replacement');
+
+        expect(signal.aborted).toBe(true);
+        expect(unrelatedSignal.aborted).toBe(false);
+        expect(harness.owner.currentnessSignal(replacement.snapshot).aborted).toBe(false);
+    });
+
     it('does not create a meaningless persistence record for a mode without configuration', async () => {
         const harness = createHarness();
         const mode = PluginConnectedAccountAuthenticationModeV2Schema.parse({

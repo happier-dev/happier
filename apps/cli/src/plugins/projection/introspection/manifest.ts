@@ -9,9 +9,11 @@ import {
 import type { CanonicalPluginManifest } from '@/plugins/manifest/types';
 import type { PluginCompatibilityDiagnostic } from '@/plugins/validation/diagnostics/types';
 import {
+  buildPluginContributionIntrospectionIdentity,
   buildPluginContributionIntrospectionQualifiedId,
-  enrichPluginDiagnosticRecord,
+  projectPluginCompatibilityDiagnostics,
   projectPluginContributionIntrospection,
+  readPluginContributionIntrospectionPresentation,
 } from './project';
 import type { PluginContributionIntrospectionCandidate } from './types';
 
@@ -32,11 +34,14 @@ export function collectManifestContributionIntrospectionCandidates(params: Reado
           `Cannot introspect contribution '${params.manifest.id}/${catalogEntry.manifestKey}' without a canonical local identity`,
         );
       }
-      const identity = catalogEntry.identityKind === 'locale'
-        ? { kind: 'locale' as const, locale: localId }
-        : catalogEntry.identityKind === 'delegatedDomain'
-          ? { kind: 'delegatedDomain' as const, domainId: localId }
-          : { kind: 'localId' as const, localId };
+      const identity = buildPluginContributionIntrospectionIdentity({
+        identityKind: catalogEntry.identityKind,
+        identityValue: localId,
+      });
+      const presentation = readPluginContributionIntrospectionPresentation(
+        catalogEntry.manifestKey,
+        record,
+      );
       candidates.push({
         pluginId: params.manifest.id,
         pluginVersion: params.manifest.version,
@@ -45,10 +50,10 @@ export function collectManifestContributionIntrospectionCandidates(params: Reado
         runtimeRegistrationHost: catalogEntry.runtimeRegistrationHost(record),
         runtimeRegistrationFamily: catalogEntry.runtimeRegistrationFamily(record),
         identity,
-        stability: introspection.stability,
         registration: introspection.registration,
         consumer: introspection.consumer,
         platforms: introspection.platforms,
+        ...(presentation === undefined ? {} : { presentation }),
       });
     }
   }
@@ -68,24 +73,18 @@ export function projectManifestContributionIntrospection(params: Readonly<{
   diagnosticStage?: PluginDiagnosticStageV1;
   diagnostics: readonly PluginCompatibilityDiagnostic[];
 }>): PluginContributionIntrospectionProjectionV1 {
-  const diagnostics = params.diagnostics.map((diagnostic, ordinal) => (
-    enrichPluginDiagnosticRecord({
-      code: diagnostic.code,
-      severity: 'error',
-      message: diagnostic.message,
-    }, {
-      ordinal,
-      plugin: {
-        id: params.manifest.id,
-        version: params.manifest.version,
-        source: params.source,
-      },
-      stage: params.diagnosticStage ?? 'normalization',
-      host: params.host,
-      platform: params.platform,
-      occurredAtMs: params.occurredAtMs,
-    })
-  ));
+  const diagnostics = projectPluginCompatibilityDiagnostics({
+    diagnostics: params.diagnostics,
+    plugin: {
+      id: params.manifest.id,
+      version: params.manifest.version,
+      source: params.source,
+    },
+    defaultStage: params.diagnosticStage ?? 'normalization',
+    host: params.host,
+    platform: params.platform,
+    occurredAtMs: params.occurredAtMs,
+  });
   return projectPluginContributionIntrospection({
     generation: params.generation,
     candidates: collectManifestContributionIntrospectionCandidates(params),

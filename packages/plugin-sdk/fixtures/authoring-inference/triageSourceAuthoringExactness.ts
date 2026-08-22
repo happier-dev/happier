@@ -30,6 +30,16 @@ if (false) {
     surfaces: {},
   });
 
+  // @ts-expect-error A protocol that declares a descriptor schema requires one.
+  triageSourcesV1.contribute({
+    operations: {
+      inspect: triageSourcesV1.operations.inspect.bind('inspect-triage-source'),
+    },
+    surfaces: {
+      detail: { renderer: 'triage-detail-card' },
+    },
+  });
+
   triageSourcesV1.contribute({
     descriptor: { kind: 'issue', label: 'Project issues' },
     operations: {
@@ -47,6 +57,7 @@ if (false) {
     actions: {
       'declared-action': {
         title: 'Declared action',
+        execution: { target: 'daemon' },
         surfaces: ['plugin'],
         inputSchema: triageSourceInspectionInputSchema,
         resultSchema: triageSourceInspectionResultSchema,

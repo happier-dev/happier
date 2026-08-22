@@ -164,7 +164,7 @@ describe('buildUiArtifacts', () => {
         });
         const bundle = encode('module.exports = {};');
         const emitted = [
-            { relativePath: 'react-native/examples.reviewNative/ios/ios.bundle.js', bytes: bundle },
+            { relativePath: 'react-native/examples.reviewNative/ios/ios.bundle', bytes: bundle },
         ];
 
         const result = await buildUiArtifacts({
@@ -200,7 +200,7 @@ describe('buildUiArtifacts', () => {
         });
         const bundle = encode('export function renderSurface() {}');
         const emitted = [
-            { relativePath: 'react-native-web/examples.reviewNative/entry.mjs', bytes: bundle },
+            { relativePath: 'react-native-web/examples.reviewNative/entry.mjs.bundle', bytes: bundle },
         ];
 
         const result = await buildUiArtifacts({
@@ -351,7 +351,7 @@ describe('buildUiArtifacts', () => {
             hostUiApiVersion,
             compatibility: { reactVersion, reactNativeVersion: '0.83.4' },
         });
-        const relativePath = 'react-native/examples.reviewNative/ios/ios.bundle.js';
+        const relativePath = 'react-native/examples.reviewNative/ios/ios.bundle';
         const unsafe = 'guardedWebpackRequire[key] = originalWebpackRequire[key];';
 
         const result = await buildUiArtifacts({

@@ -1,13 +1,20 @@
 import type {
+  ActionInputHints,
   PluginJsonSchemaV2,
   PluginToolContributionV2,
 } from '@happier-dev/protocol';
+import { normalizePluginActionInputHintsV2 } from '@happier-dev/protocol';
 
 import {
   evaluateContributionAvailability,
   resolveInvocationContributionPolicyFacts,
 } from './policy/evaluate';
 import type { ResolvedExecutablePluginRuntimeRegistry } from './resolveExecutablePluginRuntimeRegistry';
+
+type PluginToolCatalogRuntimeRegistry = Pick<
+  ResolvedExecutablePluginRuntimeRegistry,
+  'contributes' | 'targetActionInvocations'
+>;
 
 export type ProjectedPluginToolCatalogEntry = Readonly<{
   toolId: string;
@@ -17,13 +24,19 @@ export type ProjectedPluginToolCatalogEntry = Readonly<{
   description: string;
   inputSchema: PluginJsonSchemaV2;
   outputSchema?: NonNullable<PluginToolContributionV2['outputSchema']>;
-  inputHints?: NonNullable<PluginToolContributionV2['inputHints']>;
+  inputHints?: ActionInputHints;
   safety?: NonNullable<PluginToolContributionV2['safety']>;
   examples?: NonNullable<PluginToolContributionV2['examples']>;
   promptSnippet?: NonNullable<PluginToolContributionV2['promptSnippet']>;
   promptGuidelines?: readonly string[];
   availability?: NonNullable<PluginToolContributionV2['availability']>;
   surfaces: readonly ('agent' | 'mcp' | 'cli')[];
+  /**
+   * Ephemeral admission fence. The executable catalog projection never
+   * produces this field; a catalog snapshot owner binds the admitted Action
+   * contributor before handing the Tool to a long-lived consumer.
+   */
+  expectedContributorImmutableGenerationId?: string;
 }>;
 
 function readLocalizedText(
@@ -40,13 +53,13 @@ function readLocalizedText(
  * this is a read-only transport/presentation view.
  */
 export function projectExecutablePluginToolCatalog(
-  runtimeRegistry: ResolvedExecutablePluginRuntimeRegistry,
+  runtimeRegistry: PluginToolCatalogRuntimeRegistry,
 ): readonly ProjectedPluginToolCatalogEntry[] {
   const projected: ProjectedPluginToolCatalogEntry[] = [];
   for (const tool of runtimeRegistry.contributes.tools ?? []) {
-    if (tool.provenance !== 'external' || !tool.pluginId) continue;
+    if (!tool.pluginId) continue;
     const action = runtimeRegistry.contributes.actionsById?.get(tool.definition.actionId);
-    if (action?.provenance !== 'external' || !action.pluginId) continue;
+    if (!action?.pluginId) continue;
     const policy = runtimeRegistry.targetActionInvocations?.evaluateCatalogPolicy(
       action.pluginId,
       action.definition.id,
@@ -68,7 +81,9 @@ export function projectExecutablePluginToolCatalog(
       description: readLocalizedText(tool.definition.description) ?? title,
       inputSchema: tool.definition.inputSchema ?? {},
       ...(tool.definition.outputSchema === undefined ? {} : { outputSchema: tool.definition.outputSchema }),
-      ...(tool.definition.inputHints === undefined ? {} : { inputHints: tool.definition.inputHints }),
+      ...(tool.definition.inputHints === undefined
+        ? {}
+        : { inputHints: normalizePluginActionInputHintsV2(tool.definition.inputHints) }),
       safety: tool.definition.safety,
       ...(tool.definition.examples === undefined ? {} : { examples: tool.definition.examples }),
       ...(tool.definition.promptSnippet === undefined ? {} : { promptSnippet: tool.definition.promptSnippet }),

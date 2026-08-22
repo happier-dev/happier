@@ -9,10 +9,9 @@ import {
 
 function createRegistry(): ResolvedContributionRegistry {
     return {
-        generationId: 'generation-7',
         structuredMessages: [{
-            provenance: 'external',
-            source: { kind: 'path' },
+            provenance: 'first_party',
+            source: { kind: 'bundled' },
             pluginId: 'acme.preview',
             definition: {
                 id: 'preview-card',
@@ -38,7 +37,6 @@ function createRegistry(): ResolvedContributionRegistry {
             pluginId: 'acme.preview',
             identity: { pluginId: 'acme.preview', localId: 'summary-card' },
             manifestPath: '/plugins/acme/plugin.json',
-            manifestDigest: 'sha256:manifest',
             definition: {
                 id: 'summary-card',
                 kind: 'declarative',
@@ -49,7 +47,7 @@ function createRegistry(): ResolvedContributionRegistry {
             provenance: 'external',
             source: { kind: 'path' },
             pluginId: 'acme.preview',
-            definition: { id: 'open-preview' },
+            definition: { id: 'open-preview', title: 'Open preview', execution: { target: 'daemon' } },
         }],
         resources: [{
             provenance: 'external',
@@ -73,9 +71,21 @@ function createRegistry(): ResolvedContributionRegistry {
 }
 
 describe('production structured-message consumer', () => {
+    it('requires the runtime owner to supply the current activation generation', () => {
+        expect(() => resolveStablePluginStructuredMessage({
+            registry: createRegistry(),
+            expectedGeneration: 'generation-7',
+            currentGeneration: '',
+            kind: 'acme.preview/preview-card.v1',
+            payload: { previewId: 'preview-1' },
+            facts: { 'plugin.enabled': true, 'session.exists': true },
+        })).toThrowError(expect.objectContaining({ code: 'plugin_structured_message_generation_retired' }));
+    });
+
     it('normalizes a valid payload and every renderer/action/resource identity before rendering', () => {
         const resolution = resolveStablePluginStructuredMessageConsumer({
             registry: createRegistry(),
+            currentGeneration: 'generation-7',
             expectedGeneration: 'generation-7',
             kind: 'acme.preview/preview-card.v1',
             payload: { previewId: 'preview-1' },
@@ -119,6 +129,7 @@ describe('production structured-message consumer', () => {
     it('rejects a payload through the canonical JSON Schema validator before producing a render model', () => {
         expect(() => resolveStablePluginStructuredMessage({
             registry: createRegistry(),
+            currentGeneration: 'generation-7',
             expectedGeneration: 'generation-7',
             kind: 'acme.preview/preview-card.v1',
             payload: { previewId: 42 },
@@ -148,6 +159,7 @@ describe('production structured-message consumer', () => {
                     },
                 }],
             } as ResolvedContributionRegistry,
+            currentGeneration: 'generation-7',
             expectedGeneration: 'generation-7',
             kind: 'acme.preview/preview-card.v1',
             payload: { previewId: 'preview-1' },
@@ -155,9 +167,64 @@ describe('production structured-message consumer', () => {
         })).toThrowError(expect.objectContaining({ code: 'plugin_declarative_action_missing' }));
     });
 
+    it('rejects an exclusive structured-message kind claimed by two plugins instead of silently picking one', () => {
+        const registry = createRegistry();
+        const declaring = registry.structuredMessages![0]!;
+        const contested = {
+            ...registry,
+            structuredMessages: [
+                declaring,
+                {
+                    ...declaring,
+                    pluginId: 'other.preview',
+                    definition: {
+                        ...declaring.definition,
+                        fallback: { kind: 'summary' as const, template: 'Other preview unavailable' },
+                    },
+                },
+            ],
+        } as ResolvedContributionRegistry;
+
+        expect(() => resolveStablePluginStructuredMessage({
+            registry: contested,
+            currentGeneration: 'generation-7',
+            expectedGeneration: 'generation-7',
+            kind: 'acme.preview/preview-card.v1',
+            payload: { previewId: 'preview-1' },
+            facts: { 'plugin.enabled': true, 'session.exists': true },
+        })).toThrowError(expect.objectContaining({ code: 'plugin_structured_message_kind_ambiguous' }));
+
+        // Negative control: the SAME two contributions on DIFFERENT kinds are
+        // not ambiguous, so the rejection is about the contested kind and not
+        // about the presence of a second declaration.
+        const distinct = {
+            ...contested,
+            structuredMessages: [
+                declaring,
+                {
+                    ...contested.structuredMessages![1]!,
+                    definition: {
+                        ...contested.structuredMessages![1]!.definition,
+                        kind: 'other.preview/preview-card.v1',
+                    },
+                },
+            ],
+        } as ResolvedContributionRegistry;
+
+        expect(resolveStablePluginStructuredMessage({
+            registry: distinct,
+            currentGeneration: 'generation-7',
+            expectedGeneration: 'generation-7',
+            kind: 'acme.preview/preview-card.v1',
+            payload: { previewId: 'preview-1' },
+            facts: { 'plugin.enabled': true, 'session.exists': true },
+        }).identity.pluginId).toBe('acme.preview');
+    });
+
     it('fails closed for stale generations and unavailable policy facts', () => {
         expect(() => resolveStablePluginStructuredMessage({
             registry: createRegistry(),
+            currentGeneration: 'generation-7',
             expectedGeneration: 'generation-6',
             kind: 'acme.preview/preview-card.v1',
             payload: { previewId: 'preview-1' },
@@ -166,6 +233,7 @@ describe('production structured-message consumer', () => {
 
         expect(resolveStablePluginStructuredMessage({
             registry: createRegistry(),
+            currentGeneration: 'generation-7',
             expectedGeneration: 'generation-7',
             kind: 'acme.preview/preview-card.v1',
             payload: { previewId: 'preview-1' },

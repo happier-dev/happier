@@ -341,6 +341,8 @@
     "package.json",
     "README.md",
     "API.md",
+    "api-declarations.md",
+    "api-surface.json",
     "capability-matrix.json"
   ],
   "happier": {
@@ -370,7 +372,7 @@
     "postinstall:real": "yarn -s build",
     "postinstall": "node -e \"const fs=require('fs');const cp=require('child_process');if(/(^|[\\\\/])node_modules([\\\\/]|$)/i.test(process.cwd()))process.exit(0);try{const gate=require('../../scripts/postinstall/shouldRunPostinstall.cjs');if(!gate.shouldRunPostinstall({workspace:'plugin-sdk',scope:process.env.HAPPIER_INSTALL_SCOPE||''}))process.exit(0);}catch{}if(!fs.existsSync('tsconfig.json'))process.exit(0);const run=(cmd,args)=>cp.spawnSync(cmd,args,{stdio:'inherit'});const npmExec=process.env.npm_execpath;let r;if(npmExec){r=run(process.execPath,[npmExec,'run','-s','postinstall:real']);}else{r=run(process.platform==='win32'?'yarn.cmd':'yarn',['-s','postinstall:real']);if(r.error&&process.platform==='win32'){r=run('yarn',['-s','postinstall:real']);}}if(r.error){console.error(r.error.message);process.exit(1);}process.exit(r.status??1);\"",
     "test": "../../apps/stack/bin/hstack-exec --script=test:local",
-    "test:local": "yarn -s check:api-surface && vitest run --exclude \"scripts/*.test.mjs\" --exclude \"examples/**/test/*.test.mjs\" --exclude \"src/declarationClosureIdentity.test.ts\" && vitest run --config vitest.declaration-closure.config.ts && node --test scripts/*.test.mjs",
+    "test:local": "yarn -s check:api-surface && vitest run --exclude \"scripts/*.test.mjs\" --exclude \"examples/**/test/*.test.mjs\" --exclude \"src/declarationClosureIdentity.test.ts\" && vitest run --config vitest.declaration-closure.config.ts && node --test scripts/*.test.mjs examples/advanced-package-root/test/index.test.mjs examples/background-indexer/test/index.test.mjs examples/code-defined/test/index.test.mjs examples/descriptor-only/test/index.test.mjs examples/hosted-web/test/index.test.mjs examples/multi-mode-fallback/test/index.test.mjs examples/production-hosted-reference/test/index.test.mjs examples/projects-tasks/test/index.test.mjs examples/react-native-dev-hot-reload/test/index.test.mjs examples/react-native-installed/test/index.test.mjs",
     "vitest": "../../apps/stack/bin/hstack-exec --script=vitest:local",
     "vitest:local": "vitest",
     "test:source": "vitest run --config vitest.source.config.ts",
@@ -392,6 +394,7 @@
     "react": "19.2.0",
     "react-native": "0.83.5",
     "react-native-web": "0.21.2",
+    "semver": "^7.7.3",
     "typescript": "^5.9.2",
     "vite": "7.3.1",
     "vitest": "^3.2.4"

@@ -2,10 +2,12 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type {
     AgentExternalSessionsContribution,
+} from '@happier-dev/plugin-sdk/sessions/external';
+import type {
     AgentExternalSessionTakeoverContribution,
     AgentExternalSessionTakeoverResolveLaunchRequest,
     AgentExternalSessionTakeoverResolveLaunchResult,
-} from '@happier-dev/plugin-sdk/experimental/sessions';
+} from '@happier-dev/plugin-sdk/sessions/external';
 
 import type { ActivationTarget } from '../activation/targets';
 import type { ContributionRuntimeRegistration } from '../../api/registrationRightsHost';
@@ -48,7 +50,6 @@ function target(): ActivationTarget {
         source: { kind: 'path' },
         pluginId: 'happier.agent.fixture',
         manifestPath: '/plugins/happier.agent.fixture/plugin.json',
-        manifestDigest: 'digest-happier.agent.fixture',
         daemonEntryPath: '/plugins/happier.agent.fixture/daemon.js',
         devDaemonEntryPath: null,
         sourceSpec: {
@@ -72,6 +73,7 @@ function request(
         source: { kind: 'fixture' },
         remoteSessionId: 'remote-session-1',
         linkData: {},
+        targetDirectory: '/local/selected/workspace',
         linkedDirectory: '/linked/workspace',
     };
 }
@@ -119,6 +121,7 @@ describe('target Agent External Session takeover lease', () => {
             expect(args[0]).toMatchObject({
                 linkedSessionId: 'linked-session-1',
                 remoteSessionId: 'remote-session-1',
+                targetDirectory: '/local/selected/workspace',
                 linkedDirectory: '/linked/workspace',
                 deadlineAtMs: expect.any(Number),
                 maxSerializedBytes: 262_144,

@@ -29,7 +29,6 @@ export type PortableArchiveFile = Readonly<{
 export type ExtractedPortableArchive = Readonly<{
   rootPath: string;
   inventory: readonly PortableArchiveFile[];
-  rootDigest: `sha256:${string}`;
 }>;
 
 export type PortableArchiveErrorCode =

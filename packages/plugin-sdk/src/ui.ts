@@ -26,6 +26,8 @@ export type {
     PluginUiSchema,
     PluginUiSettingsPageV1,
     PluginUiIconTokenV1,
+    PluginUiToneV1,
+    PluginUiAttachmentToneV1,
 } from './ui/publicContract.js';
 
 /** Canonical Protocol-owned vocabulary projected without a Protocol type edge. */

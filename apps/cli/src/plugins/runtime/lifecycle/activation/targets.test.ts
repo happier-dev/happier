@@ -20,7 +20,7 @@ function target(contributes: Record<string, unknown>, activationEvents: readonly
     if (!result.ok) throw new Error(result.diagnostics.map((entry) => entry.message).join('\n'));
     return {
         provenance: 'external', source: { kind: 'path' }, pluginId: result.manifest.id,
-        manifestPath: '/tmp/plugin/happier.plugin.json', manifestDigest: 'sha256:fixture',
+        manifestPath: '/tmp/plugin/happier.plugin.json',
         daemonEntryPath: '/tmp/plugin/daemon.js',
         sourceSpec: { kind: 'path', locator: '/tmp/plugin', trustPolicy: 'local_trusted', installPolicy: 'link' },
         activationEvents,
@@ -29,6 +29,36 @@ function target(contributes: Record<string, unknown>, activationEvents: readonly
 }
 
 describe('activation target demand', () => {
+    it('routes speech demand through the unified Voice registration family', () => {
+        const speech = target({
+            voiceProviders: [{
+                id: 'speech', title: 'Speech', kind: 'speech',
+                roles: ['dictation_stt'], platforms: ['web'],
+                settings: {
+                    schemaVersion: 2,
+                    fields: [{
+                        id: 'model', title: 'Model',
+                        schema: { type: 'string', minLength: 1, maxLength: 256 },
+                        default: 'synthetic-stt-v1',
+                        presentation: { control: 'text' },
+                    }],
+                },
+            }],
+        });
+
+        expect(shouldActivateTargetAtStartup(speech)).toBe(false);
+        expect(activationTargetMatchesContributionDemand(speech, {
+            pluginId: speech.pluginId,
+            family: 'voiceProviders',
+            localId: 'speech',
+        })).toBe(true);
+        expect(activationTargetMatchesContributionDemand(speech, {
+            pluginId: speech.pluginId,
+            family: 'voiceProviders.speech',
+            localId: 'speech',
+        })).toBe(false);
+    });
+
     it('leaves client Voice registration to the client artifact instead of daemon activation', () => {
         const voice = target({
             voiceProviders: [{
@@ -38,7 +68,6 @@ describe('activation target demand', () => {
                 roles: ['realtime_conversation'],
                 platforms: ['web'],
                 capabilities: {
-                    readiness: { requirements: [] },
                     turn: { cancelResponse: true, bargeIn: false },
                 },
                 client: {
@@ -63,9 +92,79 @@ describe('activation target demand', () => {
         }))).toBe(false);
     });
 
+    it('keeps managed Providers dormant until exact public runtime demand', () => {
+        const provider = {
+            v: 1,
+            id: 'gateway',
+            name: 'Gateway',
+            kind: 'aggregator',
+            endpointTemplates: [{
+                id: 'api',
+                protocol: 'openai-responses',
+                baseUrl: 'https://example.test/v1',
+                capabilities: {
+                    streaming: 'supported',
+                    toolRoundTrips: 'supported',
+                    statefulResponses: 'unknown',
+                    reasoningControls: 'supported',
+                },
+            }],
+            catalog: {
+                source: 'static',
+                manualModelPolicy: 'allowed',
+                staticModels: [{ id: 'example', name: 'Example' }],
+            },
+        };
+        const descriptorOnly = target({ providers: [provider] });
+        const managed = target({
+            providers: [{
+                ...provider,
+                managedRuntime: { kind: 'managed', endpointTemplateIds: ['api'] },
+            }],
+        });
+
+        expect(shouldActivateTargetAtStartup(descriptorOnly)).toBe(false);
+        expect(shouldActivateTargetAtStartup(managed)).toBe(false);
+        expect(activationTargetMatchesContributionDemand(managed, {
+            pluginId: managed.pluginId,
+            family: 'providers',
+            localId: 'gateway',
+        })).toBe(true);
+    });
+
+    it('keeps a Composer attachment runtime dormant until a staged attachment demands it', () => {
+        const attachment = target({
+            composerAttachments: [{
+                id: 'entry',
+                title: 'Entry',
+                icon: 'action',
+                cardinality: 'many',
+                valueSchema: {
+                    type: 'object',
+                    properties: { entryId: { type: 'string' } },
+                    required: ['entryId'],
+                    additionalProperties: false,
+                },
+                runtime: { resolveForDispatch: true },
+            }],
+        });
+
+        expect(shouldActivateTargetAtStartup(attachment)).toBe(false);
+        expect(activationTargetMatchesContributionDemand(attachment, {
+            pluginId: attachment.pluginId,
+            family: 'composerAttachments',
+            localId: 'entry',
+        })).toBe(true);
+        expect(activationTargetMatchesContributionDemand(attachment, {
+            pluginId: attachment.pluginId,
+            family: 'composerAttachments',
+            localId: 'undeclared',
+        })).toBe(false);
+    });
+
     it('keeps an action registration dormant until host-derived contribution demand', () => {
         expect(shouldActivateTargetAtStartup(target({
-            actions: [{ id: 'run', title: 'Run', scopes: ['session'], surfaces: ['cli'], placement: 'primary', dangerLevel: 'safe' }],
+            actions: [{ id: 'run', title: 'Run', scopes: ['session'], surfaces: ['cli'], execution: { target: 'daemon' }, placementBindings: ['primary'], dangerLevel: 'safe' }],
         }))).toBe(false);
     });
 
@@ -176,7 +275,7 @@ describe('activation target demand', () => {
         const mcp = target({
             mcp: {
                 servers: [{ id: 'tools', title: 'Tools', kind: 'dynamic' }],
-                discoveryProviders: [{ id: 'detector', title: 'Detector' }],
+                discoverySources: [{ id: 'detector', title: 'Detector' }],
             },
         });
 
@@ -216,9 +315,22 @@ describe('activation target demand', () => {
         expect(shouldActivateTargetAtStartup(startup)).toBe(true);
     });
 
+    it('activates declared background services at machine-runtime startup without author events', () => {
+        const background = target({
+            backgroundServices: [{ id: 'memory-indexer', title: 'Memory indexer' }],
+        });
+
+        expect(shouldActivateTargetAtStartup(background)).toBe(true);
+        expect(activationTargetMatchesContributionDemand(background, {
+            pluginId: background.pluginId,
+            family: 'backgroundServices',
+            localId: 'memory-indexer',
+        })).toBe(true);
+    });
+
     it('matches host demand against canonical registration rights rather than author events', () => {
         const action = target({
-            actions: [{ id: 'run', title: 'Run', scopes: ['session'], surfaces: ['cli'], placement: 'primary', dangerLevel: 'safe' }],
+            actions: [{ id: 'run', title: 'Run', scopes: ['session'], surfaces: ['cli'], execution: { target: 'daemon' }, placementBindings: ['primary'], dangerLevel: 'safe' }],
         });
         expect(activationTargetMatchesContributionDemand(action, {
             pluginId: action.pluginId,

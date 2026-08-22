@@ -7,9 +7,11 @@ import {
 } from '@happier-dev/plugin-sdk';
 import {
     defineProtocolArray,
+    defineProtocolLiteral,
     defineProtocolNumber,
     defineProtocolObject,
     defineProtocolString,
+    defineProtocolUnion,
 } from '@happier-dev/plugin-sdk/protocol';
 import type { PluginActionDeclaration } from '@happier-dev/plugin-sdk/actions';
 import type { PluginAgentDefinition } from '@happier-dev/plugin-sdk/agents';
@@ -28,6 +30,7 @@ import {
     reviewSessionStatusCollection,
     reviewSessionStatusResource,
     resolveAgentContextCompanionComposition,
+    runExternalSessionDigest,
     runReviewSummary,
 } from './daemon.js';
 import { speechToTextRuntime, textToSpeechRuntime } from './voiceSpeechProvider.js';
@@ -38,7 +41,10 @@ import { speechToTextRuntime, textToSpeechRuntime } from './voiceSpeechProvider.
  * the matching activation module; no handwritten manifest or activation path
  * remains beside it.
  */
-type PublicAuthoringActions = Readonly<Record<'review-summary', PluginActionDeclaration>>;
+type PublicAuthoringActions = Readonly<Record<
+    'review-summary' | 'external-session-digest' | 'open-review-status',
+    PluginActionDeclaration
+>>;
 type PublicAuthoringAgents = Readonly<Record<'review-agent', PluginAgentDefinition>>;
 type PublicAuthoringPromptAssets = Readonly<Record<
     'agent-context-companion-prompt',
@@ -108,6 +114,12 @@ export const publicAuthoringDefinition: PublicAuthoringDefinition = {
                 reason: 'Read the declared Account review status for the current Session.',
                 scope: { enabled: true },
             },
+            {
+                id: 'external-session-read',
+                capability: 'sessions',
+                reason: 'List external Agent sessions and read their transcripts to digest them.',
+                scope: { access: ['read'] },
+            },
         ],
         optional: [],
     },
@@ -117,6 +129,7 @@ export const publicAuthoringDefinition: PublicAuthoringDefinition = {
             description: 'Produces a compact summary from the current review transcript.',
             scopes: ['global'],
             surfaces: ['cli', 'agent', 'ui'],
+            execution: { target: 'daemon' },
             placementBindings: ['commandPalette'],
             dangerLevel: 'safe',
             inputSchema: defineProtocolObject({
@@ -128,6 +141,51 @@ export const publicAuthoringDefinition: PublicAuthoringDefinition = {
                 bullets: defineProtocolArray(defineProtocolString()),
             }, { policy: 'closed' }),
             run: runReviewSummary,
+        },
+        'external-session-digest': {
+            title: 'Digest external Agent sessions',
+            description: 'Reads external Agent session transcripts through the host and reports a bounded per-session digest.',
+            scopes: ['global'],
+            surfaces: ['cli', 'agent', 'ui'],
+            execution: { target: 'daemon' },
+            placementBindings: ['commandPalette'],
+            dangerLevel: 'safe',
+            inputSchema: defineProtocolObject({
+                agentId: defineProtocolString().optional(),
+                maxCandidates: defineProtocolNumber({ integer: true, minimum: 1, maximum: 10 }).optional(),
+                maxItems: defineProtocolNumber({ integer: true, minimum: 1, maximum: 50 }).optional(),
+            }, { policy: 'closed' }),
+            resultSchema: defineProtocolObject({
+                outcome: defineProtocolString(),
+                reason: defineProtocolString().nullable(),
+                entries: defineProtocolArray(defineProtocolObject({
+                    title: defineProtocolString(),
+                    agentTurns: defineProtocolNumber({ integer: true, minimum: 0 }),
+                    userTurns: defineProtocolNumber({ integer: true, minimum: 0 }),
+                    // No boolean builder is published; a closed two-literal
+                    // union is the declaration-level way to say the same thing.
+                    truncated: defineProtocolUnion([
+                        defineProtocolLiteral(true),
+                        defineProtocolLiteral(false),
+                    ]),
+                }, { policy: 'closed' })),
+            }, { policy: 'closed' }),
+            run: runExternalSessionDigest,
+        },
+        'open-review-status': {
+            title: 'Open review status',
+            description: 'Opens the existing review-status destination on this client.',
+            surfaces: ['ui', 'voice'],
+            execution: {
+                target: 'client',
+                client: {
+                    artifactId: 'voice-runtime-web',
+                    modulePath: './voiceProvider',
+                    exportName: 'activate',
+                },
+                platforms: ['web'],
+            },
+            dangerLevel: 'safe',
         },
     },
     resources: {
@@ -253,7 +311,7 @@ export const publicAuthoringDefinition: PublicAuthoringDefinition = {
             priority: 50,
         },
     },
-    // Deferred — conformance-only surface.
+    // Deferred — source-wired but awaiting exact packed external lifecycle proof.
     commands: {
         'review-summary-command': {
             title: 'Summarize review transcript',
@@ -265,14 +323,14 @@ export const publicAuthoringDefinition: PublicAuthoringDefinition = {
     sessionHeaderActions: {
         'open-project-companion-dashboard': {
             title: 'Open Project Companion',
-            command: {
+            action: {
                 kind: 'openSurface',
                 destination: 'project-companion-dashboard',
             },
         },
         'open-project-companion-activity': {
             title: 'Open Project Companion activity',
-            command: {
+            action: {
                 kind: 'openSurface',
                 destination: 'project-companion-activity-log',
             },
@@ -422,6 +480,7 @@ export const publicAuthoringDefinition: PublicAuthoringDefinition = {
                     'context',
                     'executeAction',
                     'openSurface',
+                    'publishCurrentUiContext',
                     'readResource',
                     'watchResource',
                 ],
@@ -531,6 +590,7 @@ export const publicAuthoringDefinition: PublicAuthoringDefinition = {
                 platforms: ['web'],
                 capabilities: {
                     turn: { cancelResponse: false, bargeIn: false },
+                    tools: { effectCalls: 'none' },
                 },
                 credentials: {
                     slot: {
@@ -631,6 +691,7 @@ export const publicAuthoringDefinition: PublicAuthoringDefinition = {
                 platforms: ['web'],
                 capabilities: {
                     turn: { cancelResponse: true, bargeIn: true },
+                    tools: { effectCalls: 'none' },
                 },
                 credentials: {
                     slot: {
@@ -743,5 +804,6 @@ export {
     reviewReferenceProvider,
     reviewSessionStatusResource,
     resolveAgentContextCompanionComposition,
+    runExternalSessionDigest,
     runReviewSummary,
 };

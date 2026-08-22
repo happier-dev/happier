@@ -18,6 +18,7 @@ import {
     PluginUiJsonObjectV1Schema,
     PluginUiReadComposerRequestV1Schema,
     PluginUiPickComposerMediaRequestV1Schema,
+    PluginUiPublishCurrentUiContextRequestV1Schema,
     PluginUiReleaseComposerContentRequestV1Schema,
     PluginUiReplacePageLocationRequestV1Schema,
     PluginUiReplacePageLocationResultV1Schema,
@@ -138,7 +139,6 @@ export class PluginUiHostApiClientError extends PluginError {
             ...(data.remediation === undefined ? {} : { remediation: data.remediation }),
             ...(data.diagnostics === undefined ? {} : { diagnostics: data.diagnostics }),
         });
-        this.name = 'PluginUiHostApiClientError';
     }
 }
 
@@ -762,6 +762,16 @@ export async function createPluginUiHostApiClientFromTransport(
     let currentSurface = initial.surface;
     const api = {
         version: () => initial.version,
+        publishCurrentUiContext: (enrichment) => {
+            const payload = PluginUiPublishCurrentUiContextRequestV1Schema.safeParse({ enrichment });
+            if (!payload.success) {
+                throw new PluginUiHostApiClientError(
+                    'invalid_payload',
+                    'Current UI context enrichment is invalid.',
+                );
+            }
+            void request('publishCurrentUiContext', payload.data).catch(() => undefined);
+        },
         context: async (requestOptions) => {
             const result = await request('context', undefined, requestOptions?.signal);
             if (result === undefined) {

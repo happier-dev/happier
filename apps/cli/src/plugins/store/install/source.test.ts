@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -8,8 +8,12 @@ import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixtu
 import { createPluginRegistryStateStore } from '@/plugins/store/registry/currentState';
 import { inspectPluginSource } from './source';
 
-async function materializeInstallCandidate(pluginId: string): Promise<string> {
-  const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-install-source-'));
+async function materializeInstallCandidate(
+  pluginId: string,
+  parentDir = tmpdir(),
+  prefix = 'happier-plugin-install-source-',
+): Promise<string> {
+  const pluginRoot = await mkdtemp(join(parentDir, prefix));
   await mkdir(join(pluginRoot, '.happier-plugin'), { recursive: true });
   await writeFile(join(pluginRoot, 'daemon.mjs'), 'export async function activate() {}\n', 'utf8');
   await writeFile(
@@ -36,15 +40,21 @@ describe('inspectPluginSource', () => {
     const pluginId = 'acme.review-required';
     const pluginRoot = await materializeInstallCandidate(pluginId);
 
-    await expect(inspectPluginSource({
+    const inspected = await inspectPluginSource({
       happyHomeDir,
       locator: pluginRoot,
-    })).resolves.toMatchObject({
+    });
+
+    expect(inspected).toMatchObject({
       ok: true,
       pluginId,
       installedPath: null,
       source: { trustPolicy: 'prompt' },
     });
+    expect(inspected).not.toHaveProperty('manifestDigest');
+    if (inspected.ok) {
+      expect(inspected.source).not.toHaveProperty('resolvedDigest');
+    }
 
     const state = await createPluginRegistryStateStore({ happyHomeDir }).read();
     expect(state.plugins[pluginId]).toBeUndefined();
@@ -66,5 +76,36 @@ describe('inspectPluginSource', () => {
       installedPath: null,
     });
     expect((await createPluginRegistryStateStore({ happyHomeDir }).read()).plugins[pluginId]).toBeUndefined();
+  });
+
+  it('keeps a dev plugin under a workspace when its path begins with two dots', async () => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-plugin-install-dot-home-'));
+    const workspaceRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-install-dot-workspace-'));
+    const pluginRoot = await materializeInstallCandidate(
+      'acme.dot-prefixed-source',
+      workspaceRoot,
+      '..build-',
+    );
+
+    try {
+      const inspected = await inspectPluginSource({
+        happyHomeDir,
+        locator: pluginRoot,
+        dev: true,
+        workspaceRoot,
+      });
+
+      expect(inspected).toMatchObject({
+        ok: true,
+        source: {
+          trustPolicy: 'prompt',
+          installPolicy: 'link',
+          devWatch: true,
+        },
+      });
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+      await rm(happyHomeDir, { recursive: true, force: true });
+    }
   });
 });

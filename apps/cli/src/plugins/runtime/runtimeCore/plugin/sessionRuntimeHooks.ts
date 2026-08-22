@@ -2,15 +2,12 @@ import type {
     RuntimeTurnOperations,
     RuntimeTurnPromptMeta,
 } from '@/agent/runtime/turns/runtimeTurnOperations';
-import type { AgentSessionHostServices } from '@happier-dev/plugin-sdk/agent-runtime';
+import type { AgentSessionModelsSource } from '@happier-dev/plugin-sdk/agents/runtime';
 import type {
     HostProviderInputOutcomeEvidence,
 } from '@/agent/runtime/session/input/providerInputOutcome';
-import type { AgentSessionRuntimeEventV1 } from '@happier-dev/protocol/runtime';
 import type { SessionRuntimeControls } from '@/rpc/handlers/sessionControls';
 import type { SessionRollbackRuntimeFacet } from '@/agent/runtime/session/loop/sessionRollbackRpc';
-
-type AgentSessionModelsSource = Parameters<AgentSessionHostServices['models']['bind']>[0];
 
 export type PluginRuntimePromptAcceptedHandler = (info: Readonly<{
     localIds?: readonly string[];
@@ -40,13 +37,11 @@ export type PluginRuntimeApplyConfigDeltaInFlight = (
 ) => Promise<PluginRuntimeInFlightConfigApplyOutcome> | PluginRuntimeInFlightConfigApplyOutcome;
 
 export type PluginRuntimeHookOperations = RuntimeTurnOperations & Readonly<{
-    subscribeCanonicalAgentSessionEvents?: (
-        handler: (event: AgentSessionRuntimeEventV1) => void,
-    ) => () => void;
     models?: AgentSessionModelsSource;
     supportsInFlightSteer?: () => boolean;
     isTurnInFlight?: () => boolean;
     canSteerPrompt?: () => boolean;
+    canInterruptForPendingInput?: () => boolean;
     notifyPromptQueuedDuringTurn?: () => void;
     steerPrompt?: (message: string, options?: RuntimeTurnPromptMeta) => Promise<void> | void;
     applyConfigDeltaInFlight?: PluginRuntimeApplyConfigDeltaInFlight;

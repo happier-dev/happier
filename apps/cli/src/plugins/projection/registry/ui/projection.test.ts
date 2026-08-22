@@ -1,8 +1,19 @@
+import { readFileSync } from 'node:fs';
+
+import {
+    PluginOpenableContentViewerContributionV1Schema,
+    PluginUiViewV2Schema,
+} from '@happier-dev/protocol';
+import { PLUGIN_UI_HOST_API_VERSION_V1 } from '@happier-dev/protocol/plugins/ui';
 import { describe, expect, it } from 'vitest';
 
 import { buildPluginProjectionV2 } from '../projection/v2';
-import type { ResolvedContributionRegistry } from '../types';
-import { resolveBuiltInContributions } from '../resolveBuiltInContributions';
+import type {
+    ResolvedContributionRegistry,
+    ResolvedOpenableContentViewerContribution,
+    ResolvedUiViewV2Contribution,
+} from '../types';
+import type { StablePluginDeclarativeModel } from '@/plugins/runtime/invocation/services/declarativeModel';
 
 function createEmptyResolvedContributionRegistry(): ResolvedContributionRegistry {
     return {
@@ -29,124 +40,535 @@ const display = {
     tone: 'info',
 };
 
-// Legacy source trust metadata may remain descriptive, but UI projection
-// admission is owned by final package policy plus artifact integrity.
-const localPathSourceSpec = {
-    kind: 'path',
-    locator: '/plugins/acme',
-    trustPolicy: 'prompt',
-    installPolicy: 'link',
-} as const;
-
-const reactNativeBundleContribution = {
-    provenance: 'external',
-    source: { kind: 'path' },
-    sourceSpec: localPathSourceSpec,
-    pluginId: 'acme.preview',
-    manifestPath: '/plugins/acme/.happier-plugin/plugin.json',
-    manifestDigest: 'sha256:manifest',
-    daemonEntryPath: '/plugins/acme/daemon.mjs',
-    definition: {
-        id: 'native-preview',
-        bundle: {
-            platform: 'ios',
-            channel: 'internal',
-            integrity: { digest: 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' },
-        },
-        entry: { exportName: 'renderSurface' },
-        compatibility: {
-            hostUiApiVersion: '1.0.0',
-            reactVersion: '19.0.0',
-            reactNativeVersion: '0.83.4',
-            supportedPlatforms: ['ios'],
-            supportedChannels: ['internal'],
-            requiredNativeCapabilities: ['clipboard'],
-        },
-        hostApi: { minVersion: '1.0.0' },
-        fallback: { kind: 'hostedWeb', contributionId: 'preview-web' },
-        display,
-    },
-} as const;
-
-const reactNativeBundleArtifact = {
-    provenance: 'external',
-    source: { kind: 'path' },
-    sourceSpec: localPathSourceSpec,
-    pluginId: 'acme.preview',
-    manifestPath: '/plugins/acme/.happier-plugin/plugin.json',
-    manifestDigest: 'sha256:manifest',
-    daemonEntryPath: '/plugins/acme/daemon.mjs',
-    definition: {
-        id: 'native-preview-ios',
-        contributionId: 'native-preview',
-        contributionFamily: 'reactNativeBundles',
-        artifactKind: 'reactNativeBundle',
-        platform: 'ios',
-        channel: 'internal',
-        integrity: { digest: 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' },
-        compatibility: {
-            hostAppVersion: '2.0.0',
-            hostUiApiVersion: '1.0.0',
-            reactVersion: '19.0.0',
-            reactNativeVersion: '0.83.4',
-            expoRuntimeVersion: '0.2.0-native',
-            hermesVersion: '0.15.0',
-            // RN-HARDEN item 2: the channel-gate authority (channel above is provenance).
-            supportedChannels: ['internal'],
-            nativeCapabilities: ['clipboard'],
-        },
-        byteSize: 1024,
-        contentType: 'application/javascript',
-        assetPath: 'react-native/native-preview/ios.bundle.js',
-    },
-} as const;
-
-function projectReactNativeFixture(params: Readonly<{
-    uiArtifacts?: readonly unknown[];
-}> = {}) {
-    const registry = {
-        ...createEmptyResolvedContributionRegistry(),
-        reactNativeBundles: [reactNativeBundleContribution],
-        uiArtifacts: params.uiArtifacts ?? [],
-    } as unknown as ResolvedContributionRegistry;
-
-    const projection = buildPluginProjectionV2({
-        registry,
-        generation: 8,
-        pluginUiHostRuntime: {
-            reactNativeBundles: {
-                featureEnabled: true,
-                loaderBackendAvailable: true,
-                hostRuntime: {
-                    platform: 'ios',
-                    channel: 'internal',
-                    hostAppVersion: '2.0.0',
-                    hostUiApiVersion: '1.0.0',
-                    reactVersion: '19.0.0',
-                    reactNativeVersion: '0.83.4',
-                    availableNativeCapabilities: ['clipboard'],
-                },
-            },
-        },
-    } as Parameters<typeof buildPluginProjectionV2>[0]);
-    return projection.familiesById.pluginUi?.entriesById['reactNativeBundle:acme.preview:native-preview'];
-}
+const emptyDeclarativeInventory = Object.freeze({
+    actions: Object.freeze([]),
+    destinations: Object.freeze([]),
+    settings: Object.freeze([]),
+    uiQueries: Object.freeze([]),
+}) satisfies StablePluginDeclarativeModel['declarativeInventory'];
 
 describe('plugin UI projection family', () => {
+    it('stamps every UI entry with the exact current materialization rather than a coarse machine identity', () => {
+        const registry = {
+            ...createEmptyResolvedContributionRegistry(),
+            uiRenderersV2: [{
+                provenance: 'external',
+                source: { kind: 'path' },
+                pluginId: 'acme.materialized',
+                identity: { pluginId: 'acme.materialized', localId: 'renderer' },
+                manifestPath: '/plugins/acme-materialized/.happier-plugin/plugin.json',
+                definition: {
+                    id: 'renderer',
+                    kind: 'declarative',
+                    root: { kind: 'text', text: 'Materialized' },
+                },
+            }],
+            uiViewsV2: [{
+                provenance: 'external',
+                source: { kind: 'path' },
+                pluginId: 'acme.materialized',
+                identity: { pluginId: 'acme.materialized', localId: 'overview' },
+                manifestPath: '/plugins/acme-materialized/.happier-plugin/plugin.json',
+                definition: {
+                    id: 'overview',
+                    container: 'detailsTab',
+                    target: { kind: 'session' },
+                    renderer: 'renderer',
+                    title: 'Overview',
+                },
+            }],
+        } as unknown as ResolvedContributionRegistry;
+        const entryId = 'surfacePlacement:acme.materialized:overview';
+        const project = (materializationId: string | undefined) => (
+            buildPluginProjectionV2({
+                registry,
+                generation: 7,
+                ...(materializationId
+                    ? {
+                        pluginExecutionOriginsByPluginId: {
+                            'acme.materialized': {
+                                serverIdentityId: 'srv_projection_fixture',
+                                materializationRef: {
+                                    machineId: 'machine_projection_fixture',
+                                    materializationId,
+                                    pluginId: 'acme.materialized',
+                                },
+                            },
+                        },
+                    }
+                    : {}),
+            } as Parameters<typeof buildPluginProjectionV2>[0])
+                .familiesById.pluginUi?.entriesById[entryId]
+        );
+
+        expect(project(undefined)).not.toHaveProperty('materializationRef');
+        expect(project('materialization-a')).toMatchObject({
+            serverIdentityId: 'srv_projection_fixture',
+            materializationRef: {
+                machineId: 'machine_projection_fixture',
+                materializationId: 'materialization-a',
+                pluginId: 'acme.materialized',
+            },
+        });
+        expect(project('materialization-b')).toMatchObject({
+            materializationRef: {
+                machineId: 'machine_projection_fixture',
+                materializationId: 'materialization-b',
+                pluginId: 'acme.materialized',
+            },
+        });
+        expect(project('materialization-b')).not.toMatchObject({
+            materializationRef: { materializationId: 'materialization-a' },
+        });
+    });
+
+    it('derives an openable-content viewer from its existing direct details destination', () => {
+        const renderer = {
+            provenance: 'external',
+            source: { kind: 'path' },
+            pluginId: 'acme.viewer',
+            identity: { pluginId: 'acme.viewer', localId: 'renderer' },
+            manifestPath: '/plugins/acme-viewer/.happier-plugin/plugin.json',
+            definition: {
+                id: 'renderer',
+                kind: 'declarative',
+                root: { kind: 'text', text: 'Viewer' },
+            },
+        } as const;
+        const detailsView = {
+            provenance: 'external',
+            source: { kind: 'path' },
+            pluginId: 'acme.viewer',
+            identity: { pluginId: 'acme.viewer', localId: 'file-details' },
+            manifestPath: '/plugins/acme-viewer/.happier-plugin/plugin.json',
+            definition: PluginUiViewV2Schema.parse({
+                id: 'file-details',
+                container: 'detailsTab',
+                target: { kind: 'session' },
+                renderer: 'renderer',
+                title: 'File',
+            }),
+        } satisfies ResolvedUiViewV2Contribution;
+        const viewer = {
+            provenance: 'external',
+            source: { kind: 'path' },
+            pluginId: 'acme.viewer',
+            identity: { pluginId: 'acme.viewer', localId: 'markdown' },
+            manifestPath: '/plugins/acme-viewer/.happier-plugin/plugin.json',
+            definition: PluginOpenableContentViewerContributionV1Schema.parse({
+                id: 'markdown',
+                destination: 'file-details',
+                contentClasses: ['text'],
+                mimeTypes: ['text/markdown'],
+                extensions: ['.md'],
+            }),
+        } satisfies ResolvedOpenableContentViewerContribution;
+        const registry = {
+            ...createEmptyResolvedContributionRegistry(),
+            uiRenderersV2: [renderer],
+            uiViewsV2: [detailsView],
+            openableContentViewers: [viewer],
+        } as unknown as ResolvedContributionRegistry;
+        const viewerEntryId = 'openableContentViewer:acme.viewer:markdown';
+        const origin = {
+            serverIdentityId: 'srv_projection_fixture',
+            materializationRef: {
+                machineId: 'machine_projection_fixture',
+                materializationId: 'materialization-current',
+                pluginId: 'acme.viewer',
+            },
+        } as const;
+        const projected = buildPluginProjectionV2({
+            registry,
+            generation: 7,
+            pluginExecutionOriginsByPluginId: { 'acme.viewer': origin },
+        } as Parameters<typeof buildPluginProjectionV2>[0]).familiesById.pluginUi?.entriesById ?? {};
+
+        expect(projected[viewerEntryId]).toMatchObject({
+            pluginId: 'acme.viewer',
+            contributionKind: 'openableContentViewer',
+            descriptorId: 'markdown',
+            identity: { pluginId: 'acme.viewer', localId: 'markdown' },
+            viewer: {
+                contentClasses: ['text'],
+                mimeTypes: ['text/markdown'],
+                extensions: ['.md'],
+            },
+            destination: { pluginId: 'acme.viewer', localId: 'file-details' },
+            ...origin,
+        });
+        expect(projected[viewerEntryId]).not.toHaveProperty('path');
+        expect(projected[viewerEntryId]).not.toHaveProperty('launchInput');
+
+        const withoutDestination = buildPluginProjectionV2({
+            registry: { ...registry, uiViewsV2: [] },
+            generation: 7,
+        } as Parameters<typeof buildPluginProjectionV2>[0]).familiesById.pluginUi?.entriesById ?? {};
+        expect(withoutDestination).not.toHaveProperty(viewerEntryId);
+
+        const wrongContainerView = {
+            ...detailsView,
+            definition: PluginUiViewV2Schema.parse({
+                ...detailsView.definition,
+                container: 'rightPane',
+            }),
+        } satisfies ResolvedUiViewV2Contribution;
+        const withWrongContainer = buildPluginProjectionV2({
+            registry: {
+                ...registry,
+                uiViewsV2: [wrongContainerView],
+            },
+            generation: 7,
+        }).familiesById.pluginUi?.entriesById ?? {};
+        expect(withWrongContainer).not.toHaveProperty(viewerEntryId);
+
+        const mismatchedViewer = {
+            ...viewer,
+            identity: { ...viewer.identity, localId: 'other' },
+        } satisfies ResolvedOpenableContentViewerContribution;
+        const withMismatchedIdentity = buildPluginProjectionV2({
+            registry: {
+                ...registry,
+                openableContentViewers: [mismatchedViewer],
+            },
+            generation: 7,
+        }).familiesById.pluginUi?.entriesById ?? {};
+        expect(withMismatchedIdentity).not.toHaveProperty(viewerEntryId);
+    });
+
+    it('carries only the canonical Resource capability onto every V2 projected surface', () => {
+        const registry = {
+            ...createEmptyResolvedContributionRegistry(),
+            uiRenderersV2: [{
+                provenance: 'external',
+                source: { kind: 'path' },
+                pluginId: 'acme.generated-resource',
+                identity: { pluginId: 'acme.generated-resource', localId: 'renderer' },
+                manifestPath: '/plugins/acme-generated/.happier-plugin/plugin.json',
+                definition: {
+                    id: 'renderer',
+                    kind: 'declarative',
+                    root: { kind: 'text', text: 'Resource' },
+                },
+            }],
+            uiViewsV2: [{
+                provenance: 'external',
+                source: { kind: 'path' },
+                pluginId: 'acme.generated-resource',
+                identity: { pluginId: 'acme.generated-resource', localId: 'generated-resource-surface' },
+                manifestPath: '/plugins/acme-generated/.happier-plugin/plugin.json',
+                definition: {
+                    id: 'generated-resource-surface',
+                    container: 'rightPane',
+                    target: { kind: 'session' },
+                    renderer: 'renderer',
+                    title: 'Resource',
+                },
+            }],
+        } as unknown as ResolvedContributionRegistry;
+
+        const entries = buildPluginProjectionV2({
+            registry,
+            generation: 7,
+            pluginUiHostRuntime: {
+                resourceCapabilityForPlugin: () => ({ readable: true, dynamic: false }),
+            },
+        }).familiesById.pluginUi?.entriesById ?? {};
+
+        expect(entries['surfacePlacement:acme.generated-resource:generated-resource-surface'])
+            .toMatchObject({ runtime: { resourceCapability: { readable: true, dynamic: false } } });
+        expect(entries['surfacePlacement:acme.generated-resource:generated-resource-surface'])
+            .not.toHaveProperty('runtime.resourceCapability.resourceIds');
+    });
+
+    it('projects normalized destination bindings and the declared settings-page destination', () => {
+        const registry = {
+            ...createEmptyResolvedContributionRegistry(),
+            uiRenderersV2: [{
+                provenance: 'external',
+                source: { kind: 'path' },
+                pluginId: 'acme.navigation',
+                identity: { pluginId: 'acme.navigation', localId: 'renderer' },
+                manifestPath: '/plugins/acme/.happier-plugin/plugin.json',
+                definition: {
+                    id: 'renderer',
+                    kind: 'declarative',
+                    root: { kind: 'text', text: 'Navigation' },
+                },
+            }],
+            uiViewsV2: [{
+                provenance: 'external',
+                source: { kind: 'path' },
+                pluginId: 'acme.navigation',
+                identity: { pluginId: 'acme.navigation', localId: 'session-panel' },
+                manifestPath: '/plugins/acme/.happier-plugin/plugin.json',
+                definition: {
+                    id: 'session-panel',
+                    container: 'rightPane',
+                    target: { kind: 'session' },
+                    renderer: 'renderer',
+                    title: 'Session panel',
+                },
+            }],
+            uiSettingsGroupsV2: [{
+                provenance: 'external',
+                source: { kind: 'path' },
+                pluginId: 'acme.navigation',
+                identity: { pluginId: 'acme.navigation', localId: 'navigation' },
+                manifestPath: '/plugins/acme/.happier-plugin/plugin.json',
+                definition: {
+                    id: 'navigation',
+                    title: 'Navigation',
+                    icon: 'browser',
+                    defaultRank: 12,
+                },
+            }],
+            uiSettingsPagesV2: [{
+                provenance: 'external',
+                source: { kind: 'path' },
+                pluginId: 'acme.navigation',
+                identity: { pluginId: 'acme.navigation', localId: 'navigation-settings' },
+                manifestPath: '/plugins/acme/.happier-plugin/plugin.json',
+                definition: {
+                    id: 'navigation-settings',
+                    group: { kind: 'plugin', localId: 'navigation' },
+                    title: 'Navigation settings',
+                    keywords: ['navigation'],
+                    renderer: 'renderer',
+                },
+            }],
+        } as unknown as ResolvedContributionRegistry;
+
+        const entries = buildPluginProjectionV2({ registry, generation: 1 })
+            .familiesById.pluginUi?.entriesById ?? {};
+
+        expect(entries['surfacePlacement:acme.navigation:session-panel']).toMatchObject({
+            contributionKind: 'surfacePlacement',
+            binding: {
+                destination: { pluginId: 'acme.navigation', localId: 'session-panel' },
+                renderer: { pluginId: 'acme.navigation', localId: 'renderer' },
+                container: 'rightPane',
+                target: { kind: 'session' },
+                targetKind: 'session',
+                instancePolicy: 'singleton',
+                platforms: ['desktop', 'web'],
+            },
+        });
+        expect(entries['surfacePlacement:acme.navigation:session-panel'])
+            .not.toHaveProperty('binding.collisionDomain');
+        expect(entries['surfacePlacement:acme.navigation:session-panel'])
+            .not.toHaveProperty('binding.collisionKey');
+        expect(entries['settingsGroup:acme.navigation:navigation']).toMatchObject({
+            contributionKind: 'settingsGroup',
+            group: {
+                id: { pluginId: 'acme.navigation', localId: 'navigation' },
+                title: 'Navigation',
+                icon: 'browser',
+                defaultRank: 12,
+            },
+        });
+        expect(entries['settingsPage:acme.navigation:navigation-settings']).toMatchObject({
+            contributionKind: 'settingsPage',
+            page: {
+                id: { pluginId: 'acme.navigation', localId: 'navigation-settings' },
+                group: { kind: 'plugin', id: { pluginId: 'acme.navigation', localId: 'navigation' } },
+                title: 'Navigation settings',
+                keywords: ['navigation'],
+            },
+            binding: {
+                destination: { pluginId: 'acme.navigation', localId: 'navigation-settings' },
+                renderer: { pluginId: 'acme.navigation', localId: 'renderer' },
+                container: 'settingsPage',
+                target: { kind: 'app' },
+                targetKind: 'app',
+            },
+        });
+    });
+
+    it('keeps tablet-capable destinations available for final native form-factor admission', () => {
+        const registry = {
+            ...createEmptyResolvedContributionRegistry(),
+            uiRenderersV2: [{
+                provenance: 'external',
+                source: { kind: 'path' },
+                pluginId: 'acme.tablet',
+                identity: { pluginId: 'acme.tablet', localId: 'renderer' },
+                manifestPath: '/plugins/acme-tablet/.happier-plugin/plugin.json',
+                definition: {
+                    id: 'renderer',
+                    kind: 'declarative',
+                    root: { kind: 'text', text: 'Tablet' },
+                },
+            }],
+            uiViewsV2: [{
+                provenance: 'external',
+                source: { kind: 'path' },
+                pluginId: 'acme.tablet',
+                identity: { pluginId: 'acme.tablet', localId: 'panel' },
+                manifestPath: '/plugins/acme-tablet/.happier-plugin/plugin.json',
+                definition: {
+                    id: 'panel',
+                    container: 'rightPane',
+                    target: { kind: 'session' },
+                    renderer: 'renderer',
+                    title: 'Tablet panel',
+                },
+            }],
+        } as unknown as ResolvedContributionRegistry;
+
+        const entry = buildPluginProjectionV2({
+            registry,
+            generation: 1,
+            pluginUiHostRuntime: {
+                reactNativeBundles: {
+                    hostRuntime: {
+                        platform: 'ios',
+                    },
+                },
+            },
+        } as Parameters<typeof buildPluginProjectionV2>[0])
+            .familiesById.pluginUi?.entriesById['surfacePlacement:acme.tablet:panel'];
+
+        expect(entry).toMatchObject({
+            binding: { platforms: ['desktop', 'web'] },
+            availability: {
+                state: 'fallback',
+                reason: 'declarative_model_unavailable',
+            },
+        });
+        expect(entry).not.toMatchObject({
+            availability: { reason: 'destination_platform_unavailable' },
+        });
+    });
+
+    it('qualifies app-page header actions at the compiled projection boundary', () => {
+        const registry = {
+            ...createEmptyResolvedContributionRegistry(),
+            uiRenderersV2: [{
+                provenance: 'external',
+                source: { kind: 'path' },
+                pluginId: 'acme.navigation',
+                identity: { pluginId: 'acme.navigation', localId: 'renderer' },
+                manifestPath: '/plugins/acme/.happier-plugin/plugin.json',
+                definition: {
+                    id: 'renderer',
+                    kind: 'declarative',
+                    root: { kind: 'text', text: 'Navigation' },
+                },
+            }],
+            uiViewsV2: [{
+                provenance: 'external',
+                source: { kind: 'path' },
+                pluginId: 'acme.navigation',
+                identity: { pluginId: 'acme.navigation', localId: 'navigation-page' },
+                manifestPath: '/plugins/acme/.happier-plugin/plugin.json',
+                definition: {
+                    id: 'navigation-page',
+                    container: 'appPage',
+                    target: { kind: 'app' },
+                    renderer: 'renderer',
+                    headerActions: [{
+                        id: 'refresh',
+                        title: 'Refresh',
+                        action: { kind: 'executeAction', action: 'refresh-navigation' },
+                    }],
+                },
+            }],
+        } as unknown as ResolvedContributionRegistry;
+
+        const entry = buildPluginProjectionV2({ registry, generation: 1 })
+            .familiesById.pluginUi?.entriesById['surfacePlacement:acme.navigation:navigation-page'];
+
+        expect(entry).toMatchObject({
+            binding: {
+                container: 'appPage',
+                targetKind: 'app',
+                surfaceContextPlacement: 'appSurface',
+            },
+            headerActions: [{
+                id: 'refresh',
+                title: 'Refresh',
+                action: {
+                    kind: 'executeAction',
+                    action: { pluginId: 'acme.navigation', localId: 'refresh-navigation' },
+                },
+            }],
+        });
+        // The compiled entry carries the qualified semantic action only; the
+        // retired `command` spelling must not survive anywhere on the wire.
+        expect(entry).not.toHaveProperty('headerActions.0.command');
+    });
+
+    it('projects bounded destination presentation defaults without assigning placement authority', () => {
+        const registry = {
+            ...createEmptyResolvedContributionRegistry(),
+            uiRenderersV2: [{
+                provenance: 'external',
+                source: { kind: 'path' },
+                pluginId: 'acme.navigation',
+                identity: { pluginId: 'acme.navigation', localId: 'renderer' },
+                manifestPath: '/plugins/acme/.happier-plugin/plugin.json',
+                definition: {
+                    id: 'renderer',
+                    kind: 'declarative',
+                    root: { kind: 'text', text: 'Navigation' },
+                },
+            }],
+            uiViewsV2: [{
+                provenance: 'external',
+                source: { kind: 'path' },
+                pluginId: 'acme.navigation',
+                identity: { pluginId: 'acme.navigation', localId: 'navigation-page' },
+                manifestPath: '/plugins/acme/.happier-plugin/plugin.json',
+                definition: {
+                    id: 'navigation-page',
+                    container: 'appPage',
+                    target: { kind: 'app' },
+                    renderer: 'renderer',
+                    title: { key: 'navigation.title', fallback: 'Navigation' },
+                    icon: 'settings',
+                    badge: {
+                        label: { key: 'navigation.badge', fallback: 'Preview' },
+                        tone: 'accent',
+                    },
+                    groupHint: 'sessions',
+                    rankHint: -25,
+                    headerActions: [],
+                },
+            }],
+        } as unknown as ResolvedContributionRegistry;
+
+        const entry = buildPluginProjectionV2({ registry, generation: 1 })
+            .familiesById.pluginUi?.entriesById['surfacePlacement:acme.navigation:navigation-page'];
+
+        expect(entry).toMatchObject({
+            display: {
+                titleKey: 'navigation.title',
+                developerFallback: 'Navigation',
+                iconToken: 'settings',
+                badge: {
+                    labelKey: 'navigation.badge',
+                    developerFallback: 'Preview',
+                    tone: 'accent',
+                },
+                groupHint: 'sessions',
+                rankHint: -25,
+            },
+        });
+    });
+
     it('gives the deterministic V2 locale owner precedence over the legacy translation adapter', () => {
         const v2Translations = [
             {
                 pluginId: 'acme.preview',
                 localeIdentity: { pluginId: 'acme.preview', locale: 'en' },
                 manifestPath: '/plugins/acme/z.plugin.json',
-                manifestDigest: 'sha256:z',
                 definition: { locale: 'en', messages: { title: 'Zulu V2' } },
             },
             {
                 pluginId: 'acme.preview',
                 localeIdentity: { pluginId: 'acme.preview', locale: 'en' },
                 manifestPath: '/plugins/acme/a.plugin.json',
-                manifestDigest: 'sha256:a',
                 definition: { locale: 'en', messages: { title: 'Alpha V2' } },
             },
         ] as const;
@@ -177,7 +599,8 @@ describe('plugin UI projection family', () => {
         expect(JSON.stringify(forward)).not.toContain('Legacy V1');
     });
 
-    it('projects connected-account descriptors only through the canonical connectedAccounts family', () => {
+    it('projects connected-account descriptors only through the canonical connectedAccounts family', async () => {
+        const { resolveBuiltInContributions } = await import('../resolveBuiltInContributions');
         const builtIn = resolveBuiltInContributions();
         const registry = {
             ...createEmptyResolvedContributionRegistry(),
@@ -191,11 +614,11 @@ describe('plugin UI projection family', () => {
             pluginUiHostRuntime: {},
         } as Parameters<typeof buildPluginProjectionV2>[0]);
 
-        expect(projection.familiesById.connectedAccounts?.entriesById['happier.scm.hosting.bitbucket/bitbucket-account'])
+        expect(projection.familiesById.connectedAccounts?.entriesById['happier.scm.forge.bitbucket/bitbucket-account'])
             .toEqual(expect.objectContaining({
                 id: 'bitbucket-account',
                 serviceId: 'bitbucket',
-                pluginId: 'happier.scm.hosting.bitbucket',
+                pluginId: 'happier.scm.forge.bitbucket',
                 provenance: 'first_party',
                 sourceKind: 'bundled',
                 availability: { state: 'available', reason: 'resolved' },
@@ -213,263 +636,10 @@ describe('plugin UI projection family', () => {
                 }),
             }));
         expect(projection.familiesById.pluginUi?.entriesById)
-            .not.toHaveProperty('connectedAccountDescriptor:happier.scm.hosting.bitbucket:bitbucket-account');
+            .not.toHaveProperty('connectedAccountDescriptor:happier.scm.forge.bitbucket:bitbucket-account');
     });
 
-    it('projects descriptor, hosted web, executable bundle, translation, and artifact metadata through one host-owned family', () => {
-        const previewAction = {
-            provenance: 'external' as const,
-            source: { kind: 'path' as const },
-            pluginId: 'acme.preview',
-            manifestPath: '/plugins/acme/.happier-plugin/plugin.json',
-            manifestDigest: 'sha256:manifest',
-            daemonEntryPath: '/plugins/acme/daemon.mjs',
-            definition: {
-                kindVersion: 1 as const,
-                id: 'open-preview',
-                title: 'Open preview',
-                description: 'Open the plugin preview',
-                dangerLevel: 'safe' as const,
-                surfaces: {
-                    ui: true,
-                    voice: false,
-                    agent: false,
-                    mcp: false,
-                    cli: false,
-                    rpc: false,
-                    sdk: false,
-                },
-                inputSchema: { type: 'object' as const, additionalProperties: false },
-                execution: {
-                    routing: 'plugin' as const,
-                    handler: { target: 'plugin' as const, exportName: 'openPreview' },
-                },
-            },
-        };
-        const registry = {
-            ...createEmptyResolvedContributionRegistry(),
-            actions: [previewAction],
-            actionsById: new Map([['acme.preview/open-preview', previewAction]]),
-            uiTranslations: [
-                {
-                    provenance: 'external',
-                    source: { kind: 'path' },
-                    pluginId: 'acme.preview',
-                    manifestPath: '/plugins/acme/.happier-plugin/plugin.json',
-                    manifestDigest: 'sha256:manifest',
-                    daemonEntryPath: '/plugins/acme/daemon.mjs',
-                    definition: {
-                        locales: {
-                            en: {
-                                title: 'Preview',
-                                description: 'Open preview',
-                            },
-                        },
-                    },
-                },
-            ],
-            structuredMessages: [
-                {
-                    provenance: 'external',
-                    source: { kind: 'path' },
-                    pluginId: 'acme.preview',
-                    manifestPath: '/plugins/acme/.happier-plugin/plugin.json',
-                    manifestDigest: 'sha256:manifest',
-                    daemonEntryPath: '/plugins/acme/daemon.mjs',
-                    definition: {
-                        id: 'preview-card',
-                        title: 'Preview',
-                        kind: 'acme.preview/preview-card.v1',
-                        payloadSchema: { type: 'object' },
-                        renderer: 'summary-card',
-                        fallback: { kind: 'summary', template: 'Preview unavailable' },
-                    },
-                },
-            ],
-            surfacePlacements: [
-                {
-                    provenance: 'external',
-                    source: { kind: 'path' },
-                    pluginId: 'acme.preview',
-                    manifestPath: '/plugins/acme/.happier-plugin/plugin.json',
-                    manifestDigest: 'sha256:manifest',
-                    daemonEntryPath: '/plugins/acme/daemon.mjs',
-                    definition: {
-                        id: 'preview-pane',
-                        placement: 'session.preview',
-                        target: { kind: 'session', sessionIdPath: '/session/id' },
-                        renderer: { kind: 'host', rendererId: 'previewPlaceholder' },
-                        display,
-                        actions: [],
-                        hostActions: [],
-                    },
-                },
-            ],
-            sessionHeaderActions: [
-                {
-                    provenance: 'external',
-                    source: { kind: 'path' },
-                    pluginId: 'acme.preview',
-                    manifestPath: '/plugins/acme/.happier-plugin/plugin.json',
-                    manifestDigest: 'sha256:manifest',
-                    daemonEntryPath: '/plugins/acme/daemon.mjs',
-                    definition: {
-                        id: 'open-preview',
-                        title: { key: 'title', fallback: 'Open preview' },
-                        action: 'open-preview',
-                    },
-                },
-            ],
-            hostedWeb: [
-                {
-                    provenance: 'external',
-                    source: { kind: 'path' },
-                    pluginId: 'acme.preview',
-                    manifestPath: '/plugins/acme/.happier-plugin/plugin.json',
-                    manifestDigest: 'sha256:manifest',
-                    daemonEntryPath: '/plugins/acme/daemon.mjs',
-                    definition: {
-                        id: 'preview-web',
-                        service: { kind: 'staticAssets', assetRootId: 'hosted-web/preview-web' },
-                        entry: { routeMode: 'hostOrigin', path: '/' },
-                        bridge: { allowedMessages: ['ready'] },
-                        sandbox: { scripts: true },
-                        security: {
-                            allowedConnectOrigins: ['https://api.example.test'],
-                            csp: { connectSrc: 'declaredOrigins', allowEval: false },
-                        },
-                        fallback: { kind: 'unavailable' },
-                        display,
-                    },
-                },
-            ],
-            reactNativeBundles: [
-                reactNativeBundleContribution,
-            ],
-            uiArtifacts: [
-                reactNativeBundleArtifact,
-                {
-                    provenance: 'external',
-                    source: { kind: 'path' },
-                    pluginId: 'acme.preview',
-                    manifestPath: '/plugins/acme/.happier-plugin/plugin.json',
-                    manifestDigest: 'sha256:manifest',
-                    daemonEntryPath: '/plugins/acme/daemon.mjs',
-                    definition: {
-                        id: 'preview-web-static',
-                        contributionId: 'preview-web',
-                        contributionFamily: 'hostedWeb',
-                        artifactKind: 'hostedWebAsset',
-                        platform: 'web',
-                        channel: 'internal',
-                        integrity: { digest: 'sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff' },
-                        compatibility: {
-                            hostAppVersion: '1.0.0',
-                            hostUiApiVersion: '1.0.0',
-                            reactVersion: '19.0.0',
-                            nativeCapabilities: [],
-                        },
-                        byteSize: 2048,
-                        contentType: 'text/html',
-                    },
-                },
-            ],
-        } as unknown as ResolvedContributionRegistry;
-
-        const projection = buildPluginProjectionV2({
-            registry,
-            generation: 8,
-            pluginUiHostRuntime: {
-                hostedWeb: {
-                    featureEnabled: true,
-                },
-                structuredMessages: {
-                    featureEnabled: true,
-                },
-            },
-        });
-        const entries = projection.familiesById.pluginUi?.entriesById ?? {};
-
-        expect(entries['structuredMessage:acme.preview:preview-card']).toMatchObject({
-            id: 'structuredMessage:acme.preview:preview-card',
-            pluginId: 'acme.preview',
-            contributionKind: 'structuredMessage',
-            kind: 'acme.preview/preview-card.v1',
-            fallback: { kind: 'summary', template: 'Preview unavailable' },
-        });
-        expect(entries['surfacePlacement:acme.preview:preview-pane']).toMatchObject({
-            contributionKind: 'surfacePlacement',
-            placement: 'session.preview',
-            availability: { state: 'available', reason: 'available' },
-        });
-        expect(entries['sessionHeaderAction:acme.preview:open-preview']).toMatchObject({
-            contributionKind: 'sessionHeaderAction',
-            title: { key: 'title', fallback: 'Open preview' },
-            action: 'open-preview',
-        });
-        expect(entries['hostedWeb:acme.preview:preview-web']).toMatchObject({
-            contributionKind: 'hostedWeb',
-            service: { kind: 'staticAssets', assetRootId: 'hosted-web/preview-web' },
-            runtimeMode: {
-                kind: 'installedStaticAssets',
-                artifactId: 'preview-web-static',
-                assetRootId: 'hosted-web/preview-web',
-            },
-            runtime: {
-                state: 'available',
-                diagnostics: [],
-                decision: {
-                    state: 'render',
-                    reason: 'available',
-                    diagnostics: [],
-                },
-            },
-            security: {
-                allowedConnectOrigins: ['https://api.example.test'],
-                csp: expect.objectContaining({ connectSrc: 'declaredOrigins' }),
-            },
-            fallback: { kind: 'unavailable' },
-        });
-        expect(entries['reactNativeBundle:acme.preview:native-preview']).toMatchObject({
-            contributionKind: 'reactNativeBundle',
-            compatibility: expect.objectContaining({
-                reactVersion: '19.0.0',
-                reactNativeVersion: '0.83.4',
-            }),
-            fallback: { kind: 'hostedWeb', contributionId: 'preview-web' },
-            runtime: {
-                state: 'fallback',
-                diagnostics: ['feature_disabled'],
-                decision: {
-                    state: 'fallback',
-                    reason: 'feature_disabled',
-                    fallback: { kind: 'hostedWeb', contributionId: 'preview-web' },
-                    diagnostics: ['feature_disabled'],
-                },
-            },
-        });
-        expect(entries['uiArtifact:acme.preview:native-preview-ios']).toMatchObject({
-            contributionKind: 'uiArtifact',
-            artifactKind: 'reactNativeBundle',
-            integrity: { digest: 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' },
-        });
-        expect(entries['uiArtifact:acme.preview:preview-web-static']).toMatchObject({
-            contributionKind: 'uiArtifact',
-            artifactKind: 'hostedWebAsset',
-            integrity: { digest: 'sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff' },
-        });
-        expect(entries['translations:acme.preview']).toMatchObject({
-            contributionKind: 'translations',
-            locales: ['en'],
-        });
-        expect(entries['digest:acme.preview']).toMatchObject({
-            contributionKind: 'digest',
-            digest: expect.stringMatching(/^sha256:/u),
-            families: expect.any(Object),
-        });
-    });
-
-    it('omits structured-message entries unless the structured-message feature decision is enabled', () => {
+    it('does not project host-private structured-message descriptors even when a registry contains one', () => {
         const registry = {
             ...createEmptyResolvedContributionRegistry(),
             structuredMessages: [
@@ -487,700 +657,88 @@ describe('plugin UI projection family', () => {
             ],
         } as unknown as ResolvedContributionRegistry;
 
-        const disabled = buildPluginProjectionV2({
-            registry,
-            generation: 3,
-        }).familiesById.pluginUi?.entriesById ?? {};
-        expect(disabled['structuredMessage:acme.preview:preview-card']).toBeUndefined();
-
-        const explicitlyDisabled = buildPluginProjectionV2({
-            registry,
-            generation: 3,
-            pluginUiHostRuntime: {
-                structuredMessages: { featureEnabled: false },
-            },
-        } as Parameters<typeof buildPluginProjectionV2>[0]).familiesById.pluginUi?.entriesById ?? {};
-        expect(explicitlyDisabled['structuredMessage:acme.preview:preview-card']).toBeUndefined();
-
-        const enabled = buildPluginProjectionV2({
+        const entries = buildPluginProjectionV2({
             registry,
             generation: 3,
             pluginUiHostRuntime: {
                 structuredMessages: { featureEnabled: true },
             },
         } as Parameters<typeof buildPluginProjectionV2>[0]).familiesById.pluginUi?.entriesById ?? {};
-        expect(enabled['structuredMessage:acme.preview:preview-card']).toMatchObject({
-            contributionKind: 'structuredMessage',
-            kind: 'acme.preview/preview-card.v1',
-            fallback: { kind: 'summary', template: 'Preview unavailable' },
-        });
+        expect(entries['structuredMessage:acme.preview:preview-card']).toBeUndefined();
     });
 
-    it('projects fail-closed RN runtime diagnostics when the installed artifact is unavailable', () => {
-        expect(projectReactNativeFixture()).toMatchObject({
-            contributionKind: 'reactNativeBundle',
-            runtime: {
-                state: 'fallback',
-                diagnostics: ['invalid_manifest'],
-                decision: {
-                    state: 'fallback',
-                    reason: 'unknown',
-                    diagnostics: ['invalid_manifest'],
-                    fallback: { kind: 'hostedWeb', contributionId: 'preview-web' },
-                },
-            },
-        });
-    });
-
-    it('projects RN bundles as loadable when host runtime gates expose a loader backend', () => {
-        const trustedReactNativeBundleArtifact = {
-            ...reactNativeBundleArtifact,
-            sourceSpec: {
-                kind: 'path',
-                locator: '/plugins/acme',
-                trustPolicy: 'local_trusted',
-                installPolicy: 'link',
-            },
-        };
+    it('projects transcript Activity descriptors as same-plugin qualified Resource and Action identities', () => {
         const registry = {
             ...createEmptyResolvedContributionRegistry(),
-            reactNativeBundles: [reactNativeBundleContribution],
-            uiArtifacts: [trustedReactNativeBundleArtifact],
-        } as unknown as ResolvedContributionRegistry;
-
-        const projection = buildPluginProjectionV2({
-            registry,
-            generation: 8,
-            pluginUiHostRuntime: {
-                reactNativeBundles: {
-                    featureEnabled: true,
-                    loaderBackendAvailable: true,
-                    hostRuntime: {
-                        platform: 'ios',
-                        channel: 'internal',
-                        hostAppVersion: '2.0.0',
-                        hostUiApiVersion: '1.0.0',
-                        reactVersion: '19.0.0',
-                        reactNativeVersion: '0.83.4',
-                        availableNativeCapabilities: ['clipboard'],
-                    },
-                },
-            },
-        } as Parameters<typeof buildPluginProjectionV2>[0]);
-        const entry = projection.familiesById.pluginUi?.entriesById['reactNativeBundle:acme.preview:native-preview'];
-
-        expect(entry).toMatchObject({
-            runtime: {
-                state: 'loadable',
-                diagnostics: [],
-                decision: {
-                    state: 'load',
-                    reason: 'compatible',
-                    diagnostics: [],
-                },
-    loadPolicy: { source: 'installedArtifact' },
-                cacheKey: expect.stringContaining('sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'),
-                cacheIdentity: expect.objectContaining({
-                    projectionGeneration: 8,
-                }),
-            },
-        });
-    });
-
-    // NATIVE-PIPELINE (LEDGER DEC-6 follow-up, item 1): platform-aware
-    // placement→bundle resolution. `reactNativeBundleContribution` above (a
-    // single ios sibling) already proves the SINGLE-platform-per-id case is
-    // unchanged (the "ios-only" / "web-only" shape — one sibling always
-    // resolves regardless of whether the connecting client reported its
-    // platform). These tests cover the NEW multi-sibling ("both") case: a
-    // second `bundle.platform: 'web'` contribution sharing the SAME
-    // `id: 'native-preview'`.
-    describe('platform-family resolution for sibling reactNativeBundles contributions sharing one id', () => {
-        const webSiblingContribution = {
-            ...reactNativeBundleContribution,
-            definition: {
-                ...reactNativeBundleContribution.definition,
-                bundle: {
-                    platform: 'web',
-                    channel: 'internal',
-                    integrity: { digest: `sha256:${'d'.repeat(64)}` },
-                },
-                compatibility: {
-                    ...reactNativeBundleContribution.definition.compatibility,
-                    supportedPlatforms: ['web'],
-                },
-            },
-        };
-        const webSiblingArtifact = {
-            ...reactNativeBundleArtifact,
-            sourceSpec: localPathSourceSpec,
-            definition: {
-                ...reactNativeBundleArtifact.definition,
-                id: 'native-preview-web',
-                platform: 'web',
-                integrity: { digest: `sha256:${'d'.repeat(64)}` },
-                assetPath: 'react-native/native-preview/web.bundle.js',
-            },
-        };
-        const trustedIosArtifact = {
-            ...reactNativeBundleArtifact,
-            sourceSpec: localPathSourceSpec,
-        };
-
-        function buildBothPlatformsProjection(connectingPlatform: string | undefined) {
-            const registry = {
-                ...createEmptyResolvedContributionRegistry(),
-                reactNativeBundles: [reactNativeBundleContribution, webSiblingContribution],
-                uiArtifacts: [trustedIosArtifact, webSiblingArtifact],
-            } as unknown as ResolvedContributionRegistry;
-
-            const projection = buildPluginProjectionV2({
-                registry,
-                generation: 8,
-                pluginUiHostRuntime: {
-                    reactNativeBundles: {
-                        featureEnabled: true,
-                        loaderBackendAvailable: true,
-                        ...(connectingPlatform
-                            ? {
-                                hostRuntime: {
-                                    platform: connectingPlatform,
-                                    channel: 'internal',
-                                    hostAppVersion: '2.0.0',
-                                    hostUiApiVersion: '1.0.0',
-                                    reactVersion: '19.0.0',
-                                    reactNativeVersion: '0.83.4',
-                                    availableNativeCapabilities: ['clipboard'],
-                                },
-                            }
-                            : {}),
-                    },
-                },
-            } as Parameters<typeof buildPluginProjectionV2>[0]);
-            return projection.familiesById.pluginUi?.entriesById['reactNativeBundle:acme.preview:native-preview'];
-        }
-
-        it('resolves the ios sibling when the connecting client reports platform: ios', () => {
-            const entry = buildBothPlatformsProjection('ios');
-            expect(entry).toMatchObject({
-                bundle: { platform: 'ios' },
-                runtime: {
-                    state: 'loadable',
-                    decision: { state: 'load', reason: 'compatible' },
-                },
-            });
-        });
-
-        it('resolves the web sibling when the connecting client reports platform: web', () => {
-            const entry = buildBothPlatformsProjection('web');
-            expect(entry).toMatchObject({
-                bundle: { platform: 'web' },
-                runtime: {
-                    state: 'loadable',
-                    decision: { state: 'load', reason: 'compatible' },
-                },
-            });
-        });
-
-        it('fails closed (graceful unavailable) when the connecting platform is not reported', () => {
-            const entry = buildBothPlatformsProjection(undefined);
-            expect(entry).toMatchObject({
-                runtime: {
-                    state: 'fallback',
-                    diagnostics: ['react_native_bundle_platform_unresolved'],
-                    decision: {
-                        state: 'fallback',
-                        reason: 'platform_unavailable',
-                    },
-                },
-            });
-        });
-
-        it('fails closed (graceful unavailable) when the connecting platform matches neither sibling', () => {
-            const entry = buildBothPlatformsProjection('android');
-            expect(entry).toMatchObject({
-                runtime: {
-                    state: 'fallback',
-                    diagnostics: ['react_native_bundle_platform_unresolved'],
-                    decision: {
-                        state: 'fallback',
-                        reason: 'platform_unavailable',
-                    },
-                },
-            });
-        });
-    });
-
-    // FIX-RNWEB-SERVING: a first-party BUNDLED contribution
-    // (`provenance:'first_party'`) with NO matching `uiArtifacts` entry must
-    // fail closed with a diagnosable reason — never silently resolve
-    // `loadable`, and never be mistaken for the (correctly denied)
-    // dev-hot-reload path, since there is no `devUrl` to even consider one.
-    // `resolveReactNativePluginSource` classifies this as `pluginSource:
-    // 'internal'`, which `resolveDevHotReloadProjection` denies for a
-    // `devUrl`-carrying artifact — but here there is no artifact at all, so
-    // the runtime never reaches that gate; it fails via the SAME
-    // `validateInstalledReactNativeBundleArtifact({artifact: null, ...})`
-    // path a genuinely missing production artifact hits on any platform.
-    it('fails closed with a clear diagnostic for a first-party bundled contribution with no registered uiArtifact', () => {
-        const firstPartyContribution = {
-            ...reactNativeBundleContribution,
-            provenance: 'first_party',
-            source: { kind: 'bundled' },
-        };
-        const registry = {
-            ...createEmptyResolvedContributionRegistry(),
-            reactNativeBundles: [firstPartyContribution],
-            uiArtifacts: [],
-        } as unknown as ResolvedContributionRegistry;
-
-        const projection = buildPluginProjectionV2({
-            registry,
-            generation: 8,
-            pluginUiHostRuntime: {
-                reactNativeBundles: {
-                    featureEnabled: true,
-                    loaderBackendAvailable: true,
-                    hostRuntime: {
-                        platform: 'ios',
-                        channel: 'internal',
-                        hostAppVersion: '2.0.0',
-                        hostUiApiVersion: '1.0.0',
-                        reactVersion: '19.0.0',
-                        reactNativeVersion: '0.83.4',
-                        availableNativeCapabilities: ['clipboard'],
-                    },
-                },
-            },
-        } as Parameters<typeof buildPluginProjectionV2>[0]);
-        const entry = projection.familiesById.pluginUi?.entriesById['reactNativeBundle:acme.preview:native-preview'];
-
-        expect(entry).toMatchObject({
-            runtime: {
-                state: 'fallback',
-                diagnostics: ['invalid_manifest'],
-                decision: {
-                    state: 'fallback',
-                },
-            },
-        });
-        expect(entry?.runtime).not.toHaveProperty('loadPolicy');
-        expect(entry?.runtime).not.toHaveProperty('cacheKey');
-    });
-
-    it('projects a local development RN bundle through dev hot reload without requiring an immutable digest', () => {
-        const devContribution = {
-            ...reactNativeBundleContribution,
-            definition: {
-                ...reactNativeBundleContribution.definition,
-                bundle: {
-                    platform: 'ios',
-                    channel: 'development',
-                },
-                compatibility: {
-                    ...reactNativeBundleContribution.definition.compatibility,
-                    supportedChannels: ['development'],
-                },
-                policy: {
-                    allowDevHotReload: true,
-                },
-            },
-        };
-        const devArtifact = {
-            ...reactNativeBundleArtifact,
-            definition: {
-                ...reactNativeBundleArtifact.definition,
-                channel: 'development',
-                integrity: undefined,
-                assetPath: undefined,
-                devUrl: 'http://127.0.0.1:8082/index.bundle?platform=ios&dev=true',
-                compatibility: {
-                    ...reactNativeBundleArtifact.definition.compatibility,
-                    hostAppVersion: '2.0.0',
-                },
-            },
-        };
-        const registry = {
-            ...createEmptyResolvedContributionRegistry(),
-            reactNativeBundles: [devContribution],
-            uiArtifacts: [devArtifact],
-        } as unknown as ResolvedContributionRegistry;
-
-        const projection = buildPluginProjectionV2({
-            registry,
-            generation: 8,
-            pluginUiHostRuntime: {
-                reactNativeBundles: {
-                    featureEnabled: true,
-                    loaderBackendAvailable: true,
-                    devHotReloadEnabled: true,
-                    hostRuntime: {
-                        platform: 'ios',
-                        channel: 'development',
-                        hostAppVersion: '2.0.0',
-                        hostUiApiVersion: '1.0.0',
-                        reactVersion: '19.0.0',
-                        reactNativeVersion: '0.83.4',
-                        availableNativeCapabilities: ['clipboard'],
-                    },
-                },
-            },
-        } as Parameters<typeof buildPluginProjectionV2>[0]);
-        const entry = projection.familiesById.pluginUi?.entriesById['reactNativeBundle:acme.preview:native-preview'];
-
-        expect(entry).toMatchObject({
-            runtime: {
-                state: 'loadable',
-                diagnostics: [],
-                decision: {
-                    state: 'load',
-                    reason: 'compatible',
-                    diagnostics: [],
-                },
-                loadPolicy: {
-                    source: 'devHotReload',
-                    devUrl: 'http://127.0.0.1:8082/index.bundle?platform=ios&dev=true',
-                },
-            },
-        });
-    });
-
-    it('renders a final-policy-admitted local RN bundle through artifact integrity', () => {
-        const registry = {
-            ...createEmptyResolvedContributionRegistry(),
-            reactNativeBundles: [reactNativeBundleContribution],
-            uiArtifacts: [reactNativeBundleArtifact],
-        } as unknown as ResolvedContributionRegistry;
-
-        const projection = buildPluginProjectionV2({
-            registry,
-            generation: 8,
-            pluginUiHostRuntime: {
-                reactNativeBundles: {
-                    featureEnabled: true,
-                    loaderBackendAvailable: true,
-                    hostRuntime: {
-                        platform: 'ios',
-                        channel: 'internal',
-                        hostAppVersion: '2.0.0',
-                        hostUiApiVersion: '1.0.0',
-                        reactVersion: '19.0.0',
-                        reactNativeVersion: '0.83.4',
-                        availableNativeCapabilities: ['clipboard'],
-                    },
-                },
-            },
-        } as Parameters<typeof buildPluginProjectionV2>[0]);
-        const entry = projection.familiesById.pluginUi?.entriesById['reactNativeBundle:acme.preview:native-preview'];
-
-        expect(entry).toMatchObject({
-            runtime: {
-                state: 'loadable',
-                decision: {
-                    state: 'load',
-                    reason: 'compatible',
-                },
-                loadPolicy: { source: 'installedArtifact' },
-            },
-        });
-    });
-
-    it('keeps a local RN bundle fallback when the family kill-switch (featureEnabled) is off', () => {
-        // §5.1: the server/build kill-switch remains the OUTER gate even for a
-        // trusted local source.
-        const registry = {
-            ...createEmptyResolvedContributionRegistry(),
-            reactNativeBundles: [reactNativeBundleContribution],
-            uiArtifacts: [reactNativeBundleArtifact],
-        } as unknown as ResolvedContributionRegistry;
-
-        const projection = buildPluginProjectionV2({
-            registry,
-            generation: 8,
-            pluginUiHostRuntime: {
-                reactNativeBundles: {
-                    featureEnabled: false,
-                    loaderBackendAvailable: true,
-                    hostRuntime: {
-                        platform: 'ios',
-                        channel: 'internal',
-                        hostAppVersion: '2.0.0',
-                        hostUiApiVersion: '1.0.0',
-                        reactVersion: '19.0.0',
-                        reactNativeVersion: '0.83.4',
-                        availableNativeCapabilities: ['clipboard'],
-                    },
-                },
-            },
-        } as Parameters<typeof buildPluginProjectionV2>[0]);
-        const entry = projection.familiesById.pluginUi?.entriesById['reactNativeBundle:acme.preview:native-preview'];
-
-        expect(entry).toMatchObject({
-            runtime: {
-                state: 'fallback',
-                decision: { reason: 'feature_disabled' },
-            },
-        });
-    });
-
-    it('does not default RN bundles enabled when the host omits the canonical feature decision', () => {
-        const registry = {
-            ...createEmptyResolvedContributionRegistry(),
-            reactNativeBundles: [reactNativeBundleContribution],
-            uiArtifacts: [reactNativeBundleArtifact],
-        } as unknown as ResolvedContributionRegistry;
-
-        const projection = buildPluginProjectionV2({
-            registry,
-            generation: 8,
-            pluginUiHostRuntime: {
-                reactNativeBundles: {
-                    loaderBackendAvailable: true,
-                    hostRuntime: {
-                        platform: 'ios',
-                        channel: 'internal',
-                        hostAppVersion: '2.0.0',
-                        hostUiApiVersion: '1.0.0',
-                        reactVersion: '19.0.0',
-                        reactNativeVersion: '0.83.4',
-                        availableNativeCapabilities: ['clipboard'],
-                    },
-                },
-            },
-        } as Parameters<typeof buildPluginProjectionV2>[0]);
-        const entry = projection.familiesById.pluginUi?.entriesById['reactNativeBundle:acme.preview:native-preview'];
-
-        expect(entry).toMatchObject({
-            runtime: {
-                state: 'fallback',
-                diagnostics: ['feature_disabled'],
-                decision: {
-                    state: 'fallback',
-                    reason: 'feature_disabled',
-                    diagnostics: ['feature_disabled'],
-                },
-            },
-        });
-        expect(entry?.runtime).not.toHaveProperty('loadPolicy');
-        expect(entry?.runtime).not.toHaveProperty('cacheIdentity');
-    });
-
-    it('does not expose hosted-web runtime mode when the host omits the canonical feature decision', () => {
-        const registry = {
-            ...createEmptyResolvedContributionRegistry(),
-            hostedWeb: [{
+            transcriptActivities: [{
                 provenance: 'external',
                 source: { kind: 'path' },
                 pluginId: 'acme.preview',
+                identity: { pluginId: 'acme.preview', localId: 'outward-delivery' },
                 manifestPath: '/plugins/acme/.happier-plugin/plugin.json',
-                manifestDigest: 'sha256:manifest',
-                daemonEntryPath: '/plugins/acme/daemon.mjs',
                 definition: {
-                    id: 'preview-web',
-                    service: { kind: 'staticAssets', assetRootId: 'hosted-web/preview-web' },
-                    entry: { routeMode: 'hostOrigin', path: '/' },
-                    bridge: { allowedMessages: ['ready'] },
-                    sandbox: { scripts: true },
-                    security: {
-                        csp: { connectSrc: 'selfOnly', allowEval: false },
-                    },
-                    fallback: { kind: 'unavailable' },
-                    display,
+                    id: 'outward-delivery',
+                    resourceId: 'outward-delivery-activities-v1',
+                    actions: ['retry-delivery'],
                 },
             }],
-            uiArtifacts: [{
-                provenance: 'external',
-                source: { kind: 'path' },
-                pluginId: 'acme.preview',
-                manifestPath: '/plugins/acme/.happier-plugin/plugin.json',
-                manifestDigest: 'sha256:manifest',
-                daemonEntryPath: '/plugins/acme/daemon.mjs',
-                definition: {
-                    id: 'preview-web-static',
-                    contributionId: 'preview-web',
-                    contributionFamily: 'hostedWeb',
-                    artifactKind: 'hostedWebAsset',
-                    platform: 'web',
-                    channel: 'internal',
-                    integrity: { digest: 'sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff' },
-                    compatibility: {
-                        hostAppVersion: '1.0.0',
-                        hostUiApiVersion: '1.0.0',
-                        reactVersion: '19.0.0',
-                        nativeCapabilities: [],
-                    },
-                    byteSize: 2048,
-                    contentType: 'text/html',
-                },
-            }],
-        } as unknown as ResolvedContributionRegistry;
+        } satisfies ResolvedContributionRegistry;
 
-        const projection = buildPluginProjectionV2({ registry, generation: 8 });
-        const entry = projection.familiesById.pluginUi?.entriesById['hostedWeb:acme.preview:preview-web'];
+        const entries = buildPluginProjectionV2({
+            registry,
+            generation: 9,
+        } as Parameters<typeof buildPluginProjectionV2>[0]).familiesById.pluginUi?.entriesById ?? {};
 
-        expect(entry).toMatchObject({
-            runtime: {
-                state: 'fallback',
-                diagnostics: ['feature_disabled'],
-                decision: {
-                    state: 'fallback',
-                    reason: 'feature_disabled',
-                    diagnostics: ['feature_disabled'],
-                },
-            },
+        expect(entries['transcriptActivity:acme.preview:outward-delivery']).toEqual({
+            id: 'transcriptActivity:acme.preview:outward-delivery',
+            pluginId: 'acme.preview',
+            contributionKind: 'transcriptActivity',
+            descriptorId: 'outward-delivery',
+            resource: { pluginId: 'acme.preview', localId: 'outward-delivery-activities-v1' },
+            actions: [{ pluginId: 'acme.preview', localId: 'retry-delivery' }],
         });
-        expect(entry).not.toHaveProperty('runtimeMode');
     });
 
-    it('flags a duplicate contribution id with a diagnostic instead of silently dropping it (DR-2)', () => {
-        // Two contributions from the same plugin + kind sharing a descriptorId project to
-        // the same id-keyed entry. Last-write-wins is preserved (no behavior change to which
-        // record survives), but the survivor must carry a `duplicate_contribution_id`
-        // diagnostic so the collision is diagnosable instead of dropped (§13.5.6 / §10).
-        const makePlacement = (order: number) => ({
+    it('rejects a duplicate V2 view id instead of selecting a projection-order survivor (DR-2)', () => {
+        const renderer = {
             provenance: 'external',
             source: { kind: 'path' },
             pluginId: 'acme.review',
+            identity: { pluginId: 'acme.review', localId: 'renderer' },
             manifestPath: '/plugins/acme/.happier-plugin/plugin.json',
-            manifestDigest: 'sha256:manifest',
-            daemonEntryPath: '/plugins/acme/daemon.mjs',
             definition: {
-                id: 'dupe-panel',
-                placement: 'workspace.details',
-                target: { kind: 'workspace' },
-                renderer: { kind: 'host', rendererId: 'descriptorPanel' },
-                display,
-                order,
-                actions: [],
-                hostActions: [],
+                id: 'renderer',
+                kind: 'declarative',
+                root: { kind: 'text', text: 'Review' },
             },
-        });
-
-        const registry = {
-            ...createEmptyResolvedContributionRegistry(),
-            surfacePlacements: [makePlacement(1), makePlacement(2)],
-        } as unknown as ResolvedContributionRegistry;
-
-        const projection = buildPluginProjectionV2({ registry, generation: 9 });
-        const entries = projection.familiesById.pluginUi?.entriesById ?? {};
-
-        expect(entries['surfacePlacement:acme.review:dupe-panel']).toMatchObject({
-            contributionKind: 'surfacePlacement',
-            // last-write-wins survivor (order 2) is preserved
-            order: 2,
-            diagnostics: ['duplicate_contribution_id'],
-        });
-    });
-
-    it('gates host renderer surface-placement availability on the pure protocol predicate (PR-12)', () => {
-        const makeHostPlacement = (id: string, rendererId: string) => ({
+        };
+        const makeView = (title: string) => ({
             provenance: 'external',
             source: { kind: 'path' },
-            pluginId: 'acme.preview',
+            pluginId: 'acme.review',
+            identity: { pluginId: 'acme.review', localId: 'dupe-panel' },
             manifestPath: '/plugins/acme/.happier-plugin/plugin.json',
-            manifestDigest: 'sha256:manifest',
-            daemonEntryPath: '/plugins/acme/daemon.mjs',
             definition: {
-                id,
-                placement: 'workspace.details',
-                target: { kind: 'workspace' },
-                renderer: { kind: 'host', rendererId },
-                display,
-                actions: [],
-                hostActions: [],
+                id: 'dupe-panel',
+                container: 'servicesPanel',
+                target: { kind: 'services' },
+                renderer: 'renderer',
+                title,
+                headerActions: [],
+                fallbackRenderers: [],
             },
         });
-
         const registry = {
             ...createEmptyResolvedContributionRegistry(),
-            surfacePlacements: [
-                makeHostPlacement('renderable-host', 'descriptorPanel'),
-                makeHostPlacement('unknown-host', 'settingsDescriptorPanel'),
-            ],
+            uiRenderersV2: [renderer],
+            uiViewsV2: [makeView('First'), makeView('Second')],
         } as unknown as ResolvedContributionRegistry;
 
-        const projection = buildPluginProjectionV2({ registry, generation: 9 });
-        const entries = projection.familiesById.pluginUi?.entriesById ?? {};
-
-        expect(entries['surfacePlacement:acme.preview:renderable-host']).toMatchObject({
-            contributionKind: 'surfacePlacement',
-            renderer: { kind: 'host', rendererId: 'descriptorPanel' },
-            availability: { state: 'available', reason: 'available' },
-        });
-        const unknownHostEntry = entries['surfacePlacement:acme.preview:unknown-host'] as
-            | { availability?: { state?: unknown } }
-            | undefined;
-        expect(unknownHostEntry?.availability).toMatchObject({
-            state: 'fallback',
-        });
-        expect(unknownHostEntry?.availability?.state)
-            .not.toBe('available');
+        expect(() => buildPluginProjectionV2({ registry, generation: 9 }))
+            .toThrow("Duplicate projected plugin UI contribution 'surfacePlacement:acme.review:dupe-panel'");
     });
 
-    it('REG-1: rejects a placement whose renderer mode is unsupported by its surface descriptor (reject-at-projection)', () => {
-        // `app.settingsPage` is a `container` surface — it supports only the
-        // `host`/`declarative` modes, NOT `hostedWeb`. Routing the contribution
-        // through PLUGIN_SURFACE_REGISTRY.projectContribution must reject the
-        // mode-incompatible placement instead of mounting it blindly.
-        const registry = {
-            ...createEmptyResolvedContributionRegistry(),
-            surfacePlacements: [
-                {
-                    provenance: 'external',
-                    source: { kind: 'path' },
-                    pluginId: 'acme.preview',
-                    manifestPath: '/plugins/acme/.happier-plugin/plugin.json',
-                    manifestDigest: 'sha256:manifest',
-                    daemonEntryPath: '/plugins/acme/daemon.mjs',
-                    definition: {
-                        id: 'settings-web',
-                        placement: 'app.settingsPage',
-                        target: { kind: 'app' },
-                        renderer: { kind: 'hostedWeb', contributionId: 'settings-web-bundle' },
-                        display,
-                        actions: [],
-                        hostActions: [],
-                    },
-                },
-                {
-                    provenance: 'external',
-                    source: { kind: 'path' },
-                    pluginId: 'acme.preview',
-                    manifestPath: '/plugins/acme/.happier-plugin/plugin.json',
-                    manifestDigest: 'sha256:manifest',
-                    daemonEntryPath: '/plugins/acme/daemon.mjs',
-                    definition: {
-                        id: 'settings-host',
-                        placement: 'app.settingsPage',
-                        target: { kind: 'app' },
-                        renderer: { kind: 'host', rendererId: 'descriptorPanel' },
-                        display,
-                        actions: [],
-                        hostActions: [],
-                    },
-                },
-            ],
-        } as unknown as ResolvedContributionRegistry;
-
-        const projection = buildPluginProjectionV2({ registry, generation: 12 });
-        const entries = projection.familiesById.pluginUi?.entriesById ?? {};
-
-        const rejected = entries['surfacePlacement:acme.preview:settings-web'] as
-            | { availability?: { state?: unknown; reason?: unknown; diagnostics?: readonly string[] } }
-            | undefined;
-        expect(rejected?.availability).toMatchObject({
-            state: 'disabled',
-            reason: 'surface_contribution_rejected',
-        });
-        expect(rejected?.availability?.diagnostics).toContain('mode_unsupported');
-
-        // The compatible `host`-mode placement on the same surface still mounts.
-        expect(entries['surfacePlacement:acme.preview:settings-host']).toMatchObject({
-            availability: { state: 'available', reason: 'available' },
-        });
-    });
-
-    it('projects every V2 view through the canonical surface-placement family while retaining RN artifact ownership', () => {
+    it('projects every V2 view through the canonical surface-placement family and adopts the first admitted renderer fallback', () => {
         const generatedArtifact = {
             contributionId: 'panel-artifact',
             tier: 'reactNative' as const,
@@ -1226,7 +784,7 @@ describe('plugin UI projection family', () => {
             digest: `sha256:${'4'.repeat(64)}`,
             builtWith: { bundler: 'vite' as const, version: '7.0.0' },
             hostUiApiVersion: '1.0.0',
-            compat: { react: '19.2.0' },
+            compat: {},
         };
         const stableDeclarativeModel = {
             identity: {
@@ -1237,9 +795,10 @@ describe('plugin UI projection family', () => {
             },
             visible: true,
             requiredHostMethods: ['context', 'executeAction'],
+            declarativeInventory: emptyDeclarativeInventory,
             root: { kind: 'text', path: 'root', order: 0, text: 'Generated status' },
             nodes: [{ kind: 'text', path: 'root', order: 0, text: 'Generated status' }],
-        };
+        } satisfies StablePluginDeclarativeModel;
         const registry = {
             ...createEmptyResolvedContributionRegistry(),
             uiRenderersV2: [{
@@ -1248,7 +807,6 @@ describe('plugin UI projection family', () => {
                 pluginId: 'acme.generated-rnw',
                 identity: { pluginId: 'acme.generated-rnw', localId: 'panel-renderer' },
                 manifestPath: '/plugins/acme/.happier-plugin/plugin.json',
-                manifestDigest: 'sha256:manifest',
                 pluginRootPath: '/plugins/acme',
                 generatedUiArtifactsManifest: {
                     version: 1 as const,
@@ -1266,12 +824,10 @@ describe('plugin UI projection family', () => {
                 pluginId: 'acme.generated-rnw',
                 identity: { pluginId: 'acme.generated-rnw', localId: 'declarative-renderer' },
                 manifestPath: '/plugins/acme/.happier-plugin/plugin.json',
-                manifestDigest: 'sha256:manifest',
                 definition: {
                     id: 'declarative-renderer',
                     kind: 'declarative',
                     root: { kind: 'text', text: 'Generated status' },
-                    requiredHostMethods: ['context', 'executeAction'],
                 },
             }, {
                 provenance: 'external',
@@ -1279,7 +835,6 @@ describe('plugin UI projection family', () => {
                 pluginId: 'acme.generated-rnw',
                 identity: { pluginId: 'acme.generated-rnw', localId: 'hosted-renderer' },
                 manifestPath: '/plugins/acme/.happier-plugin/plugin.json',
-                manifestDigest: 'sha256:manifest',
                 pluginRootPath: '/plugins/acme',
                 generatedUiArtifactsManifest: {
                     version: 1 as const,
@@ -1298,10 +853,10 @@ describe('plugin UI projection family', () => {
                 pluginId: 'acme.generated-rnw',
                 identity: { pluginId: 'acme.generated-rnw', localId: 'panel' },
                 manifestPath: '/plugins/acme/.happier-plugin/plugin.json',
-                manifestDigest: 'sha256:manifest',
                 definition: {
                     id: 'panel',
-                    placement: 'app.sidePanel',
+                    container: 'rightPane',
+                    target: { kind: 'session' },
                     renderer: 'panel-renderer',
                     title: 'Generated panel',
                 },
@@ -1311,10 +866,10 @@ describe('plugin UI projection family', () => {
                 pluginId: 'acme.generated-rnw',
                 identity: { pluginId: 'acme.generated-rnw', localId: 'declarative-view' },
                 manifestPath: '/plugins/acme/.happier-plugin/plugin.json',
-                manifestDigest: 'sha256:manifest',
                 definition: {
                     id: 'declarative-view',
-                    placement: 'app.settingsPage',
+                    container: 'rightPane',
+                    target: { kind: 'session' },
                     renderer: 'declarative-renderer',
                     title: { key: 'settings.title', fallback: 'Generated settings' },
                 },
@@ -1324,30 +879,13 @@ describe('plugin UI projection family', () => {
                 pluginId: 'acme.generated-rnw',
                 identity: { pluginId: 'acme.generated-rnw', localId: 'hosted-view' },
                 manifestPath: '/plugins/acme/.happier-plugin/plugin.json',
-                manifestDigest: 'sha256:manifest',
                 definition: {
                     id: 'hosted-view',
-                    placement: 'app.sidePanel',
+                    container: 'rightPane',
+                    target: { kind: 'session' },
                     renderer: 'hosted-renderer',
                     fallbackRenderers: ['panel-renderer'],
                     title: 'Generated hosted panel',
-                },
-            }],
-            surfacePlacements: [{
-                provenance: 'external',
-                source: { kind: 'path' },
-                pluginId: 'acme.generated-rnw',
-                manifestPath: '/plugins/acme/.happier-plugin/plugin.json',
-                manifestDigest: 'sha256:manifest',
-                definition: {
-                    id: 'declarative-view',
-                    placement: 'app.settingsPage',
-                    target: { kind: 'app' },
-                    renderer: { kind: 'host', rendererId: 'descriptorPanel' },
-                    display: { titleKey: 'legacy-duplicate', developerFallback: 'Legacy duplicate' },
-                    order: 99,
-                    actions: [],
-                    hostActions: [],
                 },
             }],
         } as unknown as ResolvedContributionRegistry;
@@ -1356,7 +894,13 @@ describe('plugin UI projection family', () => {
             registry,
             generation: 31,
             pluginUiHostRuntime: {
-                hostedWeb: { featureEnabled: true },
+                hostedWeb: {
+                    featureEnabled: true,
+                    frameCapability: {
+                        platform: 'web',
+                        adapter: 'domIframe',
+                    },
+                },
                 reactNativeBundles: {
                     featureEnabled: true,
                     loaderBackendAvailable: true,
@@ -1376,7 +920,7 @@ describe('plugin UI projection family', () => {
                     },
                 },
             },
-        } as Parameters<typeof buildPluginProjectionV2>[0]);
+        });
         const entries = projection.familiesById.pluginUi?.entriesById ?? {};
 
         expect(entries['reactNativeBundle:acme.generated-rnw:panel-renderer']).toMatchObject({
@@ -1404,7 +948,11 @@ describe('plugin UI projection family', () => {
             pluginId: 'acme.generated-rnw',
             contributionKind: 'surfacePlacement',
             descriptorId: 'panel',
-            placement: 'app.sidePanel',
+            container: 'rightPane',
+            binding: expect.objectContaining({
+                container: 'rightPane',
+                target: { kind: 'session' },
+            }),
             renderer: { kind: 'reactNative', contributionId: 'panel-renderer' },
             availability: { state: 'available', reason: 'available' },
         });
@@ -1413,7 +961,11 @@ describe('plugin UI projection family', () => {
             contributionKind: 'surfacePlacement',
             descriptorId: 'declarative-view',
             generatedV2: true,
-            placement: 'app.settingsPage',
+            container: 'rightPane',
+            binding: expect.objectContaining({
+                container: 'rightPane',
+                target: { kind: 'session' },
+            }),
             display: { titleKey: 'settings.title', developerFallback: 'Generated settings' },
             renderer: {
                 kind: 'declarative',
@@ -1428,28 +980,259 @@ describe('plugin UI projection family', () => {
             contributionKind: 'surfacePlacement',
             descriptorId: 'hosted-view',
             generatedV2: true,
-            placement: 'app.sidePanel',
-            fallbackRenderers: ['panel-renderer'],
+            container: 'rightPane',
+            binding: expect.objectContaining({
+                container: 'rightPane',
+                target: { kind: 'session' },
+                rendererChain: [
+                    { pluginId: 'acme.generated-rnw', localId: 'hosted-renderer' },
+                    { pluginId: 'acme.generated-rnw', localId: 'panel-renderer' },
+                ],
+                renderer: { pluginId: 'acme.generated-rnw', localId: 'hosted-renderer' },
+            }),
             renderer: {
                 kind: 'hostedWeb',
                 contributionId: 'hosted-renderer',
-                source: { kind: 'artifact', artifact: 'hosted-artifact' },
-                requiredHostMethods: ['context'],
             },
-            availability: { state: 'available', reason: 'available' },
+            availability: {
+                state: 'available',
+                reason: 'available',
+            },
         });
+        expect(entries['surfacePlacement:acme.generated-rnw:hosted-view'])
+            .not.toHaveProperty('fallbackRenderers');
         expect(entries['hostedWeb:acme.generated-rnw:hosted-renderer']).toMatchObject({
             pluginId: 'acme.generated-rnw',
             contributionKind: 'hostedWeb',
             contributionId: 'hosted-renderer',
             generatedV2: true,
-            runtimeMode: {
-                kind: 'installedStaticAssets',
-                artifactId: 'hosted-artifact',
-                assetRootId: 'hosted-web/hosted-artifact',
-            },
+            bridge: { allowedMessages: ['ready', 'hostApi'] },
             entry: { routeMode: 'pathFallback', path: '/' },
-            runtime: { state: 'available', decision: { state: 'render', reason: 'available' } },
+            runtime: {
+                state: 'available',
+                diagnostics: [],
+                artifactReadIdentity: {
+                    pluginId: 'acme.generated-rnw',
+                    contributionId: 'hosted-renderer',
+                    artifactDigest: generatedHostedArtifact.digest,
+                    platform: 'web',
+                    projectionGeneration: 31,
+                },
+                decision: {
+                    state: 'render',
+                    reason: 'available',
+                    diagnostics: [],
+                },
+            },
+        });
+        expect(entries['hostedWeb:acme.generated-rnw:hosted-renderer'])
+            .not.toHaveProperty('runtimeMode');
+        expect(entries['hostedWeb:acme.generated-rnw:hosted-renderer']?.artifactGraph)
+            .toEqual(generatedHostedArtifact);
+
+        // A missing physical frame fact does not leave a renderer-local
+        // unavailable terminal. The canonical surface-placement selector
+        // consumes the hosted renderer's fallback decision and adopts the
+        // next declared renderer in its existing chain.
+        const adapterUnavailableProjection = buildPluginProjectionV2({
+            registry,
+            generation: 31,
+            pluginUiHostRuntime: {
+                hostedWeb: { featureEnabled: true },
+                reactNativeBundles: {
+                    featureEnabled: true,
+                    loaderBackendAvailable: true,
+                    hostRuntime: {
+                        platform: 'web',
+                        channel: 'internal',
+                        hostAppVersion: '2.0.0',
+                        hostUiApiVersion: '1.0.0',
+                        reactVersion: '19.2.0',
+                        reactNativeVersion: '0.83.4',
+                        availableNativeCapabilities: [],
+                    },
+                },
+                declarative: {
+                    modelsByRendererKey: {
+                        ['acme.generated-rnw\0declarative-renderer']: stableDeclarativeModel,
+                    },
+                },
+            },
+        });
+        const adapterUnavailableEntries = adapterUnavailableProjection.familiesById.pluginUi?.entriesById ?? {};
+
+        expect(adapterUnavailableEntries['hostedWeb:acme.generated-rnw:hosted-renderer']).toMatchObject({
+            runtime: {
+                state: 'fallback',
+                diagnostics: ['hosted_web_frame_adapter_unavailable'],
+                decision: {
+                    state: 'fallback',
+                    reason: 'hosted_web_frame_adapter_unavailable',
+                },
+            },
+        });
+        expect(adapterUnavailableEntries['surfacePlacement:acme.generated-rnw:hosted-view']).toMatchObject({
+            renderer: { kind: 'reactNative', contributionId: 'panel-renderer' },
+            availability: { state: 'available', reason: 'available' },
+        });
+    });
+
+    it('owns declarative availability only in the evaluated-model path', () => {
+        const declarativeRenderer = (localId: string) => ({
+            provenance: 'external',
+            source: { kind: 'path' },
+            pluginId: 'acme.declarative',
+            identity: { pluginId: 'acme.declarative', localId },
+            manifestPath: '/plugins/acme/.happier-plugin/plugin.json',
+            definition: {
+                id: localId,
+                kind: 'declarative',
+                root: { kind: 'text', text: 'Status' },
+                requiredHostMethods: ['context'],
+            },
+        });
+        const declarativeView = (localId: string, renderer: string) => ({
+            provenance: 'external',
+            source: { kind: 'path' },
+            pluginId: 'acme.declarative',
+            identity: { pluginId: 'acme.declarative', localId },
+            manifestPath: '/plugins/acme/.happier-plugin/plugin.json',
+            definition: {
+                id: localId,
+                container: 'rightPane',
+                target: { kind: 'session' },
+                renderer,
+                title: 'Declarative',
+            },
+        });
+        const model = (visible: boolean, localId: string) => ({
+            identity: {
+                pluginId: 'acme.declarative',
+                localId,
+                qualifiedId: `acme.declarative/${localId}`,
+                generation: '7',
+            },
+            visible,
+            requiredHostMethods: ['context'],
+            declarativeInventory: emptyDeclarativeInventory,
+            root: { kind: 'text', path: 'root', order: 0, text: 'Status' },
+            nodes: [{ kind: 'text', path: 'root', order: 0, text: 'Status' }],
+        } satisfies StablePluginDeclarativeModel);
+        const registry = {
+            ...createEmptyResolvedContributionRegistry(),
+            uiRenderersV2: [
+                declarativeRenderer('visible-renderer'),
+                declarativeRenderer('hidden-renderer'),
+                declarativeRenderer('modelless-renderer'),
+            ],
+            uiViewsV2: [
+                declarativeView('visible-view', 'visible-renderer'),
+                declarativeView('hidden-view', 'hidden-renderer'),
+                declarativeView('modelless-view', 'modelless-renderer'),
+            ],
+        } as unknown as ResolvedContributionRegistry;
+
+        const projection = buildPluginProjectionV2({
+            registry,
+            generation: 7,
+            pluginUiHostRuntime: {
+                declarative: {
+                    modelsByRendererKey: {
+                        ['acme.declarative\0visible-renderer']: model(true, 'visible-renderer'),
+                        ['acme.declarative\0hidden-renderer']: model(false, 'hidden-renderer'),
+                    },
+                },
+            },
+        });
+        const entries = projection.familiesById.pluginUi?.entriesById ?? {};
+
+        expect(entries['surfacePlacement:acme.declarative:visible-view']?.availability)
+            .toMatchObject({ state: 'available', reason: 'available' });
+        expect(entries['surfacePlacement:acme.declarative:hidden-view']?.availability)
+            .toMatchObject({ state: 'fallback', reason: 'declarative_model_hidden' });
+        expect(entries['surfacePlacement:acme.declarative:modelless-view']?.availability)
+            .toMatchObject({ state: 'fallback', reason: 'declarative_model_unavailable' });
+
+        // The generic renderer-availability projector must not carry a second declarative
+        // decision: it schema-parses through the strict v1 renderer union, which has no
+        // declarative member, so any declarative branch there is unreachable and wrong.
+        const source = readFileSync(new URL('./projection.ts', import.meta.url), 'utf8');
+        const start = source.indexOf('function projectSurfaceAvailability');
+        expect(start).toBeGreaterThan(-1);
+        const end = source.indexOf('\n}\n', start);
+        expect(end).toBeGreaterThan(start);
+        expect(source.slice(start, end)).not.toContain('declarative');
+    });
+
+    it('projects a declarative document source beside its evaluated static model', () => {
+        const registry = {
+            ...createEmptyResolvedContributionRegistry(),
+            uiRenderersV2: [{
+                provenance: 'external',
+                source: { kind: 'path' },
+                pluginId: 'acme.declarative',
+                identity: { pluginId: 'acme.declarative', localId: 'dashboard' },
+                manifestPath: '/plugins/acme/.happier-plugin/plugin.json',
+                definition: {
+                    id: 'dashboard',
+                    kind: 'declarative',
+                    root: { kind: 'text', text: 'Static dashboard' },
+                    documentSource: { kind: 'resource', resourceId: 'live-dashboard' },
+                },
+            }],
+            uiViewsV2: [{
+                provenance: 'external',
+                source: { kind: 'path' },
+                pluginId: 'acme.declarative',
+                identity: { pluginId: 'acme.declarative', localId: 'dashboard-view' },
+                manifestPath: '/plugins/acme/.happier-plugin/plugin.json',
+                definition: {
+                    id: 'dashboard-view',
+                    container: 'rightPane',
+                    target: { kind: 'session' },
+                    renderer: 'dashboard',
+                    title: 'Dashboard',
+                    instancePolicy: 'singleton',
+                    headerActions: [],
+                },
+            }],
+        } as unknown as ResolvedContributionRegistry;
+        const model = {
+            identity: {
+                pluginId: 'acme.declarative',
+                localId: 'dashboard',
+                qualifiedId: 'acme.declarative/dashboard',
+                generation: '7',
+            },
+            visible: true,
+            requiredHostMethods: [],
+            declarativeInventory: emptyDeclarativeInventory,
+            root: { kind: 'text', path: 'root', order: 0, text: 'Static dashboard' },
+            nodes: [{ kind: 'text', path: 'root', order: 0, text: 'Static dashboard' }],
+        } satisfies StablePluginDeclarativeModel;
+
+        const projection = buildPluginProjectionV2({
+            registry,
+            generation: 7,
+            pluginUiHostRuntime: {
+                declarative: {
+                    modelsByRendererKey: {
+                        ['acme.declarative\0dashboard']: model,
+                    },
+                },
+            },
+        });
+        const entry = projection.familiesById.pluginUi?.entriesById[
+            'surfacePlacement:acme.declarative:dashboard-view'
+        ];
+
+        expect(entry).toMatchObject({
+            renderer: {
+                kind: 'declarative',
+                contributionId: 'dashboard',
+                documentSource: { kind: 'resource', resourceId: 'live-dashboard' },
+                model,
+            },
         });
     });
 
@@ -1478,7 +1261,6 @@ describe('plugin UI projection family', () => {
                 pluginVersion: '1.0.0',
                 identity: { pluginId: 'acme.generated-voice', localId: 'conversation' },
                 manifestPath: '/plugins/acme/.happier-plugin/plugin.json',
-                manifestDigest: 'sha256:manifest',
                 pluginRootPath: '/plugins/acme',
                 generatedUiArtifactsManifest: { version: 1 as const, entries: [generatedArtifact] },
                 definition: {
@@ -1488,7 +1270,6 @@ describe('plugin UI projection family', () => {
                     roles: ['realtime_conversation', 'turn_control'],
                     platforms: ['web'],
                     capabilities: {
-                        readiness: { requirements: [] },
                         turn: { cancelResponse: true, bargeIn: false },
                     },
                     client: {
@@ -1542,18 +1323,198 @@ describe('plugin UI projection family', () => {
         expect(Object.keys(entries).some((id) => id.startsWith('uiArtifact:acme.generated-voice:'))).toBe(false);
     });
 
+    it('projects a client Action under its own identity without borrowing a co-resident Voice Artifact', () => {
+        const pluginId = 'acme.generated-client-action';
+        const actionId = 'open-preview';
+        const actionArtifact = {
+            contributionId: 'open-preview-artifact',
+            tier: 'reactNative' as const,
+            platform: 'ios' as const,
+            entry: 'react-native/open-preview/index.js',
+            files: [{
+                relativePath: 'react-native/open-preview/index.js',
+                digest: `sha256:${'5'.repeat(64)}`,
+                byteSize: 1,
+            }],
+            digest: `sha256:${'6'.repeat(64)}`,
+            builtWith: { bundler: 'repack' as const, version: '5.2.5' },
+            repack: {
+                containerName: 'acme_generated_client_action',
+                modulePath: './openPreview',
+                exportName: 'activate',
+            },
+            hostUiApiVersion: '1.0.0',
+            compat: { react: '19.2.0', reactNative: '0.83.4' },
+        };
+        const voiceArtifact = {
+            contributionId: 'voice-artifact',
+            tier: 'reactNative' as const,
+            platform: 'ios' as const,
+            entry: 'react-native/voice/index.js',
+            files: [{
+                relativePath: 'react-native/voice/index.js',
+                digest: `sha256:${'7'.repeat(64)}`,
+                byteSize: 1,
+            }],
+            digest: `sha256:${'8'.repeat(64)}`,
+            builtWith: { bundler: 'repack' as const, version: '5.2.5' },
+            repack: {
+                containerName: 'acme_generated_client_action',
+                modulePath: './voiceRuntime',
+                exportName: 'activate',
+            },
+            hostUiApiVersion: '1.0.0',
+            compat: { react: '19.2.0', reactNative: '0.83.4' },
+        };
+        const registry = {
+            ...createEmptyResolvedContributionRegistry(),
+            actions: [{
+                provenance: 'external',
+                source: { kind: 'package' },
+                pluginId,
+                pluginVersion: '1.0.0',
+                identity: { pluginId, localId: actionId },
+                manifestPath: '/plugins/acme/.happier-plugin/plugin.json',
+                pluginRootPath: '/plugins/acme',
+                generatedUiArtifactsManifest: { version: 1 as const, entries: [actionArtifact] },
+                definition: {
+                    kindVersion: 1,
+                    id: actionId,
+                    title: 'Open preview',
+                    description: null,
+                    safety: 'safe',
+                    placements: [],
+                    slash: null,
+                    bindings: null,
+                    examples: null,
+                    surfaces: {
+                        ui: true,
+                        voice: false,
+                        agent: false,
+                        mcp: false,
+                        cli: false,
+                        rpc: false,
+                        sdk: false,
+                        plugin: false,
+                    },
+                    inputHints: null,
+                    inputSchema: {},
+                    execution: {
+                        target: 'client',
+                        client: {
+                            artifactId: actionArtifact.contributionId,
+                            modulePath: './openPreview',
+                            exportName: 'activate',
+                        },
+                        platforms: ['ios'],
+                    },
+                    scopes: ['session'],
+                    contributionSurfaces: ['ui'],
+                    placementBindings: ['detailsPanel'],
+                    dangerLevel: 'safe',
+                },
+            }],
+            voiceProviders: [{
+                provenance: 'external',
+                source: { kind: 'package' },
+                pluginId,
+                pluginVersion: '1.0.0',
+                identity: { pluginId, localId: 'conversation' },
+                manifestPath: '/plugins/acme/.happier-plugin/plugin.json',
+                pluginRootPath: '/plugins/acme',
+                generatedUiArtifactsManifest: { version: 1 as const, entries: [voiceArtifact] },
+                definition: {
+                    id: 'conversation',
+                    title: 'Conversation',
+                    kind: 'conversation',
+                    roles: ['realtime_conversation', 'turn_control'],
+                    platforms: ['ios'],
+                    capabilities: {
+                        turn: { cancelResponse: true, bargeIn: false },
+                    },
+                    client: {
+                        artifactId: voiceArtifact.contributionId,
+                        modulePath: './voiceRuntime',
+                        exportName: 'activate',
+                    },
+                },
+            }],
+        } as unknown as ResolvedContributionRegistry;
+
+        const projection = buildPluginProjectionV2({
+            registry,
+            generation: 34,
+            pluginExecutionOriginsByPluginId: {
+                [pluginId]: {
+                    serverIdentityId: 'srv_client_action',
+                    materializationRef: {
+                        machineId: 'machine_client_action',
+                        materializationId: 'client-action-materialization',
+                        pluginId,
+                    },
+                },
+            },
+            pluginUiHostRuntime: {
+                reactNativeBundles: {
+                    featureEnabled: true,
+                    loaderBackendAvailable: true,
+                    hostRuntime: {
+                        platform: 'ios',
+                        channel: 'internal',
+                        hostAppVersion: '2.0.0',
+                        hostUiApiVersion: '1.0.0',
+                        reactVersion: '19.2.0',
+                        reactNativeVersion: '0.83.4',
+                        availableNativeCapabilities: [],
+                    },
+                },
+            },
+        } as Parameters<typeof buildPluginProjectionV2>[0]);
+        const entries = projection.familiesById.pluginUi?.entriesById ?? {};
+        const actionEntry = entries[`reactNativeBundle:${pluginId}:${actionId}`];
+
+        expect(actionEntry).toMatchObject({
+            pluginId,
+            contributionKind: 'reactNativeBundle',
+            contributionId: actionId,
+            generatedOwnerKind: 'clientContribution',
+            artifactGraph: actionArtifact,
+            entry: {
+                containerName: 'acme_generated_client_action',
+                modulePath: './openPreview',
+                exportName: 'activate',
+            },
+            runtime: {
+                state: 'loadable',
+                cacheIdentity: {
+                    pluginId,
+                    contributionId: actionId,
+                    artifactDigest: actionArtifact.digest,
+                    projectionGeneration: 34,
+                },
+            },
+            serverIdentityId: 'srv_client_action',
+            materializationRef: {
+                machineId: 'machine_client_action',
+                materializationId: 'client-action-materialization',
+                pluginId,
+            },
+        });
+        expect(actionEntry).not.toMatchObject({
+            artifactGraph: { contributionId: voiceArtifact.contributionId },
+            runtime: { cacheIdentity: { contributionId: 'conversation' } },
+        });
+    });
+
     it('projects a V2-owned generated native renderer directly without reviving legacy artifact rows', () => {
         const registry = {
             ...createEmptyResolvedContributionRegistry(),
-            reactNativeBundles: [reactNativeBundleContribution],
-            uiArtifacts: [reactNativeBundleArtifact],
             uiRenderersV2: [{
                 provenance: 'external',
                 source: { kind: 'path' },
                 pluginId: 'acme.preview',
                 identity: { pluginId: 'acme.preview', localId: 'native-preview' },
                 manifestPath: '/plugins/acme/.happier-plugin/plugin.json',
-                manifestDigest: 'sha256:manifest',
                 pluginRootPath: '/plugins/acme',
                 generatedUiArtifactsManifest: {
                     version: 1 as const,
@@ -1561,9 +1522,9 @@ describe('plugin UI projection family', () => {
                         contributionId: 'native-artifact',
                         tier: 'reactNative' as const,
                         platform: 'ios' as const,
-                        entry: 'react-native/native-preview/ios.bundle.js',
+                        entry: 'react-native/native-preview/ios.bundle',
                         files: [{
-                            relativePath: 'react-native/native-preview/ios.bundle.js',
+                            relativePath: 'react-native/native-preview/ios.bundle',
                             digest: `sha256:${'4'.repeat(64)}`,
                             byteSize: 1,
                         }],
@@ -1639,6 +1600,6 @@ describe('plugin UI projection family', () => {
                 }),
             },
         });
-        expect(entry?.bundle).not.toEqual(reactNativeBundleContribution.definition.bundle);
+        expect(entry).not.toHaveProperty('bundle');
     });
 });

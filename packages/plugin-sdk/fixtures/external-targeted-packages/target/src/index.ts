@@ -163,6 +163,7 @@ export const sourceContributor = definePlugin({
   actions: {
     'source-only-inspect': {
       title: 'Inspect a source-only contribution',
+      execution: { target: 'daemon' },
       surfaces: ['plugin'],
       inputSchema: inspectionInputSchema,
       resultSchema: inspectionResultSchema,

@@ -1,15 +1,24 @@
 import { describe, expect, expectTypeOf, it } from 'vitest';
-import { definePlugin } from '../definePlugin.js';
+import { definePlugin, type PluginActionDefinition } from '../definePlugin.js';
 import {
     defineProtocolLiteral,
     defineProtocolObject,
     defineProtocolString,
     defineProtocolUnion,
 } from '../protocol/index.js';
-import type { JsonValue, PluginContributionRef } from '../identity.js';
+import type {
+    JsonValue,
+    PluginContributionRef,
+    PluginIdentity,
+    PluginInvocationContributionIdentity,
+} from '../identity.js';
+import type { PluginInvocationContext } from '../invocation.js';
+import type { PluginApi, PluginClientApi } from '../activation.js';
 import type {
     AdmittedTargetedOperationExecutionHandle,
     ActionsService,
+    PluginActionExecutionV2,
+    PluginClientActionContext,
 } from './index.js';
 
 const publishInputSchema = defineProtocolObject({
@@ -38,6 +47,7 @@ const producer = definePlugin({
     actions: {
         publish: {
             title: 'Publish',
+            execution: { target: 'daemon' },
             surfaces: ['plugin'],
             inputSchema: publishInputSchema,
             resultSchema: publishResultSchema,
@@ -45,6 +55,7 @@ const producer = definePlugin({
         },
         archive: {
             title: 'Archive',
+            execution: { target: 'daemon' },
             surfaces: ['plugin'],
             inputSchema: archiveInputSchema,
             resultSchema: archiveResultSchema,
@@ -54,6 +65,113 @@ const producer = definePlugin({
 });
 
 describe('single-declaration Action contracts', () => {
+    it('requires one closed author execution target with a relative client module path', () => {
+        if (false) {
+            const daemonExecution: PluginActionExecutionV2 = { target: 'daemon' };
+            const clientExecution: PluginActionExecutionV2 = {
+                target: 'client',
+                client: {
+                    artifactId: 'action-client',
+                    modulePath: './runAction',
+                    exportName: 'runAction',
+                },
+                platforms: ['web'],
+            };
+            const nonRelativeClientExecution: PluginActionExecutionV2 = {
+                target: 'client',
+                client: {
+                    artifactId: 'action-client',
+                    // @ts-expect-error Client Action modules are package-relative.
+                    modulePath: 'runAction',
+                    exportName: 'runAction',
+                },
+                platforms: ['web'],
+            };
+            void daemonExecution;
+            void clientExecution;
+            void nonRelativeClientExecution;
+
+            definePlugin({
+                id: 'acme.action-target-required',
+                version: '1.0.0',
+                actions: {
+                    // @ts-expect-error Authored Actions cannot infer a daemon execution target.
+                    missingTarget: {
+                        title: 'Missing target',
+                        run: async () => null,
+                    },
+                },
+            });
+
+            // @ts-expect-error Client Action handlers belong only to the client artifact activation.
+            const invalidClientAction: PluginActionDefinition<{
+                title: 'Open details';
+                execution: {
+                    target: 'client';
+                    client: {
+                        artifactId: 'action-client';
+                        modulePath: './runAction';
+                        exportName: 'activate';
+                    };
+                    platforms: readonly ['web'];
+                };
+                surfaces: readonly ['ui'];
+            }> = {
+                title: 'Open details',
+                execution: {
+                    target: 'client',
+                    client: {
+                        artifactId: 'action-client',
+                        modulePath: './runAction',
+                        exportName: 'activate',
+                    },
+                    platforms: ['web'],
+                },
+                surfaces: ['ui'],
+                run: async () => null,
+            };
+            void invalidClientAction;
+        }
+
+        const daemonExecution = { target: 'daemon' } satisfies PluginActionExecutionV2;
+        expectTypeOf(daemonExecution).toMatchTypeOf<PluginActionExecutionV2>();
+    });
+
+    it('selects a client-safe handler context from the declared execution target', () => {
+        if (false) {
+            const clientApi = {} as PluginClientApi;
+            clientApi.actions.register('openDetails', async (_input, context) => {
+                const clientContext: PluginClientActionContext = context;
+                const plugin: PluginIdentity = context.plugin;
+                const contribution: PluginInvocationContributionIdentity = context.contribution;
+                void context.signal;
+                void context.invocationSurface;
+                void context.currentUiContext;
+                await context.ui.openSurface('details');
+                // @ts-expect-error Client Action handlers never receive daemon services.
+                void context.services;
+                void clientContext;
+                void plugin;
+                void contribution;
+                return null;
+            });
+
+            // @ts-expect-error Client activation does not expose daemon Agent registration.
+            void clientApi.agents;
+            // @ts-expect-error Client activation does not expose daemon Hook registration.
+            void clientApi.hooks;
+
+            const daemonApi = {} as PluginApi;
+            daemonApi.actions.register('daemonAction', async (_input, context) => {
+                const daemonContext: PluginInvocationContext = context;
+                void daemonContext.services;
+                return null;
+            });
+        }
+
+        expect(true).toBe(true);
+    });
+
     it('derives frozen qualified refs from the one definePlugin declaration', () => {
         expect(producer.actionContracts).toEqual({
             publish: { pluginId: 'acme.action-contracts', localId: 'publish' },

@@ -129,25 +129,6 @@ describe('plugin UI projection host runtime', () => {
         }).reactNativeBundles?.featureEnabled).toBe(true);
     });
 
-    it('reports structured-message feature enablement from the canonical feature decision', () => {
-        expect(resolvePluginUiProjectionHostRuntime({
-            hostAppVersion: '2.0.0',
-        }).structuredMessages?.featureEnabled).toBe(false);
-
-        expect(resolvePluginUiProjectionHostRuntime({
-            hostAppVersion: '2.0.0',
-            structuredMessagesFeatureDecision: createFeatureDecision({
-                featureId: 'plugins.ui.structuredMessages',
-                state: 'enabled',
-                blockedBy: null,
-                blockerCode: 'none',
-                diagnostics: [],
-                evaluatedAt: 0,
-                scope: { scopeKind: 'runtime' },
-            }),
-        }).structuredMessages?.featureEnabled).toBe(true);
-    });
-
     it('does not enable hosted web without the canonical feature decision being enabled', () => {
         expect(resolvePluginUiProjectionHostRuntime({
             hostAppVersion: '2.0.0',
@@ -167,25 +148,36 @@ describe('plugin UI projection host runtime', () => {
         }).hostedWeb?.featureEnabled).toBe(true);
     });
 
-    it('threads daemon-owned React Native crash-disabled contribution ids into the host runtime context', () => {
+    it('reports hosted-web frame readiness only from one exact physical adapter capability', () => {
+        const hostedWebFeatureDecision = createFeatureDecision({
+            featureId: 'plugins.ui.hostedWeb',
+            state: 'enabled',
+            blockedBy: null,
+            blockerCode: 'none',
+            diagnostics: [],
+            evaluatedAt: 0,
+            scope: { scopeKind: 'runtime' },
+        });
+
         expect(resolvePluginUiProjectionHostRuntime({
             hostAppVersion: '2.0.0',
-            installedArtifactLoaderAvailable: true,
-            reactNativeBundlesFeatureDecision: createFeatureDecision({
-                featureId: 'plugins.ui.reactNativeBundles',
-                state: 'enabled',
-                blockedBy: null,
-                blockerCode: 'none',
-                diagnostics: [],
-                evaluatedAt: 0,
-                scope: { scopeKind: 'runtime' },
-            }),
-            reactNativeCrashDisabledContributionIds: ['runtime.plugin:native-compatible'],
-        }).reactNativeBundles).toMatchObject({
-            crashDisabledContributionIds: ['runtime.plugin:native-compatible'],
-            crashDisabledByContributionId: {
-                'runtime.plugin:native-compatible': true,
+            hostedWebFeatureDecision,
+        }).hostedWeb).toEqual({ featureEnabled: true });
+
+        expect(resolvePluginUiProjectionHostRuntime({
+            hostAppVersion: '2.0.0',
+            hostedWebFeatureDecision,
+            hostedWebFrameCapability: {
+                platform: 'ios',
+                adapter: 'WKWebView',
+            },
+        }).hostedWeb).toEqual({
+            featureEnabled: true,
+            frameCapability: {
+                platform: 'ios',
+                adapter: 'WKWebView',
             },
         });
     });
+
 });

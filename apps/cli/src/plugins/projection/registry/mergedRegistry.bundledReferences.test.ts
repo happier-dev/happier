@@ -53,7 +53,8 @@ describe('resolveMergedContributionRegistry bundled reference universe', () => {
             title: 'Run',
             scopes: ['global'],
             surfaces: ['ui'],
-            placement: 'commandPalette',
+            execution: { target: 'daemon' },
+            placementBindings: ['commandPalette'],
             dangerLevel: 'safe',
             hostAccess: ['claude-account'],
           }],
@@ -83,7 +84,6 @@ describe('resolveMergedContributionRegistry bundled reference universe', () => {
           install: {
             mode: 'link',
             manifestVersion: '1.0.0',
-            manifestDigest: null,
             installedPath: null,
           },
           state: {

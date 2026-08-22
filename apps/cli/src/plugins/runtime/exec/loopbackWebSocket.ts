@@ -1,5 +1,8 @@
-import { createHash, randomBytes } from 'node:crypto';
-import { connect as connectSocket, type Socket } from 'node:net';
+import { isPluginError } from '@happier-dev/plugin-sdk';
+import type {
+    PluginWebSocketClose,
+    PluginWebSocketConnection,
+} from '@happier-dev/plugin-sdk/http';
 
 import type {
     ExecClientDiagnosticSanitizerV1,
@@ -23,6 +26,7 @@ import {
 } from './errors';
 import { createPluginProtocolCallbackQueue } from './callbackQueue';
 import type { HostRuntimeLimitMeasurementRecorder } from '@/agent/runtime/state/runtimeLimitMeasurement';
+import { createPluginWebSocketConnection } from '../fetch/webSocket';
 import {
     encodeLoopbackHandshakeFrame,
     readLoopbackHandshakeFrame,
@@ -81,13 +85,10 @@ type ValidatedEndpoint = Readonly<{
     sensitiveValues: readonly string[];
 }>;
 
-type RawWebSocketConnection = Readonly<{
-    socket: Socket;
-    sendText(text: string): void;
-    close(error?: Error): void;
-    onMessage(listener: (text: string) => void): void;
-    onClose(listener: (error?: Error) => void): void;
-    bufferedBytes(): number;
+type NormalizedLoopbackLimits = Readonly<{
+    maxMessageBytes: number;
+    maxPendingMessages: number;
+    maxBufferedBytes: number;
 }>;
 
 const DEFAULT_CONNECT_TIMEOUT_MS = 1_000;
@@ -97,7 +98,6 @@ const DEFAULT_MAX_MESSAGE_BYTES = 1024 * 1024;
 const DEFAULT_MAX_PENDING_MESSAGES = 64;
 const DEFAULT_MAX_BUFFERED_BYTES = 1024 * 1024;
 const DEFAULT_SHUTDOWN_GRACE_MS = 250;
-const WS_GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
 const SAFE_ORIGIN_FORM_PATH_PATTERN = /^\/[A-Za-z0-9\-._~!$&'()*+,;=:@/%]*(?:\?[A-Za-z0-9\-._~!$&'()*+,;=:@/%?]*)?$/;
 
 function createProtocolError(message: string, cause?: unknown, stderrPreview?: string): PluginExecClientError {
@@ -121,34 +121,45 @@ function createConnectionTimeoutError(cause?: unknown, stderrPreview?: string): 
 }
 
 function readNodeErrorCode(error: unknown): string | null {
-    if (!error || typeof error !== 'object') {
-        return null;
-    }
+    if (!error || typeof error !== 'object') return null;
     const code = (error as { code?: unknown }).code;
     return typeof code === 'string' ? code : null;
 }
 
 function readErrorCause(error: unknown): unknown {
-    if (!error || typeof error !== 'object') {
-        return null;
-    }
+    if (!error || typeof error !== 'object') return null;
     return (error as { cause?: unknown }).cause;
 }
 
+function isAbortError(error: unknown): boolean {
+    return !!error
+        && typeof error === 'object'
+        && (error as { name?: unknown }).name === 'AbortError';
+}
+
+/**
+ * A loopback server that has not finished binding refuses the connection. Every
+ * error reaching this point is a canonical PluginError - `PluginExecClientError`
+ * included - so one predicate decides readiness for all of them.
+ */
 function isRetryableReadinessError(error: unknown): boolean {
-    if (!(error instanceof PluginExecClientError)) {
-        return false;
-    }
-    if (error.code !== 'PLUGIN_EXEC_CLIENT_PROTOCOL_ERROR') {
-        return false;
-    }
-    return readNodeErrorCode(readErrorCause(error)) === 'ECONNREFUSED';
+    return isPluginError(error)
+        && error.code === 'plugin_websocket_connect_failed'
+        && readNodeErrorCode(readErrorCause(error)) === 'ECONNREFUSED';
 }
 
 function normalizePositiveInteger(value: number | undefined, fallback: number): number {
     return typeof value === 'number' && Number.isFinite(value) && value > 0
         ? Math.trunc(value)
         : fallback;
+}
+
+function normalizeLimits(limits: ExecLoopbackWebSocketLimitsV1 | undefined): NormalizedLoopbackLimits {
+    return Object.freeze({
+        maxMessageBytes: normalizePositiveInteger(limits?.maxMessageBytes, DEFAULT_MAX_MESSAGE_BYTES),
+        maxPendingMessages: normalizePositiveInteger(limits?.maxPendingMessages, DEFAULT_MAX_PENDING_MESSAGES),
+        maxBufferedBytes: normalizePositiveInteger(limits?.maxBufferedBytes, DEFAULT_MAX_BUFFERED_BYTES),
+    });
 }
 
 function isLoopbackHost(host: string): boolean {
@@ -160,7 +171,7 @@ function isLoopbackHost(host: string): boolean {
 }
 
 function readPath(parsed: URL): string {
-    return `${parsed.pathname || '/'}${parsed.search}`;
+    return (parsed.pathname || '/') + parsed.search;
 }
 
 function isSafeAbsolutePath(path: string): boolean {
@@ -168,7 +179,7 @@ function isSafeAbsolutePath(path: string): boolean {
 }
 
 function validateHeader(header: ExecLoopbackWebSocketHeaderV1): void {
-    if (!/^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/.test(header.name)) {
+    if (!/^[!#$%&'*+\-.^_\x60|~0-9A-Za-z]+$/.test(header.name)) {
         throw createProtocolError('Loopback WebSocket header name is invalid');
     }
     if (/[\r\n]/.test(header.value)) {
@@ -222,13 +233,17 @@ function validateEndpoint(
     });
 }
 
+function loopbackUrl(endpoint: ValidatedEndpoint): string {
+    const host = endpoint.host.replace(/^\[|\]$/g, '');
+    const authority = host.includes(':') ? '[' + host + ']' : host;
+    return 'ws://' + authority + ':' + String(endpoint.port) + endpoint.path;
+}
+
 function mergeSanitizer(
     sanitizer: ExecClientDiagnosticSanitizerV1 | undefined,
     sensitiveValues: readonly string[],
 ): ExecClientDiagnosticSanitizerV1 | undefined {
-    if (sensitiveValues.length === 0) {
-        return sanitizer;
-    }
+    if (sensitiveValues.length === 0) return sanitizer;
     return Object.freeze({
         ...(sanitizer ?? {}),
         redactedValues: Object.freeze([
@@ -249,9 +264,7 @@ function createSanitizedPreviewReader(
 }
 
 async function delay(ms: number, signal?: AbortSignal): Promise<void> {
-    if (signal?.aborted) {
-        throw createPluginExecClientAbortError();
-    }
+    if (signal?.aborted) throw createPluginExecClientAbortError();
     await new Promise<void>((resolve, reject) => {
         let settled = false;
         const cleanup = () => {
@@ -259,21 +272,13 @@ async function delay(ms: number, signal?: AbortSignal): Promise<void> {
             signal?.removeEventListener('abort', onAbort);
         };
         const settle = (callback: () => void) => {
-            if (settled) {
-                return;
-            }
+            if (settled) return;
             settled = true;
             cleanup();
             callback();
         };
-        const timeout = setTimeout(() => {
-            settle(resolve);
-        }, Math.max(0, ms));
-        const onAbort = () => {
-            settle(() => {
-                reject(createPluginExecClientAbortError());
-            });
-        };
+        const timeout = setTimeout(() => settle(resolve), Math.max(0, ms));
+        const onAbort = () => settle(() => reject(createPluginExecClientAbortError()));
         signal?.addEventListener('abort', onAbort, { once: true });
     });
 }
@@ -285,17 +290,15 @@ function waitForExitError(
     return process.handle.exit.then((result) => {
         throw new PluginExecClientError(
             'PLUGIN_EXEC_CLIENT_EXITED',
-            `Loopback WebSocket child exited before the client was ready (exitCode=${result.exitCode ?? 'null'}, signal=${result.signal ?? 'null'})`,
+            'Loopback WebSocket child exited before the client was ready (exitCode='
+                + String(result.exitCode ?? 'null') + ', signal=' + String(result.signal ?? 'null') + ')',
             { stderrPreview: readStderrPreview() },
         );
     }, (error) => {
         throw new PluginExecClientError(
             'PLUGIN_EXEC_CLIENT_EXITED',
             'Loopback WebSocket child failed before the client was ready',
-            {
-                cause: error,
-                stderrPreview: readStderrPreview(),
-            },
+            { cause: error, stderrPreview: readStderrPreview() },
         );
     });
 }
@@ -317,24 +320,18 @@ async function rethrowProcessExitIfReady(
     readStderrPreview: () => string | undefined,
 ): Promise<never> {
     const exitError = await Promise.race<PluginExecClientError | null>([
-        waitForExitError(process, readStderrPreview).catch((exitFailure: unknown) => {
-            if (exitFailure instanceof PluginExecClientError) {
-                return exitFailure;
-            }
-            return new PluginExecClientError(
-                'PLUGIN_EXEC_CLIENT_EXITED',
-                'Loopback WebSocket child failed before the client was ready',
-                {
-                    cause: exitFailure,
-                    stderrPreview: readStderrPreview(),
-                },
-            );
-        }),
+        waitForExitError(process, readStderrPreview).catch((exitFailure: unknown) => (
+            exitFailure instanceof PluginExecClientError
+                ? exitFailure
+                : new PluginExecClientError(
+                    'PLUGIN_EXEC_CLIENT_EXITED',
+                    'Loopback WebSocket child failed before the client was ready',
+                    { cause: exitFailure, stderrPreview: readStderrPreview() },
+                )
+        )),
         delay(25).then(() => null),
     ]);
-    if (exitError) {
-        throw exitError;
-    }
+    if (exitError) throw exitError;
     throw error;
 }
 
@@ -344,9 +341,7 @@ async function writeHandshakeFrames(
 ): Promise<void> {
     const maxFrameBytes = handshake.response?.maxFrameBytes ?? DEFAULT_MAX_MESSAGE_BYTES;
     for (const frame of handshake.requestFrames) {
-        const payloadLength = typeof frame === 'string'
-            ? Buffer.byteLength(frame)
-            : frame.byteLength;
+        const payloadLength = typeof frame === 'string' ? Buffer.byteLength(frame) : frame.byteLength;
         if (payloadLength > maxFrameBytes) {
             throw createProtocolError('Loopback WebSocket handshake request exceeded the configured size limit');
         }
@@ -371,352 +366,80 @@ async function readHandshakeResponse(
     });
 }
 
-function buildUpgradeRequest(endpoint: ValidatedEndpoint, key: string): Buffer {
-    const hostHeader = endpoint.host.includes(':')
-        ? `[${endpoint.host.replace(/^\[|\]$/g, '')}]:${endpoint.port}`
-        : `${endpoint.host}:${endpoint.port}`;
-    const lines = [
-        `GET ${endpoint.path} HTTP/1.1`,
-        `Host: ${hostHeader}`,
-        'Upgrade: websocket',
-        'Connection: Upgrade',
-        `Sec-WebSocket-Key: ${key}`,
-        'Sec-WebSocket-Version: 13',
-        ...endpoint.headers.map((header) => `${header.name}: ${header.value}`),
-        '',
-        '',
-    ];
-    return Buffer.from(lines.join('\r\n'), 'utf8');
+function toExecClientError(
+    error: unknown,
+    readStderrPreview: () => string | undefined,
+): PluginExecClientError {
+    if (error instanceof PluginExecClientError) return error;
+    if (isAbortError(error)) return createPluginExecClientAbortError();
+    if (isPluginError(error) && error.code === 'plugin_websocket_backpressure_exceeded') {
+        return createBackpressureError(readStderrPreview());
+    }
+    return createProtocolError('Loopback WebSocket transport failed', error, readStderrPreview());
 }
 
-function expectedAcceptKey(key: string): string {
-    return createHash('sha1').update(`${key}${WS_GUID}`).digest('base64');
+function closeError(
+    close: PluginWebSocketClose,
+    readStderrPreview: () => string | undefined,
+): Error | undefined {
+    if (close.kind === 'remote' || close.kind === 'local') return undefined;
+    if (close.kind === 'aborted') return createPluginExecClientAbortError();
+    if (close.diagnostic?.code === 'plugin_websocket_backpressure_exceeded') {
+        return createBackpressureError(readStderrPreview());
+    }
+    return createProtocolError('Loopback WebSocket transport closed unexpectedly', close, readStderrPreview());
 }
 
-function encodeClientTextFrame(text: string): Buffer {
-    const payload = Buffer.from(text, 'utf8');
-    const length = payload.byteLength;
-    const mask = randomBytes(4);
-    let header: Buffer;
-    if (length < 126) {
-        header = Buffer.from([0x81, 0x80 | length]);
-    } else if (length <= 0xffff) {
-        header = Buffer.allocUnsafe(4);
-        header[0] = 0x81;
-        header[1] = 0x80 | 126;
-        header.writeUInt16BE(length, 2);
-    } else {
-        header = Buffer.allocUnsafe(10);
-        header[0] = 0x81;
-        header[1] = 0x80 | 127;
-        header.writeBigUInt64BE(BigInt(length), 2);
-    }
-    const masked = Buffer.from(payload);
-    for (let index = 0; index < masked.length; index += 1) {
-        masked[index] = masked[index] ^ mask[index % 4];
-    }
-    return Buffer.concat([header, mask, masked]);
-}
-
-function encodeControlFrame(opcode: number, payload: Buffer<ArrayBufferLike> = Buffer.alloc(0)): Buffer {
-    return Buffer.concat([Buffer.from([0x80 | opcode, payload.byteLength]), payload]);
-}
-
-function tryDecodeServerFrame(buffer: Buffer<ArrayBufferLike>, maxMessageBytes: number): null | Readonly<{
-    final: boolean;
-    opcode: number;
-    payload: Buffer<ArrayBufferLike>;
-    rest: Buffer<ArrayBufferLike>;
-}> {
-    if (buffer.byteLength < 2) {
-        return null;
-    }
-    const final = (buffer[0] & 0x80) !== 0;
-    const opcode = buffer[0] & 0x0f;
-    const masked = (buffer[1] & 0x80) !== 0;
-    let length = buffer[1] & 0x7f;
-    let offset = 2;
-    if (length === 126) {
-        if (buffer.byteLength < offset + 2) {
-            return null;
-        }
-        length = buffer.readUInt16BE(offset);
-        offset += 2;
-    } else if (length === 127) {
-        if (buffer.byteLength < offset + 8) {
-            return null;
-        }
-        const wideLength = buffer.readBigUInt64BE(offset);
-        if (wideLength > BigInt(Number.MAX_SAFE_INTEGER)) {
-            throw createProtocolError('Loopback WebSocket message exceeded the configured size limit');
-        }
-        length = Number(wideLength);
-        offset += 8;
-    }
-    if (length > maxMessageBytes) {
-        throw createProtocolError('Loopback WebSocket message exceeded the configured size limit');
-    }
-    const maskOffset = offset;
-    offset += masked ? 4 : 0;
-    if (buffer.byteLength < offset + length) {
-        return null;
-    }
-    const payload = Buffer.from(buffer.subarray(offset, offset + length));
-    if (masked) {
-        const mask = buffer.subarray(maskOffset, maskOffset + 4);
-        for (let index = 0; index < payload.length; index += 1) {
-            payload[index] = payload[index] ^ mask[index % 4];
-        }
-    }
-    return Object.freeze({
-        final,
-        opcode,
-        payload,
-        rest: buffer.subarray(offset + length),
-    });
-}
-
-async function openRawWebSocket(
+async function openSharedLoopbackWebSocket(
     endpoint: ValidatedEndpoint,
-    maxMessageBytes: number,
+    limits: NormalizedLoopbackLimits,
     timeoutMs: number,
     signal: AbortSignal | undefined,
     readStderrPreview: () => string | undefined,
-): Promise<RawWebSocketConnection> {
-    if (signal?.aborted) {
-        throw createPluginExecClientAbortError();
+): Promise<PluginWebSocketConnection> {
+    if (signal?.aborted) throw createPluginExecClientAbortError();
+    const deadline = new AbortController();
+    let timedOut = false;
+    const timeout = setTimeout(() => {
+        timedOut = true;
+        deadline.abort(Object.freeze({ kind: 'loopbackConnectTimeout' }));
+    }, timeoutMs);
+    try {
+        return await createPluginWebSocketConnection({
+            url: loopbackUrl(endpoint),
+            headers: endpoint.headers.map((header) => Object.freeze({
+                name: header.name,
+                value: header.value,
+                ...(header.sensitive === true ? { sensitive: true } : {}),
+            })),
+            connectTimeoutMs: Math.min(60_000, Math.max(100, timeoutMs)),
+            maxMessageBytes: limits.maxMessageBytes,
+            maxPendingMessages: limits.maxPendingMessages,
+            maxPendingBytes: limits.maxBufferedBytes,
+            maxBufferedSendBytes: limits.maxBufferedBytes,
+        }, {
+            // The adapter's public signal only governs opening. The spawned
+            // client signal remains authoritative after a successful upgrade;
+            // use the private lifecycle slot for that longer-lived ownership.
+            signal: deadline.signal,
+            ...(signal ? { lifecycleSignal: signal } : {}),
+        });
+    } catch (error) {
+        if (signal?.aborted) throw createPluginExecClientAbortError();
+        if (timedOut) throw createConnectionTimeoutError(error, readStderrPreview());
+        throw error;
+    } finally {
+        clearTimeout(timeout);
     }
-    const key = randomBytes(16).toString('base64');
-    const socket = connectSocket({
-        host: endpoint.host.replace(/^\[|\]$/g, ''),
-        port: endpoint.port,
-    });
-
-    return await new Promise<RawWebSocketConnection>((resolve, reject) => {
-        let settled = false;
-        let upgradeBuffer: Buffer<ArrayBufferLike> = Buffer.alloc(0);
-        let frameBuffer: Buffer<ArrayBufferLike> = Buffer.alloc(0);
-        let fragmentedTextChunks: Buffer<ArrayBufferLike>[] | null = null;
-        let fragmentedTextBytes = 0;
-        let closedError: Error | undefined;
-        const messageListeners = new Set<(text: string) => void>();
-        const closeListeners = new Set<(error?: Error) => void>();
-        const timeout = setTimeout(() => {
-            fail(createConnectionTimeoutError(undefined, readStderrPreview()));
-        }, timeoutMs);
-        timeout.unref?.();
-
-        function cleanupConnectListeners(): void {
-            clearTimeout(timeout);
-            socket.off('connect', onConnect);
-            socket.off('data', onUpgradeData);
-            socket.off('error', onConnectError);
-            socket.off('close', onConnectClose);
-            signal?.removeEventListener('abort', onAbort);
-        }
-
-        function fail(error: Error): void {
-            if (settled) {
-                return;
-            }
-            settled = true;
-            cleanupConnectListeners();
-            socket.destroy();
-            reject(error);
-        }
-
-        function onAbort(): void {
-            fail(createPluginExecClientAbortError());
-        }
-
-        function onConnect(): void {
-            socket.write(buildUpgradeRequest(endpoint, key));
-        }
-
-        function onConnectError(error: unknown): void {
-            fail(createProtocolError('Loopback WebSocket connection failed', error, readStderrPreview()));
-        }
-
-        function onConnectClose(): void {
-            fail(createProtocolError('Loopback WebSocket closed before upgrade completed', undefined, readStderrPreview()));
-        }
-
-        function notifyClose(error?: Error): void {
-            if (closedError) {
-                return;
-            }
-            closedError = error ?? new PluginExecClientError('PLUGIN_EXEC_CLIENT_DISPOSED', 'Loopback WebSocket closed');
-            for (const listener of [...closeListeners]) {
-                listener(error);
-            }
-        }
-
-        function handleFrameData(chunk: Buffer): void {
-            if (closedError) {
-                return;
-            }
-            frameBuffer = Buffer.concat([frameBuffer, chunk]);
-            try {
-                for (;;) {
-                    const decoded = tryDecodeServerFrame(frameBuffer, maxMessageBytes);
-                    if (!decoded) {
-                        if (frameBuffer.byteLength > maxMessageBytes + 14) {
-                            notifyClose(createProtocolError('Loopback WebSocket buffered data exceeded the configured size limit', undefined, readStderrPreview()));
-                            socket.destroy();
-                        }
-                        return;
-                    }
-                    frameBuffer = decoded.rest;
-                    if (decoded.opcode === 0x8) {
-                        socket.end(encodeControlFrame(0x8));
-                        notifyClose(fragmentedTextChunks
-                            ? createProtocolError('Loopback WebSocket closed before the fragmented message completed', undefined, readStderrPreview())
-                            : undefined);
-                        return;
-                    }
-                    if (decoded.opcode === 0x9) {
-                        socket.write(encodeControlFrame(0xA, decoded.payload));
-                        continue;
-                    }
-                    if (decoded.opcode === 0xA) {
-                        continue;
-                    }
-                    if (decoded.opcode === 0x1) {
-                        if (fragmentedTextChunks) {
-                            notifyClose(createProtocolError('Loopback WebSocket received a new text frame before the fragmented message completed', undefined, readStderrPreview()));
-                            socket.destroy();
-                            return;
-                        }
-                        if (!decoded.final) {
-                            fragmentedTextChunks = [decoded.payload];
-                            fragmentedTextBytes = decoded.payload.byteLength;
-                            continue;
-                        }
-                    } else if (decoded.opcode === 0x0 && fragmentedTextChunks) {
-                        fragmentedTextBytes += decoded.payload.byteLength;
-                        if (fragmentedTextBytes > maxMessageBytes) {
-                            notifyClose(createProtocolError('Loopback WebSocket message exceeded the configured size limit', undefined, readStderrPreview()));
-                            socket.destroy();
-                            return;
-                        }
-                        fragmentedTextChunks.push(decoded.payload);
-                        if (!decoded.final) {
-                            continue;
-                        }
-                    } else {
-                        notifyClose(createProtocolError('Loopback WebSocket received an unsupported frame type', undefined, readStderrPreview()));
-                        socket.destroy();
-                        return;
-                    }
-                    const text = fragmentedTextChunks
-                        ? Buffer.concat(fragmentedTextChunks, fragmentedTextBytes).toString('utf8')
-                        : decoded.payload.toString('utf8');
-                    fragmentedTextChunks = null;
-                    fragmentedTextBytes = 0;
-                    for (const listener of [...messageListeners]) {
-                        listener(text);
-                    }
-                }
-            } catch (error) {
-                notifyClose(error instanceof Error ? error : createProtocolError(String(error), undefined, readStderrPreview()));
-                socket.destroy();
-            }
-        }
-
-        function resolveConnection(rest: Buffer): void {
-            if (settled) {
-                return;
-            }
-            settled = true;
-            cleanupConnectListeners();
-            socket.on('data', handleFrameData);
-            socket.on('error', (error) => {
-                notifyClose(createProtocolError('Loopback WebSocket socket failed', error, readStderrPreview()));
-            });
-            socket.on('close', () => {
-                notifyClose(fragmentedTextChunks || frameBuffer.byteLength > 0
-                    ? createProtocolError('Loopback WebSocket closed with a trailing partial frame', undefined, readStderrPreview())
-                    : undefined);
-            });
-            const connection: RawWebSocketConnection = Object.freeze({
-                socket,
-                sendText(text) {
-                    if (closedError) {
-                        throw closedError;
-                    }
-                    socket.write(encodeClientTextFrame(text));
-                },
-                close(error?: Error) {
-                    if (!socket.destroyed) {
-                        socket.end(encodeControlFrame(0x8));
-                        setTimeout(() => {
-                            if (!socket.destroyed) {
-                                socket.destroy();
-                            }
-                        }, 50).unref?.();
-                    }
-                    notifyClose(error);
-                },
-                onMessage(listener) {
-                    messageListeners.add(listener);
-                },
-                onClose(listener) {
-                    closeListeners.add(listener);
-                },
-                bufferedBytes() {
-                    return socket.writableLength;
-                },
-            });
-            resolve(connection);
-            if (rest.byteLength > 0) {
-                handleFrameData(rest);
-            }
-        }
-
-        function onUpgradeData(chunk: Buffer): void {
-            upgradeBuffer = Buffer.concat([upgradeBuffer, chunk]);
-            const headerEnd = upgradeBuffer.indexOf('\r\n\r\n');
-            if (headerEnd < 0) {
-                if (upgradeBuffer.byteLength > 8192) {
-                    fail(createProtocolError('Loopback WebSocket upgrade response exceeded the configured size limit', undefined, readStderrPreview()));
-                }
-                return;
-            }
-            const headerText = upgradeBuffer.subarray(0, headerEnd).toString('latin1');
-            const [statusLine, ...headerLines] = headerText.split('\r\n');
-            if (!/^HTTP\/1\.[01] 101(?:\s|$)/.test(statusLine ?? '')) {
-                fail(createProtocolError('Loopback WebSocket upgrade was rejected', undefined, readStderrPreview()));
-                return;
-            }
-            const headers = new Map<string, string>();
-            for (const line of headerLines) {
-                const separator = line.indexOf(':');
-                if (separator > 0) {
-                    headers.set(line.slice(0, separator).trim().toLowerCase(), line.slice(separator + 1).trim());
-                }
-            }
-            if (headers.get('sec-websocket-accept') !== expectedAcceptKey(key)) {
-                fail(createProtocolError('Loopback WebSocket upgrade accept key was invalid', undefined, readStderrPreview()));
-                return;
-            }
-            resolveConnection(upgradeBuffer.subarray(headerEnd + 4));
-        }
-
-        socket.on('connect', onConnect);
-        socket.on('data', onUpgradeData);
-        socket.once('error', onConnectError);
-        socket.once('close', onConnectClose);
-        signal?.addEventListener('abort', onAbort, { once: true });
-    });
 }
 
 async function connectWithRetry(
     endpoint: ValidatedEndpoint,
     connect: ExecLoopbackWebSocketConnectV1 | undefined,
-    maxMessageBytes: number,
+    limits: NormalizedLoopbackLimits,
     signal: AbortSignal | undefined,
     readStderrPreview: () => string | undefined,
-): Promise<RawWebSocketConnection> {
+): Promise<PluginWebSocketConnection> {
     const timeoutMs = normalizePositiveInteger(connect?.timeoutMs, DEFAULT_CONNECT_TIMEOUT_MS);
     const retryInitialDelayMs = normalizePositiveInteger(connect?.retryInitialDelayMs, DEFAULT_RETRY_INITIAL_DELAY_MS);
     const retryMaxDelayMs = normalizePositiveInteger(connect?.retryMaxDelayMs, DEFAULT_RETRY_MAX_DELAY_MS);
@@ -727,22 +450,16 @@ async function connectWithRetry(
     for (;;) {
         try {
             const remainingMs = deadline - Date.now();
-            if (remainingMs <= 0) {
-                throw createConnectionTimeoutError(lastError, readStderrPreview());
-            }
-            return await openRawWebSocket(endpoint, maxMessageBytes, remainingMs, signal, readStderrPreview);
+            if (remainingMs <= 0) throw createConnectionTimeoutError(lastError, readStderrPreview());
+            return await openSharedLoopbackWebSocket(endpoint, limits, remainingMs, signal, readStderrPreview);
         } catch (error) {
-            if (signal?.aborted) {
-                throw createPluginExecClientAbortError();
-            }
+            if (signal?.aborted) throw createPluginExecClientAbortError();
             if (!isRetryableReadinessError(error)) {
-                throw error;
+                throw toExecClientError(error, readStderrPreview);
             }
             lastError = error;
             const remainingMs = deadline - Date.now();
-            if (remainingMs <= 0) {
-                throw createConnectionTimeoutError(lastError, readStderrPreview());
-            }
+            if (remainingMs <= 0) throw createConnectionTimeoutError(lastError, readStderrPreview());
             await delay(Math.min(nextDelay, remainingMs), signal);
             nextDelay = Math.min(nextDelay * 2, retryMaxDelayMs);
         }
@@ -750,7 +467,7 @@ async function connectWithRetry(
 }
 
 function createJsonClient(params: Readonly<{
-    connection: RawWebSocketConnection;
+    connection: PluginWebSocketConnection;
     maxMessageBytes: number;
     maxPendingMessages: number;
     maxBufferedBytes: number;
@@ -769,9 +486,7 @@ function createJsonClient(params: Readonly<{
     closed.catch(() => undefined);
 
     function settleClosed(error?: Error): void {
-        if (closedSettled) {
-            return;
-        }
+        if (closedSettled) return;
         closedSettled = true;
         if (error) {
             disposedError = error;
@@ -783,11 +498,9 @@ function createJsonClient(params: Readonly<{
     }
 
     function failClient(error: Error): void {
-        if (closedSettled) {
-            return;
-        }
-        params.connection.close(error);
+        if (closedSettled) return;
         settleClosed(error);
+        params.connection.dispose();
     }
 
     async function deliverMessage(text: string): Promise<void> {
@@ -810,30 +523,56 @@ function createJsonClient(params: Readonly<{
 
     const deliveryQueue = createPluginProtocolCallbackQueue({
         maxPendingCallbacks: params.maxPendingMessages,
+        maxPendingBytes: params.maxBufferedBytes,
         ...(params.recordRuntimeLimitMeasurement
             ? { recordRuntimeLimitMeasurement: params.recordRuntimeLimitMeasurement }
             : {}),
         onFailure(failure) {
-            failClient(failure.code === 'PLUGIN_EXEC_CLIENT_BACKPRESSURE_EXCEEDED'
-                ? createBackpressureError(params.readStderrPreview())
-                : createProtocolError('Loopback WebSocket subscriber failed', failure.cause, params.readStderrPreview()));
+            if (failure.code === 'PLUGIN_EXEC_CLIENT_BACKPRESSURE_EXCEEDED') {
+                failClient(createBackpressureError(params.readStderrPreview()));
+                return;
+            }
+            if (
+                failure.cause instanceof PluginExecClientError
+                && failure.cause.code === 'PLUGIN_EXEC_CLIENT_PROTOCOL_ERROR'
+            ) {
+                failClient(failure.cause);
+                return;
+            }
+            failClient(createProtocolError(
+                'Loopback WebSocket subscriber failed',
+                failure.cause,
+                params.readStderrPreview(),
+            ));
         },
     });
 
-    params.connection.onMessage((text) => {
-        if (closedSettled) {
-            return;
+    async function receiveMessages(): Promise<void> {
+        while (!closedSettled) {
+            try {
+                const result = await params.connection.receive();
+                if (closedSettled) return;
+                if (result.kind === 'closed') {
+                    settleClosed(closeError(result.close, params.readStderrPreview));
+                    return;
+                }
+                if (result.kind !== 'text') {
+                    failClient(createProtocolError('Loopback WebSocket received an unsupported message type', undefined, params.readStderrPreview()));
+                    return;
+                }
+                const bytes = Buffer.byteLength(result.text, 'utf8');
+                if (bytes > params.maxMessageBytes) {
+                    failClient(createProtocolError('Loopback WebSocket message exceeded the configured size limit', undefined, params.readStderrPreview()));
+                    return;
+                }
+                deliveryQueue.enqueue(bytes, () => deliverMessage(result.text));
+            } catch (error) {
+                failClient(toExecClientError(error, params.readStderrPreview));
+                return;
+            }
         }
-        if (Buffer.byteLength(text, 'utf8') > params.maxMessageBytes) {
-            failClient(createProtocolError('Loopback WebSocket message exceeded the configured size limit', undefined, params.readStderrPreview()));
-            return;
-        }
-        deliveryQueue.enqueue(Buffer.byteLength(text, 'utf8'), () => deliverMessage(text));
-    });
-
-    params.connection.onClose((error) => {
-        settleClosed(error);
-    });
+    }
+    void receiveMessages();
 
     const client: LoopbackWebSocketJsonClientV1 = Object.freeze({
         closed,
@@ -844,22 +583,21 @@ function createJsonClient(params: Readonly<{
             };
         },
         async sendJson(message, options) {
-            if (disposedError) {
-                throw disposedError;
-            }
-            if (options?.signal?.aborted) {
-                throw createPluginExecClientAbortError();
-            }
+            if (disposedError) throw disposedError;
+            if (options?.signal?.aborted) throw createPluginExecClientAbortError();
             const text = JSON.stringify(message);
             if (Buffer.byteLength(text, 'utf8') > params.maxMessageBytes) {
                 throw createProtocolError('Loopback WebSocket message exceeded the configured size limit', undefined, params.readStderrPreview());
             }
-            if (params.connection.bufferedBytes() + Buffer.byteLength(text, 'utf8') > params.maxBufferedBytes) {
-                const error = createBackpressureError(params.readStderrPreview());
-                failClient(error);
-                throw error;
+            try {
+                await params.connection.send({ kind: 'text', text }, options);
+            } catch (error) {
+                const mapped = toExecClientError(error, params.readStderrPreview);
+                if (mapped.code === 'PLUGIN_EXEC_CLIENT_BACKPRESSURE_EXCEEDED') {
+                    failClient(mapped);
+                }
+                throw mapped;
             }
-            params.connection.sendText(text);
         },
     });
 
@@ -879,19 +617,17 @@ export async function createLoopbackWebSocketJsonClient(
 ): Promise<LoopbackWebSocketProcessClient> {
     const validatedEndpoint = validateEndpoint(params.endpoint, params.headers ?? []);
     const readStderrPreview = params.readDiagnosticPreview ?? (() => undefined);
-    const maxMessageBytes = normalizePositiveInteger(params.limits?.maxMessageBytes, DEFAULT_MAX_MESSAGE_BYTES);
+    const limits = normalizeLimits(params.limits);
     const connection = await connectWithRetry(
         validatedEndpoint,
         params.connect,
-        maxMessageBytes,
+        limits,
         params.signal,
         readStderrPreview,
     );
     return createJsonClient({
         connection,
-        maxMessageBytes,
-        maxPendingMessages: normalizePositiveInteger(params.limits?.maxPendingMessages, DEFAULT_MAX_PENDING_MESSAGES),
-        maxBufferedBytes: normalizePositiveInteger(params.limits?.maxBufferedBytes, DEFAULT_MAX_BUFFERED_BYTES),
+        ...limits,
         readStderrPreview,
         ...(params.recordRuntimeLimitMeasurement
             ? { recordRuntimeLimitMeasurement: params.recordRuntimeLimitMeasurement }
@@ -941,12 +677,12 @@ export async function createLoopbackWebSocketHandshakeClient<
     const validatedEndpoint = validateEndpoint(endpoint, headers);
     const sanitizer = mergeSanitizer(params.sanitizer, validatedEndpoint.sensitiveValues);
     const readStderrPreview = createSanitizedPreviewReader(params.process, sanitizer);
-    const maxMessageBytes = normalizePositiveInteger(params.limits?.maxMessageBytes, DEFAULT_MAX_MESSAGE_BYTES);
+    const limits = normalizeLimits(params.limits);
     const connection = await raceWithExit(
         connectWithRetry(
             validatedEndpoint,
             params.connect,
-            maxMessageBytes,
+            limits,
             params.optionsSignal,
             readStderrPreview,
         ),
@@ -955,9 +691,7 @@ export async function createLoopbackWebSocketHandshakeClient<
     );
     return createJsonClient({
         connection,
-        maxMessageBytes,
-        maxPendingMessages: normalizePositiveInteger(params.limits?.maxPendingMessages, DEFAULT_MAX_PENDING_MESSAGES),
-        maxBufferedBytes: normalizePositiveInteger(params.limits?.maxBufferedBytes, DEFAULT_MAX_BUFFERED_BYTES),
+        ...limits,
         readStderrPreview,
         ...(params.recordRuntimeLimitMeasurement
             ? { recordRuntimeLimitMeasurement: params.recordRuntimeLimitMeasurement }

@@ -6,7 +6,9 @@ import {
 } from '@happier-dev/protocol/plugins/manifest';
 import type {
     ManagedExecutableRef,
+    ProviderCatalogProbeModelV1,
     ProviderConnectionId,
+    ProviderModelLoadStateV1,
 } from '@happier-dev/protocol';
 
 import type {
@@ -343,6 +345,44 @@ export interface ManagedProviderRuntime {
     ): Promise<ManagedProviderEndpoint>;
 }
 
+/**
+ * One model row a catalog format produced. The host still normalizes, bounds,
+ * and de-duplicates these rows: a contributed format decides shape, never the
+ * catalog's safety limits.
+ */
+export type ProviderCatalogParsedModel = ProviderCatalogProbeModelV1;
+
+export type ProviderCatalogParsedModelLoadState = Readonly<{
+    modelId: string;
+    loadState: ProviderModelLoadStateV1;
+}>;
+
+export type ProviderCatalogParseResult = Readonly<{
+    models: readonly ProviderCatalogParsedModel[];
+    /**
+     * Per-model load state, for formats whose probe declares
+     * `reportsModelLoadState`. Omit it when the format carries no load state.
+     */
+    loadStates?: readonly ProviderCatalogParsedModelLoadState[];
+}>;
+
+/**
+ * Maps one decoded catalog response body onto model rows. Throwing rejects the
+ * response as invalid; it never falls back to another format's parser.
+ */
+export type ProviderCatalogParser = (body: unknown) => ProviderCatalogParseResult;
+
 export interface ProvidersRegistrationApi {
     register(localId: ProviderLocalId, runtime: ManagedProviderRuntime): void;
+    /**
+     * Contributes the implementation of one catalog wire format this plugin's
+     * Provider declares. The format id is the `parser` a declared catalog probe
+     * names; bundled format ids are implemented by the host and must not be
+     * re-registered.
+     */
+    registerCatalogParser(
+        localId: ProviderLocalId,
+        format: string,
+        parse: ProviderCatalogParser,
+    ): void;
 }

@@ -5,7 +5,6 @@ import {
     BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS,
 } from './sources/generatedBundledPlugins';
 import { projectBuiltInAgents } from './builtIn/agents';
-import { projectBuiltInProviders } from './builtIn/providers';
 import { loadBundledPluginLocators } from './builtIn/locators';
 import { projectLoadedPluginContributes } from './resolvePluginContributions';
 import type { ResolvedContributionInputs, ResolvedInstallableContribution } from './types';
@@ -37,10 +36,7 @@ export function resolveBuiltInContributions(): ResolvedBuiltInContributionInputs
     return Object.freeze({
         ...projected,
         agents,
-        providers: projectBuiltInProviders({
-            manifestProviders: projected.providers ?? EMPTY_CONTRIBUTIONS,
-            implementationBindings: BUNDLED_FIRST_PARTY_IMPLEMENTATION_BINDINGS,
-        }),
+        providers: projected.providers ?? EMPTY_CONTRIBUTIONS,
         catalogEntries: EMPTY_CONTRIBUTIONS,
         managedDependencies: Object.freeze([
             {

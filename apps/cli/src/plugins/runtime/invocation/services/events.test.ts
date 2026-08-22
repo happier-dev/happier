@@ -2,13 +2,14 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { ParsedPluginEventContributionV1 } from '@happier-dev/protocol';
 import { PluginError, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
-import { type PluginContributionRef } from '@happier-dev/plugin-sdk/runtime';
+import { type PluginContributionRef } from '@happier-dev/plugin-sdk';
 
 import type { PluginInvocationServicesSeed } from './types';
 import {
     bindDeclaredEventSubscriptions,
     createStablePluginEventsBroker,
-    createPluginInvocationEventsService,
+    createPluginInvocationHostEventsService,
+    createPluginInvocationPluginEventsService,
     measureStablePluginEventPublicationBytes,
     STABLE_PLUGIN_EVENT_QUEUE_LIMITS,
 } from './events';
@@ -22,7 +23,7 @@ const subscriberDeclarations: readonly ParsedPluginEventContributionV1[] = Objec
     Object.freeze({
         id: 'watch-changed',
         kind: 'subscription',
-        event: Object.freeze({ pluginId: 'acme.publisher', localId: 'changed' }),
+        target: Object.freeze({ kind: 'plugin', event: Object.freeze({ pluginId: 'acme.publisher', localId: 'changed' }) }),
     }),
 ]);
 
@@ -47,19 +48,10 @@ function services(params: Readonly<{
         ['acme.publisher', publisherDeclarations],
         ['acme.subscriber', subscriberDeclarations],
     ]);
-    const permissionDeclarationsByPluginId = new Map([
-        ['acme.publisher', Object.freeze([])],
-        ['acme.subscriber', Object.freeze([Object.freeze({
-            capability: 'events.plugin.subscribe',
-            scope: 'acme.publisher',
-            reason: 'Observe publisher events',
-        })])],
-    ]);
-    return createPluginInvocationEventsService({
+    return createPluginInvocationPluginEventsService({
         seed: seed(params.pluginId, params.controller),
         broker: params.broker,
         declarationsByPluginId,
-        permissionDeclarationsByPluginId,
         activePluginIds: new Set(['acme.publisher', 'acme.subscriber']),
     });
 }
@@ -140,14 +132,14 @@ describe('stable invocation events service', () => {
             ['acme.first', [{
                 id: 'watch',
                 kind: 'subscription',
-                event: { pluginId: 'acme.publisher', localId: 'changed' },
+                target: { kind: 'plugin', event: { pluginId: 'acme.publisher', localId: 'changed' } },
                 filterSchema: { type: 'object', properties: { accepted: { const: true } }, required: ['accepted'] },
                 priority: -10,
             }]],
             ['acme.second', [{
                 id: 'watch',
                 kind: 'subscription',
-                event: { pluginId: 'acme.publisher', localId: 'changed' },
+                target: { kind: 'plugin', event: { pluginId: 'acme.publisher', localId: 'changed' } },
                 priority: 10,
             }]],
         ]);
@@ -160,10 +152,6 @@ describe('stable invocation events service', () => {
             host: {
                 broker,
                 declarationsByPluginId,
-                permissionDeclarationsByPluginId: new Map([
-                    ['acme.first', [{ capability: 'events.plugin.subscribe', scope: 'acme.publisher', reason: 'test' }]],
-                    ['acme.second', [{ capability: 'events.plugin.subscribe', scope: 'acme.publisher', reason: 'test' }]],
-                ]),
                 activePluginIds: new Set(['acme.publisher', 'acme.first', 'acme.second']),
             },
             registrations: [
@@ -171,13 +159,15 @@ describe('stable invocation events service', () => {
                 { pluginId: 'acme.first', pluginVersion: '1', generation: '7', localId: 'watch', handler: async (_payload, context) => { order.push(context.contribution.qualifiedId); } },
             ],
             isGenerationCurrent: () => current,
-            createContext: ({ pluginId }) => contextFor(pluginId),
+            createContext: ({ pluginId }) => Object.freeze({
+                context: contextFor(pluginId),
+                complete() {},
+            }),
         });
-        const publisher = createPluginInvocationEventsService({
+        const publisher = createPluginInvocationPluginEventsService({
             seed: seed('acme.publisher'),
             broker,
             declarationsByPluginId,
-            permissionDeclarationsByPluginId: new Map(),
             activePluginIds: new Set(['acme.publisher', 'acme.first', 'acme.second']),
         });
 
@@ -192,6 +182,55 @@ describe('stable invocation events service', () => {
         await new Promise((resolve) => setTimeout(resolve, 0));
         expect(order).toEqual(['acme.first/events/watch', 'second']);
         await binding.dispose();
+    });
+
+    it('binds a static Host Event handler through the same broker and generation lifecycle', async () => {
+        const broker = createStablePluginEventsBroker();
+        const handler = vi.fn();
+        let current = true;
+        const binding = bindDeclaredEventSubscriptions({
+            host: {
+                broker,
+                declarationsByPluginId: new Map([['acme.subscriber', [{
+                    id: 'watch-turn',
+                    kind: 'subscription',
+                    target: {
+                        kind: 'host',
+                        eventId: '@happier/runtime/turn-complete',
+                        scope: { kind: 'current-session' },
+                    },
+                }]]]),
+                activePluginIds: new Set(['acme.subscriber']),
+            },
+            registrations: [{
+                pluginId: 'acme.subscriber',
+                pluginVersion: '1',
+                generation: '7',
+                localId: 'watch-turn',
+                handler,
+            }],
+            isGenerationCurrent: () => current,
+            createContext: (input) => {
+                expect(input.sessionId).toBe('session-1');
+                return Object.freeze({
+                    context: {} as PluginInvocationContext,
+                    complete() {},
+                });
+            },
+        });
+        const payload = {
+            sequence: 1,
+            sessionId: 'session-1',
+            emittedAtMs: 2,
+            kind: 'turn-complete',
+            turnId: 'turn-1',
+        } as const;
+        broker.publishHostEvent(payload);
+        await vi.waitFor(() => expect(handler).toHaveBeenCalledWith(payload, expect.anything()));
+        current = false;
+        broker.publishHostEvent({ ...payload, sequence: 2 });
+        await binding.dispose();
+        expect(handler).toHaveBeenCalledOnce();
     });
 
     it('admits declared events with a subscriber snapshot and exact public method parity', async () => {
@@ -270,17 +309,16 @@ describe('stable invocation events service', () => {
             { pluginId: 'acme.publisher', localId: 'changed' },
             async () => {},
         )).toThrowError(expect.objectContaining({ code: 'plugin_events_subscription_undeclared' }));
-        const declaredSelfSubscriber = createPluginInvocationEventsService({
+        const declaredSelfSubscriber = createPluginInvocationPluginEventsService({
             seed: seed('acme.publisher'),
             broker,
             declarationsByPluginId: new Map([
                 ['acme.publisher', [...publisherDeclarations, {
                     id: 'watch-own',
                     kind: 'subscription' as const,
-                    event: { pluginId: 'acme.publisher', localId: 'changed' },
+                    target: { kind: 'plugin', event: { pluginId: 'acme.publisher', localId: 'changed' } },
                 }]],
             ]),
-            permissionDeclarationsByPluginId: new Map(),
             activePluginIds: new Set(['acme.publisher']),
         });
         expect(() => declaredSelfSubscriber.subscribe(
@@ -296,7 +334,7 @@ describe('stable invocation events service', () => {
             deeplyNested = { value: deeplyNested };
         }
         await expect(Reflect.apply(publisher.emit, publisher, ['changed', deeplyNested]))
-            .rejects.toMatchObject({ code: 'plugin_events_invalid_payload' });
+            .resolves.toMatchObject({ status: 'admitted', subscriberCount: 1 });
         publisherController.abort();
         await expect(publisher.emit('changed', null)).rejects.toMatchObject({ code: 'plugin_events_generation_retired' });
     });
@@ -362,6 +400,58 @@ describe('stable invocation events service', () => {
 
         expect(result).toEqual({ status: 'admitted', sequence: 1, subscriberCount: 0 });
         expect(listener).not.toHaveBeenCalled();
+    });
+
+    it('rejects subscriptions that retire while their broker registration is being established', () => {
+        const pluginController = new AbortController();
+        const pluginBroker = createStablePluginEventsBroker();
+        const pluginRaceBroker = Object.freeze({
+            ...pluginBroker,
+            subscribe(input: Parameters<typeof pluginBroker.subscribe>[0]) {
+                const subscription = pluginBroker.subscribe(input);
+                pluginController.abort();
+                return subscription;
+            },
+        });
+        const pluginSubscriber = createPluginInvocationPluginEventsService({
+            seed: seed('acme.subscriber', pluginController),
+            broker: pluginRaceBroker,
+            declarationsByPluginId: new Map([
+                ['acme.publisher', publisherDeclarations],
+                ['acme.subscriber', subscriberDeclarations],
+            ]),
+            activePluginIds: new Set(['acme.publisher', 'acme.subscriber']),
+        });
+
+        expect(() => pluginSubscriber.subscribe(
+            { pluginId: 'acme.publisher', localId: 'changed' },
+            async () => {},
+        )).toThrowError(expect.objectContaining({ code: 'plugin_events_generation_retired' }));
+
+        const hostController = new AbortController();
+        const hostBroker = createStablePluginEventsBroker();
+        const hostRaceBroker = Object.freeze({
+            ...hostBroker,
+            subscribeHost(input: Parameters<typeof hostBroker.subscribeHost>[0]) {
+                const subscription = hostBroker.subscribeHost(input);
+                hostController.abort();
+                return subscription;
+            },
+        });
+        const hostEvents = createPluginInvocationHostEventsService({
+            seed: Object.freeze({
+                ...seed('acme.subscriber', hostController),
+                session: Object.freeze({ id: 'session-1' }),
+            }),
+            broker: hostRaceBroker,
+        });
+
+        expect(() => hostEvents.subscribe({
+            eventId: '@happier/runtime/turn-complete',
+            scope: { kind: 'current-session' },
+        }, async () => {})).toThrowError(
+            expect.objectContaining({ code: 'plugin_events_generation_retired' }),
+        );
     });
 
     it('rejects a non-callable listener at the service boundary', () => {
@@ -484,5 +574,185 @@ describe('stable invocation events service', () => {
         await expect(publisher.emit('changed', 'x'.repeat(1024 * 1024)))
             .resolves.toEqual({ status: 'admitted', sequence: 1, subscriberCount: 0 });
         expect(queueSamples).toEqual([]);
+    });
+
+    it('routes Host Events by current and explicit session without awaiting listeners', async () => {
+        const broker = createStablePluginEventsBroker();
+        const current = vi.fn();
+        const explicit = vi.fn();
+        broker.subscribeHost({
+            target: { eventId: '@happier/runtime/turn-complete', scope: { kind: 'current-session' } },
+            currentSessionId: 'session-1',
+            listener: current,
+            isCurrent: () => true,
+        });
+        broker.subscribeHost({
+            target: { eventId: '@happier/runtime/turn-complete', scope: { kind: 'session', sessionId: 'session-2' } },
+            listener: explicit,
+            isCurrent: () => true,
+        });
+
+        expect(() => broker.publishHostEvent({
+            sequence: 1,
+            sessionId: 'session-1',
+            emittedAtMs: 2,
+            kind: 'turn-complete',
+            turnId: 'turn-1',
+        })).not.toThrow();
+        await vi.waitFor(() => expect(current).toHaveBeenCalledOnce());
+        expect(explicit).not.toHaveBeenCalled();
+        expect(current).toHaveBeenCalledWith(expect.objectContaining({
+            eventId: '@happier/runtime/turn-complete',
+            scope: { kind: 'session', sessionId: 'session-1' },
+        }));
+    });
+
+    it('routes a server-stamped Account lifecycle envelope only to Account-scoped observers', async () => {
+        const broker = createStablePluginEventsBroker();
+        const accountObserver = vi.fn();
+        const runtimeObserver = vi.fn();
+        broker.subscribeHost({
+            target: {
+                eventId: '@happier/automation/run-state-changed',
+                scope: { kind: 'account' },
+            },
+            listener: accountObserver,
+            isCurrent: () => true,
+        });
+        broker.subscribeHost({
+            target: {
+                eventId: '@happier/runtime/turn-complete',
+                scope: { kind: 'session', sessionId: 'session-1' },
+            },
+            listener: runtimeObserver,
+            isCurrent: () => true,
+        });
+        const payload = {
+            runId: 'run-1',
+            automationId: 'automation-1',
+            originKind: 'scheduled',
+            previousState: null,
+            currentState: 'queued',
+            transitionedAt: 1,
+            claimedByMachineId: null,
+        } as const;
+
+        broker.publishHostEventEnvelope({
+            eventId: '@happier/automation/run-state-changed',
+            scope: { kind: 'account' },
+            payload,
+        });
+
+        await vi.waitFor(() => expect(accountObserver).toHaveBeenCalledWith({
+            eventId: '@happier/automation/run-state-changed',
+            scope: { kind: 'account' },
+            payload,
+        }));
+        expect(runtimeObserver).not.toHaveBeenCalled();
+    });
+
+    it('binds dynamic Host Event subscriptions to invocation session and generation lifetime', async () => {
+        const broker = createStablePluginEventsBroker();
+        const controller = new AbortController();
+        let generationCurrent = true;
+        const host = createPluginInvocationHostEventsService({
+            broker,
+            seed: Object.freeze({
+                ...seed('acme.subscriber', controller),
+                session: Object.freeze({ id: 'session-1' }),
+                isGenerationCurrent: () => generationCurrent,
+            }),
+        });
+        const listener = vi.fn();
+        const disposable = host.subscribe({
+            eventId: '@happier/runtime/context-compaction',
+            scope: { kind: 'current-session' },
+        }, listener);
+        broker.publishHostEvent({
+            sequence: 1,
+            sessionId: 'session-1',
+            emittedAtMs: 2,
+            kind: 'context-compaction',
+            compactionId: 'compact-1',
+            phase: 'progress',
+            trigger: 'manual',
+        });
+        await vi.waitFor(() => expect(listener).toHaveBeenCalledOnce());
+
+        generationCurrent = false;
+        broker.publishHostEvent({
+            sequence: 2,
+            sessionId: 'session-1',
+            emittedAtMs: 3,
+            kind: 'context-compaction',
+            compactionId: 'compact-1',
+            phase: 'completed',
+            trigger: 'manual',
+        });
+        await disposable.dispose();
+        controller.abort();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(listener).toHaveBeenCalledOnce();
+    });
+
+    it('rejects current-session subscriptions without an invocation session', () => {
+        const host = createPluginInvocationHostEventsService({
+            broker: createStablePluginEventsBroker(),
+            seed: seed('acme.subscriber'),
+        });
+        expect(() => host.subscribe({
+            eventId: '@happier/runtime/turn-complete',
+            scope: { kind: 'current-session' },
+        }, () => {})).toThrowError(expect.objectContaining({
+            code: 'plugin_host_events_current_session_unavailable',
+        }));
+    });
+
+    it('drops bounded Host Event overflow, isolates listener failure, and stops after retirement or disposal', async () => {
+        const dropped = vi.fn();
+        const failed = vi.fn();
+        const broker = createStablePluginEventsBroker({
+            onHostDeliveryDropped: dropped,
+            onHostListenerError: failed,
+        });
+        let current = true;
+        let release!: () => void;
+        const blocked = new Promise<void>((resolve) => { release = resolve; });
+        const subscription = broker.subscribeHost({
+            target: { eventId: '@happier/runtime/turn-complete', scope: { kind: 'session', sessionId: 'session-1' } },
+            listener: async () => await blocked,
+            isCurrent: () => current,
+        });
+        const event = {
+            sequence: 1,
+            sessionId: 'session-1',
+            emittedAtMs: 2,
+            kind: 'turn-complete',
+            turnId: 'turn-1',
+        } as const;
+        for (let index = 0; index < STABLE_PLUGIN_EVENT_QUEUE_LIMITS.pendingDeliveriesPerSubscription; index += 1) {
+            expect(() => broker.publishHostEvent({ ...event, sequence: index + 1 })).not.toThrow();
+        }
+        expect(() => broker.publishHostEvent({ ...event, sequence: 257 })).not.toThrow();
+        expect(dropped).toHaveBeenCalledWith({
+            eventId: '@happier/runtime/turn-complete',
+            reason: 'delivery_limit',
+        });
+        release();
+        current = false;
+        broker.publishHostEvent({ ...event, sequence: 258 });
+        await subscription.dispose();
+
+        const throwing = broker.subscribeHost({
+            target: { eventId: '@happier/runtime/turn-complete', scope: { kind: 'session', sessionId: 'session-1' } },
+            listener: async () => { throw new Error('listener failed'); },
+            isCurrent: () => true,
+        });
+        broker.publishHostEvent({ ...event, sequence: 259 });
+        await vi.waitFor(() => expect(failed).toHaveBeenCalledOnce());
+        await throwing.dispose();
+        broker.publishHostEvent({ ...event, sequence: 260 });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(failed).toHaveBeenCalledOnce();
     });
 });

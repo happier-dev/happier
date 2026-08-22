@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { realpath } from 'node:fs/promises';
-import { isAbsolute, relative, resolve, sep } from 'node:path';
+import { isAbsolute, resolve } from 'node:path';
+
+import { isCanonicalAbsolutePathInsideRoot } from '@/utils/path/expandHomeDirPath';
 
 import { PluginContextServiceError } from '../errors';
 
@@ -162,12 +164,7 @@ export function normalizeTranscriptFileFollowAbsolutePath(path: string): string 
 }
 
 export function isTranscriptFileFollowPathInsideRoot(path: string, root: string): boolean {
-    const relativePath = relative(root, path);
-    return !relativePath || (
-        relativePath !== '..'
-        && !relativePath.startsWith(`..${sep}`)
-        && !isAbsolute(relativePath)
-    );
+    return isCanonicalAbsolutePathInsideRoot(root, path);
 }
 
 export async function resolveTranscriptFileFollowRealPath(path: string): Promise<string | null> {

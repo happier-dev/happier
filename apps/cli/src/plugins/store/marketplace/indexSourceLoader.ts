@@ -8,20 +8,32 @@ import { performance } from 'node:perf_hooks';
 import { Agent, fetch as undiciFetch } from 'undici';
 
 import {
+  createMarketplaceNpmDiscoveryProjectionV1,
+  deriveMarketplaceNpmCompatibilityPlatformsV1,
   MarketplaceIndexEntryV1Schema,
+  MarketplaceNpmDiscoveryProjectionV1Schema,
   MarketplaceIndexSourceSnapshotV1Schema,
+  marketplaceNpmDiscoveryProjectionEqualV1,
+  type MarketplaceNpmDiscoveryProjectionV1,
   type MarketplaceIndexSourceKindV1,
   type MarketplaceIndexSourceSnapshotV1,
 } from '@happier-dev/protocol';
 
 import { resolveUrlConnectionIdentity } from '@/network/urlConnectionIdentity';
 import { resolvePluginRemoteCatalogMaxBytes, resolvePluginRemoteFetchTimeoutMs } from '@/plugins/discovery/remote/fetch';
+import { createNpmRegistryHttpsClient } from '@/plugins/distribution/npm/httpsClient';
+import { normalizeNpmArtifactRequest } from '@/plugins/distribution/npm/normalize';
+import { resolveNpmArtifactMetadata, type NpmRegistryJsonClient } from '@/plugins/distribution/npm/resolver';
+import type { ResolvedNpmArtifact } from '@/plugins/distribution/npm/types';
 import { assertPublicNpmNetworkAddresses } from '@/plugins/distribution/npm/networkPolicy';
+import { projectPluginFailureText } from '@/plugins/runtime/lifecycle/utils';
 import { resolvePluginStorePaths } from '@/plugins/store/paths';
 import { writeJsonAtomic } from '@/utils/fs/writeJsonAtomic';
 
 const CACHE_MAX_STALE_MS = 7 * 24 * 60 * 60 * 1000;
 const MAX_REDIRECTS = 5;
+const MAX_COMMUNITY_NPM_DISCOVERY_CANDIDATES = 100;
+const MAX_CONCURRENT_COMMUNITY_NPM_METADATA_REQUESTS = 4;
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 const inFlight = new Map<string, Promise<MarketplaceIndexSourceSnapshotV1>>();
 
@@ -34,30 +46,142 @@ type CacheRecord = Readonly<{
   snapshot: MarketplaceIndexSourceSnapshotV1;
 }>;
 
-export function parseCommunityNpmDiscovery(
+type CommunityNpmSearchCandidate = Readonly<{
+  request: ReturnType<typeof normalizeNpmArtifactRequest>;
+  publisher: Readonly<{ id: string; displayName: string }>;
+}>;
+
+function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function readCommunityNpmPublisher(candidate: Readonly<Record<string, unknown>>): CommunityNpmSearchCandidate['publisher'] | null {
+  const publisher = candidate.publisher;
+  if (!isRecord(publisher) || typeof publisher.username !== 'string') return null;
+  const username = publisher.username.trim();
+  return username ? { id: username, displayName: username } : null;
+}
+
+export async function parseCommunityNpmDiscovery(
   raw: unknown,
   source: { id: string; title: string; sourceUrl: string; kind: 'community-npm' },
-): MarketplaceIndexSourceSnapshotV1 {
+  dependencies: Readonly<{
+    client: NpmRegistryJsonClient;
+    metadataMaxBytes?: number;
+    deadlineAtMonotonicMs?: number;
+  }>,
+): Promise<MarketplaceIndexSourceSnapshotV1> {
   const objects = raw && typeof raw === 'object' && Array.isArray((raw as { objects?: unknown }).objects)
-    ? (raw as { objects: unknown[] }).objects.slice(0, 100)
+    ? (raw as { objects: unknown[] }).objects.slice(0, MAX_COMMUNITY_NPM_DISCOVERY_CANDIDATES)
     : [];
-  const entries = objects.flatMap((candidate) => {
+
+  const registryOrigin = new URL(source.sourceUrl).origin;
+  const requests: CommunityNpmSearchCandidate[] = objects.flatMap((candidate) => {
     if (!candidate || typeof candidate !== 'object') return [];
     const pkg = (candidate as { package?: unknown }).package;
-    if (!pkg || typeof pkg !== 'object') return [];
-    const extension = (pkg as { happierPlugin?: unknown }).happierPlugin;
-    if (!extension || typeof extension !== 'object') return [];
-    const parsed = MarketplaceIndexEntryV1Schema.safeParse({
-      ...(extension as Record<string, unknown>),
-      review: { status: 'unreviewed', reviewedAt: null },
-      updatePolicy: (extension as { updatePolicy?: unknown }).updatePolicy === 'pinned' ? 'pinned' : 'manual',
-    });
-    if (!parsed.success) return [];
-    if ((pkg as { name?: unknown }).name !== parsed.data.distribution.packageName
-      || (pkg as { version?: unknown }).version !== parsed.data.distribution.version) return [];
-    return [parsed.data];
+    if (!isRecord(pkg)) return [];
+    const packageName = pkg.name;
+    const version = pkg.version;
+    const publisher = readCommunityNpmPublisher(pkg);
+    if (typeof packageName !== 'string' || typeof version !== 'string') return [];
+    if (!publisher) return [];
+    try {
+      const request = normalizeNpmArtifactRequest({
+        packageName,
+        selector: version,
+        curatedExactOrigin: registryOrigin,
+      });
+      if (request.selector.kind !== 'exact' || request.selector.value !== version) return [];
+      return [{ request, publisher }];
+    } catch {
+      return [];
+    }
   });
-  return MarketplaceIndexSourceSnapshotV1Schema.parse({ source, freshness: { state: 'fresh', fetchedAtMs: null }, entries, diagnostics: [] });
+
+  const entries: MarketplaceIndexSourceSnapshotV1['entries'] = [];
+  let skippedMetadataCandidates = 0;
+  for (let index = 0; index < requests.length; index += MAX_CONCURRENT_COMMUNITY_NPM_METADATA_REQUESTS) {
+    const resolved = await Promise.allSettled(requests.slice(index, index + MAX_CONCURRENT_COMMUNITY_NPM_METADATA_REQUESTS).map(async (candidate) => ({
+      artifact: await resolveNpmArtifactMetadata({
+        request: candidate.request,
+        client: dependencies.client,
+        metadataMaxBytes: dependencies.metadataMaxBytes,
+        deadlineAtMonotonicMs: dependencies.deadlineAtMonotonicMs,
+      }),
+      publisher: candidate.publisher,
+    })));
+    for (const result of resolved) {
+      if (result.status === 'rejected') {
+        skippedMetadataCandidates += 1;
+        continue;
+      }
+      const entry = parseCommunityNpmMetadataEntry(result.value.artifact, result.value.publisher);
+      if (entry) {
+        entries.push(entry);
+      } else {
+        skippedMetadataCandidates += 1;
+      }
+    }
+  }
+
+  return MarketplaceIndexSourceSnapshotV1Schema.parse({
+    source,
+    freshness: { state: 'fresh', fetchedAtMs: null },
+    entries,
+    diagnostics: skippedMetadataCandidates > 0
+      ? [{
+        code: 'community_npm_metadata_skipped',
+        message: `Skipped metadata for ${skippedMetadataCandidates} community npm package${skippedMetadataCandidates === 1 ? '' : 's'}.`,
+      }]
+      : [],
+  });
+}
+
+function parseCommunityNpmMetadataEntry(
+  artifact: ResolvedNpmArtifact,
+  publisher: Readonly<{ id: string; displayName: string }>,
+): MarketplaceIndexSourceSnapshotV1['entries'][number] | null {
+  const happier = artifact.versionMetadata.happier;
+  if (!isRecord(happier)) return null;
+  const parsedDiscovery = MarketplaceNpmDiscoveryProjectionV1Schema.safeParse(happier.marketplaceDiscovery);
+  if (!parsedDiscovery.success || !artifact.compatibility?.projection) return null;
+  let expectedDiscovery: MarketplaceNpmDiscoveryProjectionV1;
+  try {
+    expectedDiscovery = createMarketplaceNpmDiscoveryProjectionV1({
+      compatibility: artifact.compatibility.projection,
+      manifestDigest: parsedDiscovery.data.manifestDigest,
+    });
+  } catch {
+    return null;
+  }
+  if (!marketplaceNpmDiscoveryProjectionEqualV1(parsedDiscovery.data, expectedDiscovery)) return null;
+  const happierRange = artifact.compatibility.projection.manifest.engines?.happier;
+  if (!happierRange) return null;
+  const parsed = MarketplaceIndexEntryV1Schema.safeParse({
+    pluginId: parsedDiscovery.data.pluginId,
+    publisher,
+    display: parsedDiscovery.data.display,
+    distribution: {
+      kind: 'npm',
+      registryOrigin: artifact.registryOrigin,
+      packageName: artifact.packageName,
+      version: artifact.version,
+      integrity: artifact.integrity,
+    },
+    manifestDigest: parsedDiscovery.data.manifestDigest,
+    compatibility: {
+      happier: happierRange,
+      platforms: deriveMarketplaceNpmCompatibilityPlatformsV1(artifact.compatibility.projection),
+    },
+    summary: parsedDiscovery.data.summary,
+    review: { status: 'unreviewed', reviewedAt: null },
+    categories: [],
+    media: [],
+    updatePolicy: 'manual',
+    links: {},
+  });
+  if (!parsed.success) return null;
+  return parsed.data;
 }
 
 function sourceCachePath(happyHomeDir: string | undefined, sourceUrl: string): string {
@@ -223,6 +347,7 @@ export async function loadMarketplaceIndexSource(params: Readonly<{
   happyHomeDir?: string;
   now?: () => number;
   fetchImpl?: typeof fetch;
+  communityNpmClient?: NpmRegistryJsonClient;
 }>): Promise<MarketplaceIndexSourceSnapshotV1> {
   const sourceUrl = validateSourceUrl(params.source.sourceUrl);
   const cachePath = sourceCachePath(params.happyHomeDir, sourceUrl);
@@ -248,9 +373,20 @@ export async function loadMarketplaceIndexSource(params: Readonly<{
         }
         if (!response.ok) throw new Error(`Marketplace index source fetch failed with ${response.status}`);
         const body = await readResponseBody(response);
-        const parsed = params.source.kind === 'community-npm'
-          ? parseCommunityNpmDiscovery(body, { ...params.source, kind: 'community-npm' })
-          : MarketplaceIndexSourceSnapshotV1Schema.parse(body);
+        let parsed: MarketplaceIndexSourceSnapshotV1;
+        if (params.source.kind === 'community-npm') {
+          const timeoutMs = resolvePluginRemoteFetchTimeoutMs();
+          parsed = await parseCommunityNpmDiscovery(body, { ...params.source, kind: 'community-npm' }, {
+            client: params.communityNpmClient ?? createNpmRegistryHttpsClient({
+              registryOrigin: new URL(sourceUrl).origin,
+              timeoutMs,
+            }),
+            metadataMaxBytes: resolvePluginRemoteCatalogMaxBytes(),
+            deadlineAtMonotonicMs: performance.now() + timeoutMs,
+          });
+        } else {
+          parsed = MarketplaceIndexSourceSnapshotV1Schema.parse(body);
+        }
         if (parsed.source.id !== params.source.id || parsed.source.title !== params.source.title || parsed.source.kind !== params.source.kind || parsed.source.sourceUrl !== sourceUrl) throw new Error('Marketplace index source identity does not match its configured binding');
         const invalidReview = parsed.entries.find((entry) => (
           params.source.kind === 'curated'
@@ -265,14 +401,15 @@ export async function loadMarketplaceIndexSource(params: Readonly<{
         await opened.dispose().catch(() => undefined);
       }
     } catch (error) {
+      const message = projectPluginFailureText(error);
       if (cached && now() - cached.fetchedAtMs >= 0 && now() - cached.fetchedAtMs <= CACHE_MAX_STALE_MS) {
-        return { ...cached.snapshot, freshness: { state: isOfflineRefreshError(error) ? 'stale-offline' : 'stale', fetchedAtMs: cached.fetchedAtMs, staleSinceMs: now() }, diagnostics: [...cached.snapshot.diagnostics.slice(0, 127), { code: 'marketplace_source_refresh_failed', message: error instanceof Error ? error.message : 'Marketplace index source refresh failed' }] };
+        return { ...cached.snapshot, freshness: { state: isOfflineRefreshError(error) ? 'stale-offline' : 'stale', fetchedAtMs: cached.fetchedAtMs, staleSinceMs: now() }, diagnostics: [...cached.snapshot.diagnostics.slice(0, 127), { code: 'marketplace_source_refresh_failed', message }] };
       }
       return {
         source: params.source,
         freshness: { state: cacheRead.corrupt ? 'corrupt' : 'unavailable', fetchedAtMs: null },
         entries: [],
-        diagnostics: [{ code: cacheRead.corrupt ? 'marketplace_cache_corrupt' : 'marketplace_source_unavailable', message: error instanceof Error ? error.message : 'Marketplace index source unavailable' }],
+        diagnostics: [{ code: cacheRead.corrupt ? 'marketplace_cache_corrupt' : 'marketplace_source_unavailable', message }],
       };
     }
   })();

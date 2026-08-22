@@ -4,15 +4,24 @@ import {
   type PluginHostAccessRequestV2,
 } from '@happier-dev/protocol';
 
+import type { NpmArtifactCompatibilitySelection } from '@/plugins/distribution/npm/types';
 import type { CanonicalPluginManifest } from '@/plugins/manifest/types';
 import { createDefaultPluginAccessScopeRegistry } from '@/plugins/store/install/accessScopeRegistry';
 
-import type { PluginInstallationReview } from './changeContract';
+import {
+  MAX_PLUGIN_INSTALLATION_REVIEW_STRING_LENGTH,
+  projectPluginInstallationReviewRequestInterceptor,
+  type PluginInstallationReview,
+} from './changeContract';
 
 type ReviewPublisherIdentity = PluginInstallationReview['publisherIdentity'];
 type ReviewSignature = PluginInstallationReview['signature'];
 type ReviewProvenance = PluginInstallationReview['provenance'];
 type ReviewCuration = PluginInstallationReview['curation'];
+type ReviewBlockedNewerVersions = NonNullable<
+  PluginInstallationReview['compatibility']['blockedNewerVersions']
+>;
+type ReviewRawCredentialAccess = PluginInstallationReview['rawCredentialAccess'];
 
 export type PluginInstallationReviewSourceFacts =
   | Readonly<{
@@ -48,6 +57,7 @@ export type PluginInstallationReviewSourceFacts =
       signature: ReviewSignature;
       provenance: ReviewProvenance;
       curation: ReviewCuration;
+      blockedNewerVersions?: NpmArtifactCompatibilitySelection['blockedNewerVersions'];
       marketplaceSource?: Readonly<{
         id: string;
         kind: 'curated' | 'community-npm';
@@ -55,12 +65,6 @@ export type PluginInstallationReviewSourceFacts =
       }>;
       updatePolicy: 'automatic' | 'manual' | 'pinned';
     }>;
-
-type ReviewIntegrity = Readonly<{
-  packageDigest: string;
-  manifestDigest: string;
-  installedUiArtifactDigest: string;
-}>;
 
 const hostAccessAuthorizationClassByCapability = new Map(
   PLUGIN_HOST_ACCESS_CAPABILITY_CATALOG_V2.map((entry) => [
@@ -70,15 +74,23 @@ const hostAccessAuthorizationClassByCapability = new Map(
 );
 
 const accessScopeRegistry = createDefaultPluginAccessScopeRegistry();
+const MAX_REVIEW_BLOCKED_NEWER_VERSIONS = 32;
+const MAX_REVIEW_BLOCKED_NEWER_DIAGNOSTICS = 4;
+const LONG_HAPPIER_ENGINE_REVIEW_DECLARATION = 'Declared compatible Happier CLI range';
 
 function localizedText(value: string | Readonly<{ fallback: string }>): string {
   return typeof value === 'string' ? value : value.fallback;
 }
 
-function projectHostAccess(
-  pluginId: string,
-  requests: readonly PluginHostAccessRequestV2[],
-): PluginInstallationReview['requiredHostAccess'] {
+/**
+ * One normalized, review-safe projection for every surface that presents
+ * manifest HostAccess to a human before installation or selection.
+ */
+export function projectPluginInstallationReviewHostAccess(params: Readonly<{
+  pluginId: string;
+  requests: readonly PluginHostAccessRequestV2[];
+}>): PluginInstallationReview['requiredHostAccess'] {
+  const { pluginId, requests } = params;
   return Object.freeze(requests.map((request) => {
     const authorizationClass = hostAccessAuthorizationClassByCapability.get(request.capability);
     if (!authorizationClass) {
@@ -105,7 +117,7 @@ function projectOptionalHostAccess(
   pluginId: string,
   requests: CanonicalPluginManifest['hostAccess']['optional'],
 ): PluginInstallationReview['optionalHostAccess'] {
-  const projected = projectHostAccess(pluginId, requests);
+  const projected = projectPluginInstallationReviewHostAccess({ pluginId, requests });
   for (const request of projected) {
     if (request.authorizationClass !== 'hostResourceSelection') {
       throw new Error(`Optional plugin host access '${request.id}' is not a host-owned resource selection`);
@@ -132,6 +144,14 @@ function projectContributions(
     const count = entry.readEntries(manifest.contributes).length;
     return count > 0 ? [Object.freeze({ family: entry.manifestKey, count })] : [];
   }));
+}
+
+function projectRequestInterceptors(
+  manifest: CanonicalPluginManifest,
+): PluginInstallationReview['requestInterceptors'] {
+  return Object.freeze(manifest.contributes.requestInterceptors.map((contribution) => (
+    projectPluginInstallationReviewRequestInterceptor(contribution)
+  )));
 }
 
 function projectDeclaredUiArtifactIds(
@@ -173,10 +193,93 @@ function projectUpdateChannel(
   });
 }
 
+function projectBlockedNewerVersions(
+  blockedNewerVersions: NpmArtifactCompatibilitySelection['blockedNewerVersions'] | undefined,
+): ReviewBlockedNewerVersions | undefined {
+  if (!blockedNewerVersions || blockedNewerVersions.length === 0) return undefined;
+  return Object.freeze(blockedNewerVersions
+    .slice(0, MAX_REVIEW_BLOCKED_NEWER_VERSIONS)
+    .map((blocked) => Object.freeze({
+      version: blocked.version,
+      diagnostics: Object.freeze(blocked.diagnostics
+        .slice(0, MAX_REVIEW_BLOCKED_NEWER_DIAGNOSTICS)
+        .map((diagnostic) => Object.freeze({ ...diagnostic }))),
+    })));
+}
+
+function projectHappierEngineForReview(
+  happierEngine: string | undefined,
+): string | undefined {
+  if (!happierEngine) return undefined;
+  return happierEngine.length <= MAX_PLUGIN_INSTALLATION_REVIEW_STRING_LENGTH
+    ? happierEngine
+    : LONG_HAPPIER_ENGINE_REVIEW_DECLARATION;
+}
+
+function projectRawCredentialRequest(
+  request: ReviewRawCredentialAccess[number]['request'],
+): ReviewRawCredentialAccess[number]['request'] {
+  if (request.kind === 'httpHeaders') {
+    return Object.freeze({
+      kind: 'httpHeaders',
+      origin: request.origin,
+      headerNames: Object.freeze([...request.headerNames]),
+    });
+  }
+  if (request.kind === 'environment') {
+    return Object.freeze({
+      kind: 'environment',
+      keys: Object.freeze([...request.keys]),
+    });
+  }
+  return Object.freeze({
+    kind: 'files',
+    fileIds: Object.freeze([...request.fileIds]),
+  });
+}
+
+function projectRawVoiceCredentialAccess(
+  manifest: CanonicalPluginManifest,
+): ReviewRawCredentialAccess {
+  return Object.freeze(manifest.contributes.voiceProviders.flatMap((contribution) => {
+    const credentials = contribution.credentials;
+    if (!credentials) return [];
+    return credentials.sources.flatMap((source) => (
+      (source.rawGrants ?? []).map((grant) => {
+        const sourceClass = source.kind === 'savedSecret'
+          ? Object.freeze({
+              kind: 'savedSecret' as const,
+              secretKinds: Object.freeze([...source.secretKinds]),
+            })
+          : Object.freeze({
+              kind: 'connectedAccount' as const,
+              service: Object.freeze(
+                typeof source.service === 'string'
+                  ? { pluginId: manifest.id, localId: source.service }
+                  : { pluginId: source.service.pluginId, localId: source.service.localId },
+              ),
+            });
+        return Object.freeze({
+          accessMode: 'raw' as const,
+          contribution: Object.freeze({ pluginId: manifest.id, localId: contribution.id }),
+          credentialSlot: Object.freeze({
+            id: credentials.slot.id,
+            title: localizedText(credentials.slot.title),
+            purpose: credentials.slot.purpose,
+          }),
+          sourceClass,
+          realm: grant.realm,
+          phase: grant.phase,
+          request: projectRawCredentialRequest(grant.request),
+        });
+      })
+    ));
+  }));
+}
+
 export function projectPluginInstallationReview(params: Readonly<{
   manifest: CanonicalPluginManifest;
   source: PluginInstallationReviewSourceFacts;
-  integrity: ReviewIntegrity;
   uiArtifacts: Readonly<{
     verification: 'verified' | 'unavailable';
     contributionIds: readonly string[];
@@ -184,6 +287,9 @@ export function projectPluginInstallationReview(params: Readonly<{
 }>): PluginInstallationReview {
   const declaredUiArtifactIds = projectDeclaredUiArtifactIds(params.manifest);
   const providedUiArtifactIds = Object.freeze([...new Set(params.uiArtifacts.contributionIds)].sort());
+  const blockedNewerVersions = params.source.kind === 'npm'
+    ? projectBlockedNewerVersions(params.source.blockedNewerVersions)
+    : undefined;
   if (
     params.uiArtifacts.verification === 'verified'
     && (
@@ -196,6 +302,8 @@ export function projectPluginInstallationReview(params: Readonly<{
   const contributionIds = params.uiArtifacts.verification === 'verified'
     ? providedUiArtifactIds
     : declaredUiArtifactIds;
+  const happierEngine = projectHappierEngineForReview(params.manifest.engines?.happier);
+  const rawCredentialAccess = projectRawVoiceCredentialAccess(params.manifest);
   return Object.freeze({
     pluginId: params.manifest.id,
     displayName: localizedText(params.manifest.displayName),
@@ -211,27 +319,28 @@ export function projectPluginInstallationReview(params: Readonly<{
       ...('integrity' in params.source ? { integrity: params.source.integrity } : {}),
     }),
     updateChannel: projectUpdateChannel(params.source),
-    integrity: Object.freeze({
-      packageDigest: params.integrity.packageDigest,
-      manifestDigest: params.integrity.manifestDigest,
-      uiArtifactDigest: params.integrity.installedUiArtifactDigest,
-    }),
     signature: Object.freeze({ ...params.source.signature }),
     provenance: Object.freeze({ ...params.source.provenance }),
     curation: Object.freeze({ ...params.source.curation }),
     executableRealms: projectExecutableRealms(params.manifest),
     contributions: projectContributions(params.manifest),
+    requestInterceptors: projectRequestInterceptors(params.manifest),
     uiArtifacts: Object.freeze({
       status: contributionIds.length === 0
         ? 'none'
         : params.uiArtifacts.verification,
       contributionIds,
     }),
-    requiredHostAccess: projectHostAccess(params.manifest.id, params.manifest.hostAccess.required),
+    requiredHostAccess: projectPluginInstallationReviewHostAccess({
+      pluginId: params.manifest.id,
+      requests: params.manifest.hostAccess.required,
+    }),
     optionalHostAccess: projectOptionalHostAccess(params.manifest.id, params.manifest.hostAccess.optional),
+    rawCredentialAccess,
     compatibility: Object.freeze({
-      happier: params.manifest.engines.happier,
+      ...(happierEngine ? { happier: happierEngine } : {}),
       runtimeApiVersion: params.manifest.runtime.apiVersion,
+      ...(blockedNewerVersions ? { blockedNewerVersions } : {}),
     }),
     updatePolicy: params.source.updatePolicy,
   });

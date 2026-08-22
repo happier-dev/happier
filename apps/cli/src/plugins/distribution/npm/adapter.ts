@@ -79,6 +79,8 @@ export async function resolveAndDownloadNpmArtifact(params: Readonly<{
   signingKeysMaxBytes?: number;
   attestationsMaxBytes?: number;
   timeoutMs?: number;
+  /** Automatic updates cannot acquire an artifact without generated compatibility facts. */
+  requireCompatibleProjection?: boolean;
   client: NpmRegistryArtifactClient;
 }>): Promise<DownloadedNpmArtifactCandidate> {
   const timeoutMs = params.timeoutMs ?? 60_000;
@@ -86,6 +88,12 @@ export async function resolveAndDownloadNpmArtifact(params: Readonly<{
   const deadlineAtMonotonicMs = performance.now() + timeoutMs;
   const request = normalizeNpmArtifactRequest(params.input);
   const resolved = await resolveNpmArtifactMetadata({ request, client: params.client, metadataMaxBytes: params.metadataMaxBytes, deadlineAtMonotonicMs });
+  const mayDeferCompatibilityToPresentUserReview = (
+    !params.requireCompatibleProjection && request.selector.kind === 'exact'
+  );
+  if (!resolved.compatibility?.automaticEligible && !mayDeferCompatibilityToPresentUserReview) {
+    throw new Error('Npm artifact selection requires a compatible generated compatibility projection before archive download');
+  }
   const registryKeys = resolved.signatures.length === 0 ? [] : parseRegistryKeys(await params.client.getJson({
     url: `${request.registryOrigin}/-/npm/v1/keys`,
     maxBytes: params.signingKeysMaxBytes ?? 1024 * 1024,
@@ -102,5 +110,9 @@ export async function resolveAndDownloadNpmArtifact(params: Readonly<{
     maxBytes: params.attestationsMaxBytes ?? 2 * 1024 * 1024,
     deadlineAtMonotonicMs,
   });
-  return { ...candidate, provenance };
+  return {
+    ...candidate,
+    provenance,
+    ...(resolved.compatibility ? { compatibility: resolved.compatibility } : {}),
+  };
 }

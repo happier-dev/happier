@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -14,14 +13,12 @@ import { createPluginRegistryTransactionService } from './service';
 
 const nextStateRevision: PluginInstallationStateRevision = {
   t: 'happier_plugin_installations_v1', schemaVersion: 1, revisionId: 'state-1', createdAtMs: 1,
-  plugins: {}, health: {}, rollbackRetention: [], healthTombstones: [],
+  plugins: {}, rollbackRetention: [],
 };
-const nextStateDigest = `sha256:${createHash('sha256').update(JSON.stringify(nextStateRevision, null, 2)).digest('hex')}` as const;
-
 function next(current: PluginRegistryCommitRecord, transactionId: string): PluginRegistryCommitRecord {
   return {
     ...current, revision: current.revision + 1, baseRevision: current.revision, transactionId,
-    installationState: { revisionId: `state-${current.revision + 1}`, digest: nextStateDigest },
+    installationState: { revisionId: `state-${current.revision + 1}` },
     createdAtMs: current.createdAtMs + 1,
   };
 }
@@ -32,19 +29,23 @@ async function setup() {
   const coordinator = createPluginRegistryCommitCoordinator({ paths, owner: { pid: 300, instanceId: 'daemon-a' } });
   await coordinator.commit({
     transactionId: 'bootstrap', baseRevision: null,
+    expectedCurrent: null,
     buildNext: () => createEmptyPluginRegistryCommitRecord({ transactionId: 'bootstrap', createdAtMs: 1, creatorPid: 300, creatorInstanceId: 'daemon-a' }),
   });
   await persistInstallationStateRevision({ paths, state: nextStateRevision });
-  return { paths, coordinator };
+  const current = await coordinator.readCurrent();
+  if (!current) throw new Error('Expected bootstrap current record');
+  return { paths, coordinator, current };
 }
 
 describe('plugin registry transaction service', () => {
   it('aborts a prepared candidate exactly once on pre-commit failure and leaves committed state exact', async () => {
-    const { paths, coordinator } = await setup();
+    const { paths, coordinator, current } = await setup();
     let aborts = 0;
     const service = createPluginRegistryTransactionService({ coordinator });
     const result = await service.execute({
       transactionId: 'tx-pre-fail', baseRevision: 0,
+      expectedCurrent: current,
       prepare: async () => ({ id: 'candidate' }),
       validateAndActivate: async () => { throw new Error('registration invalid'); },
       persist: async (_prepared, current) => next(current!, 'tx-pre-fail'),
@@ -61,13 +62,14 @@ describe('plugin registry transaction service', () => {
   });
 
   it('keeps a successful commit authoritative when reconciliation fails and does not retire the prior generation', async () => {
-    const { paths, coordinator } = await setup();
+    const { paths, coordinator, current } = await setup();
     let aborts = 0;
     let retires = 0;
     let cleanups = 0;
     const service = createPluginRegistryTransactionService({ coordinator });
     const result = await service.execute({
       transactionId: 'tx-post-fail', baseRevision: 0,
+      expectedCurrent: current,
       prepare: async () => ({ id: 'candidate' }),
       validateAndActivate: async () => undefined,
       persist: async (_prepared, current) => next(current!, 'tx-post-fail'),
@@ -90,12 +92,13 @@ describe('plugin registry transaction service', () => {
   });
 
   it('reports outcomeUnknown when a durable candidate cannot be confirmed as adopted', async () => {
-    const { coordinator } = await setup();
+    const { coordinator, current } = await setup();
     const reconcile = vi.fn(async () => ({ status: 'reconciled' as const }));
     const service = createPluginRegistryTransactionService({ coordinator });
 
     await expect(service.execute({
       transactionId: 'tx-adoption-fail', baseRevision: 0,
+      expectedCurrent: current,
       prepare: async () => ({ id: 'candidate' }),
       validateAndActivate: async () => undefined,
       persist: async (_prepared, current) => next(current!, 'tx-adoption-fail'),
@@ -119,6 +122,8 @@ describe('plugin registry transaction service', () => {
       owner: { pid: 301, instanceId: 'daemon-durability-pending' },
       flushCommit: async () => { throw new Error('fsync failed'); },
     });
+    const current = await coordinator.readCurrent();
+    if (!current) throw new Error('Expected bootstrap current record');
     let aborts = 0;
     let adopts = 0;
     let reconciles = 0;
@@ -128,6 +133,7 @@ describe('plugin registry transaction service', () => {
 
     await expect(service.execute({
       transactionId: 'tx-durability-pending', baseRevision: 0,
+      expectedCurrent: current,
       prepare: async () => ({ id: 'candidate' }),
       validateAndActivate: async () => undefined,
       persist: async (_prepared, current) => next(current!, 'tx-durability-pending'),
@@ -183,6 +189,7 @@ describe('plugin registry transaction service', () => {
 
     const execution = service.execute({
       transactionId: 'tx-first-install', baseRevision: null,
+      expectedCurrent: null,
       prepare: async () => ({ id: 'candidate' }),
       validateAndActivate: async (candidate) => candidate.id,
       persist: async () => published,
@@ -230,6 +237,7 @@ describe('plugin registry transaction service', () => {
 
     await expect(service.execute({
       transactionId: 'tx-durability-adoption-fail', baseRevision: 0,
+      expectedCurrent: current,
       prepare: async () => ({ id: 'candidate' }),
       validateAndActivate: async () => undefined,
       persist: async () => published,
@@ -251,7 +259,7 @@ describe('plugin registry transaction service', () => {
   });
 
   it('does not use persisted transaction identity as in-flight execution dedupe', async () => {
-    const { coordinator } = await setup();
+    const { coordinator, current } = await setup();
     const order: string[] = [];
     const service = createPluginRegistryTransactionService({ coordinator });
     let releaseFirst!: () => void;
@@ -260,6 +268,7 @@ describe('plugin registry transaction service', () => {
     const firstPrepared = new Promise<void>((resolve) => { markFirstPrepared = resolve; });
     const operation = {
       transactionId: 'tx-green', baseRevision: 0,
+      expectedCurrent: current,
       prepare: async () => {
         order.push('prepare-first');
         markFirstPrepared();
@@ -301,6 +310,7 @@ describe('plugin registry transaction service', () => {
 
     await expect(service.execute({
       transactionId: 'tx-read-fail', baseRevision: 0,
+      expectedCurrent: null,
       prepare: async () => ({ id: 'candidate' }),
       validateAndActivate: async () => undefined,
       persist: async () => { throw new Error('persist must not run'); },
@@ -314,11 +324,12 @@ describe('plugin registry transaction service', () => {
   });
 
   it('surfaces abort failure on a stale-base conflict', async () => {
-    const { coordinator } = await setup();
+    const { coordinator, current } = await setup();
     const service = createPluginRegistryTransactionService({ coordinator });
 
     await expect(service.execute({
       transactionId: 'tx-conflict-abort-fail', baseRevision: 99,
+      expectedCurrent: current,
       prepare: async () => ({ id: 'candidate' }),
       validateAndActivate: async () => undefined,
       persist: async (_prepared, current) => next(current!, 'must-not-persist'),
@@ -335,8 +346,11 @@ describe('plugin registry transaction service', () => {
   it('classifies retirement and cleanup failures truthfully after commit', async () => {
     const first = await setup();
     const retirementService = createPluginRegistryTransactionService({ coordinator: first.coordinator });
+    const firstCurrent = await first.coordinator.readCurrent();
+    if (!firstCurrent) throw new Error('Expected bootstrap current record');
     await expect(retirementService.execute({
       transactionId: 'tx-retirement-fail', baseRevision: 0,
+      expectedCurrent: firstCurrent,
       prepare: async () => ({ id: 'candidate' }),
       validateAndActivate: async () => undefined,
       persist: async (_prepared, current) => next(current!, 'tx-retirement-fail'),
@@ -349,8 +363,11 @@ describe('plugin registry transaction service', () => {
 
     const second = await setup();
     const cleanupService = createPluginRegistryTransactionService({ coordinator: second.coordinator });
+    const secondCurrent = await second.coordinator.readCurrent();
+    if (!secondCurrent) throw new Error('Expected bootstrap current record');
     await expect(cleanupService.execute({
       transactionId: 'tx-cleanup-fail', baseRevision: 0,
+      expectedCurrent: secondCurrent,
       prepare: async () => ({ id: 'candidate' }),
       validateAndActivate: async () => undefined,
       persist: async (_prepared, current) => next(current!, 'tx-cleanup-fail'),
@@ -360,5 +377,81 @@ describe('plugin registry transaction service', () => {
       retirePrevious: async () => undefined,
       cleanup: async () => { throw new Error('cleanup failed'); },
     })).resolves.toMatchObject({ status: 'committed', pendingSurfaces: ['cleanup'], message: 'cleanup failed' });
+  });
+
+  it('projects transaction lifecycle error inputs through the redacted head bound', async () => {
+    const rawFailure = [
+      'BEGIN_FAILURE client_secret=registry-lifecycle-secret',
+      '🙂'.repeat(1_200),
+      'END_STACK',
+    ].join(' ');
+    const assertProjected = (message: string | undefined): void => {
+      const actual = message ?? '';
+      expect(actual).toMatch(/^BEGIN_FAILURE/u);
+      expect(actual).not.toContain('registry-lifecycle-secret');
+      expect(actual).not.toContain('END_STACK');
+      expect(Buffer.byteLength(actual, 'utf8')).toBeLessThanOrEqual(2_048);
+    };
+    const { coordinator, current } = await setup();
+    const service = createPluginRegistryTransactionService({ coordinator });
+
+    const activationFailure = await service.execute({
+      transactionId: 'tx-projected-activation-failure', baseRevision: 0,
+      expectedCurrent: current,
+      prepare: async () => ({ id: 'candidate' }),
+      validateAndActivate: async () => { throw new Error(rawFailure); },
+      persist: async (_prepared, currentRecord) => next(currentRecord!, 'tx-projected-activation-failure'),
+      abortPrepared: async () => { throw new Error(rawFailure); },
+      adopt: async () => undefined,
+      reconcile: async () => ({ status: 'reconciled' as const }),
+      retirePrevious: async () => undefined,
+      cleanup: async () => undefined,
+    });
+    expect(activationFailure).toMatchObject({ status: 'precommit_failed', phase: 'validateAndActivate' });
+    if (activationFailure.status !== 'precommit_failed') throw new Error('Expected precommit failure');
+    assertProjected(activationFailure.message);
+    assertProjected(activationFailure.abortMessage);
+
+    const reconciliationFailure = await service.execute({
+      transactionId: 'tx-projected-reconciliation-failure', baseRevision: 0,
+      expectedCurrent: current,
+      prepare: async () => ({ id: 'candidate' }),
+      validateAndActivate: async () => undefined,
+      persist: async (_prepared, currentRecord) => next(currentRecord!, 'tx-projected-reconciliation-failure'),
+      abortPrepared: async () => undefined,
+      adopt: async () => undefined,
+      reconcile: async () => ({ status: 'retryable' as const, message: rawFailure }),
+      retirePrevious: async () => undefined,
+      cleanup: async () => undefined,
+    });
+    expect(reconciliationFailure).toMatchObject({ status: 'committed', pendingSurfaces: ['reconciliation'] });
+    if (reconciliationFailure.status !== 'committed') throw new Error('Expected committed transaction');
+    assertProjected(reconciliationFailure.message);
+
+    const durabilityService = createPluginRegistryTransactionService({
+      coordinator: {
+        readCurrent: async () => current,
+        commit: async () => ({
+          status: 'committed_durability_pending' as const,
+          record: next(current, 'tx-projected-durability-failure'),
+          message: rawFailure,
+        }),
+      },
+    });
+    const durabilityFailure = await durabilityService.execute({
+      transactionId: 'tx-projected-durability-failure', baseRevision: 0,
+      expectedCurrent: current,
+      prepare: async () => ({ id: 'candidate' }),
+      validateAndActivate: async () => undefined,
+      persist: async (_prepared, currentRecord) => next(currentRecord!, 'tx-projected-durability-failure'),
+      abortPrepared: async () => undefined,
+      adopt: async () => undefined,
+      reconcile: async () => ({ status: 'reconciled' as const }),
+      retirePrevious: async () => undefined,
+      cleanup: async () => undefined,
+    });
+    expect(durabilityFailure).toMatchObject({ status: 'outcomeUnknown', phase: 'durability' });
+    if (durabilityFailure.status !== 'outcomeUnknown') throw new Error('Expected durability ambiguity');
+    assertProjected(durabilityFailure.message);
   });
 });

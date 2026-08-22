@@ -8,29 +8,35 @@ import { createLocalPathPluginDistributionIdentity, createPluginTrustRecord } fr
 import { PluginStateFileV1Schema } from '@/plugins/store/state';
 import {
   createPluginRegistryStateStore,
+  type CommitPluginRegistryInstallationInput,
   type PluginRegistryRuntimeCandidate,
   type PluginRegistryRuntimeLifecycle,
 } from '@/plugins/store/registry/currentState';
 import {
   PluginRegistryCommitRecordSchema,
   readPluginRegistryCommitRecord,
+  replacePluginRegistryCommitRecord,
 } from '@/plugins/store/registry/commitRecord';
 import {
   PluginInstallationStateRevisionSchema,
+  prepareOwnedImmutablePluginGeneration,
   persistInstallationStateRevision,
   readInstallationStateRevision,
 } from '@/plugins/store/registry/generationStore';
+import { createDaemonPluginRuntimeOwner } from '@/plugins/daemon/runtimeOwner';
+import type { StablePluginConnectedAccountsOwner } from '@/plugins/runtime/invocation/services/connectedAccounts';
 import { createPluginRegistryCommitCoordinator } from '@/plugins/store/registry/commitCoordinator';
 import { createPluginRegistryTransactionService } from '@/plugins/store/registry/service';
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
-import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
-import { createDaemonPluginChangeService } from '@/plugins/daemon/changeService';
+import {
+  resolveExecutablePluginRuntimeRegistry,
+  type ResolvedExecutablePluginRuntimeRegistry,
+} from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import { readInstalledPluginCatalog } from '@/plugins/projection/catalog/installed';
 import { joinInstalledCatalogRuntimeIntrospection } from '@/plugins/projection/introspection/catalogSnapshot';
 
 import { createPluginReloadController } from './controller';
 import { createDaemonPluginRegistryRuntimeLifecycle } from './registryRuntimeLifecycle';
-import type { SupervisedPluginActivationAttempt } from '../lifecycle/manager';
 
 vi.mock('@/plugins/projection/registry/resolveBuiltInContributions', () => ({
   resolveBuiltInContributions: () => Object.freeze({
@@ -39,10 +45,148 @@ vi.mock('@/plugins/projection/registry/resolveBuiltInContributions', () => ({
   }),
 }));
 
+type FixtureInstallInput = Omit<CommitPluginRegistryInstallationInput, 'preparedGeneration'> & Readonly<{
+  sourceRootPath: string;
+  manifestRelativePath: string;
+}>;
+
+function createUnusedConnectedAccountsOwner(): StablePluginConnectedAccountsOwner {
+  return Object.freeze({
+    getBinding: vi.fn(async () => null),
+    requestSelection: vi.fn(async () => {
+      throw new Error('unexpected connected-account selection');
+    }),
+    materialize: vi.fn(async () => {
+      throw new Error('unexpected connected-account materialization');
+    }),
+    listAccounts: async () => {
+        throw new Error('Connected Account listing is outside this fixture');
+    },
+    materializeListedAccount: async () => {
+        throw new Error('Exact-listed Connected Account materialization is outside this fixture');
+    },
+    watch: vi.fn(() => Object.freeze({ dispose() {} })),
+  });
+}
+
+async function installFixtureCandidate(
+  store: ReturnType<typeof createPluginRegistryStateStore>,
+  input: FixtureInstallInput,
+) {
+  const { sourceRootPath, manifestRelativePath, ...installation } = input;
+  const preparedGeneration = await prepareOwnedImmutablePluginGeneration({
+    paths: store.paths,
+    pluginId: input.pluginId,
+    sourceRootPath,
+    manifestRelativePath,
+    distribution: input.trust.distribution,
+    updatePolicy: input.updatePolicy,
+    createdAtMs: Date.now(),
+  });
+  try {
+    return await store.install({ ...installation, preparedGeneration });
+  } finally {
+    await preparedGeneration.cleanup();
+  }
+}
+
+async function seedLegacyAvailabilityInstallationState(
+  store: ReturnType<typeof createPluginRegistryStateStore>,
+  pluginId: string,
+): Promise<void> {
+  const current = await readPluginRegistryCommitRecord(store.paths);
+  if (!current) throw new Error('Expected an installed plugin registry commit');
+  const currentState = await readInstallationStateRevision({
+    paths: store.paths,
+    reference: current.installationState,
+  });
+  const installation = currentState.plugins[pluginId];
+  if (!installation) throw new Error(`Expected installation state for '${pluginId}'`);
+  const legacyInstallation = { ...installation };
+  delete legacyInstallation.materializationId;
+  delete legacyInstallation.availability;
+  const createdAtMs = Math.max(Date.now(), current.createdAtMs + 1);
+  const legacyState = PluginInstallationStateRevisionSchema.parse({
+    ...currentState,
+    revisionId: `legacy-availability-${current.revision + 1}`,
+    createdAtMs,
+    plugins: {
+      ...currentState.plugins,
+      [pluginId]: legacyInstallation,
+    },
+  });
+  const installationState = await persistInstallationStateRevision({
+    paths: store.paths,
+    state: legacyState,
+  });
+  const next = PluginRegistryCommitRecordSchema.parse({
+    ...current,
+    revision: current.revision + 1,
+    transactionId: `legacy-availability-${current.revision + 1}`,
+    baseRevision: current.revision,
+    installationState,
+    createdAtMs,
+  });
+  await replacePluginRegistryCommitRecord({
+    paths: store.paths,
+    expectedCurrent: current,
+    next,
+  });
+}
+
+async function seedUnapprovedInstallationState(
+  store: ReturnType<typeof createPluginRegistryStateStore>,
+  pluginId: string,
+): Promise<void> {
+  const current = await readPluginRegistryCommitRecord(store.paths);
+  if (!current) throw new Error('Expected an installed plugin registry commit');
+  const currentState = await readInstallationStateRevision({
+    paths: store.paths,
+    reference: current.installationState,
+  });
+  const installation = currentState.plugins[pluginId];
+  if (!installation?.trust) throw new Error(`Expected trusted installation for '${pluginId}'`);
+  const createdAtMs = Math.max(Date.now(), current.createdAtMs + 1);
+  const unapprovedInstallation = { ...installation };
+  delete unapprovedInstallation.trust;
+  const state = PluginInstallationStateRevisionSchema.parse({
+    ...currentState,
+    revisionId: `unapproved-${pluginId}-${current.revision + 1}`,
+    createdAtMs,
+    plugins: {
+      ...currentState.plugins,
+      [pluginId]: unapprovedInstallation,
+    },
+  });
+  const installationState = await persistInstallationStateRevision({
+    paths: store.paths,
+    state,
+  });
+  const next = PluginRegistryCommitRecordSchema.parse({
+    ...current,
+    revision: current.revision + 1,
+    transactionId: `unapproved-${pluginId}-${current.revision + 1}`,
+    baseRevision: current.revision,
+    installationState,
+    createdAtMs,
+  });
+  await replacePluginRegistryCommitRecord({
+    paths: store.paths,
+    expectedCurrent: current,
+    next,
+  });
+}
+
 async function createExecutableInstallFixture(
   happyHomeDir: string,
   pluginId: string,
-  options?: Readonly<{ externalSessionHooks?: boolean; descriptorOnly?: boolean }>,
+  options?: Readonly<{
+    externalSessionHooks?: boolean;
+    daemonDatabase?: boolean;
+    descriptorOnly?: boolean;
+    primaryRuntimeBootstrapFailure?: boolean;
+    startupCrash?: boolean;
+  }>,
 ) {
   const pluginRoot = join(happyHomeDir, `${pluginId}-source`);
   const counterPath = join(happyHomeDir, `${pluginId}-executions.log`);
@@ -65,9 +209,17 @@ async function createExecutableInstallFixture(
         title: 'Identity',
         scopes: ['global'],
         surfaces: ['cli'],
-        placement: 'commandPalette',
+        execution: { target: 'daemon' },
+        placementBindings: ['commandPalette'],
         dangerLevel: 'safe',
       }],
+      ...(options?.daemonDatabase ? {
+        daemonDatabases: [{
+          id: 'state',
+          migrations: [{ version: 1, id: 'create-state' }],
+          incumbentQueryFixtureId: 'state-readable',
+        }],
+      } : {}),
       ...(options?.externalSessionHooks ? {
         agents: [{
           id: agentId,
@@ -78,7 +230,6 @@ async function createExecutableInstallFixture(
               sources: [{
                 sourceKind: 'fixture',
                 schema: {
-                  passthrough: false,
                   fields: [{ name: 'kind', kind: 'literal', value: 'fixture' }],
                 },
                 key: { segments: [{ kind: 'literal', value: 'fixture' }] },
@@ -88,20 +239,50 @@ async function createExecutableInstallFixture(
           },
         }],
       } : {}),
+      ...(options?.primaryRuntimeBootstrapFailure ? {
+        agents: [{
+          id: agentId,
+          title: `${pluginId} Agent`,
+          runtime: { kind: 'custom' },
+          primary: 'sessions',
+          capabilities: {
+            sessions: {
+              open: ['create'],
+              delivery: ['newTurn'],
+              cancel: true,
+            },
+          },
+        }],
+      } : {}),
     },
   })), 'utf8');
   await writeFile(join(pluginRoot, 'daemon.mjs'), `
     import { appendFileSync } from 'node:fs';
+    ${options?.primaryRuntimeBootstrapFailure ? `
+    import { createBootstrapFailureRuntime } from './agent-runtime.mjs';
+    ` : ''}
+    ${options?.startupCrash ? `
+    throw new Error('external plugin startup crash');
+    ` : ''}
     appendFileSync(${JSON.stringify(counterPath)}, 'module\\n');
     export function activate(api) {
       appendFileSync(${JSON.stringify(counterPath)}, 'activate\\n');
       api.actions.register('identity', async (_input, context) => {
-        await context.services.storage.local.set('retained-owner', ${JSON.stringify(pluginId)});
+        await context.services.storage.daemon.set('retained-owner', ${JSON.stringify(pluginId)});
         return {
           pluginId: ${JSON.stringify(pluginId)},
-          retainedOwner: await context.services.storage.local.get('retained-owner'),
+          retainedOwner: await context.services.storage.daemon.get('retained-owner'),
         };
       });
+      ${options?.primaryRuntimeBootstrapFailure ? `
+      api.agents.register(${JSON.stringify(agentId)}, createBootstrapFailureRuntime, {
+        sessionRunnerFactory: {
+          module: './agent-runtime.mjs',
+          export: 'createBootstrapFailureRuntime',
+          runtimeApiVersion: 1,
+        },
+      });
+      ` : ''}
       ${options?.externalSessionHooks ? `
       api.agents.registerExternalSessions(${JSON.stringify(agentId)}, {
         async resolveSource(request) {
@@ -156,8 +337,8 @@ async function createExecutableInstallFixture(
           }],
         }],
         async resolveInstallation(_request, context) {
-          await context.services.storage.local.set('retained-hook-owner', ${JSON.stringify(pluginId)});
-          const owner = await context.services.storage.local.get('retained-hook-owner');
+          await context.services.storage.daemon.set('retained-hook-owner', ${JSON.stringify(pluginId)});
+          const owner = await context.services.storage.daemon.get('retained-hook-owner');
           return {
             ok: true,
             value: {
@@ -180,6 +361,19 @@ async function createExecutableInstallFixture(
       return async () => appendFileSync(${JSON.stringify(counterPath)}, 'cleanup\\n');
     }
   `, 'utf8');
+  if (options?.primaryRuntimeBootstrapFailure) {
+    await writeFile(join(pluginRoot, 'agent-runtime.mjs'), `
+      import { appendFileSync } from 'node:fs';
+      export async function createBootstrapFailureRuntime({ signal }) {
+        appendFileSync(${JSON.stringify(counterPath)}, 'bootstrap\\n');
+        if (signal.aborted) throw new Error('candidate bootstrap was already aborted');
+        signal.addEventListener('abort', () => {
+          appendFileSync(${JSON.stringify(counterPath)}, 'bootstrap-aborted\\n');
+        }, { once: true });
+        throw new Error('candidate primary bootstrap rejected');
+      }
+    `, 'utf8');
+  }
   const distribution = await createLocalPathPluginDistributionIdentity(pluginRoot);
   const trust = createPluginTrustRecord({
     pluginId,
@@ -262,7 +456,7 @@ describe('daemon plugin registry runtime lifecycle owner', () => {
     });
 
     await store.initialize();
-    await expect(store.install(retained.input)).resolves.toMatchObject({ status: 'committed' });
+    await expect(installFixtureCandidate(store, retained.input)).resolves.toMatchObject({ status: 'committed' });
     const beforeReload = await reloadController.acquireRuntimeRegistry();
     const oldHooks = beforeReload.registry.agentRuntimesByAgentId
       .get(retained.agentId)?.externalSessionHooks;
@@ -287,7 +481,7 @@ describe('daemon plugin registry runtime lifecycle owner', () => {
         }],
       },
     });
-    await expect(store.install(peer.input)).resolves.toMatchObject({ status: 'committed' });
+    await expect(installFixtureCandidate(store, peer.input)).resolves.toMatchObject({ status: 'committed' });
     await expect(oldHooks.resolveInstallation(resolveRequest()))
       .resolves.toMatchObject({
         value: {
@@ -400,8 +594,8 @@ describe('daemon plugin registry runtime lifecycle owner', () => {
     await firstStore.initialize();
 
     await expect(Promise.all([
-      firstStore.install(first.input),
-      secondStore.install(second.input),
+      installFixtureCandidate(firstStore, first.input),
+      installFixtureCandidate(secondStore, second.input),
     ])).resolves.toEqual([
       expect.objectContaining({ status: 'committed' }),
       expect.objectContaining({ status: 'committed' }),
@@ -496,9 +690,9 @@ describe('daemon plugin registry runtime lifecycle owner', () => {
     ]);
     await store.initialize();
 
-    const firstInstall = store.install(first.input);
+    const firstInstall = installFixtureCandidate(store, first.input);
     await firstPublicationEntered;
-    const secondInstall = store.install(second.input);
+    const secondInstall = installFixtureCandidate(store, second.input);
     await secondPublicationEntered;
 
     releaseSecondPublication();
@@ -570,7 +764,7 @@ describe('daemon plugin registry runtime lifecycle owner', () => {
     );
     await store.initialize();
 
-    const retainedInstall = store.install(retained.input);
+    const retainedInstall = installFixtureCandidate(store, retained.input);
     await publicationEntered;
     const committed = await readPluginRegistryCommitRecord(store.paths);
     if (!committed) throw new Error('Expected retained fixture commit');
@@ -591,6 +785,7 @@ describe('daemon plugin registry runtime lifecycle owner', () => {
 
     await expect(runtimeLifecycle.prepare({
       mutationKind: 'install',
+      runningSessionDisposition: 'retainRunningSessions',
       changedPluginIds: Object.freeze(['acme.peer-prepare-failure.later']),
       runtimeCatalog: failingRuntimeCatalog,
       installationState,
@@ -622,8 +817,8 @@ describe('daemon plugin registry runtime lifecycle owner', () => {
     const second = await createExecutableInstallFixture(happyHomeDir, 'acme.sequential.second');
     await store.initialize();
 
-    await expect(store.install(first.input)).resolves.toMatchObject({ status: 'committed' });
-    await expect(store.install(second.input)).resolves.toMatchObject({ status: 'committed' });
+    await expect(installFixtureCandidate(store, first.input)).resolves.toMatchObject({ status: 'committed' });
+    await expect(installFixtureCandidate(store, second.input)).resolves.toMatchObject({ status: 'committed' });
     for (const { counterPath } of [first, second]) {
       const lines = (await readFile(counterPath, 'utf8')).trim().split('\n');
       expect(lines.filter((line) => line === 'module')).toHaveLength(1);
@@ -654,7 +849,8 @@ describe('daemon plugin registry runtime lifecycle owner', () => {
           title: 'Identity',
           scopes: ['global'],
           surfaces: ['cli'],
-          placement: 'commandPalette',
+          execution: { target: 'daemon' },
+          placementBindings: ['commandPalette'],
           dangerLevel: 'safe',
         }],
       },
@@ -672,7 +868,7 @@ describe('daemon plugin registry runtime lifecycle owner', () => {
         },
       },
     }).plugins['acme.sequential.first']!;
-    await expect(store.install({
+    await expect(installFixtureCandidate(store, {
       ...first.input,
       catalogRecord: updatedCatalogRecord,
     })).resolves.toMatchObject({ status: 'committed' });
@@ -775,8 +971,8 @@ describe('daemon plugin registry runtime lifecycle owner', () => {
       'acme.post-commit.unrelated',
     );
     await store.initialize();
-    await expect(store.install(changed.input)).resolves.toMatchObject({ status: 'committed' });
-    await expect(store.install(unrelated.input)).resolves.toMatchObject({ status: 'committed' });
+    await expect(installFixtureCandidate(store, changed.input)).resolves.toMatchObject({ status: 'committed' });
+    await expect(installFixtureCandidate(store, unrelated.input)).resolves.toMatchObject({ status: 'committed' });
     const predecessorLease = await reloadController.acquireRuntimeRegistry();
 
     blockNextPublication = true;
@@ -834,8 +1030,8 @@ describe('daemon plugin registry runtime lifecycle owner', () => {
       'acme.post-commit-failure.unrelated',
     );
     await store.initialize();
-    await expect(store.install(changed.input)).resolves.toMatchObject({ status: 'committed' });
-    await expect(store.install(unrelated.input)).resolves.toMatchObject({ status: 'committed' });
+    await expect(installFixtureCandidate(store, changed.input)).resolves.toMatchObject({ status: 'committed' });
+    await expect(installFixtureCandidate(store, unrelated.input)).resolves.toMatchObject({ status: 'committed' });
 
     failNextPublication = true;
     await expect(store.setEnabledWithResult(changed.input.pluginId, false)).resolves.toMatchObject({
@@ -897,8 +1093,8 @@ describe('daemon plugin registry runtime lifecycle owner', () => {
       'acme.durability-pending.unrelated',
     );
     await store.initialize();
-    await expect(store.install(changed.input)).resolves.toMatchObject({ status: 'committed' });
-    await expect(store.install(unrelated.input)).resolves.toMatchObject({ status: 'committed' });
+    await expect(installFixtureCandidate(store, changed.input)).resolves.toMatchObject({ status: 'committed' });
+    await expect(installFixtureCandidate(store, unrelated.input)).resolves.toMatchObject({ status: 'committed' });
 
     const current = await readPluginRegistryCommitRecord(store.paths);
     if (!current) throw new Error('Expected current plugin registry commit');
@@ -947,9 +1143,11 @@ describe('daemon plugin registry runtime lifecycle owner', () => {
     const execution = transactionService.execute({
       transactionId: 'durability-pending-fence',
       baseRevision: current.revision,
+      expectedCurrent: current,
       prepare: async () => undefined,
       validateAndActivate: async () => await runtimeLifecycle.prepare({
         mutationKind: 'state',
+        runningSessionDisposition: 'revokeRunningSessions',
         changedPluginIds: Object.freeze([changed.input.pluginId]),
         runtimeCatalog,
         installationState,
@@ -1016,8 +1214,8 @@ describe('daemon plugin registry runtime lifecycle owner', () => {
       { descriptorOnly: true },
     );
     await store.initialize();
-    await expect(store.install(executable.input)).resolves.toMatchObject({ status: 'committed' });
-    await expect(store.install(descriptorOnly.input)).resolves.toMatchObject({ status: 'committed' });
+    await expect(installFixtureCandidate(store, executable.input)).resolves.toMatchObject({ status: 'committed' });
+    await expect(installFixtureCandidate(store, descriptorOnly.input)).resolves.toMatchObject({ status: 'committed' });
 
     for (const pluginId of ['acme.disabled.executable', 'acme.disabled.descriptor']) {
       await expect(store.setEnabledWithResult(pluginId, false)).resolves.toMatchObject({
@@ -1044,6 +1242,74 @@ describe('daemon plugin registry runtime lifecycle owner', () => {
     await reloadController.shutdown();
   });
 
+  it('quiesces an incumbent daemon database before a changed plugin removes its declaration', async () => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-daemon-plugin-removed-database-'));
+    const baseController = createPluginReloadController({ happyHomeDir });
+    const resume = vi.fn(async () => undefined);
+    const quiesceDaemonDatabases = vi.fn(async () => Object.freeze({ resume }));
+    const readPreparedDaemonDatabaseContracts = vi.fn(() => Object.freeze([Object.freeze({
+      id: 'index',
+      incumbentQueryFixtureId: 'index-v1',
+      incumbentQueryFixture: Object.freeze({
+        id: 'index-v1',
+        run: async () => undefined,
+      }),
+    })]));
+    // The reload controller is the lifecycle boundary under test. This fixture
+    // supplies only the active-registry members that candidate preparation reads.
+    const activeRegistry = Object.freeze({
+      activatedPluginIds: new Set(['acme.removed.database']),
+      quiesceDaemonDatabases,
+      readPreparedDaemonDatabaseContracts,
+    }) as unknown as ResolvedExecutablePluginRuntimeRegistry;
+    const reloadController = Object.freeze({
+      ...baseController,
+      getState: () => Object.freeze({
+        ...baseController.getState(),
+        activeRegistry,
+      }),
+    });
+    const lifecycle = createDaemonPluginRegistryRuntimeLifecycle({
+      happyHomeDir,
+      reloadController,
+    });
+    const runtimeCatalog = PluginStateFileV1Schema.parse({
+      t: 'happier_plugin_state_v1',
+      schemaVersion: 1,
+      plugins: {},
+    });
+    const installationState = PluginInstallationStateRevisionSchema.parse({
+      t: 'happier_plugin_installations_v1',
+      schemaVersion: 1,
+      revisionId: 'removed-daemon-database',
+      createdAtMs: 1,
+      plugins: {},
+      rollbackRetention: [],
+      runtimeCatalog,
+      retainedRuntimeCatalog: {},
+    });
+    const candidate: PluginRegistryRuntimeCandidate = {
+      mutationKind: 'state',
+      runningSessionDisposition: 'revokeRunningSessions',
+      changedPluginIds: Object.freeze(['acme.removed.database']),
+      runtimeCatalog,
+      installationState,
+      pluginGenerations: {},
+    };
+    try {
+      const prepared = await lifecycle.prepare(candidate);
+
+      expect(readPreparedDaemonDatabaseContracts).toHaveBeenCalledWith('acme.removed.database');
+      expect(quiesceDaemonDatabases).toHaveBeenCalledWith(['acme.removed.database']);
+
+      await prepared.abort();
+      expect(resume).toHaveBeenCalledOnce();
+    } finally {
+      await baseController.shutdown();
+      await rm(happyHomeDir, { recursive: true, force: true });
+    }
+  });
+
   it('disposes a prepared registry when the serving revision fence rejects adoption', async () => {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-daemon-plugin-stale-adopt-'));
     const runtimeCatalog = PluginStateFileV1Schema.parse({
@@ -1057,14 +1323,13 @@ describe('daemon plugin registry runtime lifecycle owner', () => {
       revisionId: 'state-stale-adopt',
       createdAtMs: 1,
       plugins: {},
-      health: {},
       rollbackRetention: [],
-      healthTombstones: [],
       runtimeCatalog,
       retainedRuntimeCatalog: {},
     });
     const candidate: PluginRegistryRuntimeCandidate = {
       mutationKind: 'state',
+      runningSessionDisposition: 'retainRunningSessions',
       changedPluginIds: Object.freeze([]),
       runtimeCatalog,
       installationState,
@@ -1098,7 +1363,6 @@ describe('daemon plugin registry runtime lifecycle owner', () => {
       baseRevision: 0,
       installationState: {
         revisionId: installationState.revisionId,
-        digest: `sha256:${'1'.repeat(64)}`,
       },
       pluginGenerations: {},
       createdAtMs: 1,
@@ -1109,103 +1373,6 @@ describe('daemon plugin registry runtime lifecycle owner', () => {
     expect(beforePublish).toHaveBeenCalledTimes(1);
     expect(disposePreparedRegistryCallCount).toBe(1);
     expect(controller.getState().activeRegistry).toBeNull();
-  });
-
-  it('publishes a successful prepared activation attempt only after durable adoption', async () => {
-    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-daemon-plugin-health-adopt-'));
-    const pluginRoot = join(happyHomeDir, 'plugin-source');
-    await mkdir(join(pluginRoot, '.happier-plugin'), { recursive: true });
-    await mkdir(join(pluginRoot, 'src'), { recursive: true });
-    await writeFile(join(pluginRoot, '.happier-plugin', 'plugin.json'), JSON.stringify(createPluginManifestV2Fixture({
-      schemaVersion: 2,
-      id: 'acme.health.adopted',
-      version: '1.0.0',
-      displayName: 'Health adoption fixture',
-      description: 'Publishes health only after adoption',
-      engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 },
-      entrypoints: { daemon: './dist/index.js', development: './src/index.ts' },
-      activation: { events: [{ kind: 'startup' }] },
-      hostAccess: { required: [], optional: [] },
-      contributes: {
-        actions: [{
-          id: 'roundtrip',
-          title: 'Roundtrip',
-          scopes: ['global'],
-          surfaces: ['cli'],
-          placement: 'commandPalette',
-          dangerLevel: 'safe',
-        }],
-      },
-    })), 'utf8');
-    await writeFile(join(pluginRoot, 'src', 'index.ts'), [
-      'export function activate(api): void {',
-      "  api.actions.register('roundtrip', async (_input, context) => {",
-      "    await context.services.storage.local.set('value', 'adopted');",
-      "    return { value: await context.services.storage.local.get('value') };",
-      '  });',
-      '}',
-      '',
-    ].join('\n'), 'utf8');
-    const distribution = await createLocalPathPluginDistributionIdentity(pluginRoot);
-    const trust = createPluginTrustRecord({
-      pluginId: 'acme.health.adopted',
-      distribution,
-      approvedAtMs: 1,
-    });
-    const record = PluginStateFileV1Schema.parse({
-      t: 'happier_plugin_state_v1',
-      schemaVersion: 1,
-      plugins: {
-        'acme.health.adopted': {
-          source: {
-            kind: 'path', locator: pluginRoot, trustPolicy: 'prompt', installPolicy: 'link', devWatch: true,
-            resolvedPath: pluginRoot, manifestPath: join(pluginRoot, '.happier-plugin', 'plugin.json'),
-          },
-          compatibility: { status: 'compatible', diagnostics: [] },
-          install: { mode: 'link', manifestVersion: '1.0.0', trust, updatePolicy: 'manual' },
-          state: { enabled: true },
-        },
-      },
-    }).plugins['acme.health.adopted']!;
-    const attempts: SupervisedPluginActivationAttempt[] = [];
-    const reloadController = createPluginReloadController({ happyHomeDir });
-    const store = createPluginRegistryStateStore({
-      happyHomeDir,
-      runtimeLifecycle: createDaemonPluginRegistryRuntimeLifecycle({
-        happyHomeDir,
-        reloadController,
-        onActivationAttempt: async (attempt) => { attempts.push(attempt); },
-      }),
-    });
-
-    await store.install({
-      pluginId: 'acme.health.adopted',
-      sourceRootPath: pluginRoot,
-      manifestRelativePath: '.happier-plugin/plugin.json',
-      catalogRecord: record,
-      trust,
-      updatePolicy: 'manual',
-      optionalAccess: [],
-    });
-    const committed = await readPluginRegistryCommitRecord(store.paths);
-    expect(attempts).toEqual([expect.objectContaining({
-      pluginId: 'acme.health.adopted',
-      immutableGenerationId: committed?.pluginGenerations['acme.health.adopted']?.immutableGenerationId,
-      phase: 'primaryBootstrap',
-      outcome: 'nonfatal',
-    })]);
-    const lease = await reloadController.acquireRuntimeRegistry();
-    try {
-      await expect(lease.registry.targetActionInvocations?.invoke({
-        pluginId: 'acme.health.adopted',
-        localId: 'roundtrip',
-        input: {},
-        surface: 'cli',
-      })).resolves.toEqual({ status: 'executed', value: { value: 'adopted' } });
-    } finally {
-      await lease.release();
-    }
-    await reloadController.shutdown();
   });
 
   it('executes candidate module and activation once and leaves it unpublished when registration validation fails', async () => {
@@ -1228,7 +1395,8 @@ describe('daemon plugin registry runtime lifecycle owner', () => {
           title: 'Required action',
           scopes: ['global'],
           surfaces: ['cli'],
-          placement: 'primary',
+          execution: { target: 'daemon' },
+          placementBindings: ['primary'],
           dangerLevel: 'safe',
         }],
       },
@@ -1280,7 +1448,7 @@ describe('daemon plugin registry runtime lifecycle owner', () => {
       }),
     });
 
-    await expect(store.install({
+    await expect(installFixtureCandidate(store, {
       pluginId: 'acme.prepare.reject',
       sourceRootPath: pluginRoot,
       manifestRelativePath: '.happier-plugin/plugin.json',
@@ -1298,339 +1466,292 @@ describe('daemon plugin registry runtime lifecycle owner', () => {
     expect(reloadController.getState().activeRegistry).toBeNull();
   });
 
-  it('isolates corrupt committed bytes to their plugin while a healthy peer keeps serving', async () => {
-    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-daemon-plugin-corrupt-isolation-'));
-    const corrupt = await createExecutableInstallFixture(happyHomeDir, 'acme.corrupt.current');
-    const healthy = await createExecutableInstallFixture(happyHomeDir, 'acme.healthy.peer');
-    const changeService = createDaemonPluginChangeService({
-      prepare: async () => {
-        throw new Error('User change preparation is outside this recovery fixture');
-      },
-    });
-    const recoveryErrors: unknown[] = [];
-    const createDaemonIncarnation = (incarnation: string, observeAttempts = true) => {
-      const reloadController = createPluginReloadController({ happyHomeDir });
-      let stateStore!: ReturnType<typeof createPluginRegistryStateStore>;
-      const runtimeLifecycle = createDaemonPluginRegistryRuntimeLifecycle({
+  it('aborts an unpublished candidate when required primary Agent bootstrap fails', async () => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-daemon-plugin-primary-bootstrap-reject-'));
+    const reloadController = createPluginReloadController({ happyHomeDir });
+    const store = createPluginRegistryStateStore({
+      happyHomeDir,
+      runtimeLifecycle: createDaemonPluginRegistryRuntimeLifecycle({
         happyHomeDir,
         reloadController,
-        ...(observeAttempts ? {
-          onActivationAttempt: async (attempt) => await stateStore.observeActivationAttempt(attempt),
-        } : {}),
-      });
-      stateStore = createPluginRegistryStateStore({
-        happyHomeDir,
-        runtimeLifecycle,
-        runAutomaticCurrentnessChange: async (pluginId, change) => {
-          try {
-            await changeService.runAutomaticCurrentnessChange(pluginId, change);
-          } catch (error) {
-            recoveryErrors.push(error);
-            throw error;
-          }
-        },
-        healthSupervisor: {
-          daemonInstanceId: incarnation,
-          daemonUptimeMs: () => 0,
-          schedule: () => undefined,
-        },
-      });
-      return { reloadController, stateStore };
-    };
-    const readState = async (store: ReturnType<typeof createPluginRegistryStateStore>) => {
-      const commit = await readPluginRegistryCommitRecord(store.paths);
-      if (!commit) throw new Error('Expected a committed plugin registry');
-      const revision = await readInstallationStateRevision({
-        paths: store.paths,
-        reference: commit.installationState,
-      });
-      return { commit, revision };
-    };
+      }),
+    });
+    const fixture = await createExecutableInstallFixture(
+      happyHomeDir,
+      'acme.primary-bootstrap.reject',
+      { primaryRuntimeBootstrapFailure: true },
+    );
 
-    const initial = createDaemonIncarnation('daemon-initial', false);
-    await initial.stateStore.initialize();
-    await expect(initial.stateStore.install(corrupt.input)).resolves.toMatchObject({ status: 'committed' });
-    await expect(initial.stateStore.install(healthy.input)).resolves.toMatchObject({ status: 'committed' });
-    const corruptGenerationId = (await readPluginRegistryCommitRecord(initial.stateStore.paths))
-      ?.pluginGenerations['acme.corrupt.current']?.immutableGenerationId;
-    if (!corruptGenerationId) throw new Error('Expected corrupt fixture generation');
-    await initial.reloadController.shutdown();
-    await rm(join(initial.stateStore.paths.generationsDir, corruptGenerationId), { recursive: true });
+    await store.initialize();
+    await expect(installFixtureCandidate(store, fixture.input))
+      .rejects.toThrow(/candidate primary bootstrap rejected/i);
+    await expect(readPluginRegistryCommitRecord(store.paths)).resolves.toMatchObject({
+      revision: 0,
+      pluginGenerations: {},
+    });
+    await expect(readFile(fixture.counterPath, 'utf8'))
+      .resolves.toBe('module\nactivate\nbootstrap\nbootstrap-aborted\ncleanup\n');
+    expect(reloadController.getState().activeRegistry).toBeNull();
 
-    for (let failureCount = 1; failureCount <= 3; failureCount += 1) {
-      const daemon = createDaemonIncarnation(`daemon-restart-${failureCount}`);
-      await expect(daemon.stateStore.initialize()).resolves.toMatchObject({
-        plugins: {
-          'acme.corrupt.current': expect.any(Object),
-          'acme.healthy.peer': expect.any(Object),
-        },
-      });
-      const lease = await daemon.reloadController.acquireRuntimeRegistry({
-        resolveRuntimeRegistry: async () => await resolveExecutablePluginRuntimeRegistry({
-          happyHomeDir,
-          generation: daemon.reloadController.getState().generation + 1,
-          onActivationAttempt: daemon.stateStore.observeActivationAttempt,
+    await reloadController.shutdown();
+    await rm(happyHomeDir, { recursive: true, force: true });
+  });
+
+  it('publishes daemon readiness while isolating one trust-rejected external plugin', async () => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-daemon-plugin-trust-rejected-startup-'));
+    const rejected = await createExecutableInstallFixture(
+      happyHomeDir,
+      'acme.trust-rejected',
+      { daemonDatabase: true },
+    );
+    const healthy = await createExecutableInstallFixture(
+      happyHomeDir,
+      'acme.healthy',
+    );
+    const seedStore = createPluginRegistryStateStore({
+      happyHomeDir,
+      runtimeLifecycle: {
+        prepare: async () => Object.freeze({
+          abort: async () => undefined,
+          adopt: async () => undefined,
         }),
-      });
-      try {
-        await expect(lease.registry.targetActionInvocations?.invoke({
-          pluginId: 'acme.healthy.peer',
-          localId: 'identity',
-          input: {},
-          surface: 'cli',
-        })).resolves.toEqual({
-          status: 'executed',
-          value: {
-            pluginId: 'acme.healthy.peer',
-            retainedOwner: 'acme.healthy.peer',
-          },
-        });
-        expect(lease.registry.pluginDiagnosticsByPluginId['acme.corrupt.current'])
-          .toContainEqual(expect.objectContaining({
-            code: 'plugin_daemon_module_load_failed',
-            message: expect.stringContaining(corruptGenerationId),
-          }));
-      } finally {
-        await lease.release();
-      }
-      await vi.waitFor(async () => {
-        if (recoveryErrors.length > 0) throw recoveryErrors[0];
-        const state = await readState(daemon.stateStore);
-        if (failureCount < 3) {
-          expect(state.revision.health[corruptGenerationId]?.eligibleFailures)
-            .toHaveLength(failureCount);
-        } else {
-          expect(state.commit.pluginGenerations).not.toHaveProperty('acme.corrupt.current');
-          expect(state.revision.runtimeCatalog?.plugins['acme.corrupt.current']?.state.enabled)
-            .toBe(false);
-          expect(state.revision.health[corruptGenerationId]).toMatchObject({
-            state: 'quarantined',
-          });
-        }
-      }, { timeout: 10_000 });
-      await daemon.reloadController.shutdown();
-    }
-    await changeService.shutdown();
-  }, 60_000);
-
-  it('recovers a serving LKG after repeated committed cold-start failures and keeps explicit rollback user-owned', async () => {
-    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-daemon-plugin-cold-recovery-'));
-    const pluginId = 'acme.health.cold-recovery';
-    const pluginRoot = join(happyHomeDir, 'plugin-source');
-    const manifestPath = join(pluginRoot, '.happier-plugin', 'plugin.json');
-    const failFlagPath = join(happyHomeDir, 'fail-current-activation');
-    await mkdir(join(pluginRoot, '.happier-plugin'), { recursive: true });
-
-    const distribution = await createLocalPathPluginDistributionIdentity(pluginRoot);
-    const trust = createPluginTrustRecord({ pluginId, distribution, approvedAtMs: 1 });
-    const writeVersion = async (version: string): Promise<void> => {
-      await writeFile(manifestPath, JSON.stringify(createPluginManifestV2Fixture({
-        schemaVersion: 2,
-        id: pluginId,
-        version,
-        displayName: 'Cold recovery fixture',
-        description: 'Exercises committed bootstrap health recovery',
-        engines: { happier: '^0.2.0' },
-        runtime: { apiVersion: 1 },
-        entrypoints: { daemon: './daemon.mjs' },
-        activation: { events: [{ kind: 'startup' }] },
-        hostAccess: { required: [], optional: [] },
-        contributes: {
-          actions: [{
-            id: 'version',
-            title: 'Version',
-            scopes: ['global'],
-            surfaces: ['cli'],
-            placement: 'commandPalette',
-            dangerLevel: 'safe',
-          }],
-        },
-      })), 'utf8');
-      await writeFile(join(pluginRoot, 'daemon.mjs'), `
-        import { existsSync } from 'node:fs';
-        export function activate(api) {
-          if (${JSON.stringify(version)} === '2.0.0' && existsSync(${JSON.stringify(failFlagPath)})) {
-            throw new Error(${JSON.stringify(`fixture ${version} committed bootstrap failure`)});
-          }
-          api.actions.register('version', async () => ({ version: ${JSON.stringify(version)} }));
-        }
-      `, 'utf8');
-    };
-    const catalogRecord = (version: string) => PluginStateFileV1Schema.parse({
-      t: 'happier_plugin_state_v1',
-      schemaVersion: 1,
-      plugins: {
-        [pluginId]: {
-          source: {
-            kind: 'path',
-            locator: pluginRoot,
-            trustPolicy: 'prompt',
-            installPolicy: 'link',
-            resolvedPath: pluginRoot,
-            manifestPath,
-          },
-          compatibility: { status: 'compatible', diagnostics: [] },
-          install: { mode: 'link', manifestVersion: version, trust, updatePolicy: 'manual' },
-          state: { enabled: true },
-        },
-      },
-    }).plugins[pluginId]!;
-    let storePaths!: ReturnType<typeof createPluginRegistryStateStore>['paths'];
-    const readState = async () => {
-      const commit = await readPluginRegistryCommitRecord(storePaths);
-      if (!commit) throw new Error('Expected a committed plugin registry');
-      const revision = await readInstallationStateRevision({
-        paths: storePaths,
-        reference: commit.installationState,
-      });
-      return { commit, revision };
-    };
-
-    const changeService = createDaemonPluginChangeService({
-      prepare: async () => {
-        throw new Error('User change preparation is outside this recovery fixture');
       },
     });
-    const recoveryErrors: unknown[] = [];
-    let daemonUptimeMs = 0;
-    const scheduled: Array<() => Promise<void>> = [];
-    const createDaemonIncarnation = (incarnation: string) => {
-      const reloadController = createPluginReloadController({ happyHomeDir });
-      let stateStore!: ReturnType<typeof createPluginRegistryStateStore>;
-      const runtimeLifecycle = createDaemonPluginRegistryRuntimeLifecycle({
-        happyHomeDir,
-        reloadController,
-        onActivationAttempt: async (attempt) => await stateStore.observeActivationAttempt(attempt),
-      });
-      stateStore = createPluginRegistryStateStore({
-        happyHomeDir,
-        runtimeLifecycle,
-        runAutomaticCurrentnessChange: async (pluginId, change) => {
-          try {
-            await changeService.runAutomaticCurrentnessChange(pluginId, change);
-          } catch (error) {
-            recoveryErrors.push(error);
-            throw error;
-          }
-        },
-        healthSupervisor: {
-          daemonInstanceId: incarnation,
-          daemonUptimeMs: () => daemonUptimeMs,
-          schedule: (_delayMs, task) => { scheduled.push(task); },
-        },
-      });
-      return { reloadController, runtimeLifecycle, stateStore };
-    };
+    await seedStore.initialize();
+    await expect(installFixtureCandidate(seedStore, rejected.input))
+      .resolves.toMatchObject({ status: 'committed' });
+    await expect(installFixtureCandidate(seedStore, healthy.input))
+      .resolves.toMatchObject({ status: 'committed' });
+    await seedUnapprovedInstallationState(seedStore, rejected.input.pluginId);
 
-    await writeVersion('1.0.0');
-    const initial = createDaemonIncarnation('daemon-initial');
-    storePaths = initial.stateStore.paths;
-    await initial.stateStore.install({
-      pluginId,
-      sourceRootPath: pluginRoot,
-      manifestRelativePath: '.happier-plugin/plugin.json',
-      catalogRecord: catalogRecord('1.0.0'),
-      trust,
-      updatePolicy: 'manual',
-      optionalAccess: [],
-    });
-    const firstGenerationId = (await readPluginRegistryCommitRecord(initial.stateStore.paths))
-      ?.pluginGenerations[pluginId]?.immutableGenerationId;
-    if (!firstGenerationId) throw new Error('Expected the initial generation');
-    await vi.waitFor(() => expect(scheduled).toHaveLength(1));
-    daemonUptimeMs = 10 * 60_000;
-    await scheduled.shift()?.();
-
-    await writeVersion('2.0.0');
-    await initial.stateStore.install({
-      pluginId,
-      sourceRootPath: pluginRoot,
-      manifestRelativePath: '.happier-plugin/plugin.json',
-      catalogRecord: catalogRecord('2.0.0'),
-      trust,
-      updatePolicy: 'manual',
-      optionalAccess: [],
-    });
-    const secondGenerationId = (await readPluginRegistryCommitRecord(initial.stateStore.paths))
-      ?.pluginGenerations[pluginId]?.immutableGenerationId;
-    if (!secondGenerationId) throw new Error('Expected the candidate generation');
-    expect(secondGenerationId).not.toBe(firstGenerationId);
-    await vi.waitFor(async () => {
-      const state = await readState();
-      expect(state.revision.health[secondGenerationId]?.observation).toMatchObject({
-        daemonInstanceId: 'daemon-initial',
-      });
-    });
-    await initial.reloadController.shutdown();
-    await writeFile(failFlagPath, 'fail\n', 'utf8');
-
-    let servingIncarnation: ReturnType<typeof createDaemonIncarnation> | null = null;
-    for (let failureCount = 1; failureCount <= 3; failureCount += 1) {
-      const daemon = createDaemonIncarnation(`daemon-restart-${failureCount}`);
-      await daemon.stateStore.initialize();
-      const coldLease = await daemon.reloadController.acquireRuntimeRegistry({
-        resolveRuntimeRegistry: async () => await resolveExecutablePluginRuntimeRegistry({
-          happyHomeDir,
-          generation: daemon.reloadController.getState().generation + 1,
-          onActivationAttempt: daemon.stateStore.observeActivationAttempt,
+    const reloadController = createPluginReloadController({ happyHomeDir });
+    const onInitialRegistryPublished = vi.fn();
+    const awaitInitialRuntimeActivation = vi.fn(async () => undefined);
+    const owner = createDaemonPluginRuntimeOwner({
+      happyHomeDir,
+      staleCandidateCleanup: 'disabled',
+      reloadController,
+      connectedAccounts: createUnusedConnectedAccountsOwner(),
+      daemonDatabaseLimits: {
+        protocolMaximumDatabaseBytes: 1_024,
+        resolvePluginLimits: () => ({
+          maximumDatabaseBytes: 1_024,
+          maximumInputBytes: 1_024,
+          maximumResultBytes: 1_024,
+          maximumResultRows: 16,
+          maximumAffectedRows: 16,
+          maximumElapsedMs: 1_000,
         }),
-      });
-      await coldLease.release();
-      await vi.waitFor(async () => {
-        if (recoveryErrors.length > 0) throw recoveryErrors[0];
-        const state = await readState();
-        if (failureCount < 3) {
-          expect(state.revision.health[secondGenerationId]?.eligibleFailures).toHaveLength(failureCount);
-        } else {
-          expect(state.commit.pluginGenerations[pluginId]?.immutableGenerationId).toBe(firstGenerationId);
-          expect(state.revision.health[secondGenerationId]).toMatchObject({
-            state: 'quarantined',
-            tryOnce: 'available',
-          });
-        }
-      }, { timeout: 10_000 });
-      if (failureCount < 3) {
-        await daemon.reloadController.shutdown();
-      } else {
-        servingIncarnation = daemon;
-      }
-    }
-
-    if (!servingIncarnation) throw new Error('Expected a serving recovery incarnation');
-    await vi.waitFor(async () => {
-      const recoveredLease = await servingIncarnation.reloadController.acquireRuntimeRegistry();
-      try {
-        await expect(recoveredLease.registry.targetActionInvocations?.invoke({
-          pluginId,
-          localId: 'version',
-          input: {},
-          surface: 'cli',
-        })).resolves.toEqual({ status: 'executed', value: { version: '1.0.0' } });
-      } finally {
-        await recoveredLease.release();
-      }
-    }, { timeout: 10_000 });
-
-    await rm(failFlagPath);
-    await servingIncarnation.stateStore.rollback(pluginId);
-    expect((await readState()).commit.pluginGenerations[pluginId]?.immutableGenerationId).toBe(secondGenerationId);
-    const explicitRollbackLease = await servingIncarnation.reloadController.acquireRuntimeRegistry();
+      },
+      onInitialRegistryPublished,
+      awaitInitialRuntimeActivation,
+    });
     try {
-      await expect(explicitRollbackLease.registry.targetActionInvocations?.invoke({
-        pluginId,
-        localId: 'version',
-        input: {},
-        surface: 'cli',
-      })).resolves.toEqual({ status: 'executed', value: { version: '2.0.0' } });
+      await owner.initialize();
+      const registry = reloadController.getState().activeRegistry;
+      expect(registry).not.toBeNull();
+      expect(registry?.activatedPluginIds).toEqual(new Set([healthy.input.pluginId]));
+      expect(registry?.pluginDiagnosticsByPluginId[rejected.input.pluginId]).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ code: 'plugin_trust_approval_required' }),
+        ]),
+      );
+      expect(onInitialRegistryPublished).toHaveBeenCalledOnce();
+      expect(awaitInitialRuntimeActivation).toHaveBeenCalledOnce();
+      await expect(readFile(healthy.counterPath, 'utf8')).resolves.toBe('module\nactivate\n');
+      await expect(readFile(rejected.counterPath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
     } finally {
-      await explicitRollbackLease.release();
+      await owner.changeService.shutdown();
+      await reloadController.shutdown();
+      await rm(happyHomeDir, { recursive: true, force: true });
     }
-    expect((await readState()).revision.healthTombstones).toContainEqual(expect.objectContaining({
-      pluginId,
-      state: 'consumed',
-    }));
+  });
 
-    await servingIncarnation.reloadController.shutdown();
-    await changeService.shutdown();
-  }, 90_000);
+  it('publishes an inspectable daemon registry when every external plugin is trust-rejected', async () => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-daemon-plugin-all-trust-rejected-startup-'));
+    const first = await createExecutableInstallFixture(happyHomeDir, 'acme.first-trust-rejected');
+    const second = await createExecutableInstallFixture(happyHomeDir, 'acme.second-trust-rejected');
+    const seedStore = createPluginRegistryStateStore({
+      happyHomeDir,
+      runtimeLifecycle: {
+        prepare: async () => Object.freeze({
+          abort: async () => undefined,
+          adopt: async () => undefined,
+        }),
+      },
+    });
+    await seedStore.initialize();
+    await expect(installFixtureCandidate(seedStore, first.input))
+      .resolves.toMatchObject({ status: 'committed' });
+    await expect(installFixtureCandidate(seedStore, second.input))
+      .resolves.toMatchObject({ status: 'committed' });
+    await seedUnapprovedInstallationState(seedStore, first.input.pluginId);
+    await seedUnapprovedInstallationState(seedStore, second.input.pluginId);
+
+    const reloadController = createPluginReloadController({ happyHomeDir });
+    const onInitialRegistryPublished = vi.fn();
+    const owner = createDaemonPluginRuntimeOwner({
+      happyHomeDir,
+      staleCandidateCleanup: 'disabled',
+      reloadController,
+      connectedAccounts: createUnusedConnectedAccountsOwner(),
+      onInitialRegistryPublished,
+    });
+    try {
+      await owner.initialize();
+      const registry = reloadController.getState().activeRegistry;
+      expect(registry).not.toBeNull();
+      expect(registry?.activatedPluginIds).toEqual(new Set());
+      expect(onInitialRegistryPublished).toHaveBeenCalledOnce();
+      for (const pluginId of [first.input.pluginId, second.input.pluginId]) {
+        expect(registry?.pluginDiagnosticsByPluginId[pluginId]).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ code: 'plugin_trust_approval_required' }),
+          ]),
+        );
+      }
+    } finally {
+      await owner.changeService.shutdown();
+      await reloadController.shutdown();
+      await rm(happyHomeDir, { recursive: true, force: true });
+    }
+  });
+
+  it('runs the initial cold-start callbacks once after normalizing a legacy availability row', async () => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-daemon-plugin-legacy-availability-initial-'));
+    const fixture = await createExecutableInstallFixture(
+      happyHomeDir,
+      'acme.legacy.availability.healthy',
+    );
+    const seedStore = createPluginRegistryStateStore({
+      happyHomeDir,
+      runtimeLifecycle: {
+        prepare: async () => Object.freeze({
+          abort: async () => undefined,
+          adopt: async () => undefined,
+        }),
+      },
+    });
+    await seedStore.initialize();
+    await expect(installFixtureCandidate(seedStore, fixture.input))
+      .resolves.toMatchObject({ status: 'committed' });
+    await seedLegacyAvailabilityInstallationState(seedStore, fixture.input.pluginId);
+
+    const reloadController = createPluginReloadController({ happyHomeDir });
+    const onInitialRegistryPublished = vi.fn();
+    const awaitInitialRuntimeActivation = vi.fn(async () => undefined);
+    const owner = createDaemonPluginRuntimeOwner({
+      happyHomeDir,
+      staleCandidateCleanup: 'disabled',
+      reloadController,
+      connectedAccounts: createUnusedConnectedAccountsOwner(),
+      onInitialRegistryPublished,
+      awaitInitialRuntimeActivation,
+    });
+    try {
+      await owner.initialize();
+      await owner.initialize();
+      expect(reloadController.getState().activeRegistry).not.toBeNull();
+      expect(onInitialRegistryPublished).toHaveBeenCalledOnce();
+      expect(awaitInitialRuntimeActivation).toHaveBeenCalledOnce();
+      await expect(readFile(fixture.counterPath, 'utf8')).resolves.toBe('module\nactivate\n');
+    } finally {
+      await owner.changeService.shutdown();
+      await reloadController.shutdown();
+      await rm(happyHomeDir, { recursive: true, force: true });
+    }
+  });
+
+  it('retains explicit plugin recovery after normal external activation is isolated', async () => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-daemon-plugin-recovery-disable-'));
+    const fixture = await createExecutableInstallFixture(
+      happyHomeDir,
+      'acme.recovery.crashing',
+      { startupCrash: true },
+    );
+    const seedStore = createPluginRegistryStateStore({
+      happyHomeDir,
+      runtimeLifecycle: {
+        prepare: async () => Object.freeze({
+          abort: async () => undefined,
+          adopt: async () => undefined,
+        }),
+      },
+    });
+    await seedStore.initialize();
+    await expect(installFixtureCandidate(seedStore, fixture.input))
+      .resolves.toMatchObject({ status: 'committed' });
+
+    const normalController = createPluginReloadController({ happyHomeDir });
+    const normalOwner = createDaemonPluginRuntimeOwner({
+      happyHomeDir,
+      staleCandidateCleanup: 'disabled',
+      reloadController: normalController,
+      connectedAccounts: createUnusedConnectedAccountsOwner(),
+    });
+    await normalOwner.initialize();
+    expect(normalController.getState().activeRegistry?.activatedPluginIds)
+      .toEqual(new Set());
+    expect(normalController.getState().activeRegistry?.pluginDiagnosticsByPluginId[fixture.input.pluginId])
+      .toEqual(expect.arrayContaining([
+        expect.objectContaining({ code: 'plugin_daemon_module_load_failed' }),
+      ]));
+    await normalOwner.changeService.shutdown();
+    await normalController.shutdown();
+
+    const recoveryController = createPluginReloadController({ happyHomeDir });
+    const recoveryOwner = createDaemonPluginRuntimeOwner({
+      happyHomeDir,
+      staleCandidateCleanup: 'disabled',
+      reloadController: recoveryController,
+      connectedAccounts: createUnusedConnectedAccountsOwner(),
+      startupMode: 'pluginRecovery',
+    });
+    await recoveryOwner.initialize();
+
+    await expect(recoveryOwner.readCatalog()).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          pluginId: fixture.input.pluginId,
+          enabled: true,
+          appliedGeneration: null,
+        }),
+      ]),
+    );
+    await expect(recoveryOwner.changeService.requestPluginChange({
+      kind: 'disable',
+      pluginId: fixture.input.pluginId,
+    })).resolves.toMatchObject({
+      kind: 'committed',
+      pluginId: fixture.input.pluginId,
+    });
+    const committed = await readPluginRegistryCommitRecord(seedStore.paths);
+    if (!committed) throw new Error('Expected recovery disable commit');
+    const state = await readInstallationStateRevision({
+      paths: seedStore.paths,
+      reference: committed.installationState,
+    });
+    expect(state.plugins[fixture.input.pluginId]?.enabled).toBe(false);
+    await expect(readFile(fixture.counterPath, 'utf8'))
+      .rejects.toMatchObject({ code: 'ENOENT' });
+
+    await expect(recoveryOwner.changeService.requestPluginChange({
+      kind: 'uninstall',
+      pluginId: fixture.input.pluginId,
+    })).resolves.toMatchObject({
+      kind: 'committed',
+      pluginId: fixture.input.pluginId,
+      desiredGeneration: null,
+      appliedGeneration: null,
+    });
+    expect((await recoveryOwner.readCatalog()).some((entry) => (
+      entry.pluginId === fixture.input.pluginId
+    ))).toBe(false);
+    await expect(readFile(fixture.counterPath, 'utf8'))
+      .rejects.toMatchObject({ code: 'ENOENT' });
+
+    await recoveryOwner.changeService.shutdown();
+    await recoveryController.shutdown();
+    await rm(happyHomeDir, { recursive: true, force: true });
+  });
 });

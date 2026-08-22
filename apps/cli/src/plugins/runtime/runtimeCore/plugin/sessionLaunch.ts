@@ -1,5 +1,5 @@
 import type { PermissionMode } from '@/api/types';
-import type { Credentials } from '@/persistence';
+import type { StoredCredentials } from '@/persistence';
 import type { AccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 import type { TerminalRuntimeFlags } from '@/terminal/runtime/terminalRuntimeFlags';
 import type {
@@ -8,6 +8,7 @@ import type {
 } from '@/plugins/projection/registry/types';
 import {
   AcpConfigOptionOverridesV1Schema,
+    AgentSessionStartupInstructionsV1Schema,
     BackendTargetRefV2Schema,
     buildBackendTargetKeyV2,
     normalizeBackendTargetRefV2InputToV2,
@@ -16,6 +17,7 @@ import {
     SessionModelSelectionV1Schema,
     type BackendTargetRefV2Input,
     type AcpConfigOptionOverridesV1,
+    type AgentSessionStartupInstructionsV1,
     type SessionModelSelectionV1,
 } from '@happier-dev/protocol';
 import type { PluginSessionLaunchResultCandidate } from './sessionMetadata';
@@ -26,7 +28,7 @@ import {
 } from '@/session/shared/spawnSessionContract';
 
 export type PluginSessionBindingInput = Readonly<{
-    credentials: Credentials;
+    credentials: StoredCredentials;
     bootstrap: Readonly<{
         workingDirectory?: string;
         target?: BackendTargetRefV2Input;
@@ -42,6 +44,7 @@ export type PluginSessionBindingInput = Readonly<{
         resumeSessionId?: string;
   }>;
   nativeForkSource?: NativeForkSource;
+  agentSessionStartupInstructionsV1?: AgentSessionStartupInstructionsV1;
     runtimePreferences: Readonly<{
         terminal?: TerminalRuntimeFlags | null;
         startingMode?: 'terminal' | 'remote' | 'local';
@@ -58,7 +61,9 @@ export type PluginSessionBindingInput = Readonly<{
     }>;
 }>;
 
-export type HostPrivateLateSessionEnvironmentResolver = () => Promise<
+export type HostPrivateLateSessionEnvironmentResolver = (
+  input: Readonly<{ sessionId: string }>,
+) => Promise<
   Readonly<{
     environmentVariables: Readonly<Record<string, string>>;
     unsetEnvironmentVariables: readonly string[];
@@ -81,7 +86,7 @@ export type PluginSessionLaunchHandler = (
 ) => Promise<PluginSessionLaunchResultCandidate>;
 
 export type PluginHostSessionRuntimeOptions = Readonly<{
-    credentials: Credentials;
+    credentials: StoredCredentials;
     directory?: string;
     backendTarget?: BackendTargetRefV2Input;
     startedBy?: 'daemon' | 'terminal';
@@ -105,6 +110,48 @@ export type PluginHostSessionRuntimeOptions = Readonly<{
 
 function isRecord(value: unknown): value is Record<string, unknown> {
     return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function readStoredCredentials(value: unknown): StoredCredentials | null {
+    if (!isRecord(value) || typeof value.token !== 'string' || value.token.length === 0) {
+        return null;
+    }
+    if (value.encryption === null) {
+        return {
+            token: value.token,
+            encryption: null,
+        };
+    }
+    if (!isRecord(value.encryption)) {
+        return null;
+    }
+    if (
+        value.encryption.type === 'legacy'
+        && value.encryption.secret instanceof Uint8Array
+    ) {
+        return {
+            token: value.token,
+            encryption: {
+                type: 'legacy',
+                secret: value.encryption.secret,
+            },
+        };
+    }
+    if (
+        value.encryption.type === 'dataKey'
+        && value.encryption.publicKey instanceof Uint8Array
+        && value.encryption.machineKey instanceof Uint8Array
+    ) {
+        return {
+            token: value.token,
+            encryption: {
+                type: 'dataKey',
+                publicKey: value.encryption.publicKey,
+                machineKey: value.encryption.machineKey,
+            },
+        };
+    }
+    return null;
 }
 
 function readOptionalString(value: unknown): string | undefined {
@@ -200,9 +247,9 @@ export function buildPluginSessionBindingInput(raw: unknown): PluginSessionBindi
         throw new Error('Plugin session launch params must be an object payload');
     }
 
-    const credentials = raw.credentials as Credentials | undefined;
+    const credentials = readStoredCredentials(raw.credentials);
     if (!credentials) {
-        throw new Error('Plugin session launch params must include credentials');
+        throw new Error('Plugin session launch params must include valid credentials');
     }
 
     if (
@@ -216,8 +263,22 @@ export function buildPluginSessionBindingInput(raw: unknown): PluginSessionBindi
 
     const modelSelection = readModelSelection(raw);
     const nativeForkSource = readNativeForkSource(raw.nativeForkSource);
+    const parsedStartupInstructions = raw.agentSessionStartupInstructionsV1 === undefined
+        ? null
+        : AgentSessionStartupInstructionsV1Schema.safeParse(
+            raw.agentSessionStartupInstructionsV1,
+        );
+    if (
+        parsedStartupInstructions !== null
+        && !parsedStartupInstructions.success
+    ) {
+        throw new Error('Invalid plugin session startup instructions');
+    }
     if (nativeForkSource && readOptionalString(raw.resume)) {
         throw new Error('Plugin session native fork source cannot be combined with provider resume');
+    }
+    if (nativeForkSource && parsedStartupInstructions?.success) {
+        throw new Error('Plugin session startup instructions cannot be combined with a native fork');
     }
     const hasConfigurationOptions = raw.sessionConfigOptionOverrides !== undefined;
     const parsedConfigurationOptions = AcpConfigOptionOverridesV1Schema.safeParse(
@@ -257,6 +318,9 @@ export function buildPluginSessionBindingInput(raw: unknown): PluginSessionBindi
             ...(readOptionalString(raw.resume) ? { resumeSessionId: readOptionalString(raw.resume) } : {}),
         }),
         ...(nativeForkSource ? { nativeForkSource } : {}),
+        ...(parsedStartupInstructions?.success
+            ? { agentSessionStartupInstructionsV1: parsedStartupInstructions.data }
+            : {}),
         runtimePreferences: Object.freeze({
             ...(raw.terminalRuntime === null || isRecord(raw.terminalRuntime)
                 ? { terminal: raw.terminalRuntime as TerminalRuntimeFlags | null }

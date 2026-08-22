@@ -25,7 +25,6 @@ type MarketplaceContributionPreview = Readonly<{
   hostedWeb: readonly string[];
   reactNativeBundles: readonly string[];
   uiArtifacts: readonly string[];
-  surfacePlacements: readonly string[];
 }>;
 
 const REMOTE_MARKETPLACE_CACHE_TTL_MS = 5 * 60 * 1000;
@@ -386,7 +385,6 @@ function buildProtocolMarketplaceEntry(
       hostedWeb: [],
       reactNativeBundles: [],
       uiArtifacts: [],
-      surfacePlacements: [],
     },
     installable: source !== null && diagnostics.length === 0,
     diagnostics,

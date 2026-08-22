@@ -14,9 +14,7 @@ function createBackendPrerequisiteHookRegistration(params: Readonly<{
     provenance: 'external',
     source: { kind: 'path' },
     pluginId: params.pluginId,
-    manifestPath: `/plugins/${params.pluginId}/plugin.json`,
-    manifestDigest: `sha256:${params.pluginId}`,
-    daemonEntryPath: `/plugins/${params.pluginId}/daemon.mjs`,
+    manifestPath: `/plugins/${params.pluginId}/plugin.json`,daemonEntryPath: `/plugins/${params.pluginId}/daemon.mjs`,
     sourceSpec: {
       kind: 'path',
       locator: `/plugins/${params.pluginId}`,
@@ -67,9 +65,7 @@ function createPrerequisiteHookActivationTarget(params: Readonly<{
     provenance: 'external' as const,
     source: { kind: 'path' as const },
     pluginId: params.pluginId,
-    manifestPath: `/plugins/${params.pluginId}/plugin.json`,
-    manifestDigest: `sha256:${params.pluginId}`,
-    daemonEntryPath: `/plugins/${params.pluginId}/daemon.mjs`,
+    manifestPath: `/plugins/${params.pluginId}/plugin.json`,daemonEntryPath: `/plugins/${params.pluginId}/daemon.mjs`,
     sourceSpec: {
       kind: 'path' as const,
       locator: `/plugins/${params.pluginId}`,
@@ -89,7 +85,6 @@ describe('dispatchDaemonSpawnHookEvent', () => {
     const acceptedRegistry = {
       contributes: acceptedContributes,
       hookHandlersByHookId: new Map(),
-      readHookEventEnvelopeV1: vi.fn(),
     };
     const resolveContributes = vi.fn().mockResolvedValue({
       ...acceptedContributes,
@@ -98,7 +93,6 @@ describe('dispatchDaemonSpawnHookEvent', () => {
     const resolveRuntimeRegistry = vi.fn().mockResolvedValue({
       contributes: await resolveContributes(),
       hookHandlersByHookId: new Map(),
-      readHookEventEnvelopeV1: vi.fn(),
       dispose: vi.fn(),
     });
     resolveContributes.mockClear();
@@ -157,7 +151,6 @@ describe('dispatchDaemonSpawnHookEvent', () => {
     const resolveRuntimeRegistry = vi.fn().mockResolvedValue({
       contributes,
       hookHandlersByHookId: new Map(),
-      readHookEventEnvelopeV1: vi.fn(),
       dispose,
     });
     const dispatchEvent = vi.fn().mockResolvedValue({
@@ -310,7 +303,6 @@ describe('dispatchDaemonSpawnHookEvent', () => {
     const resolveRuntimeRegistry = vi.fn().mockResolvedValue({
       contributes,
       hookHandlersByHookId: new Map(),
-      readHookEventEnvelopeV1: vi.fn(),
       dispose,
     });
     const dispatchEvent = vi.fn().mockResolvedValue({
@@ -395,7 +387,6 @@ describe('dispatchDaemonSpawnHookEvent', () => {
     const resolveRuntimeRegistry = vi.fn().mockResolvedValue({
       contributes,
       hookHandlersByHookId: new Map(),
-      readHookEventEnvelopeV1: vi.fn(),
       dispose,
     });
     const dispatchEvent = vi.fn().mockResolvedValue({

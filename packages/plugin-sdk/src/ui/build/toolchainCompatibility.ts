@@ -55,6 +55,7 @@ export type PublicToolchainScaffoldBindingsV1 = Readonly<{
         | '@swc/helpers'
         | '@types/node'
         | '@types/react'
+        | 'typescript'
         | '@typescript/native'
         | '@vitejs/plugin-react'
         | 'vite',
@@ -121,6 +122,7 @@ export function createPublicToolchainScaffoldBindingsV1(
             '@swc/helpers': packet.authoringDependencies.swcHelpers.dependencySpec,
             '@types/node': packet.authoringDependencies.nodeTypes.dependencySpec,
             '@types/react': packet.authoringDependencies.reactTypes.dependencySpec,
+            typescript: packet.authoringDependencies.typescript.dependencySpec,
             '@typescript/native': packet.authoringDependencies.typescriptNative.dependencySpec,
             '@vitejs/plugin-react': packet.authoringDependencies.viteReactPlugin.dependencySpec,
             vite: packet.framework.vite,

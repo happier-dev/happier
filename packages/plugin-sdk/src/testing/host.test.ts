@@ -39,7 +39,7 @@ import type {
   VoiceSpeechSynthesizeRequest,
   VoiceSpeechTranscribeRequest,
 } from '../voice/speech.js';
-import { PluginError } from '../errors.js';
+import { isPluginError, PluginError } from '../errors.js';
 import { defineContributionProtocol } from '../targetedContributionAuthoring.js';
 import {
   defineProtocolLiteral,
@@ -58,6 +58,7 @@ const manifest = {
     actions: [{
       id: 'echo',
       title: 'Echo',
+      execution: { target: 'daemon' },
       scopes: ['global'],
       surfaces: ['cli'],
       placementBindings: ['commandPalette'],
@@ -133,8 +134,9 @@ function actionManifest(
     contributes: {
       actions: [{
         id: actionId,
-        title: actionId,
-        scopes: ['global'],
+      title: actionId,
+      execution: { target: 'daemon' },
+      scopes: ['global'],
         surfaces: [...surfaces],
         ...(surfaces.includes('cli') ? { placementBindings: ['commandPalette'] as const } : {}),
         dangerLevel: 'safe',
@@ -173,6 +175,7 @@ const testkitTargetedTargetDefinition = definePlugin({
   actions: {
     capture: {
       title: 'Capture provider',
+      execution: { target: 'daemon' },
       scopes: ['global'],
       surfaces: ['cli'],
       dangerLevel: 'safe',
@@ -180,6 +183,7 @@ const testkitTargetedTargetDefinition = definePlugin({
     },
     send: {
       title: 'Send provider request',
+      execution: { target: 'daemon' },
       scopes: ['global'],
       surfaces: ['cli'],
       dangerLevel: 'safe',
@@ -256,6 +260,7 @@ function defineTargetedOperationContributor(
     actions: {
       [actionId]: {
         title: actionId,
+        execution: { target: 'daemon' },
         scopes: ['global'],
         surfaces: ['plugin'],
         inputSchema: testkitTargetedOperationInputSchema.jsonSchema,
@@ -460,7 +465,7 @@ describe('createPluginTestkit', () => {
     }
   });
 
-  it('reconstructs a fresh closed PluginError for a direct action failure', async () => {
+  it('rebuilds a direct action failure from its canonical published payload', async () => {
     const cause = new Error('credential secret');
     const original = new PluginError({
       code: 'fixture_provider_failed',
@@ -487,33 +492,29 @@ describe('createPluginTestkit', () => {
     try {
       const received = await testkit.invokeAction('echo', null).catch((error: unknown) => error);
 
-      expect(received).toBeInstanceOf(PluginError);
-      if (!(received instanceof PluginError)) {
+      expect(isPluginError(received)).toBe(true);
+      if (!isPluginError(received)) {
         throw new Error('Expected a PluginError');
       }
+      // The error is rebuilt from the canonical payload, never transported as
+      // an object: identity and `cause` do not survive, the contract does.
       expect(received).not.toBe(original);
       expect(received).toMatchObject({
         code: 'fixture_provider_failed',
         message: 'provider credential is secret',
-        retryable: false,
-      });
-      expect(received).toMatchObject({
-        details: undefined,
-        remediation: undefined,
-        diagnostics: undefined,
+        retryable: true,
+        details: { credential: 'secret' },
+        remediation: { kind: 'openSettings', path: 'accounts/acme' },
+        diagnostics: [{ code: 'fixture_diagnostic', severity: 'error', message: 'private' }],
       });
       expect(Object.hasOwn(received, 'cause')).toBe(false);
-      expect(received.data).toEqual({
-        name: 'PluginError',
-        code: 'fixture_provider_failed',
-        message: 'provider credential is secret',
-      });
+      expect(received.data).toEqual(original.data);
     } finally {
       await testkit.dispose();
     }
   });
 
-  it('reconstructs a fresh closed PluginError from an action target failure', async () => {
+  it('carries a target plugin canonical failure payload to its plugin caller', async () => {
     const cause = new Error('credential secret');
     const original = new PluginError({
       code: 'fixture_provider_failed',
@@ -552,25 +553,23 @@ describe('createPluginTestkit', () => {
     try {
       const received = await caller.invokeAction('send', null).catch((error: unknown) => error);
 
-      expect(received).toBeInstanceOf(PluginError);
-      if (!(received instanceof PluginError)) {
+      expect(isPluginError(received)).toBe(true);
+      if (!isPluginError(received)) {
         throw new Error('Expected a PluginError');
       }
+      // Plugins are trusted code: the target's own code, retryable signal and
+      // published payload reach the calling plugin.
       expect(received).not.toBe(original);
       expect(received).toMatchObject({
         code: 'fixture_provider_failed',
         message: 'provider credential is secret',
-        retryable: false,
-        details: undefined,
-        remediation: undefined,
-        diagnostics: undefined,
+        retryable: true,
+        details: { credential: 'secret' },
+        remediation: { kind: 'openSettings', path: 'accounts/acme' },
+        diagnostics: [{ code: 'fixture_diagnostic', severity: 'error', message: 'private' }],
       });
       expect(Object.hasOwn(received, 'cause')).toBe(false);
-      expect(received.data).toEqual({
-        name: 'PluginError',
-        code: 'fixture_provider_failed',
-        message: 'provider credential is secret',
-      });
+      expect(received.data).toEqual(original.data);
     } finally {
       await caller.dispose();
       await target.dispose();
@@ -1353,6 +1352,7 @@ describe('createPluginTestkit', () => {
         actions: [{
           id: 'receive',
           title: 'receive',
+          execution: { target: 'daemon' },
           scopes: ['global'],
           surfaces: ['plugin'],
           dangerLevel: 'safe',

@@ -119,7 +119,6 @@ describe('managed dependency plugin contributions', () => {
                     pluginId: 'acme.dependencies',
                     pluginRootPath: '/plugins/acme-dependencies',
                     manifestPath: '/plugins/acme-dependencies/.happier-plugin/plugin.json',
-                    manifestDigest: 'sha256:acme',
                     daemonEntryPath: null,
                     sourceSpec,
                     devDaemonEntryPath: null,
@@ -178,7 +177,6 @@ describe('managed dependency plugin contributions', () => {
                     source: { kind: 'path' },
                     pluginId: 'acme.shadow',
                     manifestPath: '/plugins/acme-shadow/.happier-plugin/plugin.json',
-                    manifestDigest: 'sha256:shadow',
                     daemonEntryPath: null,
                     sourceSpec,
                     devDaemonEntryPath: null,
@@ -223,7 +221,6 @@ describe('managed dependency plugin contributions', () => {
                     source: { kind: 'bundled' },
                     pluginId: 'acme.first-party',
                     manifestPath: 'bundled:acme.first-party',
-                    manifestDigest: 'bundled:acme.first-party@1.0.0',
                     daemonEntryPath: '@happier-dev/plugins-acme-first-party',
                     sourceSpec,
                     devDaemonEntryPath: null,
@@ -254,7 +251,6 @@ describe('managed dependency plugin contributions', () => {
                     source: { kind: 'path' },
                     pluginId: 'acme.dependencies',
                     manifestPath: '/plugins/acme-dependencies/.happier-plugin/plugin.json',
-                    manifestDigest: 'sha256:acme',
                     daemonEntryPath: null,
                     sourceSpec,
                     devDaemonEntryPath: null,
@@ -292,7 +288,6 @@ describe('managed dependency plugin contributions', () => {
             source: { kind: 'path' as const },
             pluginId,
             manifestPath: `/plugins/${pluginId}/.happier-plugin/plugin.json`,
-            manifestDigest: `sha256:${pluginId}`,
             daemonEntryPath: null,
             sourceSpec: { ...sourceSpec, locator: `/plugins/${pluginId}` },
             definition: {
@@ -323,7 +318,7 @@ describe('managed dependency plugin contributions', () => {
         ]);
     });
 
-    it('includes qualified V2 ownership in the resolved registry generation identity', () => {
+    it('keeps qualified V2 ownership without a global registry fingerprint', () => {
         const makeRegistry = (pluginId: string) => createResolvedContributionRegistry({
             agents: [],
                         managedDependencies: [{
@@ -331,7 +326,6 @@ describe('managed dependency plugin contributions', () => {
                 source: { kind: 'path' },
                 pluginId,
                 manifestPath: '/plugins/shared/.happier-plugin/plugin.json',
-                manifestDigest: 'sha256:shared',
                 daemonEntryPath: null,
                 sourceSpec,
                 definition: {
@@ -342,6 +336,12 @@ describe('managed dependency plugin contributions', () => {
             }],
         });
 
-        expect(makeRegistry('acme.one').generationId).not.toBe(makeRegistry('acme.two').generationId);
+        const first = makeRegistry('acme.one');
+        const second = makeRegistry('acme.two');
+
+        expect(first.managedDependenciesByKey?.get('acme.one/tool')).toBeDefined();
+        expect(second.managedDependenciesByKey?.get('acme.two/tool')).toBeDefined();
+        expect(first).not.toHaveProperty('generationId');
+        expect(second).not.toHaveProperty('generationId');
     });
 });

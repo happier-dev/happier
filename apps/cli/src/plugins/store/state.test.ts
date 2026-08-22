@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   createPluginStateStore,
+  PluginStateFileV1Schema,
   resolvePredecessorPluginStorePaths,
   writeCommittedLocalPathPluginFixture,
 } from './state.testkit';
@@ -47,7 +48,6 @@ describe('pluginStateStore', () => {
             locator: '/plugins/acme-ohmypi',
             trustPolicy: 'local_trusted',
             installPolicy: 'link',
-            resolvedDigest: 'sha256:abc123',
             resolvedPath: '/plugins/acme-ohmypi',
             manifestPath: '/plugins/acme-ohmypi/.happier-plugin/plugin.json',
           },
@@ -58,7 +58,6 @@ describe('pluginStateStore', () => {
           install: {
             mode: 'link',
             manifestVersion: '1.0.0',
-            manifestDigest: 'sha256:abc123',
             installedPath: null,
           },
           state: {
@@ -83,6 +82,44 @@ describe('pluginStateStore', () => {
         },
       },
     });
+  });
+
+  it('rejects retired raw source and install manifest digests from persisted state', () => {
+    const plugin = {
+      source: {
+        kind: 'path' as const,
+        locator: '/plugins/acme-retired-digest',
+        trustPolicy: 'local_trusted' as const,
+        installPolicy: 'link' as const,
+        resolvedPath: '/plugins/acme-retired-digest',
+        manifestPath: '/plugins/acme-retired-digest/.happier-plugin/plugin.json',
+      },
+      compatibility: { status: 'compatible' as const, diagnostics: [] },
+      install: { mode: 'link' as const, manifestVersion: '1.0.0', installedPath: null },
+      state: { enabled: true },
+    };
+
+    const rawSourceDigest = PluginStateFileV1Schema.safeParse({
+      t: 'happier_plugin_state_v1', schemaVersion: 1,
+      plugins: {
+        'acme.retired-digest': {
+          ...plugin,
+          source: { ...plugin.source, resolvedDigest: 'sha256:retired-source' },
+        },
+      },
+    });
+    expect(rawSourceDigest.success).toBe(false);
+    const rawInstallState = {
+      t: 'happier_plugin_state_v1', schemaVersion: 1,
+      plugins: {
+        'acme.retired-digest': {
+          ...plugin,
+          install: { ...plugin.install, manifestDigest: 'sha256:retired-manifest' },
+        },
+      },
+    };
+    const rawInstallDigest = PluginStateFileV1Schema.safeParse(rawInstallState);
+    expect(rawInstallDigest.success).toBe(false);
   });
 
   it('rejects future plugin state schema versions fail-closed', async () => {
@@ -269,7 +306,6 @@ describe('pluginStateStore', () => {
                 locator: '/plugins/acme-alpha',
                 trustPolicy: 'local_trusted',
                 installPolicy: 'link',
-                resolvedDigest: 'sha256:alpha',
                 resolvedPath: '/plugins/acme-alpha',
                 manifestPath: '/plugins/acme-alpha/.happier-plugin/plugin.json',
               },
@@ -280,7 +316,6 @@ describe('pluginStateStore', () => {
               install: {
                 mode: 'link',
                 manifestVersion: '1.0.0',
-                manifestDigest: 'sha256:alpha',
                 installedPath: null,
               },
               state: {
@@ -300,7 +335,6 @@ describe('pluginStateStore', () => {
               locator: '/plugins/acme-beta',
               trustPolicy: 'local_trusted',
               installPolicy: 'link',
-              resolvedDigest: 'sha256:beta',
               resolvedPath: '/plugins/acme-beta',
               manifestPath: '/plugins/acme-beta/.happier-plugin/plugin.json',
             },
@@ -311,7 +345,6 @@ describe('pluginStateStore', () => {
             install: {
               mode: 'link',
               manifestVersion: '1.0.0',
-              manifestDigest: 'sha256:beta',
               installedPath: null,
             },
             state: {
@@ -332,7 +365,7 @@ describe('pluginStateStore', () => {
 });
 
 describe('writeCommittedLocalPathPluginFixture', () => {
-  it('commits matching health ownership for the current immutable generation', async () => {
+  it('commits the current immutable generation without retired health state', async () => {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-committed-plugin-fixture-home-'));
     const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-committed-plugin-fixture-root-'));
     const pluginId = 'acme.committed-fixture';
@@ -350,7 +383,7 @@ describe('writeCommittedLocalPathPluginFixture', () => {
       }), 'utf8');
       await writeFile(join(pluginRoot, 'daemon.mjs'), 'export function activate() {}', 'utf8');
 
-      await writeCommittedLocalPathPluginFixture({
+      const fixture = await writeCommittedLocalPathPluginFixture({
         happyHomeDir,
         pluginId,
         sourceRootPath: pluginRoot,
@@ -379,11 +412,11 @@ describe('writeCommittedLocalPathPluginFixture', () => {
         reference: commit.installationState,
       });
 
-      expect(state.health[generation.immutableGenerationId]).toMatchObject({
-        pluginId,
-        immutableGenerationId: generation.immutableGenerationId,
-        state: 'pending',
+      expect(generation.immutableGenerationId).toBe(fixture.immutableGenerationId);
+      expect(state.plugins[pluginId]).toMatchObject({
+        enabled: true,
       });
+      expect(state).not.toHaveProperty('health');
     } finally {
       await rm(happyHomeDir, { recursive: true, force: true });
       await rm(pluginRoot, { recursive: true, force: true });

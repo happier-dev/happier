@@ -18,6 +18,8 @@ const SOURCE_DECLARATION_SIDECAR_ALLOWLIST = Object.freeze([]);
 const PUBLIC_AUTHORING_COMPANION_FILES = [
   'README.md',
   'API.md',
+  'api-declarations.md',
+  'api-surface.json',
   'capability-matrix.json',
 ];
 
@@ -126,6 +128,31 @@ test('SDK package selection declares and packs the public authoring inventory as
       `SDK tarball must include the public authoring companion ${relativePath}`,
     );
   }
+});
+
+test('the public contract records stay reviewable in version control', () => {
+  const repoRoot = resolve(packageRoot, '../..');
+  const insideWorkTree = spawnSync('git', ['rev-parse', '--is-inside-work-tree'], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+  });
+  if (insideWorkTree.status !== 0) return;
+
+  // A record that Git ignores produces no diff when a symbol or a signature
+  // enters or leaves the published API, which is exactly the review gap these
+  // records exist to close. `check-ignore` exits 0 only for an ignored path.
+  const recordPaths = PUBLIC_AUTHORING_COMPANION_FILES
+    .map((relativePath) => `packages/plugin-sdk/${relativePath}`)
+    .concat('packages/plugin-ui/api-declarations.md');
+  const ignored = spawnSync('git', ['check-ignore', ...recordPaths], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+  });
+  assert.equal(
+    ignored.stdout.trim(),
+    '',
+    `public contract records must not be excluded from version control: ${ignored.stdout.trim()}`,
+  );
 });
 
 test('SDK package boundary permits only explicitly allowlisted source declaration sidecars', async () => {

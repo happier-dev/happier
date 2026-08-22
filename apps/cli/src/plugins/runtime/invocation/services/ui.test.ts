@@ -1,288 +1,289 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { PluginError } from '@happier-dev/plugin-sdk';
-import type { ApiSessionClient } from '@/api/session/sessionClient';
-import type { AgentState } from '@/api/types';
-import { ProviderEnforcedPermissionHandler } from '@/agent/permissions/providerEnforced/handler';
-import { createNativeAgentSessionServices } from '@/agent/runtime/registry/engineRegistry/nativeAgentSessionInteractions';
 import type {
-    HostCurrentSessionInteractionsService as PluginCurrentSessionInteractionsService,
-    HostCurrentSessionPresentationService as PluginCurrentSessionPresentationService,
-    HostSessionApprovalRequest as PluginSessionApprovalRequest,
-    HostSessionApprovalResult as PluginSessionApprovalResult,
-    HostSessionConfirmationRequest as PluginSessionConfirmationRequest,
-    HostSessionConfirmationResult as PluginSessionConfirmationResult,
-    HostSessionInteractionRequest as PluginSessionInteractionRequest,
-    HostSessionInteractionResult as PluginSessionInteractionResult,
-    HostSessionQuestionsRequest as PluginSessionQuestionsRequest,
-    HostSessionQuestionsResult as PluginSessionQuestionsResult,
+    HostCurrentSessionInteractionsService,
+    HostCurrentSessionPresentationService,
+    HostSessionPresentationOwner,
+    HostSessionApprovalRequest,
+    HostSessionApprovalResult,
+    HostSessionConfirmationRequest,
+    HostSessionConfirmationResult,
+    HostSessionInteractionRequest,
+    HostSessionInteractionResult,
+    HostSessionQuestionsRequest,
+    HostSessionQuestionsResult,
 } from '@/agent/runtime/state/currentSessionUiTypes';
 
-import { createPluginInvocationUi } from './ui';
+import {
+    createPluginInteractionsService,
+    createPluginInvocationPresentation,
+} from './interactions';
 
-class FakeRpcHandlerManager {
-    readonly handlers = new Map<string, (payload: unknown) => unknown>();
-
-    registerHandler(name: string, handler: (payload: unknown) => unknown): void {
-        this.handlers.set(name, handler);
-    }
-}
-
-class FakeSession {
-    readonly sessionId = 'session-1';
-    readonly rpcHandlerManager = new FakeRpcHandlerManager();
-    agentState: AgentState = { requests: {}, completedRequests: {} };
-
-    getAgentStateSnapshot(): AgentState {
-        return this.agentState;
-    }
-
-    updateAgentState(updater: (state: AgentState) => AgentState): AgentState {
-        this.agentState = updater(this.agentState);
-        return this.agentState;
-    }
-
-    getMetadataSnapshot(): null {
-        return null;
-    }
-}
-
-function requireAgentStateRequests(state: AgentState): NonNullable<AgentState['requests']> {
-    if (!state.requests) throw new Error('Expected the test session to have an agent request store');
-    return state.requests;
-}
-
-class TestInteractions implements PluginCurrentSessionInteractionsService {
+class TestInteractions implements HostCurrentSessionInteractionsService {
     constructor(
         private readonly handle: (
-            request: PluginSessionInteractionRequest,
+            request: HostSessionInteractionRequest,
             options?: { signal?: AbortSignal },
-        ) => Promise<PluginSessionInteractionResult>,
+        ) => Promise<HostSessionInteractionResult>,
     ) {}
 
-    request(request: PluginSessionApprovalRequest, options?: { signal?: AbortSignal }): Promise<PluginSessionApprovalResult>;
-    request(request: PluginSessionQuestionsRequest, options?: { signal?: AbortSignal }): Promise<PluginSessionQuestionsResult>;
-    request(request: PluginSessionConfirmationRequest, options?: { signal?: AbortSignal }): Promise<PluginSessionConfirmationResult>;
+    request(request: HostSessionApprovalRequest, options?: { signal?: AbortSignal }): Promise<HostSessionApprovalResult>;
+    request(request: HostSessionQuestionsRequest, options?: { signal?: AbortSignal }): Promise<HostSessionQuestionsResult>;
+    request(request: HostSessionConfirmationRequest, options?: { signal?: AbortSignal }): Promise<HostSessionConfirmationResult>;
     async request(
-        request: PluginSessionInteractionRequest,
+        request: HostSessionInteractionRequest,
         options?: { signal?: AbortSignal },
-    ): Promise<PluginSessionInteractionResult> {
+    ): Promise<HostSessionInteractionResult> {
         return await this.handle(request, options);
     }
 }
 
 function presentation(
-    overrides: Partial<PluginCurrentSessionPresentationService> = {},
-): PluginCurrentSessionPresentationService {
+    overrides: Partial<HostCurrentSessionPresentationService> = {},
+): HostCurrentSessionPresentationService {
     return Object.freeze({
         notify: vi.fn(async () => ({ status: 'applied' as const, revision: '1' })),
         setStatus: vi.fn(async () => ({ status: 'applied' as const, revision: '1' })),
         setWidget: vi.fn(async () => ({ status: 'applied' as const, revision: '1' })),
-        setSurfaceTitle: vi.fn(async () => ({ status: 'applied' as const, revision: '1' })),
+        purgeOwner: vi.fn(async () => ({ status: 'applied' as const, revision: '1' })),
         replaceComposerText: vi.fn(async () => ({ status: 'applied' as const, revision: '1' })),
         ...overrides,
     });
 }
 
-describe('plugin invocation UI facade', () => {
-    it('round-trips structured questions through the sole agentState request owner', async () => {
-        const session = new FakeSession();
-        const permissionHandler = new ProviderEnforcedPermissionHandler(
-            session as unknown as ApiSessionClient,
-            { logPrefix: '[Test]' },
-        );
-        const services = createNativeAgentSessionServices({
-            permissionHandler,
-            pluginId: 'acme.plugin',
-            contributionId: 'acme.agent',
-            runtimeId: 'acme.agent',
-            sessionId: session.sessionId,
-            generationId: 'generation-1',
-            isCurrent: () => true,
-        });
-        let operation = 0;
-        const ui = createPluginInvocationUi({
-            currentSession: services.sessions.current,
-            signal: new AbortController().signal,
-            isGenerationCurrent: () => true,
-            createOperationId: () => `host-question-${++operation}`,
-        });
-
-        const answered = ui.askQuestions([
-            { id: 'notes', prompt: 'Notes?', type: 'text' },
-            {
-                id: 'language',
-                prompt: 'Language?',
-                type: 'single',
-                choices: [{ id: 'ts', label: 'TypeScript' }],
-            },
-            {
-                id: 'targets',
-                prompt: 'Targets?',
-                type: 'multiple',
-                choices: [{ id: 'web' }, { id: 'ios', description: 'Apple mobile' }],
-                allowCustom: true,
-            },
-        ]);
-
-        expect(Object.keys(requireAgentStateRequests(session.agentState))).toEqual(['host-question-1']);
-        expect(requireAgentStateRequests(session.agentState)['host-question-1']).toMatchObject({
-            tool: 'AskUserQuestion',
-            kind: 'user_action',
-            owner: { kind: 'plugin', pluginId: 'acme.plugin', runtimeId: 'acme.agent' },
-            arguments: {
-                questions: [
-                    { id: 'notes', selection: 'text' },
-                    { id: 'language', selection: 'single', options: [{ id: 'ts', label: 'TypeScript' }] },
-                    {
-                        id: 'targets',
-                        selection: 'multiple',
-                        options: [{ id: 'web', label: 'web' }, { id: 'ios', label: 'ios', description: 'Apple mobile' }],
-                        allowCustom: true,
-                    },
-                ],
-            },
-        });
-
-        await session.rpcHandlerManager.handlers.get('session.user_action.answer')?.({
-            id: 'host-question-1',
-            approved: true,
-            decision: 'approved',
-            answers: {
-                notes: 'keep spacing',
-                language: 'ts',
-                targets: 'web, custom target',
-            },
-        });
-        await expect(answered).resolves.toEqual({
+describe('plugin invocation interaction and presentation facades', () => {
+    it('forwards the exact questions author request and exact answered result', async () => {
+        const request = {
+            kind: 'questions' as const,
+            title: 'Project settings',
+            questions: [
+                { id: 'notes', prompt: 'Notes?', type: 'text' as const },
+                {
+                    id: 'language',
+                    prompt: 'Language?',
+                    type: 'singleChoice' as const,
+                    choices: [{ id: 'ts', label: 'TypeScript' }],
+                },
+                {
+                    id: 'targets',
+                    prompt: 'Targets?',
+                    type: 'multipleChoice' as const,
+                    choices: [{ id: 'web' }, { id: 'ios', description: 'Apple mobile' }],
+                    allowCustom: true,
+                },
+            ],
+        };
+        const handle = vi.fn(async (): Promise<HostSessionQuestionsResult> => ({
+            requestId: 'host-questions',
+            kind: 'questions',
             status: 'answered',
             answers: {
-                notes: { type: 'text', value: 'keep spacing' },
-                language: { type: 'single', answer: { type: 'choice', choiceId: 'ts' } },
+                notes: { kind: 'text', value: 'keep spacing' },
+                language: { kind: 'singleChoice', answer: { kind: 'choice', choiceId: 'ts' } },
                 targets: {
-                    type: 'multiple',
+                    kind: 'multipleChoice',
                     answers: [
-                        { type: 'choice', choiceId: 'web' },
-                        { type: 'custom', value: 'custom target' },
+                        { kind: 'choice', choiceId: 'web' },
+                        { kind: 'custom', value: 'custom target' },
                     ],
                 },
             },
+        }));
+        const interactions = createPluginInteractionsService({
+            currentSession: { interactions: new TestInteractions(handle) },
+            signal: new AbortController().signal,
+            isGenerationCurrent: () => true,
         });
-        expect(session.agentState.requests).toEqual({});
 
-        const cancelled = ui.askQuestions([{ id: 'reason', prompt: 'Reason?', type: 'text' }]);
-        expect(Object.keys(requireAgentStateRequests(session.agentState))).toEqual(['host-question-2']);
-        await session.rpcHandlerManager.handlers.get('session.user_action.answer')?.({
-            id: 'host-question-2',
-            approved: false,
-            decision: 'abort',
+        await expect(interactions.askQuestions(request)).resolves.toMatchObject({
+            requestId: 'host-questions',
+            kind: 'questions',
+            status: 'answered',
         });
-        await expect(cancelled).resolves.toEqual({ status: 'cancelled' });
-        expect(session.agentState.requests).toEqual({});
-
-        await expect(Reflect.apply(ui.askQuestions, ui, [[]])).resolves.toMatchObject({
-            status: 'unavailable',
-        });
-        expect(session.agentState.requests).toEqual({});
+        expect(handle).toHaveBeenCalledWith(request, expect.objectContaining({ signal: expect.any(AbortSignal) }));
     });
 
-    it('projects author intent through current-session SVC10 without exposing host operation ids', async () => {
-        const confirm = vi.fn(async () => ({
-            kind: 'confirmation' as const,
-            status: 'answered' as const,
-            confirmed: true,
+    it('forwards confirmation author intent without exposing host request identity', async () => {
+        const request = { kind: 'confirmation' as const, title: 'Review', message: 'Proceed?' };
+        const handle = vi.fn(async (): Promise<HostSessionConfirmationResult> => ({
+            requestId: 'host-confirmation',
+            kind: 'confirmation',
+            status: 'approved',
         }));
-        const hostPresentation = presentation();
         const signal = new AbortController().signal;
-        const ui = createPluginInvocationUi({
-            currentSession: {
-                interactions: new TestInteractions(confirm),
-                presentation: hostPresentation,
-            },
+        const interactions = createPluginInteractionsService({
+            currentSession: { interactions: new TestInteractions(handle) },
             signal,
             isGenerationCurrent: () => true,
-            createOperationId: (() => {
-                let sequence = 0;
-                return () => `host-operation-${++sequence}`;
-            })(),
         });
 
-        await expect(ui.confirm('Proceed?', { title: 'Review' })).resolves.toBe(true);
-        await expect(ui.notify('Finished', { severity: 'warning' })).resolves.toBeUndefined();
-        await expect(ui.status.set('build', 'Ready')).resolves.toBeUndefined();
-        await expect(ui.widget.set('summary', {
+        await expect(interactions.confirm(request)).resolves.toEqual({
+            requestId: 'host-confirmation',
+            kind: 'confirmation',
+            status: 'approved',
+        });
+        expect(handle).toHaveBeenCalledWith(request, { signal });
+    });
+
+    it('projects one-shot and stateful presentation through the current-session owner', async () => {
+        const hostPresentation = presentation();
+        const signal = new AbortController().signal;
+        let operation = 0;
+        const facade = createPluginInvocationPresentation({
+            currentSession: { presentation: hostPresentation },
+            signal,
+            isGenerationCurrent: () => true,
+            createOperationId: () => `host-operation-${++operation}`,
+            presentationOwner: {
+                pluginId: 'acme.alpha',
+                contributionId: 'run',
+                generationId: 'immutable-generation-alpha',
+                invocationId: 'invocation-a',
+            },
+        });
+
+        await expect(facade.notify('Finished', { severity: 'warning' })).resolves.toBeUndefined();
+        await expect(facade.status.set('build', 'Ready')).resolves.toBeUndefined();
+        await expect(facade.widget.set('summary', {
             placement: 'afterComposer',
             lines: ['One', 'Two'],
         })).resolves.toBeUndefined();
-        await expect(ui.widget.set('summary', null)).resolves.toBeUndefined();
-        await expect(ui.title.set('Review')).resolves.toBeUndefined();
-        await expect(ui.composer.replace('next prompt')).resolves.toBeUndefined();
+        await expect(facade.widget.set('summary', null)).resolves.toBeUndefined();
+        await expect(facade.composer.replace('next prompt')).resolves.toBeUndefined();
 
-        expect(confirm).toHaveBeenCalledWith({
-            kind: 'confirmation',
-            requestId: 'host-operation-1',
-            title: 'Review',
-            message: 'Proceed?',
-        }, { signal });
         expect(hostPresentation.notify).toHaveBeenCalledWith({
-            operationId: 'host-operation-2',
+            operationId: 'host-operation-1',
             message: 'Finished',
             severity: 'warning',
         }, { signal });
         expect(hostPresentation.setWidget).toHaveBeenLastCalledWith({
-            operationId: 'host-operation-5',
+            operationId: 'host-operation-4',
             key: 'summary',
             placement: 'beforeComposer',
             lines: null,
+            owner: {
+                pluginId: 'acme.alpha',
+                contributionId: 'run',
+                generationId: 'immutable-generation-alpha',
+                invocationId: 'invocation-a',
+            },
         }, { signal });
     });
 
-    it('rejects a retained UI facade after its plugin generation retires', async () => {
-        const hostPresentation = presentation();
-        const ui = createPluginInvocationUi({
-            currentSession: {
-                interactions: new TestInteractions(async () => ({
-                    kind: 'confirmation',
-                    status: 'answered',
-                    confirmed: true,
-                })),
-                presentation: hostPresentation,
-            },
-            signal: new AbortController().signal,
-            isGenerationCurrent: () => false,
+    it('uses only a host-stamped invocation owner for transient rows and purges it on retirement', async () => {
+        const hostPresentation = presentation({
+            purgeOwner: vi.fn(async () => ({ status: 'applied' as const, revision: '2' })),
+        });
+        const controller = new AbortController();
+        const owner: HostSessionPresentationOwner = {
+            pluginId: 'acme.alpha',
+            contributionId: 'run',
+            generationId: 'immutable-generation-a',
+            invocationId: 'invocation-a',
+        };
+        const facade = createPluginInvocationPresentation({
+            currentSession: { presentation: hostPresentation },
+            signal: controller.signal,
+            isGenerationCurrent: () => true,
+            presentationOwner: owner,
+            createOperationId: () => 'host-operation',
         });
 
-        await expect(ui.notify('Stale generation')).rejects.toMatchObject({
-            name: 'PluginError',
-            code: 'plugin_ui_generation_retired',
-        } satisfies Partial<PluginError>);
-        expect(hostPresentation.notify).not.toHaveBeenCalled();
+        await facade.status.set('progress', 'Running');
+        await facade.widget.set('progress', { placement: 'beforeComposer', lines: ['1/2'] });
+
+        expect(hostPresentation.setStatus).toHaveBeenCalledWith(expect.objectContaining({
+            key: 'progress',
+            owner,
+        }), expect.objectContaining({ signal: controller.signal }));
+        expect(hostPresentation.setWidget).toHaveBeenCalledWith(expect.objectContaining({
+            key: 'progress',
+            owner,
+        }), expect.objectContaining({ signal: controller.signal }));
+
+        controller.abort();
+        await Promise.resolve();
+        expect(hostPresentation.purgeOwner).toHaveBeenCalledWith(expect.objectContaining({ owner }));
     });
 
-    it('fails truthfully for unbound sessions and inconclusive host outcomes', async () => {
-        const unavailable = createPluginInvocationUi({
-            currentSession: null,
+    it('fails status and widget writes without a host-stamped invocation owner', async () => {
+        const hostPresentation = presentation();
+        const facade = createPluginInvocationPresentation({
+            currentSession: { presentation: hostPresentation },
             signal: new AbortController().signal,
             isGenerationCurrent: () => true,
         });
-        await expect(unavailable.confirm('Proceed?')).rejects.toMatchObject({
+
+        await expect(facade.status.set('progress', 'Running')).rejects.toMatchObject({
+            code: 'plugin_ui_unavailable',
+        });
+        await expect(facade.widget.set('progress', { placement: 'beforeComposer', lines: ['1/2'] })).rejects.toMatchObject({
+            code: 'plugin_ui_unavailable',
+        });
+        expect(hostPresentation.setStatus).not.toHaveBeenCalled();
+        expect(hostPresentation.setWidget).not.toHaveBeenCalled();
+    });
+
+    it('does not expose actionable presentation through the plugin facade', () => {
+        const facade = createPluginInvocationPresentation({
+            currentSession: { presentation: presentation() },
+            signal: new AbortController().signal,
+            isGenerationCurrent: () => true,
+        });
+
+        expect('actionable' in facade).toBe(false);
+        expect('title' in facade).toBe(false);
+    });
+
+    it('returns exact unavailable interaction terminals and truthful presentation failures', async () => {
+        let operation = 0;
+        const params = {
+            currentSession: null,
+            signal: new AbortController().signal,
+            isGenerationCurrent: () => true,
+            createOperationId: () => `fallback-${++operation}`,
+        };
+        const interactions = createPluginInteractionsService(params);
+        const facade = createPluginInvocationPresentation(params);
+
+        await expect(interactions.confirm({
+            kind: 'confirmation',
+            message: 'Proceed?',
+        })).resolves.toEqual({
+            requestId: 'fallback-1',
+            kind: 'confirmation',
+            status: 'unavailable',
+        });
+        await expect(interactions.askQuestions({
+            kind: 'questions',
+            questions: [{ id: 'reason', prompt: 'Reason?', type: 'text' }],
+        })).resolves.toEqual({
+            requestId: 'fallback-2',
+            kind: 'questions',
+            status: 'unavailable',
+        });
+        await expect(facade.notify('Finished')).rejects.toMatchObject({
             name: 'PluginError',
             code: 'plugin_ui_unavailable',
         } satisfies Partial<PluginError>);
-        await expect(unavailable.askQuestions([
-            { id: 'reason', prompt: 'Reason?', type: 'text' },
-        ])).resolves.toMatchObject({
-            status: 'unavailable',
-            diagnostic: { code: 'plugin_ui_unavailable' },
-        });
+    });
 
-        const outcomeUnknown = createPluginInvocationUi({
+    it('fails presentation calls truthfully for retired generations and inconclusive host outcomes', async () => {
+        const retiredPresentation = presentation();
+        const retired = createPluginInvocationPresentation({
+            currentSession: { presentation: retiredPresentation },
+            signal: new AbortController().signal,
+            isGenerationCurrent: () => false,
+        });
+        await expect(retired.notify('Stale generation')).rejects.toMatchObject({
+            name: 'PluginError',
+            code: 'plugin_ui_generation_retired',
+        } satisfies Partial<PluginError>);
+        expect(retiredPresentation.notify).not.toHaveBeenCalled();
+
+        const inconclusive = createPluginInvocationPresentation({
             currentSession: {
-                interactions: new TestInteractions(async () => ({
-                    kind: 'confirmation',
-                    status: 'unavailable',
-                    diagnostic: { code: 'interaction_unavailable', severity: 'warning', message: 'Unavailable' },
-                })),
                 presentation: presentation({
                     notify: async () => ({
                         status: 'outcomeUnknown',
@@ -296,45 +297,18 @@ describe('plugin invocation UI facade', () => {
             },
             signal: new AbortController().signal,
             isGenerationCurrent: () => true,
-            createOperationId: () => 'host-operation',
+            presentationOwner: {
+                pluginId: 'acme.alpha',
+                contributionId: 'run',
+                generationId: 'immutable-generation-alpha',
+                invocationId: 'invocation-a',
+            },
         });
-
-        await expect(outcomeUnknown.confirm('Proceed?')).rejects.toMatchObject({
-            name: 'PluginError',
-            code: 'plugin_ui_unavailable',
-        } satisfies Partial<PluginError>);
-        await expect(outcomeUnknown.notify('Finished')).rejects.toMatchObject({
-            name: 'PluginError',
+        await expect(inconclusive.notify('Finished')).rejects.toMatchObject({
             code: 'plugin_ui_outcome_unknown',
-        } satisfies Partial<PluginError>);
-        await expect(outcomeUnknown.status.set('build', 'Ready')).rejects.toMatchObject({
-            name: 'PluginError',
-            code: 'plugin_ui_conflict',
-        } satisfies Partial<PluginError>);
-    });
-
-    it('maps question interaction failures to the typed unavailable terminal result', async () => {
-        const ui = createPluginInvocationUi({
-            currentSession: {
-                interactions: new TestInteractions(async () => {
-                    throw new Error('raw interaction transport failure');
-                }),
-                presentation: presentation(),
-            },
-            signal: new AbortController().signal,
-            isGenerationCurrent: () => true,
-            createOperationId: () => 'host-question',
         });
-
-        await expect(ui.askQuestions([
-            { id: 'reason', prompt: 'Reason?', type: 'text' },
-        ])).resolves.toEqual({
-            status: 'unavailable',
-            diagnostic: {
-                code: 'plugin_ui_questions_unavailable',
-                severity: 'error',
-                message: 'The requested UI questions interaction failed',
-            },
+        await expect(inconclusive.status.set('build', 'Ready')).rejects.toMatchObject({
+            code: 'plugin_ui_conflict',
         });
     });
 });

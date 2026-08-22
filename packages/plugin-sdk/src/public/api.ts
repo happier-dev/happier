@@ -4,7 +4,7 @@ export type {
     PluginDiagnosticData,
     PluginDiagnosticSeverity,
 } from '../diagnostics.js';
-export { PluginError } from '../errors.js';
+export { isPluginError, PluginError } from '../errors.js';
 export type { PluginErrorData } from '../errors.js';
 export type * from '../identity.js';
 export type * from '../invocation.js';

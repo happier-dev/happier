@@ -1,6 +1,7 @@
 /** @moduleRealm daemon */
 import {
     createPluginActionInvocation,
+    readPluginActionFailureAuthorPayload,
     MessageActionAvailableSnapshotV1Schema,
     PluginMachineExecutionOriginV1Schema,
     PluginMachineMaterializationRefV1Schema,
@@ -21,7 +22,7 @@ import type {
     ContributedActionExecutionWithOriginResult,
 } from '../actions/service.js';
 import type { PluginCleanup } from '../activation.js';
-import { PluginError } from '../errors.js';
+import { isPluginError, PluginError } from '../errors.js';
 import {
     parsePluginManifest,
     type ParsedPluginManifest,
@@ -405,14 +406,7 @@ export async function createPluginTestkit(
     const manifest = manifestResult.manifest;
     const rights = derivePluginDaemonContributionRegistrationRights(
         manifest.contributes as Readonly<Record<string, unknown>>,
-    ).map((right) => {
-        if (right.family !== 'voiceProviders') return right;
-        const voiceProviderDeclaration = manifest.contributes.voiceProviders.find(
-            (candidate) => candidate.id === right.localId,
-        );
-        if (!voiceProviderDeclaration) return right;
-        return Object.freeze({ ...right, voiceProviderDeclaration });
-    });
+    );
     const registrationScope = createPluginRegistrationScope({
         pluginId: manifest.id,
         target: { realm: 'daemon' },
@@ -1185,10 +1179,19 @@ export async function createPluginTestkit(
             },
         });
         if (result.status === 'executed') return result.value;
+        // The canonical projection carries the target's own `retryable` signal
+        // and published payload, so an author's test observes the same failure
+        // contract a real plugin-to-plugin call delivers.
         throw new PluginError({
             code: result.code,
             message: result.message,
-            ...(handlerError instanceof PluginError
+            ...(result.status !== 'failed' || result.retryable === undefined
+                ? {}
+                : { retryable: result.retryable }),
+            ...(result.status === 'failed'
+                ? readPluginActionFailureAuthorPayload(result.data)
+                : {}),
+            ...(isPluginError(handlerError)
                 && handlerError.actionHandlerInvocation !== undefined
                 ? { actionHandlerInvocation: handlerError.actionHandlerInvocation }
                 : invocationOptions.contributedTarget === true && !handlerStarted

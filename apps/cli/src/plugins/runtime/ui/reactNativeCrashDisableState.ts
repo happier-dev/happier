@@ -1,6 +1,15 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
+import {
+    DaemonPluginReactNativeCrashBindingTokenV1Schema,
+    DaemonPluginReactNativeCrashFailureOccurrenceIdV1Schema,
+    DaemonPluginReactNativeCrashFailureV1Schema,
+    isSameDaemonPluginReactNativeCrashBindingTokenV1,
+    type DaemonPluginReactNativeCrashBindingTokenV1,
+    type DaemonPluginReactNativeCrashMountV1,
+    type DaemonPluginReactNativeCrashFailureV1,
+} from '@happier-dev/protocol';
 import { z } from 'zod';
 
 import { writeJsonAtomic } from '@/utils/fs/writeJsonAtomic';
@@ -8,166 +17,396 @@ import { writeJsonAtomic } from '@/utils/fs/writeJsonAtomic';
 import { withPluginStoreLock } from '@/plugins/store/lock';
 import { ensurePluginStoreDirectories, resolvePluginStorePaths, type PluginStorePaths } from '@/plugins/store/paths';
 
-const REACT_NATIVE_CRASH_DISABLE_STATE_FILE_NAME = 'react-native-crash-disable-state.v1.json';
-const REACT_NATIVE_CRASH_DISABLE_STATE_LOCK_NAME = 'react-native-crash-disable-state.v1.lock';
+const REACT_NATIVE_CRASH_STATE_FILE_NAME = 'react-native-crash-state.v3.json';
+const REACT_NATIVE_CRASH_STATE_LOCK_NAME = 'react-native-crash-state.v3.lock';
 
-const ReactNativeCrashDisableReasonSchema = z.enum([
-    'render_error_threshold',
-    'startup_ack_timeout_threshold',
-]);
-export type ReactNativeCrashDisableReason = z.infer<typeof ReactNativeCrashDisableReasonSchema>;
+export const REACT_NATIVE_CRASH_FAILURE_THRESHOLD = 2;
 
-export const ReactNativeCrashDisableRecordV1Schema = z.object({
-    pluginId: z.string().min(1),
-    contributionId: z.string().min(1),
-    cacheKey: z.string().min(1),
-    artifactDigest: z.string().min(1),
-    crashCount: z.number().int().nonnegative(),
-    startupFailureCount: z.number().int().nonnegative(),
+export const ReactNativeCrashStateRecordV3Schema = z.object({
+    token: DaemonPluginReactNativeCrashBindingTokenV1Schema,
+    renderFailureCount: z.number().int().nonnegative(),
     disabled: z.boolean(),
-    disabledReason: ReactNativeCrashDisableReasonSchema.optional(),
-    updatedAtMs: z.number().int().nonnegative(),
-    disabledAtMs: z.number().int().nonnegative().optional(),
+    failureOccurrences: z.record(
+        DaemonPluginReactNativeCrashFailureOccurrenceIdV1Schema,
+        DaemonPluginReactNativeCrashFailureV1Schema,
+    ),
 }).strict();
-export type ReactNativeCrashDisableRecordV1 = z.infer<typeof ReactNativeCrashDisableRecordV1Schema>;
+export type ReactNativeCrashStateRecordV3 = z.infer<typeof ReactNativeCrashStateRecordV3Schema>;
 
-export const ReactNativeCrashDisableStateFileV1Schema = z.object({
-    t: z.literal('happier_plugin_react_native_crash_disable_state_v1'),
-    schemaVersion: z.literal(1),
-    records: z.record(z.string(), ReactNativeCrashDisableRecordV1Schema),
+export const ReactNativeCrashStateFileV3Schema = z.object({
+    t: z.literal('happier_plugin_react_native_crash_state_v3'),
+    schemaVersion: z.literal(3),
+    records: z.record(z.string(), ReactNativeCrashStateRecordV3Schema),
 }).strict();
-export type ReactNativeCrashDisableStateFileV1 = z.infer<typeof ReactNativeCrashDisableStateFileV1Schema>;
+export type ReactNativeCrashStateFileV3 = z.infer<typeof ReactNativeCrashStateFileV3Schema>;
 
-export type ReactNativeCrashDisableStateStore = Readonly<{
+export type ReactNativeCrashStateStore = Readonly<{
     paths: PluginStorePaths;
     stateFilePath: string;
-    read: () => Promise<ReactNativeCrashDisableStateFileV1>;
-    write: (next: ReactNativeCrashDisableStateFileV1) => Promise<void>;
+    read: () => Promise<ReactNativeCrashStateFileV3>;
+    write: (next: ReactNativeCrashStateFileV3) => Promise<void>;
     update: (
         transform: (
-            current: ReactNativeCrashDisableStateFileV1,
-        ) => Promise<ReactNativeCrashDisableStateFileV1> | ReactNativeCrashDisableStateFileV1,
-    ) => Promise<ReactNativeCrashDisableStateFileV1>;
+            current: ReactNativeCrashStateFileV3,
+        ) => Promise<ReactNativeCrashStateFileV3> | ReactNativeCrashStateFileV3,
+    ) => Promise<ReactNativeCrashStateFileV3>;
 }>;
 
-export type ReactNativeCrashDisableCurrentCacheIdentity = Readonly<{
-    cacheKey: string;
-    artifactDigest?: string;
+export type ReactNativeCrashStateBinding = Readonly<{
+    mount: DaemonPluginReactNativeCrashBindingTokenV1['mount'];
+    renderer: DaemonPluginReactNativeCrashBindingTokenV1['renderer'];
+    artifactDigest: DaemonPluginReactNativeCrashBindingTokenV1['artifactDigest'];
 }>;
 
-export type ReactNativeCrashDisableReportRecordInput = Readonly<{
-    store: ReactNativeCrashDisableStateStore;
-    pluginId: string;
-    contributionId: string;
-    cacheKey: string;
-    artifactDigest: string;
-    disabledReason: ReactNativeCrashDisableReason;
-    crashCount: number;
-    startupFailureCount: number;
-    observedAtMs?: number;
+export type ReactNativeCrashStateProjection = Readonly<{
+    token: DaemonPluginReactNativeCrashBindingTokenV1;
+    disabled: boolean;
 }>;
 
-export function createReactNativeCrashDisableContributionKey(input: Readonly<{
-    pluginId: string;
-    contributionId: string;
-}>): string {
-    return `${input.pluginId}:${input.contributionId}`;
+export type ReactNativeCrashStateReconciliation = Readonly<{
+    state: ReactNativeCrashStateFileV3;
+    statesByBindingKey: Readonly<Record<string, ReactNativeCrashStateProjection | undefined>>;
+}>;
+
+export type ReactNativeCrashFailureRecordResult = Readonly<{
+    state: ReactNativeCrashStateFileV3;
+    status: 'recorded' | 'rejoined' | 'failure_occurrence_conflict' | 'binding_token_mismatch' | 'ignored_disabled';
+    disabled: boolean;
+}>;
+
+export type ReactNativeCrashResetResult = Readonly<{
+    state: ReactNativeCrashStateFileV3;
+    status: 'reset' | 'binding_token_mismatch';
+    token?: DaemonPluginReactNativeCrashBindingTokenV1;
+}>;
+
+function cloneToken(token: DaemonPluginReactNativeCrashBindingTokenV1): DaemonPluginReactNativeCrashBindingTokenV1 {
+    return {
+        mount: cloneMount(token.mount),
+        renderer: { ...token.renderer },
+        artifactDigest: token.artifactDigest,
+        crashStateEpoch: token.crashStateEpoch,
+    };
 }
 
-export function createEmptyReactNativeCrashDisableState(): ReactNativeCrashDisableStateFileV1 {
+function sameQualifiedIdentity(
+    left: Readonly<{ pluginId: string; localId: string }>,
+    right: Readonly<{ pluginId: string; localId: string }>,
+): boolean {
+    return left.pluginId === right.pluginId && left.localId === right.localId;
+}
+
+function cloneMount(mount: DaemonPluginReactNativeCrashMountV1): DaemonPluginReactNativeCrashMountV1 {
+    if (mount.kind === 'destination') {
+        return {
+            kind: 'destination',
+            destination: { ...mount.destination },
+        };
+    }
+    if (mount.kind === 'composer') {
+        return {
+            kind: 'composer',
+            contribution: { ...mount.contribution },
+            immutableGenerationId: mount.immutableGenerationId,
+            role: mount.role,
+        };
+    }
     return {
-        t: 'happier_plugin_react_native_crash_disable_state_v1',
-        schemaVersion: 1,
+            kind: 'targetedSurface',
+            target: { ...mount.target },
+            point: {
+                pointId: mount.point.pointId,
+                protocol: { ...mount.point.protocol },
+            },
+            contributor: { ...mount.contributor },
+            role: mount.role,
+            presentation: mount.presentation,
+    };
+}
+
+function sameMount(
+    left: DaemonPluginReactNativeCrashMountV1,
+    right: DaemonPluginReactNativeCrashMountV1,
+): boolean {
+    if (left.kind !== right.kind) return false;
+    if (left.kind === 'destination' && right.kind === 'destination') {
+        return sameQualifiedIdentity(left.destination, right.destination);
+    }
+    if (left.kind === 'composer' && right.kind === 'composer') {
+        return sameQualifiedIdentity(left.contribution, right.contribution)
+            && left.immutableGenerationId === right.immutableGenerationId
+            && left.role === right.role;
+    }
+    if (left.kind !== 'targetedSurface' || right.kind !== 'targetedSurface') return false;
+    return left.target.pluginId === right.target.pluginId
+        && left.target.immutableGenerationId === right.target.immutableGenerationId
+        && left.point.pointId === right.point.pointId
+        && left.point.protocol.id === right.point.protocol.id
+        && left.point.protocol.version === right.point.protocol.version
+        && left.contributor.pluginId === right.contributor.pluginId
+        && left.contributor.contributionId === right.contributor.contributionId
+        && left.contributor.immutableGenerationId === right.contributor.immutableGenerationId
+        && left.role === right.role
+        && left.presentation === right.presentation;
+}
+
+function countFailures(record: ReactNativeCrashStateRecordV3): number {
+    return record.renderFailureCount;
+}
+
+function createRecord(binding: ReactNativeCrashStateBinding, crashStateEpoch: number): ReactNativeCrashStateRecordV3 {
+    return {
+        token: {
+            mount: cloneMount(binding.mount),
+            renderer: { ...binding.renderer },
+            artifactDigest: binding.artifactDigest,
+            crashStateEpoch,
+        },
+        renderFailureCount: 0,
+        disabled: false,
+        failureOccurrences: {},
+    };
+}
+
+function toProjection(record: ReactNativeCrashStateRecordV3): ReactNativeCrashStateProjection {
+    return Object.freeze({
+        token: Object.freeze(cloneToken(record.token)),
+        disabled: record.disabled,
+    });
+}
+
+function normalizeBindings(bindings: readonly ReactNativeCrashStateBinding[]): readonly ReactNativeCrashStateBinding[] {
+    const bindingsByKey = new Map<string, ReactNativeCrashStateBinding>();
+    for (const binding of bindings) {
+        const key = createReactNativeCrashStateBindingKey(binding);
+        const previous = bindingsByKey.get(key);
+        if (previous && previous.artifactDigest !== binding.artifactDigest) {
+            throw new Error('React Native crash-state reconciliation received conflicting current artifact digests');
+        }
+        bindingsByKey.set(key, binding);
+    }
+    return Object.freeze([...bindingsByKey.values()]);
+}
+
+export function createReactNativeCrashStateBindingKey(input: Readonly<{
+    mount: DaemonPluginReactNativeCrashBindingTokenV1['mount'];
+    renderer: DaemonPluginReactNativeCrashBindingTokenV1['renderer'];
+}>): string {
+    const mountKey = input.mount.kind === 'destination'
+        ? [
+            input.mount.kind,
+            input.mount.destination.pluginId,
+            input.mount.destination.localId,
+        ]
+        : input.mount.kind === 'composer'
+            ? [
+                input.mount.kind,
+                input.mount.contribution.pluginId,
+                input.mount.contribution.localId,
+                input.mount.role,
+            ]
+            : [
+            input.mount.kind,
+            input.mount.target.pluginId,
+            input.mount.point.pointId,
+            input.mount.point.protocol.id,
+            input.mount.point.protocol.version,
+            input.mount.contributor.pluginId,
+            input.mount.contributor.contributionId,
+            input.mount.role,
+            input.mount.presentation,
+        ];
+    return JSON.stringify([
+        ...mountKey,
+        input.renderer.pluginId,
+        input.renderer.localId,
+    ]);
+}
+
+export function createEmptyReactNativeCrashState(): ReactNativeCrashStateFileV3 {
+    return {
+        t: 'happier_plugin_react_native_crash_state_v3',
+        schemaVersion: 3,
         records: {},
     };
 }
 
-export async function recordReactNativeCrashDisableReport(
-    input: ReactNativeCrashDisableReportRecordInput,
-): Promise<ReactNativeCrashDisableStateFileV1> {
-    const contributionKey = createReactNativeCrashDisableContributionKey(input);
-    const observedAtMs = input.observedAtMs ?? Date.now();
-    return await input.store.update((current) => {
-        const previous = current.records[contributionKey];
-        const previousMatchesCurrentArtifact = previous?.cacheKey === input.cacheKey
-            && previous.artifactDigest === input.artifactDigest;
+/**
+ * The daemon creates/refreshes the one current binding state before projecting
+ * it. Artifact replacement is the only automatic reset: it advances the epoch
+ * and clears counts, disablement, and retained occurrence IDs together.
+ */
+export async function reconcileReactNativeCrashStateBindings(input: Readonly<{
+    store: ReactNativeCrashStateStore;
+    bindings: readonly ReactNativeCrashStateBinding[];
+}>): Promise<ReactNativeCrashStateReconciliation> {
+    const bindings = normalizeBindings(input.bindings);
+    const state = await input.store.update((current) => {
+        let records = current.records;
+        let changed = false;
+
+        for (const binding of bindings) {
+            const bindingKey = createReactNativeCrashStateBindingKey(binding);
+            const previous = records[bindingKey];
+            if (!previous) {
+                if (!changed) records = { ...records };
+                records[bindingKey] = createRecord(binding, 0);
+                changed = true;
+                continue;
+            }
+            // A targeted mount's durable slot deliberately survives immutable
+            // generation changes. Its exact admitted target/contributor facts
+            // still fence the live token, so replacing either generation must
+            // reset the slot even when the generated bytes are unchanged.
+            if (
+                sameMount(previous.token.mount, binding.mount)
+                && previous.token.artifactDigest === binding.artifactDigest
+            ) {
+                continue;
+            }
+            if (previous.token.crashStateEpoch >= Number.MAX_SAFE_INTEGER) {
+                throw new Error('React Native crash-state epoch exhausted');
+            }
+            if (!changed) records = { ...records };
+            records[bindingKey] = createRecord(binding, previous.token.crashStateEpoch + 1);
+            changed = true;
+        }
+
+        return changed ? { ...current, records } : current;
+    });
+
+    const statesByBindingKey: Record<string, ReactNativeCrashStateProjection | undefined> = {};
+    for (const binding of bindings) {
+        const bindingKey = createReactNativeCrashStateBindingKey(binding);
+        const record = state.records[bindingKey];
+        if (record) statesByBindingKey[bindingKey] = toProjection(record);
+    }
+    return Object.freeze({
+        state,
+        statesByBindingKey: Object.freeze(statesByBindingKey),
+    });
+}
+
+/**
+ * Reconciles one UI-created failure occurrence under the daemon lock. The
+ * occurrence mapping is bounded naturally by the disable threshold: once the
+ * binding is disabled, new occurrence IDs do not change state.
+ */
+export async function recordReactNativeCrashFailure(input: Readonly<{
+    store: ReactNativeCrashStateStore;
+    token: DaemonPluginReactNativeCrashBindingTokenV1;
+    failureOccurrenceId: string;
+    failure: DaemonPluginReactNativeCrashFailureV1;
+}>): Promise<ReactNativeCrashFailureRecordResult> {
+    const occurrenceId = DaemonPluginReactNativeCrashFailureOccurrenceIdV1Schema.parse(input.failureOccurrenceId);
+    const failure = DaemonPluginReactNativeCrashFailureV1Schema.parse(input.failure);
+    const bindingKey = createReactNativeCrashStateBindingKey(input.token);
+    let status: ReactNativeCrashFailureRecordResult['status'] = 'binding_token_mismatch';
+    let disabled = false;
+
+    const state = await input.store.update((current) => {
+        const previous = current.records[bindingKey];
+        if (!previous || !isSameDaemonPluginReactNativeCrashBindingTokenV1(previous.token, input.token)) return current;
+
+        const existingFailure = previous.failureOccurrences[occurrenceId];
+        if (existingFailure !== undefined) {
+            status = existingFailure === failure ? 'rejoined' : 'failure_occurrence_conflict';
+            disabled = previous.disabled;
+            return current;
+        }
+        if (previous.disabled) {
+            status = 'ignored_disabled';
+            disabled = true;
+            return current;
+        }
+
+        const next: ReactNativeCrashStateRecordV3 = {
+            ...previous,
+            renderFailureCount: previous.renderFailureCount + 1,
+            failureOccurrences: {
+                ...previous.failureOccurrences,
+                [occurrenceId]: failure,
+            },
+        };
+        next.disabled = countFailures(next) >= REACT_NATIVE_CRASH_FAILURE_THRESHOLD;
+        status = 'recorded';
+        disabled = next.disabled;
         return {
             ...current,
             records: {
                 ...current.records,
-                [contributionKey]: {
-                    pluginId: input.pluginId,
-                    contributionId: input.contributionId,
-                    cacheKey: input.cacheKey,
-                    artifactDigest: input.artifactDigest,
-                    crashCount: Math.max(previousMatchesCurrentArtifact ? previous.crashCount : 0, input.crashCount),
-                    startupFailureCount: Math.max(
-                        previousMatchesCurrentArtifact ? previous.startupFailureCount : 0,
-                        input.startupFailureCount,
-                    ),
-                    disabled: true,
-                    disabledReason: input.disabledReason,
-                    updatedAtMs: observedAtMs,
-                    disabledAtMs: previousMatchesCurrentArtifact
-                        ? previous.disabledAtMs ?? observedAtMs
-                        : observedAtMs,
-                },
+                [bindingKey]: next,
             },
         };
     });
+
+    return Object.freeze({ state, status, disabled });
 }
 
-function resolveReactNativeCrashDisableStateFilePath(paths: PluginStorePaths): string {
-    return join(paths.stateDir, REACT_NATIVE_CRASH_DISABLE_STATE_FILE_NAME);
+/**
+ * Same-digest recovery is a daemon-owned operation. Mount-local Retry never
+ * calls this function.
+ */
+export async function resetReactNativeCrashState(input: Readonly<{
+    store: ReactNativeCrashStateStore;
+    token: DaemonPluginReactNativeCrashBindingTokenV1;
+}>): Promise<ReactNativeCrashResetResult> {
+    const bindingKey = createReactNativeCrashStateBindingKey(input.token);
+    let resetToken: DaemonPluginReactNativeCrashBindingTokenV1 | undefined;
+
+    const state = await input.store.update((current) => {
+        const previous = current.records[bindingKey];
+        if (!previous || !isSameDaemonPluginReactNativeCrashBindingTokenV1(previous.token, input.token)) return current;
+        if (previous.token.crashStateEpoch >= Number.MAX_SAFE_INTEGER) {
+            throw new Error('React Native crash-state epoch exhausted');
+        }
+        const next = createRecord({
+            mount: previous.token.mount,
+            renderer: previous.token.renderer,
+            artifactDigest: previous.token.artifactDigest,
+        }, previous.token.crashStateEpoch + 1);
+        resetToken = cloneToken(next.token);
+        return {
+            ...current,
+            records: {
+                ...current.records,
+                [bindingKey]: next,
+            },
+        };
+    });
+
+    return Object.freeze(resetToken
+        ? { state, status: 'reset' as const, token: resetToken }
+        : { state, status: 'binding_token_mismatch' as const });
 }
 
-export function resolveReactNativeCrashDisabledContributionIdsForProjection(params: Readonly<{
-    state: ReactNativeCrashDisableStateFileV1;
-    currentCacheKeysByContributionId: Readonly<Record<string, ReactNativeCrashDisableCurrentCacheIdentity | undefined>>;
-}>): readonly string[] {
-    const disabledContributionIds: string[] = [];
-    for (const record of Object.values(params.state.records)) {
-        if (!record.disabled) continue;
-
-        const contributionKey = createReactNativeCrashDisableContributionKey(record);
-        const currentIdentity = params.currentCacheKeysByContributionId[contributionKey]
-            ?? params.currentCacheKeysByContributionId[record.contributionId];
-        if (!currentIdentity) continue;
-        if (currentIdentity.cacheKey !== record.cacheKey) continue;
-        if (currentIdentity.artifactDigest && currentIdentity.artifactDigest !== record.artifactDigest) continue;
-
-        disabledContributionIds.push(contributionKey);
-    }
-    return Object.freeze(disabledContributionIds.sort((left, right) => left.localeCompare(right)));
+function resolveReactNativeCrashStateFilePath(paths: PluginStorePaths): string {
+    return join(paths.stateDir, REACT_NATIVE_CRASH_STATE_FILE_NAME);
 }
 
-export function createReactNativeCrashDisableStateStore(params?: Readonly<{ happyHomeDir?: string }>): ReactNativeCrashDisableStateStore {
+export function createReactNativeCrashStateStore(params?: Readonly<{ happyHomeDir?: string }>): ReactNativeCrashStateStore {
     const paths = resolvePluginStorePaths(params);
-    const stateFilePath = resolveReactNativeCrashDisableStateFilePath(paths);
+    const stateFilePath = resolveReactNativeCrashStateFilePath(paths);
 
-    async function readUnlocked(): Promise<ReactNativeCrashDisableStateFileV1> {
+    async function readUnlocked(): Promise<ReactNativeCrashStateFileV3> {
         try {
             const raw = await readFile(stateFilePath, 'utf8');
             const parsedJson = JSON.parse(raw) as unknown;
-            const parsed = ReactNativeCrashDisableStateFileV1Schema.safeParse(parsedJson);
+            const parsed = ReactNativeCrashStateFileV3Schema.safeParse(parsedJson);
             if (!parsed.success) {
-                throw new Error('Invalid React Native crash-disable state file');
+                throw new Error('Invalid React Native crash-state file');
             }
             return parsed.data;
         } catch (error) {
             const code = (error as NodeJS.ErrnoException | null)?.code;
-            if (code === 'ENOENT') {
-                return createEmptyReactNativeCrashDisableState();
-            }
-            if (error instanceof SyntaxError) {
-                throw new Error('Invalid React Native crash-disable state file');
-            }
+            if (code === 'ENOENT') return createEmptyReactNativeCrashState();
+            if (error instanceof SyntaxError) throw new Error('Invalid React Native crash-state file');
             throw error;
         }
     }
 
-    async function writeUnlocked(next: ReactNativeCrashDisableStateFileV1): Promise<void> {
-        const parsed = ReactNativeCrashDisableStateFileV1Schema.parse(next);
+    async function writeUnlocked(next: ReactNativeCrashStateFileV3): Promise<void> {
+        const parsed = ReactNativeCrashStateFileV3Schema.parse(next);
         await ensurePluginStoreDirectories({ happyHomeDir: paths.happyHomeDir });
         await writeJsonAtomic(stateFilePath, parsed);
     }
@@ -175,25 +414,25 @@ export function createReactNativeCrashDisableStateStore(params?: Readonly<{ happ
     return {
         paths,
         stateFilePath,
-        async read(): Promise<ReactNativeCrashDisableStateFileV1> {
+        async read(): Promise<ReactNativeCrashStateFileV3> {
             return await readUnlocked();
         },
-        async write(next: ReactNativeCrashDisableStateFileV1): Promise<void> {
+        async write(next: ReactNativeCrashStateFileV3): Promise<void> {
             await withPluginStoreLock({
                 paths,
-                lockName: REACT_NATIVE_CRASH_DISABLE_STATE_LOCK_NAME,
+                lockName: REACT_NATIVE_CRASH_STATE_LOCK_NAME,
                 fn: async () => {
                     await writeUnlocked(next);
                 },
             });
         },
-        async update(transform): Promise<ReactNativeCrashDisableStateFileV1> {
+        async update(transform): Promise<ReactNativeCrashStateFileV3> {
             return await withPluginStoreLock({
                 paths,
-                lockName: REACT_NATIVE_CRASH_DISABLE_STATE_LOCK_NAME,
+                lockName: REACT_NATIVE_CRASH_STATE_LOCK_NAME,
                 fn: async () => {
                     const current = await readUnlocked();
-                    const next = ReactNativeCrashDisableStateFileV1Schema.parse(await transform(current));
+                    const next = ReactNativeCrashStateFileV3Schema.parse(await transform(current));
                     await writeUnlocked(next);
                     return next;
                 },

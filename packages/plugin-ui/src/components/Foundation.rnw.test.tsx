@@ -94,6 +94,44 @@ describe('foundation presentation families', () => {
     mount.unmount();
   });
 
+  it('resolves every author-owned foundation chrome label through the plugin catalog', () => {
+    const context = createSurfaceContext({
+      translations: {
+        'acme.runtime': 'Exécution',
+        'acme.details': 'Détails',
+        'acme.plugin': 'Extension',
+        'acme.installing': 'Installation',
+        'acme.warning': 'Attention',
+        'acme.warning.detail': 'Vérifiez la configuration.',
+      },
+    });
+    const mount = mountThroughReactNativeWeb(
+      <PluginUiProvider hostApi={createHostApiStub(context)} context={context}>
+        <Divider accessibilityLabel="Runtime" accessibilityLabelKey="acme.runtime" />
+        <Metadata
+          title="Details"
+          titleKey="acme.details"
+          entries={[{ label: 'Plugin', labelKey: 'acme.plugin', value: 'Inspector' }]}
+        />
+        <Progress value={0.5} label="Installing" labelKey="acme.installing" />
+        <Banner
+          title="Warning"
+          titleKey="acme.warning"
+          description="Check the configuration."
+          descriptionKey="acme.warning.detail"
+        />
+      </PluginUiProvider>,
+    );
+
+    expect(mount.container.textContent).toContain('Détails');
+    expect(mount.container.textContent).toContain('Extension');
+    expect(mount.container.querySelector('[role="progressbar"]')?.getAttribute('aria-label')).toBe('Installation');
+    expect(mount.container.textContent).toContain('Attention');
+    expect(mount.container.textContent).toContain('Vérifiez la configuration.');
+    expect(mount.container.querySelector('[role="separator"]')?.getAttribute('aria-label')).toBe('Exécution');
+    mount.unmount();
+  });
+
   it('routes external links through the bound host instead of navigating directly', async () => {
     const openExternalLink = vi.fn(async () => undefined);
     const hostApi = createHostApiStub(createSurfaceContext(), { openExternalLink });

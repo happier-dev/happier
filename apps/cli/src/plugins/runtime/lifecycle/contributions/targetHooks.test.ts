@@ -4,9 +4,8 @@ import { join } from 'node:path';
 
 import { describe, expect, it, vi } from 'vitest';
 
-import { toPluginHookObjectContext } from '@happier-dev/plugin-sdk/experimental/hooks';
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
-import type { HookHandler } from '@happier-dev/plugin-sdk/runtime';
+import type { HookHandler } from '@happier-dev/plugin-sdk/hooks';
 import { PLUGIN_MANIFEST as KIMI_PLUGIN_MANIFEST } from '@happier-dev/plugins-kimi';
 
 import { ingestCanonicalPluginManifest } from '@/plugins/manifest/ingest';
@@ -15,7 +14,15 @@ import { resolvePluginStorePaths } from '@/plugins/store/paths';
 import { createContributionRegistrationHost } from '../../api/registrationRightsHost';
 import { createProductionPluginInvocationServiceOwners } from '../../invocation/services/production';
 import type { ActivationTarget } from '../activation/targets';
+import { getPluginHookDefinitionV1 } from '@happier-dev/protocol';
+import type { ResolvedPluginHookHandler } from '@/plugins/runtime/types';
 import { createTargetHookHandlerRegistry } from './targetHooks';
+
+function createTargetHookHandlerRegistryHandlers(
+    params: Parameters<typeof createTargetHookHandlerRegistry>[0],
+): ReadonlyMap<string, readonly ResolvedPluginHookHandler[]> {
+    return createTargetHookHandlerRegistry(params).handlersByHookId;
+}
 
 function target(params: Readonly<{
     daemonEntryPath?: string | null;
@@ -31,7 +38,6 @@ function target(params: Readonly<{
         source: { kind: 'path' },
         pluginId: KIMI_PLUGIN_MANIFEST.id,
         manifestPath: `/plugins/${KIMI_PLUGIN_MANIFEST.id}/plugin.json`,
-        manifestDigest: 'digest-kimi',
         daemonEntryPath: params.daemonEntryPath === undefined
             ? `/plugins/${KIMI_PLUGIN_MANIFEST.id}/daemon.js`
             : params.daemonEntryPath,
@@ -79,6 +85,10 @@ describe('target hook handler registry', () => {
         const getBinding = vi.fn(async (input) => Object.freeze({
             purpose: input.purpose.purpose,
             service: input.serviceRefs[0]!,
+            account: Object.freeze({
+                service: input.serviceRefs[0]!,
+                accountId: 'codex-account',
+            }),
             target: Object.freeze({ kind: 'account' as const, displayName: 'Codex account' }),
         }));
         const invocationServices = createProductionPluginInvocationServiceOwners({
@@ -86,20 +96,26 @@ describe('target hook handler registry', () => {
                 getBinding,
                 requestSelection: vi.fn(),
                 materialize: vi.fn(),
+                listAccounts: async () => {
+                    throw new Error('Connected Account listing is outside this fixture');
+                },
+                materializeListedAccount: async () => {
+                    throw new Error('Exact-listed Connected Account materialization is outside this fixture');
+                },
                 watch: vi.fn(),
             },
         });
         const host = createContributionRegistrationHost({
             pluginId: KIMI_PLUGIN_MANIFEST.id,
             generation: '7',
-            rights: [{ family: 'hooks', localId: 'resolve-prerequisites' }],
+            rights: [{ family: 'hooks', localId: 'resolve-prerequisites', target: { realm: 'daemon' } }],
             isGenerationCurrent: () => true,
         });
         host.api.hooks.register('resolve-prerequisites', async (_payload, context) => {
             await context.services.connectedAccounts.getBinding(accountRequest.id);
             return { decision: 'allow' };
         });
-        const registry = createTargetHookHandlerRegistry({
+        const registry = createTargetHookHandlerRegistryHandlers({
             generation: 7,
             activationTargets: [activationTarget],
             targetRegistrations: host.commit().map((registration) => ({
@@ -139,20 +155,24 @@ describe('target hook handler registry', () => {
             loggerSink: { write: (record) => { records.push(record); } },
             storagePaths: resolvePluginStorePaths({ happyHomeDir }),
         });
+        const retained = {
+            logger: null as PluginInvocationContext['services']['logger'] | null,
+        };
         const host = createContributionRegistrationHost({
             pluginId: KIMI_PLUGIN_MANIFEST.id,
             generation: '7',
-            rights: [{ family: 'hooks', localId: 'resolve-prerequisites' }],
+            rights: [{ family: 'hooks', localId: 'resolve-prerequisites', target: { realm: 'daemon' } }],
             isGenerationCurrent: () => true,
         });
         host.api.hooks.register('resolve-prerequisites', async (_payload, context) => {
             expect(context.services.availability('logger')).toEqual({ status: 'available' });
             expect(context.services.availability('storage')).toEqual({ status: 'available' });
             context.services.logger.info('hook invoked');
-            await context.services.storage.local.set('invoked', true);
-            await expect(context.services.storage.local.get('invoked')).resolves.toBe(true);
+            retained.logger = context.services.logger;
+            await context.services.storage.daemon.set('invoked', true);
+            await expect(context.services.storage.daemon.get('invoked')).resolves.toBe(true);
             controller.abort();
-            await expect(context.services.storage.local.get('invoked')).rejects.toMatchObject({
+            await expect(context.services.storage.daemon.get('invoked')).rejects.toMatchObject({
                 code: 'PLUGIN_STORAGE_CANCELLED',
             });
             return { decision: 'allow' };
@@ -170,7 +190,7 @@ describe('target hook handler registry', () => {
         };
 
         try {
-            const registry = createTargetHookHandlerRegistry(registryParams);
+            const registry = createTargetHookHandlerRegistryHandlers(registryParams);
             const resolved = registry.get('agent.resolvePrerequisites')?.[0];
             if (!resolved) throw new Error('Expected target hook handler');
 
@@ -179,6 +199,8 @@ describe('target hook handler registry', () => {
                 { signal: controller.signal },
             ))
                 .rejects.toThrow();
+            expect(records).toHaveLength(1);
+            retained.logger?.info('must not log after hook settlement');
             expect(records).toHaveLength(1);
         } finally {
             await invocationServices.dispose();
@@ -191,7 +213,7 @@ describe('target hook handler registry', () => {
         const host = createContributionRegistrationHost({
             pluginId: KIMI_PLUGIN_MANIFEST.id,
             generation: '7',
-            rights: [{ family: 'hooks', localId: 'resolve-prerequisites' }],
+            rights: [{ family: 'hooks', localId: 'resolve-prerequisites', target: { realm: 'daemon' } }],
             isGenerationCurrent: () => true,
         });
         host.api.hooks.register('resolve-prerequisites', async () => {
@@ -200,7 +222,7 @@ describe('target hook handler registry', () => {
                 release = resolve;
             });
         });
-        const registry = createTargetHookHandlerRegistry({
+        const registry = createTargetHookHandlerRegistryHandlers({
             generation: 7,
             activationTargets: [target()],
             targetRegistrations: host.commit().map((registration) => ({
@@ -237,14 +259,14 @@ describe('target hook handler registry', () => {
         const host = createContributionRegistrationHost({
             pluginId: KIMI_PLUGIN_MANIFEST.id,
             generation: '7',
-            rights: [{ family: 'hooks', localId: 'resolve-prerequisites' }],
+            rights: [{ family: 'hooks', localId: 'resolve-prerequisites', target: { realm: 'daemon' } }],
             isGenerationCurrent: () => true,
         });
         host.api.hooks.register('resolve-prerequisites', () => {
             controller.abort();
             return { decision: 'allow' };
         });
-        const registry = createTargetHookHandlerRegistry({
+        const registry = createTargetHookHandlerRegistryHandlers({
             generation: 7,
             activationTargets: [target()],
             targetRegistrations: host.commit().map((registration) => ({
@@ -267,12 +289,12 @@ describe('target hook handler registry', () => {
         const host = createContributionRegistrationHost({
             pluginId: KIMI_PLUGIN_MANIFEST.id,
             generation: '7',
-            rights: [{ family: 'hooks', localId: 'resolve-prerequisites' }],
+            rights: [{ family: 'hooks', localId: 'resolve-prerequisites', target: { realm: 'daemon' } }],
             isGenerationCurrent: () => true,
         });
         host.api.hooks.register('resolve-prerequisites', async () => ({ decision: 'allow' }));
 
-        const registry = createTargetHookHandlerRegistry({
+        const registry = createTargetHookHandlerRegistryHandlers({
             generation: 7,
             activationTargets: [target({
                 daemonEntryPath: null,
@@ -299,11 +321,11 @@ describe('target hook handler registry', () => {
         const host = createContributionRegistrationHost({
             pluginId: KIMI_PLUGIN_MANIFEST.id,
             generation: '7',
-            rights: [{ family: 'hooks', localId: 'resolve-prerequisites' }],
+            rights: [{ family: 'hooks', localId: 'resolve-prerequisites', target: { realm: 'daemon' } }],
             isGenerationCurrent: () => true,
         });
         host.api.hooks.register('resolve-prerequisites', handler);
-        const registry = createTargetHookHandlerRegistry({
+        const registry = createTargetHookHandlerRegistryHandlers({
             generation: 7,
             activationTargets: [target()],
             targetRegistrations: host.commit().map((registration) => ({
@@ -334,21 +356,14 @@ describe('target hook handler registry', () => {
         const host = createContributionRegistrationHost({
             pluginId: KIMI_PLUGIN_MANIFEST.id,
             generation: '7',
-            rights: [{ family: 'hooks', localId: 'resolve-prerequisites' }],
+            rights: [{ family: 'hooks', localId: 'resolve-prerequisites', target: { realm: 'daemon' } }],
             isGenerationCurrent: () => true,
         });
         host.api.hooks.register('resolve-prerequisites', async (_payload, context) => {
             receivedContext = context;
-            const tools = toPluginHookObjectContext<Readonly<{
-                tools?: Readonly<{
-                    resolveSystemTool(): Promise<Readonly<{ ok: true }>>;
-                }>;
-            }>>(context)?.tools;
-            if (!tools) return { decision: 'deny' };
-            await tools.resolveSystemTool();
             return { decision: 'allow' };
         });
-        const registry = createTargetHookHandlerRegistry({
+        const registry = createTargetHookHandlerRegistryHandlers({
             generation: 7,
             activationTargets: [target()],
             targetRegistrations: host.commit().map((registration) => ({
@@ -372,8 +387,8 @@ describe('target hook handler registry', () => {
                 services: { callerControlled: true },
             },
         )).resolves.toEqual({ decision: 'allow' });
-        expect(resolveSystemTool).toHaveBeenCalledOnce();
         expect(receivedContext).toMatchObject({
+            tools: { resolveSystemTool },
             plugin: { id: KIMI_PLUGIN_MANIFEST.id, version: KIMI_PLUGIN_MANIFEST.version },
             contribution: {
                 id: 'resolve-prerequisites',
@@ -382,5 +397,57 @@ describe('target hook handler registry', () => {
             signal: callerSignal,
         });
         expect(receivedContext?.services).not.toHaveProperty('callerControlled');
+    });
+
+    // P0 regression: one plugin whose manifest hook declaration contradicts the
+    // canonical hook contract used to throw out of this global projection, so no
+    // plugin's hooks projected at all.
+    it('isolates a hook declaration that contradicts the canonical contract', () => {
+        const goodTarget = target();
+        const declaredHook = goodTarget.manifest.contributes.hooks[0]!;
+        const canonical = getPluginHookDefinitionV1(declaredHook.on);
+        if (!canonical) throw new Error('Expected a canonical hook definition');
+        const driftedCategory = canonical.category === 'decision' ? 'lifecycle' : 'decision';
+        const badTarget: ActivationTarget = {
+            ...goodTarget,
+            pluginId: 'bad.plugin',
+            manifest: {
+                ...goodTarget.manifest,
+                id: 'bad.plugin',
+                contributes: {
+                    ...goodTarget.manifest.contributes,
+                    hooks: [{ ...declaredHook, category: driftedCategory }],
+                },
+            },
+        };
+        const registration = (pluginId: string) => ({
+            pluginId,
+            generation: '7',
+            registration: {
+                family: 'hooks' as const,
+                localId: declaredHook.id,
+                value: async () => undefined,
+            },
+        });
+
+        const projected = createTargetHookHandlerRegistry({
+            generation: 7,
+            activationTargets: [goodTarget, badTarget],
+            targetRegistrations: [
+                registration(goodTarget.pluginId),
+                registration('bad.plugin'),
+            ] as never,
+            isGenerationActive: () => true,
+        });
+
+        expect(projected.handlersByHookId.get(declaredHook.on)?.map((handler) => handler.pluginId))
+            .toEqual([goodTarget.pluginId]);
+        expect(projected.diagnosticsByPluginId[goodTarget.pluginId]).toBeUndefined();
+        expect(projected.diagnosticsByPluginId['bad.plugin']).toEqual([
+            expect.objectContaining({
+                code: 'plugin_activation_failed',
+                message: expect.stringContaining('does not match the canonical hook contract'),
+            }),
+        ]);
     });
 });

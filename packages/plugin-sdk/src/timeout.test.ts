@@ -11,6 +11,7 @@ type TimeoutModule = Readonly<{
   ): Promise<RaceWithTimeoutResult<T>>;
   sleep(ms: number): Promise<void>;
   sleepWithSignal(ms: number, signal?: AbortSignal | null): Promise<void>;
+  throwIfAborted(signal?: AbortSignal | null): void;
 }>;
 
 async function loadTimeout(): Promise<TimeoutModule> {
@@ -29,6 +30,36 @@ describe('async timeout helpers', () => {
       types: './dist/async/index.d.ts',
       default: './dist/async/index.js',
     });
+  });
+
+  it('supports React Native structural abort signals without throwIfAborted', async () => {
+    const timeout = await loadTimeout();
+    const signal = { aborted: true } as AbortSignal;
+
+    let thrown: unknown = null;
+    try {
+      timeout.throwIfAborted(signal);
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toMatchObject({ name: 'AbortError' });
+  });
+
+  it('preserves modern AbortSignal reason identity', async () => {
+    const timeout = await loadTimeout();
+    const controller = new AbortController();
+    const reason = new Error('modern abort reason');
+    controller.abort(reason);
+
+    let thrown: unknown = null;
+    try {
+      timeout.throwIfAborted(controller.signal);
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBe(reason);
   });
 
   it('returns timeout without waiting for the underlying promise to settle', async () => {

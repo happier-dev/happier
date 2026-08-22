@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
@@ -84,6 +84,22 @@ describe('resolvePluginDaemonEntryPath', () => {
         expect(result.daemonEntryPath).toMatch(/daemon\.mjs$/);
     });
 
+    it('accepts an in-root daemon entry whose directory starts with dot-dot', async () => {
+        const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-root-'));
+        const daemonEntry = join(pluginRoot, '..build', 'daemon.mjs');
+        await writeFileFixture(daemonEntry);
+        const canonicalDaemonEntry = await realpath(daemonEntry);
+
+        const result = await resolvePluginDaemonEntryPath({
+            pluginRootPath: pluginRoot,
+            manifest: createManifestWithEntrypoints({ daemon: './..build/daemon.mjs' }),
+        });
+
+        expect(result.ok).toBe(true);
+        if (!result.ok) return;
+        expect(result.daemonEntryPath).toBe(canonicalDaemonEntry);
+    });
+
     it('resolves an in-root TypeScript dev daemon entry when dev entrypoints are requested', async () => {
         const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-root-'));
         await writeFileFixture(join(pluginRoot, 'dist', 'daemon.mjs'));
@@ -102,6 +118,24 @@ describe('resolvePluginDaemonEntryPath', () => {
         if (!result.ok) return;
         expect(result.daemonEntryPath).toMatch(/dist\/daemon\.mjs$/);
         expect(result.devDaemonEntryPath).toMatch(/src\/daemon\.ts$/);
+    });
+
+    it('rejects a TSX development entry before daemon module loading', async () => {
+        const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-root-'));
+        await writeFileFixture(join(pluginRoot, 'src', 'daemon.tsx'));
+
+        const result = await resolvePluginDaemonEntryPath({
+            pluginRootPath: pluginRoot,
+            manifest: createManifestWithEntrypoints({ development: './src/daemon.tsx' }),
+            resolveDevEntrypoint: true,
+        });
+
+        expect(result.ok).toBe(false);
+        if (result.ok) return;
+        expect(result.diagnostic).toEqual({
+            code: 'plugin_source_kind_unsupported',
+            message: expect.stringContaining("daemon dev entry extension '.tsx'"),
+        });
     });
 
     it('uses the development entry when the production build does not exist yet', async () => {

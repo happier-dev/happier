@@ -2,7 +2,8 @@ import { existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { join } from 'node:path';
 
-import type { PluginSourceSpecV1 } from '@happier-dev/protocol';
+import { formatPluginManifestIngestionDiagnostics, type PluginSourceSpecV1 } from '@happier-dev/protocol';
+import { readTargetedContributionPointSemanticRefs } from '@happier-dev/plugin-sdk/host/targeted-contributions';
 
 import type { LoadedPlugin } from '@/plugins/discovery/load/installed';
 import { readGeneratedPluginUiArtifactsManifestSync } from '@/plugins/install/ui/generatedArtifacts';
@@ -12,7 +13,6 @@ export type BundledPluginLocator = Readonly<{
     pluginId: string;
     manifest: unknown;
     manifestPath: string;
-    manifestDigest: string;
     daemonEntryPath: string | null;
     devDaemonEntryPath?: string | null;
     sourceSpec: PluginSourceSpecV1;
@@ -47,15 +47,18 @@ export function loadBundledPluginLocators(
         }
         seenPluginIds.add(locator.pluginId);
 
+        // Read the exact target-authored semantic refs before canonical
+        // ingestion deliberately strips non-JSON host sidecars. They support
+        // current-generation cold admission; loading a bundled locator never
+        // activates its plugin.
+        const semanticPointRefs = readTargetedContributionPointSemanticRefs(locator.manifest);
+
         const ingestion = ingestCanonicalPluginManifest(locator.manifest, {
             manifestAuthority: 'bundled_first_party',
-            enforceEngineCompatibility: false,
         });
         if (!ingestion.ok) {
             throw new Error(
-                `Invalid bundled plugin manifest '${locator.pluginId}': ${ingestion.diagnostics
-                    .map((diagnostic) => diagnostic.message)
-                    .join('; ')}`,
+                `Invalid bundled plugin manifest '${locator.pluginId}': ${formatPluginManifestIngestionDiagnostics(ingestion.diagnostics)}`,
             );
         }
         if (ingestion.manifest.id !== locator.pluginId) {
@@ -81,11 +84,11 @@ export function loadBundledPluginLocators(
                 ? installedPluginRootPath
                 : bundledPluginLocator,
             manifestPath: locator.manifestPath,
-            manifestDigest: locator.manifestDigest,
             daemonEntryPath: locator.daemonEntryPath,
             devDaemonEntryPath: locator.devDaemonEntryPath ?? null,
             manifest: ingestion.manifest,
             sourceSpec: locator.sourceSpec,
+            ...(semanticPointRefs.length > 0 ? { semanticPointRefs } : {}),
             ...(generatedUiArtifactsManifest ? { generatedUiArtifactsManifest } : {}),
         });
     }));

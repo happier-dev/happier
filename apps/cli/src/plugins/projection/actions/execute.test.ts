@@ -2,7 +2,6 @@ import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { readHookEventEnvelopeV1 } from '@happier-dev/protocol';
 import { describe, expect, it, vi } from 'vitest';
 
 import type {
@@ -16,6 +15,8 @@ import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/
 import { createTargetActionHostBindingResolver } from '@/plugins/runtime/hostAccess/resolve';
 import { createUnavailablePluginServicesFactory } from '@/plugins/runtime/invocation/services/factory';
 import { createUnavailablePluginServices } from '@/plugins/runtime/invocation/services/unavailable';
+import { createPluginActionCallerMaterializationFixture } from '@/plugins/runtime/invocation/services/actionCaller.testkit';
+import { createProductionPluginInvocationServiceOwners } from '@/plugins/runtime/invocation/services/production';
 import { createTargetActionInvocationRegistry as createTargetActionInvocationRegistryBase } from '@/plugins/runtime/invocation/targetActionRegistry';
 import type { TargetActionInvocationRegistration } from '@/plugins/runtime/invocation/targetActionRegistry';
 import { executePluginActionIfAvailable } from './execute';
@@ -106,7 +107,6 @@ function createRegistry(
   const commands = options.commands ?? [];
   const tools = options.tools ?? [];
   return {
-    generationId: 'registry:test',
     uiViewsV2: [],
     uiRenderersV2: [],
     uiTranslationsV2: [],
@@ -134,7 +134,6 @@ function createAction(
     source: { kind: 'path' },
     pluginId: 'acme.action.plugin',
     manifestPath: '/plugins/acme/action/plugin.json',
-    manifestDigest: 'sha256:action',
     daemonEntryPath,
     sourceSpec: {
       kind: 'path',
@@ -162,6 +161,7 @@ function createAction(
         cli: true,
         rpc: false,
         sdk: false,
+        plugin: false,
       },
       inputHints: null,
       inputSchema: {
@@ -171,14 +171,10 @@ function createAction(
       },
       scopes: ['global'],
       contributionSurfaces: ['cli', 'agent'],
-      placement: 'commandPalette',
+      placementBindings: ['commandPalette'],
       dangerLevel: 'safe',
       execution: {
-        routing: 'daemon',
-        handler: {
-          target: 'plugin',
-          exportName: 'startReview',
-        },
+        target: 'daemon',
       },
     },
   };
@@ -193,7 +189,6 @@ function createCommandContribution(
     source: action.source,
     pluginId: action.pluginId,
     manifestPath: action.manifestPath,
-    manifestDigest: action.manifestDigest,
     daemonEntryPath: action.daemonEntryPath,
     sourceSpec: action.sourceSpec,
     definition: {
@@ -216,7 +211,6 @@ function createToolContribution(
     source: action.source,
     pluginId: action.pluginId,
     manifestPath: action.manifestPath,
-    manifestDigest: action.manifestDigest,
     daemonEntryPath: action.daemonEntryPath,
     sourceSpec: action.sourceSpec,
     definition: {
@@ -238,8 +232,12 @@ function createExecutableRegistry(params: Readonly<{
   commands?: readonly ResolvedCommandContribution[];
   tools?: readonly ResolvedToolContribution[];
   targetActionInvocations?: ReturnType<typeof createTargetActionInvocationRegistry>;
+  resolveCurrentPluginExecutionOrigin?: ResolvedExecutablePluginRuntimeRegistry['resolveCurrentPluginExecutionOrigin'];
+  resolveCurrentPluginImmutableGenerationId?: (pluginId: string) => Promise<string | null>;
   activateContributionsOnDemand: ResolvedExecutablePluginRuntimeRegistry['activateContributionsOnDemand'];
-}>): ResolvedExecutablePluginRuntimeRegistry {
+}>): ResolvedExecutablePluginRuntimeRegistry & Readonly<{
+  resolveCurrentPluginImmutableGenerationId?: (pluginId: string) => Promise<string | null>;
+}> {
   const contributes = createRegistry(params.action, {
     commands: params.commands,
     tools: params.tools,
@@ -255,15 +253,871 @@ function createExecutableRegistry(params: Readonly<{
     pluginDiagnosticsByPluginId: {},
     activatedPluginIds: new Set(),
     activateContributionsOnDemand: params.activateContributionsOnDemand,
-    createAgentInvocationServices: () => createUnavailablePluginServices(),
+    ...(params.resolveCurrentPluginExecutionOrigin
+      ? { resolveCurrentPluginExecutionOrigin: params.resolveCurrentPluginExecutionOrigin }
+      : {}),
+    ...(params.resolveCurrentPluginImmutableGenerationId
+      ? { resolveCurrentPluginImmutableGenerationId: params.resolveCurrentPluginImmutableGenerationId }
+      : {}),
+    createAgentInvocationServices: async () => createUnavailablePluginServices(),
     resolvePromptAssetBlocks: async () => [],
-    readHookEventEnvelopeV1,
     retireConsumers: () => {},
     dispose: async () => {},
   };
 }
 
 describe('executePluginActionIfAvailable', () => {
+  it('does not daemon-dispatch a client-target contributed Action', async () => {
+    const base = createAction('/unused/client-action.mjs', 'open-client');
+    const action: SafeResolvedActionContribution = {
+      ...base,
+      definition: {
+        ...base.definition,
+        surfaces: {
+          ...base.definition.surfaces,
+          ui: true,
+          cli: false,
+          agent: false,
+        },
+        contributionSurfaces: ['ui'],
+        execution: {
+          target: 'client',
+          client: {
+            artifactId: 'client-actions',
+            modulePath: './client-actions.js',
+            exportName: 'activate',
+          },
+          platforms: ['web'],
+        },
+      },
+    };
+    const daemonHandler = vi.fn(async () => ({ handledBy: 'daemon' }));
+    const targetActionInvocations = createTargetActionInvocationRegistry({
+      actions: [createTargetActionRegistration({ action, handler: daemonHandler })],
+    });
+
+    await expect(executePluginActionIfAvailable({
+      runtimeRegistry: createExecutableRegistry({
+        action,
+        targetActionInvocations,
+        activateContributionsOnDemand: async () => [],
+      }),
+      actionId: action.definition.id,
+      input: { destination: 'preview' },
+      context: { surface: 'ui' },
+    })).resolves.toEqual({
+      matched: true,
+      result: {
+        ok: false,
+        errorCode: 'plugin_action_client_target_unavailable',
+        error: 'Client-target actions must execute on the invoking UI client',
+        actionHandlerInvocation: 'notStarted',
+      },
+    });
+
+    expect(daemonHandler).not.toHaveBeenCalled();
+  });
+
+  it('composes public Actions through demand activation with immediate caller attribution', async () => {
+    const alphaSource = createAction('/unused/alpha.mjs', 'start');
+    const betaSource = createAction('/unused/beta.mjs', 'continue');
+    const gammaSource = createAction('/unused/gamma.mjs', 'finish');
+    const alpha: ResolvedActionContribution = {
+      ...alphaSource,
+      pluginId: 'acme.alpha',
+      definition: {
+        ...alphaSource.definition,
+        surfaces: {
+          ...alphaSource.definition.surfaces,
+          plugin: false,
+        },
+        contributionSurfaces: ['cli'],
+      },
+    };
+    const beta: ResolvedActionContribution = {
+      ...betaSource,
+      pluginId: 'acme.beta',
+      definition: {
+        ...betaSource.definition,
+        surfaces: {
+          ...betaSource.definition.surfaces,
+          agent: false,
+          cli: false,
+          plugin: true,
+        },
+        contributionSurfaces: ['plugin'],
+      },
+    };
+    const gamma: ResolvedActionContribution = {
+      ...gammaSource,
+      pluginId: 'acme.gamma',
+      definition: {
+        ...gammaSource.definition,
+        surfaces: {
+          ...gammaSource.definition.surfaces,
+          agent: false,
+          cli: false,
+          plugin: true,
+        },
+        contributionSurfaces: ['plugin'],
+      },
+    };
+    const alphaMaterialization = createPluginActionCallerMaterializationFixture('acme.alpha').materialization;
+    const betaMaterialization = createPluginActionCallerMaterializationFixture('acme.beta').materialization;
+    const gammaMaterialization = createPluginActionCallerMaterializationFixture('acme.gamma').materialization;
+    const materializations = new Map([
+      ['acme.alpha', alphaMaterialization],
+      ['acme.beta', betaMaterialization],
+      ['acme.gamma', gammaMaterialization],
+    ]);
+    let runtimeRegistry: ResolvedExecutablePluginRuntimeRegistry | null = null;
+    const serviceOwners = createProductionPluginInvocationServiceOwners({
+      loggerSink: { write: () => {} },
+      actionExecutor: { execute: vi.fn() },
+      resolveCurrentPluginMaterializationRef: (pluginId) => materializations.get(pluginId) ?? null,
+      invokeContributedAction: async (request) => {
+        if (!runtimeRegistry) {
+          return {
+            status: 'unavailable' as const,
+            code: 'plugin_action_registry_unavailable',
+            message: 'Plugin action registry is not yet committed',
+          };
+        }
+        const attempt = await executePluginActionIfAvailable({
+          runtimeRegistry,
+          actionId: `${request.action.pluginId}/${request.action.localId}`,
+          input: request.input,
+          context: {
+            surface: request.surface,
+            ...(request.originSurface ? { originSurface: request.originSurface } : {}),
+            caller: request.caller,
+            ...(request.sessionId ? { defaultSessionId: request.sessionId } : {}),
+            signal: request.signal,
+          },
+        });
+        if (!attempt.matched) {
+          return {
+            status: 'unavailable' as const,
+            code: 'plugin_action_handler_missing',
+            message: 'No declared contributed action matches the exact plugin reference',
+          };
+        }
+        if (attempt.result.ok) {
+          return { status: 'executed' as const, value: attempt.result.result };
+        }
+        return {
+          status: 'failed' as const,
+          code: attempt.result.errorCode,
+          message: attempt.result.error,
+        };
+      },
+    });
+    let betaInvocation: Readonly<{ surface: string; caller: unknown }> | null = null;
+    let gammaInvocation: Readonly<{ surface: string; caller: unknown }> | null = null;
+    const alphaHandler = vi.fn(async (_input, context) => {
+      await context.services.actions.execute(
+        { pluginId: 'acme.beta', localId: 'continue' },
+        { source: 'alpha' },
+      );
+      return { started: true };
+    });
+    const betaHandler = vi.fn(async (_input, context) => {
+      betaInvocation = Object.freeze({ surface: context.surface, caller: context.caller });
+      await context.services.actions.execute(
+        { pluginId: 'acme.gamma', localId: 'finish' },
+        { source: 'beta' },
+      );
+      return { continued: true };
+    });
+    const gammaHandler = vi.fn(async (_input, context) => {
+      gammaInvocation = Object.freeze({ surface: context.surface, caller: context.caller });
+      return { finished: true };
+    });
+    const registrations: TargetActionInvocationRegistration[] = [
+      createTargetActionRegistration({ action: alpha, handler: alphaHandler }),
+    ];
+    const targetActionInvocations = createTargetActionInvocationRegistryBase({
+      actions: registrations,
+      expectedActions: [
+        { pluginId: 'acme.alpha', localId: 'start' },
+        { pluginId: 'acme.beta', localId: 'continue' },
+        { pluginId: 'acme.gamma', localId: 'finish' },
+      ],
+      readActions: () => registrations,
+      resolveAuthorizationFacts: (action) => ({
+        packageTrust: {
+          packageIdentity: action.qualifiedId,
+          reviewedPackageIdentity: action.qualifiedId,
+        },
+        generation: {
+          targetGeneration: action.generation,
+          desiredGeneration: action.generation,
+          appliedGeneration: action.generation,
+        },
+        resourceSelections: [],
+        scopedGrants: [],
+        operatingSystemAuthorization: [],
+      }),
+      resolveHostBinding: serviceOwners.resolveHostBinding,
+      createServices: serviceOwners.createServices,
+      resolveCurrentPluginMaterializationRef: (pluginId) => materializations.get(pluginId) ?? null,
+    });
+    const activateContributionsOnDemand = vi.fn(async (requests) => {
+      for (const request of requests) {
+        if (request.pluginId === 'acme.beta' && request.localId === 'continue'
+          && !registrations.some((registration) => registration.pluginId === request.pluginId && registration.localId === request.localId)) {
+          registrations.push(createTargetActionRegistration({ action: beta, handler: betaHandler }));
+        }
+        if (request.pluginId === 'acme.gamma' && request.localId === 'finish'
+          && !registrations.some((registration) => registration.pluginId === request.pluginId && registration.localId === request.localId)) {
+          registrations.push(createTargetActionRegistration({ action: gamma, handler: gammaHandler }));
+        }
+      }
+      targetActionInvocations.refresh();
+      return [];
+    });
+    const baseRegistry = createExecutableRegistry({
+      action: alpha,
+      targetActionInvocations,
+      activateContributionsOnDemand,
+    });
+    const activeRuntimeRegistry: ResolvedExecutablePluginRuntimeRegistry = {
+      ...baseRegistry,
+      contributes: {
+        ...baseRegistry.contributes,
+        actions: [alpha, beta, gamma],
+        actionsById: new Map([
+          ['acme.alpha/start', alpha],
+          ['acme.beta/continue', beta],
+          ['acme.gamma/finish', gamma],
+        ]),
+      },
+    };
+    runtimeRegistry = activeRuntimeRegistry;
+
+    await expect(executePluginActionIfAvailable({
+      runtimeRegistry: activeRuntimeRegistry,
+      actionId: 'acme.alpha/start',
+      input: {},
+      context: { surface: 'cli' },
+    })).resolves.toEqual({
+      matched: true,
+      result: { ok: true, result: { started: true } },
+    });
+
+    expect(betaInvocation).toEqual({
+      surface: 'plugin',
+      caller: {
+        kind: 'plugin',
+        pluginId: 'acme.alpha',
+        contribution: { id: 'start', qualifiedId: 'acme.alpha/actions/start' },
+        materialization: alphaMaterialization,
+        originSurface: 'cli',
+      },
+    });
+    expect(gammaInvocation).toEqual({
+      surface: 'plugin',
+      caller: {
+        kind: 'plugin',
+        pluginId: 'acme.beta',
+        contribution: { id: 'continue', qualifiedId: 'acme.beta/actions/continue' },
+        materialization: betaMaterialization,
+        originSurface: 'cli',
+      },
+    });
+    expect(gammaMaterialization.pluginId).toBe('acme.gamma');
+    expect(alphaHandler).toHaveBeenCalledOnce();
+    expect(betaHandler).toHaveBeenCalledOnce();
+    expect(gammaHandler).toHaveBeenCalledOnce();
+    expect(activateContributionsOnDemand).toHaveBeenNthCalledWith(1, [{
+      pluginId: 'acme.beta', family: 'actions', localId: 'continue',
+    }]);
+    expect(activateContributionsOnDemand).toHaveBeenNthCalledWith(2, [{
+      pluginId: 'acme.gamma', family: 'actions', localId: 'finish',
+    }]);
+    await serviceOwners.dispose();
+  });
+
+  it('derives the plugin target surface from host-stamped plugin caller identity', async () => {
+    const externalAction = createAction('/unused/daemon.mjs', 'publish');
+    const action: ResolvedActionContribution = {
+      ...externalAction,
+      definition: {
+        ...externalAction.definition,
+        surfaces: {
+          ...externalAction.definition.surfaces,
+          ui: false,
+          plugin: true,
+        },
+        contributionSurfaces: ['plugin'],
+      },
+    };
+    const target = vi.fn(async (_input, context) => ({
+      surface: context.surface,
+      caller: context.caller,
+    }));
+    const targetActionInvocations = createTargetActionInvocationRegistry({
+      actions: [createTargetActionRegistration({ action, handler: target })],
+    });
+
+    await expect(executePluginActionIfAvailable({
+      runtimeRegistry: createExecutableRegistry({
+        action,
+        targetActionInvocations,
+        activateContributionsOnDemand: async () => [],
+      }),
+      actionId: action.definition.id,
+      input: {},
+      context: {
+        surface: 'ui',
+        invocationSurface: 'ui',
+        caller: {
+          kind: 'plugin',
+          pluginId: 'acme.mounted',
+          contribution: {
+            id: 'dashboard',
+            qualifiedId: 'acme.mounted/dashboard',
+          },
+          materialization: {
+            machineId: 'machine-1',
+            materializationId: 'materialization-mounted-current',
+            pluginId: 'acme.mounted',
+          },
+          originSurface: 'ui',
+        },
+      },
+    })).resolves.toEqual({
+      matched: true,
+      result: {
+        ok: true,
+        result: {
+          surface: 'plugin',
+          caller: {
+            kind: 'plugin',
+            pluginId: 'acme.mounted',
+            contribution: {
+              id: 'dashboard',
+              qualifiedId: 'acme.mounted/dashboard',
+            },
+            materialization: {
+              machineId: 'machine-1',
+              materializationId: 'materialization-mounted-current',
+              pluginId: 'acme.mounted',
+            },
+            originSurface: 'ui',
+          },
+        },
+      },
+    });
+    expect(target).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns the pre-effect target execution origin without a post-settlement reread', async () => {
+    const externalAction = createAction('/unused/daemon.mjs', 'publish');
+    const action: ResolvedActionContribution = {
+      ...externalAction,
+      pluginId: 'acme.target',
+      definition: {
+        ...externalAction.definition,
+        surfaces: {
+          ...externalAction.definition.surfaces,
+          plugin: true,
+        },
+        contributionSurfaces: ['plugin'],
+      },
+    };
+    const resolveCurrentPluginExecutionOrigin = vi.fn(async (pluginId: string) => (
+      pluginId === 'acme.target'
+        ? Object.freeze({
+          serverIdentityId: 'srv_action_origin_fixture',
+          materializationRef: Object.freeze({
+            pluginId: 'acme.target',
+            machineId: 'machine-target',
+            materializationId: 'materialization-target-current',
+          }),
+        })
+        : null
+    ));
+    const target = vi.fn(async () => ({ accepted: true }));
+    const targetActionInvocations = createTargetActionInvocationRegistry({
+      actions: [createTargetActionRegistration({ action, handler: target })],
+    });
+    const signal = new AbortController().signal;
+
+    await expect(executePluginActionIfAvailable({
+      runtimeRegistry: createExecutableRegistry({
+        action,
+        targetActionInvocations,
+        resolveCurrentPluginExecutionOrigin,
+        activateContributionsOnDemand: async () => [],
+      }),
+      actionId: action.definition.id,
+      input: { title: 'Ready' },
+      captureExecutionOrigin: true,
+      context: {
+        surface: 'plugin',
+        signal,
+        caller: {
+          kind: 'plugin',
+          pluginId: 'acme.caller',
+          contribution: { id: 'sender', qualifiedId: 'acme.caller/actions/sender' },
+          materialization: {
+            pluginId: 'acme.caller',
+            machineId: 'machine-caller',
+            materializationId: 'materialization-caller-current',
+          },
+        },
+      },
+    })).resolves.toEqual({
+      matched: true,
+      result: {
+        ok: true,
+        result: { accepted: true },
+        executionOrigin: {
+          serverIdentityId: 'srv_action_origin_fixture',
+          materializationRef: {
+            pluginId: 'acme.target',
+            machineId: 'machine-target',
+            materializationId: 'materialization-target-current',
+          },
+        },
+      },
+    });
+    expect(target).toHaveBeenCalledTimes(1);
+    expect(resolveCurrentPluginExecutionOrigin).toHaveBeenCalledTimes(1);
+    expect(resolveCurrentPluginExecutionOrigin).toHaveBeenNthCalledWith(1, 'acme.target', signal);
+  });
+
+  it('rejects a mismatched expected target origin before the handler without replacement disclosure', async () => {
+    const externalAction = createAction('/unused/daemon.mjs', 'publish');
+    const action: ResolvedActionContribution = {
+      ...externalAction,
+      pluginId: 'acme.target',
+      definition: {
+        ...externalAction.definition,
+        surfaces: {
+          ...externalAction.definition.surfaces,
+          plugin: true,
+        },
+        contributionSurfaces: ['plugin'],
+      },
+    };
+    const expectedExecutionOrigin = Object.freeze({
+      serverIdentityId: 'srv_action_origin_fixture',
+      materializationRef: Object.freeze({
+        pluginId: 'acme.target',
+        machineId: 'machine-target',
+        materializationId: 'materialization-target-before',
+      }),
+    });
+    const resolveCurrentPluginExecutionOrigin = vi.fn(async (pluginId: string) => (
+      pluginId === 'acme.target'
+        ? Object.freeze({
+          serverIdentityId: 'srv_action_origin_fixture',
+          materializationRef: Object.freeze({
+            pluginId: 'acme.target',
+            machineId: 'machine-target',
+            materializationId: 'materialization-target-current',
+          }),
+        })
+        : null
+    ));
+    const target = vi.fn(async () => ({ accepted: true }));
+    const targetActionInvocations = createTargetActionInvocationRegistry({
+      actions: [createTargetActionRegistration({ action, handler: target })],
+    });
+
+    const attempt = await executePluginActionIfAvailable({
+      runtimeRegistry: createExecutableRegistry({
+        action,
+        targetActionInvocations,
+        resolveCurrentPluginExecutionOrigin,
+        activateContributionsOnDemand: async () => [],
+      }),
+      actionId: action.definition.id,
+      input: { title: 'Ready' },
+      expectedExecutionOrigin,
+      context: {
+        surface: 'plugin',
+        caller: {
+          kind: 'plugin',
+          pluginId: 'acme.caller',
+          contribution: { id: 'sender', qualifiedId: 'acme.caller/actions/sender' },
+          materialization: {
+            pluginId: 'acme.caller',
+            machineId: 'machine-caller',
+            materializationId: 'materialization-caller-current',
+          },
+        },
+      },
+    });
+
+    expect(attempt).toEqual({
+      matched: true,
+      result: {
+        ok: false,
+        errorCode: 'plugin_action_execution_origin_mismatch',
+        error: 'Expected target execution origin does not match the current target',
+        actionHandlerInvocation: 'notStarted',
+      },
+    });
+    expect(target).not.toHaveBeenCalled();
+    expect(resolveCurrentPluginExecutionOrigin).toHaveBeenCalledTimes(1);
+    if (!attempt.matched) throw new Error('Expected the declared contributed Action to match');
+    expect(attempt.result).not.toHaveProperty('executionOrigin');
+  });
+
+  it('fails closed before invoking the target when origin capture has no fresh runtime owner', async () => {
+    const externalAction = createAction('/unused/daemon.mjs', 'publish');
+    const action: ResolvedActionContribution = {
+      ...externalAction,
+      pluginId: 'acme.target',
+      definition: {
+        ...externalAction.definition,
+        surfaces: {
+          ...externalAction.definition.surfaces,
+          plugin: true,
+        },
+        contributionSurfaces: ['plugin'],
+      },
+    };
+    const target = vi.fn(async () => ({ accepted: true }));
+    const targetActionInvocations = createTargetActionInvocationRegistry({
+      actions: [createTargetActionRegistration({ action, handler: target })],
+    });
+
+    await expect(executePluginActionIfAvailable({
+      runtimeRegistry: createExecutableRegistry({
+        action,
+        targetActionInvocations,
+        activateContributionsOnDemand: async () => [],
+      }),
+      actionId: action.definition.id,
+      input: { title: 'Ready' },
+      captureExecutionOrigin: true,
+      context: {
+        surface: 'plugin',
+        caller: {
+          kind: 'plugin',
+          pluginId: 'acme.caller',
+          contribution: { id: 'sender', qualifiedId: 'acme.caller/actions/sender' },
+          materialization: {
+            pluginId: 'acme.caller',
+            machineId: 'machine-caller',
+            materializationId: 'materialization-caller-current',
+          },
+        },
+      },
+    })).resolves.toEqual({
+      matched: true,
+      result: {
+        ok: false,
+        errorCode: 'plugin_action_execution_origin_unavailable',
+        error: 'Current target execution origin is unavailable',
+        actionHandlerInvocation: 'notStarted',
+      },
+    });
+    expect(target).not.toHaveBeenCalled();
+  });
+
+  it('preserves a known contributed action result when the target origin retires after handler settlement', async () => {
+    const externalAction = createAction('/unused/daemon.mjs', 'publish');
+    const action: ResolvedActionContribution = {
+      ...externalAction,
+      pluginId: 'acme.target',
+      definition: {
+        ...externalAction.definition,
+        surfaces: {
+          ...externalAction.definition.surfaces,
+          plugin: true,
+        },
+        contributionSurfaces: ['plugin'],
+      },
+    };
+    let materializationId = 'materialization-target-before';
+    const resolveCurrentPluginExecutionOrigin = vi.fn(async (pluginId: string) => (
+      pluginId === 'acme.target'
+        ? Object.freeze({
+          serverIdentityId: 'srv_action_origin_fixture',
+          materializationRef: Object.freeze({
+            pluginId: 'acme.target',
+            machineId: 'machine-target',
+            materializationId,
+          }),
+        })
+        : null
+    ));
+    const target = vi.fn(async () => {
+      materializationId = 'materialization-target-after';
+      return { accepted: true };
+    });
+    const targetActionInvocations = createTargetActionInvocationRegistry({
+      actions: [createTargetActionRegistration({ action, handler: target })],
+    });
+
+    await expect(executePluginActionIfAvailable({
+      runtimeRegistry: createExecutableRegistry({
+        action,
+        targetActionInvocations,
+        resolveCurrentPluginExecutionOrigin,
+        activateContributionsOnDemand: async () => [],
+      }),
+      actionId: action.definition.id,
+      input: { title: 'Ready' },
+      captureExecutionOrigin: true,
+      context: {
+        surface: 'plugin',
+        caller: {
+          kind: 'plugin',
+          pluginId: 'acme.caller',
+          contribution: { id: 'sender', qualifiedId: 'acme.caller/actions/sender' },
+          materialization: {
+            pluginId: 'acme.caller',
+            machineId: 'machine-caller',
+            materializationId: 'materialization-caller-current',
+          },
+        },
+      },
+    })).resolves.toEqual({
+      matched: true,
+      result: {
+        ok: true,
+        result: { accepted: true },
+        executionOrigin: {
+          serverIdentityId: 'srv_action_origin_fixture',
+          materializationRef: {
+            pluginId: 'acme.target',
+            machineId: 'machine-target',
+            materializationId: 'materialization-target-before',
+          },
+        },
+      },
+    });
+    expect(target).toHaveBeenCalledTimes(1);
+    expect(resolveCurrentPluginExecutionOrigin).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects a stale admitted contributor generation before cold activation and admits the fresh binding', async () => {
+    const externalAction = createAction('/unused/daemon.mjs', 'publish');
+    const replacementAction: ResolvedActionContribution = {
+      ...externalAction,
+      pluginId: 'acme.contributor',
+      definition: {
+        ...externalAction.definition,
+        surfaces: {
+          ...externalAction.definition.surfaces,
+          plugin: true,
+        },
+        contributionSurfaces: ['plugin'],
+      },
+    };
+    const replacementHandler = vi.fn(async () => ({ handledBy: 'replacement' }));
+    const targetActionInvocations = createTargetActionInvocationRegistry({
+      actions: [createTargetActionRegistration({
+        action: replacementAction,
+        handler: replacementHandler,
+      })],
+    });
+    const runtimeRegistry = createExecutableRegistry({
+      action: replacementAction,
+      targetActionInvocations,
+      resolveCurrentPluginImmutableGenerationId: async (pluginId) => (
+        pluginId === 'acme.contributor' ? 'generation-b' : null
+      ),
+      activateContributionsOnDemand: async () => [],
+    });
+
+    const staleRequest = {
+      runtimeRegistry,
+      actionId: replacementAction.definition.id,
+      input: { title: 'Ready' },
+      expectedContributorImmutableGenerationId: 'generation-a',
+      context: {
+        surface: 'plugin' as const,
+        caller: {
+          kind: 'plugin' as const,
+          pluginId: 'acme.target',
+          contribution: { id: 'providers', qualifiedId: 'acme.target/points/providers' },
+          materialization: {
+            pluginId: 'acme.target',
+            machineId: 'machine-target',
+            materializationId: 'materialization-target-current',
+          },
+        },
+      },
+    };
+    const staleAttempt = await executePluginActionIfAvailable(staleRequest);
+
+    expect(staleAttempt).toEqual({
+      matched: true,
+      result: {
+        ok: false,
+        errorCode: 'plugin_action_generation_retired',
+        error: 'Admitted contributor generation is no longer current',
+        actionHandlerInvocation: 'notStarted',
+      },
+    });
+    expect(replacementHandler).not.toHaveBeenCalled();
+
+    const freshRequest = {
+      runtimeRegistry,
+      actionId: replacementAction.definition.id,
+      input: { title: 'Ready' },
+      expectedContributorImmutableGenerationId: 'generation-b',
+      context: {
+        surface: 'plugin' as const,
+        caller: {
+          kind: 'plugin' as const,
+          pluginId: 'acme.target',
+          contribution: { id: 'providers', qualifiedId: 'acme.target/points/providers' },
+          materialization: {
+            pluginId: 'acme.target',
+            machineId: 'machine-target',
+            materializationId: 'materialization-target-current',
+          },
+        },
+      },
+    };
+    await expect(executePluginActionIfAvailable(freshRequest)).resolves.toEqual({
+      matched: true,
+      result: { ok: true, result: { handledBy: 'replacement' } },
+    });
+    expect(replacementHandler).toHaveBeenCalledOnce();
+  });
+
+  it('preserves a known admitted contributor result when its generation retires during the handler', async () => {
+    const externalAction = createAction('/unused/daemon.mjs', 'publish');
+    const action: ResolvedActionContribution = {
+      ...externalAction,
+      pluginId: 'acme.contributor',
+      definition: {
+        ...externalAction.definition,
+        surfaces: {
+          ...externalAction.definition.surfaces,
+          plugin: true,
+        },
+        contributionSurfaces: ['plugin'],
+      },
+    };
+    let immutableGenerationId = 'generation-a';
+    const handler = vi.fn(async () => {
+      immutableGenerationId = 'generation-b';
+      return { handledBy: 'retired-a' };
+    });
+    const targetActionInvocations = createTargetActionInvocationRegistry({
+      actions: [createTargetActionRegistration({ action, handler })],
+    });
+    const runtimeRegistry = createExecutableRegistry({
+      action,
+      targetActionInvocations,
+      resolveCurrentPluginImmutableGenerationId: async (pluginId) => (
+        pluginId === 'acme.contributor' ? immutableGenerationId : null
+      ),
+      activateContributionsOnDemand: async () => [],
+    });
+
+    const request = {
+      runtimeRegistry,
+      actionId: action.definition.id,
+      input: { title: 'Ready' },
+      expectedContributorImmutableGenerationId: 'generation-a',
+      context: {
+        surface: 'plugin' as const,
+        caller: {
+          kind: 'plugin' as const,
+          pluginId: 'acme.target',
+          contribution: { id: 'providers', qualifiedId: 'acme.target/points/providers' },
+          materialization: {
+            pluginId: 'acme.target',
+            machineId: 'machine-target',
+            materializationId: 'materialization-target-current',
+          },
+        },
+      },
+    };
+    await expect(executePluginActionIfAvailable(request)).resolves.toEqual({
+      matched: true,
+      result: {
+        ok: true,
+        result: { handledBy: 'retired-a' },
+      },
+    });
+    expect(handler).toHaveBeenCalledOnce();
+  });
+
+  it('preserves a known admitted contributor result when its real runtime materialization retires', async () => {
+    const externalAction = createAction('/unused/daemon.mjs', 'publish');
+    const action: ResolvedActionContribution = {
+      ...externalAction,
+      pluginId: 'acme.contributor',
+      definition: {
+        ...externalAction.definition,
+        surfaces: {
+          ...externalAction.definition.surfaces,
+          plugin: true,
+        },
+        contributionSurfaces: ['plugin'],
+      },
+    };
+    let materializationId = 'materialization-a';
+    const handler = vi.fn(async () => {
+      materializationId = 'materialization-b';
+      return { handledBy: 'retired-materialization-a' };
+    });
+    const targetActionInvocations = createTargetActionInvocationRegistry({
+      actions: [createTargetActionRegistration({ action, handler })],
+    });
+    const runtimeRegistry = {
+      ...createExecutableRegistry({
+        action,
+        targetActionInvocations,
+        resolveCurrentPluginImmutableGenerationId: async (pluginId) => (
+          pluginId === 'acme.contributor' ? 'generation-a' : null
+        ),
+        activateContributionsOnDemand: async () => [],
+      }),
+      resolveCurrentPluginMaterializationRef: (pluginId: string) => (
+        pluginId === 'acme.contributor'
+          ? Object.freeze({
+            pluginId,
+            machineId: 'machine-contributor',
+            materializationId,
+          })
+          : null
+      ),
+    };
+
+    const request = {
+      runtimeRegistry,
+      actionId: action.definition.id,
+      input: { title: 'Ready' },
+      expectedContributorImmutableGenerationId: 'generation-a',
+      expectedContributorMaterializationId: 'materialization-a',
+      context: {
+        surface: 'plugin' as const,
+        caller: {
+          kind: 'plugin' as const,
+          pluginId: 'acme.target',
+          contribution: { id: 'providers', qualifiedId: 'acme.target/points/providers' },
+          materialization: {
+            pluginId: 'acme.target',
+            machineId: 'machine-target',
+            materializationId: 'materialization-target-current',
+          },
+        },
+      },
+    };
+
+    await expect(executePluginActionIfAvailable(request)).resolves.toEqual({
+      matched: true,
+      result: {
+        ok: true,
+        result: { handledBy: 'retired-materialization-a' },
+      },
+    });
+    expect(handler).toHaveBeenCalledOnce();
+  });
+
   it('executes a first-party plugin action through the same qualified target-action route', async () => {
     const externalAction = createAction('/unused/daemon.mjs', 'mint-client-auth');
     const action: ResolvedActionContribution = {
@@ -355,6 +1209,59 @@ describe('executePluginActionIfAvailable', () => {
       runtimeRegistry: registry, actionId: 'run', input: {}, context: { surface: 'cli' },
     })).resolves.toEqual({ matched: true, result: { ok: true, result: { executedBy: 'target' } } });
     expect(target).toHaveBeenCalledTimes(1);
+  });
+
+  it('preserves a null result from the committed target action registry', async () => {
+    const action = createAction('/unused/daemon.mjs', 'clear');
+    const targetActionInvocations = createTargetActionInvocationRegistry({
+      actions: [createTargetActionRegistration({ action, handler: async () => null })],
+    });
+    const registry = createExecutableRegistry({
+      action,
+      targetActionInvocations,
+      activateContributionsOnDemand: async () => [],
+    });
+
+    await expect(executePluginActionIfAvailable({
+      runtimeRegistry: registry,
+      actionId: action.definition.id,
+      input: {},
+      context: { surface: 'cli' },
+    })).resolves.toEqual({
+      matched: true,
+      result: { ok: true, result: null },
+    });
+  });
+
+  it('normalizes a void target result to schema-validated null through the contributed-action owner', async () => {
+    const baseAction = createAction('/unused/daemon.mjs', 'clear-void');
+    const action: ResolvedActionContribution = {
+      ...baseAction,
+      definition: {
+        ...baseAction.definition,
+        outputSchema: { type: 'null' },
+      },
+    };
+    const target = vi.fn(async () => undefined);
+    const targetActionInvocations = createTargetActionInvocationRegistry({
+      actions: [createTargetActionRegistration({ action, handler: target })],
+    });
+    const registry = createExecutableRegistry({
+      action,
+      targetActionInvocations,
+      activateContributionsOnDemand: async () => [],
+    });
+
+    await expect(executePluginActionIfAvailable({
+      runtimeRegistry: registry,
+      actionId: action.definition.id,
+      input: {},
+      context: { surface: 'cli' },
+    })).resolves.toEqual({
+      matched: true,
+      result: { ok: true, result: null },
+    });
+    expect(target).toHaveBeenCalledOnce();
   });
 
   it('returns the committed target failure', async () => {
@@ -534,6 +1441,7 @@ describe('executePluginActionIfAvailable', () => {
         ok: false,
         errorCode: 'plugin_action_handler_missing',
         error: 'Plugin action is not bound through named activation',
+        actionHandlerInvocation: 'notStarted',
       },
     });
   });
@@ -691,6 +1599,7 @@ describe('executePluginActionIfAvailable', () => {
         ok: false,
         errorCode: 'plugin_activation_failed',
         error: 'Activation failed for Acme',
+        actionHandlerInvocation: 'notStarted',
       },
     });
   });
@@ -777,6 +1686,7 @@ describe('executePluginActionIfAvailable', () => {
         ok: false,
         errorCode: 'plugin_action_input_schema_invalid',
         error: 'Plugin action input does not match its manifest inputSchema',
+        actionHandlerInvocation: 'notStarted',
       },
     });
     expect(handler).not.toHaveBeenCalled();
@@ -879,6 +1789,7 @@ describe('executePluginActionIfAvailable', () => {
         ok: false,
         errorCode: 'plugin_action_input_schema_invalid',
         error: 'Plugin action input does not match its manifest inputSchema',
+        actionHandlerInvocation: 'notStarted',
       },
     });
     expect(accessorReads).toBe(0);
@@ -905,6 +1816,7 @@ describe('executePluginActionIfAvailable', () => {
         ok: false,
         errorCode: 'plugin_action_unavailable',
         error: 'Plugin action is not available on the requested surface',
+        actionHandlerInvocation: 'notStarted',
       },
     });
   });

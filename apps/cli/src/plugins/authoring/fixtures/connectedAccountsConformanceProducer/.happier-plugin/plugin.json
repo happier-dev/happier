@@ -1,0 +1,81 @@
+{
+  "schemaVersion": 2,
+  "id": "acme.connected-accounts-conformance-producer",
+  "version": "1.0.0",
+  "displayName": "Connected Accounts Conformance Producer",
+  "description": "Packed third-party Connected Accounts runtime producer for public consumer conformance.",
+  "engines": {
+    "happier": "^0.2.0"
+  },
+  "runtime": {
+    "apiVersion": 1
+  },
+  "entrypoints": {
+    "daemon": "./daemon.mjs"
+  },
+  "activation": {
+    "events": [
+      {
+        "kind": "startup"
+      }
+    ]
+  },
+  "hostAccess": {
+    "required": [],
+    "optional": []
+  },
+  "contributes": {
+    "connectedAccountDescriptors": [
+      {
+        "id": "vault",
+        "title": "Acme Vault conformance account",
+        "authentication": {
+          "defaultModeId": "manual",
+          "modes": [
+            {
+              "id": "manual",
+              "kind": "manual",
+              "outcomeReconciliation": "none",
+              "fields": [
+                {
+                  "id": "token",
+                  "title": "Acme Vault conformance token",
+                  "schema": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "secret": true
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "id": "archive",
+        "title": "Acme Archive conformance account",
+        "authentication": {
+          "defaultModeId": "manual",
+          "modes": [
+            {
+              "id": "manual",
+              "kind": "manual",
+              "outcomeReconciliation": "none",
+              "fields": [
+                {
+                  "id": "token",
+                  "title": "Acme Archive conformance token",
+                  "schema": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "secret": true
+                }
+              ]
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

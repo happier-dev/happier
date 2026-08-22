@@ -4,6 +4,11 @@ import { readFile } from 'node:fs/promises';
 import { describe, expect, expectTypeOf, it } from 'vitest';
 
 import type {
+    CurrentUiCommandDeclarationV1 as ProtocolCurrentUiCommandDeclarationV1,
+    CurrentUiCommandDescriptorV1 as ProtocolCurrentUiCommandDescriptorV1,
+    CurrentUiContextEntityV1 as ProtocolCurrentUiContextEntityV1,
+    CurrentUiContextSnapshotV1 as ProtocolCurrentUiContextSnapshotV1,
+    PluginUiContextEnrichmentV1 as ProtocolPluginUiContextEnrichmentV1,
     PluginUiSelectActionInputRequestV1,
     PluginUiSelectActionInputResultV1,
     PluginTargetedContributionSelectionV1 as ProtocolPluginTargetedContributionSelectionV1,
@@ -20,13 +25,28 @@ import type {
     ComposerOperationV1,
     ComposerStagedMediaContentV1,
     ComposerRefV1,
+    CurrentUiCommandDeclarationV1,
+    CurrentUiCommandDescriptorV1,
+    CurrentUiContextEntityV1,
+    CurrentUiContextSnapshotV1,
     PluginUiHostApi,
     PluginUiContributionIdentityV1,
+    PluginUiContextEnrichmentV1,
+    PluginUiSemanticCommandV1,
     PluginUiTargetedContributionsV1,
     SelectActionInputRequest,
     SelectActionInputResult,
 } from './hostApi.js';
-import { ComposerSnapshotV1Schema } from './hostApi.js';
+import {
+    ComposerSnapshotV1Schema,
+    CURRENT_UI_CONTEXT_BOUNDED_INCOMPLETENESS_V1,
+    CURRENT_UI_CONTEXT_MAX_COMMANDS_V1,
+    CURRENT_UI_CONTEXT_MAX_UTF8_BYTES_V1,
+} from './hostApi.js';
+import type {
+    PluginUiSemanticExecuteActionCommandV1,
+    PluginUiSemanticOpenSurfaceCommandV1,
+} from './publicContract.js';
 import type { PluginTargetedContributionSelectionV1 } from '../contributions/index.js';
 import type { PluginCancellationOptions } from '../lifecycle.js';
 
@@ -67,6 +87,35 @@ describe('PluginUiHostApi initial public contract', () => {
             .toMatchTypeOf<SelectActionInputRequest>();
         expectTypeOf<PluginUiSelectActionInputResultV1>()
             .toMatchTypeOf<SelectActionInputResult>();
+    });
+
+    it('publishes only closed current-UI enrichment through the mount-bound host API', () => {
+        expectTypeOf<CurrentUiContextEntityV1>()
+            .toEqualTypeOf<ProtocolCurrentUiContextEntityV1>();
+        expectTypeOf<CurrentUiCommandDeclarationV1>()
+            .toEqualTypeOf<ProtocolCurrentUiCommandDeclarationV1>();
+        expectTypeOf<PluginUiSemanticCommandV1>()
+            .toEqualTypeOf<ProtocolCurrentUiCommandDeclarationV1['command']>();
+        expectTypeOf<PluginUiSemanticExecuteActionCommandV1>()
+            .toEqualTypeOf<Extract<ProtocolCurrentUiCommandDeclarationV1['command'], { kind: 'executeAction' }>>();
+        expectTypeOf<PluginUiSemanticOpenSurfaceCommandV1>()
+            .toEqualTypeOf<Extract<ProtocolCurrentUiCommandDeclarationV1['command'], { kind: 'openSurface' }>>();
+        expectTypeOf<CurrentUiCommandDescriptorV1>()
+            .toEqualTypeOf<ProtocolCurrentUiCommandDescriptorV1>();
+        expectTypeOf<CurrentUiContextSnapshotV1>()
+            .toEqualTypeOf<ProtocolCurrentUiContextSnapshotV1>();
+        expectTypeOf<PluginUiContextEnrichmentV1>()
+            .toEqualTypeOf<ProtocolPluginUiContextEnrichmentV1>();
+        expectTypeOf<PluginUiHostApi['publishCurrentUiContext']>().parameters.toEqualTypeOf<[
+            enrichment: PluginUiContextEnrichmentV1 | null,
+        ]>();
+        expectTypeOf<PluginUiHostApi['publishCurrentUiContext']>().returns.toEqualTypeOf<void>();
+    });
+
+    it('lets an SDK-only UI author consume the canonical current-context bounds', () => {
+        expect(CURRENT_UI_CONTEXT_MAX_COMMANDS_V1).toBe(32);
+        expect(CURRENT_UI_CONTEXT_MAX_UTF8_BYTES_V1).toBe(8_192);
+        expect(CURRENT_UI_CONTEXT_BOUNDED_INCOMPLETENESS_V1).toEqual({ incomplete: true });
     });
 
     it('projects the optional Composer reference companion through the canonical snapshot schema', () => {

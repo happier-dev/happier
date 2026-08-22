@@ -105,6 +105,8 @@ const FEATURE_PROTOCOL_PROTOCOL_AUTHORING_IMPORT_AUDIENCE = Object.freeze({
     PluginJsonSchema: 'feature-protocol',
     ProtocolArrayOptions: 'feature-protocol',
     ProtocolComposableSchema: 'feature-protocol',
+    ProtocolComposerRefV1: 'feature-protocol',
+    ProtocolComposerRefV1Schema: 'feature-protocol',
     ProtocolJsonValue: 'feature-protocol',
     ProtocolJsonValueOptions: 'feature-protocol',
     ProtocolNumberOptions: 'feature-protocol',
@@ -229,7 +231,6 @@ const FEATURE_PROTOCOL_SDK_IMPORT_ALLOWLIST: Readonly<Record<string, ReadonlySet
         'SessionSpawnNewInputV2Schema',
     ]),
     [`${SDK_PACKAGE_NAME}/automations`]: new Set([
-        'AUTOMATION_RESULT_DELIVERY_ACTION_REF_V1',
         'AutomationIdV1',
         'AutomationIdV1Schema',
         'AutomationConversationAdmitInputV1',
@@ -415,7 +416,7 @@ const featureProtocolFixture = {
             "import { parsePluginManifest, PluginContributionIdentityV1JsonSchema, PluginContributionIdentityV1Schema } from '@happier-dev/plugin-sdk/manifest';",
             "import { PluginWebhookEndpointIdV1JsonSchema, PluginWebhookEndpointIdV1Schema, PluginWebhookEndpointSetupV1Schema } from '@happier-dev/plugin-sdk/webhooks';",
             "import { AgentPermissionIntentV1Schema, SessionIdSchema, SessionSpawnNewInputV2Schema } from '@happier-dev/plugin-sdk/sessions';",
-            "import { AUTOMATION_RESULT_DELIVERY_ACTION_REF_V1, AutomationResultDeliveryInputV1JsonSchema, AutomationResultDeliveryInputV1Schema, AutomationResultDeliveryResultV1Schema, AutomationResultDeliverySourceV1Schema } from '@happier-dev/plugin-sdk/automations';",
+            "import { AutomationResultDeliveryInputV1JsonSchema, AutomationResultDeliveryInputV1Schema, AutomationResultDeliveryResultV1Schema, AutomationResultDeliverySourceV1Schema } from '@happier-dev/plugin-sdk/automations';",
             "import type { PluginJsonSchema } from '@happier-dev/plugin-sdk/protocol';",
             "import type { PluginTargetedContributionSelectionV1 } from '@happier-dev/plugin-sdk/contributions';",
             "import type { QualifiedConnectedAccountRef } from '@happier-dev/plugin-sdk/connected-accounts';",
@@ -469,7 +470,6 @@ const featureProtocolFixture = {
             '    permissionSchema: AgentPermissionIntentV1Schema,',
             '    sessionIdSchema: SessionIdSchema,',
             '    spawnSchema: SessionSpawnNewInputV2Schema,',
-            '    deliveryAction: AUTOMATION_RESULT_DELIVERY_ACTION_REF_V1,',
             '    deliverySchema: AutomationResultDeliveryInputV1Schema,',
             '    deliveryJsonSchema: AutomationResultDeliveryInputV1JsonSchema,',
             '    deliveryResultSchema: AutomationResultDeliveryResultV1Schema,',
@@ -726,6 +726,15 @@ function assertFeatureProtocolSdkImport(
             const audience = FEATURE_PROTOCOL_PROTOCOL_AUTHORING_IMPORT_AUDIENCE[
                 name as keyof typeof FEATURE_PROTOCOL_PROTOCOL_AUTHORING_IMPORT_AUDIENCE
             ];
+            if (audience === 'feature-protocol') {
+                // Reusable for a feature protocol, but published on the other
+                // approved subpath. Saying "classified feature-protocol rather
+                // than feature-protocol" would tell the author nothing.
+                throw new Error(
+                    `${packageName} imports public SDK symbol ${name} from ${reference.specifier}, `
+                    + 'but it is published on the other approved authoring subpath',
+                );
+            }
             if (audience !== undefined) {
                 throw new Error(
                     `${packageName} imports public SDK symbol ${name} from ${reference.specifier}, `
@@ -1323,6 +1332,34 @@ describe('feature-protocol package policy', () => {
             sources: {
                 ...featureProtocolFixture.sources,
                 'src/v1/provider/otherSubpath.ts': "import { getActionSpec } from '@happier-dev/plugin-sdk/actions';\nvoid getActionSpec;\n",
+            },
+        })).toThrow('unapproved SDK subpath');
+        expect(() => assertFeatureProtocolPackageBoundary({
+            ...featureProtocolFixture,
+            sources: {
+                ...featureProtocolFixture.sources,
+                'src/v1/provider/composerRefContributionEscape.ts': "import { ComposerRefV1Schema } from '@happier-dev/plugin-sdk/contributions';\nvoid ComposerRefV1Schema;\n",
+            },
+        })).toThrow('unapproved SDK symbol');
+        expect(() => assertFeatureProtocolPackageBoundary({
+            ...featureProtocolFixture,
+            sources: {
+                ...featureProtocolFixture.sources,
+                'src/v1/provider/composerRefProtocolProjection.ts': "import { ProtocolComposerRefV1Schema } from '@happier-dev/plugin-sdk/protocol';\nvoid ProtocolComposerRefV1Schema;\n",
+            },
+        })).not.toThrow();
+        expect(() => assertFeatureProtocolPackageBoundary({
+            ...featureProtocolFixture,
+            sources: {
+                ...featureProtocolFixture.sources,
+                'src/v1/provider/composerRefProtocolEscape.ts': "import { ProtocolComposerRefV1Schema } from '@happier-dev/plugin-sdk/contributions';\nvoid ProtocolComposerRefV1Schema;\n",
+            },
+        })).toThrow('published on the other approved authoring subpath');
+        expect(() => assertFeatureProtocolPackageBoundary({
+            ...featureProtocolFixture,
+            sources: {
+                ...featureProtocolFixture.sources,
+                'src/v1/provider/composerRefUiEscape.ts': "import { ComposerRefV1Schema } from '@happier-dev/plugin-sdk/ui';\nvoid ComposerRefV1Schema;\n",
             },
         })).toThrow('unapproved SDK subpath');
         for (const [path, source] of Object.entries({

@@ -37,7 +37,7 @@ describe('notification channel settings normalization', () => {
             definition: {
                 id: 'notification-channel/webhook',
                 target: { kind: 'plugin' },
-                scope: 'synced',
+                scope: 'account',
                 fields: [
                     { id: 'webhook.endpoint' },
                     { id: 'webhook.token', secret: true },

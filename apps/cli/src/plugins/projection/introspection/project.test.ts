@@ -5,6 +5,7 @@ import { PLUGIN_CONTRIBUTION_CATALOG_V2, type PluginDiagnosticDataV1 } from '@ha
 import {
   enrichPluginDiagnosticRecord,
   projectPluginContributionIntrospection,
+  readPluginDiagnosticDisplayMessage,
   type PluginContributionIntrospectionCandidate,
 } from './project';
 
@@ -14,13 +15,81 @@ const action: PluginContributionIntrospectionCandidate = {
   source: 'development',
   family: 'actions',
   identity: { kind: 'localId', localId: 'run' },
-  stability: 'stable',
   registration: 'required',
   consumer: 'action-dispatch',
   platforms: ['cli', 'web'],
 };
 
 describe('plugin contribution lifecycle introspection', () => {
+  it('reads display text from canonical diagnostic data with a code fallback', () => {
+    const context = {
+      ordinal: 0,
+      plugin: { id: 'acme.example', version: '1.0.0', source: 'development' as const },
+      stage: 'normalization' as const,
+      host: 'cli' as const,
+      platform: 'darwin',
+      occurredAtMs: 10,
+    };
+
+    expect(readPluginDiagnosticDisplayMessage(enrichPluginDiagnosticRecord({
+      code: 'target_absent',
+      severity: 'error',
+      message: 'Targeted contribution admission rejected.',
+    }, context))).toBe('Targeted contribution admission rejected.');
+    expect(readPluginDiagnosticDisplayMessage(enrichPluginDiagnosticRecord({
+      code: 'target_absent',
+      severity: 'error',
+    }, context))).toBe('target_absent');
+  });
+
+  it('preserves an author source location while re-redacting a published diagnostic record', () => {
+    const record = enrichPluginDiagnosticRecord({
+      code: 'plugin_activation_failed',
+      severity: 'error',
+      message: "src/daemon.ts:7:19: Cannot find module 'left-pad' from /Users/alice/private/store",
+    }, {
+      ordinal: 0,
+      plugin: { id: 'acme.example', version: '1.0.0', source: 'development' },
+      stage: 'activation',
+      host: 'cli',
+      platform: 'darwin',
+      occurredAtMs: 10,
+    });
+
+    const message = record.data.message ?? '';
+    expect(message).toContain('src/daemon.ts:7:19');
+    expect(message).toContain('[REDACTED_PATH]');
+    expect(message).not.toContain('/Users/alice/private/store');
+  });
+
+  it('projects persistent diagnostic failure text through the shared redacted head bound', () => {
+    const record = enrichPluginDiagnosticRecord({
+      code: 'target_absent',
+      severity: 'error',
+      message: [
+        'BEGIN_FAILURE client_secret=introspection-secret',
+        'https://alice:introspection-userinfo@example.test/load?access_token=introspection-query-secret&safe=yes',
+        '🙂'.repeat(1_200),
+        'END_STACK',
+      ].join(' '),
+    }, {
+      ordinal: 0,
+      plugin: { id: 'acme.example', version: '1.0.0', source: 'development' },
+      stage: 'activation',
+      host: 'cli',
+      platform: 'darwin',
+      occurredAtMs: 10,
+    });
+
+    const message = record.data.message ?? '';
+    expect(message).toMatch(/^BEGIN_FAILURE/u);
+    expect(message).not.toContain('introspection-secret');
+    expect(message).not.toContain('introspection-userinfo');
+    expect(message).not.toContain('introspection-query-secret');
+    expect(message).not.toContain('END_STACK');
+    expect(Buffer.byteLength(message, 'utf8')).toBeLessThanOrEqual(2_048);
+  });
+
   it('accounts for all public catalog entries exactly once', () => {
     const candidates: PluginContributionIntrospectionCandidate[] = PLUGIN_CONTRIBUTION_CATALOG_V2.map((entry) => ({
       pluginId: 'acme.all-families',
@@ -32,7 +101,6 @@ describe('plugin contribution lifecycle introspection', () => {
         : entry.identityKind === 'delegatedDomain'
           ? { kind: 'delegatedDomain' as const, domainId: 'gateway' }
           : { kind: 'localId' as const, localId: entry.manifestKey.replaceAll('.', '-') },
-      stability: entry.stability,
       registration: entry.activationDemand === 'registration' ? 'required' : 'notRequired',
       consumer: entry.consumer,
       platforms: entry.platforms,
@@ -97,7 +165,6 @@ describe('plugin contribution lifecycle introspection', () => {
           ...action,
           family: 'providers',
           identity: { kind: 'delegatedDomain', domainId: 'gateway' },
-          stability: 'delegated',
           registration: 'notRequired',
           consumer: 'providers-first-class',
         },
@@ -105,7 +172,6 @@ describe('plugin contribution lifecycle introspection', () => {
           ...action,
           family: 'voiceModelPacks',
           identity: { kind: 'localId', localId: 'english-small' },
-          stability: 'experimental',
           registration: 'notRequired',
           consumer: 'voice-model-catalog',
         },

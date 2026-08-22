@@ -1,6 +1,10 @@
-import { existsSync as nodeExistsSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { existsSync as nodeExistsSync, realpathSync } from 'node:fs';
+import { lstat } from 'node:fs/promises';
+import { createRequire } from 'node:module';
+import { dirname, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+
+import { isCanonicalAbsolutePathInsideRoot } from '@/utils/path/expandHomeDirPath';
 
 import {
     normalizeBundledWorkspaceNameFromPackageName,
@@ -9,6 +13,17 @@ import {
 } from '@/subprocess/sourceDevSharedDepsPreflight';
 
 import type { PluginDaemonModuleNamespace } from './types';
+import type {
+    PluginRelativeModuleResolution,
+    ValidatedAgentSessionRunnerFactoryFactV1,
+} from './activationSources';
+import {
+    assertContainedRegularGenerationFile,
+    persistValidatedAgentSessionRunnerFactories,
+    type ImmutablePluginGenerationRecord,
+} from '../store/registry/generationStore';
+import type { PluginStorePaths } from '../store/paths';
+import { resolvePluginModuleCandidatePaths } from './loadPluginModule';
 
 type BundledActivationTarget = Readonly<{
     pluginId: string;
@@ -20,6 +35,12 @@ type BundledActivationSource = Readonly<{
     moduleId: string;
     prepare?: () => Promise<void>;
     load: () => Promise<PluginDaemonModuleNamespace>;
+    resolveRelativeModule: (
+        module: string,
+    ) => Promise<PluginRelativeModuleResolution<Record<string, unknown>>>;
+    persistValidatedAgentSessionRunnerFactories?: (
+        facts: readonly ValidatedAgentSessionRunnerFactoryFactV1[],
+    ) => Promise<void>;
 }>;
 
 type ImportModule = (specifier: string) => Promise<PluginDaemonModuleNamespace>;
@@ -43,6 +64,12 @@ type SourceDevSharedDepsBatchPreflightOutcome =
     | Readonly<{
         type: 'targeted-fallback';
     }>;
+
+type BundledExecutablePluginTarget = Readonly<{
+    pluginId: string;
+    daemonEntryPath: string | null;
+    sourceSpec: Readonly<{ kind: string }>;
+}>;
 
 function normalizePathSeparators(pathLike: string): string {
     return pathLike.replaceAll('\\', '/');
@@ -70,9 +97,22 @@ async function importModule(specifier: string): Promise<PluginDaemonModuleNamesp
     return await import(specifier) as PluginDaemonModuleNamespace;
 }
 
-function defaultRepoRoot(): string {
-    const here = dirname(fileURLToPath(import.meta.url));
+export function resolveBundledActivationSourceRepoRoot(
+    moduleUrl: string | URL,
+): string {
+    const lexicalModulePath = fileURLToPath(moduleUrl);
+    let modulePath = lexicalModulePath;
+    try {
+        modulePath = realpathSync(lexicalModulePath);
+    } catch {
+        // Packaged virtual filesystems do not necessarily expose a realpath.
+    }
+    const here = dirname(modulePath);
     return resolve(here, '..', '..', '..', '..', '..');
+}
+
+function defaultRepoRoot(): string {
+    return resolveBundledActivationSourceRepoRoot(import.meta.url);
 }
 
 function defaultCanImportFirstPartyPluginSource(): boolean {
@@ -80,20 +120,205 @@ function defaultCanImportFirstPartyPluginSource(): boolean {
     return currentModulePath.endsWith('/src/plugins/runtime/bundledActivationSource.ts');
 }
 
+function resolveComparableFileIdentity(path: string): string {
+    const absolutePath = resolve(path);
+    try {
+        return realpathSync(absolutePath);
+    } catch {
+        return absolutePath;
+    }
+}
+
+export function resolveSourceDevelopmentBundledPackageNames(params: Readonly<{
+    artifacts: readonly Readonly<{
+        packageName: string;
+        packageEntryRelativePath: string;
+    }>[];
+    canImportFirstPartyPluginSource?: () => boolean;
+    existsSync?: (path: string) => boolean;
+    repoRoot?: string;
+    resolveBundledPackageEntry?: (packageName: string) => string;
+}>): ReadonlySet<string> {
+    const canImportFirstPartyPluginSource =
+        params.canImportFirstPartyPluginSource ?? defaultCanImportFirstPartyPluginSource;
+    if (!canImportFirstPartyPluginSource()) return new Set();
+    const repoRoot = params.repoRoot ?? defaultRepoRoot();
+    const existsSync = params.existsSync ?? nodeExistsSync;
+    const resolveBundledPackageEntry =
+        params.resolveBundledPackageEntry
+        ?? createRequire(import.meta.url).resolve;
+    const sourceDevelopmentPackageNames = new Set<string>();
+    for (const artifact of params.artifacts) {
+        const pluginId = parseFirstPartyPluginIdFromPackageName(artifact.packageName);
+        const workspaceName = normalizeBundledWorkspaceNameFromPackageName(
+            artifact.packageName,
+        );
+        if (!pluginId || !workspaceName) continue;
+        const sourceEntryPath = resolve(
+            repoRoot,
+            'packages',
+            'plugins',
+            pluginId,
+            'src',
+            'index.ts',
+        );
+        if (!existsSync(sourceEntryPath)) continue;
+        let resolvedPackageEntry: string;
+        try {
+            resolvedPackageEntry = resolve(resolveBundledPackageEntry(artifact.packageName));
+        } catch {
+            continue;
+        }
+        const sourceDevelopmentCopyEntry = resolve(
+            repoRoot,
+            'apps',
+            'cli',
+            'node_modules',
+            '@happier-dev',
+            workspaceName,
+            ...artifact.packageEntryRelativePath.split('/'),
+        );
+        // The managed source checkout copies workspace output into this exact
+        // dependency root. It is a development dependency closure, not the
+        // generated immutable artifact whose inventory happens to describe a
+        // subset of its files.
+        if (
+            resolveComparableFileIdentity(resolvedPackageEntry)
+            === resolveComparableFileIdentity(sourceDevelopmentCopyEntry)
+        ) {
+            sourceDevelopmentPackageNames.add(artifact.packageName);
+        }
+    }
+    return sourceDevelopmentPackageNames;
+}
+
+export function resolveCurrentHostBundledImmutableArtifacts<
+    TArtifact extends Readonly<{
+        packageName: string;
+        packageEntryRelativePath: string;
+    }>,
+>(params: Readonly<{
+    artifacts: readonly TArtifact[];
+    canImportFirstPartyPluginSource?: () => boolean;
+    existsSync?: (path: string) => boolean;
+    repoRoot?: string;
+    resolveBundledPackageEntry?: (packageName: string) => string;
+}>): readonly TArtifact[] {
+    const sourceDevelopmentBundledPackageNames =
+        resolveSourceDevelopmentBundledPackageNames(params);
+    return params.artifacts.filter(
+        (artifact) => !sourceDevelopmentBundledPackageNames.has(
+            artifact.packageName,
+        ),
+    );
+}
+
+/**
+ * Keeps immutable admission scoped to actual bundled daemon targets. A
+ * declaration without an executable target cannot acquire a generation here.
+ */
+export function selectBundledExecutableImmutableArtifacts<
+    TArtifact extends Readonly<{
+        record: Readonly<{ pluginId: string }>;
+    }>,
+>(params: Readonly<{
+    artifacts: readonly TArtifact[];
+    activationTargets: readonly BundledExecutablePluginTarget[];
+}>): readonly TArtifact[] {
+    const executablePluginIds = new Set(
+        params.activationTargets.flatMap((target) => (
+            target.sourceSpec.kind === 'bundled'
+            && typeof target.daemonEntryPath === 'string'
+            && target.daemonEntryPath.trim().length > 0
+            && target.pluginId.trim().length > 0
+                ? [target.pluginId.trim()]
+                : []
+        )),
+    );
+    return Object.freeze(params.artifacts.filter((artifact) => (
+        executablePluginIds.has(artifact.record.pluginId)
+    )));
+}
+
+/**
+ * The registry must establish every selected executable bundled generation
+ * before it projects any consumer. In a source checkout, the generated
+ * package overlay is prepared by the source-dev shared-deps owner rather than
+ * by a particular contribution family or activation-on-demand.
+ */
+export async function prepareBundledExecutableGenerationAdmission(params: Readonly<{
+    artifacts: readonly Readonly<{
+        packageName: string;
+        record: Readonly<{ pluginId: string }>;
+    }>[];
+    canImportFirstPartyPluginSource?: () => boolean;
+    prepareSourceDevSharedDeps?: PrepareSourceDevSharedDeps;
+}>): Promise<void> {
+    const canImportFirstPartyPluginSource =
+        params.canImportFirstPartyPluginSource ?? defaultCanImportFirstPartyPluginSource;
+    if (!canImportFirstPartyPluginSource()) return;
+    const packageNamesByWorkspaceName = new Map<string, string>();
+    for (const artifact of params.artifacts) {
+        const workspaceName = normalizeBundledWorkspaceNameFromPackageName(
+            artifact.packageName,
+        );
+        if (!workspaceName) continue;
+        const existingPackageName = packageNamesByWorkspaceName.get(workspaceName);
+        if (
+            !existingPackageName
+            || compareCanonicalStrings(artifact.packageName, existingPackageName) < 0
+        ) {
+            packageNamesByWorkspaceName.set(workspaceName, artifact.packageName);
+        }
+    }
+
+    const workspaceNames = [...packageNamesByWorkspaceName.keys()].sort(
+        compareCanonicalStrings,
+    );
+    const packageName = workspaceNames[0]
+        ? packageNamesByWorkspaceName.get(workspaceNames[0])
+        : undefined;
+    if (!packageName) return;
+
+    const preflight = await (
+        params.prepareSourceDevSharedDeps
+        ?? prepareSourceDevSharedDepsForBundledPluginRuntimeLoad
+    )({
+        packageName,
+        workspaceNames,
+    });
+    if (preflight.type === 'error') {
+        throw new Error(preflight.errorMessage);
+    }
+}
+
 export function createBundledActivationSourceResolver(params: Readonly<{
     bundledPackageNames: readonly string[];
     immutableArtifactPackageNames?: readonly string[];
+    /**
+     * The published daemon runtime bundle for each bundled package: the module that
+     * activates the plugin and the directory its staged session-runner leaves live in.
+     * It is not the package root export, which stays the compiler's own emit.
+     */
     immutableArtifactEntryPathsByPackageName?: ReadonlyMap<string, string>;
+    immutableArtifactRootPathsByPackageName?: ReadonlyMap<string, string>;
+    immutableArtifactRecordsByPackageName?: ReadonlyMap<
+        string,
+        ImmutablePluginGenerationRecord
+    >;
     unavailableImmutableArtifactPackageNames?: ReadonlySet<string>;
     canImportFirstPartyPluginSource?: () => boolean;
     existsSync?: (path: string) => boolean;
     importModule?: ImportModule;
     prepareSourceDevSharedDeps?: PrepareSourceDevSharedDeps;
     repoRoot?: string;
+    pluginStorePaths?: PluginStorePaths;
 }>) {
     const bundledPackageNames = new Set(params.bundledPackageNames);
     const immutableArtifactPackageNames = new Set(params.immutableArtifactPackageNames ?? []);
     const immutableArtifactEntryPathsByPackageName = params.immutableArtifactEntryPathsByPackageName ?? new Map();
+    const immutableArtifactRootPathsByPackageName = params.immutableArtifactRootPathsByPackageName ?? new Map();
+    const immutableArtifactRecordsByPackageName = params.immutableArtifactRecordsByPackageName ?? new Map();
     const unavailableImmutableArtifactPackageNames = params.unavailableImmutableArtifactPackageNames ?? new Set();
     const canImportFirstPartyPluginSource =
         params.canImportFirstPartyPluginSource ?? defaultCanImportFirstPartyPluginSource;
@@ -123,9 +348,8 @@ export function createBundledActivationSourceResolver(params: Readonly<{
         const packageNamesByWorkspaceName = new Map<string, string>();
         for (const packageName of bundledPackageNames) {
             if (
-                immutableArtifactPackageNames.has(packageName)
-                || immutableArtifactEntryPathsByPackageName.has(packageName)
-                || unavailableImmutableArtifactPackageNames.has(packageName)
+                immutableArtifactEntryPathsByPackageName.has(packageName)
+                || immutableArtifactPackageNames.has(packageName)
             ) {
                 continue;
             }
@@ -238,26 +462,41 @@ export function createBundledActivationSourceResolver(params: Readonly<{
             return null;
         }
         const daemonEntryPath = target.daemonEntryPath;
+        const resolveSourceDevEntry = (): Readonly<{
+            entryPath: string;
+            rootPath: string;
+            loadMode: 'source-ts';
+        }> | null => {
+            if (!canImportFirstPartyPluginSource()) return null;
+            if (immutableArtifactPackageNames.has(daemonEntryPath)) {
+                return null;
+            }
+            const pluginId = parseFirstPartyPluginIdFromPackageName(daemonEntryPath);
+            if (!pluginId) return null;
+            const packageRoot = resolve(repoRoot, 'packages', 'plugins', pluginId);
+            const entryPath = resolve(packageRoot, 'src', 'index.ts');
+            return existsSync(entryPath)
+                ? { entryPath, rootPath: packageRoot, loadMode: 'source-ts' }
+                : null;
+        };
         let prepared = false;
         const prepare = async (): Promise<void> => {
             if (prepared) return;
             const pluginId = parseFirstPartyPluginIdFromPackageName(daemonEntryPath);
-            const srcCandidate = pluginId
-                ? resolve(repoRoot, 'packages', 'plugins', pluginId, 'src', 'index.ts')
-                : null;
+            const sourceDevEntry = resolveSourceDevEntry();
             const canImportSource = canImportFirstPartyPluginSource();
-            const sourceExists = Boolean(srcCandidate && existsSync(srcCandidate));
             if (
                 pluginId
-                && srcCandidate
-                && !immutableArtifactPackageNames.has(daemonEntryPath)
                 && !immutableArtifactEntryPathsByPackageName.has(daemonEntryPath)
-                && !unavailableImmutableArtifactPackageNames.has(daemonEntryPath)
                 && canImportSource
+                && (
+                    sourceDevEntry
+                    || !immutableArtifactPackageNames.has(daemonEntryPath)
+                )
             ) {
                 const preflight = await runSourceDevSharedDepsPreflight(
                     daemonEntryPath,
-                    sourceExists ? undefined : { admittedCopyOnly: true },
+                    sourceDevEntry ? undefined : { admittedCopyOnly: true },
                 );
                 if (preflight.type === 'error') {
                     throw new Error(preflight.errorMessage);
@@ -266,35 +505,187 @@ export function createBundledActivationSourceResolver(params: Readonly<{
             prepared = true;
         };
 
+        const resolveSelectedEntry = (): Readonly<{
+            entryPath: string;
+            rootPath: string;
+            loadMode: 'immutable-js' | 'source-ts';
+        }> | null => {
+            const immutableArtifactEntryPath = immutableArtifactEntryPathsByPackageName.get(daemonEntryPath);
+            if (immutableArtifactEntryPath) {
+                return {
+                    entryPath: immutableArtifactEntryPath,
+                    rootPath: immutableArtifactRootPathsByPackageName.get(daemonEntryPath)
+                        ?? dirname(immutableArtifactEntryPath),
+                    loadMode: 'immutable-js',
+                };
+            }
+            const sourceDevEntry = resolveSourceDevEntry();
+            if (sourceDevEntry) return sourceDevEntry;
+            if (
+                immutableArtifactPackageNames.has(daemonEntryPath)
+                || unavailableImmutableArtifactPackageNames.has(daemonEntryPath)
+            ) {
+                return null;
+            }
+            const pluginId = parseFirstPartyPluginIdFromPackageName(daemonEntryPath);
+            if (!pluginId) return null;
+            const packageRoot = resolve(repoRoot, 'packages', 'plugins', pluginId);
+            const distEntryPath = resolve(packageRoot, 'dist', 'index.js');
+            if (existsSync(distEntryPath)) {
+                return { entryPath: distEntryPath, rootPath: packageRoot, loadMode: 'immutable-js' };
+            }
+            return null;
+        };
+        const immutableRootPath =
+            immutableArtifactRootPathsByPackageName.get(daemonEntryPath);
+        const immutableRecord: ImmutablePluginGenerationRecord | undefined =
+            immutableArtifactRecordsByPackageName.get(daemonEntryPath);
+
+        const resolveRelativeModule = async (
+            module: string,
+        ): Promise<PluginRelativeModuleResolution<Record<string, unknown>>> => {
+            await prepare();
+            const selected = resolveSelectedEntry();
+            if (!selected) {
+                throw new Error(`Bundled plugin '${daemonEntryPath}' has no file-backed runner module root`);
+            }
+            const candidateBase = resolve(dirname(selected.entryPath), module);
+            const extensionCandidates = resolvePluginModuleCandidatePaths({
+                candidateBase,
+                loadMode: selected.loadMode,
+            });
+            let existingCandidate: string | null = null;
+            let lexicalModuleMetadata: Awaited<ReturnType<typeof lstat>> | null = null;
+            for (const candidate of extensionCandidates) {
+                if (!existsSync(candidate)) continue;
+                const candidateMetadata = await lstat(candidate);
+                if (
+                    !candidateMetadata.isSymbolicLink()
+                    && !candidateMetadata.isFile()
+                ) {
+                    continue;
+                }
+                existingCandidate = candidate;
+                lexicalModuleMetadata = candidateMetadata;
+                break;
+            }
+            if (!existingCandidate || !lexicalModuleMetadata) {
+                throw new Error(`Runner module '${module}' was not found in bundled plugin '${daemonEntryPath}'`);
+            }
+            if (
+                lexicalModuleMetadata.isSymbolicLink()
+                || !lexicalModuleMetadata.isFile()
+            ) {
+                throw new Error(`Runner module '${module}' must be a real bundled plugin file`);
+            }
+            const entryPath = realpathSync(selected.entryPath);
+            const modulePath = realpathSync(existingCandidate);
+            const rootPath = realpathSync(selected.rootPath);
+            const relativeModulePath = relative(rootPath, modulePath);
+            if (
+                modulePath === rootPath
+                || !isCanonicalAbsolutePathInsideRoot(rootPath, modulePath)
+            ) {
+                throw new Error(`Runner module '${module}' escapes bundled plugin '${daemonEntryPath}'`);
+            }
+            if (modulePath === entryPath) {
+                throw new Error(`Runner module '${module}' must be a leaf distinct from the plugin activation entry`);
+            }
+            const normalizedModulePath =
+                relativeModulePath.split(sep).join('/');
+            const immutableInventoryFile = (
+                immutableRootPath
+                && immutableRecord
+                && selected.loadMode === 'immutable-js'
+            )
+                ? immutableRecord.files.find(
+                    (file) => file.relativePath === normalizedModulePath,
+                )
+                : undefined;
+            const assertSelectedImmutableLeaf = async (): Promise<void> => {
+                if (!immutableRootPath || !immutableRecord || selected.loadMode !== 'immutable-js') {
+                    return;
+                }
+                const canonicalImmutableRoot = realpathSync(immutableRootPath);
+                if (rootPath !== canonicalImmutableRoot || !immutableInventoryFile) {
+                    throw new Error(
+                        `Runner module '${module}' failed bundled immutable inventory verification`,
+                    );
+                }
+                await assertContainedRegularGenerationFile(
+                    canonicalImmutableRoot,
+                    normalizedModulePath,
+                    `Bundled runner module '${module}'`,
+                );
+            };
+            await assertSelectedImmutableLeaf();
+            if (
+                immutableInventoryFile
+                && lexicalModuleMetadata.size !== immutableInventoryFile.byteLength
+            ) {
+                throw new Error(
+                    `Runner module '${module}' failed bundled immutable inventory verification`,
+                );
+            }
+            const moduleNamespace = (
+                await loadImport(pathToFileURL(modulePath).href)
+            ) as Record<string, unknown>;
+            await assertSelectedImmutableLeaf();
+            const afterModuleMetadata = await lstat(existingCandidate);
+            if (
+                afterModuleMetadata.isSymbolicLink()
+                || !afterModuleMetadata.isFile()
+                || afterModuleMetadata.dev !== lexicalModuleMetadata.dev
+                || afterModuleMetadata.ino !== lexicalModuleMetadata.ino
+                || afterModuleMetadata.size !== lexicalModuleMetadata.size
+                || (
+                    immutableInventoryFile !== undefined
+                    && afterModuleMetadata.size !== immutableInventoryFile.byteLength
+                )
+                || afterModuleMetadata.mtimeMs !== lexicalModuleMetadata.mtimeMs
+                || afterModuleMetadata.ctimeMs !== lexicalModuleMetadata.ctimeMs
+            ) {
+                throw new Error(
+                    `Runner module '${module}' changed during bundled import`,
+                );
+            }
+            return Object.freeze({
+                module: moduleNamespace,
+                normalizedModulePath,
+                loadMode: selected.loadMode,
+            });
+        };
+
         return {
             kind: 'bundled' as const,
             moduleId: daemonEntryPath,
             prepare,
+            resolveRelativeModule,
+            ...(params.pluginStorePaths && immutableRootPath && immutableRecord
+                ? {
+                    persistValidatedAgentSessionRunnerFactories: async (facts) => {
+                        await persistValidatedAgentSessionRunnerFactories({
+                            paths: params.pluginStorePaths!,
+                            record: immutableRecord,
+                            manifestAuthority: 'bundled_first_party',
+                            factories: facts,
+                        });
+                    },
+                }
+                : {}),
             load: async () => {
                 await prepare();
-                const immutableArtifactEntryPath = immutableArtifactEntryPathsByPackageName.get(daemonEntryPath);
-                if (immutableArtifactEntryPath) {
-                    return await loadImport(pathToFileURL(immutableArtifactEntryPath).href);
+                const selectedEntry = resolveSelectedEntry();
+                if (selectedEntry) {
+                    return await loadImport(
+                        pathToFileURL(selectedEntry.entryPath).href,
+                    );
                 }
-                if (unavailableImmutableArtifactPackageNames.has(daemonEntryPath)) {
+                if (
+                    immutableArtifactPackageNames.has(daemonEntryPath)
+                    || unavailableImmutableArtifactPackageNames.has(daemonEntryPath)
+                ) {
                     throw new Error(`Bundled immutable artifact is unavailable for '${daemonEntryPath}'`);
-                }
-                const pluginId = parseFirstPartyPluginIdFromPackageName(daemonEntryPath);
-                if (pluginId) {
-                    const distCandidate = resolve(repoRoot, 'packages', 'plugins', pluginId, 'dist', 'index.js');
-                    const srcCandidate = resolve(repoRoot, 'packages', 'plugins', pluginId, 'src', 'index.ts');
-
-                    if (
-                        !immutableArtifactPackageNames.has(daemonEntryPath)
-                        && canImportFirstPartyPluginSource()
-                        && existsSync(srcCandidate)
-                    ) {
-                        // Dev/test local plugins must share the host's TS module graph; dist can carry a second SDK runtime context.
-                        return await loadImport(pathToFileURL(srcCandidate).href);
-                    }
-                    if (existsSync(distCandidate)) {
-                        return await loadImport(pathToFileURL(distCandidate).href);
-                    }
                 }
 
                 return await loadImport(daemonEntryPath);

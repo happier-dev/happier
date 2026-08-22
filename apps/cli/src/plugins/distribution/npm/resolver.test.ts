@@ -8,6 +8,26 @@ function jsonClient(packument: unknown): NpmRegistryJsonClient {
   return { getJson: async () => packument };
 }
 
+function compatibilityProjection(
+  version: string,
+  engines: Record<string, unknown> | undefined = { happier: '>=0.0.0' },
+  entries: readonly Record<string, unknown>[] = [],
+): Record<string, unknown> {
+  return {
+    version: 1,
+    manifest: {
+      schemaVersion: 2,
+      id: 'acme.compatibility-fixture',
+      version,
+      displayName: 'Compatibility fixture',
+      ...(engines ? { engines } : {}),
+      runtime: { apiVersion: 1 },
+      contributes: {},
+    },
+    uiArtifacts: { version: 1, entries },
+  };
+}
+
 describe('resolveNpmArtifactMetadata', () => {
   const base = {
     registryOrigin: 'https://registry.example.test',
@@ -38,6 +58,22 @@ describe('resolveNpmArtifactMetadata', () => {
       request: { ...base, selector: { kind: 'tag', value: 'next' } },
       client: jsonClient(packument),
     })).resolves.toMatchObject({ version: '3.0.0-beta.1' });
+  });
+
+  it('requests full npm metadata so generated compatibility facts are available', async () => {
+    const requests: Parameters<NpmRegistryJsonClient['getJson']>[0][] = [];
+    await resolveNpmArtifactMetadata({
+      request: { ...base, selector: { kind: 'tag', value: 'latest' } },
+      client: {
+        getJson: async (input) => {
+          requests.push(input);
+          return packument;
+        },
+      },
+    });
+
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.headers.accept).toBe('application/json');
   });
 
   it('rejects a dist-tag that does not resolve to an exact canonical semver', async () => {
@@ -79,6 +115,292 @@ describe('resolveNpmArtifactMetadata', () => {
     };
     await expect(resolveNpmArtifactMetadata({
       request: { ...base, selector: { kind: 'range', value: '^1.0.0' } }, client: jsonClient({ ...packument, versions }),
+    })).resolves.toMatchObject({ version: '1.4.0' });
+  });
+
+  it('selects the newest generated-compatible version instead of treating latest as an artifact decision', async () => {
+    const compatibilityAwarePackument = {
+      ...packument,
+      'dist-tags': { latest: '2.0.0' },
+      versions: {
+        ...packument.versions,
+        '1.4.0': {
+          ...packument.versions['1.4.0'],
+          happier: { manifest: '.happier-plugin/plugin.json', compatibilityProjection: compatibilityProjection('1.4.0') },
+        },
+        '2.0.0': {
+          ...packument.versions['2.0.0'],
+          happier: {
+            manifest: '.happier-plugin/plugin.json',
+            compatibilityProjection: compatibilityProjection('2.0.0', { happier: '>=9999.0.0' }),
+          },
+        },
+      },
+    };
+
+    await expect(resolveNpmArtifactMetadata({
+      request: { ...base, selector: { kind: 'tag', value: 'latest' } },
+      client: jsonClient(compatibilityAwarePackument),
+    })).resolves.toMatchObject({
+      version: '1.4.0',
+      compatibility: {
+        automaticEligible: true,
+        blockedNewerVersions: [{
+          version: '2.0.0',
+          diagnostics: [expect.objectContaining({ code: 'plugin_manifest_semantic_invalid' })],
+        }],
+      },
+    });
+  });
+
+  it('retains only the newest 32 incompatible versions before the compatible selection', async () => {
+    const incompatibleVersions = Object.fromEntries(
+      Array.from({ length: 33 }, (_, minor) => {
+        const version = `2.${minor}.0`;
+        return [version, {
+          name: '@scope/plugin',
+          version,
+          happier: { compatibilityProjection: compatibilityProjection(version, { happier: '>=9999.0.0' }) },
+          dist: { integrity, tarball: `https://registry.example.test/@scope/plugin/-/plugin-${version}.tgz` },
+        }];
+      }),
+    );
+    const compatibilityAwarePackument = {
+      name: '@scope/plugin',
+      'dist-tags': { latest: '2.32.0' },
+      versions: {
+        '1.4.0': {
+          name: '@scope/plugin',
+          version: '1.4.0',
+          happier: { compatibilityProjection: compatibilityProjection('1.4.0') },
+          dist: { integrity, tarball: 'https://registry.example.test/@scope/plugin/-/plugin-1.4.0.tgz' },
+        },
+        ...incompatibleVersions,
+      },
+    };
+
+    const resolved = await resolveNpmArtifactMetadata({
+      request: { ...base, selector: { kind: 'tag', value: 'latest' } },
+      client: jsonClient(compatibilityAwarePackument),
+    });
+
+    expect(resolved.version).toBe('1.4.0');
+    expect(resolved.compatibility?.blockedNewerVersions).toHaveLength(32);
+    expect(resolved.compatibility?.blockedNewerVersions.map((blocked) => blocked.version)).toEqual([
+      '2.32.0',
+      '2.31.0',
+      '2.30.0',
+      '2.29.0',
+      '2.28.0',
+      '2.27.0',
+      '2.26.0',
+      '2.25.0',
+      '2.24.0',
+      '2.23.0',
+      '2.22.0',
+      '2.21.0',
+      '2.20.0',
+      '2.19.0',
+      '2.18.0',
+      '2.17.0',
+      '2.16.0',
+      '2.15.0',
+      '2.14.0',
+      '2.13.0',
+      '2.12.0',
+      '2.11.0',
+      '2.10.0',
+      '2.9.0',
+      '2.8.0',
+      '2.7.0',
+      '2.6.0',
+      '2.5.0',
+      '2.4.0',
+      '2.3.0',
+      '2.2.0',
+      '2.1.0',
+    ]);
+  });
+
+  it('rejects a candidate whose generated UI artifact targets a different Host UI API before body selection', async () => {
+    const generatedEntry = {
+      contributionId: 'main',
+      tier: 'hostedWeb',
+      entry: 'web/index.html',
+      files: [{
+        relativePath: 'web/index.html',
+        digest: `sha256:${'a'.repeat(64)}`,
+        byteSize: 1,
+      }],
+      digest: `sha256:${'b'.repeat(64)}`,
+      builtWith: { bundler: 'vite', version: '7.0.0' },
+      hostUiApiVersion: '999.0.0',
+      compat: {},
+    };
+    const compatibilityAwarePackument = {
+      ...packument,
+      'dist-tags': { latest: '2.0.0' },
+      versions: {
+        ...packument.versions,
+        '1.4.0': {
+          ...packument.versions['1.4.0'],
+          happier: { compatibilityProjection: compatibilityProjection('1.4.0') },
+        },
+        '2.0.0': {
+          ...packument.versions['2.0.0'],
+          happier: { compatibilityProjection: compatibilityProjection('2.0.0', undefined, [generatedEntry]) },
+        },
+      },
+    };
+
+    await expect(resolveNpmArtifactMetadata({
+      request: { ...base, selector: { kind: 'tag', value: 'latest' } },
+      client: jsonClient(compatibilityAwarePackument),
+    })).resolves.toMatchObject({
+      version: '1.4.0',
+      compatibility: {
+        automaticEligible: true,
+        blockedNewerVersions: [{
+          version: '2.0.0',
+          diagnostics: [expect.objectContaining({ code: 'plugin_compatibility_projection_invalid' })],
+        }],
+      },
+    });
+  });
+
+  it('binds compatibility projection manifest version to the candidate coordinate before body selection', async () => {
+    const compatibilityAwarePackument = {
+      ...packument,
+      'dist-tags': { latest: '2.0.0' },
+      versions: {
+        ...packument.versions,
+        '1.4.0': {
+          ...packument.versions['1.4.0'],
+          happier: { compatibilityProjection: compatibilityProjection('1.4.0') },
+        },
+        '2.0.0': {
+          ...packument.versions['2.0.0'],
+          happier: { compatibilityProjection: compatibilityProjection('1.4.0') },
+        },
+      },
+    };
+
+    await expect(resolveNpmArtifactMetadata({
+      request: { ...base, selector: { kind: 'tag', value: 'latest' } },
+      client: jsonClient(compatibilityAwarePackument),
+    })).resolves.toMatchObject({
+      version: '1.4.0',
+      compatibility: {
+        automaticEligible: true,
+        blockedNewerVersions: [{
+          version: '2.0.0',
+          diagnostics: [expect.objectContaining({ code: 'plugin_compatibility_projection_invalid' })],
+        }],
+      },
+    });
+  });
+
+  it('never falls below the installed-version range when that version lacks compatibility facts', async () => {
+    const compatibilityAwarePackument = {
+      name: '@scope/plugin',
+      'dist-tags': { latest: '1.9.0' },
+      versions: {
+        '1.9.0': {
+          name: '@scope/plugin',
+          version: '1.9.0',
+          happier: { compatibilityProjection: compatibilityProjection('1.9.0') },
+          dist: { integrity, tarball: 'https://registry.example.test/plugin-1.9.0.tgz' },
+        },
+        '2.0.0': {
+          name: '@scope/plugin',
+          version: '2.0.0',
+          dist: { integrity, tarball: 'https://registry.example.test/plugin-2.0.0.tgz' },
+        },
+      },
+    };
+
+    await expect(resolveNpmArtifactMetadata({
+      request: { ...base, selector: { kind: 'range', value: '>=2.0.0' } },
+      client: jsonClient(compatibilityAwarePackument),
+    })).resolves.toMatchObject({
+      version: '2.0.0',
+      compatibility: {
+        automaticEligible: false,
+        diagnostics: [expect.objectContaining({ code: 'plugin_compatibility_projection_missing' })],
+      },
+    });
+  });
+
+  it('keeps preview-range selection on the installed prerelease line', async () => {
+    const compatibilityAwarePackument = {
+      name: '@scope/plugin',
+      'dist-tags': { latest: '1.9.0', next: '2.0.0-beta.2' },
+      versions: {
+        '1.9.0': {
+          name: '@scope/plugin',
+          version: '1.9.0',
+          happier: { compatibilityProjection: compatibilityProjection('1.9.0') },
+          dist: { integrity, tarball: 'https://registry.example.test/plugin-1.9.0.tgz' },
+        },
+        '2.0.0-beta.1': {
+          name: '@scope/plugin',
+          version: '2.0.0-beta.1',
+          happier: { compatibilityProjection: compatibilityProjection('2.0.0-beta.1') },
+          dist: { integrity, tarball: 'https://registry.example.test/plugin-2.0.0-beta.1.tgz' },
+        },
+        '2.0.0-beta.2': {
+          name: '@scope/plugin',
+          version: '2.0.0-beta.2',
+          happier: { compatibilityProjection: compatibilityProjection('2.0.0-beta.2') },
+          dist: { integrity, tarball: 'https://registry.example.test/plugin-2.0.0-beta.2.tgz' },
+        },
+        '2.0.0': {
+          name: '@scope/plugin',
+          version: '2.0.0',
+          happier: { compatibilityProjection: compatibilityProjection('2.0.0') },
+          dist: { integrity, tarball: 'https://registry.example.test/plugin-2.0.0.tgz' },
+        },
+      },
+    };
+
+    await expect(resolveNpmArtifactMetadata({
+      request: {
+        ...base,
+        selector: { kind: 'range', value: '>=2.0.0-beta.1 <2.0.0' },
+      },
+      client: jsonClient(compatibilityAwarePackument),
+    })).resolves.toMatchObject({
+      version: '2.0.0-beta.2',
+      compatibility: { automaticEligible: true },
+    });
+  });
+
+  it('does not admit author-supplied build provenance into compatibility selection', async () => {
+    const compatibilityAwarePackument = {
+      ...packument,
+      'dist-tags': { latest: '2.0.0' },
+      versions: {
+        ...packument.versions,
+        '1.4.0': {
+          ...packument.versions['1.4.0'],
+          happier: { manifest: '.happier-plugin/plugin.json', compatibilityProjection: compatibilityProjection('1.4.0') },
+        },
+        '2.0.0': {
+          ...packument.versions['2.0.0'],
+          happier: {
+            manifest: '.happier-plugin/plugin.json',
+            compatibilityProjection: {
+              ...compatibilityProjection('2.0.0', undefined),
+              builtWith: { pluginSdk: '9999.0.0' },
+            },
+          },
+        },
+      },
+    };
+
+    await expect(resolveNpmArtifactMetadata({
+      request: { ...base, selector: { kind: 'tag', value: 'latest' } },
+      client: jsonClient(compatibilityAwarePackument),
     })).resolves.toMatchObject({ version: '1.4.0' });
   });
 

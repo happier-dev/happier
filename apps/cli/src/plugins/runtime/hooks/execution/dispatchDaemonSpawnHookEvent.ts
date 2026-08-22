@@ -26,7 +26,7 @@ type DispatchDaemonSpawnHookEventDeps = Readonly<{
     pluginIds?: readonly string[];
   }>) => Promise<ResolvedExecutablePluginRuntimeRegistry>;
   dispatchEvent?: (params: Readonly<{
-    runtimeRegistry: Pick<ResolvedExecutablePluginRuntimeRegistry, 'hookHandlersByHookId' | 'readHookEventEnvelopeV1'> & Partial<Pick<ResolvedExecutablePluginRuntimeRegistry, 'contributes'>>;
+    runtimeRegistry: Pick<ResolvedExecutablePluginRuntimeRegistry, 'hookHandlersByHookId'> & Partial<Pick<ResolvedExecutablePluginRuntimeRegistry, 'contributes'>>;
     event: HookEventEnvelopeV1;
     context?: unknown;
   }>) => Promise<DispatchPluginHookEventResultV1>;

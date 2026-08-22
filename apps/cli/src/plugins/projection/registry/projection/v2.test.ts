@@ -1,15 +1,28 @@
 import { describe, expect, it } from 'vitest';
+import {
+    evaluatePluginActionPolicy,
+    type PluginActionPresentUserGatePolicy,
+} from '@happier-dev/protocol';
 
 import { buildPluginProjectionV2 } from './v2';
-import type { ResolvedActionContribution, ResolvedContributionRegistry } from '../types';
+import type {
+    ResolvedActionContribution,
+    ResolvedContributionRegistry,
+    ResolvedTargetedPluginContributionDeclaration,
+} from '../types';
 import {
     PluginContributesV2Schema,
     PluginProjectionV2Schema,
     createPluginContributionIdentity,
 } from '@happier-dev/protocol';
+import type { PluginTargetedContributionV1 } from '@happier-dev/protocol';
 import { adaptTargetActivationFacts } from '@/plugins/projection/introspection/targetActivationFacts';
+import type { LoadedPlugin } from '@/plugins/discovery/load/installed';
+import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
 import { buildPluginProjectionFamiliesByIdV2 } from '@/plugins/projection/families';
 import { resolveBuiltInContributions } from '../resolveBuiltInContributions';
+import { createResolvedContributionRegistry } from '../createResolvedContributionRegistry';
+import { projectLoadedPluginContributes } from '../resolvePluginContributions';
 
 function createEmptyResolvedContributionRegistry(): ResolvedContributionRegistry {
     return {
@@ -32,6 +45,164 @@ function createEmptyResolvedContributionRegistry(): ResolvedContributionRegistry
 }
 
 describe('buildPluginProjectionV2', () => {
+    it('projects an attributed targeted-admission rejection through the canonical diagnostics record', () => {
+        const contributorPluginId = 'examples.contributor';
+        const targetPluginId = 'examples.absent-target';
+        const declaration = {
+            provenance: 'external',
+            source: { kind: 'path' },
+            pluginId: contributorPluginId,
+            pluginVersion: '1.2.3',
+            identity: createPluginContributionIdentity({
+                pluginId: contributorPluginId,
+                localId: 'provider-a',
+            }),
+            manifestPath: '/plugins/examples.contributor/.happier-plugin/plugin.json',
+            definition: {
+                id: 'provider-a',
+                target: { pluginId: targetPluginId, pointId: 'providers' },
+                protocol: { id: 'provider', version: 1 },
+                operations: {},
+            } satisfies PluginTargetedContributionV1,
+        } satisfies ResolvedTargetedPluginContributionDeclaration;
+        const registry = createResolvedContributionRegistry({
+            targetedPluginContributions: [declaration],
+            immutableGenerationIdsByPluginId: {
+                [contributorPluginId]: 'contributor-generation-a',
+            },
+        });
+
+        const projection = buildPluginProjectionV2({ registry, generation: 7 });
+        const diagnostic = projection.diagnostics.find((entry) => (
+            entry.data.code === 'target_absent'
+        ));
+
+        expect(diagnostic).toMatchObject({
+            data: {
+                code: 'target_absent',
+                message: 'Targeted contribution admission rejected (target_absent).',
+                details: {
+                    targetPluginId,
+                    pointId: 'providers',
+                    protocol: { id: 'provider', version: 1 },
+                },
+            },
+            plugin: { id: contributorPluginId, version: '1.2.3', source: 'localPath' },
+            contribution: { pluginId: contributorPluginId, localId: 'provider-a' },
+            stage: 'normalization',
+            generation: 'contributor-generation-a',
+            host: 'daemon',
+        });
+        expect(PluginProjectionV2Schema.safeParse(projection).success).toBe(true);
+    });
+
+    it('projects an attributed cold target-semantic rejection from the canonical diagnostics map', () => {
+        const contributorPluginId = 'examples.contributor';
+        const targetPluginId = 'examples.target';
+        const declaration = {
+            provenance: 'external',
+            source: { kind: 'path' },
+            pluginId: contributorPluginId,
+            pluginVersion: '1.2.3',
+            identity: createPluginContributionIdentity({
+                pluginId: contributorPluginId,
+                localId: 'provider-a',
+            }),
+            manifestPath: '/plugins/examples.contributor/.happier-plugin/plugin.json',
+            definition: {
+                id: 'provider-a',
+                target: { pluginId: targetPluginId, pointId: 'providers' },
+                protocol: { id: 'provider', version: 1 },
+                operations: {},
+            } satisfies PluginTargetedContributionV1,
+        } satisfies ResolvedTargetedPluginContributionDeclaration;
+        const registry = createResolvedContributionRegistry({
+            targetedPluginContributions: [declaration],
+            immutableGenerationIdsByPluginId: {
+                [contributorPluginId]: 'contributor-generation-a',
+            },
+        });
+
+        const projection = buildPluginProjectionV2({
+            registry,
+            generation: 7,
+            pluginDiagnosticsByPluginId: {
+                [contributorPluginId]: [{
+                    code: 'descriptor_semantic_invalid',
+                    message: 'Targeted contribution semantics rejected (descriptor_semantic_invalid).',
+                    stage: 'normalization',
+                    contribution: createPluginContributionIdentity({
+                        pluginId: contributorPluginId,
+                        localId: 'provider-a',
+                    }),
+                    details: {
+                        targetPluginId,
+                        pointId: 'providers',
+                        protocol: { id: 'provider', version: 1 },
+                    },
+                }],
+            },
+        });
+
+        expect(projection.diagnostics).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                data: expect.objectContaining({
+                    code: 'descriptor_semantic_invalid',
+                    message: 'Targeted contribution semantics rejected (descriptor_semantic_invalid).',
+                    details: expect.objectContaining({
+                        targetPluginId,
+                        pointId: 'providers',
+                        protocol: { id: 'provider', version: 1 },
+                    }),
+                }),
+                plugin: { id: contributorPluginId, version: '1.2.3', source: 'localPath' },
+                contribution: { pluginId: contributorPluginId, localId: 'provider-a' },
+                stage: 'normalization',
+                generation: 'contributor-generation-a',
+                host: 'daemon',
+            }),
+        ]));
+        expect(PluginProjectionV2Schema.safeParse(projection).success).toBe(true);
+    });
+
+    it('does not project a raw manifest digest as installed-package identity', () => {
+        const projection = buildPluginProjectionV2({
+            registry: {
+                ...createEmptyResolvedContributionRegistry(),
+                immutableGenerationIdsByPluginId: {
+                    'com.acme.plugin': 'committed-generation-a',
+                },
+                agents: [{
+                    id: 'acme-agent',
+                    provenance: 'external',
+                    source: { kind: 'path' },
+                    pluginId: 'com.acme.plugin',
+                    identity: createPluginContributionIdentity({
+                        pluginId: 'com.acme.plugin',
+                        localId: 'acme-agent',
+                    }),
+                    manifestPath: '/plugins/com.acme.plugin/.happier-plugin/plugin.json',
+                    definition: {
+                        kindVersion: 1,
+                        id: 'acme-agent',
+                        ownedBackendIds: [],
+                    },
+                }],
+            },
+            generation: 1,
+        });
+
+        expect(projection.installedPackagesById['com.acme.plugin']).toMatchObject({
+            id: 'com.acme.plugin',
+            immutableGenerationId: 'committed-generation-a',
+            source: {
+                kind: 'path',
+                locator: '/plugins/com.acme.plugin/.happier-plugin/plugin.json',
+            },
+        });
+        expect(projection.installedPackagesById['com.acme.plugin']).not.toHaveProperty('digest');
+    });
+
     it('projects canonical exact action danger and localized confirmation metadata', () => {
         const confirmation = {
             title: { key: 'actions.publish.title', fallback: 'Publish changes?' },
@@ -52,13 +223,13 @@ describe('buildPluginProjectionV2', () => {
                 slash: null,
                 bindings: null,
                 examples: null,
-                surfaces: { ui: true, voice: false, agent: false, mcp: false, cli: false, rpc: false, sdk: false },
+                surfaces: { ui: true, voice: false, agent: false, mcp: false, cli: false, rpc: false, sdk: false, plugin: false },
                 inputHints: null,
                 inputSchema: {},
-                execution: { routing: 'daemon', handler: { target: 'plugin', exportName: 'publish' } },
+                execution: { target: 'daemon' },
                 scopes: ['workspace'],
                 contributionSurfaces: ['ui'],
-                placement: 'detailsPanel',
+                placementBindings: ['detailsPanel'],
                 dangerLevel: 'writesRemote',
                 confirmation,
             },
@@ -70,6 +241,11 @@ describe('buildPluginProjectionV2', () => {
         });
 
         expect(projection.actionsById['acme.publish/publish']).toMatchObject({
+            // The projected UI form must retain the declaration's semantic
+            // scope. Deriving this from `surfaces.ui` would falsely turn a
+            // workspace Action into a settings Action and strand the real
+            // current qualified Action from its intended host surface.
+            scopes: ['workspace'],
             dangerLevel: 'writesRemote',
             confirmation,
         });
@@ -91,6 +267,453 @@ describe('buildPluginProjectionV2', () => {
             });
             expect(exact.actionsById['acme.publish/publish']?.dangerLevel).toBe(dangerLevel);
         }
+    });
+
+    it('carries a manifest-declared Voice Action through the resolved registry to the final actions projection', () => {
+        const pluginId = 'acme.voice-action';
+        const plugin = {
+            pluginId,
+            pluginRootPath: `/plugins/${pluginId}`,
+            manifestPath: `/plugins/${pluginId}/.happier-plugin/plugin.json`,
+            daemonEntryPath: `/plugins/${pluginId}/dist/plugin.js`,
+            devDaemonEntryPath: null,
+            sourceSpec: {
+                kind: 'path',
+                locator: `/plugins/${pluginId}`,
+                trustPolicy: 'local_trusted',
+                installPolicy: 'link',
+            },
+            manifest: normalizePluginManifestV2({
+                schemaVersion: 2,
+                id: pluginId,
+                version: '1.0.0',
+                displayName: 'Voice Action',
+                engines: { happier: '^1.0.0' },
+                runtime: { apiVersion: 1 },
+                entrypoints: { daemon: './dist/plugin.js' },
+                contributes: {
+                    actions: [{
+                        id: 'open-context',
+                        title: 'Open context',
+                        scopes: ['session'],
+                        surfaces: ['voice'],
+                        execution: { target: 'daemon' },
+                        dangerLevel: 'safe',
+                    }],
+                },
+            }),
+        } satisfies LoadedPlugin;
+        const registry = createResolvedContributionRegistry(projectLoadedPluginContributes({
+            loadResult: { loadedPlugins: [plugin], diagnosticsByPluginId: {} },
+            provenance: 'external',
+        }));
+
+        const projection = buildPluginProjectionV2({ registry, generation: 1 });
+
+        expect(projection.actionsById[`${pluginId}/open-context`]).toMatchObject({
+            pluginId,
+            id: 'open-context',
+            surfaces: ['voice'],
+        });
+        expect(PluginProjectionV2Schema.safeParse(projection).success).toBe(true);
+    });
+
+    it('retains localized Action presentation through the canonical author-to-projection path', () => {
+        const pluginId = 'acme.localized-action';
+        const plugin = {
+            pluginId,
+            pluginRootPath: `/plugins/${pluginId}`,
+            manifestPath: `/plugins/${pluginId}/.happier-plugin/plugin.json`,
+            daemonEntryPath: `/plugins/${pluginId}/dist/plugin.js`,
+            devDaemonEntryPath: null,
+            sourceSpec: {
+                kind: 'path',
+                locator: `/plugins/${pluginId}`,
+                trustPolicy: 'local_trusted',
+                installPolicy: 'link',
+            },
+            manifest: normalizePluginManifestV2({
+                schemaVersion: 2,
+                id: pluginId,
+                version: '1.0.0',
+                displayName: 'Localized Action',
+                engines: { happier: '^1.0.0' },
+                runtime: { apiVersion: 1 },
+                entrypoints: { daemon: './dist/plugin.js' },
+                contributes: {
+                    actions: [{
+                        id: 'refresh',
+                        title: { key: 'actions.refresh.title', fallback: 'Refresh preview' },
+                        description: { key: 'actions.refresh.description', fallback: 'Refresh the active preview.' },
+                        scopes: ['session'],
+                        surfaces: ['ui', 'voice'],
+                        execution: { target: 'daemon' },
+                        placementBindings: ['commandPalette'],
+                        dangerLevel: 'safe',
+                        inputSchema: {
+                            type: 'object',
+                            properties: { note: { type: 'string' } },
+                            additionalProperties: false,
+                        },
+                        inputHints: {
+                            title: { key: 'actions.refresh.form.title', fallback: 'Refresh options' },
+                            description: { key: 'actions.refresh.form.description', fallback: 'Choose refresh options.' },
+                            submitLabel: { key: 'actions.refresh.form.submit', fallback: 'Refresh' },
+                            fields: [{
+                                path: 'note',
+                                widget: 'textarea',
+                                title: { key: 'actions.refresh.note.title', fallback: 'Note' },
+                                placeholder: { key: 'actions.refresh.note.placeholder', fallback: 'Optional note' },
+                            }],
+                        },
+                    }],
+                },
+            }),
+        } satisfies LoadedPlugin;
+        const registry = createResolvedContributionRegistry(projectLoadedPluginContributes({
+            loadResult: { loadedPlugins: [plugin], diagnosticsByPluginId: {} },
+            provenance: 'external',
+        }));
+
+        const projected = buildPluginProjectionV2({ registry, generation: 1 })
+            .actionsById[`${pluginId}/refresh`];
+
+        expect(projected).toMatchObject({
+            title: { key: 'actions.refresh.title', fallback: 'Refresh preview' },
+            description: { key: 'actions.refresh.description', fallback: 'Refresh the active preview.' },
+            inputHints: {
+                title: { key: 'actions.refresh.form.title', fallback: 'Refresh options' },
+                description: { key: 'actions.refresh.form.description', fallback: 'Choose refresh options.' },
+                submitLabel: { key: 'actions.refresh.form.submit', fallback: 'Refresh' },
+                fields: [{
+                    path: 'note',
+                    title: { key: 'actions.refresh.note.title', fallback: 'Note' },
+                    placeholder: { key: 'actions.refresh.note.placeholder', fallback: 'Optional note' },
+                }],
+            },
+        });
+    });
+
+    it('preserves the canonical client Action execution target and stamps its exact producer origin', () => {
+        const pluginId = 'acme.client-actions';
+        const outputSchema = {
+            type: 'object',
+            properties: {
+                summary: { type: 'string' },
+            },
+            required: ['summary'],
+            additionalProperties: false,
+        } as const;
+        const execution: ResolvedActionContribution['definition']['execution'] = {
+            target: 'client',
+            client: {
+                artifactId: 'client-actions',
+                modulePath: './client-actions.js',
+                exportName: 'activate',
+            },
+            platforms: ['web', 'ios'],
+        };
+        const origin = {
+            serverIdentityId: 'srv_action_projection_fixture',
+            materializationRef: {
+                machineId: 'machine_action_projection_fixture',
+                materializationId: 'materialization-action-a',
+                pluginId,
+            },
+        } as const;
+        const action: ResolvedActionContribution = {
+            provenance: 'external',
+            source: { kind: 'path' },
+            pluginId,
+            definition: {
+                kindVersion: 1,
+                id: 'open-client-preview',
+                title: 'Open client preview',
+                description: null,
+                safety: 'safe',
+                placements: [],
+                slash: null,
+                bindings: null,
+                examples: null,
+                surfaces: { ui: true, voice: false, agent: false, mcp: false, cli: false, rpc: false, sdk: false, plugin: false },
+                inputHints: null,
+                inputSchema: {},
+                outputSchema,
+                execution,
+                scopes: ['session'],
+                contributionSurfaces: ['ui'],
+                placementBindings: ['detailsPanel'],
+                dangerLevel: 'safe',
+            },
+        };
+
+        const projected = buildPluginProjectionV2({
+            registry: { ...createEmptyResolvedContributionRegistry(), actions: [action] },
+            generation: 1,
+            pluginExecutionOriginsByPluginId: { [pluginId]: origin },
+        }).actionsById[`${pluginId}/open-client-preview`];
+
+        expect(projected).toMatchObject({
+            execution,
+            inputSchema: {},
+            outputSchema,
+            dangerLevel: 'safe',
+            available: true,
+            ...origin,
+        });
+        expect(projected?.execution).toEqual(execution);
+    });
+
+    it('projects only the exact target-Action authorization facts when the runtime owner can resolve them', () => {
+        const pluginId = 'acme.client-actions';
+        const authorization = {
+            packageTrust: {
+                packageIdentity: 'package:acme.client-actions:generation-7',
+                reviewedPackageIdentity: null,
+            },
+            generation: {
+                targetGeneration: 'generation-7',
+                desiredGeneration: 'generation-7',
+                appliedGeneration: null,
+                targetGenerationMode: 'current' as const,
+            },
+            resourceSelections: [],
+            scopedGrants: [],
+            serviceAvailability: [],
+            operatingSystemAuthorization: [],
+        } satisfies PluginActionPresentUserGatePolicy['authorization'];
+        const action: ResolvedActionContribution = {
+            provenance: 'external',
+            source: { kind: 'path' },
+            pluginId,
+            definition: {
+                kindVersion: 1,
+                id: 'open-client-preview',
+                title: 'Open client preview',
+                description: null,
+                safety: 'safe',
+                placements: [],
+                slash: null,
+                bindings: null,
+                examples: null,
+                surfaces: { ui: true, voice: false, agent: false, mcp: false, cli: false, rpc: false, sdk: false, plugin: false },
+                inputHints: null,
+                inputSchema: {},
+                execution: { target: 'client', client: { artifactId: 'client-actions', modulePath: './client-actions.js', exportName: 'activate' }, platforms: ['web'] },
+                scopes: ['session'],
+                contributionSurfaces: ['ui'],
+                placementBindings: ['detailsPanel'],
+                dangerLevel: 'safe',
+            },
+        };
+        const resolveActionPresentUserGatePolicy = (candidatePluginId: string, localId: string) => {
+            if (candidatePluginId !== pluginId || localId !== action.definition.id) return null;
+            return {
+                qualifiedId: `${candidatePluginId}/actions/${localId}`,
+                generation: 'generation-7',
+                dangerLevel: 'safe',
+                scopes: ['session'],
+                surfaces: ['ui'],
+                authorization,
+            } satisfies PluginActionPresentUserGatePolicy;
+        };
+
+        const projection = buildPluginProjectionV2({
+            registry: { ...createEmptyResolvedContributionRegistry(), actions: [action] },
+            generation: 1,
+            resolveActionPresentUserGatePolicy,
+            pluginFinalPolicyCurrentGenerationsById: new Map([[pluginId, {
+                immutableGenerationId: 'generation-7',
+                desiredImmutableGenerationId: 'generation-7',
+                appliedImmutableGenerationId: null,
+                distribution: { kind: 'localPath' },
+                applied: false,
+                selectedAccess: [],
+            }]]),
+        });
+        const projected = projection.actionsById[`${pluginId}/open-client-preview`];
+
+        expect(projected?.authorization).toEqual(authorization);
+        expect(evaluatePluginActionPolicy({
+            ...authorization,
+            confirmation: 'notRequired',
+        })).toEqual({
+            outcome: 'denied',
+            code: 'plugin_action_package_untrusted',
+            requiresCurrentIntent: false,
+        });
+        expect(buildPluginProjectionV2({
+            registry: { ...createEmptyResolvedContributionRegistry(), actions: [action] },
+            generation: 1,
+            resolveActionPresentUserGatePolicy,
+        }).actionsById[`${pluginId}/open-client-preview`]).not.toHaveProperty('authorization');
+    });
+
+    it('leaves an Action producer origin absent when the projection lease has none', () => {
+        const pluginId = 'acme.daemon-actions';
+        const execution = { target: 'daemon' } as const;
+        const action: ResolvedActionContribution = {
+            provenance: 'external',
+            source: { kind: 'path' },
+            pluginId,
+            definition: {
+                kindVersion: 1,
+                id: 'refresh',
+                title: 'Refresh',
+                description: null,
+                safety: 'safe',
+                placements: [],
+                slash: null,
+                bindings: null,
+                examples: null,
+                surfaces: { ui: true, voice: false, agent: false, mcp: false, cli: false, rpc: false, sdk: false, plugin: false },
+                inputHints: null,
+                inputSchema: {},
+                execution,
+                scopes: ['session'],
+                contributionSurfaces: ['ui'],
+                placementBindings: ['detailsPanel'],
+                dangerLevel: 'safe',
+            },
+        };
+
+        const projected = buildPluginProjectionV2({
+            registry: { ...createEmptyResolvedContributionRegistry(), actions: [action] },
+            generation: 1,
+        }).actionsById[`${pluginId}/refresh`];
+
+        expect(projected).toMatchObject({ execution });
+        expect(projected).not.toHaveProperty('serverIdentityId');
+        expect(projected).not.toHaveProperty('materializationRef');
+    });
+
+    it('does not stamp an Action with an origin whose materialization belongs to another plugin', () => {
+        const pluginId = 'acme.current-actions';
+        const execution = { target: 'daemon' } as const;
+        const action: ResolvedActionContribution = {
+            provenance: 'external',
+            source: { kind: 'path' },
+            pluginId,
+            definition: {
+                kindVersion: 1,
+                id: 'refresh',
+                title: 'Refresh',
+                description: null,
+                safety: 'safe',
+                placements: [],
+                slash: null,
+                bindings: null,
+                examples: null,
+                surfaces: { ui: true, voice: false, agent: false, mcp: false, cli: false, rpc: false, sdk: false, plugin: false },
+                inputHints: null,
+                inputSchema: {},
+                execution,
+                scopes: ['session'],
+                contributionSurfaces: ['ui'],
+                placementBindings: ['detailsPanel'],
+                dangerLevel: 'safe',
+            },
+        };
+
+        const projected = buildPluginProjectionV2({
+            registry: { ...createEmptyResolvedContributionRegistry(), actions: [action] },
+            generation: 1,
+            pluginExecutionOriginsByPluginId: {
+                [pluginId]: {
+                    serverIdentityId: 'srv_action_projection_fixture',
+                    materializationRef: {
+                        machineId: 'machine_action_projection_fixture',
+                        materializationId: 'materialization-action-b',
+                        pluginId: 'acme.other-actions',
+                    },
+                },
+            },
+        }).actionsById[`${pluginId}/refresh`];
+
+        expect(projected).toMatchObject({ execution });
+        expect(projected).not.toHaveProperty('serverIdentityId');
+        expect(projected).not.toHaveProperty('materializationRef');
+    });
+
+    it('projects Action icon, priority, and every declared placement binding', () => {
+        const action = {
+            provenance: 'external',
+            source: { kind: 'path' },
+            pluginId: 'acme.preview',
+            definition: {
+                kindVersion: 1,
+                id: 'refresh-preview',
+                title: 'Refresh preview',
+                description: null,
+                icon: 'magic-wand',
+                safety: 'safe',
+                placements: [],
+                slash: null,
+                bindings: null,
+                examples: null,
+                surfaces: { ui: true, voice: false, agent: false, mcp: false, cli: false, rpc: false, sdk: false, plugin: false },
+                inputHints: null,
+                inputSchema: {},
+                execution: { target: 'daemon' },
+                scopes: ['session'],
+                contributionSurfaces: ['ui'],
+                placementBindings: ['primary', 'secondary'] as const,
+                priority: -10,
+                dangerLevel: 'safe' as const,
+            },
+        } satisfies ResolvedActionContribution & Readonly<{
+            definition: Readonly<{ placementBindings: readonly ['primary', 'secondary'] }>;
+        }>;
+
+        const projection = buildPluginProjectionV2({
+            registry: { ...createEmptyResolvedContributionRegistry(), actions: [action] },
+            generation: 1,
+        });
+
+        expect(projection.actionsById['acme.preview/refresh-preview']).toMatchObject({
+          icon: 'magic-wand',
+          priority: -10,
+          placementBindings: ['primary', 'secondary'],
+        });
+    });
+
+    it('projects plugin-only Actions without a CLI fallback or manufactured presentation', () => {
+        const action: ResolvedActionContribution = {
+            provenance: 'external',
+            source: { kind: 'path' },
+            pluginId: 'acme.provider',
+            definition: {
+                kindVersion: 1,
+                id: 'refresh-provider-state',
+                title: 'Refresh provider state',
+                description: null,
+                safety: 'danger',
+                placements: [],
+                slash: null,
+                bindings: null,
+                examples: null,
+                surfaces: { ui: false, voice: false, agent: false, mcp: false, cli: false, rpc: false, sdk: false, plugin: true },
+                inputHints: null,
+                inputSchema: {},
+                execution: { target: 'daemon' },
+                scopes: ['session'],
+                contributionSurfaces: ['plugin'],
+                dangerLevel: 'writesRemote',
+            },
+        };
+
+        const projection = buildPluginProjectionV2({
+            registry: { ...createEmptyResolvedContributionRegistry(), actions: [action] },
+            generation: 1,
+        });
+
+        expect(projection.actionsById['acme.provider/refresh-provider-state']).toMatchObject({
+            surfaces: ['plugin'],
+            dangerLevel: 'writesRemote',
+            inputSchema: {},
+        });
+        expect(projection.actionsById['acme.provider/refresh-provider-state']).not.toHaveProperty('placement');
+        expect(projection.actionsById['acme.provider/refresh-provider-state']).not.toHaveProperty('confirmation');
     });
 
     it('projects plugin-local resource ids under qualified keys', () => {
@@ -179,7 +802,6 @@ describe('buildPluginProjectionV2', () => {
                     source: 'development',
                     family: 'actions',
                     identity: { kind: 'localId', localId: 'run' },
-                    stability: 'stable',
                     registration: 'required',
                     consumer: 'action-dispatch',
                     platforms: ['cli'],
@@ -199,7 +821,7 @@ describe('buildPluginProjectionV2', () => {
         const candidate = {
             pluginId: 'acme.lifecycle', pluginVersion: '1.0.0', source: 'development' as const,
             family: 'actions', identity: { kind: 'localId' as const, localId: 'run' },
-            stability: 'stable' as const, registration: 'required' as const,
+            registration: 'required' as const,
             consumer: 'action-dispatch', platforms: ['cli' as const],
         };
         const introspectionRuntimeSnapshot = adaptTargetActivationFacts({
@@ -253,7 +875,6 @@ describe('buildPluginProjectionV2', () => {
             pluginId: 'com.acme.voice',
             identity: createPluginContributionIdentity({ pluginId: 'com.acme.voice', localId: definition.id }),
             manifestPath: '/plugins/com.acme.voice/plugin.json',
-            manifestDigest: 'sha256:voice',
             definition,
         });
         const projection = buildPluginProjectionV2({
@@ -273,7 +894,6 @@ describe('buildPluginProjectionV2', () => {
             roles: ['conversation_stt', 'conversation_tts', 'realtime_conversation', 'turn_control'],
             platforms: ['web'],
             capabilities: {
-                readiness: { requirements: [] },
                 turn: { cancelResponse: true, bargeIn: true },
             },
             client: { artifactId: 'voice-ui', modulePath: './voice.js', exportName: 'activate' },
@@ -284,7 +904,7 @@ describe('buildPluginProjectionV2', () => {
                 ...createEmptyResolvedContributionRegistry(),
                 voiceProviders: [{
                     provenance: 'external', source: { kind: 'path' }, pluginId: 'com.acme.voice', identity,
-                    manifestPath: '/plugins/com.acme.voice/plugin.json', manifestDigest: 'sha256:voice', definition: provider,
+                    manifestPath: '/plugins/com.acme.voice/plugin.json', definition: provider,
                 }],
             },
             generation: 8,
@@ -324,6 +944,12 @@ describe('buildPluginProjectionV2', () => {
                         ],
                     },
                 },
+                catalogEntry: {
+                    id: 'acme-agent',
+                    cliSubcommand: 'acme-agent',
+                    vendorResumeSupport: 'unsupported',
+                    connectedServiceIds: ['openai-codex'],
+                },
                 definition: {
                     kindVersion: 1 as const,
                     id: 'acme-agent',
@@ -348,6 +974,7 @@ describe('buildPluginProjectionV2', () => {
         expect(projection.agentsById['acme-agent']).toMatchObject({
             id: 'acme-agent',
             providerOwnedEnvironmentKeys: ['ACME_PROVIDER_KEY'],
+            connectedServiceIds: ['openai-codex'],
             cli: {
                 executable: { binaryName: 'acme', sourcePreference: 'system-first' },
                 auth: {
@@ -359,6 +986,8 @@ describe('buildPluginProjectionV2', () => {
                 },
             },
         });
+        expect(PluginProjectionV2Schema.parse(projection).agentsById['acme-agent']?.connectedServiceIds)
+            .toEqual(['openai-codex']);
         expect(projection.agentsById['acme-agent']).not.toHaveProperty('providerSupport');
         expect(projection.agentsById['acme-agent']).not.toHaveProperty('providerRequirements');
         expect(buildPluginProjectionV2({
@@ -387,7 +1016,6 @@ describe('buildPluginProjectionV2', () => {
                         sources: [{
                             sourceKind: 'acmeArchive',
                             schema: {
-                                passthrough: false,
                                 fields: [{ name: 'kind', kind: 'literal', value: 'acmeArchive' }],
                             },
                             key: { segments: [{ kind: 'literal', value: 'acmeArchive' }] },
@@ -437,6 +1065,87 @@ describe('buildPluginProjectionV2', () => {
             });
     });
 
+    it('retains the normalized external Agent lifecycle declaration instead of a presentation fallback', () => {
+        const definition = PluginContributesV2Schema.parse({
+            agents: [{
+                id: 'acme-lifecycle',
+                title: 'Acme Lifecycle',
+                runtime: { kind: 'custom' },
+                primary: 'sessions',
+                capabilities: {
+                    surfaces: ['terminal'],
+                    sessions: {
+                        open: ['create', 'resume', 'fork'],
+                        delivery: ['newTurn', 'steer', 'followUp'],
+                        cancel: true,
+                        conversationRollback: true,
+                        usageLimitRecovery: {
+                            active: ['checkNow'],
+                            inactive: ['checkNow', 'consumeResetCredit'],
+                        },
+                    },
+                    executionRuns: {
+                        open: ['create', 'resume', 'fork'],
+                        checkpoint: true,
+                        stop: true,
+                    },
+                },
+            }],
+        }).agents[0]!;
+        const registry = {
+            ...createEmptyResolvedContributionRegistry(),
+            agents: [{
+                id: definition.id,
+                identity: createPluginContributionIdentity({
+                    pluginId: 'acme.lifecycle',
+                    localId: definition.id,
+                }),
+                provenance: 'external' as const,
+                source: { kind: 'path' as const },
+                pluginId: 'acme.lifecycle',
+                // These presentation-compatible fields must not become the
+                // lifecycle authority for this external Agent.
+                definition: {
+                    kindVersion: 1 as const,
+                    id: definition.id,
+                    ownedBackendIds: [],
+                    catalogAgentId: 'codex',
+                },
+                richDefinition: {
+                    provenance: 'external' as const,
+                    definition,
+                },
+            }],
+        } satisfies ResolvedContributionRegistry;
+
+        expect(buildPluginProjectionV2({ registry, generation: 18 }).agentsById['acme-lifecycle'])
+            .toMatchObject({
+                id: 'acme-lifecycle',
+                identity: {
+                    pluginId: 'acme.lifecycle',
+                    localId: 'acme-lifecycle',
+                },
+                capabilities: {
+                    surfaces: ['terminal'],
+                    sessions: {
+                        open: ['create', 'resume', 'fork'],
+                        delivery: ['newTurn', 'steer', 'followUp'],
+                        cancel: true,
+                        conversationRollback: true,
+                        usageLimitRecovery: {
+                            active: ['checkNow'],
+                            inactive: ['checkNow', 'consumeResetCredit'],
+                        },
+                    },
+                    executionRuns: {
+                        open: ['create', 'resume', 'fork'],
+                        checkpoint: true,
+                        stop: true,
+                    },
+                },
+            });
+    });
+
     it('projects declared built-in external-session Agents and omits unsupported Agent packages', () => {
         const builtIns = resolveBuiltInContributions();
         const registry = {
@@ -445,7 +1154,7 @@ describe('buildPluginProjectionV2', () => {
         } satisfies ResolvedContributionRegistry;
         const projection = buildPluginProjectionV2({ registry, generation: 21 });
 
-        expect(projection.agentsById.codex?.capabilities).toEqual({
+        expect(projection.agentsById.codex?.capabilities).toMatchObject({
             sessions: {
                 startupInstructions: { versions: [1] },
             },
@@ -500,7 +1209,6 @@ describe('buildPluginProjectionV2', () => {
                 source: { kind: 'path' as const },
                 pluginId: 'acme.gateway',
                 manifestPath: '/plugins/acme.gateway/plugin.json',
-                manifestDigest: 'sha256:gateway',
                 daemonEntryPath: null,
                 identity: {
                     pluginId: 'acme.gateway',
@@ -623,7 +1331,6 @@ describe('buildPluginProjectionV2', () => {
                     source: { kind: 'path' },
                     pluginId: 'acme.mcp',
                     manifestPath: '/tmp/acme/.happier-plugin/plugin.json',
-                    manifestDigest: 'sha256:mcp',
                     daemonEntryPath: '/tmp/acme/daemon.mjs',
                     definition: {
                         id: 'acme-server',
@@ -633,13 +1340,12 @@ describe('buildPluginProjectionV2', () => {
                     },
                 },
             ],
-            mcpDiscoveryProviders: [
+            mcpDiscoverySources: [
                 {
                     provenance: 'external',
                     source: { kind: 'path' },
                     pluginId: 'acme.mcp',
                     manifestPath: '/tmp/acme/.happier-plugin/plugin.json',
-                    manifestDigest: 'sha256:mcp',
                     daemonEntryPath: '/tmp/acme/daemon.mjs',
                     definition: {
                         id: 'acme-discovery',
@@ -662,10 +1368,10 @@ describe('buildPluginProjectionV2', () => {
             title: 'Acme hosted',
             transport: { kind: 'http', url: 'https://mcp.example.test/' },
         });
-        expect(projection.familiesById.mcp?.entriesById['discoveryProvider:acme-discovery']).toMatchObject({
-            id: 'discoveryProvider:acme-discovery',
+        expect(projection.familiesById.mcp?.entriesById['discoverySource:acme-discovery']).toMatchObject({
+            id: 'discoverySource:acme-discovery',
             pluginId: 'acme.mcp',
-            contributionKind: 'discoveryProvider',
+            contributionKind: 'discoverySource',
             title: 'Acme discovery',
         });
         expect(projection.familiesById.mcp?.entriesById['backendClient:acme.backendClient']).toBeUndefined();
@@ -688,7 +1394,6 @@ describe('buildPluginProjectionV2', () => {
                     source: { kind: 'path' },
                     pluginId: 'acme.reload',
                     manifestPath: '/tmp/acme/.happier-plugin/plugin.json',
-                    manifestDigest: 'sha256:reload',
                     daemonEntryPath: '/tmp/acme/daemon.mjs',
                     sourceSpec: {
                         kind: 'path',
@@ -803,7 +1508,7 @@ describe('buildPluginProjectionV2', () => {
         expect(projection.backendsById).toEqual({});
     });
 
-    it('projects generic plugin-local settings for a plugin', () => {
+    it('projects generic daemon settings for a plugin without losing explicit secret custody', () => {
         const registry: ResolvedContributionRegistry = {
             ...createEmptyResolvedContributionRegistry(),
             settings: [
@@ -812,7 +1517,6 @@ describe('buildPluginProjectionV2', () => {
                     source: { kind: 'path' },
                     pluginId: 'acme.hooks',
                     manifestPath: '/tmp/acme/.happier-plugin/plugin.json',
-                    manifestDigest: 'sha256:settings',
                     daemonEntryPath: '/tmp/acme/daemon.mjs',
                     sourceSpec: {
                         kind: 'path',
@@ -828,7 +1532,7 @@ describe('buildPluginProjectionV2', () => {
                             fallback: 'Acme settings',
                         },
                         target: { kind: 'plugin' },
-                        scope: 'local',
+                        scope: 'daemon',
                         fields: [
                             {
                                 id: 'api-token',
@@ -841,7 +1545,7 @@ describe('buildPluginProjectionV2', () => {
                                     fallback: 'Used to authenticate requests.',
                                 },
                                 schema: { type: 'string', minLength: 1 },
-                                secret: true,
+                                secret: { custody: 'daemon' },
                             },
                             {
                                 id: 'enabled',
@@ -868,7 +1572,7 @@ describe('buildPluginProjectionV2', () => {
             pluginId: 'acme.hooks',
             version: 1,
             title: 'Acme settings',
-            storageScope: 'local',
+            scope: { kind: 'daemon' },
             presentation: {
                 sections: [],
                 subagentSections: [],
@@ -879,6 +1583,7 @@ describe('buildPluginProjectionV2', () => {
                     id: 'api-token',
                     version: '1.0.0',
                     control: 'password',
+                    secretCustody: 'daemon',
                     redaction: 'secret',
                     clearWhenEmpty: 'omit',
                     displayKey: 'API token',
@@ -887,6 +1592,7 @@ describe('buildPluginProjectionV2', () => {
                 expect.objectContaining({
                     id: 'enabled',
                     control: 'switch',
+                    secretCustody: null,
                     defaultBooleanValue: true,
                 }),
             ],
@@ -961,7 +1667,7 @@ describe('buildPluginProjectionV2', () => {
         expect(settings).toMatchObject({
             id: 'notification-channel/webhook',
             pluginId: 'acme.notifications',
-            storageScope: 'synced',
+            scope: { kind: 'account' },
             target: { kind: 'plugin' },
             presentation: {
                 sections: [{
@@ -975,6 +1681,7 @@ describe('buildPluginProjectionV2', () => {
                 id: 'webhook.endpoint',
                 groupId: 'configuration',
                 control: 'text',
+                secretCustody: null,
                 redaction: 'none',
                 defaultValue: 'https://example.invalid/hook',
             }),
@@ -982,6 +1689,7 @@ describe('buildPluginProjectionV2', () => {
                 id: 'webhook.token',
                 groupId: 'configuration',
                 control: 'password',
+                secretCustody: 'account',
                 redaction: 'secret',
                 clearWhenEmpty: 'omit',
             }),
@@ -999,7 +1707,6 @@ describe('buildPluginProjectionV2', () => {
                     source: { kind: 'path' },
                     pluginId: 'acme.agent',
                     manifestPath: '/tmp/acme/.happier-plugin/plugin.json',
-                    manifestDigest: 'sha256:agent-settings',
                     daemonEntryPath: '/tmp/acme/daemon.mjs',
                     sourceSpec: {
                         kind: 'path',
@@ -1012,7 +1719,7 @@ describe('buildPluginProjectionV2', () => {
                         version: 1,
                         title: 'Agent settings',
                         target: { kind: 'agent', agent: 'reviewer' },
-                        scope: 'synced',
+                        scope: 'account',
                         presentation: {
                             icon: {
                                 ionName: 'sparkles-outline',
@@ -1072,7 +1779,7 @@ describe('buildPluginProjectionV2', () => {
             id: 'agent-settings',
             pluginId: 'acme.agent',
             version: 1,
-            storageScope: 'synced',
+            scope: { kind: 'account' },
             target: {
                 kind: 'agent',
                 agent: { pluginId: 'acme.agent', localId: 'reviewer' },
@@ -1130,7 +1837,7 @@ describe('buildPluginProjectionV2', () => {
                             version: 1,
                             title: 'Unsupported settings',
                             target: { kind: 'plugin' },
-                            scope: 'local',
+                            scope: 'daemon',
                             fields: [{ id: 'value', title: 'Value', schema: { type } }],
                             presentation: { sections: [], subagentSections: [] },
                         },
@@ -1160,7 +1867,7 @@ describe('buildPluginProjectionV2', () => {
                         version: 1,
                         title: 'Numeric settings',
                         target: { kind: 'plugin' },
-                        scope: 'synced',
+                        scope: 'account',
                         fields: [{
                             id: 'limit',
                             title: 'Limit',
@@ -1195,7 +1902,7 @@ describe('buildPluginProjectionV2', () => {
             version: 1 as const,
             title: 'Ambiguous settings',
             target: { kind: 'plugin' as const },
-            scope: 'local' as const,
+            scope: 'daemon' as const,
             fields: [{
                 id: 'ambiguous',
                 title: 'Ambiguous',
@@ -1257,7 +1964,7 @@ describe('buildPluginProjectionV2', () => {
                         version: 1,
                         title: 'Invalid settings',
                         target: { kind: 'plugin' },
-                        scope: 'local',
+                        scope: 'daemon',
                         fields: [field],
                         presentation: { sections: [], subagentSections: [] },
                     },
@@ -1297,7 +2004,7 @@ describe('buildPluginProjectionV2', () => {
                         version: 1,
                         title: 'Lossy settings',
                         target: { kind: 'plugin' },
-                        scope: 'local',
+                        scope: 'daemon',
                         fields: [{ id: 'value', title: 'Value', schema }],
                         presentation: { sections: [], subagentSections: [] },
                     },
@@ -1328,7 +2035,7 @@ describe('buildPluginProjectionV2', () => {
                         version: 1,
                         title: 'Contradictory settings',
                         target: { kind: 'plugin' },
-                        scope: 'local',
+                        scope: 'daemon',
                         fields: [{
                             id: 'value',
                             title: 'Value',
@@ -1368,7 +2075,7 @@ describe('buildPluginProjectionV2', () => {
                         version: 1,
                         title: 'Conditional settings',
                         target: { kind: 'plugin' },
-                        scope: 'local',
+                        scope: 'daemon',
                         fields: [{
                             id: 'enabled',
                             title: 'Enabled',
@@ -1402,7 +2109,7 @@ describe('buildPluginProjectionV2', () => {
                         version: 1,
                         title: 'Unowned settings',
                         target: { kind: 'plugin' },
-                        scope: 'local',
+                        scope: 'daemon',
                         fields: [{ id: 'enabled', title: 'Enabled', schema: { type: 'boolean' } }],
                         presentation: { sections: [], subagentSections: [] },
                     },

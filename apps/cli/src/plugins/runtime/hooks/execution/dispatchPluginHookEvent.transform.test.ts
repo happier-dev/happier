@@ -1,5 +1,4 @@
 import { describe, expect, it, vi } from 'vitest';
-import { readHookEventEnvelopeV1 } from '@happier-dev/protocol';
 
 import type { ResolvedActivatedHookRegistration } from '@/plugins/projection/registry/types';
 import type { PluginRuntimeHookHandler, ResolvedPluginHookHandler } from '../../types';
@@ -23,9 +22,7 @@ function createTransformHookRegistration(params: Readonly<{
     provenance: 'external',
     source: { kind: 'path' },
     pluginId: params.pluginId,
-    manifestPath: `/plugins/${params.pluginId}/plugin.json`,
-    manifestDigest: `sha256:${params.pluginId}`,
-    daemonEntryPath: `/plugins/${params.pluginId}/daemon.mjs`,
+    manifestPath: `/plugins/${params.pluginId}/plugin.json`,daemonEntryPath: `/plugins/${params.pluginId}/daemon.mjs`,
     sourceSpec: {
       kind: 'path',
       locator: `/plugins/${params.pluginId}`,
@@ -75,7 +72,6 @@ describe('dispatchPluginHookEvent transform hooks', () => {
 
     const result = await dispatchPluginHookEvent({
       runtimeRegistry: {
-        readHookEventEnvelopeV1,
         hookHandlersByHookId: new Map<string, readonly ResolvedPluginHookHandler[]>([
           ['agent.context.before', Object.freeze([
             {
@@ -83,9 +79,7 @@ describe('dispatchPluginHookEvent transform hooks', () => {
               hookId: 'agent.context.before',
               priority: 1,
               registrationIndex: 0,
-              manifestPath: firstRegistration.manifestPath,
-              manifestDigest: firstRegistration.manifestDigest,
-              daemonEntryPath: firstRegistration.daemonEntryPath!,
+              manifestPath: firstRegistration.manifestPath,daemonEntryPath: firstRegistration.daemonEntryPath!,
               exportName: 'transform',
               registration: firstRegistration,
               handler: firstHandler,
@@ -95,9 +89,7 @@ describe('dispatchPluginHookEvent transform hooks', () => {
               hookId: 'agent.context.before',
               priority: 2,
               registrationIndex: 1,
-              manifestPath: secondRegistration.manifestPath,
-              manifestDigest: secondRegistration.manifestDigest,
-              daemonEntryPath: secondRegistration.daemonEntryPath!,
+              manifestPath: secondRegistration.manifestPath,daemonEntryPath: secondRegistration.daemonEntryPath!,
               exportName: 'transform',
               registration: secondRegistration,
               handler: secondHandler,
@@ -175,16 +167,13 @@ describe('dispatchPluginHookEvent transform hooks', () => {
       hookId: 'session.input.transform',
       priority: registration.definition.priority ?? 0,
       registrationIndex,
-      manifestPath: registration.manifestPath,
-      manifestDigest: registration.manifestDigest,
-      daemonEntryPath: registration.daemonEntryPath!,
+      manifestPath: registration.manifestPath,daemonEntryPath: registration.daemonEntryPath!,
       registration,
       handler,
     });
 
     const result = await dispatchPluginHookEvent({
       runtimeRegistry: {
-        readHookEventEnvelopeV1,
         hookHandlersByHookId: new Map([['session.input.transform', Object.freeze([
           resolved(firstRegistration, 0, async (event) => ({
             ...readPayload(event),
@@ -248,7 +237,6 @@ describe('dispatchPluginHookEvent transform hooks', () => {
 
     const result = await dispatchPluginHookEvent({
       runtimeRegistry: {
-        readHookEventEnvelopeV1,
         hookHandlersByHookId: new Map<string, readonly ResolvedPluginHookHandler[]>([
           ['session.input.transform', Object.freeze([
             {
@@ -256,9 +244,7 @@ describe('dispatchPluginHookEvent transform hooks', () => {
               hookId: 'session.input.transform',
               priority: 1,
               registrationIndex: 0,
-              manifestPath: rejectingRegistration.manifestPath,
-              manifestDigest: rejectingRegistration.manifestDigest,
-              daemonEntryPath: rejectingRegistration.daemonEntryPath!,
+              manifestPath: rejectingRegistration.manifestPath,daemonEntryPath: rejectingRegistration.daemonEntryPath!,
               exportName: 'transform',
               registration: rejectingRegistration,
               handler: async () => {
@@ -270,9 +256,7 @@ describe('dispatchPluginHookEvent transform hooks', () => {
               hookId: 'session.input.transform',
               priority: 2,
               registrationIndex: 1,
-              manifestPath: invalidRegistration.manifestPath,
-              manifestDigest: invalidRegistration.manifestDigest,
-              daemonEntryPath: invalidRegistration.daemonEntryPath!,
+              manifestPath: invalidRegistration.manifestPath,daemonEntryPath: invalidRegistration.daemonEntryPath!,
               exportName: 'transform',
               registration: invalidRegistration,
               handler: async () => ({ text: 'missing required session fields' }),
@@ -282,9 +266,7 @@ describe('dispatchPluginHookEvent transform hooks', () => {
               hookId: 'session.input.transform',
               priority: 3,
               registrationIndex: 2,
-              manifestPath: timedOutRegistration.manifestPath,
-              manifestDigest: timedOutRegistration.manifestDigest,
-              daemonEntryPath: timedOutRegistration.daemonEntryPath!,
+              manifestPath: timedOutRegistration.manifestPath,daemonEntryPath: timedOutRegistration.daemonEntryPath!,
               exportName: 'transform',
               registration: timedOutRegistration,
               handler: async () => await new Promise(() => undefined),
@@ -294,9 +276,7 @@ describe('dispatchPluginHookEvent transform hooks', () => {
               hookId: 'session.input.transform',
               priority: 4,
               registrationIndex: 3,
-              manifestPath: finalRegistration.manifestPath,
-              manifestDigest: finalRegistration.manifestDigest,
-              daemonEntryPath: finalRegistration.daemonEntryPath!,
+              manifestPath: finalRegistration.manifestPath,daemonEntryPath: finalRegistration.daemonEntryPath!,
               exportName: 'transform',
               registration: finalRegistration,
               handler: finalHandler,

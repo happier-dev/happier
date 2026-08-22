@@ -19,7 +19,7 @@ import type {
     AgentProviderBindingCredential,
     AgentProviderBindingPrepared,
     AgentProviderBindingResolvedFacts,
-} from '@happier-dev/plugin-sdk/agent-runtime';
+} from '@happier-dev/plugin-sdk/agents/runtime';
 
 import type { PluginRuntimeRegistryLease } from '../reload/controller';
 
@@ -172,14 +172,16 @@ export function readLeasedAgentProviderRequirements(params: Readonly<{
         : deepFreeze(AgentProviderRequirementsV1Schema.parse(rawSupport));
 }
 
-export function readLeasedAgentProviderBindingAdapter(params: Readonly<{
-    lease: PluginRuntimeRegistryLease;
-    agentId: string;
-}>): Readonly<{
+export type CapturedAgentProviderBindingAdapter = Readonly<{
     pluginId: string;
     adapter: AgentProviderBindingAdapter;
     support: AgentProviderRequirementsV1;
-}> | null {
+}>;
+
+export function readLeasedAgentProviderBindingAdapter(params: Readonly<{
+    lease: PluginRuntimeRegistryLease;
+    agentId: string;
+}>): CapturedAgentProviderBindingAdapter | null {
     const owner = params.lease.registry.agentRuntimesByAgentId.get(params.agentId);
     const adapter = owner?.providerBinding;
     const support = readLeasedAgentProviderRequirements(params);
@@ -219,6 +221,23 @@ export async function materializeLeasedAgentProviderBinding(params: Readonly<{
 }>): Promise<AgentProviderBindingMaterializationV1> {
     const resolved = readLeasedAgentProviderBindingAdapter(params);
     if (!resolved) throw new Error(`Agent '${params.agentId}' has no provider-binding adapter`);
+    return await materializeCapturedAgentProviderBinding({
+        resolved,
+        binding: params.binding,
+        prepared: params.prepared,
+        credential: params.credential,
+    });
+}
+
+export async function materializeCapturedAgentProviderBinding(params: Readonly<{
+    resolved: NonNullable<ReturnType<
+        typeof readLeasedAgentProviderBindingAdapter
+    >>;
+    binding: AgentProviderBindingResolvedFacts;
+    prepared: AgentProviderBindingPrepared;
+    credential: AgentProviderBindingCredential;
+}>): Promise<AgentProviderBindingMaterializationV1> {
+    const resolved = params.resolved;
     const binding = deepFreeze(ResolvedFactsSchema.parse(params.binding));
     const prepared = deepFreeze(PreparedSchema.parse(params.prepared));
     const credential = deepFreeze(params.credential.kind === 'none'

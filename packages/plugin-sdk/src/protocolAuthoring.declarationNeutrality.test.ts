@@ -33,6 +33,7 @@ const compiledConnectedAccountsDeclaration = fileURLToPath(
 );
 const sourceAuthoringDeclarationSources = [
     fileURLToPath(new URL('./protocol/protocolFacade.ts', import.meta.url)),
+    fileURLToPath(new URL('./protocol/composerRef.ts', import.meta.url)),
     fileURLToPath(new URL('./protocol/index.ts', import.meta.url)),
     fileURLToPath(new URL('./targetedContributionAuthoring.ts', import.meta.url)),
     fileURLToPath(new URL('./connectedAccounts.ts', import.meta.url)),
@@ -97,6 +98,71 @@ function emittedSourceAuthoringDeclaration(relativePath: string): string {
         throw new Error(`Missing emitted source declaration ${relativePath}`);
     }
     return declaration;
+}
+
+function compileExternalProtocolAuthoringConsumer(sourceText: string): readonly ts.Diagnostic[] {
+    const declarations = emitSourceAuthoringDeclarations();
+    const consumerPath = resolve(
+        sourceAuthoringDeclarationOutputDirectory,
+        'external-protocol-authoring-consumer.ts',
+    );
+    const compilerOptions: ts.CompilerOptions = {
+        strict: true,
+        noEmit: true,
+        skipLibCheck: false,
+        target: ts.ScriptTarget.ES2022,
+        module: ts.ModuleKind.NodeNext,
+        moduleResolution: ts.ModuleResolutionKind.NodeNext,
+        lib: ['lib.es2022.d.ts'],
+        types: [],
+    };
+    const host = ts.createCompilerHost(compilerOptions);
+    const readFile = host.readFile.bind(host);
+    const fileExists = host.fileExists.bind(host);
+    const directoryExists = host.directoryExists?.bind(host) ?? (() => false);
+    const virtualDirectories = new Set<string>();
+    for (const declarationPath of declarations.keys()) {
+        let directory = dirname(declarationPath);
+        while (directory.startsWith(sourceAuthoringDeclarationOutputDirectory)) {
+            virtualDirectories.add(directory);
+            const parent = dirname(directory);
+            if (parent === directory) break;
+            directory = parent;
+        }
+    }
+    host.fileExists = (fileName) => (
+        resolve(fileName) === consumerPath
+        || declarations.has(resolve(fileName))
+        || fileExists(fileName)
+    );
+    host.directoryExists = (directoryName) => (
+        virtualDirectories.has(resolve(directoryName))
+        || directoryExists(directoryName)
+    );
+    host.readFile = (fileName) => {
+        const resolvedFileName = resolve(fileName);
+        if (resolvedFileName === consumerPath) return sourceText;
+        return declarations.get(resolvedFileName) ?? readFile(fileName);
+    };
+    host.getSourceFile = (fileName, languageVersionOrOptions) => {
+        const contents = host.readFile(fileName);
+        return contents === undefined
+            ? undefined
+            : ts.createSourceFile(
+                fileName,
+                contents,
+                languageVersionOrOptions,
+                true,
+                fileName.endsWith('.ts') ? ts.ScriptKind.TS : ts.ScriptKind.Unknown,
+            );
+    };
+
+    const program = ts.createProgram({
+        rootNames: [consumerPath],
+        options: compilerOptions,
+        host,
+    });
+    return ts.getPreEmitDiagnostics(program);
 }
 
 function declarationPathFromRelativeSpecifier(
@@ -165,6 +231,45 @@ const internalProtocolAuthoringDeclarationReferences = [
 ] as const;
 
 describe('public protocol-authoring declaration neutrality', () => {
+    it('preserves concrete schema input and output types for external declaration consumers', () => {
+        const diagnostics = compileExternalProtocolAuthoringConsumer(`
+            import {
+                defineProtocolArray,
+                defineProtocolObject,
+                defineProtocolString,
+                type ProtocolSchemaInput,
+                type ProtocolSchemaOutput,
+            } from './protocol/index.js';
+
+            const item = defineProtocolObject({
+                id: defineProtocolString(),
+                optionalLabel: defineProtocolString().optional(),
+            }, { policy: 'closed' });
+            const items = defineProtocolArray(item);
+
+            type ItemInput = ProtocolSchemaInput<typeof item>;
+            type ItemOutput = ProtocolSchemaOutput<typeof item>;
+            const input: ItemInput = { id: 'one' };
+            const output: ItemOutput = item.parse(input);
+            const parsedItems: readonly ItemOutput[] = items.parse([input]);
+
+            const id: string = output.id;
+            const optionalLabel: string | undefined = output.optionalLabel;
+            const firstId: string = parsedItems[0]!.id;
+            void id;
+            void optionalLabel;
+            void firstId;
+        `);
+
+        expect(diagnostics.map((diagnostic) => (
+            ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n')
+        ))).toEqual([]);
+        // Whole TypeScript-program work: measured 8.5 s / 15.9 s alone and
+        // timing out against 30 s inside `vitest run` for the package. Aligned
+        // with the package's other whole-program suites rather than a number
+        // that only holds on an idle host.
+    }, 120_000);
+
     it('keeps the source declaration entrypoint validator-neutral without losing algebra inference', async () => {
         const utf8Text = defineProtocolUtf8String({ maxUtf8Bytes: 1_024, minLength: 1 });
         const tags = defineProtocolUniqueArray(utf8Text, { minItems: 1, maxItems: 2 });
@@ -192,7 +297,11 @@ describe('public protocol-authoring declaration neutrality', () => {
         expect(emittedSourceAuthoringDeclaration('protocol/index.d.ts')).toMatch(
             /export\s+type\s*\{[\s\S]*?\bProtocolComposableSchema\b[\s\S]*?\}\s*from\s*['"]\.\/protocolFacade\.js['"]/u,
         );
-    }, 30_000);
+        // Whole TypeScript-program work: measured 8.5 s / 15.9 s alone and
+        // timing out against 30 s inside `vitest run` for the package. Aligned
+        // with the package's other whole-program suites rather than a number
+        // that only holds on an idle host.
+    }, 120_000);
 
     it('keeps the public facade declaration closure structural and isolated from source composition internals', async () => {
         const declaration = emittedSourceAuthoringDeclaration('protocol/protocolFacade.d.ts');

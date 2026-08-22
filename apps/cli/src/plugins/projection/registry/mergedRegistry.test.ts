@@ -72,7 +72,8 @@ async function writePluginManifest(rootDir: string, manifestOverrides?: Record<s
                         description: 'Starts a plugin-defined review workflow',
                         scopes: ['global'],
                         surfaces: ['cli'],
-                        placement: 'commandPalette',
+                        execution: { target: 'daemon' },
+                        placementBindings: ['commandPalette'],
                         dangerLevel: 'safe',
                     }],
                     hooks: [createResolvePrerequisitesHook()],
@@ -123,7 +124,6 @@ describe('resolveMergedContributionRegistry', () => {
                     install: {
                         mode: 'link',
                         manifestVersion: '1.0.0',
-                        manifestDigest: null,
                         installedPath: null,
                     },
                     state: {
@@ -214,7 +214,6 @@ describe('resolveMergedContributionRegistry', () => {
                     install: {
                         mode: 'link',
                         manifestVersion: '1.0.0',
-                        manifestDigest: null,
                         installedPath: null,
                     },
                     state: {
@@ -297,7 +296,6 @@ describe('resolveMergedContributionRegistry', () => {
                     install: {
                         mode: 'link',
                         manifestVersion: '1.0.0',
-                        manifestDigest: null,
                         installedPath: null,
                     },
                     state: {
@@ -355,7 +353,6 @@ describe('resolveMergedContributionRegistry', () => {
                     install: {
                         mode: 'link',
                         manifestVersion: '1.0.0',
-                        manifestDigest: null,
                         installedPath: null,
                     },
                     state: {
@@ -442,7 +439,6 @@ describe('resolveMergedContributionRegistry', () => {
                     install: {
                         mode: 'link',
                         manifestVersion: '1.0.0',
-                        manifestDigest: null,
                         installedPath: null,
                     },
                     state: {
@@ -509,7 +505,6 @@ describe('resolveMergedContributionRegistry', () => {
                     install: {
                         mode: 'link',
                         manifestVersion: '1.0.0',
-                        manifestDigest: null,
                         installedPath: null,
                     },
                     state: {
@@ -563,7 +558,6 @@ describe('resolveMergedContributionRegistry', () => {
                     install: {
                         mode: 'link',
                         manifestVersion: '1.0.0',
-                        manifestDigest: null,
                         installedPath: null,
                     },
                     state: {
@@ -630,7 +624,6 @@ describe('resolveMergedContributionRegistry', () => {
                     install: {
                         mode: 'link',
                         manifestVersion: '1.0.0',
-                        manifestDigest: null,
                         installedPath: null,
                     },
                     state: {
@@ -684,7 +677,6 @@ describe('resolveMergedContributionRegistry', () => {
                     install: {
                         mode: 'link',
                         manifestVersion: '1.0.0',
-                        manifestDigest: null,
                         installedPath: null,
                     },
                     state: {
@@ -743,7 +735,6 @@ describe('resolveMergedContributionRegistry', () => {
                     install: {
                         mode: 'link',
                         manifestVersion: '1.0.0',
-                        manifestDigest: null,
                         installedPath: null,
                     },
                     state: {
@@ -816,7 +807,6 @@ describe('resolveMergedContributionRegistry', () => {
                     install: {
                         mode: 'link',
                         manifestVersion: '1.0.0',
-                        manifestDigest: null,
                         installedPath: null,
                     },
                     state: {

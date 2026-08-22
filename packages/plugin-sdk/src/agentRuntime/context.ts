@@ -260,6 +260,11 @@ export type AgentSessionMcpServer = Readonly<{
   transport: AgentSessionMcpTransport;
 }>;
 
+/**
+ * Resolves launch-ready MCP server descriptors for this exact native Agent
+ * session. This is distinct from the generic invocation MCP registry/client
+ * service and from Session-handle MCP elicitation.
+ */
 export interface AgentSessionMcpService {
   resolveServers(options?: Readonly<{ signal?: AbortSignal }>): Promise<readonly AgentSessionMcpServer[]>;
 }
@@ -475,6 +480,12 @@ export type AgentToolExecutionService = Readonly<{
   ): Promise<AgentToolExecutionBeforeResult>;
 }>;
 
+/**
+ * Host capabilities bound to one live native Agent session. The host creates
+ * this bag once for that session and retires it with the session or its
+ * generation. It complements the operation-scoped `AgentRuntimeContext.services`
+ * bag rather than duplicating it.
+ */
 export type AgentSessionHostServices = Readonly<{
   features: AgentFeatureDecisionService;
   terminalHost?: AgentTerminalHostService;

@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
 import { describe, expect, it, vi } from 'vitest';
+import { isPluginError } from '@happier-dev/plugin-sdk';
 
 import {
   SESSION_PROVIDER_HOOK_EVENT_ID_V1,
@@ -15,7 +16,11 @@ import { logger } from '@/ui/logger';
 import { createSessionHooksService, disposeSessionHookArtifactsForSession } from './service';
 
 function hasSessionHooksCapability(capability: string): boolean {
-  return capability === 'sessionHooks' || capability === 'session.hooks.control';
+  return capability === 'sessionHooks';
+}
+
+async function captureRejection(operation: Promise<unknown>): Promise<unknown> {
+  return await operation.then(() => null, (error: unknown) => error);
 }
 
 async function postSessionHook(params: {
@@ -445,29 +450,20 @@ describe('createSessionHooksService', () => {
     await expect(readFile(join(outsideRoot, 'marker.txt'), 'utf8')).resolves.toBe('outside-root');
   });
 
-  it('requires the session hook runtime capability and control permission for host hook surfaces', async () => {
+  it('allows owned hook plugin directories whose names begin with two dots', async () => {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-session-hooks-'));
-    const service = createSessionHooksService({
-      happyHomeDir,
-      hasCapability: (capability: string) => capability === 'sessionHooks',
-    } as Parameters<typeof createSessionHooksService>[0] & {
-      hasCapability: (capability: string) => boolean;
-    });
+    try {
+      const service = createSessionHooksService({ happyHomeDir, hasCapability: hasSessionHooksCapability });
+      const pluginDir = await service.createPluginDir({
+        providerId: '..build',
+        files: [{ path: '.claude-plugin/plugin.json', json: { name: 'dot-prefixed-plugin' } }],
+      });
 
-    await expect(service.startServer({
-      providerId: 'claude',
-      sessionId: 'happy-session-denied',
-    })).rejects.toMatchObject({ code: 'PLUGIN_SESSION_HOOKS_CAPABILITY_REQUIRED' });
-    await expect(service.createPluginDir({
-      providerId: 'claude',
-      files: [{ path: '.claude-plugin/plugin.json', json: { name: 'denied-plugin' } }],
-    })).rejects.toMatchObject({ code: 'PLUGIN_SESSION_HOOKS_CAPABILITY_REQUIRED' });
-    await expect(service.publishProviderTranscript({
-      providerId: 'claude',
-      sessionId: 'happy-session-denied',
-      kind: 'assistant_stop',
-      providerPayload: { type: 'assistant' },
-    })).rejects.toMatchObject({ code: 'PLUGIN_SESSION_HOOKS_CAPABILITY_REQUIRED' });
+      await expect(service.disposePluginDir(pluginDir)).resolves.toBeUndefined();
+      await expect(stat(pluginDir)).rejects.toMatchObject({ code: 'ENOENT' });
+    } finally {
+      await rm(happyHomeDir, { recursive: true, force: true });
+    }
   });
 
   it('removes partially created hook plugin dirs when creation fails', async () => {
@@ -795,6 +791,44 @@ describe('createSessionHooksService', () => {
       });
     } finally {
       server.stop();
+    }
+  });
+
+  it('delivers ctx.sessionHooks capability denials through the canonical public PluginError contract', async () => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-session-hooks-'));
+    const service = createSessionHooksService({ happyHomeDir, hasCapability: () => false });
+
+    try {
+      const denials = await Promise.all([
+        captureRejection(service.startServer({
+          providerId: 'claude',
+          sessionId: 'happy-session-uncapable',
+        })),
+        captureRejection(service.createPluginDir({
+          providerId: 'claude',
+          files: [{ path: '.claude-plugin/plugin.json', json: { name: 'uncapable-plugin' } }],
+        })),
+        captureRejection(service.publishProviderTranscript({
+          providerId: 'claude',
+          sessionId: 'happy-session-uncapable',
+          kind: 'assistant_stop',
+          providerPayload: { type: 'assistant' },
+        })),
+      ]);
+
+      for (const denial of denials) {
+        // These denials reach plugin authors raw through ctx.sessionHooks, so the
+        // canonical public guard - not merely a `code` property that a plain Error
+        // could also carry - has to accept them.
+        expect(isPluginError(denial)).toBe(true);
+        expect(denial).toMatchObject({
+          name: 'PluginError',
+          code: 'PLUGIN_SESSION_HOOKS_CAPABILITY_REQUIRED',
+          retryable: false,
+        });
+      }
+    } finally {
+      await rm(happyHomeDir, { recursive: true, force: true });
     }
   });
 });

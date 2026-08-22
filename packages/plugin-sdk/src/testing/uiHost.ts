@@ -26,6 +26,7 @@ import {
     PluginUiReplacePageLocationRequestV1Schema,
     PluginUiPickComposerMediaRequestV1Schema,
     PluginUiPickComposerMediaResultV1Schema,
+    PluginUiPublishCurrentUiContextRequestV1Schema,
     PluginUiReadComposerRequestV1Schema,
     PluginUiReadComposerResultV1Schema,
     PluginUiReleaseComposerContentRequestV1Schema,
@@ -54,7 +55,7 @@ import {
 } from '@happier-dev/protocol/plugins/ui/targetedContributions';
 
 import type { PluginDiagnosticData } from '../diagnostics.js';
-import { PluginError } from '../errors.js';
+import { isPluginError, PluginError } from '../errors.js';
 import type { JsonValue, PluginReference } from '../identity.js';
 import type { InteractionSeverity } from '../interactions.js';
 import type { Disposable } from '../lifecycle.js';
@@ -82,6 +83,7 @@ import type {
     ComposerSnapshotV1,
     ComposerTransactionResultV1,
     ComposerTransactionV1,
+    PluginUiContextEnrichmentV1,
     RenderContext,
     ResourceContent,
     SurfaceContext,
@@ -524,6 +526,9 @@ export type PluginUiTestkitSelectActionInputInput = Readonly<{
 }>;
 
 export type PluginUiTestkitHostHandlers = Readonly<{
+    publishCurrentUiContext?: (
+        input: Readonly<{ enrichment: PluginUiContextEnrichmentV1 | null; signal: AbortSignal }>,
+    ) => void | Promise<void>;
     executeAction?: (input: PluginUiTestkitExecuteActionInput) => JsonValue | Promise<JsonValue>;
     selectActionInput?: (
         input: PluginUiTestkitSelectActionInputInput,
@@ -597,6 +602,7 @@ type PluginUiTestkitHostMethodPolicy = 'fixture' | keyof PluginUiTestkitHostHand
  */
 const hostMethodPolicies = {
     context: 'fixture',
+    publishCurrentUiContext: 'publishCurrentUiContext',
     watchContext: 'fixture',
     executeAction: 'executeAction',
     readResource: 'readResource',
@@ -674,6 +680,18 @@ export interface PluginUiTestkit {
     readonly context: RenderContext;
     /** Push one new host-owned context through the semantic mount and `watchContext`. */
     updateSurface(surface: SurfaceContext): Promise<void>;
+    /**
+     * Settle one new plugin-local page location and re-render the surface with
+     * it, exactly as the host's own page-location owner does.
+     *
+     * This is the host half of a full-page surface's location contract: the
+     * page asks through `replacePageLocation` and the host answers by making a
+     * location current, but the host also makes one current for navigation the
+     * page never performed — system Back walking a declared step, a deep link,
+     * or ordinary history movement. A test plays the host here, so it can
+     * exercise both directions rather than only the location a mount opened at.
+     */
+    updatePageLocation(subPath: string): Promise<void>;
     /** Emit only the canonical invalidation signal; consumers re-read through `hostApi.readResource`. */
     invalidateResource(resource: PluginReference, digest: string): void;
     /** Emit one schema-checked observation through exact active Composer watches. */
@@ -721,19 +739,7 @@ function unreachableSurfaceHostMethod(method: never): never {
 }
 
 function readFixtureHostFailure(error: unknown, fallbackMessage: string): PluginError {
-    if (error instanceof PluginError) return error;
-    // A handler may come from an external author's resolved SDK copy. Preserve
-    // only the public PluginError shape across that package boundary; arbitrary
-    // thrown values remain an internal fixture failure.
-    if (error !== null && typeof error === 'object') {
-        const candidate = error as Readonly<{ name?: unknown; code?: unknown; message?: unknown }>;
-        if (candidate.name === 'PluginError' && typeof candidate.code === 'string' && candidate.code.trim() !== '') {
-            return new PluginError({
-                code: candidate.code,
-                ...(typeof candidate.message === 'string' ? { message: candidate.message } : {}),
-            });
-        }
-    }
+    if (isPluginError(error)) return error;
     return fixtureError('internal_error', fallbackMessage);
 }
 
@@ -973,7 +979,14 @@ async function createPluginUiTestkitInternal<TSurface>(
     const launchInput = options.launchInput === undefined
         ? undefined
         : PluginUiJsonValueV1Schema.parse(options.launchInput);
-    const subPath = options.subPath === undefined
+    // The page location is fixture STATE, not a construction constant: the real
+    // host settles a replacement and re-renders the page with the location it
+    // settled on, and it also changes the location for navigation the page did
+    // not perform — system Back being the one every full-page surface has to
+    // answer. A location captured once made both of those untestable, so a
+    // surface that reads `subPath` as its input could only ever be mounted at
+    // one location.
+    let currentSubPath = options.subPath === undefined
         ? undefined
         : PluginUiSubPathV1Schema.parse(options.subPath);
     const handlers = options.handlers ?? {};
@@ -1083,7 +1096,7 @@ async function createPluginUiTestkitInternal<TSurface>(
             hostApi,
             signal: lifetime.signal,
             ...(launchInput === undefined ? {} : { launchInput }),
-            ...(subPath === undefined ? {} : { subPath }),
+            ...(currentSubPath === undefined ? {} : { subPath: currentSubPath }),
         };
         return Object.freeze(context);
     }
@@ -1096,6 +1109,17 @@ async function createPluginUiTestkitInternal<TSurface>(
         switch (message.method) {
             case 'context':
                 return currentSurface;
+            case 'publishCurrentUiContext': {
+                if (!handlers.publishCurrentUiContext) {
+                    throw fixtureError('unsupported_method', 'publishCurrentUiContext is not installed.');
+                }
+                const payload = PluginUiPublishCurrentUiContextRequestV1Schema.safeParse(message.payload);
+                if (!payload.success) {
+                    throw fixtureError('invalid_payload', 'publishCurrentUiContext payload is invalid.');
+                }
+                await handlers.publishCurrentUiContext({ enrichment: payload.data.enrichment, signal });
+                return undefined;
+            }
             case 'executeAction': {
                 if (!handlers.executeAction) throw fixtureError('unsupported_method', 'executeAction is not installed.');
                 const payload = PluginUiExecuteActionRequestV1Schema.safeParse(message.payload);
@@ -1546,6 +1570,8 @@ async function createPluginUiTestkitInternal<TSurface>(
     });
     const initialSurface = await hostApi.context();
     const context = renderContext(initialSurface, hostApi);
+    /** The surface fact currently rendered, so a location-only change keeps it. */
+    let renderedSurface: SurfaceContext = initialSurface;
     try {
         semanticMount = await options.adapter.mount({ surface: options.surface, context, signal: lifetime.signal });
     } catch (error) {
@@ -1637,6 +1663,7 @@ async function createPluginUiTestkitInternal<TSurface>(
             await semanticMount.update(next);
             assertActive();
             currentSurface = surface;
+            renderedSurface = surface;
             fixtureRevision += 1;
             for (const subscriptionId of contextSubscriptions) {
                 if (negotiatedApiVersion) {
@@ -1649,6 +1676,16 @@ async function createPluginUiTestkitInternal<TSurface>(
                     });
                 }
             }
+        },
+        async updatePageLocation(subPath: string) {
+            assertActive();
+            if (!semanticMount) throw fixtureError('stale_surface', 'The semantic surface mount is unavailable.');
+            // Normalized by the same owner the request schema uses, so a
+            // fixture can never settle a location the real host would refuse.
+            currentSubPath = PluginUiSubPathV1Schema.parse(subPath);
+            await semanticMount.update(renderContext(renderedSurface, hostApi));
+            assertActive();
+            fixtureRevision += 1;
         },
         invalidateResource(resource: PluginReference, digest: string) {
             assertActive();

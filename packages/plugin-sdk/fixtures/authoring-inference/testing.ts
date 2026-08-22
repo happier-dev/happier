@@ -74,6 +74,12 @@ export async function exerciseTestkit(): Promise<void> {
     },
   }), /distinct named runner leaf/u);
 
+  // A hand-written `surfaces: ['externalSessions']` literal is now rejected by
+  // the compiler, so this proves the other half of the same rule: a capability
+  // list a JavaScript author — or any runtime projection — hands to
+  // `definePlugin` carries no literal for the compiler to read, and the runtime
+  // guard is what refuses the missing contribution.
+  const projectedSurfaces: ('terminal' | 'externalSessions')[] = ['externalSessions'];
   expectDefinitionFailure(() => definePlugin({
     id: 'example.missing-external-sessions',
     version: '0.1.0',
@@ -83,7 +89,7 @@ export async function exerciseTestkit(): Promise<void> {
           title: 'Assistant', runtime: { kind: 'custom' }, primary: 'executionRuns',
           capabilities: {
             executionRuns: { open: ['create'], checkpoint: false, stop: true },
-            surfaces: ['externalSessions'],
+            surfaces: projectedSurfaces,
           },
           surfaces: {
             externalSession: {

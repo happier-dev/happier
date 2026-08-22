@@ -1,5 +1,5 @@
 import type { PluginApi } from '@happier-dev/plugin-sdk';
-import type { PluginCleanup } from '@happier-dev/plugin-sdk/runtime';
+import type { PluginCleanup } from '@happier-dev/plugin-sdk';
 import type { PluginActivationSource } from '../../activationSources';
 import type { PluginDaemonModuleNamespace } from '../../types';
 import type { ActivationTarget } from './targets';

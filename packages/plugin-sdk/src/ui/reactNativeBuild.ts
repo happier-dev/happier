@@ -291,7 +291,7 @@ export function defineReactNativeRepackBuildPreset(
     const sourceEntry = readRelativeBuildPath(input.sourceEntry, 'sourceEntry');
     const outputFileName = input.outputFileName
         ? readOutputPathSegment(input.outputFileName, 'outputFileName')
-        : `${input.platform}.bundle.js`;
+        : `${input.platform}.bundle`;
     assertPlainJavaScriptBundlePath(outputFileName);
 
     const module = input.module;

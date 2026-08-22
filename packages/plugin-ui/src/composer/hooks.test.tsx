@@ -349,6 +349,37 @@ describe('useComposerView', () => {
     expect(view?.pending).toBeNull();
   });
 
+  it('preserves a PluginError from another SDK bundle', async () => {
+    const ref = { kind: 'session', sessionId: 'session-foreign-plugin-error' } as const;
+    const foreignPluginError = Object.assign(new Error('Host disconnected.'), {
+      name: 'PluginError',
+      code: 'ui_host_unavailable',
+      retryable: true,
+      details: { transport: 'native' },
+      data: {
+        name: 'PluginError',
+        code: 'ui_host_unavailable',
+        message: 'Host disconnected.',
+        retryable: true,
+        details: { transport: 'native' },
+      },
+    });
+    const handle = createHandle({
+      ref,
+      observe: async () => ({ dispose: vi.fn() }),
+      read: async () => { throw foreignPluginError; },
+    });
+    let view: ComposerViewState | undefined;
+
+    await act(async () => {
+      renderer.create(<ComposerViewProbe handle={handle} onState={(next) => { view = next; }} />);
+      await Promise.resolve();
+    });
+
+    expect(view?.error).toBe(foreignPluginError);
+    expect(view?.error?.details).toEqual({ transport: 'native' });
+  });
+
   it('does not let a successful baseline erase an observation-establishment failure', async () => {
     const ref = { kind: 'session', sessionId: 'session-watch-failure' } as const;
     const result = Object.freeze({

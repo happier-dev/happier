@@ -51,6 +51,7 @@ describe('manifest authoring contract', () => {
                 actions: [{
                     id: 'select-repository',
                     title: 'Select repository',
+                    execution: { target: 'daemon' },
                     scopes: ['global'],
                     surfaces: ['plugin'],
                     inputSchema: {
@@ -156,17 +157,27 @@ describe('manifest authoring contract', () => {
             'PluginBrowserContributionDisplay',
             'PluginBrowserTargetContribution',
             'PluginBrowserTargetContributionInput',
+            // The grammar's own leaf vocabularies are published because the SDK
+            // now declares the declarative grammar itself: an author narrowing
+            // to one of these gets a nameable SDK type instead of an anonymous
+            // structural blob their own `.d.ts` cannot reprint.
+            'PluginCollectionProjectedScalarFieldRefV1',
+            'PluginCollectionRowCommandV1',
             'PluginDeclarativeActionNodeV2',
             'PluginDeclarativeActionPanelNodeV2',
+            'PluginDeclarativeActionVariantV2',
             'PluginDeclarativeCollectionListNodeV2',
             'PluginDeclarativeComposerApplyEffectV1',
             'PluginDeclarativeControlV2',
             'PluginDeclarativeItemNodeV2',
             'PluginDeclarativeListNodeV2',
+            'PluginDeclarativeMetadataEntryV2',
             'PluginDeclarativeMetadataNodeV2',
             'PluginDeclarativeNodeV2',
+            'PluginDeclarativeRowNodeV2',
             'PluginDeclarativeSectionNodeV2',
             'PluginDeclarativeStateNodeV2',
+            'PluginDeclarativeStateV2',
             'PluginDeclarativeTargetedSurfaceNodeV2',
             'PluginDeclarativeTargetedSurfaceReferenceV1',
             'PluginDeclarativeToneV2',
@@ -561,6 +572,7 @@ describe('manifest authoring contract', () => {
                 actions: [{
                     id: 'open-preview-action',
                     title: 'Open preview',
+                    execution: { target: 'daemon' },
                     scopes: ['global'],
                     surfaces: ['plugin'],
                     inputSchema: { type: 'object' },

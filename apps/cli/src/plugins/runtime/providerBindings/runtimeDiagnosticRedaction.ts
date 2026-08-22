@@ -11,15 +11,23 @@ const INACTIVE_LEASE: SensitiveDiagnosticValuesLease = Object.freeze({ close: ()
 export function beginProviderBindingRuntimeDiagnosticRedaction(params: Readonly<{
     agentId: string;
     providerBindingActive: boolean;
+    providerRequirements?: unknown;
     environment?: NodeJS.ProcessEnv;
 }>): SensitiveDiagnosticValuesLease {
     if (!params.providerBindingActive) return INACTIVE_LEASE;
 
-    const definition = getResolvedContributionRegistry()
-        .agentDefinitionsById
-        .get(params.agentId)
-        ?.definition;
-    const support = AgentProviderRequirementsV1Schema.safeParse(definition?.providerRequirements);
+    const providerRequirements = Object.prototype.hasOwnProperty.call(
+        params,
+        'providerRequirements',
+    )
+        ? params.providerRequirements
+        : getResolvedContributionRegistry()
+            .agentDefinitionsById
+            .get(params.agentId)
+            ?.definition.providerRequirements;
+    const support = AgentProviderRequirementsV1Schema.safeParse(
+        providerRequirements,
+    );
     if (!support.success) {
         throw new Error(`Agent '${params.agentId}' has no valid static provider support for runtime redaction`);
     }

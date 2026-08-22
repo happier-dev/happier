@@ -46,7 +46,8 @@
   "files": [
     "dist",
     "package.json",
-    "README.md"
+    "README.md",
+    "api-declarations.md"
   ],
   "happier": {
     "publicSdkRelease": {
@@ -66,7 +67,9 @@
     "test:external-authoring": "node --test ./scripts/validateExternalAuthoringFixture.test.mjs",
     "test:external-authoring:tarballs": "node ./scripts/validateExternalAuthoringFixture.mjs",
     "typecheck": "../../apps/stack/bin/hstack-exec --script=typecheck:local",
-    "typecheck:local": "node ../plugin-sdk/scripts/generatePublicToolchainCompatibility.mjs --check && node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json"
+    "typecheck:local": "node ../plugin-sdk/scripts/generatePublicToolchainCompatibility.mjs --check && node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json",
+    "api-declarations": "node ./scripts/publicDeclarationReportCli.mjs --write",
+    "check:api-declarations": "node ./scripts/publicDeclarationReportCli.mjs --check"
   },
   "dependencies": {
     "@happier-dev/plugin-sdk": "0.0.0"

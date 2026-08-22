@@ -1,11 +1,17 @@
 import { createHash } from 'node:crypto';
 
 import {
+    createSensitiveDiagnosticTextRedactor,
+    isBaseCredentialDiagnosticKey,
+    PluginInvocationLogRecordV1Schema,
     redactBugReportSensitiveText,
-    trimBugReportTextToMaxBytes,
+    splitSensitiveDiagnosticKeySegments,
+    trimBugReportTextHeadToMaxBytes,
+    type SensitiveDiagnosticTextRedactor,
+    type SensitiveDiagnosticValuesLease,
 } from '@happier-dev/protocol';
 import type { JsonValue, PluginDiagnosticData } from '@happier-dev/plugin-sdk';
-import type { PluginLoggerService } from '@happier-dev/plugin-sdk/runtime';
+import type { LoggerService as PluginLoggerService } from '@happier-dev/plugin-sdk';
 
 import type { PluginInvocationServicesSeed } from './types';
 
@@ -16,12 +22,21 @@ export const PLUGIN_LOG_MAX_CONTEXT_VALUE_BYTES = 2 * 1024;
 export const PLUGIN_LOG_MAX_DEPTH = 8;
 export const PLUGIN_LOG_MAX_COLLECTION_ENTRIES = 64;
 export const PLUGIN_LOG_MAX_NODES = 256;
+export const PLUGIN_LOG_MAX_SECRET_COMPONENT_BYTES = 16 * 1024;
+export const PLUGIN_LOG_MAX_SECRET_COMPONENTS_PER_SCOPE = 128;
+export const PLUGIN_LOG_MAX_SECRET_COMPONENT_TOTAL_BYTES = 256 * 1024;
 
 const REDACTED = '[REDACTED]';
 const CIRCULAR = '[Circular]';
 const TRUNCATED = '[TRUNCATED]';
-const SENSITIVE_KEY = /(?:authorization|cookie|credential|password|passphrase|private[-_]?key|secret|session(?:id)?|token|jwt|api[-_]?key)/iu;
-const HTTP_URL = /https?:\/\/[^\s"'<>]+/giu;
+const PLUGIN_LOG_CREDENTIAL_SEGMENTS = new Set([
+    'auth',
+    'authentication',
+    'credential',
+    'credentials',
+    'secret',
+]);
+const PLUGIN_LOG_CREDENTIAL_SUFFIXES = new Set(['token']);
 
 export type PluginInvocationLogLevel = 'debug' | 'info' | 'warn' | 'error' | 'diagnostic';
 
@@ -44,6 +59,14 @@ export type PluginInvocationLogRecord = Readonly<{
     sequence: number;
 }>;
 
+/**
+ * The daemon-log reader admits only records produced by this structured logger.
+ * It intentionally checks identity fields rather than matching log text.
+ */
+export function isPluginInvocationLogRecord(value: unknown): value is PluginInvocationLogRecord {
+    return PluginInvocationLogRecordV1Schema.safeParse(value).success;
+}
+
 export type PluginInvocationLogSink = Readonly<{
     write(record: PluginInvocationLogRecord): void;
 }>;
@@ -51,42 +74,119 @@ export type PluginInvocationLogSink = Readonly<{
 export type PluginInvocationSecretRedactionScope = Readonly<{
     pluginId: string;
     generation: string;
+    correlationId: string;
 }>;
 
 export type PluginInvocationSecretRedactor = Readonly<{
-    register(scope: PluginInvocationSecretRedactionScope, value: string): void;
+    beginInvocation(scope: PluginInvocationSecretRedactionScope, signal: AbortSignal): void;
+    registerRaw(scope: PluginInvocationSecretRedactionScope, value: string): void;
+    registerExact(scope: PluginInvocationSecretRedactionScope, value: string): void;
     redact(scope: PluginInvocationSecretRedactionScope, value: string): string;
+    completeInvocation(scope: PluginInvocationSecretRedactionScope): void;
     retireGeneration(generation: string, pluginId: string): void;
 }>;
 
 function secretRedactionScopeKey(scope: PluginInvocationSecretRedactionScope): string {
-    return `${scope.generation}\u0000${scope.pluginId}`;
+    return `${scope.generation}\u0000${scope.pluginId}\u0000${scope.correlationId}`;
 }
 
+type PluginInvocationSecretRedactionState = {
+    readonly scope: PluginInvocationSecretRedactionScope;
+    readonly redactor: SensitiveDiagnosticTextRedactor;
+    readonly values: Set<string>;
+    readonly leases: SensitiveDiagnosticValuesLease[];
+    disposeSignal?: () => void;
+    totalBytes: number;
+    saturated: boolean;
+};
+
 export function createPluginInvocationSecretRedactor(): PluginInvocationSecretRedactor {
-    const valuesByScope = new Map<string, Set<string>>();
+    const statesByScope = new Map<string, PluginInvocationSecretRedactionState>();
+    const baselineRedactor = createSensitiveDiagnosticTextRedactor();
+    const completeInvocation = (scope: PluginInvocationSecretRedactionScope): void => {
+        const key = secretRedactionScopeKey(scope);
+        const state = statesByScope.get(key);
+        if (!state) return;
+        statesByScope.delete(key);
+        state.disposeSignal?.();
+        for (const lease of state.leases.reverse()) lease.close();
+    };
+    const ensureState = (
+        scope: PluginInvocationSecretRedactionScope,
+    ): PluginInvocationSecretRedactionState => {
+        const key = secretRedactionScopeKey(scope);
+        let state = statesByScope.get(key);
+        if (!state) {
+            state = {
+                scope: Object.freeze({ ...scope }),
+                redactor: createSensitiveDiagnosticTextRedactor(),
+                values: new Set(),
+                leases: [],
+                totalBytes: 0,
+                saturated: false,
+            };
+            statesByScope.set(key, state);
+        }
+        return state;
+    };
+    const registerExact = (
+        scope: PluginInvocationSecretRedactionScope,
+        value: string,
+    ): void => {
+        if (value.length === 0) return;
+        const state = statesByScope.get(secretRedactionScopeKey(scope));
+        if (!state || state.saturated || state.values.has(value)) return;
+        const valueBytes = Buffer.byteLength(value, 'utf8');
+        if (
+            valueBytes > PLUGIN_LOG_MAX_SECRET_COMPONENT_BYTES
+            || state.values.size >= PLUGIN_LOG_MAX_SECRET_COMPONENTS_PER_SCOPE
+            || state.totalBytes + valueBytes > PLUGIN_LOG_MAX_SECRET_COMPONENT_TOTAL_BYTES
+        ) {
+            state.saturated = true;
+            return;
+        }
+        try {
+            state.leases.push(state.redactor.register([value]));
+            state.values.add(value);
+            state.totalBytes += valueBytes;
+        } catch {
+            state.saturated = true;
+        }
+    };
     return Object.freeze({
-        register(scope, value): void {
+        beginInvocation(scope, signal): void {
+            const state = ensureState(scope);
+            if (state.disposeSignal) return;
+            const complete = () => completeInvocation(scope);
+            signal.addEventListener('abort', complete, { once: true });
+            state.disposeSignal = () => signal.removeEventListener('abort', complete);
+            if (signal.aborted) completeInvocation(scope);
+        },
+        registerRaw(scope, value): void {
             if (value.length === 0) return;
-            const key = secretRedactionScopeKey(scope);
-            let values = valuesByScope.get(key);
-            if (!values) {
-                values = new Set();
-                valuesByScope.set(key, values);
+            registerExact(scope, value);
+            if (Buffer.byteLength(value, 'utf8') > PLUGIN_LOG_MAX_SECRET_COMPONENT_BYTES) {
+                return;
             }
-            values.add(value);
+            const bytes = Buffer.from(value, 'utf8');
+            registerExact(scope, bytes.toString('base64'));
+            registerExact(scope, bytes.toString('base64url'));
+            registerExact(scope, bytes.toString('hex'));
         },
+        registerExact,
         redact(scope, value): string {
-            const values = valuesByScope.get(secretRedactionScopeKey(scope));
-            if (!values || values.size === 0) return value;
-            let redacted = value;
-            for (const secret of [...values].sort((left, right) => right.length - left.length)) {
-                redacted = redacted.split(secret).join(REDACTED);
-            }
-            return redacted;
+            const state = statesByScope.get(secretRedactionScopeKey(scope));
+            if (!state) return baselineRedactor.redact(value);
+            if (state.saturated) return REDACTED;
+            return state.redactor.redact(value);
         },
+        completeInvocation,
         retireGeneration(generation, pluginId): void {
-            valuesByScope.delete(secretRedactionScopeKey({ generation, pluginId }));
+            for (const state of [...statesByScope.values()]) {
+                if (state.scope.generation === generation && state.scope.pluginId === pluginId) {
+                    completeInvocation(state.scope);
+                }
+            }
         },
     });
 }
@@ -96,31 +196,35 @@ type SanitizeState = {
     nodes: number;
 };
 
+function isSensitivePluginLogKey(key: string): boolean {
+    if (isBaseCredentialDiagnosticKey(key)) return true;
+    const segments = splitSensitiveDiagnosticKeySegments(key);
+    return segments.some((segment) => PLUGIN_LOG_CREDENTIAL_SEGMENTS.has(segment))
+        || PLUGIN_LOG_CREDENTIAL_SUFFIXES.has(segments.at(-1) ?? '')
+        || segments.some((segment, index) => (
+            segment === 'session' && segments[index + 1] === 'id'
+        ));
+}
+
 function truncateRedactedText(value: string, maxBytes: number, redact?: (value: string) => string): string {
-    const secretsRedacted = redact?.(value) ?? value;
-    const urlsRedacted = secretsRedacted.replace(HTTP_URL, (rawUrl) => {
-        try {
-            const url = new URL(rawUrl);
-            let redacted = false;
-            if (url.username || url.password) {
-                url.username = '';
-                url.password = '';
-                redacted = true;
-            }
-            const sensitiveQueryKeys = [...url.searchParams.keys()]
-                .filter((key) => SENSITIVE_KEY.test(key));
-            for (const key of sensitiveQueryKeys) url.searchParams.delete(key);
-            if (sensitiveQueryKeys.length > 0) redacted = true;
-            if (redacted) url.searchParams.append('_redacted', REDACTED);
-            return url.toString();
-        } catch {
-            return rawUrl;
-        }
-    });
-    const redacted = redactBugReportSensitiveText(urlsRedacted);
+    // Individual structured records identify their failure in the opening text.
+    // Redact the complete value before retaining that head: clipping an open
+    // quoted credential first can remove its closing quote and expose the rest
+    // of the credential as ordinary text.
+    const redacted = redact?.(value) ?? redactBugReportSensitiveText(value);
     if (Buffer.byteLength(redacted, 'utf8') <= maxBytes) return redacted;
     const markerBytes = Buffer.byteLength(TRUNCATED, 'utf8');
-    return `${trimBugReportTextToMaxBytes(redacted, Math.max(0, maxBytes - markerBytes))}${TRUNCATED}`;
+    return `${trimBugReportTextHeadToMaxBytes(redacted, Math.max(0, maxBytes - markerBytes))}${TRUNCATED}`;
+}
+
+function truncateRedactedHeadWithMarker(
+    value: string,
+    maxBytes: number,
+    redact?: (value: string) => string,
+): string {
+    const redacted = redact?.(value) ?? redactBugReportSensitiveText(value);
+    const markerBytes = Buffer.byteLength(TRUNCATED, 'utf8');
+    return `${trimBugReportTextHeadToMaxBytes(redacted, Math.max(0, maxBytes - markerBytes))}${TRUNCATED}`;
 }
 
 function boundHostIdentity(value: string): string {
@@ -137,7 +241,7 @@ function sanitizeValue(
     key?: string,
     redact?: (value: string) => string,
 ): JsonValue {
-    if (key && SENSITIVE_KEY.test(key)) return REDACTED;
+    if (key && isSensitivePluginLogKey(key)) return REDACTED;
     if (value === null || typeof value === 'boolean') return value;
     if (typeof value === 'string') return truncateRedactedText(value, PLUGIN_LOG_MAX_VALUE_BYTES, redact);
     if (typeof value === 'number') return Number.isFinite(value) ? value : null;
@@ -204,7 +308,10 @@ function freezeRecord(record: PluginInvocationLogRecord): PluginInvocationLogRec
     return Object.freeze(record);
 }
 
-function boundRecord(record: PluginInvocationLogRecord): PluginInvocationLogRecord {
+function boundRecord(
+    record: PluginInvocationLogRecord,
+    redact?: (value: string) => string,
+): PluginInvocationLogRecord {
     if (byteLength(record) <= PLUGIN_LOG_MAX_RECORD_BYTES) return freezeRecord(record);
     const bounded: PluginInvocationLogRecord = {
         ...record,
@@ -216,7 +323,13 @@ function boundRecord(record: PluginInvocationLogRecord): PluginInvocationLogReco
                 diagnostic: Object.freeze({
                     code: record.diagnostic.code ?? 'plugin_diagnostic_truncated',
                     severity: record.diagnostic.severity ?? 'error',
-                    message: TRUNCATED,
+                    message: typeof record.diagnostic.message === 'string'
+                        ? truncateRedactedHeadWithMarker(
+                            record.diagnostic.message,
+                            1024,
+                            redact,
+                        )
+                        : TRUNCATED,
                 }),
             }),
     };
@@ -246,6 +359,7 @@ export function createPluginInvocationLogger(params: Readonly<{
     const redactionScope = Object.freeze({
         pluginId: params.seed.plugin.id,
         generation: params.seed.generation,
+        correlationId: params.seed.correlationId,
     });
     const redact = params.secretRedactor
         ? (value: string): string => params.secretRedactor!.redact(redactionScope, value)
@@ -273,7 +387,7 @@ export function createPluginInvocationLogger(params: Readonly<{
                 context,
                 occurredAtMs: params.now?.() ?? Date.now(),
                 sequence: nextSequence,
-            });
+            }, redact);
             if (params.seed.signal.aborted || !params.seed.isGenerationCurrent()) return;
             sequence = nextSequence;
             params.sink.write(record);

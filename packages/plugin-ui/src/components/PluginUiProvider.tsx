@@ -93,11 +93,17 @@ function resolveTranslationResolver(
 ): PluginTranslate {
   const existing = translationResolvers.get(translations);
   if (existing) return existing;
-  const resolver: PluginTranslate = (key: string, fallback?: string) => {
+  const resolver: PluginTranslate = (key, fallback, values) => {
     const translation = Object.prototype.hasOwnProperty.call(translations, key)
       ? translations[key]
       : undefined;
-    return typeof translation === 'string' ? translation : (fallback ?? '');
+    const resolved = typeof translation === 'string' ? translation : (fallback ?? '');
+    if (values === undefined) return resolved;
+    return resolved.replace(/\{([A-Za-z][A-Za-z0-9_]*)\}/g, (placeholder, name: string) => (
+      Object.prototype.hasOwnProperty.call(values, name)
+        ? String(values[name])
+        : placeholder
+    ));
   };
   translationResolvers.set(translations, resolver);
   return resolver;
@@ -308,7 +314,13 @@ export function usePluginTheme(): PluginUiThemeV1 {
   return useHappierUiTheme();
 }
 
-export type PluginTranslate = (key: string, fallback?: string) => string;
+export type PluginTranslationValues = Readonly<Record<string, string | number>>;
+
+export type PluginTranslate = (
+  key: string,
+  fallback?: string,
+  values?: PluginTranslationValues,
+) => string;
 
 /**
  * Resolve one of this plugin's declared translation keys for the active locale.

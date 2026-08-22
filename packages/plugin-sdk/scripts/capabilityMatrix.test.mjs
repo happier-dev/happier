@@ -11,6 +11,7 @@ import {
 
 import {
   CapabilityMatrixValidationError,
+  capabilityMatrixProvingConsumerExerciseFailure,
   deriveCapabilityMatrixMetadata,
   projectCapabilityMatrix,
   readDefinePluginCapabilityPolicy,
@@ -25,6 +26,45 @@ import { CAPABILITY_MATRIX_DECLARATIONS_V1 } from './capabilityMatrixMetadata.mj
 import {
   readCurrentApiSurfaceInventory,
 } from './apiSurfaceCli.mjs';
+
+test('accepts the canonical Account storage guard as a storage service invocation', () => {
+  const source = [
+    "import { requireAccountStorage } from '@happier-dev/plugin-sdk/storage';",
+    'export const run = (context) => requireAccountStorage(context, {',
+    "  code: 'storage_unavailable',",
+    "  message: 'Storage is required.',",
+    '});',
+  ].join('\n');
+
+  assert.equal(
+    capabilityMatrixProvingConsumerExerciseFailure({ serviceId: 'storage' }, source),
+    null,
+  );
+});
+
+test('rejects storage guard text that is not a named SDK import and call', () => {
+  for (const source of [
+    [
+      "const sdk = '@happier-dev/plugin-sdk/storage';",
+      'function requireAccountStorage() {}',
+      'requireAccountStorage();',
+    ].join('\n'),
+    [
+      "// import { requireAccountStorage } from '@happier-dev/plugin-sdk/storage';",
+      'function requireAccountStorage() {}',
+      'requireAccountStorage();',
+    ].join('\n'),
+    [
+      "import storage from '@happier-dev/plugin-sdk/storage';",
+      'storage.requireAccountStorage();',
+    ].join('\n'),
+  ]) {
+    assert.equal(
+      capabilityMatrixProvingConsumerExerciseFailure({ serviceId: 'storage' }, source),
+      'does not invoke services.storage',
+    );
+  }
+});
 
 const CATALOG = Object.freeze([
   Object.freeze({
@@ -72,7 +112,6 @@ const API_INVENTORY = Object.freeze({
       sourceModule: 'src/definePlugin.ts',
       sourceExport: 'definePlugin',
       realm: 'any',
-      stability: 'preview',
     }),
     Object.freeze({
       specifier: './http',
@@ -81,7 +120,6 @@ const API_INVENTORY = Object.freeze({
       sourceModule: 'src/services/io.ts',
       sourceExport: 'HttpService',
       realm: 'any',
-      stability: 'preview',
     }),
   ]),
 });
@@ -169,6 +207,24 @@ test('rejects an omitted canonical manifest-family metadata row', () => {
   );
 });
 
+test('rejects a contribution catalog family that carries its own availability posture', () => {
+  assert.throws(
+    () => projectCapabilityMatrix({
+      contributionCatalog: Object.freeze([Object.freeze({ ...CATALOG[0], stability: 'stable' })]),
+      hostAccessCatalog: HOST_ACCESS_CATALOG,
+      definePluginPolicy: DEFINE_PLUGIN_POLICY,
+      apiInventory: API_INVENTORY,
+      services: SERVICES,
+      metadata: metadata(),
+    }),
+    (error) => error instanceof CapabilityMatrixValidationError
+      && error.diagnostics.includes(
+        "contribution catalog family 'actions' uses retired family stability metadata"
+        + '; capability-matrix.json owns family availability',
+      ),
+  );
+});
+
 test('rejects metadata that does not join a canonical public subpath', () => {
   assert.throws(
     () => project({
@@ -207,11 +263,12 @@ test('declares protocol and contribution authoring with their maintained Channel
   });
 });
 
-test('source publication spec closes the public testkit mount contract family', async () => {
+test('source publication spec closes the public testkit mount contract family without per-symbol posture', async () => {
   const packageRoot = resolve(import.meta.dirname, '..');
+  const publicSpecText = await readFile(resolve(packageRoot, 'src/testing/index.public.ts'), 'utf8');
   const publicSpec = ts.createSourceFile(
     'src/testing/index.public.ts',
-    await readFile(resolve(packageRoot, 'src/testing/index.public.ts'), 'utf8'),
+    publicSpecText,
     ts.ScriptTarget.Latest,
     true,
     ts.ScriptKind.TS,
@@ -225,23 +282,17 @@ test('source publication spec closes the public testkit mount contract family', 
       && statement.exportClause
       && ts.isNamedExports(statement.exportClause)
     ))
-    .flatMap((statement) => {
-      const experimental = ts.getJSDocCommentsAndTags(statement)
-        .some((comment) => /@experimental\b/u.test(comment.getText()));
-      return statement.exportClause.elements.map((element) => ({
-        name: element.name.text,
-        experimental,
-      }));
-    })
-    .filter((symbol) => symbol.name.startsWith('PluginUiTestkitMount'))
-    .sort((left, right) => left.name.localeCompare(right.name));
+    .flatMap((statement) => statement.exportClause.elements.map((element) => element.name.text))
+    .filter((symbol) => symbol.startsWith('PluginUiTestkitMount'))
+    .sort((left, right) => left.localeCompare(right));
 
   assert.deepEqual(mountContractSymbols, [
-    { name: 'PluginUiTestkitMountAvailability', experimental: true },
-    { name: 'PluginUiTestkitMountInput', experimental: true },
-    { name: 'PluginUiTestkitMountOptions', experimental: true },
-    { name: 'PluginUiTestkitMountResult', experimental: true },
+    'PluginUiTestkitMountAvailability',
+    'PluginUiTestkitMountInput',
+    'PluginUiTestkitMountOptions',
+    'PluginUiTestkitMountResult',
   ]);
+  assert.doesNotMatch(publicSpecText, /@(preview|experimental|stable|incubating)\b/u);
   assert.match(
     await readFile(resolve(packageRoot, 'src/testing/uiHost.ts'), 'utf8'),
     /^\/\*\* @moduleRealm daemon \*\//mu,
@@ -286,11 +337,16 @@ test('keeps MCP servers deferred until a maintained plugin author declares and r
   });
 });
 
-test('keeps tools deferred until a maintained plugin author declares one', () => {
+test('keeps Tools and Commands deferred until exact packed external lifecycle proof', () => {
+  assert.deepEqual(CAPABILITY_MATRIX_DECLARATIONS_V1.manifestFamilies.commands, {
+    availabilityDisposition: 'deferred',
+    provingConsumer: 'no current positive consumer',
+    unblockCondition: 'An exact packed external Command invokes its Action through the canonical plugin command catalog and proves replacement, disable, and uninstall currentness.',
+  });
   assert.deepEqual(CAPABILITY_MATRIX_DECLARATIONS_V1.manifestFamilies.tools, {
     availabilityDisposition: 'deferred',
     provingConsumer: 'no current positive consumer',
-    unblockCondition: 'A maintained plugin author declares a tool and proves its canonical registration and invocation lifecycle.',
+    unblockCondition: 'An exact packed external Tool invokes its Action through the real daemon MCP catalog and proves replacement, disable, and uninstall currentness.',
   });
 });
 
@@ -334,7 +390,7 @@ test('derives HostAccess metadata from the terminal/session and deferred declara
   assert.deepEqual(metadata.hostAccess.terminal, {
     producer: 'apps/cli/src/agent/runtime/registry/engineRegistry/nativeAgentSessionHostServiceOwners.ts',
     lifecycle: 'session-runtime',
-    provingConsumer: 'packages/plugins/claude/src/agent/runtime/terminal/unified/nativeSession.ts',
+    provingConsumer: 'packages/plugins/claude/src/manifest.ts',
     specialistOwner: 'apps/cli/src/plugins/runtime/context/terminalHost.ts',
     predecessorRemoval: 'none',
     availabilityDisposition: 'available',
@@ -620,7 +676,7 @@ test('joins the current canonical catalogs without a missing, stale, or disposit
     authorizationClass: 'presentIntentOrOs',
     producer: 'apps/cli/src/agent/runtime/registry/engineRegistry/nativeAgentSessionHostServiceOwners.ts',
     lifecycle: 'session-runtime',
-    provingConsumer: 'packages/plugins/claude/src/agent/runtime/terminal/unified/nativeSession.ts',
+    provingConsumer: 'packages/plugins/claude/src/manifest.ts',
     specialistOwner: 'apps/cli/src/plugins/runtime/context/terminalHost.ts',
     predecessorRemoval: 'none',
     availabilityDisposition: 'available',
@@ -670,6 +726,52 @@ test('rejects an available capability whose declared public consumer path is abs
       }),
     }),
     /hostAccess\.network provingConsumer path does not name a regular file/u,
+  );
+});
+
+test('rejects an available capability whose declared consumer never exercises the family', async () => {
+  const packageRoot = resolve(import.meta.dirname, '..');
+  const apiInventory = await readCurrentApiInventory(packageRoot);
+  await assert.rejects(
+    createCapabilityMatrixOutput({
+      packageRoot,
+      apiInventory,
+      declarations: Object.freeze({
+        ...CAPABILITY_MATRIX_DECLARATIONS_V1,
+        subpaths: Object.freeze({
+          ...CAPABILITY_MATRIX_DECLARATIONS_V1.subpaths,
+          './mcp': Object.freeze({
+            availabilityDisposition: 'available',
+            // A real, maintained, regular file that never imports the subpath:
+            // the path check alone reports this row as proven.
+            provingConsumer: 'packages/plugins/opencode/src/activate.ts',
+          }),
+        }),
+      }),
+    }),
+    /subpaths\.\.\/mcp provingConsumer packages\/plugins\/opencode\/src\/activate\.ts does not import @happier-dev\/plugin-sdk\/mcp/u,
+  );
+});
+
+test('rejects an available manifest family whose declared consumer declares only its parent author key', async () => {
+  const packageRoot = resolve(import.meta.dirname, '..');
+  const apiInventory = await readCurrentApiInventory(packageRoot);
+  await assert.rejects(
+    createCapabilityMatrixOutput({
+      packageRoot,
+      apiInventory,
+      declarations: Object.freeze({
+        ...CAPABILITY_MATRIX_DECLARATIONS_V1,
+        manifestFamilies: Object.freeze({
+          ...CAPABILITY_MATRIX_DECLARATIONS_V1.manifestFamilies,
+          'mcp.discoverySources': Object.freeze({
+            availabilityDisposition: 'available',
+            provingConsumer: 'packages/plugins/claude/src/agent/mcp/configServers.ts',
+          }),
+        }),
+      }),
+    }),
+    /manifestFamilies\.mcp\.discoverySources provingConsumer .* declares 'mcp' but not 'mcp\.discoverySources'/u,
   );
 });
 

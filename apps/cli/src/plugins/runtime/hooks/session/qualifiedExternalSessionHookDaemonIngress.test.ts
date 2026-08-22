@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type {
     AgentExternalSessionHooksContribution,
     AgentExternalSessionsContribution,
-} from '@happier-dev/plugin-sdk/experimental/sessions';
+} from '@happier-dev/plugin-sdk/sessions/external';
 
 import {
     createExternalSessionObservationProjection,
@@ -11,6 +11,10 @@ import {
 import {
     createExternalSessionObservationReconciler,
 } from '@/api/session/external/leases/createExternalSessionObservationReconciler';
+import {
+    createBoundedAgentExternalSessionsContribution,
+} from '@/session/external/agentExternalSessionsInvocation';
+import { createUnavailablePluginServices } from '@/plugins/runtime/invocation/services/unavailable';
 
 import { createQualifiedExternalSessionHookDaemonIngress } from './qualifiedExternalSessionHookDaemonIngress';
 
@@ -34,6 +38,7 @@ const source = {
     kind: 'fixture.source',
     scope: 'workspace-1',
 } as const;
+const unavailableInvocationExec = createUnavailablePluginServices().exec;
 
 function durableLink(linkGeneration = '1') {
     return {
@@ -98,7 +103,7 @@ function runtime(nowMs: number) {
             },
         })),
     };
-    const externalSessions: AgentExternalSessionsContribution = {
+    const externalSessionsContribution: AgentExternalSessionsContribution = {
         resolveSource: vi.fn(async () => ({
             ok: true as const,
             value: { source },
@@ -116,6 +121,19 @@ function runtime(nowMs: number) {
         pageTranscript: vi.fn(),
         readAfterTranscript: vi.fn(),
     };
+    const externalSessions = createBoundedAgentExternalSessionsContribution({
+        contribution: externalSessionsContribution,
+        identity: {
+            pluginId: 'happier.agent.fixture',
+            agentId: 'fixture',
+            generation: 'plugin-generation-1',
+            contributionQualifiedId: 'happier.agent.fixture/agents/fixture',
+            immutableGenerationId: null,
+        },
+        isCurrent: () => true,
+        retirementSignal: new AbortController().signal,
+        createInvocationExec: async () => unavailableInvocationExec,
+    });
     const retirement = new AbortController();
     return {
         hooks,

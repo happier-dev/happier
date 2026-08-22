@@ -44,6 +44,8 @@ export type {
   AgentRuntimeContext,
   AgentRuntimeFactory,
   AgentRuntimeFactoryContext,
+  AgentRuntimeForkSurface,
+  AgentRuntimeHandoffSurface,
   AgentRuntimeRegistrationOptions,
   AgentRuntimeSurfaces,
   AgentSessionRunnerFactoryLocatorV1,

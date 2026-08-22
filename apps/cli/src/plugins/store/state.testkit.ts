@@ -16,7 +16,6 @@ import {
   readInstallationStateRevision,
   type PluginInstallationStateRevision,
 } from './registry/generationStore';
-import { createPendingGenerationHealthRecord } from './registry/healthPolicy';
 import { PluginStateFileV1Schema, type PluginStateFileV1 } from './state';
 
 export * from './state';
@@ -94,8 +93,6 @@ export function createPluginStateStore(params?: Readonly<{ happyHomeDir?: string
         trust,
         source: {
           distribution: trust.distribution,
-          admittedIntegrity: currentRevision.plugins[pluginId]?.source.admittedIntegrity
-            ?? `sha256:${'0'.repeat(64)}`,
         },
         updatePolicy: record.install.updatePolicy ?? 'manual',
         optionalAccess: record.install.optionalAccess ?? [],
@@ -103,10 +100,6 @@ export function createPluginStateStore(params?: Readonly<{ happyHomeDir?: string
     }
     const pluginGenerations = Object.fromEntries(Object.entries(currentCommit.pluginGenerations)
       .filter(([pluginId]) => next.plugins[pluginId] !== undefined));
-    const liveGenerationIds = new Set(Object.values(pluginGenerations)
-      .map((reference) => reference.immutableGenerationId));
-    const health = Object.fromEntries(Object.entries(currentRevision.health)
-      .filter(([generationId]) => liveGenerationIds.has(generationId)));
     const createdAtMs = Date.now();
     const revision: PluginInstallationStateRevision = {
       t: 'happier_plugin_installations_v1',
@@ -114,9 +107,7 @@ export function createPluginStateStore(params?: Readonly<{ happyHomeDir?: string
       revisionId: `state-${randomUUID()}`,
       createdAtMs,
       plugins,
-      health,
       rollbackRetention: [],
-      healthTombstones: currentRevision.healthTombstones,
       runtimeCatalog: next,
       retainedRuntimeCatalog: {},
     };
@@ -124,7 +115,7 @@ export function createPluginStateStore(params?: Readonly<{ happyHomeDir?: string
     const transactionId = `fixture-${randomUUID()}`;
     await replacePluginRegistryCommitRecord({
       paths,
-      expectedRevision: currentCommit.revision,
+      expectedCurrent: currentCommit,
       next: {
         ...currentCommit,
         revision: currentCommit.revision + 1,
@@ -237,7 +228,6 @@ export async function writeCommittedLocalPathPluginFixture(params: Readonly<{
           ...(params.plugin.source.trustPolicy === 'local_trusted' && currentPlugin.trust
             ? { trust: currentPlugin.trust }
             : {}),
-          manifestDigest: generation.manifestDigest,
         },
       },
     },
@@ -252,26 +242,14 @@ export async function writeCommittedLocalPathPluginFixture(params: Readonly<{
         ...currentInstallationState.plugins,
         [params.pluginId]: {
           ...currentPlugin,
-          source: {
-            ...currentPlugin.source,
-            admittedIntegrity: generation.packageDigest,
-          },
         },
-      },
-      health: {
-        ...currentInstallationState.health,
-        [generation.immutableGenerationId]: createPendingGenerationHealthRecord({
-          pluginId: params.pluginId,
-          immutableGenerationId: generation.immutableGenerationId,
-          fingerprint: generation.fingerprint,
-        }),
       },
       runtimeCatalog,
     },
   });
   await replacePluginRegistryCommitRecord({
     paths,
-    expectedRevision: currentCommit.revision,
+    expectedCurrent: currentCommit,
     next: {
       ...currentCommit,
       revision: currentCommit.revision + 1,

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type {
+  AgentDaemonSpawnRuntimeSelectionV1,
   AgentRuntimeFactory,
   AgentSessionRunnerFactoryLocatorV1,
 } from '../../agentRuntime/index.js';
@@ -38,6 +39,49 @@ function scopeFor(
 }
 
 describe('Agent runner-factory registration transaction', () => {
+  it('captures bounded daemon spawn hooks in the same Agent registration transaction', async () => {
+    const scope = scopeFor(['factory']);
+    const spawnSelection = Object.freeze({}) satisfies AgentDaemonSpawnRuntimeSelectionV1;
+    const resolveRuntimePrerequisites = vi.fn(
+      async (_selection: AgentDaemonSpawnRuntimeSelectionV1) => ({ ok: true as const }),
+    );
+    const augmentEnv = vi.fn(
+      (_selection: AgentDaemonSpawnRuntimeSelectionV1) => ({ ACME_SPAWN_HOOK: 'enabled' }),
+    );
+
+    scope.api.agents.register('assistant', factory, {
+      daemonSpawnHooks: {
+        resolveRuntimePrerequisites,
+        augmentEnv,
+      },
+    });
+
+    const [registration] = scope.commit();
+    const daemonSpawnHooks = (registration?.value as {
+      daemonSpawnHooks?: {
+        resolveRuntimePrerequisites?: typeof resolveRuntimePrerequisites;
+        augmentEnv?: typeof augmentEnv;
+      };
+    }).daemonSpawnHooks;
+
+    expect(daemonSpawnHooks).toBeDefined();
+    expect(Object.isFrozen(daemonSpawnHooks)).toBe(true);
+    await expect(daemonSpawnHooks?.resolveRuntimePrerequisites?.(spawnSelection))
+      .resolves.toEqual({ ok: true });
+    expect(daemonSpawnHooks?.augmentEnv?.(spawnSelection)).toEqual({
+      ACME_SPAWN_HOOK: 'enabled',
+    });
+  });
+
+  it('rejects an empty daemon spawn hook bag before it can become an open callback registry', () => {
+    const scope = scopeFor(['factory']);
+
+    scope.api.agents.register('assistant', factory, { daemonSpawnHooks: {} });
+
+    expect(() => scope.commit()).toThrow(/invalid 'agents\/assistant' runtime/i);
+    expect(scope.registrations()).toEqual([]);
+  });
+
   it('commits one session-capable composite factory with its immutable runner locator', () => {
     const scope = scopeFor(['factory', 'sessionRunnerFactory']);
 

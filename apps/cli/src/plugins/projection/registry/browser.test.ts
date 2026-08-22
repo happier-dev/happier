@@ -32,7 +32,6 @@ describe('plugin browser projection family', () => {
                     source: { kind: 'path' },
                     pluginId: 'acme.preview',
                     manifestPath: '/plugins/acme/.happier-plugin/plugin.json',
-                    manifestDigest: 'sha256:manifest',
                     daemonEntryPath: '/plugins/acme/daemon.mjs',
                     definition: {
                         id: 'preview-target',
@@ -49,7 +48,6 @@ describe('plugin browser projection family', () => {
                     source: { kind: 'path' },
                     pluginId: 'acme.preview',
                     manifestPath: '/plugins/acme/.happier-plugin/plugin.json',
-                    manifestDigest: 'sha256:manifest',
                     daemonEntryPath: '/plugins/acme/daemon.mjs',
                     definition: {
                         id: 'open-preview',

@@ -133,7 +133,6 @@ test('publishes the Agent-only user classification through the canonical SDK inv
     && symbol.sourceModule === 'src/externalSessions.ts'
     && symbol.sourceExport === 'AgentExternalSessionUserProjection'
     && symbol.realm === 'daemon'
-    && symbol.stability === 'preview'
   )));
 });
 
@@ -146,6 +145,5 @@ test('publishes the strict canonical Agent transcript raw record through the can
     && symbol.sourceModule === 'src/externalSessions.ts'
     && symbol.sourceExport === 'AgentExternalSessionTranscriptRawRecord'
     && symbol.realm === 'daemon'
-    && symbol.stability === 'preview'
   )));
 });

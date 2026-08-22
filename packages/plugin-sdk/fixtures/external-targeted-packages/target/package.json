@@ -14,6 +14,10 @@
     "./plugin-ui-build": {
       "types": "./dist/pluginUiBuild.d.ts",
       "default": "./dist/pluginUiBuild.js"
+    },
+    "./declarative-authoring": {
+      "types": "./dist/declarativeAuthoring.d.ts",
+      "default": "./dist/declarativeAuthoring.js"
     }
   },
   "dependencies": {

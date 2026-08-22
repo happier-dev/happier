@@ -2,8 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { PluginApi } from '@happier-dev/plugin-sdk';
 import type {
-    PluginNotificationPreferences,
-} from '@happier-dev/plugin-sdk/runtime';
+    NotificationPreferences as PluginNotificationPreferences,
+} from '@happier-dev/plugin-sdk/notifications';
 
 import type {
     ResolvedNotificationCategoryContribution,
@@ -142,6 +142,42 @@ describe('stable plugin notifications service', () => {
         });
         expect(() => service.watchPreferences('review-ready', () => undefined))
             .toThrow(expect.objectContaining({ code: 'plugin_notification_preferences_watch_unavailable' }));
+    });
+
+    it('binds retained category declarations without replacing the shared notification owner', async () => {
+        const currentCategory: ResolvedNotificationCategoryContribution =
+            Object.freeze({
+                ...category,
+                definition: Object.freeze({
+                    ...category.definition,
+                    id: 'current-only',
+                    title: 'Current only',
+                }),
+            });
+        const owner = createStablePluginNotificationsOwner({
+            categories: [currentCategory],
+            channels,
+            activateChannel: async () => undefined,
+            readChannel: () => null,
+        });
+        const retained = owner.bind(seed, {
+            categories: [Object.freeze({
+                pluginId: category.pluginId,
+                definition: category.definition,
+            })],
+        });
+
+        await expect(retained.listCategories()).resolves.toEqual({
+            items: [{
+                id: 'review-ready',
+                title: 'Review ready',
+                description: 'A review is ready',
+                defaultChannelIds: [
+                    'acme.notifications/configured',
+                    'acme.delivery/external',
+                ],
+            }],
+        });
     });
 
     it('fails closed on category and channel availability before activation or sender dispatch', async () => {

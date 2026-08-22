@@ -141,7 +141,7 @@ export function defineReactNativeWebViteBuildPreset(
         } : {}),
         output: Object.freeze({
             root: `dist/happier-plugin-ui/react-native-web/${parsed.contributionId}`,
-            entry: `react-native-web/${parsed.contributionId}/entry.mjs`,
+            entry: `react-native-web/${parsed.contributionId}/entry.mjs.bundle`,
         }),
         vite: Object.freeze({
             version: parsed.viteVersion,

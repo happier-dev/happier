@@ -2,6 +2,7 @@ import { lstat, realpath, rm } from 'node:fs/promises';
 import { relative, resolve, sep } from 'node:path';
 
 import { PluginIdSchema } from '@happier-dev/protocol';
+import { isCanonicalAbsolutePathInsideRoot } from '@/utils/path/expandHomeDirPath';
 
 import { PluginContextServiceError } from './errors';
 import { normalizePluginStorageNamespace } from './pluginNamespace';
@@ -38,8 +39,7 @@ async function inspectPluginOwnedDirectory(params: Readonly<{
     const containedRelativePath = relative(rootRealPath, targetRealPath);
     if (
         !containedRelativePath
-        || containedRelativePath.startsWith(`..${sep}`)
-        || containedRelativePath === '..'
+        || !isCanonicalAbsolutePathInsideRoot(rootRealPath, targetRealPath)
         || resolve(rootRealPath, containedRelativePath) !== targetRealPath
         || containedRelativePath.includes(sep)
     ) {

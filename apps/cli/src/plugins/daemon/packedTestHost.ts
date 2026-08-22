@@ -6,10 +6,18 @@ import fastify from 'fastify';
 
 import { createDaemonControlAuthGuard } from '@/daemon/controlAuth';
 import { configuration } from '@/configuration';
-import { acquireDaemonLock, releaseDaemonLock } from '@/persistence';
+import { acquireDaemonLock, releaseDaemonLock, type StoredCredentials } from '@/persistence';
 import { registerDaemonPluginChangeRoutes } from '@/plugins/daemon/controlRoutes';
 import { createDaemonPluginRuntimeOwner } from '@/plugins/daemon/runtimeOwner';
 import { createPackedTestConnectedAccountsRuntime } from '@/plugins/daemon/packedTestConnectedAccounts';
+import {
+  PACKED_TEST_TARGETED_ADMISSION_READ_PATH,
+  PackedTestTargetedAdmissionReadRequestSchema,
+  readPackedTestTargetedAdmission,
+} from '@/plugins/daemon/packedTestTargetedAdmissions';
+import type {
+  AccountPluginDataStorageHostDependencies,
+} from '@/plugins/runtime/context/accountPluginDataStorage';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { logger } from '@/ui/logger';
 
@@ -40,6 +48,53 @@ function readOptionalOption(args: readonly string[], name: string): string | nul
   return value;
 }
 
+/**
+ * The packed daemon has no real Account client, but bundled Resources still
+ * execute their canonical Account Data admission reads during readiness. Keep
+ * that test boundary explicit and deterministic: real storage logic is used,
+ * while only its authenticated HTTP/system port is supplied by the harness.
+ */
+function createPackedTestAccountStorageDependencies(): AccountPluginDataStorageHostDependencies {
+  const fixtureCredentials = {
+    token: 'packed-test-account-token',
+    encryption: null,
+  } satisfies StoredCredentials;
+
+  return {
+    readCredentials: async () => fixtureCredentials,
+    isCurrentAccount: (credentials) => credentials.token === fixtureCredentials.token,
+    resolveAccountScopeKey: () => 'packed-test-account',
+    resolveBaseUrl: () => 'https://packed-test-account.invalid',
+    resolveAccountEncryptionCurrentness: async () => ({
+      mode: 'plain' as const,
+      version: 1,
+      signingKeyFingerprint: null,
+      contentKeyFingerprint: null,
+      updatedAt: 1,
+    }),
+    http: {
+      async get(url) {
+        if (url.endsWith('/v1/account/encryption')) {
+          return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
+        }
+        if (url.includes('/v1/account/plugin-storage/')) {
+          return { status: 200, data: { status: 'absent' } };
+        }
+        throw new Error(`Unexpected packed Account Data GET: ${url}`);
+      },
+      async post(url) {
+        if (url.endsWith('/v1/plugins/data/query')) {
+          return { status: 200, data: { rows: [], changeCursor: 0 } };
+        }
+        if (url.endsWith('/v1/plugins/data/get')) {
+          return { status: 200, data: { row: null } };
+        }
+        throw new Error(`Unexpected packed Account Data POST: ${url}`);
+      },
+    },
+  };
+}
+
 export async function runPackedTestDaemonHost(args: readonly string[]): Promise<void> {
   const happyHomeDir = readRequiredOption(args, '--home');
   const readyFile = readRequiredOption(args, '--ready-file');
@@ -54,27 +109,45 @@ export async function runPackedTestDaemonHost(args: readonly string[]): Promise<
 
   const incarnationId = randomUUID();
   const controlToken = randomUUID();
-  const startedAt = Date.now();
   const connectedAccounts = createPackedTestConnectedAccountsRuntime({
     happyHomeDir,
     pluginId: connectedAccountsFixturePluginId ?? 'happier.packed.connected-accounts-unavailable',
+    runtimeRegistry: pluginReloadController,
   });
+  const accountStorageDependencies = createPackedTestAccountStorageDependencies();
   const runtimeOwner = createDaemonPluginRuntimeOwner({
     happyHomeDir,
     staleCandidateCleanup: 'exclusiveHome',
-    daemonInstanceId: incarnationId,
-    daemonUptimeMs: () => Math.max(0, Date.now() - startedAt),
     reloadController: pluginReloadController,
     connectedAccounts: connectedAccounts.owner,
+    accountStorageDependencies,
     reconcileConnectedAccountPurposePublication:
       connectedAccounts.reconcileRegistryPublication,
   });
   const app = fastify({ logger: false });
+  const requireControlAuth = createDaemonControlAuthGuard(controlToken);
   registerDaemonPluginChangeRoutes(app, {
     service: runtimeOwner.changeService,
-    requireAuth: createDaemonControlAuthGuard(controlToken),
+    requireAuth: requireControlAuth,
     readCatalog: runtimeOwner.readCatalog,
   });
+  app.post(
+    PACKED_TEST_TARGETED_ADMISSION_READ_PATH,
+    { preHandler: requireControlAuth },
+    async (request, reply) => {
+      const parsed = PackedTestTargetedAdmissionReadRequestSchema.safeParse(request.body);
+      if (!parsed.success) {
+        return await reply.code(400).send({
+          kind: 'unavailable',
+          code: 'plugin_packed_targeted_admission_invalid_request',
+        });
+      }
+      return await readPackedTestTargetedAdmission({
+        reloadController: pluginReloadController,
+        request: parsed.data,
+      });
+    },
+  );
 
   let parentWatch: NodeJS.Timeout | null = null;
   let resolveShutdown!: () => void;

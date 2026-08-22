@@ -1,24 +1,34 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import type { PluginInvocationContext, PluginServices } from '@happier-dev/plugin-sdk';
+import type {
+    ManagedServiceHandle,
+    ManagedServiceSpec,
+} from '@happier-dev/plugin-sdk/managed-services';
 import type {
     AgentProviderBindingAdapter,
     AgentRuntimeFactory,
     AgentSessionRuntimeContext,
-} from '@happier-dev/plugin-sdk/agent-runtime';
+} from '@happier-dev/plugin-sdk/agents/runtime';
 import type {
     AgentExternalSessionHookResolveInstallationRequest,
     AgentExternalSessionHooksContribution,
     AgentExternalSessionObservationContribution,
-    AgentExternalSessionTakeoverContribution,
+    AgentExternalSessionObservationReconcileResultV1,
     AgentExternalSessionsContribution,
-    ExternalAgentObservationReconcileResultV1,
-} from '@happier-dev/plugin-sdk/experimental/sessions';
+    AgentExternalSessionsManagedEndpointRead,
+} from '@happier-dev/plugin-sdk/sessions/external';
+import type {
+    AgentExternalSessionTakeoverContribution,
+} from '@happier-dev/plugin-sdk/sessions/external';
 import { PluginContributesV2Schema } from '@happier-dev/protocol';
 
 import type { ActivationTarget } from '../activation/targets';
 import type { ContributionRuntimeRegistration } from '../../api/registrationRightsHost';
-import { createContributionRegistrationHost } from '../../api/registrationRightsHost';
+import {
+    createContributionRegistrationHost,
+    recordValidatedAgentSessionRunnerFactory,
+} from '../../api/registrationRightsHost';
 import {
     createDeclarativeAcpAgentRuntimeRegistry,
     createTargetAgentRuntimeRegistry,
@@ -27,6 +37,7 @@ import {
     createExternalSessionObservationReconciler,
 } from '../../../../api/session/external/leases/createExternalSessionObservationReconciler';
 import { createUnavailablePluginServices } from '../../invocation/services/unavailable';
+import type { CreateAgentInvocationServices } from '../../invocation/services/types';
 
 const providerBinding: AgentProviderBindingAdapter = {
     v: 1,
@@ -175,7 +186,6 @@ function target(pluginId = 'happier.agent.fixture'): ActivationTarget {
         source: { kind: 'path' },
         pluginId,
         manifestPath: `/plugins/${pluginId}/plugin.json`,
-        manifestDigest: `digest-${pluginId}`,
         daemonEntryPath: `/plugins/${pluginId}/daemon.js`,
         devDaemonEntryPath: null,
         sourceSpec: {
@@ -284,7 +294,780 @@ function externalSessionHooksRegistration(params?: Readonly<{
     };
 }
 
+/**
+ * Minimal managed-services double. Only the process-owning boundary is faked;
+ * the acquisition decision, spec admission and reuse under test are the real
+ * host implementations.
+ */
+function createManagedServicesDouble(params?: Readonly<{
+    respond?: (request: Readonly<{ pathAndQuery: string }>) => Readonly<{
+        ok: boolean;
+        status: number;
+        statusText: string;
+        headers: Readonly<Record<string, string>>;
+        body: ReadableStream<Uint8Array> | null;
+    }>;
+}>) {
+    const supervisedSpecs: ManagedServiceSpec[] = [];
+    const request = vi.fn(async (input: Readonly<{ pathAndQuery: string }>) => (
+        params?.respond?.(input) ?? Object.freeze({
+            ok: true,
+            status: 200,
+            statusText: 'OK',
+            headers: Object.freeze({}),
+            body: null,
+        })
+    ));
+    const snapshot = Object.freeze({
+        id: 'service',
+        state: 'healthy' as const,
+        mode: 'spawn' as const,
+        baseUrl: null,
+        startedAtMs: null,
+        lastHealthyAtMs: null,
+        diagnostics: Object.freeze([]),
+        diagnosticsTruncated: false,
+    });
+    const handle: ManagedServiceHandle = Object.freeze({
+        snapshot: () => snapshot,
+        observe: () => Object.freeze({ dispose() {} }),
+        waitUntilHealthy: vi.fn(async () => snapshot),
+        request,
+        stop: vi.fn(async () => Object.freeze({ status: 'stopped' })),
+        dispose: vi.fn(async () => undefined),
+    });
+    const supervise = vi.fn(async (
+        spec: ManagedServiceSpec,
+        _options?: Readonly<{ signal?: AbortSignal }>,
+    ): Promise<ManagedServiceHandle> => {
+        supervisedSpecs.push(spec);
+        return handle;
+    });
+    const unavailableServices = createUnavailablePluginServices();
+    const createAgentInvocationServices = vi.fn(
+        async (
+            _params: Parameters<CreateAgentInvocationServices>[0],
+        ): Promise<PluginServices> => (
+            // The managed endpoint acquisition is the only service under test,
+            // while the bounded callback still receives the canonical
+            // fail-closed ExecService required by its public invocation shape.
+            {
+                ...unavailableServices,
+                managedServices: {
+                    ...unavailableServices.managedServices,
+                    supervise,
+                },
+            }
+        ),
+    );
+    return {
+        supervise,
+        supervisedSpecs,
+        request,
+        createAgentInvocationServices,
+    };
+}
+
+const HOST_MINTED_SPAWN_SPEC: ManagedServiceSpec = Object.freeze({
+    id: 'fixture-server',
+    mode: Object.freeze({
+        kind: 'spawn' as const,
+        launch: Object.freeze({ executable: {} as never }),
+        endpoint: Object.freeze({
+            kind: 'assignAndInject' as const,
+            port: Object.freeze({ kind: 'allocated' as const }),
+        }),
+    }),
+    clientAccess: Object.freeze({
+        kind: 'hostBasic' as const,
+        username: 'fixture',
+        injectPasswordEnvironmentKey: 'FIXTURE_SERVER_PASSWORD',
+    }),
+});
+
+function declaringExternalSessionsRegistration(
+    resolveManagedEndpointService:
+        NonNullable<AgentExternalSessionsContribution['resolveManagedEndpointService']>,
+): Readonly<{
+    pluginId: string;
+    generation: string;
+    registration: ContributionRuntimeRegistration;
+}> {
+    return {
+        pluginId: 'happier.agent.fixture',
+        generation: 'generation-7',
+        registration: {
+            family: 'agents',
+            localId: 'assistant',
+            value: {
+                externalSessions: Object.freeze({
+                    ...externalSessionsContribution,
+                    resolveManagedEndpointService,
+                }),
+            },
+        } as ContributionRuntimeRegistration,
+    };
+}
+
+describe('contribution-owned External Sessions managed endpoint', () => {
+    it('serves a browse listing from a daemon-owned service with no Session runner endpoint', async () => {
+        const managed = createManagedServicesDouble({
+            respond: () => Object.freeze({
+                ok: true,
+                status: 200,
+                statusText: 'OK',
+                headers: Object.freeze({ 'x-observed': 'owned' }),
+                body: null,
+            }),
+        });
+        const runnerEndpointRead = vi.fn(async () => {
+            throw new Error('Session-runner endpoint host must not be consulted');
+        });
+        const listCandidates = vi.fn(async (
+            request: Parameters<AgentExternalSessionsContribution['listCandidates']>[0],
+        ) => {
+            const response = await request.managedEndpointRead({ pathAndQuery: '/session?limit=50' });
+            return {
+                ok: true as const,
+                value: {
+                    candidates: [{
+                        remoteSessionId: `session-${response.headers['x-observed']}`,
+                        updatedAtMs: 1,
+                    }],
+                    nextCursor: null,
+                },
+            };
+        });
+        const registry = createTargetAgentRuntimeRegistry({
+            agents: [{ id: 'assistant', pluginId: 'happier.agent.fixture' }],
+            activationTargets: [target()],
+            targetRegistrations: [{
+                pluginId: 'happier.agent.fixture',
+                generation: 'generation-7',
+                registration: {
+                    family: 'agents',
+                    localId: 'assistant',
+                    value: {
+                        externalSessions: Object.freeze({
+                            ...externalSessionsContribution,
+                            listCandidates,
+                            resolveManagedEndpointService: () => HOST_MINTED_SPAWN_SPEC,
+                        }),
+                    },
+                } as ContributionRuntimeRegistration,
+            }],
+            isGenerationActive: () => true,
+            retirementSignal: TEST_RETIREMENT_SIGNAL,
+            managedEndpointRead: runnerEndpointRead,
+            createAgentInvocationServices: managed.createAgentInvocationServices,
+            onDuplicate: vi.fn(),
+        });
+        const externalSessions = registry.get('assistant')?.externalSessions;
+        if (!externalSessions) throw new Error('Expected External Sessions lease');
+
+        const first = await externalSessions.listCandidates({
+            source: { kind: 'opencodeServer', managedEndpoint: true },
+            maxItems: 50,
+            maxSerializedBytes: 1_048_576,
+            deadlineAtMs: Date.now() + 15_000,
+            signal: new AbortController().signal,
+        });
+        const second = await externalSessions.listCandidates({
+            source: { kind: 'opencodeServer', managedEndpoint: true },
+            maxItems: 50,
+            maxSerializedBytes: 1_048_576,
+            deadlineAtMs: Date.now() + 15_000,
+            signal: new AbortController().signal,
+        });
+
+        expect(first).toMatchObject({
+            ok: true,
+            value: { candidates: [{ remoteSessionId: 'session-owned' }] },
+        });
+        expect(second).toMatchObject({ ok: true });
+        expect(runnerEndpointRead).not.toHaveBeenCalled();
+        expect(managed.request).toHaveBeenCalledTimes(2);
+        // One acquisition identity serves both pages; each admitted callback
+        // additionally receives its own signal-bound generic invocation service.
+        expect(managed.createAgentInvocationServices).toHaveBeenCalledTimes(3);
+        expect(managed.supervisedSpecs).toEqual([
+            HOST_MINTED_SPAWN_SPEC,
+            HOST_MINTED_SPAWN_SPEC,
+        ]);
+        const correlationIds = new Set(
+            managed.createAgentInvocationServices.mock.calls
+                .map((call) => call[0].correlationId),
+        );
+        expect(correlationIds.size).toBe(3);
+    });
+
+    it('keeps the Session-runner endpoint host when a contribution declares no service', async () => {
+        const managed = createManagedServicesDouble();
+        const runnerRead = vi.fn(async () => Object.freeze({
+            ok: true,
+            status: 200,
+            statusText: 'OK',
+            headers: Object.freeze({ 'x-observed': 'runner' }),
+            body: null,
+        }));
+        const runnerEndpointRead = vi.fn(async () => runnerRead);
+        const listCandidates = vi.fn(async (
+            request: Parameters<AgentExternalSessionsContribution['listCandidates']>[0],
+        ) => {
+            const response = await request.managedEndpointRead({ pathAndQuery: '/session' });
+            return {
+                ok: true as const,
+                value: {
+                    candidates: [{
+                        remoteSessionId: `session-${response.headers['x-observed']}`,
+                        updatedAtMs: 1,
+                    }],
+                    nextCursor: null,
+                },
+            };
+        });
+        const registry = createTargetAgentRuntimeRegistry({
+            agents: [{ id: 'assistant', pluginId: 'happier.agent.fixture' }],
+            activationTargets: [target()],
+            targetRegistrations: [{
+                pluginId: 'happier.agent.fixture',
+                generation: 'generation-7',
+                registration: {
+                    family: 'agents',
+                    localId: 'assistant',
+                    value: {
+                        externalSessions: Object.freeze({
+                            ...externalSessionsContribution,
+                            listCandidates,
+                        }),
+                    },
+                } as ContributionRuntimeRegistration,
+            }],
+            isGenerationActive: () => true,
+            retirementSignal: TEST_RETIREMENT_SIGNAL,
+            managedEndpointRead: runnerEndpointRead,
+            createAgentInvocationServices: managed.createAgentInvocationServices,
+            onDuplicate: vi.fn(),
+        });
+        const externalSessions = registry.get('assistant')?.externalSessions;
+        if (!externalSessions) throw new Error('Expected External Sessions lease');
+
+        await expect(externalSessions.listCandidates({
+            source: { kind: 'opencodeServer', managedEndpoint: true },
+            maxItems: 50,
+            maxSerializedBytes: 1_048_576,
+            deadlineAtMs: Date.now() + 15_000,
+            signal: new AbortController().signal,
+        })).resolves.toMatchObject({
+            ok: true,
+            value: { candidates: [{ remoteSessionId: 'session-runner' }] },
+        });
+        expect(runnerEndpointRead).toHaveBeenCalledOnce();
+        expect(managed.supervise).not.toHaveBeenCalled();
+    });
+
+    it('declares no owned service for a source that names the user\'s own server', async () => {
+        const managed = createManagedServicesDouble();
+        const resolveManagedEndpointService = vi.fn(() => null);
+        const registry = createTargetAgentRuntimeRegistry({
+            agents: [{ id: 'assistant', pluginId: 'happier.agent.fixture' }],
+            activationTargets: [target()],
+            targetRegistrations: [
+                declaringExternalSessionsRegistration(resolveManagedEndpointService),
+            ],
+            isGenerationActive: () => true,
+            retirementSignal: TEST_RETIREMENT_SIGNAL,
+            createAgentInvocationServices: managed.createAgentInvocationServices,
+            onDuplicate: vi.fn(),
+        });
+        const externalSessions = registry.get('assistant')?.externalSessions;
+        if (!externalSessions) throw new Error('Expected External Sessions lease');
+
+        await externalSessions.resolveSource({
+            source: { kind: 'opencodeServer', baseUrl: 'http://127.0.0.1:4096' },
+            maxSerializedBytes: 262_144,
+            deadlineAtMs: Date.now() + 15_000,
+            signal: new AbortController().signal,
+        });
+
+        expect(resolveManagedEndpointService).toHaveBeenCalled();
+        expect(managed.supervise).not.toHaveBeenCalled();
+    });
+});
+
 describe('target Agent runtime registry', () => {
+    it('binds managed endpoint reads once before observation and reconciliation entry', async () => {
+        const observeExactRead = vi.fn(async () => Object.freeze({
+            ok: true,
+            status: 200,
+            statusText: 'OK',
+            headers: Object.freeze({ 'x-next-cursor': 'cursor-2' }),
+            body: null,
+        }));
+        const reconcileExactRead = vi.fn(async () => Object.freeze({
+            ok: true,
+            status: 201,
+            statusText: 'Created',
+            headers: Object.freeze({}),
+            body: null,
+        }));
+        const replacementRead = vi.fn(async () => Object.freeze({
+            ok: true,
+            status: 299,
+            statusText: 'Replacement',
+            headers: Object.freeze({}),
+            body: null,
+        }));
+        let selectedRead: AgentExternalSessionsManagedEndpointRead = observeExactRead;
+        const managedEndpointRead = vi.fn(async () => selectedRead);
+        const observeRead = vi.fn();
+        const reconcileRead = vi.fn();
+        const retainedReads: AgentExternalSessionsManagedEndpointRead[] = [];
+        const observation = createObservationContribution({
+            acquire: async (request) => {
+                expect(managedEndpointRead).toHaveBeenCalledOnce();
+                retainedReads.push(request.managedEndpointRead);
+                selectedRead = replacementRead;
+                observeRead(await request.managedEndpointRead({
+                    pathAndQuery: '/global/event',
+                    headers: { accept: 'text/event-stream' },
+                }));
+                return { dispose() {} };
+            },
+            reconcile: async (request) => {
+                expect(managedEndpointRead).toHaveBeenCalledTimes(2);
+                retainedReads.push(request.managedEndpointRead);
+                selectedRead = replacementRead;
+                reconcileRead(await request.managedEndpointRead({
+                    pathAndQuery: '/session',
+                }));
+                return {
+                    purpose: 'observation_evidence' as const,
+                    outcomes: request.links.map(({ linkKey }) => ({
+                        linkKey,
+                        facts: [{
+                            kind: 'retrieval_failed' as const,
+                            evidenceClass: 'reconciliation' as const,
+                            observedAtMs: 1,
+                            axis: 'liveness' as const,
+                        }],
+                    })),
+                };
+            },
+        });
+        const registry = createTargetAgentRuntimeRegistry({
+            agents: [{ id: 'assistant', pluginId: 'happier.agent.fixture' }],
+            activationTargets: [target()],
+            targetRegistrations: [observationRegistration({ observation })],
+            isGenerationActive: () => true,
+            retirementSignal: TEST_RETIREMENT_SIGNAL,
+            managedEndpointRead,
+            onDuplicate: vi.fn(),
+        });
+        const lease = registry.get('assistant')?.externalSessionObservation;
+        if (!lease) throw new Error('Expected observation lease');
+        const managedEndpointSource = Object.freeze({
+            kind: 'opencode',
+            baseUrl: 'http://127.0.0.1:4096',
+        });
+
+        const acquired = await lease.observeResource({
+            resourceKey: 'resource-1',
+            managedEndpointSource,
+            signal: new AbortController().signal,
+            emit() {},
+            requestReconcile() {},
+            requestTranscriptRefresh() {},
+        });
+        await acquired.dispose();
+        const retainedObserveRead = retainedReads[0];
+        if (!retainedObserveRead) throw new Error('Expected retained observe read');
+        await expect(retainedObserveRead({ pathAndQuery: '/global/event' }))
+            .rejects.toBe('disposed');
+        expect(observeExactRead).toHaveBeenCalledOnce();
+        expect(replacementRead).not.toHaveBeenCalled();
+        selectedRead = reconcileExactRead;
+        await lease.reconcileResource({
+            purpose: 'observation_evidence',
+            resourceKey: 'resource-1',
+            links: [{
+                linkKey: 'link-1',
+                linkedSource: {
+                    source: managedEndpointSource,
+                    remoteSessionId: 'session-1',
+                    linkData: {},
+                },
+            }],
+            signal: new AbortController().signal,
+        });
+        const retainedReconcileRead = retainedReads[1];
+        if (!retainedReconcileRead) throw new Error('Expected retained reconcile read');
+        await expect(retainedReconcileRead({ pathAndQuery: '/session' }))
+            .rejects.toBe('disposed');
+
+        expect(observeRead).toHaveBeenCalledWith(expect.objectContaining({
+            status: 200,
+        }));
+        expect(reconcileRead).toHaveBeenCalledWith(expect.objectContaining({
+            status: 201,
+        }));
+        expect(managedEndpointRead).toHaveBeenNthCalledWith(1, expect.objectContaining({
+            identity: {
+                pluginId: 'happier.agent.fixture',
+                agentId: 'assistant',
+                generation: 'generation-7',
+                contributionQualifiedId:
+                    'happier.agent.fixture/agents/assistant',
+                immutableGenerationId: null,
+            },
+            source: managedEndpointSource,
+        }));
+        expect(managedEndpointRead).toHaveBeenNthCalledWith(2, expect.objectContaining({
+            source: managedEndpointSource,
+        }));
+        expect(observeExactRead).toHaveBeenCalledWith({
+            pathAndQuery: '/global/event',
+            headers: { accept: 'text/event-stream' },
+        });
+        expect(reconcileExactRead).toHaveBeenCalledWith({
+            pathAndQuery: '/session',
+        });
+        expect(observeExactRead).toHaveBeenCalledOnce();
+        expect(reconcileExactRead).toHaveBeenCalledOnce();
+        expect(replacementRead).not.toHaveBeenCalled();
+        expect(managedEndpointRead).toHaveBeenCalledTimes(2);
+    });
+
+    it('cancels an over-budget managed response during finite reconciliation', async () => {
+        const responseCancelled = vi.fn();
+        let pulls = 0;
+        let releaseThirdPull: (() => void) | undefined;
+        const exactRead = vi.fn(async () => Object.freeze({
+            ok: true,
+            status: 200,
+            statusText: 'OK',
+            headers: Object.freeze({}),
+            body: new ReadableStream<Uint8Array>({
+                pull(controller) {
+                    pulls += 1;
+                    if (pulls === 1) {
+                        controller.enqueue(new Uint8Array(262_144));
+                        return;
+                    }
+                    if (pulls === 2) {
+                        controller.enqueue(new Uint8Array(1));
+                        return;
+                    }
+                    return new Promise<void>((resolve) => {
+                        releaseThirdPull = resolve;
+                    });
+                },
+                cancel(reason) {
+                    responseCancelled(reason);
+                    releaseThirdPull?.();
+                },
+            }),
+        }));
+        const reconcile = vi.fn(async (request: Parameters<
+            NonNullable<AgentExternalSessionObservationContribution['reconcileResource']>
+        >[0]) => {
+            const response = await request.managedEndpointRead({ pathAndQuery: '/session' });
+            const reader = response.body?.getReader();
+            if (!reader) throw new Error('Expected managed endpoint response body');
+            await reader.read();
+            await reader.read();
+            return {
+                purpose: 'observation_evidence' as const,
+                outcomes: request.links.map(({ linkKey }) => ({
+                    linkKey,
+                    facts: [{
+                        kind: 'retrieval_failed' as const,
+                        evidenceClass: 'reconciliation' as const,
+                        observedAtMs: 1,
+                        axis: 'liveness' as const,
+                    }],
+                })),
+            };
+        });
+        const lease = createTargetAgentRuntimeRegistry({
+            agents: [{ id: 'assistant', pluginId: 'happier.agent.fixture' }],
+            activationTargets: [target()],
+            targetRegistrations: [observationRegistration({
+                observation: createObservationContribution({ reconcile }),
+            })],
+            isGenerationActive: () => true,
+            retirementSignal: TEST_RETIREMENT_SIGNAL,
+            managedEndpointRead: vi.fn(async () => exactRead),
+            onDuplicate: vi.fn(),
+        }).get('assistant')?.externalSessionObservation;
+        if (!lease) throw new Error('Expected observation lease');
+
+        await expect(lease.reconcileResource({
+            purpose: 'observation_evidence',
+            resourceKey: 'resource-1',
+            links: [{
+                linkKey: 'link-1',
+                linkedSource: {
+                    source: { kind: 'opencode', baseUrl: 'http://127.0.0.1:4096' },
+                    remoteSessionId: 'session-1',
+                    linkData: {},
+                },
+            }],
+            signal: new AbortController().signal,
+        })).rejects.toThrow(/managed endpoint response exceeds its 262144-byte operation budget/u);
+
+        expect(exactRead).toHaveBeenCalledWith({ pathAndQuery: '/session' });
+        expect(responseCancelled).toHaveBeenCalledOnce();
+        expect(reconcile).toHaveBeenCalledOnce();
+    });
+
+    it('accepts a managed response exactly at the finite reconciliation budget', async () => {
+        const responseCancelled = vi.fn();
+        const exactRead = vi.fn(async () => Object.freeze({
+            ok: true,
+            status: 200,
+            statusText: 'OK',
+            headers: Object.freeze({}),
+            body: new ReadableStream<Uint8Array>({
+                start(controller) {
+                    controller.enqueue(new Uint8Array(262_144));
+                    controller.close();
+                },
+                cancel: responseCancelled,
+            }),
+        }));
+        const lease = createTargetAgentRuntimeRegistry({
+            agents: [{ id: 'assistant', pluginId: 'happier.agent.fixture' }],
+            activationTargets: [target()],
+            targetRegistrations: [observationRegistration({
+                observation: createObservationContribution({
+                    reconcile: async (request) => {
+                        const response = await request.managedEndpointRead({
+                            pathAndQuery: '/session',
+                        });
+                        const reader = response.body?.getReader();
+                        if (!reader) throw new Error('Expected managed endpoint response body');
+                        while (!(await reader.read()).done) {
+                            // Consume the exact-boundary response through the plugin-facing seam.
+                        }
+                        return {
+                            purpose: 'observation_evidence' as const,
+                            outcomes: request.links.map(({ linkKey }) => ({
+                                linkKey,
+                                facts: [{
+                                    kind: 'retrieval_failed' as const,
+                                    evidenceClass: 'reconciliation' as const,
+                                    observedAtMs: 1,
+                                    axis: 'liveness' as const,
+                                }],
+                            })),
+                        };
+                    },
+                }),
+            })],
+            isGenerationActive: () => true,
+            retirementSignal: TEST_RETIREMENT_SIGNAL,
+            managedEndpointRead: vi.fn(async () => exactRead),
+            onDuplicate: vi.fn(),
+        }).get('assistant')?.externalSessionObservation;
+        if (!lease) throw new Error('Expected observation lease');
+
+        await expect(lease.reconcileResource({
+            purpose: 'observation_evidence',
+            resourceKey: 'resource-1',
+            links: [{
+                linkKey: 'link-1',
+                linkedSource: {
+                    source: { kind: 'opencode', baseUrl: 'http://127.0.0.1:4096' },
+                    remoteSessionId: 'session-1',
+                    linkData: {},
+                },
+            }],
+            signal: new AbortController().signal,
+        })).resolves.toMatchObject({
+            purpose: 'observation_evidence',
+            outcomes: [{ linkKey: 'link-1' }],
+        });
+
+        expect(responseCancelled).not.toHaveBeenCalled();
+    });
+
+    it('leaves the managed event stream unbounded for long-lived observation', async () => {
+        const responseCancelled = vi.fn();
+        let observedBytes = 0;
+        const exactRead = vi.fn(async () => Object.freeze({
+            ok: true,
+            status: 200,
+            statusText: 'OK',
+            headers: Object.freeze({}),
+            body: new ReadableStream<Uint8Array>({
+                start(controller) {
+                    controller.enqueue(new Uint8Array(262_145));
+                    controller.close();
+                },
+                cancel: responseCancelled,
+            }),
+        }));
+        const lease = createTargetAgentRuntimeRegistry({
+            agents: [{ id: 'assistant', pluginId: 'happier.agent.fixture' }],
+            activationTargets: [target()],
+            targetRegistrations: [observationRegistration({
+                observation: createObservationContribution({
+                    acquire: async (request) => {
+                        const response = await request.managedEndpointRead({
+                            pathAndQuery: '/global/event',
+                        });
+                        const reader = response.body?.getReader();
+                        if (!reader) throw new Error('Expected managed endpoint response body');
+                        for (;;) {
+                            const result = await reader.read();
+                            if (result.done) break;
+                            observedBytes += result.value.byteLength;
+                        }
+                        return { dispose() {} };
+                    },
+                }),
+            })],
+            isGenerationActive: () => true,
+            retirementSignal: TEST_RETIREMENT_SIGNAL,
+            managedEndpointRead: vi.fn(async () => exactRead),
+            onDuplicate: vi.fn(),
+        }).get('assistant')?.externalSessionObservation;
+        if (!lease) throw new Error('Expected observation lease');
+
+        const acquired = await lease.observeResource({
+            resourceKey: 'resource-1',
+            managedEndpointSource: { kind: 'opencode', baseUrl: 'http://127.0.0.1:4096' },
+            signal: new AbortController().signal,
+            emit() {},
+            requestReconcile() {},
+            requestTranscriptRefresh() {},
+        });
+        await acquired.dispose();
+
+        expect(exactRead).toHaveBeenCalledWith({ pathAndQuery: '/global/event' });
+        expect(observedBytes).toBe(262_145);
+        expect(responseCancelled).not.toHaveBeenCalled();
+    });
+
+    it('settles retired observation while a managed endpoint bind ignores abort', async () => {
+        vi.useFakeTimers();
+        try {
+            let settleBind!: (read: AgentExternalSessionsManagedEndpointRead) => void;
+            let bindSignal: AbortSignal | undefined;
+            let current = true;
+            const retirement = new AbortController();
+            const acquire = vi.fn(async () => ({ dispose() {} }));
+            const managedEndpointRead = vi.fn(({ signal }: { signal: AbortSignal }) => {
+                bindSignal = signal;
+                return new Promise<AgentExternalSessionsManagedEndpointRead>((resolve) => {
+                    settleBind = resolve;
+                });
+            });
+            const lease = createTargetAgentRuntimeRegistry({
+                agents: [{ id: 'assistant', pluginId: 'happier.agent.fixture' }],
+                activationTargets: [target()],
+                targetRegistrations: [observationRegistration({
+                    observation: createObservationContribution({ acquire }),
+                })],
+                isGenerationActive: () => current,
+                retirementSignal: retirement.signal,
+                managedEndpointRead,
+                onDuplicate: vi.fn(),
+            }).get('assistant')?.externalSessionObservation;
+            if (!lease) throw new Error('Expected observation lease');
+
+            const acquisition = Promise.resolve(lease.observeResource({
+                resourceKey: 'resource-1',
+                managedEndpointSource: { kind: 'fixture' },
+                signal: new AbortController().signal,
+                emit() {},
+                requestReconcile() {},
+                requestTranscriptRefresh() {},
+            }));
+            void acquisition.catch(() => undefined);
+            await Promise.resolve();
+            expect(managedEndpointRead).toHaveBeenCalledOnce();
+            current = false;
+            retirement.abort();
+
+            expect(bindSignal?.aborted).toBe(true);
+            expect(await readPromiseStateAfterMicrotasks(acquisition)).toBe('rejected');
+            await expect(acquisition).rejects.toThrow(/retired generation/u);
+            expect(acquire).not.toHaveBeenCalled();
+            expect(vi.getTimerCount()).toBe(0);
+
+            settleBind(async () => {
+                throw new Error('Late managed endpoint read must remain unreachable');
+            });
+            await Promise.resolve();
+            expect(acquire).not.toHaveBeenCalled();
+            await expect(acquisition).rejects.toThrow(/retired generation/u);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('times out reconciliation while a managed endpoint bind ignores abort', async () => {
+        vi.useFakeTimers();
+        try {
+            let settleBind!: (read: AgentExternalSessionsManagedEndpointRead) => void;
+            let bindSignal: AbortSignal | undefined;
+            const reconcile = vi.fn(createObservationContribution().reconcileResource);
+            const managedEndpointRead = vi.fn(({ signal }: { signal: AbortSignal }) => {
+                bindSignal = signal;
+                return new Promise<AgentExternalSessionsManagedEndpointRead>((resolve) => {
+                    settleBind = resolve;
+                });
+            });
+            const lease = createTargetAgentRuntimeRegistry({
+                agents: [{ id: 'assistant', pluginId: 'happier.agent.fixture' }],
+                activationTargets: [target()],
+                targetRegistrations: [observationRegistration({
+                    observation: createObservationContribution({ reconcile }),
+                })],
+                isGenerationActive: () => true,
+                retirementSignal: new AbortController().signal,
+                managedEndpointRead,
+                onDuplicate: vi.fn(),
+            }).get('assistant')?.externalSessionObservation;
+            if (!lease) throw new Error('Expected observation lease');
+
+            const reconciliation = Promise.resolve(lease.reconcileResource({
+                purpose: 'observation_evidence',
+                resourceKey: 'resource-1',
+                links: [{
+                    linkKey: 'link-1',
+                    linkedSource: {
+                        source: { kind: 'fixture' },
+                        remoteSessionId: 'native-session',
+                        linkData: {},
+                    },
+                }],
+                signal: new AbortController().signal,
+            }));
+            void reconciliation.catch(() => undefined);
+            await Promise.resolve();
+            expect(managedEndpointRead).toHaveBeenCalledOnce();
+            await vi.advanceTimersByTimeAsync(15_000);
+
+            expect(bindSignal?.aborted).toBe(true);
+            expect(await readPromiseStateAfterMicrotasks(reconciliation)).toBe('rejected');
+            await expect(reconciliation).rejects.toThrow(/timed out/u);
+            expect(reconcile).not.toHaveBeenCalled();
+            expect(vi.getTimerCount()).toBe(0);
+
+            settleBind(async () => {
+                throw new Error('Late managed endpoint read must remain unreachable');
+            });
+            await Promise.resolve();
+            expect(reconcile).not.toHaveBeenCalled();
+            await expect(reconciliation).rejects.toThrow(/timed out/u);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
     it('fails closed when no retirement signal owns a generated runtime lease', () => {
         expect(() => createTargetAgentRuntimeRegistry({
             agents: [{ id: 'assistant', pluginId: 'happier.agent.fixture' }],
@@ -410,6 +1193,83 @@ describe('target Agent runtime registry', () => {
         expect(runtime?.sessions).toBeDefined();
     });
 
+    it('retains a direct runner factory binding without host-only lease fields', () => {
+        const host = createContributionRegistrationHost({
+            pluginId: 'happier.agent.fixture',
+            generation: 'generation-7',
+            rights: [{
+                family: 'agents',
+                localId: 'assistant',
+                target: { realm: 'daemon' },
+                requiredFields: ['factory', 'sessionRunnerFactory'],
+            }],
+            isGenerationCurrent: () => true,
+        });
+        const factory: AgentRuntimeFactory = async () => ({
+            sessions: {
+                open: async () => ({
+                    send: async () => ({ status: 'admitted' }),
+                    watch: () => ({ dispose() {} }),
+                    dispose() {},
+                }),
+            },
+        });
+        host.api.agents.register('assistant', factory, {
+            sessionRunnerFactory: {
+                module: './agent/runtime.js',
+                export: 'createAssistantRuntime',
+                runtimeApiVersion: 1,
+            },
+        });
+        const [committed] = host.commit();
+        if (committed?.family !== 'agents') {
+            throw new Error('Expected an Agent runtime registration');
+        }
+        const locator = committed.value.sessionRunnerFactory;
+        if (!locator) {
+            throw new Error('Expected a session runner factory locator');
+        }
+        recordValidatedAgentSessionRunnerFactory(committed.value, {
+            locator,
+            normalizedModulePath: 'agent/runtime.js',
+            loadMode: 'immutable-js',
+        });
+
+        const lease = createTargetAgentRuntimeRegistry({
+            agents: [{ id: 'assistant', pluginId: 'happier.agent.fixture' }],
+            activationTargets: [target()],
+            targetRegistrations: [{
+                pluginId: 'happier.agent.fixture',
+                generation: 'generation-7',
+                registration: committed,
+            }],
+            immutableGenerationIdsByPluginId: new Map([
+                ['happier.agent.fixture', 'immutable-generation-7'],
+            ]),
+            isGenerationActive: () => true,
+            retirementSignal: TEST_RETIREMENT_SIGNAL,
+            onDuplicate: vi.fn(),
+        }).get('assistant');
+
+        if (!lease?.hasPrimaryRuntime) {
+            throw new Error('Expected a primary Agent runtime lease');
+        }
+        expect(lease.sessionRunnerFactoryBinding).toEqual({
+            v: 1,
+            pluginId: 'happier.agent.fixture',
+            pluginVersion: '0.0.0',
+            agentId: 'assistant',
+            localAgentId: 'assistant',
+            immutableGenerationId: 'immutable-generation-7',
+            locator,
+            normalizedModulePath: 'agent/runtime.js',
+            loadMode: 'immutable-js',
+        });
+        expect(lease).not.toHaveProperty('workflowRunRecordSessionOpen');
+        expect(lease).not.toHaveProperty('issueRunnerExecutionGrant');
+        expect(lease).not.toHaveProperty('manifestDigest');
+    });
+
     it('leases an auxiliary-only External Sessions contribution without claiming primary runtime ownership', () => {
         const registry = createTargetAgentRuntimeRegistry({
             agents: [{ id: 'assistant', pluginId: 'happier.agent.fixture' }],
@@ -433,6 +1293,64 @@ describe('target Agent runtime registry', () => {
         expect(registry.get('assistant')?.externalSessions).toBeDefined();
         expect(registry.get('assistant')?.externalSessions).not.toBe(externalSessionsContribution);
         expect(registry.get('assistant')?.createRuntime).toBeUndefined();
+    });
+
+    it('binds the generic invocation ExecService into an External Sessions callback', async () => {
+        const services = createUnavailablePluginServices();
+        const createAgentInvocationServices = vi.fn(async (
+            _params: Parameters<CreateAgentInvocationServices>[0],
+        ) => services);
+        let receivedRequest: Parameters<AgentExternalSessionsContribution['listCandidates']>[0] | undefined;
+        const listCandidates = vi.fn<AgentExternalSessionsContribution['listCandidates']>(
+            async (request) => {
+                receivedRequest = request;
+                return { ok: true, value: { candidates: [], nextCursor: null } };
+            },
+        );
+        const registry = createTargetAgentRuntimeRegistry({
+            agents: [{ id: 'assistant', pluginId: 'happier.agent.fixture' }],
+            activationTargets: [target()],
+            targetRegistrations: [{
+                pluginId: 'happier.agent.fixture',
+                generation: 'generation-7',
+                registration: {
+                    family: 'agents',
+                    localId: 'assistant',
+                    value: {
+                        externalSessions: Object.freeze({
+                            ...externalSessionsContribution,
+                            listCandidates,
+                        }),
+                    },
+                } as ContributionRuntimeRegistration,
+            }],
+            createAgentInvocationServices,
+            isGenerationActive: () => true,
+            retirementSignal: TEST_RETIREMENT_SIGNAL,
+            onDuplicate: vi.fn(),
+        });
+        const externalSessions = registry.get('assistant')?.externalSessions;
+        if (!externalSessions) throw new Error('Expected External Sessions lease');
+
+        await expect(externalSessions.listCandidates({
+            source: { kind: 'fixture' },
+            maxItems: 50,
+            maxSerializedBytes: 1_048_576,
+            deadlineAtMs: Date.now() + 15_000,
+            signal: new AbortController().signal,
+        })).resolves.toEqual({
+            ok: true,
+            value: { candidates: [], nextCursor: null },
+        });
+
+        // The public invocation type gains this service with the owner change;
+        // this narrow assertion makes the missing runtime wiring fail RED first.
+        expect((receivedRequest as unknown as { exec?: unknown } | undefined)?.exec)
+            .toBe(services.exec);
+        expect(createAgentInvocationServices).toHaveBeenCalledOnce();
+        if (!receivedRequest) throw new Error('Expected External Sessions callback request');
+        expect(createAgentInvocationServices.mock.calls[0]?.[0].signal)
+            .toBe(receivedRequest.signal);
     });
 
     it('leases observation beside the same auxiliary-only External Sessions identity and generation', () => {
@@ -510,7 +1428,7 @@ describe('target Agent runtime registry', () => {
             }),
         );
         const services = createUnavailablePluginServices();
-        const createAgentInvocationServices = vi.fn(() => services);
+        const createAgentInvocationServices = vi.fn(async () => services);
         const registry = createTargetAgentRuntimeRegistry({
             agents: [{
                 id: 'assistant',
@@ -876,6 +1794,10 @@ describe('target Agent runtime registry', () => {
         let emit: ((event: never) => void) | undefined;
         let requestReconcile: (() => void) | undefined;
         let requestTranscriptRefresh: ((linkKey: string) => void) | undefined;
+        let markEntered!: () => void;
+        const entered = new Promise<void>((resolve) => {
+            markEntered = resolve;
+        });
         const dispose = vi.fn();
         const observation = createObservationContribution({
             acquire: ({
@@ -888,6 +1810,7 @@ describe('target Agent runtime registry', () => {
                 emit = emitValue;
                 requestReconcile = requestReconcileValue;
                 requestTranscriptRefresh = requestTranscriptRefreshValue;
+                markEntered();
                 return new Promise((resolve) => {
                     settle = resolve;
                 });
@@ -916,6 +1839,7 @@ describe('target Agent runtime registry', () => {
             requestReconcile: reconcile,
             requestTranscriptRefresh: refresh,
         });
+        await entered;
         requestReconcile?.();
         requestTranscriptRefresh?.('link-1');
         expect(reconcile).toHaveBeenCalledOnce();
@@ -945,6 +1869,10 @@ describe('target Agent runtime registry', () => {
         vi.useFakeTimers();
         let settle!: (disposable: Readonly<{ dispose(): void }>) => void;
         let observedSignal: AbortSignal | undefined;
+        let markEntered!: () => void;
+        const entered = new Promise<void>((resolve) => {
+            markEntered = resolve;
+        });
         const dispose = vi.fn();
         const caller = new AbortController();
         const retirement = new AbortController();
@@ -953,6 +1881,7 @@ describe('target Agent runtime registry', () => {
         const observation = createObservationContribution({
             acquire: ({ signal }) => {
                 observedSignal = signal;
+                markEntered();
                 return new Promise((resolve) => {
                     settle = resolve;
                 });
@@ -975,6 +1904,7 @@ describe('target Agent runtime registry', () => {
             requestReconcile() {},
             requestTranscriptRefresh() {},
         });
+        await entered;
         caller.abort();
 
         expect(observedSignal?.aborted).toBe(true);
@@ -1202,10 +2132,287 @@ describe('target Agent runtime registry', () => {
         expect(secondDispose).toHaveBeenCalledOnce();
     });
 
+    it('sanitizes a rejecting observer disposal and retries the exact same cleanup', async () => {
+        const dispose = vi.fn<() => Promise<void>>(async () => {
+            throw new Error('plugin-private-observer-disposal-failure');
+        });
+        const observation = createTargetAgentRuntimeRegistry({
+            agents: [{ id: 'assistant', pluginId: 'happier.agent.fixture' }],
+            activationTargets: [target()],
+            targetRegistrations: [observationRegistration({
+                observation: createObservationContribution({
+                    acquire: async () => ({ dispose }),
+                }),
+            })],
+            isGenerationActive: () => true,
+            retirementSignal: TEST_RETIREMENT_SIGNAL,
+            onDuplicate: vi.fn(),
+        }).get('assistant')?.externalSessionObservation;
+        if (!observation) throw new Error('Expected observation lease');
+
+        const observer = await observation.observeResource({
+            resourceKey: 'resource-1',
+            signal: new AbortController().signal,
+            emit() {},
+            requestReconcile() {},
+            requestTranscriptRefresh() {},
+        });
+
+        let failure: unknown = null;
+        try {
+            await observer.dispose();
+        } catch (error) {
+            failure = error;
+        }
+        expect(failure).toBeInstanceOf(Error);
+        expect((failure as Error).message).toBe(
+            'Agent External Session observation cleanup failed',
+        );
+        expect((failure as Error).message).not.toContain(
+            'plugin-private-observer-disposal-failure',
+        );
+        // One physical disposal per attempt: the rejecting call is not repeated
+        // inside the attempt that observed it.
+        expect(dispose).toHaveBeenCalledOnce();
+
+        // The observation reconciler deliberately retains an observer whose
+        // disposal rejected so the next owned retirement retries it. Caching the
+        // rejected attempt here would make that exact cleanup permanently
+        // unreachable and leak the plugin-side resource for the daemon's lifetime.
+        dispose.mockResolvedValueOnce(undefined);
+        await expect(observer.dispose()).resolves.toBeUndefined();
+        expect(dispose).toHaveBeenCalledTimes(2);
+    });
+
+    it('retries the exact plugin observer cleanup through generation retirement after it rejects once', async () => {
+        // Every wrapper between the observation reconciler and the plugin leaf has to
+        // preserve one contract: a cleanup that rejected keeps its custody and can be
+        // retried physically. Fixing only one of them reads as fixed and is not, so
+        // this drives the real chain — generation abort, the generation-bound facade,
+        // the reconciler's resource retirement, and the disposal owner.
+        const retirement = new AbortController();
+        const dispose = vi.fn<() => Promise<void>>()
+            .mockRejectedValueOnce(new Error('plugin-private-observer-disposal-failure'))
+            .mockResolvedValue(undefined);
+        const lease = createTargetAgentRuntimeRegistry({
+            agents: [{ id: 'assistant', pluginId: 'happier.agent.fixture' }],
+            activationTargets: [target()],
+            targetRegistrations: [observationRegistration({
+                observation: createObservationContribution({
+                    acquire: async () => ({ dispose }),
+                }),
+            })],
+            isGenerationActive: () => !retirement.signal.aborted,
+            retirementSignal: retirement.signal,
+            onDuplicate: vi.fn(),
+        }).get('assistant')?.externalSessionObservation;
+        if (!lease) throw new Error('Expected observation lease');
+        const reconciler = createExternalSessionObservationReconciler({
+            acquireObserver: async (input) => await lease.observeResource({
+                resourceKey: input.resource.resourceKey,
+                signal: input.signal,
+                emit: input.emit,
+                requestReconcile: input.requestReconcile,
+                requestTranscriptRefresh() {},
+            }),
+        });
+        await reconciler.reconcileLink({
+            resource: {
+                pluginId: 'happier.agent.fixture',
+                agentLocalId: 'assistant',
+                pluginGeneration: 'generation-7',
+                resourceKey: 'resource-1',
+                retirementSignal: retirement.signal,
+            },
+            link: {
+                sessionId: 'session-1',
+                linkGeneration: 'link-generation-1',
+                linkKey: 'link-1',
+                linkedSource: {
+                    source: { kind: 'fixture' },
+                    remoteSessionId: 'native-session',
+                    linkData: {},
+                },
+                changeObservation: 'observe_resource',
+            },
+            demand: {
+                passiveEvent: true,
+                persistedPolicy: false,
+                fallbackDemand: false,
+            },
+            onFacts() {},
+        });
+
+        const unhandled: unknown[] = [];
+        const onUnhandledRejection = (reason: unknown): void => {
+            unhandled.push(reason);
+        };
+        process.on('unhandledRejection', onUnhandledRejection);
+        try {
+            retirement.abort();
+            // Let Node run its unhandled-rejection detection for this turn.
+            await new Promise<void>((resolve) => { setTimeout(resolve, 0); });
+            expect(dispose).toHaveBeenCalledTimes(1);
+            expect(unhandled).toEqual([]);
+        } finally {
+            process.off('unhandledRejection', onUnhandledRejection);
+        }
+
+        await reconciler.dispose();
+        expect(dispose).toHaveBeenCalledTimes(2);
+    });
+
+    it('bounds a non-cooperative observer disposal at the existing observation deadline', async () => {
+        vi.useFakeTimers();
+        try {
+            const dispose = vi.fn(() => new Promise<void>(() => {}));
+            const observation = createTargetAgentRuntimeRegistry({
+                agents: [{ id: 'assistant', pluginId: 'happier.agent.fixture' }],
+                activationTargets: [target()],
+                targetRegistrations: [observationRegistration({
+                    observation: createObservationContribution({
+                        acquire: async () => ({ dispose }),
+                    }),
+                })],
+                isGenerationActive: () => true,
+                retirementSignal: TEST_RETIREMENT_SIGNAL,
+                onDuplicate: vi.fn(),
+            }).get('assistant')?.externalSessionObservation;
+            if (!observation) throw new Error('Expected observation lease');
+
+            const observer = await observation.observeResource({
+                resourceKey: 'resource-1',
+                signal: new AbortController().signal,
+                emit() {},
+                requestReconcile() {},
+                requestTranscriptRefresh() {},
+            });
+            const disposal = observer.dispose();
+
+            await vi.advanceTimersByTimeAsync(14_999);
+            expect(await readPromiseStateAfterMicrotasks(disposal)).toBe('pending');
+            await vi.advanceTimersByTimeAsync(1);
+
+            expect(await readPromiseStateAfterMicrotasks(disposal)).toBe('rejected');
+            await expect(disposal).rejects.toThrow(
+                'Agent External Session observation cleanup timed out after 15000ms',
+            );
+            expect(dispose).toHaveBeenCalledOnce();
+            expect(vi.getTimerCount()).toBe(0);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('admits a replacement generation after retirement while old physical cleanup is bounded', async () => {
+        vi.useFakeTimers();
+        try {
+            const firstRetirement = new AbortController();
+            const secondRetirement = new AbortController();
+            let firstCurrent = true;
+            const firstDispose = vi.fn(() => new Promise<void>(() => {}));
+            const secondDispose = vi.fn(async () => undefined);
+            const first = createTargetAgentRuntimeRegistry({
+                agents: [{ id: 'assistant', pluginId: 'happier.agent.fixture' }],
+                activationTargets: [target()],
+                targetRegistrations: [observationRegistration({
+                    generation: 'generation-7',
+                    observation: createObservationContribution({
+                        acquire: async () => ({ dispose: firstDispose }),
+                    }),
+                })],
+                isGenerationActive: () => firstCurrent,
+                retirementSignal: firstRetirement.signal,
+                onDuplicate: vi.fn(),
+            }).get('assistant')?.externalSessionObservation;
+            const second = createTargetAgentRuntimeRegistry({
+                agents: [{ id: 'assistant', pluginId: 'happier.agent.fixture' }],
+                activationTargets: [target()],
+                targetRegistrations: [observationRegistration({
+                    generation: 'generation-8',
+                    observation: createObservationContribution({
+                        acquire: async () => ({ dispose: secondDispose }),
+                    }),
+                })],
+                isGenerationActive: () => true,
+                retirementSignal: secondRetirement.signal,
+                onDuplicate: vi.fn(),
+            }).get('assistant')?.externalSessionObservation;
+            if (!first || !second) throw new Error('Expected observation leases');
+
+            const reconciler = createExternalSessionObservationReconciler({
+                acquireObserver: async (input) => await (
+                    input.resource.pluginGeneration === 'generation-7'
+                        ? first
+                        : second
+                ).observeResource({
+                    resourceKey: input.resource.resourceKey,
+                    signal: input.signal,
+                    emit: input.emit,
+                    requestReconcile: input.requestReconcile,
+                    requestTranscriptRefresh: input.requestTranscriptRefresh,
+                }),
+            });
+            const link = {
+                sessionId: 'session-1',
+                linkKey: 'link-1',
+                linkedSource: {
+                    source: { kind: 'fixture' },
+                    remoteSessionId: 'native-session',
+                    linkData: {},
+                },
+                changeObservation: 'observe_resource' as const,
+            };
+            const demand = {
+                passiveEvent: true,
+                persistedPolicy: false,
+                fallbackDemand: false,
+            };
+
+            await expect(reconciler.reconcileLink({
+                resource: {
+                    pluginId: 'happier.agent.fixture',
+                    agentLocalId: 'assistant',
+                    pluginGeneration: 'generation-7',
+                    resourceKey: 'resource-1',
+                    retirementSignal: firstRetirement.signal,
+                },
+                link: { ...link, linkGeneration: 'link-generation-1' },
+                demand,
+                onFacts() {},
+            })).resolves.toEqual({ state: 'observing' });
+
+            firstCurrent = false;
+            firstRetirement.abort();
+            expect(firstDispose).toHaveBeenCalledOnce();
+
+            await expect(reconciler.reconcileLink({
+                resource: {
+                    pluginId: 'happier.agent.fixture',
+                    agentLocalId: 'assistant',
+                    pluginGeneration: 'generation-8',
+                    resourceKey: 'resource-1',
+                    retirementSignal: secondRetirement.signal,
+                },
+                link: { ...link, linkGeneration: 'link-generation-2' },
+                demand,
+                onFacts() {},
+            })).resolves.toEqual({ state: 'observing' });
+
+            await vi.advanceTimersByTimeAsync(15_000);
+            await reconciler.dispose();
+            expect(firstDispose).toHaveBeenCalledOnce();
+            expect(secondDispose).toHaveBeenCalledOnce();
+            expect(vi.getTimerCount()).toBe(0);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
     it('admits only strict bounded observation descriptors, batches, and reconciliation DTOs', async () => {
         const reconcileResource = vi.fn(async () => ({
             outcomes: [],
-        }) as unknown as ExternalAgentObservationReconcileResultV1);
+        }) as unknown as AgentExternalSessionObservationReconcileResultV1);
         const observation: AgentExternalSessionObservationContribution = Object.freeze({
             describeResource: () => ({
                 resourceKey: 'resource-1',
@@ -1397,7 +2604,7 @@ describe('target Agent runtime registry', () => {
             kind: 'unavailable' as const,
             linkKey,
         });
-        let pluginResult: ExternalAgentObservationReconcileResultV1 = {
+        let pluginResult: AgentExternalSessionObservationReconcileResultV1 = {
             purpose: 'resource_descriptors',
             outcomes: [
                 unavailableOutcome('link-2'),
@@ -1555,14 +2762,14 @@ describe('target Agent runtime registry', () => {
         vi.useRealTimers();
     });
 
-    it('carries the immutable registration-ingress Provider binding snapshot into the generation lease', () => {
+    it('carries the immutable registration-ingress Provider binding snapshot into the generation lease', async () => {
         const originalPrepare = providerBinding.prepare;
         const originalMaterialize = providerBinding.materialize;
         const mutableProviderBinding = { ...providerBinding };
         const host = createContributionRegistrationHost({
             pluginId: 'happier.agent.fixture',
             generation: 'generation-7',
-            rights: [{ family: 'agents', localId: 'assistant' }],
+            rights: [{ family: 'agents', localId: 'assistant', target: { realm: 'daemon' } }],
             isGenerationCurrent: () => true,
         });
         const factory: AgentRuntimeFactory = async () => ({
@@ -1578,6 +2785,14 @@ describe('target Agent runtime registry', () => {
             providerBinding: mutableProviderBinding,
         });
         const committed = host.commit();
+        const [committedRegistration] = committed;
+        if (
+            committedRegistration?.family !== 'agents'
+            || !committedRegistration.value.providerBinding
+        ) {
+            throw new Error('Expected committed Provider binding snapshot');
+        }
+        const committedProviderBinding = committedRegistration.value.providerBinding;
 
         mutableProviderBinding.adapterVersion = 2;
         mutableProviderBinding.prepare = () => ({ v: 1, materialization: 'configFile' });
@@ -1596,13 +2811,45 @@ describe('target Agent runtime registry', () => {
             onDuplicate: vi.fn(),
         }).get('assistant');
 
-        expect(lease?.providerBinding).toMatchObject({
+        const binding = lease?.providerBinding;
+        if (!binding) throw new Error('Expected Provider binding lease');
+        expect(binding).toBe(committedProviderBinding);
+        expect(binding).toMatchObject({
             v: 1,
             adapterVersion: 1,
-            prepare: originalPrepare,
-            materialize: originalMaterialize,
+            prepare: expect.any(Function),
+            materialize: expect.any(Function),
         });
-        expect(Object.isFrozen(lease?.providerBinding)).toBe(true);
+        expect(binding.prepare).not.toBe(originalPrepare);
+        expect(binding.materialize).not.toBe(originalMaterialize);
+        expect(binding.prepare({
+            v: 1,
+            agentTargetKey: 'assistant',
+            connectionId: 'connection-1',
+        })).toEqual({ v: 1, materialization: 'spawnEnv' });
+        await expect(binding.materialize({
+            v: 1,
+            binding: {
+                v: 1,
+                agentTargetKey: 'assistant',
+                selection: {
+                    connectionId: 'connection-1',
+                    model: { id: 'model-1', name: 'Model 1' },
+                },
+                contributionKey: null,
+                endpoint: {
+                    endpointTemplateId: 'fixture',
+                    normalizedUrl: 'https://example.com/v1',
+                    protocol: 'openai-responses',
+                    publicHeaders: {},
+                },
+                runtimeCredentialTransport: null,
+                compatibilityFingerprint: 'fixture',
+            },
+            prepared: { v: 1, materialization: 'spawnEnv' },
+            credential: { kind: 'none' },
+        })).resolves.toEqual({ v: 1, kind: 'spawnEnv', env: [] });
+        expect(Object.isFrozen(binding)).toBe(true);
     });
 
     it('carries the selected normalized startup-instructions capability into the runtime lease', () => {

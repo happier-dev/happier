@@ -9,11 +9,11 @@
       "files": [
         {
           "relativePath": "react-native/voice-runtime-web/index.js",
-          "digest": "sha256:ef52415c7ea192779f56194debc9a6ef7dc77eb7360fcf1ce96ea5273392ba1e",
-          "byteSize": 9339
+          "digest": "sha256:92946f94ea3e111e3afefdbf15425f753208399b144f5fd8e7221ab7b6e11cb2",
+          "byteSize": 10802
         }
       ],
-      "digest": "sha256:dcfa3d5681fe7a2c49a28c4a5de46be19d6cdb37fb9ea3dd45be3932bb8db251",
+      "digest": "sha256:60fbda9f98d2e9d0d40a9156ecf57313fda0fb0fcf31226d165a9a1f21ee9cca",
       "builtWith": {
         "bundler": "vite",
         "version": "7.0.0"

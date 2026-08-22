@@ -4,6 +4,7 @@ import {
   type PluginActionDangerLevelV2,
   type PluginActionPolicyDecision,
   type PluginActionPolicyInput,
+  type PluginActionPresentUserAuthorizationFacts,
   type PluginPromptAssetContributionV1,
 } from '@happier-dev/protocol';
 
@@ -112,7 +113,7 @@ export function resolveTargetActionAvailability(params: Readonly<{
 export type TargetActionHostAccessDecision = Readonly<{
   id: string;
   required: boolean;
-  status: 'available' | 'denied' | 'unavailable';
+  status: 'available' | 'denied' | 'unavailable' | 'notApplicable';
   code?: string;
   requestFingerprint: string;
   resourceSelection?: Readonly<{
@@ -142,6 +143,27 @@ export type TargetActionAuthorizationFacts = Pick<
   | 'scopedGrants'
   | 'operatingSystemAuthorization'
 >;
+
+/** Projects daemon-owned readonly policy facts into the canonical Protocol wire DTO. */
+export function projectTargetActionPresentUserAuthorizationFacts(
+  authorization: TargetActionAuthorizationFacts,
+  serviceAvailability: PluginActionPolicyInput['serviceAvailability'],
+) {
+  return {
+    packageTrust: { ...authorization.packageTrust },
+    generation: { ...authorization.generation },
+    resourceSelections: authorization.resourceSelections.map((selection) => ({ ...selection })),
+    scopedGrants: authorization.scopedGrants.map((grant) => ({
+      ...grant,
+      requiredScope: { ...grant.requiredScope },
+      ...(grant.grantedScope === undefined ? {} : { grantedScope: { ...grant.grantedScope } }),
+    })),
+    serviceAvailability: serviceAvailability.map((requirement) => ({ ...requirement })),
+    operatingSystemAuthorization: authorization.operatingSystemAuthorization.map((requirement) => ({
+      ...requirement,
+    })),
+  } satisfies PluginActionPresentUserAuthorizationFacts;
+}
 
 export function resolveTargetActionResourceSelectionFacts(
   action: Pick<NormalizedTargetActionPolicy, 'hostAccess'>,
@@ -175,11 +197,28 @@ export function targetActionRequiresCurrentIntent(action: Pick<NormalizedTargetA
     || action.dangerLevel !== 'safe';
 }
 
+function targetActionRequiresCurrentIntentOnInvocationSurface(
+  action: Pick<NormalizedTargetActionPolicy, 'dangerLevel' | 'confirmation'>,
+  invocationSurface: string | undefined,
+): boolean {
+  // Declaration surface answers whether a target may be invoked. Actual execution
+  // surface answers whether the call carries a present-user interaction. These
+  // intentionally differ for a mounted UI action that invokes a plugin target.
+  return invocationSurface !== 'plugin'
+    && invocationSurface !== 'background'
+    && targetActionRequiresCurrentIntent(action);
+}
+
 export function evaluateTargetActionCatalogPolicy(params: Readonly<{
   action: NormalizedTargetActionPolicy;
   authorizationFacts: TargetActionAuthorizationFacts;
+  /** Absent for catalog reads, which must never claim a trusted execution origin. */
+  invocationSurface?: string;
 }>): TargetActionPolicyDecision {
-  const requiresIntent = targetActionRequiresCurrentIntent(params.action);
+  const requiresIntent = targetActionRequiresCurrentIntentOnInvocationSurface(
+    params.action,
+    params.invocationSurface,
+  );
   return evaluatePluginActionPolicy({
     ...params.authorizationFacts,
     serviceAvailability: params.action.hostAccess.map((access) => ({
@@ -198,10 +237,17 @@ export function evaluateTargetActionCatalogPolicy(params: Readonly<{
 export function evaluateTargetActionPolicy(params: Readonly<{
   action: NormalizedTargetActionPolicy;
   authorizationFacts: TargetActionAuthorizationFacts;
+  /** Declared target capability surface. */
   surface: string;
+  /** Actual host-owned invocation origin, distinct from target capability. */
+  invocationSurface?: string;
   sessionId?: string;
 }>): TargetActionPolicyDecision {
-  const requiresIntent = targetActionRequiresCurrentIntent(params.action);
+  const invocationSurface = params.invocationSurface ?? params.surface;
+  const requiresIntent = targetActionRequiresCurrentIntentOnInvocationSurface(
+    params.action,
+    invocationSurface,
+  );
   if (!params.action.surfaces.includes(params.surface)) {
     return Object.freeze({ outcome: 'unavailable', code: 'plugin_action_surface_unavailable', requiresCurrentIntent: requiresIntent });
   }
@@ -211,5 +257,6 @@ export function evaluateTargetActionPolicy(params: Readonly<{
   return evaluateTargetActionCatalogPolicy({
     action: params.action,
     authorizationFacts: params.authorizationFacts,
+    invocationSurface,
   });
 }

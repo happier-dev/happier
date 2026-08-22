@@ -2,15 +2,17 @@ import { randomBytes } from 'node:crypto';
 import { join, resolve } from 'node:path';
 import { rm } from 'node:fs/promises';
 
-import type { PluginExecService, PluginPath } from '@happier-dev/plugin-sdk/runtime';
-import { getAgentCliRuntimeSpec } from '@happier-dev/agents';
-import type { FetchRuntimeRequestV1 } from '@/plugins/runtime/exec/privateContract';
+import type { ExecService } from '@happier-dev/plugin-sdk/exec';
+import type { HttpService } from '@happier-dev/plugin-sdk/http';
+import type { PluginPath } from '@happier-dev/plugin-sdk';
+import { getAgentCliRuntimeSpec, isBundledAgentId } from '@happier-dev/agents';
 import {
     resolveConnectedAccountRequestAuthCapabilityPath,
-} from '@happier-dev/plugin-sdk/experimental/cloud/request-auth';
+} from '@happier-dev/agents/request-auth';
 import {
     ConnectedAccountRequestAuthUsesV1Schema,
     ConnectedServiceIdSchema,
+    type InstallableDependencyDescriptor,
     readConnectedServiceLimitCategoryV1,
     resolveConnectedServicesProviderStateSharingPolicyV1,
     type ConnectedServiceCredentialRecordV1,
@@ -36,21 +38,22 @@ import type {
     CatalogAgentId,
     ConnectedServiceSwitchContinuityParams,
     ConnectedServiceSwitchContinuityResult,
+    VendorResumeSupportLevel,
 } from '@/agent/catalog/types';
 import type { TerminalPromptSubmitVerificationPolicy } from '@/integrations/terminalHost/promptSubmitVerification';
 import {
     isCloudConnectAuthenticateResultV1,
-    type CloudAuthCredentialWriteInputV1,
-    type CloudAuthCredentialWriteResultV1,
-    type CloudAuthDiagnosticV1,
-    type CloudAuthFailureCodeV1,
-    type CloudAuthLoopbackInputV1,
-    type CloudAuthLoopbackResultV1,
-    type CloudAuthOpenBrowserResultV1,
-    type CloudAuthPromptTextInputV1,
-    type CloudAuthPromptTextResultV1,
+    type AuthCredentialWriteInput,
+    type AuthCredentialWriteResult,
+    type AuthDiagnostic,
+    type AuthFailureCode,
+    type AuthLoopbackInput,
+    type AuthLoopbackResult,
+    type AuthOpenBrowserResult,
+    type AuthPromptTextInput,
+    type AuthPromptTextResult,
     type CloudConnectAuthenticateOptions,
-    type CloudConnectAuthenticateResultV1,
+    type AuthenticateResult,
     type CloudConnectTarget,
 } from '@/cloud/connectTypes';
 import { createCloudAuthCallbackService } from '@/cloud/auth/services/callback';
@@ -62,19 +65,18 @@ import { generatePkceCodes } from '@/cloud/pkce';
 import { parseOauthRedirectPaste } from '@/cloud/parseOauthRedirectPaste';
 import { createGlobalFetchRuntime } from '@/plugins/runtime/fetch/globalFetchRuntime';
 import {
-    resolveFirstPartyLegacyAgentConnectedAccountServiceId,
-} from './connectedAccountPurposeCompatibility';
-import {
     resolveConnectedServiceGroupHomeDir,
     resolveConnectedServiceHomeDir,
 } from '@/daemon/connectedServices/homes/resolveConnectedServiceHomeDir';
-import { readConnectedServiceMaterializedEnvKeysFromEnv } from '@/daemon/connectedServices/connectedServiceChildEnvironment';
 import {
     createRetainedConnectedServicesMaterialization,
     type ConnectedServiceMaterializationCredentialRefreshFailureCategory,
     type ConnectedServicesMaterializationDiagnostic,
     type ConnectedServicesMaterializer,
 } from '@/daemon/connectedServices/materialization/materializer';
+import {
+    ensurePrivateConnectedServiceMaterializedRoot,
+} from '@/daemon/connectedServices/materialize/privateMaterializedRoot';
 import { parseProviderResetAt } from '@/daemon/connectedServices/quotas/normalization';
 import { createRestartResumeConnectedServiceRuntimeAuthAdapter } from '@/daemon/connectedServices/runtimeAuth/createRestartResumeConnectedServiceRuntimeAuthAdapter';
 import type {
@@ -91,14 +93,10 @@ import {
     readConnectedServiceStateSharingManifest,
     writeConnectedServiceStateSharingManifest,
 } from '@/daemon/connectedServices/stateSharing/connectedServiceStateSharingManifest';
-import type { ConnectedServiceRuntimeAuthSelectionMaterializer } from '@/daemon/connectedServices/sessionAuthSwitch/runtimeAuthSelectionMaterializerTypes';
-import type { SessionConnectedServiceRuntimeAuthSelectionMaterializerInput } from '@/daemon/connectedServices/sessionAuthSwitch/switchSessionConnectedServiceAuth';
-import { createSessionConnectedServiceAuthTransport } from '@/session/runtime/control/transport';
 import { configuration } from '@/configuration';
 import { createStablePluginExecService } from '@/plugins/runtime/invocation/services/exec';
 import {
     readSessionHandoffContribution,
-    resolveSessionHandoffSurface,
 } from './sessionHandoffContribution';
 import { projectPluginSystemToolContributions } from '@/plugins/runtime/exec/system/tools/definitions';
 import {
@@ -106,18 +104,8 @@ import {
     type AgentCliSystemToolBinding,
 } from '@/plugins/runtime/exec/system/tools/agentCliBinding';
 import { createPluginExecSystemToolResolver } from '@/plugins/runtime/exec/system/tools/resolveGrant';
-import {
-    readManagedServerStateAtPathBestEffort,
-    readManagedServerStateBestEffort,
-    releaseManagedServerForSwitch,
-    releaseManagedServerForSwitchFromState,
-    resolveManagedServerStatePath,
-    stopManagedServerBestEffort,
-} from '@/plugins/runtime/context/managedServerPersistence';
 import { promptInput, promptSecretInput } from '@/terminal/prompts/promptInput';
 import { openBrowser } from '@/ui/openBrowser';
-import { readPositiveIntEnv } from '@/utils/readPositiveIntEnv';
-import { delay } from '@/utils/time';
 
 import type {
     ResolvedCatalogEntry,
@@ -130,7 +118,6 @@ import type {
     DaemonSpawnHooksContribution,
     ConnectedServiceStateSharingDescriptorResult,
     ConnectedServicesContribution,
-    ManagedServerContribution,
     PreflightSessionControlsContribution,
     ProviderCliSessionCommandContribution,
     ProviderAttachContribution,
@@ -156,6 +143,31 @@ type CliSessionCommandHandlerDeps = Readonly<{
 }>;
 type CatalogVendorResumeSupport = Awaited<ReturnType<NonNullable<ResolvedCatalogEntry['getVendorResumeSupport']>>>;
 type CatalogChecklistContributions = NonNullable<ResolvedCatalogEntry['checklists']>;
+
+const VENDOR_RESUME_SUPPORT_LEVELS: ReadonlySet<string> = new Set<VendorResumeSupportLevel>([
+    'supported',
+    'unsupported',
+    'experimental',
+]);
+
+function readVendorResumeSupportLevel(value: unknown): VendorResumeSupportLevel | null {
+    return typeof value === 'string' && VENDOR_RESUME_SUPPORT_LEVELS.has(value)
+        ? value as VendorResumeSupportLevel
+        : null;
+}
+
+/**
+ * Projects the one bounded daemon-spawn hook contract onto a catalog entry.
+ * Both declarative bundled contributions and activation-registered Agent
+ * runtimes use this exact catalog seam.
+ */
+export function projectAgentDaemonSpawnHooksCatalogEntry(
+    daemonSpawnHooks: DaemonSpawnHooks,
+): Pick<ResolvedCatalogEntry, 'getDaemonSpawnHooks'> {
+    return Object.freeze({
+        getDaemonSpawnHooks: async () => daemonSpawnHooks,
+    });
+}
 
 type MaterializedAuthEnvironmentResult = Awaited<ReturnType<ConnectedServicesContribution['materializeAuthEnvironment']>>;
 type CloudConnectOauthAuthorizationCode = NonNullable<CloudConnectContribution['oauthAuthorizationCode']>;
@@ -187,12 +199,6 @@ function readAgentCliSystemToolBinding(
         throw new Error(`Agent CLI system-tool binding '${toolId}' must name a declared system tool`);
     }
     return Object.freeze({ toolId });
-}
-
-function sameResolvedPath(left: string | null | undefined, right: string | null | undefined): boolean {
-    const normalizedLeft = readString(left);
-    const normalizedRight = readString(right);
-    return Boolean(normalizedLeft && normalizedRight && resolve(normalizedLeft) === resolve(normalizedRight));
 }
 
 function readFunction<T>(value: unknown): T | null {
@@ -332,7 +338,25 @@ function serializeRuntimeAuthDestinationTransitions(
     };
     return {
         ...adapter,
-        hotApply: async (input) => await run(input, async () => await adapter.hotApply(input)),
+        hotApply: async (input) => await run(input, async () => {
+            const currentness = await input.validateCurrentBeforeMutation?.();
+            if (currentness?.current === false) {
+                return {
+                    applied: false,
+                    ...(currentness.authoritativeTarget
+                        ? {
+                            status: 'superseded_after_apply',
+                            activeProfileId: currentness.authoritativeTarget.profileId,
+                            generation: currentness.authoritativeTarget.generation,
+                            credentialRevision: currentness.authoritativeTarget.credentialRevision,
+                        }
+                        : {}),
+                    reason: currentness.reason,
+                    recovery: 'none',
+                };
+            }
+            return await adapter.hotApply(input);
+        }),
         ...(adapter.verifyActiveAccount
             ? {
                 verifyActiveAccount: async (input) => await run(
@@ -362,45 +386,6 @@ function readQuotaFetcherDescriptor(value: unknown): ConnectedServicesContributi
 
 function readFailureCacheStrategy(value: unknown): 'cooldown' | 'retry' | undefined {
     return value === 'cooldown' || value === 'retry' ? value : undefined;
-}
-
-function readManagedServerContribution(value: unknown): ManagedServerContribution | null {
-    if (!isRecord(value)) return null;
-    const timeouts = isRecord(value.timeouts) ? value.timeouts : {};
-    const namespace = readString(value.namespace);
-    const statePathEnvKey = readString(value.statePathEnvKey);
-    const resolveStateFingerprintInput = readFunction<ManagedServerContribution['resolveStateFingerprintInput']>(
-        value.resolveStateFingerprintInput,
-    );
-    const isExpectedProcessCommand = readFunction<ManagedServerContribution['isExpectedProcessCommand']>(
-        value.isExpectedProcessCommand,
-    );
-    const buildHealthUrl = readFunction<ManagedServerContribution['buildHealthUrl']>(value.buildHealthUrl);
-    const logLabel = readString(value.logLabel);
-    if (!namespace || !statePathEnvKey || !resolveStateFingerprintInput || !isExpectedProcessCommand || !buildHealthUrl || !logLabel) {
-        return null;
-    }
-
-    return {
-        namespace,
-        statePathEnvKey,
-        resolveStateFingerprintInput,
-        isExpectedProcessCommand,
-        buildHealthUrl,
-        logLabel,
-        timeouts: {
-            authSwitchDrainMsEnvKey: readString(timeouts.authSwitchDrainMsEnvKey) ?? '',
-            authSwitchDrainMsDefault: readPositiveNumber(timeouts.authSwitchDrainMsDefault) ?? 9_000,
-            healthProbeMsEnvKey: readString(timeouts.healthProbeMsEnvKey) ?? '',
-            healthProbeMsDefault: readPositiveNumber(timeouts.healthProbeMsDefault) ?? 750,
-            shutdownGraceMsEnvKey: readString(timeouts.shutdownGraceMsEnvKey) ?? '',
-            shutdownGraceMsDefault: readPositiveNumber(timeouts.shutdownGraceMsDefault) ?? 5_000,
-            forceKillWaitMsEnvKey: readString(timeouts.forceKillWaitMsEnvKey) ?? '',
-            forceKillWaitMsDefault: readPositiveNumber(timeouts.forceKillWaitMsDefault) ?? 500,
-            pollIntervalMsEnvKey: readString(timeouts.pollIntervalMsEnvKey) ?? '',
-            pollIntervalMsDefault: readPositiveNumber(timeouts.pollIntervalMsDefault) ?? 50,
-        },
-    };
 }
 
 function readProviderAttachContribution(value: unknown): ProviderAttachContribution | null {
@@ -608,6 +593,7 @@ function readConnectedServicesContribution(value: unknown): ConnectedServicesCon
     const daemonAuthBridgeRefresh = readFunction<
         NonNullable<ConnectedServicesContribution['daemonAuthBridge']>['refresh']
     >(daemonAuthBridge?.refresh);
+    const daemonAuthBridgeServiceIds = readConnectedServiceIdArray(daemonAuthBridge?.serviceIds);
     const restartRematerializeRequiredReason = readString(value.restartRematerializeRequiredReason);
     const connectedSwitchSharedStateRequiredReason = readString(value.connectedSwitchSharedStateRequiredReason);
     const nativeSwitchSharedStateRequiredReason = readString(value.nativeSwitchSharedStateRequiredReason);
@@ -663,7 +649,6 @@ function readConnectedServicesContribution(value: unknown): ConnectedServicesCon
             : {}),
         ...(sanitizeRetainedMaterializedHome ? { sanitizeRetainedMaterializedHome } : {}),
         stateSharingDescriptor,
-        ...(value.materializeRuntimeAuthSelection === false ? { materializeRuntimeAuthSelection: false } : {}),
         ...(shouldRestartForServiceSwitch ? { shouldRestartForServiceSwitch } : {}),
         ...(unsupportedSwitchReason ? { unsupportedSwitchReason } : {}),
         ...(restartRematerializeRequiredReason ? { restartRematerializeRequiredReason } : {}),
@@ -678,9 +663,10 @@ function readConnectedServicesContribution(value: unknown): ConnectedServicesCon
         ...(resolveResumeReachabilityUnsupported ? { resolveResumeReachabilityUnsupported } : {}),
         ...(classifyUsageLimitError ? { classifyUsageLimitError } : {}),
         ...(runtimeAuthAdapter !== undefined ? { runtimeAuthAdapter } : {}),
-        ...(daemonAuthBridgeRefresh
+        ...(daemonAuthBridgeRefresh && daemonAuthBridgeServiceIds.length > 0
             ? {
                 daemonAuthBridge: {
+                    serviceIds: daemonAuthBridgeServiceIds,
                     refresh: daemonAuthBridgeRefresh,
                 },
             }
@@ -727,6 +713,9 @@ function readPreflightSessionControlsContribution(value: unknown): PreflightSess
     const cliModelsCommandArgs = readStringArray(value.cliModelsCommandArgs);
     const verboseModelsCommandArgs = readStringArray(value.verboseModelsCommandArgs);
     return {
+        ...(value.connectedServiceAuth === 'materialized-env'
+            ? { connectedServiceAuth: 'materialized-env' as const }
+            : {}),
         failureCacheStrategy: readFailureCacheStrategy(value.failureCacheStrategy),
         ...(value.needsAccountSettings === true ? { needsAccountSettings: true } : {}),
         ...(resolveProbeVariant ? { resolveProbeVariant } : {}),
@@ -819,25 +808,21 @@ function readTerminalContribution(value: unknown): TerminalContribution | null {
 
 function readTerminalPromptSubmitVerificationPolicy(value: unknown): TerminalPromptSubmitVerificationPolicy | null {
     if (!isRecord(value)) return null;
-    const shouldVerifyBeforeSubmit = readFunction<TerminalPromptSubmitVerificationPolicy['shouldVerifyBeforeSubmit']>(
-        value.shouldVerifyBeforeSubmit,
-    );
-    const verifyBeforeSubmit = readFunction<TerminalPromptSubmitVerificationPolicy['verifyBeforeSubmit']>(
-        value.verifyBeforeSubmit,
-    );
     const shouldVerifyAfterSubmit = readFunction<TerminalPromptSubmitVerificationPolicy['shouldVerifyAfterSubmit']>(
         value.shouldVerifyAfterSubmit,
+    );
+    const verifyBeforeSubmitStaging = readFunction<NonNullable<TerminalPromptSubmitVerificationPolicy['verifyBeforeSubmitStaging']>>(
+        value.verifyBeforeSubmitStaging,
     );
     const verifyAfterSubmit = readFunction<TerminalPromptSubmitVerificationPolicy['verifyAfterSubmit']>(
         value.verifyAfterSubmit,
     );
-    if (!shouldVerifyBeforeSubmit || !verifyBeforeSubmit || !shouldVerifyAfterSubmit || !verifyAfterSubmit) {
+    if (!shouldVerifyAfterSubmit || !verifyAfterSubmit) {
         return null;
     }
     return {
-        shouldVerifyBeforeSubmit,
-        verifyBeforeSubmit,
         shouldVerifyAfterSubmit,
+        ...(verifyBeforeSubmitStaging ? { verifyBeforeSubmitStaging } : {}),
         verifyAfterSubmit,
     };
 }
@@ -850,7 +835,7 @@ export function readCliSessionCommandContribution(
     const backendIdForSessionRuntime = readString(value.backendIdForSessionRuntime) ?? defaultAgentId;
     if (!backendIdForSessionRuntime) return null;
     const agentIdForDeprecatedAliases = readString(value.agentIdForDeprecatedAliases);
-    const agentIdForAccountSettings = readString(value.agentIdForAccountSettings);
+    const agentIdForAccountSettings = readString(value.agentIdForAccountSettings) ?? defaultAgentId;
     const directoryFlags = readStringArray(value.directoryFlags);
     const yoloProviderArgs = readStringArray(value.yoloProviderArgs);
     const versionFlags = readStringArray(value.versionFlags);
@@ -867,7 +852,7 @@ export function readCliSessionCommandContribution(
     return {
         backendIdForSessionRuntime,
         ...(agentIdForDeprecatedAliases ? { agentIdForDeprecatedAliases } : {}),
-        ...(agentIdForAccountSettings ? { agentIdForAccountSettings } : {}),
+        agentIdForAccountSettings,
         ...(implicitResumeDelegation && implicitResumeDelegation.resumeFlags.length > 0
             ? { implicitResumeDelegation }
             : {}),
@@ -963,105 +948,6 @@ export function createCliSessionCommandHandler(
     };
 }
 
-function managedServerStateParams(
-    managedServer: ManagedServerContribution,
-    env: NodeJS.ProcessEnv = process.env,
-) {
-    return {
-        env,
-        overrideEnvKey: managedServer.statePathEnvKey,
-        namespace: managedServer.namespace,
-        fingerprintInput: managedServer.resolveStateFingerprintInput(env),
-    } as const;
-}
-
-function readBoundedPositiveIntEnv(
-    key: string,
-    fallback: number,
-    bounds: Readonly<{ min: number; max: number }>,
-): number {
-    if (!key) return fallback;
-    const value = readPositiveIntEnv(key, fallback);
-    return Math.min(bounds.max, Math.max(bounds.min, value));
-}
-
-function resolveManagedServerStatePathForEnv(
-    managedServer: ManagedServerContribution,
-    env: NodeJS.ProcessEnv = process.env,
-): string {
-    return resolveManagedServerStatePath(managedServerStateParams(managedServer, env));
-}
-
-async function readManagedProviderServerStateBestEffort(
-    managedServer: ManagedServerContribution,
-): Promise<Awaited<ReturnType<typeof readManagedServerStateBestEffort>>> {
-    return await readManagedServerStateBestEffort(managedServerStateParams(managedServer, process.env));
-}
-
-async function releaseManagedProviderServerForAuthSwitch(
-    managedServer: ManagedServerContribution,
-    params: Readonly<{
-        previousStatePath?: string | null;
-        expectedOwnerToken?: string | null;
-        expectedActiveServerDir?: string | null;
-        expectedDaemonInstanceId?: string | null;
-        drainMs?: number;
-        trackedClaimCount: number;
-        allowCurrentSessionClaim?: boolean;
-        hasInFlightTurnForLaunchFingerprint?: () => Promise<boolean> | boolean;
-        processEnv?: NodeJS.ProcessEnv;
-    }>,
-) {
-    const env = params.processEnv ?? process.env;
-    return await releaseManagedServerForSwitch({
-        ...managedServerStateParams(managedServer, env),
-        isExpectedProcessCommand: managedServer.isExpectedProcessCommand,
-        previousStatePath: params.previousStatePath,
-        expectedOwnerToken: params.expectedOwnerToken,
-        expectedActiveServerDir: params.expectedActiveServerDir,
-        expectedDaemonInstanceId: params.expectedDaemonInstanceId,
-        drainMs: params.drainMs
-            ?? readBoundedPositiveIntEnv(
-                managedServer.timeouts.authSwitchDrainMsEnvKey,
-                managedServer.timeouts.authSwitchDrainMsDefault,
-                { min: 250, max: 30_000 },
-            ),
-        trackedClaimCount: params.trackedClaimCount,
-        allowCurrentSessionClaim: params.allowCurrentSessionClaim,
-        ...(params.hasInFlightTurnForLaunchFingerprint
-            ? { hasInFlightTurnForLaunchFingerprint: params.hasInFlightTurnForLaunchFingerprint }
-            : {}),
-    });
-}
-
-async function stopManagedProviderServerBestEffort(managedServer: ManagedServerContribution): Promise<void> {
-    await stopManagedServerBestEffort({
-        ...managedServerStateParams(managedServer, process.env),
-        buildHealthUrl: managedServer.buildHealthUrl,
-        healthTimeoutMs: readBoundedPositiveIntEnv(
-            managedServer.timeouts.healthProbeMsEnvKey,
-            managedServer.timeouts.healthProbeMsDefault,
-            { min: 50, max: 10_000 },
-        ),
-        graceTimeoutMs: readBoundedPositiveIntEnv(
-            managedServer.timeouts.shutdownGraceMsEnvKey,
-            managedServer.timeouts.shutdownGraceMsDefault,
-            { min: 100, max: 30_000 },
-        ),
-        forceWaitTimeoutMs: readBoundedPositiveIntEnv(
-            managedServer.timeouts.forceKillWaitMsEnvKey,
-            managedServer.timeouts.forceKillWaitMsDefault,
-            { min: 50, max: 10_000 },
-        ),
-        pollIntervalMs: readBoundedPositiveIntEnv(
-            managedServer.timeouts.pollIntervalMsEnvKey,
-            managedServer.timeouts.pollIntervalMsDefault,
-            { min: 10, max: 1_000 },
-        ),
-        logLabel: managedServer.logLabel,
-    });
-}
-
 function materializedRootDirForStableRoot(
     connectedServices: ConnectedServicesContribution,
     stableRootDir: string,
@@ -1069,39 +955,6 @@ function materializedRootDirForStableRoot(
     return connectedServices.materializedRootSubdir
         ? join(stableRootDir, connectedServices.materializedRootSubdir)
         : stableRootDir;
-}
-
-function resolveSharedGroupAuthSurfacePreflightSelection(params: Readonly<{
-    agentId: CatalogAgentId;
-    connectedServices: ConnectedServicesContribution;
-    serviceId: ConnectedServiceId;
-    activeServerDir: string;
-    baseSelection: Parameters<ConnectedServiceRuntimeAuthSelectionMaterializer>[0]['baseSelection'];
-    trackedEnv?: NodeJS.ProcessEnv | null;
-    exec: PluginExecService;
-}>): unknown | null {
-    const requirement = params.connectedServices.recoveryCapabilities?.predictiveSoftSwitch.liveSessionRequirement;
-    if (requirement?.kind !== 'shared_group_auth_surface') return null;
-    if (!requirement.serviceIds.includes(params.serviceId)) return null;
-    const groupId = readString(params.baseSelection.groupId);
-    if (!groupId) return null;
-    const groupHomeDir = resolveConnectedServiceGroupHomeDir({
-        activeServerDir: params.activeServerDir,
-        serviceId: params.serviceId,
-        groupId,
-        agentId: params.agentId,
-    });
-    const authSurfaceRoot = requirement.authEnvSubpath && requirement.authEnvSubpath.length > 0
-        ? resolve(groupHomeDir, ...requirement.authEnvSubpath)
-        : groupHomeDir;
-    if (!sameResolvedPath(params.trackedEnv?.[requirement.authEnvKey], authSurfaceRoot)) return null;
-    return {
-        ...params.baseSelection,
-        targetMaterializedEnv: { [requirement.authEnvKey]: authSurfaceRoot },
-        targetMaterializedRoot: authSurfaceRoot,
-        exec: params.exec,
-        materializationDiagnostics: [],
-    };
 }
 
 function normalizeMaterializationDiagnostics(value: readonly unknown[] | undefined): readonly {
@@ -1176,7 +1029,7 @@ async function applyConnectedServiceStateSharingForContribution(params: Readonly
     materializedRootDir: string;
     env: NodeJS.ProcessEnv;
     stateSourceRoot?: string | null;
-    accountSettings?: Readonly<Record<string, unknown>> | null;
+    stateSharingPolicy: ReturnType<typeof resolveConnectedServicesProviderStateSharingPolicyV1>;
     sessionDirectory?: string | null;
 }>): Promise<Readonly<{
     diagnostics: readonly ConnectedServicesMaterializationDiagnostic[];
@@ -1184,20 +1037,17 @@ async function applyConnectedServiceStateSharingForContribution(params: Readonly
 }>> {
     const resolveStateSharingSourceRoot = params.connectedServices.resolveStateSharingSourceRoot;
     const providerLabel = String(params.agentId);
-    const settings = resolveConnectedServicesProviderStateSharingPolicyV1(
-        params.accountSettings?.connectedServicesProviderStateSharingSettingsV1,
-        params.agentId,
-    );
     if (!resolveStateSharingSourceRoot) {
-        return { diagnostics: [], effectiveStateMode: settings.stateMode };
+        return { diagnostics: [], effectiveStateMode: params.stateSharingPolicy.stateMode };
     }
     if (
         params.connectedServices.stateSharingServiceIds
         && !params.connectedServices.stateSharingServiceIds.includes(params.serviceId)
     ) {
-        return { diagnostics: [], effectiveStateMode: settings.stateMode };
+        return { diagnostics: [], effectiveStateMode: params.stateSharingPolicy.stateMode };
     }
     return await withConnectedServiceStateSharingDestinationLock(params.materializedRootDir, async () => {
+        const settings = params.stateSharingPolicy;
         const sourceRoot = resolveStateSharingSourceRoot({ env: params.env });
         const stateSourceRoot = readString(params.stateSourceRoot) ?? sourceRoot;
         const stateEntryNames = await params.connectedServices.resolveStateSharingStateEntryNames?.({
@@ -1266,8 +1116,7 @@ async function applyConnectedServiceStateSharingForContribution(params: Readonly
 function createConnectedServicesMaterializer(
     agentId: CatalogAgentId,
     connectedServices: ConnectedServicesContribution,
-    managedServer: ManagedServerContribution | null,
-    exec: PluginExecService,
+    exec: ExecService,
 ): ConnectedServicesMaterializer {
     const mergeAuthMaterializationInput = (
         target: Record<string, unknown>,
@@ -1282,31 +1131,25 @@ function createConnectedServicesMaterializer(
     return async ({
         materializationKey,
         activeServerDir,
+        rootDir,
         recordsByServiceId,
         selectionsByServiceId,
-        requestAuthPurposeBindings,
+        connectedAccountMaterializationAuthority,
         accountSettings,
         processEnv,
         sessionDirectory,
     }) => {
         const materializationInput: Record<string, unknown> = {};
-        const qualifiedPurposeLegacyServiceIds = new Set(
-            (requestAuthPurposeBindings ?? []).flatMap((binding) => {
-                const service = binding.target.kind === 'account'
-                    ? binding.target.account.service
-                    : binding.target.service;
-                const serviceId =
-                    resolveFirstPartyLegacyAgentConnectedAccountServiceId(service);
-                return serviceId ? [serviceId] : [];
-            }),
-        );
+        const requestAuthPurposeBindings = connectedAccountMaterializationAuthority.kind === 'qualified'
+            ? connectedAccountMaterializationAuthority.requestAuthPurposeBindings
+            : [];
         let primaryRecord: CredentialRecord | null = null;
         let primaryServiceId: ConnectedServiceId | null = null;
 
         for (const serviceId of connectedServices.serviceIds) {
             const record = selectionsByServiceId?.get(serviceId)?.record ?? recordsByServiceId.get(serviceId) ?? null;
             if (!record) continue;
-            if (!qualifiedPurposeLegacyServiceIds.has(serviceId)) {
+            if (connectedAccountMaterializationAuthority.kind === 'legacy_unfenced_one_shot') {
                 mergeAuthMaterializationInput(
                     materializationInput,
                     connectedServices.createAuthMaterializationInput(serviceId, record),
@@ -1317,6 +1160,10 @@ function createConnectedServicesMaterializer(
         }
 
         if (!primaryRecord || !primaryServiceId) return null;
+        const stateSharingPolicy = resolveConnectedServicesProviderStateSharingPolicyV1(
+            accountSettings?.connectedServicesProviderStateSharingSettingsV1,
+            agentId,
+        );
         const primarySelection = selectionsByServiceId?.get(primaryServiceId);
         const stableRootDir = primarySelection?.kind === 'group'
             ? resolveConnectedServiceGroupHomeDir({
@@ -1332,6 +1179,7 @@ function createConnectedServicesMaterializer(
                 agentId,
             });
         const materializedRootDir = materializedRootDirForStableRoot(connectedServices, stableRootDir);
+        await ensurePrivateConnectedServiceMaterializedRoot(materializedRootDir);
 
         const env = processEnv ?? process.env;
         // Thread group-bound selections' groupIds to the plugin materializer so runtime-auth
@@ -1342,49 +1190,41 @@ function createConnectedServicesMaterializer(
         );
         const materializationContext = {
             ...materializationInput,
-            ...(qualifiedPurposeLegacyServiceIds.size > 0
-                ? { qualifiedPurposeMaterialization: true }
-                : {}),
+            connectedAccountMaterializationAuthority:
+                connectedAccountMaterializationAuthority.kind,
             ...(Object.keys(connectedServiceGroupIdsByServiceId).length > 0
                 ? { connectedServiceGroupIdsByServiceId }
                 : {}),
             rootDir: materializedRootDir,
             processEnv: env,
-            accountSettings: accountSettings ?? null,
+            connectedServicesSessionStateSharingRequested: stateSharingPolicy.stateMode === 'shared',
             sessionDirectory: sessionDirectory ?? null,
             exec,
-            ...(requestAuthPurposeBindings?.length
+            ...(requestAuthPurposeBindings.length
                 ? {
                     requestAuth: Object.freeze({
                         purposeBindings: requestAuthPurposeBindings,
                         capabilityPath:
                             resolveConnectedAccountRequestAuthCapabilityPath(
-                                materializedRootDir,
+                                rootDir,
                             ),
                     }),
                 }
                 : {}),
         };
-        const managedServerStatePath = managedServer
-            ? resolveManagedServerStatePathForEnv(managedServer, {
-                ...env,
-                ...((await connectedServices.materializeAuthEnvironment(materializationContext)).env),
-            })
-            : null;
         const stateSharing = await applyConnectedServiceStateSharingForContribution({
             agentId,
             connectedServices,
             serviceId: primaryServiceId,
             materializedRootDir,
             env,
-            accountSettings: accountSettings ?? null,
+            stateSharingPolicy,
             sessionDirectory: sessionDirectory ?? null,
         });
         const materialized = await connectedServices.materializeAuthEnvironment({
             ...materializationContext,
             connectedServicesSessionStateSharingEffectiveMode: stateSharing.effectiveStateMode,
             materializationId: materializationKey,
-            ...(managedServerStatePath ? { managedServerStatePath } : {}),
         });
 
         return {
@@ -1392,6 +1232,9 @@ function createConnectedServicesMaterializer(
                 rootDir: materializedRootDir,
                 env: materialized.env,
             }),
+            ...(requestAuthPurposeBindings.length
+                ? { requestAuthMaterializedRoot: rootDir }
+                : {}),
             diagnostics: [
                 ...stateSharing.diagnostics,
                 ...normalizeMaterializationDiagnostics(materialized.diagnostics),
@@ -1443,65 +1286,6 @@ function createRuntimeAuthAdapter(
     };
 }
 
-function readBaseSelectionCredentialRecord(value: unknown): CredentialRecord | null {
-    return isRecord(value) ? value as CredentialRecord : null;
-}
-
-function readTrackedMaterializedStateSourceEnv(value: unknown): NodeJS.ProcessEnv | null {
-    if (!isRecord(value)) return null;
-    const env: Record<string, string> = {};
-    for (const [key, raw] of Object.entries(value)) {
-        if (typeof raw === 'string' && raw.trim().length > 0) {
-            env[key] = raw;
-        }
-    }
-    const materializedKeys = readConnectedServiceMaterializedEnvKeysFromEnv(env);
-    if (materializedKeys.length === 0) return null;
-    return materializedKeys.some((key) => readString(env[key]))
-        ? env as NodeJS.ProcessEnv
-        : null;
-}
-
-function resolvePreviousRuntimeAuthStateSourceRoot(params: Readonly<{
-    connectedServices: ConnectedServicesContribution;
-    input: SessionConnectedServiceRuntimeAuthSelectionMaterializerInput;
-}>): string | null {
-    const sourceEnv = readTrackedMaterializedStateSourceEnv(params.input.tracked.spawnOptions?.environmentVariables);
-    if (!sourceEnv) return null;
-    return readString(params.connectedServices.resolveStateSharingSourceRoot?.({ env: sourceEnv }));
-}
-
-function createRuntimeAuthSelectionMaterializationRoot(params: Readonly<{
-    agentId: CatalogAgentId;
-    serviceId: ConnectedServiceId;
-    activeServerDir: string;
-    baseSelection: Readonly<{
-        profileId: string;
-        groupId?: string;
-        activeProfileId?: string;
-        fallbackProfileId?: string;
-    }>;
-    connectedServices: ConnectedServicesContribution;
-}>): string {
-    const groupId = readString(params.baseSelection.groupId);
-    const activeProfileId = readString(params.baseSelection.activeProfileId);
-    const fallbackProfileId = readString(params.baseSelection.fallbackProfileId);
-    const stableRootDir = groupId && activeProfileId && fallbackProfileId
-        ? resolveConnectedServiceGroupHomeDir({
-            activeServerDir: params.activeServerDir,
-            serviceId: params.serviceId,
-            groupId,
-            agentId: params.agentId,
-        })
-        : resolveConnectedServiceHomeDir({
-            activeServerDir: params.activeServerDir,
-            serviceId: params.serviceId,
-            profileId: params.baseSelection.profileId,
-            agentId: params.agentId,
-        });
-    return materializedRootDirForStableRoot(params.connectedServices, stableRootDir);
-}
-
 function createConnectedServiceMaterializedHomeRootResolver(
     agentId: CatalogAgentId,
     connectedServices: ConnectedServicesContribution,
@@ -1525,173 +1309,6 @@ function createConnectedServiceMaterializedHomeRootResolver(
             });
         return materializedRootDirForStableRoot(connectedServices, stableRootDir);
     };
-}
-
-function createRetainedRuntimeAuthSelectionMaterializer(
-    agentId: CatalogAgentId,
-    connectedServices: ConnectedServicesContribution,
-    exec: PluginExecService,
-): ConnectedServiceRuntimeAuthSelectionMaterializer {
-    return async (params) => {
-        const baseSelection = {
-            ...params.baseSelection,
-            applyConnectedServiceAuthGeneration:
-                createSessionConnectedServiceAuthTransport({
-                    credentials: params.credentials,
-                    sessionId: params.input.sessionId,
-                }).applyConnectedServiceAuthGeneration,
-        };
-        const serviceId = connectedServices.readConnectedServiceId(params.input.serviceId);
-        if (!serviceId) return baseSelection;
-        const activeServerDir = readString(params.activeServerDir);
-        if (!activeServerDir) return baseSelection;
-        const record = readBaseSelectionCredentialRecord(baseSelection.record);
-        if (!record) return baseSelection;
-        const materializedRootDir = createRuntimeAuthSelectionMaterializationRoot({
-            agentId,
-            serviceId,
-            activeServerDir,
-            baseSelection,
-            connectedServices,
-        });
-        const sharedGroupAuthSurfaceSelection = resolveSharedGroupAuthSurfacePreflightSelection({
-            agentId,
-            connectedServices,
-            serviceId,
-            activeServerDir,
-            baseSelection,
-            trackedEnv: params.input.tracked.spawnOptions?.environmentVariables,
-            exec,
-        });
-        if (params.input.mode === 'preflight') {
-            return sharedGroupAuthSurfaceSelection ?? baseSelection;
-        }
-        if (sharedGroupAuthSurfaceSelection) return sharedGroupAuthSurfaceSelection;
-        const env = params.processEnv ?? process.env;
-        const materializationId = readString(
-            params.input.tracked.spawnOptions?.connectedServiceMaterializationIdentityV1?.id,
-        );
-        const stateSharing = await applyConnectedServiceStateSharingForContribution({
-            agentId,
-            connectedServices,
-            serviceId,
-            materializedRootDir,
-            env,
-            stateSourceRoot: resolvePreviousRuntimeAuthStateSourceRoot({
-                connectedServices,
-                input: params.input,
-            }),
-            accountSettings: params.accountSettings ?? null,
-            sessionDirectory: params.input.tracked.spawnOptions?.directory ?? null,
-        });
-        const materialized = await connectedServices.materializeAuthEnvironment({
-            ...connectedServices.createAuthMaterializationInput(serviceId, record),
-            rootDir: materializedRootDir,
-            ...(materializationId ? { materializationId } : {}),
-            processEnv: env,
-            connectedServicesSessionStateSharingEffectiveMode: stateSharing.effectiveStateMode,
-            accountSettings: params.accountSettings ?? null,
-            sessionDirectory: params.input.tracked.spawnOptions?.directory ?? null,
-            exec,
-        });
-        return {
-            ...baseSelection,
-            targetMaterializedEnv: materialized.env,
-            targetMaterializedRoot: materializedRootDir,
-            exec,
-            materializationDiagnostics: [
-                ...stateSharing.diagnostics,
-                ...normalizeMaterializationDiagnostics(materialized.diagnostics),
-            ],
-        };
-    };
-}
-
-function createManagedServerRuntimeAuthSelectionMaterializer(
-    agentId: CatalogAgentId,
-    connectedServices: ConnectedServicesContribution,
-    managedServer: ManagedServerContribution,
-    exec: PluginExecService,
-): ConnectedServiceRuntimeAuthSelectionMaterializer {
-    const materializeRetainedSelection = createRetainedRuntimeAuthSelectionMaterializer(agentId, connectedServices, exec);
-    return async (params) => {
-        const retainedSelection = await materializeRetainedSelection(params);
-        const serviceId = connectedServices.readConnectedServiceId(params.input.serviceId);
-        if (!serviceId || !isRecord(retainedSelection)) return retainedSelection;
-        const previousBinding = params.input.previous;
-        const previousProfileId = previousBinding?.source === 'connected' ? previousBinding.profileId : null;
-        const previousContext = await (async () => {
-            const normalizedPreviousProfileId = readString(previousProfileId);
-            if (!normalizedPreviousProfileId) return null;
-            const resolutions =
-                await resolveConnectedServiceCredentialResolutions({
-                credentials: params.credentials,
-                api: params.api,
-                bindings: [{ serviceId, profileId: normalizedPreviousProfileId }],
-            });
-            const previousResolution = resolutions.get(serviceId);
-            if (
-                previousResolution?.revisionSemantics !== 'revisioned'
-            ) return null;
-            const previousRecord = previousResolution.record;
-            const materializedPrevious = await connectedServices.materializeAuthEnvironment({
-                ...connectedServices.createAuthMaterializationInput(serviceId, previousRecord),
-                rootDir: '',
-                exec,
-            });
-            const previousStatePath = resolveManagedServerStatePathForEnv(managedServer, {
-                ...(params.processEnv ?? process.env),
-                ...materializedPrevious.env,
-            });
-            const previousState = await readManagedServerStateAtPathBestEffort(previousStatePath);
-            const previousOwnerToken = readString(previousState?.ownerToken);
-            return { previousStatePath, previousOwnerToken };
-        })().catch(() => null);
-
-        const postSwitchRecover = previousContext
-            ? async (input: Readonly<{
-                countTrackedClaimsForStatePath?: (statePath: string) => number;
-                hasUnknownTrackedClaims?: boolean;
-                hasInFlightTurnForStatePath?: (statePath: string) => boolean;
-            }>) => {
-                const trackedClaimCount = typeof input.countTrackedClaimsForStatePath === 'function'
-                    ? input.countTrackedClaimsForStatePath(previousContext.previousStatePath)
-                    : 0;
-                if (input.hasUnknownTrackedClaims === true) return;
-                const hasInFlightTurnForStatePath = input.hasInFlightTurnForStatePath;
-                await releaseManagedProviderServerForAuthSwitch(managedServer, {
-                    previousStatePath: previousContext.previousStatePath,
-                    expectedOwnerToken: previousContext.previousOwnerToken,
-                    trackedClaimCount,
-                    allowCurrentSessionClaim: true,
-                    ...(hasInFlightTurnForStatePath
-                        ? {
-                            hasInFlightTurnForLaunchFingerprint: () =>
-                                hasInFlightTurnForStatePath(previousContext.previousStatePath),
-                        }
-                        : {}),
-                });
-            }
-            : undefined;
-
-        return {
-            ...retainedSelection,
-            ...(previousContext?.previousStatePath ? { previousStatePath: previousContext.previousStatePath } : {}),
-            ...(previousContext?.previousOwnerToken ? { previousOwnerToken: previousContext.previousOwnerToken } : {}),
-            ...(postSwitchRecover ? { postSwitchRecover } : {}),
-        };
-    };
-}
-
-function createRuntimeAuthSelectionMaterializer(
-    agentId: CatalogAgentId,
-    connectedServices: ConnectedServicesContribution,
-    managedServer: ManagedServerContribution | null,
-    exec: PluginExecService,
-): ConnectedServiceRuntimeAuthSelectionMaterializer | null {
-    return managedServer
-        ? createManagedServerRuntimeAuthSelectionMaterializer(agentId, connectedServices, managedServer, exec)
-        : createRetainedRuntimeAuthSelectionMaterializer(agentId, connectedServices, exec);
 }
 
 function createSwitchContinuityResolver(
@@ -1859,15 +1476,25 @@ async function authenticateAuthorizationCodeConnectTarget(
         });
     }
 
-    const pastedPromise = promptInput('Paste redirect URL: ');
-    const pasted = timeoutMs
-        ? await Promise.race([
-            pastedPromise,
-            delay(timeoutMs).then(() => {
-                throw new Error('Authentication timed out');
-            }),
-        ])
-        : await pastedPromise;
+    let pasted: string;
+    if (timeoutMs === undefined) {
+        pasted = await promptInput('Paste redirect URL: ');
+    } else {
+        const promptAbortController = new AbortController();
+        let timedOut = false;
+        const timeout = setTimeout(() => {
+            timedOut = true;
+            promptAbortController.abort();
+        }, timeoutMs);
+        try {
+            pasted = await promptInput('Paste redirect URL: ', { signal: promptAbortController.signal });
+        } catch (error) {
+            if (timedOut) throw new Error('Authentication timed out');
+            throw error;
+        } finally {
+            clearTimeout(timeout);
+        }
+    }
 
     const parsed = parseOauthRedirectPaste({ pasted });
     if (!parsed.ok) {
@@ -1885,7 +1512,7 @@ async function authenticateAuthorizationCodeConnectTarget(
     });
 }
 
-function sanitizeCloudAuthDiagnostic(value: unknown): CloudAuthDiagnosticV1 | null {
+function sanitizeCloudAuthDiagnostic(value: unknown): AuthDiagnostic | null {
     if (!isRecord(value)) return null;
     const code = readString(value.code);
     if (!code) return null;
@@ -1898,7 +1525,7 @@ function sanitizeCloudAuthDiagnostic(value: unknown): CloudAuthDiagnosticV1 | nu
     };
 }
 
-function sanitizeCloudAuthDiagnostics(values: unknown): readonly CloudAuthDiagnosticV1[] {
+function sanitizeCloudAuthDiagnostics(values: unknown): readonly AuthDiagnostic[] {
     if (!Array.isArray(values)) return [];
     return values.flatMap((value) => {
         const diagnostic = sanitizeCloudAuthDiagnostic(value);
@@ -1906,7 +1533,7 @@ function sanitizeCloudAuthDiagnostics(values: unknown): readonly CloudAuthDiagno
     });
 }
 
-function readCloudAuthFailureCode(value: unknown): CloudAuthFailureCodeV1 {
+function readCloudAuthFailureCode(value: unknown): AuthFailureCode {
     return value === 'unsupported'
         || value === 'cancelled'
         || value === 'failed'
@@ -1918,17 +1545,17 @@ function readCloudAuthFailureCode(value: unknown): CloudAuthFailureCodeV1 {
 }
 
 function mergeCloudAuthDiagnostics(
-    first: readonly CloudAuthDiagnosticV1[],
-    second: readonly CloudAuthDiagnosticV1[],
-): readonly CloudAuthDiagnosticV1[] | undefined {
+    first: readonly AuthDiagnostic[],
+    second: readonly AuthDiagnostic[],
+): readonly AuthDiagnostic[] | undefined {
     const merged = [...first, ...second];
     return merged.length > 0 ? merged : undefined;
 }
 
 function sanitizeCloudConnectAuthenticateResult(
     value: unknown,
-    contextDiagnostics: readonly CloudAuthDiagnosticV1[],
-): CloudConnectAuthenticateResultV1 {
+    contextDiagnostics: readonly AuthDiagnostic[],
+): AuthenticateResult {
     if (!isCloudConnectAuthenticateResultV1(value)) {
         return {
             ok: false,
@@ -1969,7 +1596,7 @@ function sanitizeCloudConnectAuthenticateResult(
     };
 }
 
-function createUnsupportedCredentialWriteResult(): CloudAuthCredentialWriteResultV1 {
+function createUnsupportedCredentialWriteResult(): AuthCredentialWriteResult {
     return {
         ok: false,
         code: 'unsupported',
@@ -1982,7 +1609,7 @@ function createUnsupportedCredentialWriteResult(): CloudAuthCredentialWriteResul
     };
 }
 
-function createCancelledPromptResult(): CloudAuthPromptTextResultV1 {
+function createCancelledPromptResult(): AuthPromptTextResult {
     return {
         ok: false,
         code: 'cancelled',
@@ -1994,19 +1621,24 @@ function createCloudCustomAuthenticatorContext(
     opts: CloudConnectAuthenticateOptions,
 ): Readonly<{
     context: CloudCustomAuthenticatorContextV1;
-    diagnostics: readonly CloudAuthDiagnosticV1[];
+    diagnostics: readonly AuthDiagnostic[];
 }> {
-    const diagnostics: CloudAuthDiagnosticV1[] = [];
+    const diagnostics: AuthDiagnostic[] = [];
     const signal = opts.signal ?? new AbortController().signal;
     const fetchRuntime = createGlobalFetchRuntime();
     const credentialWriter = opts.hostServices?.credentials?.write;
-    const pushDiagnostic = (input: CloudAuthDiagnosticV1) => {
+    const pushDiagnostic = (input: AuthDiagnostic) => {
         const sanitized = sanitizeCloudAuthDiagnostic(input);
         if (sanitized) diagnostics.push(sanitized);
     };
     const cancelled = () => signal.aborted;
-    const requestPromptText = async (input: CloudAuthPromptTextInputV1): Promise<CloudAuthPromptTextResultV1> => {
-        if (cancelled()) return createCancelledPromptResult();
+    const requestPromptText = async (
+        input: AuthPromptTextInput,
+        options: Readonly<{ signal?: AbortSignal }> = {},
+    ): Promise<AuthPromptTextResult> => {
+        const promptSignal = options.signal ?? signal;
+        const promptCancelled = () => cancelled() || promptSignal.aborted;
+        if (promptCancelled()) return createCancelledPromptResult();
         const label = input.label.trim();
         if (!label) {
             return {
@@ -2015,14 +1647,21 @@ function createCloudCustomAuthenticatorContext(
                 diagnostics: [{ code: 'missing_prompt_label' }],
             };
         }
-        const value = await (input.secret ? promptSecretInput(label) : promptInput(label));
-        if (cancelled()) return createCancelledPromptResult();
-        return { ok: true, value };
+        try {
+            const value = await (input.secret
+                ? promptSecretInput(label)
+                : promptInput(label, { signal: promptSignal }));
+            if (promptCancelled()) return createCancelledPromptResult();
+            return { ok: true, value };
+        } catch (error) {
+            if (promptCancelled()) return createCancelledPromptResult();
+            throw error;
+        }
     };
     const callbackService = createCloudAuthCallbackService({
         signal,
-        promptText: async (label) => {
-            const result = await requestPromptText({ label });
+        promptText: async (label, options) => {
+            const result = await requestPromptText({ label }, options);
             if (result.ok) return result.value;
             const diagnostic = result.diagnostics?.[0]?.code ?? result.code;
             throw new Error(diagnostic);
@@ -2032,12 +1671,16 @@ function createCloudCustomAuthenticatorContext(
     const context: CloudCustomAuthenticatorContextV1 = Object.freeze({
         signal,
         now: () => Date.now(),
-        fetch: async (request: FetchRuntimeRequestV1) => await fetchRuntime({
-            ...request,
-            signal: request.signal ?? signal,
+        fetch: Object.freeze({
+            request: async (
+                request: Parameters<HttpService['request']>[0],
+                options: Parameters<HttpService['request']>[1] = {},
+            ) => await fetchRuntime.request(request, {
+                signal: options.signal ?? signal,
+            }),
         }),
         browser: Object.freeze({
-            open: async (url: string): Promise<CloudAuthOpenBrowserResultV1> => {
+            open: async (url: string): Promise<AuthOpenBrowserResult> => {
                 if (cancelled()) return { ok: false, code: 'cancelled' };
                 try {
                     const opened = await openBrowser(url);
@@ -2076,7 +1719,7 @@ function createCloudCustomAuthenticatorContext(
         oauth: Object.freeze({
             createPkceChallenge: async () => generatePkceCodes(),
             callback: callbackService,
-            listenForCallback: async (input: CloudAuthLoopbackInputV1): Promise<CloudAuthLoopbackResultV1> => {
+            listenForCallback: async (input: AuthLoopbackInput): Promise<AuthLoopbackResult> => {
                 const created = await callbackService.create({
                     mode: 'loopback',
                     ...(input.defaultPort ? { preferredPort: input.defaultPort } : {}),
@@ -2091,7 +1734,7 @@ function createCloudCustomAuthenticatorContext(
             },
         }),
         credentials: Object.freeze({
-            write: async (input: CloudAuthCredentialWriteInputV1): Promise<CloudAuthCredentialWriteResultV1> => {
+            write: async (input: AuthCredentialWriteInput): Promise<AuthCredentialWriteResult> => {
                 if (cancelled()) return { ok: false, code: 'cancelled' };
                 return credentialWriter ? await credentialWriter(input) : createUnsupportedCredentialWriteResult();
             },
@@ -2172,7 +1815,7 @@ function createProviderScopedStableExecService(params: Readonly<{
     systemTools: readonly PluginSystemToolContributionV1[];
     agentId?: CatalogAgentId;
     agentCliSystemTool?: AgentCliSystemToolBinding | null;
-}>): PluginExecService {
+}>): ExecService {
     const workspaceRoot = resolve(params.cwd);
     const definitions = projectPluginSystemToolContributions(params.systemTools);
     const unboundSystemTools = createPluginExecSystemToolResolver({
@@ -2185,7 +1828,10 @@ function createProviderScopedStableExecService(params: Readonly<{
     const boundDefinition = params.agentCliSystemTool
         ? definitions.find((definition) => definition.toolId === params.agentCliSystemTool?.toolId)
         : undefined;
-    const systemTools = params.agentId && params.agentCliSystemTool && boundDefinition
+    const systemTools = params.agentId
+        && isBundledAgentId(params.agentId)
+        && params.agentCliSystemTool
+        && boundDefinition
         ? createAgentCliSystemToolService({
             agentId: params.agentId,
             runtimeSpec: getAgentCliRuntimeSpec(params.agentId),
@@ -2235,7 +1881,7 @@ function createProviderScopedExecService(
     systemTools?: readonly PluginSystemToolContributionV1[],
     agentId?: CatalogAgentId,
     agentCliSystemTool?: AgentCliSystemToolBinding | null,
-): PluginExecService {
+): ExecService {
     const environment = Object.freeze(Object.fromEntries(
         Object.entries(process.env).filter(
             (entry): entry is [string, string] => typeof entry[1] === 'string',
@@ -2262,7 +1908,6 @@ export function createAgentRuntimeCatalogEntryHooks(params: Readonly<{
         systemTools,
     );
     const connectedServices = readConnectedServicesContribution(params.contribution.connectedServices);
-    const managedServer = readManagedServerContribution(params.contribution.managedServer);
     const attach = readProviderAttachContribution(params.contribution.attach);
     const sessionRuntimePreferences = readSessionRuntimePreferencesContribution(
         params.contribution.sessionRuntimePreferences,
@@ -2283,6 +1928,32 @@ export function createAgentRuntimeCatalogEntryHooks(params: Readonly<{
     const cliSessionCommand = readCliSessionCommandContribution(params.contribution.cliSessionCommand, params.agentId);
     const vendorResumeSupport = readFunction<CatalogVendorResumeSupport>(
         params.contribution.vendorResumeSupport?.resolve,
+    );
+    const vendorResumeSupportLevel = readVendorResumeSupportLevel(
+        params.contribution.vendorResumeSupport?.support,
+    );
+    const resolvePetDiscoveryHomePath = readFunction<NonNullable<ResolvedCatalogEntry['resolvePetDiscoveryHomePath']>>(
+        params.contribution.petDiscovery?.resolveHomePath,
+    );
+    const resolvePetDiscoveryHomeEntries = readFunction<NonNullable<ResolvedCatalogEntry['resolvePetDiscoveryHomeEntries']>>(
+        params.contribution.petDiscovery?.resolveHomeEntries,
+    );
+    const matchesRuntimeInstallableDescriptor = readFunction<(
+        descriptor: InstallableDependencyDescriptor,
+    ) => boolean>(params.contribution.runtimeInstallableAdapter?.matchesDescriptor);
+    const resolveRuntimeInstallableSpawnSpec = readFunction<(
+        opts?: Readonly<{ env?: NodeJS.ProcessEnv }>,
+        deps?: Readonly<{
+            resolveExistingManagedBinPath?: (env?: NodeJS.ProcessEnv) => string | null;
+        }>,
+    ) => { command: string; args: readonly string[] }>(
+        params.contribution.runtimeInstallableAdapter?.resolveSpawnSpec,
+    );
+    const validateRuntimeInstallableAvailability = readFunction<(
+        spec: Readonly<{ command: string; args: readonly string[] }>,
+        opts?: Readonly<{ env?: NodeJS.ProcessEnv }>,
+    ) => Readonly<{ ok: true } | { ok: false; errorMessage: string }>>(
+        params.contribution.runtimeInstallableAdapter?.validateAvailability,
     );
     const checklists = isRecord(params.contribution.checklists)
         ? params.contribution.checklists as CatalogChecklistContributions
@@ -2354,7 +2025,7 @@ export function createAgentRuntimeCatalogEntryHooks(params: Readonly<{
         ...(connectedServices
             ? {
                 getConnectedServicesMaterializer: async () =>
-                    createConnectedServicesMaterializer(params.agentId, connectedServices, managedServer, exec),
+                    createConnectedServicesMaterializer(params.agentId, connectedServices, exec),
                 ...(connectedServices.noRestartRequiredServiceIds
                     ? { connectedServiceNoRestartRequiredServiceIds: connectedServices.noRestartRequiredServiceIds }
                     : {}),
@@ -2393,13 +2064,6 @@ export function createAgentRuntimeCatalogEntryHooks(params: Readonly<{
                             connectedServices.resolveLegacyRuntimeAuthFailureSourceRevision,
                     }
                     : {}),
-                ...(connectedServices.materializeRuntimeAuthSelection === false
-                    ? {}
-                    : {
-                        materializeConnectedServiceRuntimeAuthSelection:
-                            createRuntimeAuthSelectionMaterializer(params.agentId, connectedServices, managedServer, exec)
-                            ?? undefined,
-                    }),
                 ...(runtimeAuthAdapter
                     ? {
                         getConnectedServiceRuntimeAuthAdapter: async () => runtimeAuthAdapter,
@@ -2407,8 +2071,10 @@ export function createAgentRuntimeCatalogEntryHooks(params: Readonly<{
                     : {}),
                 ...(connectedServices.daemonAuthBridge
                     ? {
-                        getConnectedServiceDaemonAuthBridgeRefresh: async () =>
-                            connectedServices.daemonAuthBridge?.refresh ?? null,
+                        getConnectedServiceDaemonAuthBridgeRefresh: async (serviceId: ConnectedServiceId) =>
+                            connectedServices.daemonAuthBridge?.serviceIds.includes(serviceId) === true
+                                ? connectedServices.daemonAuthBridge.refresh
+                                : null,
                     }
                     : {}),
                 ...(connectedServices.quotaFetcherDescriptor
@@ -2483,11 +2149,36 @@ export function createAgentRuntimeCatalogEntryHooks(params: Readonly<{
                 ),
             }
             : {}),
+        ...(vendorResumeSupportLevel
+            ? { vendorResumeSupport: vendorResumeSupportLevel }
+            : {}),
         ...(vendorResumeSupport
             ? { getVendorResumeSupport: async () => vendorResumeSupport }
             : {}),
         ...(checklists
             ? { checklists }
+            : {}),
+        ...(resolvePetDiscoveryHomePath
+            ? { resolvePetDiscoveryHomePath }
+            : {}),
+        ...(resolvePetDiscoveryHomeEntries
+            ? { resolvePetDiscoveryHomeEntries }
+            : {}),
+        ...(matchesRuntimeInstallableDescriptor
+            && resolveRuntimeInstallableSpawnSpec
+            && validateRuntimeInstallableAvailability
+            ? {
+                getRuntimeInstallableAdapter: async (descriptor: InstallableDependencyDescriptor) => {
+                    if (!matchesRuntimeInstallableDescriptor(descriptor)) return null;
+                    const { createCodexAcpRuntimeInstallableAdapter } = await import(
+                        '@/packagedRuntime/installables/sourceAdapters/codexAcpRuntimeInstallable'
+                    );
+                    return createCodexAcpRuntimeInstallableAdapter(descriptor, {
+                        resolveSpawnSpec: resolveRuntimeInstallableSpawnSpec,
+                        validateAvailability: validateRuntimeInstallableAvailability,
+                    });
+                },
+            }
             : {}),
         ...(sessionRuntimePreferences
             ? { resolveSessionRuntimePreferences: sessionRuntimePreferences.resolve }
@@ -2502,7 +2193,7 @@ export function createAgentRuntimeCatalogEntryHooks(params: Readonly<{
             ? { resolveCodingPromptBehaviorBlocks: codingPromptBehavior }
             : {}),
         ...(daemonSpawnHooks
-            ? { getDaemonSpawnHooks: async () => daemonSpawnHooks }
+            ? projectAgentDaemonSpawnHooksCatalogEntry(daemonSpawnHooks)
             : {}),
         ...(sessionHandoff?.agentBundleRecords
             ? {
@@ -2510,68 +2201,30 @@ export function createAgentRuntimeCatalogEntryHooks(params: Readonly<{
                     sessionHandoff.agentBundleRecords?.extract ?? null,
             }
             : {}),
-        ...(sessionHandoff?.surface
-            ? {
-                getHandoffSurface: async () => resolveSessionHandoffSurface(
-                    sessionHandoff,
-                    (workspaceRoot) => createProviderScopedStableExecService({
-                        cwd: workspaceRoot,
-                        environment: Object.freeze(Object.fromEntries(
-                            Object.entries(process.env).filter(
-                                (entry): entry is [string, string] => typeof entry[1] === 'string',
-                            ),
-                        )),
-                        systemTools,
-                        agentId: params.agentId,
-                        agentCliSystemTool,
-                    }),
-                ),
-            }
-            : {}),
-        ...(sessionHandoff?.resolveReplayChildLaunch
-            ? { resolveReplayChildLaunch: sessionHandoff.resolveReplayChildLaunch }
-            : {}),
         ...(sessionHandoff?.runtimeLocalMetadata
             ? { buildRuntimeLocalHandoffMetadata: sessionHandoff.runtimeLocalMetadata.build }
             : {}),
-        ...(managedServer
-            ? {
-                getManagedServerLaunchSpec: async () => {
-                    const { requireAgentCliLaunchSpec } = await import(
-                        '@/packagedRuntime/managedTools/requireAgentCliLaunchSpec'
-                    );
-                    return requireAgentCliLaunchSpec(params.agentId);
-                },
-                getManagedServerShutdownCleanup: async () => async () => {
-                    await stopManagedProviderServerBestEffort(managedServer);
-                },
-                getManagedServerClaimDescriptor: async () => ({
-                    agentId: params.agentId,
-                    statePathEnvKey: managedServer.statePathEnvKey,
-                    isExpectedProcessCommand: managedServer.isExpectedProcessCommand,
-                }),
-            }
+        ...(sessionHandoff?.nativeSessionLog
+            ? { resolveAgentNativeSessionLogPath: sessionHandoff.nativeSessionLog.resolvePath }
             : {}),
         ...(attach
             ? {
-                getProviderAttachOps: async () => {
-                    const { createProviderCliAttachOps } = await import(
+                resolveHostAgentRuntimeSurfaces: async () => {
+                    const { createProviderCliAttachSurface } = await import(
                         '@/session/attach/providerCliAttach'
                     );
-                    return createProviderCliAttachOps({
-                        agentId: params.agentId,
-                        resolveTarget: ({ metadata, fallbackServerBaseUrl }) => {
-                            const target = attach.resolveTarget({ metadata, fallbackServerBaseUrl });
-                            return isRecord(target) && target.ok === true
-                                ? { ok: true, value: target }
-                                : { ok: false, reason: readString(isRecord(target) ? target.reason : null) ?? 'Unable to resolve provider attach target.' };
-                        },
-                        createArgs: (target) => attach.createArgs(target),
-                        buildHealthUrl: (target) => attach.buildHealthUrl(String(target.baseUrl ?? '')),
-                        readFallbackServerBaseUrl: async () =>
-                            managedServer
-                                ? readString((await readManagedProviderServerStateBestEffort(managedServer))?.baseUrl)
-                                : null,
+                    return Object.freeze({
+                        attach: createProviderCliAttachSurface({
+                            agentId: params.agentId,
+                            resolveTarget: ({ metadata, fallbackServerBaseUrl }) => {
+                                const target = attach.resolveTarget({ metadata, fallbackServerBaseUrl });
+                                return isRecord(target) && target.ok === true
+                                    ? { ok: true, value: target }
+                                    : { ok: false, reason: readString(isRecord(target) ? target.reason : null) ?? 'Unable to resolve provider attach target.' };
+                            },
+                            createArgs: (target) => attach.createArgs(target),
+                            buildHealthUrl: (target) => attach.buildHealthUrl(String(target.baseUrl ?? '')),
+                        }),
                     });
                 },
             }
@@ -2592,6 +2245,9 @@ export function createAgentRuntimeCatalogEntryHooks(params: Readonly<{
                     }
                     : {}),
                 getPreflightSessionControlsProbeAdapter: async () => ({
+                    ...(preflightSessionControls.connectedServiceAuth
+                        ? { connectedServiceAuth: preflightSessionControls.connectedServiceAuth }
+                        : {}),
                     failureCacheStrategy: preflightSessionControls.failureCacheStrategy,
                     cliModelsCommandArgs: preflightSessionControls.cliModelsCommandArgs,
                     ...(preflightSessionControls.verboseModelsCommandArgs
@@ -2660,5 +2316,3 @@ export function applyAgentCatalogEntryHooks(
         }),
     });
 }
-
-export const releaseManagedAgentServerForSwitchFromState = releaseManagedServerForSwitchFromState;

@@ -15,10 +15,11 @@ import {
     PluginUiHostApiWireEnvelopeV1Schema as PluginUiHostApiClientWireEnvelopeV1Schema,
 } from '@happier-dev/protocol/plugins/ui/client';
 
-import type { PluginErrorData } from '../errors.js';
+import { isPluginError, PluginError } from '../errors.js';
 import type { PluginDiagnosticData } from '../diagnostics.js';
 import { definePlugin } from '../definePlugin.js';
 import type { ComposerContentHandleV1, ComposerSnapshotV1 } from '../ui/hostApi.js';
+import { PluginUiHostApiClientError } from '../ui/clientTransport.js';
 import {
     createPluginUiTestkit,
     createSurfaceContextFixture,
@@ -882,6 +883,52 @@ describe('createPluginUiTestkit', () => {
         expect(PluginUiSemanticRoleSchema.safeParse('text').success).toBe(false);
     });
 
+    it('routes a mount-bound current-UI enrichment replacement and clear through one host boundary', async () => {
+        const semantic = createSemanticAdapter();
+        const published: unknown[] = [];
+        let resolveFirst!: () => void;
+        let resolveSecond!: () => void;
+        const firstDelivered = new Promise<void>((resolve) => { resolveFirst = resolve; });
+        const secondDelivered = new Promise<void>((resolve) => { resolveSecond = resolve; });
+
+        const fixture = await createPluginUiTestkit({
+            identity,
+            surface: { kind: 'author-surface' },
+            surfaceContext: initialSurface,
+            adapter: semantic.adapter,
+            handlers: {
+                publishCurrentUiContext: ({ enrichment }) => {
+                    published.push(enrichment);
+                    if (published.length === 1) resolveFirst();
+                    if (published.length === 2) resolveSecond();
+                },
+            },
+        });
+
+        fixture.context.hostApi.publishCurrentUiContext({
+            entity: { kind: 'review', label: 'PR #42' },
+            commands: [{
+                title: 'Open review',
+                command: { kind: 'openSurface', destination: 'review-detail' },
+            }],
+        });
+        await firstDelivered;
+        fixture.context.hostApi.publishCurrentUiContext(null);
+        await secondDelivered;
+
+        expect(published).toEqual([
+            {
+                entity: { kind: 'review', label: 'PR #42' },
+                commands: [{
+                    title: 'Open review',
+                    command: { kind: 'openSurface', destination: 'review-detail' },
+                }],
+            },
+            null,
+        ]);
+        await fixture.dispose();
+    });
+
     it('mounts a strict public context and routes real public host operations through supplied boundaries', async () => {
         const semantic = createSemanticAdapter();
         let resource = {
@@ -1044,6 +1091,40 @@ describe('createPluginUiTestkit', () => {
         ]));
     });
 
+    it('settles a new page location and re-renders the surface with it', async () => {
+        // A full-page surface reads its plugin-local location as an input, and
+        // the host changes that input for navigation the page never performed
+        // — system Back walking a declared step, a deep link, history movement.
+        // A fixture that captured the location once could mount a page at one
+        // location and never move it, so no author test could close that loop.
+        const semantic = createSemanticAdapter();
+        const fixture = await createPluginUiTestkit({
+            identity,
+            surface: { kind: 'author-surface' },
+            surfaceContext: initialSurface,
+            subPath: 'reviews/current',
+            adapter: semantic.adapter,
+        });
+
+        try {
+            expect(fixture.context.subPath).toBe('reviews/current');
+
+            await fixture.updatePageLocation('/reviews/7/');
+
+            expect(semantic.updates).toHaveLength(1);
+            // Normalized by the same owner the request schema uses, so a
+            // fixture cannot settle a location the real host would refuse.
+            expect(semantic.updates[0]?.subPath).toBe('reviews/7');
+            // A location change is not a context change: the surface fact the
+            // page was mounted with survives it.
+            expect(semantic.updates[0]?.surface).toEqual(initialSurface);
+            await expect(fixture.updatePageLocation('../escape'))
+                .rejects.toBeInstanceOf(Error);
+        } finally {
+            await fixture.dispose();
+        }
+    });
+
     it('returns the exact Resource watch establishment digest through the public testkit', async () => {
         const fixture = await createPluginUiTestkit({
             identity,
@@ -1077,24 +1158,26 @@ describe('createPluginUiTestkit', () => {
                 openSurface: async ({ view }) => {
                     expect(typeof view === 'string' ? view : view.localId).toBe('review-detail');
                     calls += 1;
-                    const refusal = {
-                        name: 'PluginError',
-                        code: 'denied',
-                        message: 'The host did not admit the Review details panel.',
-                    } satisfies PluginErrorData;
-                    // A host boundary can cross a separately resolved SDK copy;
-                    // only its closed public error shape is relevant here.
+                    const refusal = new PluginUiHostApiClientError(
+                        'denied',
+                        'The host did not admit the Review details panel.',
+                    );
                     throw refusal;
                 },
             },
         });
 
         try {
-            await expect(fixture.context.hostApi.openSurface('review-detail', { reviewId: 'review-7' }))
-                .rejects.toMatchObject({
-                    code: 'denied',
-                    message: 'The host did not admit the Review details panel.',
-                });
+            const failure = await fixture.context.hostApi
+                .openSurface('review-detail', { reviewId: 'review-7' })
+                .catch((error: unknown) => error);
+            expect(isPluginError(failure)).toBe(true);
+            expect(failure).toMatchObject({
+                name: 'PluginError',
+                code: 'denied',
+                message: 'The host did not admit the Review details panel.',
+                retryable: false,
+            });
             expect(calls).toBe(1);
         } finally {
             await fixture.dispose();

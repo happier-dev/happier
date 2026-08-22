@@ -10,6 +10,9 @@ import {
     resolveExternalSessionsSourceKeysForPersistedTagLookup,
 } from '@happier-dev/protocol';
 import { codexExternalSessionsContribution } from '@happier-dev/plugins-codex';
+import type {
+    AgentExternalSessionsManagedEndpointRead,
+} from '@happier-dev/plugin-sdk/sessions/external';
 
 import {
     resolveExternalSessionTagLookupCandidates,
@@ -19,14 +22,26 @@ import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/contro
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
+import { createUnavailablePluginServices } from '@/plugins/runtime/invocation/services/unavailable';
 
-const { readCredentialsMock } = vi.hoisted(() => ({
+const {
+    fetchAccountEncryptionCurrentnessMock,
+    readCredentialsMock,
+    readStoredCredentialsMock,
+} = vi.hoisted(() => ({
+    fetchAccountEncryptionCurrentnessMock: vi.fn(),
     readCredentialsMock: vi.fn(),
+    readStoredCredentialsMock: vi.fn(),
+}));
+
+vi.mock('@/api/client/connectedServiceCredentialApi', () => ({
+    fetchAccountEncryptionCurrentness: fetchAccountEncryptionCurrentnessMock,
 }));
 
 vi.mock('@/persistence', async (importOriginal) => ({
     ...await importOriginal<typeof import('@/persistence')>(),
     readCredentials: readCredentialsMock,
+    readStoredCredentials: readStoredCredentialsMock,
 }));
 
 import {
@@ -35,6 +50,11 @@ import {
 
 let codexHome = '';
 let priorCodexHome: string | undefined;
+const unavailableManagedEndpointRead: AgentExternalSessionsManagedEndpointRead =
+    async () => {
+        throw new Error('Managed endpoint read is unavailable in this file-backed fixture');
+    };
+const unavailableInvocationExec = createUnavailablePluginServices().exec;
 const source = () => ({
     kind: 'codexHome' as const,
     home: 'user' as const,
@@ -101,12 +121,17 @@ describe('qualified External Session hook durable lookup composition', () => {
 
     beforeEach(() => {
         vi.restoreAllMocks();
-        readCredentialsMock.mockResolvedValue({
+        fetchAccountEncryptionCurrentnessMock.mockReset().mockResolvedValue({
+            mode: 'plain',
+            version: 1,
+            signingKeyFingerprint: null,
+            contentKeyFingerprint: null,
+            updatedAt: 1,
+        });
+        readCredentialsMock.mockResolvedValue(null);
+        readStoredCredentialsMock.mockResolvedValue({
             token: 'token-1',
-            encryption: {
-                type: 'legacy',
-                secret: new Uint8Array(32).fill(1),
-            },
+            encryption: null,
         });
     });
 
@@ -120,6 +145,8 @@ describe('qualified External Session hook durable lookup composition', () => {
                 signal,
                 deadlineAtMs: Date.now() + 500,
                 maxSerializedBytes: 262_144,
+                managedEndpointRead: unavailableManagedEndpointRead,
+                exec: unavailableInvocationExec,
             });
         if (!linkedIdentity.ok) {
             throw new Error('Expected the real Codex linked identity');
@@ -179,6 +206,13 @@ describe('qualified External Session hook durable lookup composition', () => {
             deadlineAtMs: Date.now() + 500,
         });
         expect(axios.post).toHaveBeenCalledOnce();
+        expect(fetchAccountEncryptionCurrentnessMock).toHaveBeenCalledOnce();
+        expect(fetchAccountEncryptionCurrentnessMock).toHaveBeenCalledWith({
+            token: 'token-1',
+            signal,
+        });
+        expect(readStoredCredentialsMock).toHaveBeenCalledOnce();
+        expect(readCredentialsMock).not.toHaveBeenCalled();
         expect(axios.post).toHaveBeenCalledWith(
             expect.stringContaining('/v2/sessions/lookup-by-tags'),
             { tags: [tag] },

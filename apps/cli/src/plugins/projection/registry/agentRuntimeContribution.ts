@@ -6,13 +6,12 @@ import type {
 import type {
     CloudConnectTargetStatus,
     CloudVendorKey,
-    HandoffSurfaceV1,
 } from '@happier-dev/agents';
-import type { PluginExecService } from '@happier-dev/plugin-sdk/runtime';
 import type {
-    CloudCustomAuthenticatorContextV1,
-    CloudCustomAuthenticatorV1,
-} from '@happier-dev/plugin-sdk/experimental/cloud/auth';
+    AuthenticatorContext as CloudCustomAuthenticatorContextV1,
+    Authenticator as CloudCustomAuthenticatorV1,
+} from '@happier-dev/plugin-sdk/connected-accounts';
+import type { ExecService } from '@happier-dev/plugin-sdk/exec';
 
 import type {
     PreflightSessionControlsProbeKind,
@@ -51,16 +50,6 @@ type CliAuthContributionSource = Readonly<{
     detectAuthStatus?: RuntimeContributionFunction;
 }>;
 
-type ManagedServerContributionSource = Readonly<{
-    namespace?: unknown;
-    statePathEnvKey?: unknown;
-    resolveStateFingerprintInput?: RuntimeContributionFunction;
-    isExpectedProcessCommand?: RuntimeContributionFunction;
-    buildHealthUrl?: RuntimeContributionFunction;
-    logLabel?: unknown;
-    timeouts?: RuntimeContributionObject;
-}>;
-
 type ProviderAttachContributionSource = Readonly<{
     resolveTarget?: RuntimeContributionFunction;
     createArgs?: RuntimeContributionFunction;
@@ -86,23 +75,27 @@ type DaemonSpawnHooksContributionSource = Readonly<{
 }>;
 
 type VendorResumeSupportContributionSource = Readonly<{
+    /** Declarative support level; a contributed Agent has no host-owned Agent table to read it from. */
+    support?: unknown;
     resolve?: RuntimeContributionFunction;
 }>;
 
 type AgentChecklistContributionSource = NonNullable<ResolvedCatalogEntry['checklists']>;
 
 type SessionHandoffContributionSource = Readonly<{
-    surface?: unknown;
-    resolveReplayChildLaunch?: RuntimeContributionFunction;
     agentBundleRecords?: Readonly<{
         extract?: RuntimeContributionFunction;
     }>;
     runtimeLocalMetadata?: Readonly<{
         build?: RuntimeContributionFunction;
     }>;
+    nativeSessionLog?: Readonly<{
+        resolvePath?: RuntimeContributionFunction;
+    }>;
 }>;
 
 type PreflightSessionControlsContributionSource = Readonly<{
+    connectedServiceAuth?: unknown;
     failureCacheStrategy?: unknown;
     needsAccountSettings?: unknown;
     resolveProbeVariant?: RuntimeContributionFunction;
@@ -142,6 +135,17 @@ type TerminalContributionSource = Readonly<{
     retainsSessionHookArtifacts?: unknown;
 }>;
 
+type PetDiscoveryContributionSource = Readonly<{
+    resolveHomePath?: RuntimeContributionFunction;
+    resolveHomeEntries?: RuntimeContributionFunction;
+}>;
+
+type RuntimeInstallableAdapterContributionSource = Readonly<{
+    matchesDescriptor?: RuntimeContributionFunction;
+    resolveSpawnSpec?: RuntimeContributionFunction;
+    validateAvailability?: RuntimeContributionFunction;
+}>;
+
 type ProviderCliSessionCommandContributionSource = Readonly<{
     backendIdForSessionRuntime?: unknown;
     agentIdForDeprecatedAliases?: unknown;
@@ -175,7 +179,6 @@ type ConnectedServicesContributionSource = Readonly<{
     materializeAuthEnvironment?: RuntimeContributionFunction;
     isMaterializedHomeStale?: RuntimeContributionFunction;
     sanitizeRetainedMaterializedHome?: RuntimeContributionFunction;
-    materializeRuntimeAuthSelection?: unknown;
     stateSharingDescriptor?: unknown;
     shouldRestartForServiceSwitch?: RuntimeContributionFunction;
     unsupportedSwitchReason?: RuntimeContributionFunction;
@@ -225,27 +228,6 @@ export type CliAuthContribution = Readonly<{
     }>) => Promise<CliAuthStatusDraft> | CliAuthStatusDraft;
 }>;
 
-export type ManagedServerContribution = Readonly<{
-    namespace: string;
-    statePathEnvKey: string;
-    resolveStateFingerprintInput: (env: NodeJS.ProcessEnv) => Readonly<Record<string, string>>;
-    isExpectedProcessCommand: (command: string) => boolean;
-    buildHealthUrl: (baseUrl: string) => string | null;
-    logLabel: string;
-    timeouts: Readonly<{
-        authSwitchDrainMsEnvKey: string;
-        authSwitchDrainMsDefault: number;
-        healthProbeMsEnvKey: string;
-        healthProbeMsDefault: number;
-        shutdownGraceMsEnvKey: string;
-        shutdownGraceMsDefault: number;
-        forceKillWaitMsEnvKey: string;
-        forceKillWaitMsDefault: number;
-        pollIntervalMsEnvKey: string;
-        pollIntervalMsDefault: number;
-    }>;
-}>;
-
 export type ProviderAttachContribution = Readonly<{
     resolveTarget: (params: Readonly<{
         metadata: Readonly<Record<string, unknown>>;
@@ -271,19 +253,19 @@ export type SessionHandoffAgentBundleRecordExtractor = NonNullable<
 >;
 
 export type SessionHandoffContribution = Readonly<{
-    surface?: (params: Readonly<{
-        exec: PluginExecService;
-    }>) => HandoffSurfaceV1;
-    resolveReplayChildLaunch?: NonNullable<ResolvedCatalogEntry['resolveReplayChildLaunch']>;
     agentBundleRecords?: Readonly<{
         extract: SessionHandoffAgentBundleRecordExtractor;
     }>;
     runtimeLocalMetadata?: Readonly<{
         build: NonNullable<ResolvedCatalogEntry['buildRuntimeLocalHandoffMetadata']>;
     }>;
+    nativeSessionLog?: Readonly<{
+        resolvePath: NonNullable<ResolvedCatalogEntry['resolveAgentNativeSessionLogPath']>;
+    }>;
 }>;
 
 export type PreflightSessionControlsContribution = Readonly<{
+    connectedServiceAuth?: 'materialized-env';
     failureCacheStrategy?: 'cooldown' | 'retry';
     needsAccountSettings?: boolean;
     resolveProbeVariant?: NonNullable<ResolvedCatalogEntry['resolveSessionControlsProbeVariant']>;
@@ -304,7 +286,7 @@ export type PreflightSessionControlsContribution = Readonly<{
 
 export type PreflightSessionControlsContributionProbeParams = PreflightSessionControlsProbeParams & Readonly<{
     probeKind: PreflightSessionControlsProbeKind;
-    exec: PluginExecService;
+    exec: ExecService;
     env: NodeJS.ProcessEnv;
 }>;
 
@@ -399,7 +381,6 @@ export type ConnectedServicesContribution = Readonly<{
     materializedHomeFreshness?: ConnectedServiceMaterializedHomeFreshness;
     sanitizeRetainedMaterializedHome?: (homeRootDir: string) => Promise<void> | void;
     stateSharingDescriptor: NonNullable<ConnectedServiceStateSharingDescriptorResult>;
-    materializeRuntimeAuthSelection?: boolean;
     shouldRestartForServiceSwitch?: (serviceId: unknown) => boolean;
     unsupportedSwitchReason?: (serviceId: unknown) => string;
     restartRematerializeRequiredReason?: string;
@@ -418,6 +399,7 @@ export type ConnectedServicesContribution = Readonly<{
     }>) => unknown;
     runtimeAuthAdapter?: ConnectedServiceProviderRuntimeAuthAdapter | false;
     daemonAuthBridge?: Readonly<{
+        serviceIds: readonly ConnectedServiceId[];
         refresh: ConnectedServiceDaemonAuthBridgeRefresh;
     }>;
     quotaFetcherDescriptor?: ConnectedServiceQuotaFetcherDescriptor;
@@ -442,7 +424,6 @@ export type AgentRuntimeContribution = Readonly<{
     }>;
     runtimeActivityApplicability?: RuntimeActivityApplicability;
     cliAuth?: CliAuthContributionSource;
-    managedServer?: ManagedServerContributionSource;
     attach?: ProviderAttachContributionSource;
     sessionRuntimePreferences?: SessionRuntimePreferencesContributionSource;
     sessionStartup?: SessionStartupContributionSource;
@@ -455,6 +436,8 @@ export type AgentRuntimeContribution = Readonly<{
     cloudConnect?: CloudConnectContributionSource;
     sessionControls?: SessionControlsContributionSource;
     terminal?: TerminalContributionSource;
+    petDiscovery?: PetDiscoveryContributionSource;
+    runtimeInstallableAdapter?: RuntimeInstallableAdapterContributionSource;
     cliSessionCommand?: ProviderCliSessionCommandContributionSource;
     connectedServices?: ConnectedServicesContributionSource;
 }>;

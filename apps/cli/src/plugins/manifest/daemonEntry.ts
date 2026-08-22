@@ -1,7 +1,8 @@
 import { realpath, stat } from 'node:fs/promises';
-import { extname, isAbsolute, relative } from 'node:path';
+import { extname } from 'node:path';
 
 import type { PluginCompatibilityDiagnostic } from '@/plugins/validation/diagnostics/types';
+import { isCanonicalAbsolutePathInsideRoot } from '@/utils/path/expandHomeDirPath';
 import { resolvePortablePluginRelativePath } from './portableRelativePath';
 import type { CanonicalPluginManifest } from './types';
 
@@ -11,13 +12,7 @@ const SUPPORTED_PLUGIN_DEV_DAEMON_ENTRY_EXTENSIONS = new Set([
   '.ts',
   '.mts',
   '.cts',
-  '.tsx',
 ]);
-
-function isPathInsideRoot(rootPath: string, candidatePath: string): boolean {
-  const relativePath = relative(rootPath, candidatePath);
-  return relativePath === '' || (!relativePath.startsWith('..') && !isAbsolute(relativePath));
-}
 
 async function resolveCanonicalExistingPath(path: string): Promise<string | null> {
   try {
@@ -78,7 +73,7 @@ async function resolveEntrypointPath(params: Readonly<{
 
   const canonicalResolvedPath = await resolveCanonicalExistingPath(resolvedPath);
   const containmentPath = canonicalResolvedPath ?? resolvedPath;
-  if (!isPathInsideRoot(params.pluginRootPath, containmentPath)) {
+  if (!isCanonicalAbsolutePathInsideRoot(params.pluginRootPath, containmentPath)) {
     return {
       ok: false,
       diagnostic: {

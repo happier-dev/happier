@@ -1,16 +1,36 @@
 import { createHash } from 'node:crypto';
-import { PluginError, type JsonValue } from '@happier-dev/plugin-sdk';
+import {
+  createPluginActionPresentUserGate,
+  type PluginActionPresentUserGatePolicy,
+} from '@happier-dev/protocol';
+import { isPluginError, type JsonValue } from '@happier-dev/plugin-sdk';
+import type { PluginActionHandlerInvocation } from '@happier-dev/plugin-sdk/actions';
 
 import {
-  evaluateTargetActionPolicy,
+  projectTargetActionPresentUserAuthorizationFacts,
   type NormalizedTargetActionPolicy,
   type TargetActionAuthorizationFacts,
 } from '../policy/evaluate';
+import type {
+  ResolveTargetActionHostPolicy,
+  TargetActionHostAccessRequest,
+} from '../hostAccess/resolve';
+import { projectPluginFailureText } from '../lifecycle/utils';
 import type { PluginInvocationServiceBinding } from './services/types';
 
 export type TargetActionExecutionResult = Readonly<
   | { status: 'executed'; value: JsonValue | null }
-  | { status: 'unavailable' | 'invalid' | 'failed'; code: string; message: string }
+  | {
+    status: 'unavailable' | 'invalid' | 'failed';
+    code: string;
+    message: string;
+    /** Failures only, and only for a proven canonical PluginError. */
+    retryable?: boolean;
+    /** Failures only: the target's own published PluginError contract payload. */
+    data?: JsonValue;
+    /** Present only when the generic Action owner proves the target handler never began. */
+    actionHandlerInvocation?: PluginActionHandlerInvocation;
+  }
 >;
 
 export type ResolvedTargetAction = NormalizedTargetActionPolicy & Readonly<{
@@ -22,10 +42,57 @@ export type ResolvedTargetAction = NormalizedTargetActionPolicy & Readonly<{
   policyFingerprint: string;
 }>;
 
+/**
+ * Builds the one normalized Action policy used by both daemon Action
+ * invocation and read-only Action projection. The manifest remains the
+ * declaration owner; the supplied host-policy owner resolves its exact
+ * HostAccess facts without requiring a daemon handler registration.
+ */
+export function resolveCatalogTargetActionPolicy(params: Readonly<{
+  pluginId: string;
+  localId: string;
+  generation: string;
+  dangerLevel: ResolvedTargetAction['dangerLevel'];
+  scopes: ResolvedTargetAction['scopes'];
+  surfaces: ResolvedTargetAction['surfaces'];
+  hostAccessRequests: readonly TargetActionHostAccessRequest[];
+  availability?: ResolvedTargetAction['availability'];
+  confirmation?: ResolvedTargetAction['confirmation'];
+  resolveHostPolicy: ResolveTargetActionHostPolicy;
+}>): ResolvedTargetAction {
+  const action = Object.freeze({
+    qualifiedId: `${params.pluginId}/actions/${params.localId}`,
+    pluginId: params.pluginId,
+    localId: params.localId,
+    generation: params.generation,
+    dangerLevel: params.dangerLevel,
+    scopes: params.scopes,
+    surfaces: params.surfaces,
+    hostAccess: params.hostAccessRequests.map(({ request, required }) => ({
+      id: request.id,
+      required,
+      status: 'unavailable' as const,
+      code: 'plugin_host_access_context_unavailable',
+      requestFingerprint: '',
+    })),
+    ...(params.availability === undefined ? {} : { availability: params.availability }),
+    ...(params.confirmation === undefined ? {} : { confirmation: params.confirmation }),
+    input: null,
+    policyFingerprint: '',
+  });
+  return params.resolveHostPolicy(action, {
+    hostAccessRequests: params.hostAccessRequests,
+    surface: 'catalog',
+  }).action;
+}
+
 export type TargetActionCurrentIntentRequest = Readonly<{
   action: ResolvedTargetAction;
   fingerprint: string;
+  /** Declared target capability surface. */
   surface: string;
+  /** Actual host invocation surface that the approval binds. */
+  invocationSurface?: string;
   signal?: AbortSignal;
 }>;
 
@@ -42,14 +109,6 @@ function stable(value: unknown): string {
   return JSON.stringify(value) ?? 'undefined';
 }
 
-export function fingerprintTargetActionIntent(action: ResolvedTargetAction, surface: string): string {
-  return createHash('sha256').update(stable({
-    qualifiedId: action.qualifiedId, input: action.input, accountId: action.accountId,
-    resourceId: action.resourceId, generation: action.generation,
-    policyFingerprint: action.policyFingerprint, surface,
-  })).digest('hex');
-}
-
 export function fingerprintTargetActionPolicy(action: NormalizedTargetActionPolicy): string {
   return createHash('sha256').update(stable({
     qualifiedId: action.qualifiedId,
@@ -64,15 +123,58 @@ export function fingerprintTargetActionPolicy(action: NormalizedTargetActionPoli
 }
 
 function unavailable(code: string): TargetActionExecutionResult {
-  return Object.freeze({ status: 'unavailable', code, message: code });
+  return Object.freeze({
+    status: 'unavailable',
+    code,
+    message: code,
+    actionHandlerInvocation: 'notStarted',
+  });
 }
 
-function failed(code: string, error: unknown): TargetActionExecutionResult {
+function failed(
+  code: string,
+  error: unknown,
+  actionHandlerInvocation?: PluginActionHandlerInvocation,
+): TargetActionExecutionResult {
   return Object.freeze({
     status: 'failed',
     code,
     message: error instanceof Error ? error.message : code,
+    ...(actionHandlerInvocation === undefined ? {} : { actionHandlerInvocation }),
   });
+}
+
+function projectTargetActionFailureCode(value: string): string {
+  return /^[a-z][a-z0-9_.:-]{0,119}$/iu.test(value)
+    ? value
+    : 'plugin_action_execution_failed';
+}
+
+/**
+ * A target's published failure payload crosses to its caller, so it must not
+ * become the one unredacted route out of an invocation whose credential
+ * redaction already owns the failure code and message. The same scoped
+ * redactor is applied to every string leaf and key; a redactor failure is
+ * caught by the caller, which then withholds the payload entirely.
+ *
+ * The payload already passed the shared Action JSON bound and depth limit at
+ * the Protocol projection, so this walk is bounded by that same admission.
+ */
+function redactTargetActionFailureData(
+  value: JsonValue,
+  redact: (value: string) => string,
+): JsonValue {
+  if (typeof value === 'string') return redact(value);
+  if (Array.isArray(value)) {
+    return value.map((item) => redactTargetActionFailureData(item, redact));
+  }
+  if (value !== null && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [
+      redact(key),
+      redactTargetActionFailureData(item, redact),
+    ]));
+  }
+  return value;
 }
 
 function isCurrentServiceBinding(
@@ -89,6 +191,40 @@ function bindResolvedPolicy(action: ResolvedTargetAction): ResolvedTargetAction 
   });
 }
 
+export function resolvePresentUserGatePolicy(
+  action: ResolvedTargetAction,
+  authorization: TargetActionAuthorizationFacts,
+): PluginActionPresentUserGatePolicy {
+  return Object.freeze({
+    qualifiedId: action.qualifiedId,
+    generation: action.generation,
+    dangerLevel: action.dangerLevel,
+    scopes: action.scopes,
+    surfaces: action.surfaces,
+    ...(action.confirmation === undefined ? {} : { confirmation: action.confirmation }),
+    ...(action.availability === undefined ? {} : { availability: action.availability }),
+    authorization: Object.freeze(projectTargetActionPresentUserAuthorizationFacts(
+      authorization,
+      action.hostAccess.map((access) => ({
+        id: access.id,
+        required: true,
+        status: access.status,
+        ...(access.code === undefined ? {} : { code: access.code }),
+      })),
+    )),
+    // The Protocol gate already fingerprints normalized policy facts. Preserve
+    // the daemon-only binding choices that are not expressed by the generic
+    // evaluator so approval cannot authorize a replacement service selection.
+    fingerprintContext: Object.freeze({
+      input: action.input,
+      accountId: action.accountId ?? null,
+      resourceId: action.resourceId ?? null,
+      policyFingerprint: action.policyFingerprint,
+      hostAccess: action.hostAccess,
+    }),
+  });
+}
+
 export function createTargetActionExecutor(deps: Readonly<{
   resolve: (args: Readonly<{ pluginId: string; localId: string; input: unknown }>) => ResolvedTargetAction | null;
   resolveAuthorizationFacts: (action: ResolvedTargetAction) => TargetActionAuthorizationFacts;
@@ -97,83 +233,153 @@ export function createTargetActionExecutor(deps: Readonly<{
     serviceBinding: PluginInvocationServiceBinding;
   }> | null>;
   requestCurrentIntent?: (request: TargetActionCurrentIntentRequest) => Promise<TargetActionCurrentIntentResult>;
-  fingerprint?: (action: ResolvedTargetAction, surface: string) => string;
   invoke: (action: ResolvedTargetAction, args: Readonly<{ surface: string; sessionId?: string; signal?: AbortSignal }>, serviceBinding: PluginInvocationServiceBinding) => Promise<TargetActionExecutionResult>;
+  redactFailureText?: (action: ResolvedTargetAction, value: string) => string;
   diagnostic?: (fact: Readonly<{ qualifiedId: string; generation: string; surface: string; status: string; code?: string }>) => void | Promise<void>;
 }>) {
   return Object.freeze({
-    async execute(args: Readonly<{ pluginId: string; localId: string; input: unknown; surface: string; sessionId?: string; signal?: AbortSignal; requestCurrentIntent?: (request: TargetActionCurrentIntentRequest) => Promise<TargetActionCurrentIntentResult> }>): Promise<TargetActionExecutionResult> {
-      let action = deps.resolve(args);
-      let serviceBinding: PluginInvocationServiceBinding | null = null;
+    async execute(args: Readonly<{ pluginId: string; localId: string; input: unknown; surface: string; invocationSurface?: string; sessionId?: string; signal?: AbortSignal; requestCurrentIntent?: (request: TargetActionCurrentIntentRequest) => Promise<TargetActionCurrentIntentResult> }>): Promise<TargetActionExecutionResult> {
+      let action: ResolvedTargetAction | null = null;
+      const invocationSurface = args.invocationSurface ?? args.surface;
       const finish = async (result: TargetActionExecutionResult): Promise<TargetActionExecutionResult> => {
+        let publicResult = result;
+        if (result.status === 'failed') {
+          let code = projectTargetActionFailureCode(result.code);
+          let message = result.message;
+          let data = result.data;
+          const redactedAction = action;
+          if (redactedAction && deps.redactFailureText) {
+            const redactFailureText = deps.redactFailureText;
+            code = 'plugin_action_execution_failed';
+            message = code;
+            data = undefined;
+            try {
+              const redactedCode = redactFailureText(redactedAction, result.code);
+              code = redactedCode === result.code
+                ? projectTargetActionFailureCode(result.code)
+                : 'plugin_action_execution_failed';
+              message = redactFailureText(redactedAction, result.message);
+              data = result.data === undefined
+                ? undefined
+                : redactTargetActionFailureData(
+                  result.data,
+                  (value) => redactFailureText(redactedAction, value),
+                );
+            } catch {
+              // Error projection is a privacy boundary. If the scoped redactor is
+              // unavailable, retain only the host-owned stable failure taxonomy.
+            }
+          }
+          publicResult = Object.freeze({
+            status: 'failed',
+            code,
+            message: projectPluginFailureText(new Error(message)),
+            ...(result.retryable === undefined ? {} : { retryable: result.retryable }),
+            ...(data === undefined ? {} : { data }),
+            ...(result.actionHandlerInvocation === undefined
+              ? {}
+              : { actionHandlerInvocation: result.actionHandlerInvocation }),
+          });
+        }
         try {
           await deps.diagnostic?.({
             qualifiedId: action?.qualifiedId ?? `${args.pluginId}/actions/${args.localId}`,
             generation: action?.generation ?? 'unavailable',
-            surface: args.surface, status: result.status, ...('code' in result ? { code: result.code } : {}),
+            surface: args.surface, status: publicResult.status, ...('code' in publicResult ? { code: publicResult.code } : {}),
           });
         } catch { /* Diagnostics are failure-isolated from authorization and execution. */ }
-        return result;
+        return publicResult;
       };
-      if (!action) return await finish(unavailable('plugin_action_handler_missing'));
-      try {
-        const binding = await deps.resolveHostBinding(action);
-        action = binding ? bindResolvedPolicy(binding.action) : null;
-        serviceBinding = binding?.serviceBinding ?? null;
-      } catch (error) {
-        return await finish(failed(
-          error instanceof PluginError ? error.code : 'plugin_action_selection_failed',
-          error,
-        ));
-      }
-      if (!action || !serviceBinding) return await finish(unavailable('plugin_action_selection_unavailable'));
-      if (!isCurrentServiceBinding(action, serviceBinding)) return await finish(unavailable('plugin_action_generation_retired'));
-      const evaluate = () => evaluateTargetActionPolicy({
-        action: action!,
-        authorizationFacts: deps.resolveAuthorizationFacts(action!),
-        surface: args.surface,
-        ...(args.sessionId ? { sessionId: args.sessionId } : {}),
+      const gate = createPluginActionPresentUserGate<Readonly<{
+        action: ResolvedTargetAction;
+        serviceBinding: PluginInvocationServiceBinding;
+      }>>({
+        resolve: async () => {
+          let resolved: ResolvedTargetAction | null;
+          try {
+            resolved = deps.resolve(args);
+          } catch (error) {
+            return Object.freeze({
+              status: 'failed' as const,
+              code: isPluginError(error) ? error.code : 'plugin_action_selection_failed',
+              message: error instanceof Error ? error.message : 'plugin_action_selection_failed',
+            });
+          }
+          if (!resolved) {
+            return Object.freeze({
+              status: 'unavailable' as const,
+              code: 'plugin_action_handler_missing',
+            });
+          }
+          action = resolved;
+          let binding: Readonly<{
+            action: ResolvedTargetAction;
+            serviceBinding: PluginInvocationServiceBinding;
+          }> | null;
+          try {
+            binding = await deps.resolveHostBinding(resolved);
+          } catch (error) {
+            return Object.freeze({
+              status: 'failed' as const,
+              code: isPluginError(error) ? error.code : 'plugin_action_selection_failed',
+              message: error instanceof Error ? error.message : 'plugin_action_selection_failed',
+            });
+          }
+          if (!binding) {
+            return Object.freeze({
+              status: 'unavailable' as const,
+              code: 'plugin_action_selection_unavailable',
+            });
+          }
+          const boundAction = bindResolvedPolicy(binding.action);
+          action = boundAction;
+          if (!isCurrentServiceBinding(boundAction, binding.serviceBinding)) {
+            return Object.freeze({
+              status: 'unavailable' as const,
+              code: 'plugin_action_generation_retired',
+            });
+          }
+          return Object.freeze({
+            status: 'resolved' as const,
+            action: Object.freeze({ action: boundAction, serviceBinding: binding.serviceBinding }),
+            policy: resolvePresentUserGatePolicy(
+              boundAction,
+              deps.resolveAuthorizationFacts(boundAction),
+            ),
+            isCurrent: () => isCurrentServiceBinding(boundAction, binding.serviceBinding),
+          });
+        },
+        ...(args.requestCurrentIntent || deps.requestCurrentIntent
+          ? {
+            requestCurrentIntent: async (request) => await (args.requestCurrentIntent ?? deps.requestCurrentIntent)!({
+              action: request.action.action,
+              fingerprint: request.fingerprint,
+              surface: request.surface,
+              invocationSurface: request.invocationSurface,
+              ...(request.signal === undefined ? {} : { signal: request.signal }),
+            }),
+          }
+          : {}),
       });
-      let policy = evaluate();
-      if (policy.outcome !== 'visible') return await finish(unavailable(policy.code));
-      if (policy.requiresCurrentIntent) {
-        const requestCurrentIntent = args.requestCurrentIntent ?? deps.requestCurrentIntent;
-        if (!requestCurrentIntent) return await finish(unavailable('plugin_action_current_intent_unavailable'));
-        const fingerprint = (deps.fingerprint ?? fingerprintTargetActionIntent)(action, args.surface);
-        let intent: TargetActionCurrentIntentResult;
-        try {
-          intent = await requestCurrentIntent({ action, fingerprint, surface: args.surface, ...(args.signal ? { signal: args.signal } : {}) });
-        } catch (error) {
-          return await finish(args.signal?.aborted
-            ? unavailable('plugin_action_aborted')
-            : unavailable('plugin_action_current_intent_unavailable'));
+      const admission = await gate.admit({
+        input: args.input,
+        surface: args.surface,
+        invocationSurface,
+        ...(args.sessionId === undefined ? {} : { sessionId: args.sessionId }),
+        ...(args.signal === undefined ? {} : { signal: args.signal }),
+      });
+      if (admission.status !== 'admitted') {
+        if (admission.status === 'failed') {
+          return await finish(failed(admission.code, new Error(admission.message), 'notStarted'));
         }
-        if (args.signal?.aborted) return await finish(unavailable('plugin_action_aborted'));
-        if (intent.status !== 'approved') return await finish(unavailable(intent.code));
-        if (intent.fingerprint !== fingerprint) return await finish(unavailable('plugin_action_current_intent_mismatch'));
-        action = deps.resolve(args);
-        if (!action) return await finish(unavailable('plugin_action_handler_missing'));
-        try {
-          const binding = await deps.resolveHostBinding(action);
-          action = binding ? bindResolvedPolicy(binding.action) : null;
-          serviceBinding = binding?.serviceBinding ?? null;
-        } catch (error) {
-          return await finish(failed(
-            error instanceof PluginError ? error.code : 'plugin_action_selection_failed',
-            error,
-          ));
-        }
-        if (!action || !serviceBinding) return await finish(unavailable('plugin_action_selection_unavailable'));
-        if (!isCurrentServiceBinding(action, serviceBinding)) return await finish(unavailable('plugin_action_generation_retired'));
-        const currentFingerprint = (deps.fingerprint ?? fingerprintTargetActionIntent)(action, args.surface);
-        if (currentFingerprint !== fingerprint) return await finish(unavailable('plugin_action_current_intent_mismatch'));
-        policy = evaluate();
-        if (policy.outcome !== 'visible') return await finish(unavailable(policy.code));
+        return await finish(unavailable(admission.code));
       }
       if (args.signal?.aborted) return await finish(unavailable('plugin_action_aborted'));
+      const { action: admittedAction, serviceBinding } = admission.action;
+      action = admittedAction;
       let result: TargetActionExecutionResult;
       try {
-        result = await deps.invoke(action, { surface: args.surface, ...(args.sessionId ? { sessionId: args.sessionId } : {}), ...(args.signal ? { signal: args.signal } : {}) }, serviceBinding);
+        result = await deps.invoke(admittedAction, { surface: args.surface, ...(args.sessionId ? { sessionId: args.sessionId } : {}), ...(args.signal ? { signal: args.signal } : {}) }, serviceBinding);
       } catch (error) {
         result = failed('plugin_action_execution_failed', error);
       }

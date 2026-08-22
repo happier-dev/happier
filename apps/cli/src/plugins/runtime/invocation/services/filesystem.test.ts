@@ -1,11 +1,73 @@
-import { mkdtemp, mkdir, readFile, readdir, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, readdir, realpath, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
-import { createPluginFileSystemService } from './filesystem';
+import {
+  createPluginFileSystemService,
+  isCanonicalPathAuthorizedByPluginFileSystemScopes,
+} from './filesystem';
 
 describe('plugin invocation filesystem service', () => {
+  it('is the sole plugin filesystem service owner', async () => {
+    const predecessorExists = await stat(
+      new URL('../../context/fs.ts', import.meta.url),
+    ).then(() => true, () => false);
+    expect(predecessorExists).toBe(false);
+  });
+
+  it('authorizes canonical media roots only inside a readable exact scope', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-media-scope-'));
+    const workspace = join(root, 'workspace');
+    const projectA = join(root, 'project-a');
+    const projectB = join(root, 'project-a-sibling');
+    const outside = join(root, 'outside');
+    await Promise.all([
+      mkdir(join(workspace, 'allowed'), { recursive: true }),
+      mkdir(join(workspace, 'allowed-sibling'), { recursive: true }),
+      mkdir(projectA, { recursive: true }),
+      mkdir(projectB, { recursive: true }),
+      mkdir(outside, { recursive: true }),
+    ]);
+    await symlink(outside, join(workspace, 'allowed', 'escape'));
+    const roots = {
+      pluginData: join(root, 'plugin-data'),
+      workspace,
+      projects: new Map([['a', projectA], ['b', projectB]]),
+    };
+
+    await expect(isCanonicalPathAuthorizedByPluginFileSystemScopes({
+      roots,
+      scopes: [{ root: 'workspace', pathPrefix: 'allowed', access: ['read'] }],
+      canonicalPath: await realpath(join(workspace, 'allowed')),
+      access: 'read',
+    })).resolves.toBe(true);
+    await expect(isCanonicalPathAuthorizedByPluginFileSystemScopes({
+      roots,
+      scopes: [{ root: 'workspace', pathPrefix: 'allowed', access: ['read'] }],
+      canonicalPath: await realpath(join(workspace, 'allowed-sibling')),
+      access: 'read',
+    })).resolves.toBe(false);
+    await expect(isCanonicalPathAuthorizedByPluginFileSystemScopes({
+      roots,
+      scopes: [{ root: 'workspace', pathPrefix: 'allowed', access: ['write'] }],
+      canonicalPath: await realpath(join(workspace, 'allowed')),
+      access: 'read',
+    })).resolves.toBe(false);
+    await expect(isCanonicalPathAuthorizedByPluginFileSystemScopes({
+      roots,
+      scopes: [{ root: 'workspace', pathPrefix: 'allowed', access: ['read'] }],
+      canonicalPath: await realpath(join(workspace, 'allowed', 'escape')),
+      access: 'read',
+    })).resolves.toBe(false);
+    await expect(isCanonicalPathAuthorizedByPluginFileSystemScopes({
+      roots,
+      scopes: [{ root: 'project', projectId: 'a', access: ['read'] }],
+      canonicalPath: await realpath(projectB),
+      access: 'read',
+    })).resolves.toBe(false);
+  });
+
   it('round-trips binary bytes atomically inside an exact authorized scope', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-svc07-'));
     const service = createPluginFileSystemService({
@@ -20,20 +82,30 @@ describe('plugin invocation filesystem service', () => {
     expect(new Uint8Array(await readFile(join(root, 'allowed/data.bin')))).toEqual(bytes);
   });
 
-  it('rejects traversal, a different same-capability scope, symlink escape, oversize, and stale generation', async () => {
+  it('diagnoses a disclosure mismatch while preserving traversal, symlink, size, and generation fences', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-svc07-root-'));
     const outside = await mkdtemp(join(tmpdir(), 'happier-svc07-outside-'));
     await mkdir(join(root, 'allowed'), { recursive: true });
     await symlink(outside, join(root, 'allowed', 'link'));
     let current = true;
+    const disclosureMismatches: unknown[] = [];
     const service = createPluginFileSystemService({
       roots: { pluginData: root, workspace: root, projects: new Map() },
       scopes: [{ root: 'workspace', pathPrefix: 'allowed', access: ['read', 'write'] }],
       signal: new AbortController().signal,
       isGenerationCurrent: () => current,
+      recordDisclosureMismatch: (mismatch) => {
+        disclosureMismatches.push(mismatch);
+        throw new Error('diagnostic sink failed');
+      },
     });
     await expect(service.readFile({ root: 'workspace', relativePath: '../outside' })).rejects.toMatchObject({ code: 'plugin_fs_path_denied' });
-    await expect(service.writeFile({ root: 'workspace', relativePath: 'other/a' }, new Uint8Array([1]))).rejects.toMatchObject({ code: 'plugin_fs_access_denied' });
+    await expect(service.writeFile({ root: 'workspace', relativePath: 'other/a' }, new Uint8Array([1]))).resolves.toBeUndefined();
+    expect(disclosureMismatches).toEqual([{
+      root: 'workspace',
+      relativePath: 'other/a',
+      access: 'write',
+    }]);
     await expect(service.writeFile({ root: 'workspace', relativePath: 'allowed/link/a' }, new Uint8Array([1]))).rejects.toMatchObject({ code: 'plugin_fs_path_denied' });
     await service.writeFile({ root: 'workspace', relativePath: 'allowed/large' }, new Uint8Array([1, 2]));
     await expect(service.readFile({ root: 'workspace', relativePath: 'allowed/large' }, { maxBytes: 1 })).rejects.toMatchObject({ code: 'plugin_fs_too_large' });
@@ -83,6 +155,25 @@ describe('plugin invocation filesystem service', () => {
       { root: 'workspace', relativePath: 'allowed/Case.txt' },
       { maxBytes: Number.NaN },
     )).rejects.toMatchObject({ code: 'plugin_fs_invalid_limit' });
+  });
+
+  it('treats NFC and NFD spellings as the same portable path without weakening case checks', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-svc07-unicode-'));
+    await mkdir(join(root, 'allowed'), { recursive: true });
+    const nfcName = 'caf\u00e9.txt';
+    const nfdName = nfcName.normalize('NFD');
+    await writeFile(join(root, 'allowed', nfcName), 'normalized');
+    const service = createPluginFileSystemService({
+      roots: { pluginData: root, workspace: root, projects: new Map() },
+      scopes: [{ root: 'workspace', pathPrefix: 'allowed', access: ['read'] }],
+      signal: new AbortController().signal,
+      isGenerationCurrent: () => true,
+    });
+
+    await expect(service.readFile({
+      root: 'workspace',
+      relativePath: `allowed/${nfdName}`,
+    })).resolves.toEqual(new TextEncoder().encode('normalized'));
   });
 
   it('lists an authorized root with a bounded scope-bound opaque cursor', async () => {
@@ -176,7 +267,7 @@ describe('plugin invocation filesystem service', () => {
     await expect(service.writeFile(
       { root: 'project', projectId: 'project-b', relativePath: 'denied.bin' },
       new Uint8Array([1]),
-    )).rejects.toMatchObject({ code: 'plugin_fs_access_denied' });
+    )).rejects.toMatchObject({ code: 'plugin_fs_root_unavailable' });
     await expect(service.writeFile(
       { root: 'workspace', relativePath: 'oversized.bin' },
       new Uint8Array((16 * 1024 * 1024) + 1),

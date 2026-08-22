@@ -3,6 +3,10 @@ import {
     ExternalAgentObservationLeafFactV1Schema,
     PluginAgentExternalSessionLinkDataSchema,
 } from '@happier-dev/protocol/plugins/agents';
+import {
+    cloneStrictPluginJsonValue,
+    measureSerializedValidatedStrictPluginJsonUtf8Bytes,
+} from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
 
 import type { PluginDiagnosticData } from './diagnostics.js';
 import type {
@@ -11,6 +15,7 @@ import type {
     AgentExternalSessionsInvocationBounds,
     AgentExternalSessionsResult,
 } from './externalSessions.js';
+import { isAgentExternalSessionsFailureCode } from './sessions/external/failureCodes.js';
 import type { JsonValue } from './identity.js';
 import type { PluginInvocationContext } from './invocation.js';
 import {
@@ -165,19 +170,6 @@ export type AgentExternalSessionHooksContribution = Readonly<{
 }>;
 
 const textEncoder = new TextEncoder();
-const FAILURE_CODES = new Set([
-    'source_invalid',
-    'source_unreachable',
-    'candidate_not_found',
-    'agent_unavailable',
-    'unsupported',
-    'unavailable',
-    'not_authorized',
-    'invalid_request',
-    'cancelled',
-    'agent_error',
-    'timeout',
-]);
 
 function invalid(label: string, reason: string): never {
     throw new TypeError(`External Session hooks ${label}: ${reason}`);
@@ -304,71 +296,51 @@ function enforceEnvelope(value: unknown, maxBytes: number, label: string): void 
 
 function snapshotStrictJsonValue(value: unknown, label: string): JsonValue {
     const limits = AGENT_EXTERNAL_SESSION_HOOK_LIMITS;
-    const state = { nodes: 0 };
-    const visit = (input: unknown, depth: number): JsonValue => {
-        if (depth > limits.maxJsonDepth) return invalid(label, 'exceeds the JSON depth limit');
-        if (input === null || typeof input === 'string' || typeof input === 'boolean') {
-            return input;
+    let snapshot: JsonValue;
+    try {
+        snapshot = cloneStrictPluginJsonValue(value, label) as JsonValue;
+    } catch {
+        return invalid(label, 'must contain strict JSON data');
+    }
+
+    let nodes = 0;
+    const pending: Array<Readonly<{ value: JsonValue; depth: number }>> = [{
+        value: snapshot,
+        depth: 0,
+    }];
+    while (pending.length > 0) {
+        const current = pending.pop();
+        if (!current) continue;
+        if (current.depth > limits.maxJsonDepth) {
+            return invalid(label, 'exceeds the JSON depth limit');
         }
-        if (typeof input === 'number') {
-            if (!Number.isFinite(input)) return invalid(label, 'contains a non-finite number');
-            return input;
-        }
-        if (Array.isArray(input)) {
-            const expectedKeys = new Set<PropertyKey>([
-                'length',
-                ...Array.from({ length: input.length }, (_, index) => String(index)),
-            ]);
-            const ownKeys = Reflect.ownKeys(input);
-            if (ownKeys.length !== expectedKeys.size
-                || ownKeys.some((key) => !expectedKeys.has(key))) {
-                return invalid(label, 'contains a sparse or decorated array');
+        if (current.value === null || typeof current.value !== 'object') continue;
+        if (Array.isArray(current.value)) {
+            nodes += current.value.length;
+            if (nodes > limits.maxJsonNodes) return invalid(label, 'exceeds the JSON node limit');
+            for (let index = current.value.length - 1; index >= 0; index -= 1) {
+                pending.push({ value: current.value[index]!, depth: current.depth + 1 });
             }
-            state.nodes += input.length;
-            if (state.nodes > limits.maxJsonNodes) {
-                return invalid(label, 'exceeds the JSON node limit');
-            }
-            const snapshot = input.map((item, index) => {
-                const descriptor = Object.getOwnPropertyDescriptor(input, String(index));
-                if (!descriptor || !descriptor.enumerable || !('value' in descriptor)) {
-                    return invalid(label, 'contains an accessor array item');
-                }
-                return visit(descriptor.value, depth + 1);
-            });
-            return Object.freeze(snapshot);
+            continue;
         }
-        if (input === null || typeof input !== 'object') {
-            return invalid(label, 'contains a non-JSON value');
-        }
-        const prototype = Object.getPrototypeOf(input);
-        if (prototype !== Object.prototype && prototype !== null) {
-            return invalid(label, 'contains a non-plain object');
-        }
-        const keys = Reflect.ownKeys(input);
-        if (keys.some((key) => typeof key !== 'string')) {
-            return invalid(label, 'contains a non-string object key');
-        }
-        state.nodes += keys.length;
-        if (state.nodes > limits.maxJsonNodes) {
-            return invalid(label, 'exceeds the JSON node limit');
-        }
-        const snapshot: Record<string, JsonValue> = {};
-        for (const key of keys as string[]) {
-            const descriptor = Object.getOwnPropertyDescriptor(input, key);
-            if (!descriptor || !descriptor.enumerable || !('value' in descriptor)) {
-                return invalid(label, 'contains an accessor object field');
-            }
-            Object.defineProperty(snapshot, key, {
-                configurable: false,
-                enumerable: true,
-                writable: false,
-                value: visit(descriptor.value, depth + 1),
+        const record = current.value as Readonly<Record<string, JsonValue>>;
+        const keys = Object.keys(record);
+        nodes += keys.length;
+        if (nodes > limits.maxJsonNodes) return invalid(label, 'exceeds the JSON node limit');
+        for (let index = keys.length - 1; index >= 0; index -= 1) {
+            const key = keys[index]!;
+            pending.push({
+                value: record[key]!,
+                depth: current.depth + 1,
             });
         }
-        return Object.freeze(snapshot);
-    };
-    const snapshot = visit(value, 0);
-    if (serializedUtf8Bytes(snapshot) > limits.maxJsonUtf8Bytes) {
+    }
+
+    if (measureSerializedValidatedStrictPluginJsonUtf8Bytes(
+        snapshot,
+        label,
+        limits.maxJsonUtf8Bytes,
+    ) > limits.maxJsonUtf8Bytes) {
         return invalid(label, 'exceeds the JSON byte limit');
     }
     return snapshot;
@@ -915,7 +887,7 @@ function snapshotFailure(
     record: Readonly<Record<string, unknown>>,
     label: string,
 ): AgentExternalSessionsResult<never> {
-    if (typeof record.code !== 'string' || !FAILURE_CODES.has(record.code)) {
+    if (!isAgentExternalSessionsFailureCode(record.code)) {
         return invalid(label, 'has an unsupported failure code');
     }
     if (record.message !== undefined) {
@@ -1152,14 +1124,10 @@ function snapshotSource(value: unknown): AgentExternalSessionSource {
     } catch {
         return invalid('mapHookEvent sourceInput', 'must be strict bounded JSON');
     }
-    const kindDescriptor = Object.getOwnPropertyDescriptor(source, 'kind');
-    if (!kindDescriptor || !('value' in kindDescriptor)) {
+    if (!Object.hasOwn(source, 'kind')) {
         return invalid('mapHookEvent sourceInput', 'must contain kind');
     }
-    boundedString(kindDescriptor.value, 256, 'mapHookEvent sourceInput kind');
-    if (serializedUtf8Bytes(source) > AGENT_EXTERNAL_SESSION_HOOK_LIMITS.maxJsonUtf8Bytes) {
-        return invalid('mapHookEvent sourceInput', 'exceeds the JSON byte limit');
-    }
+    boundedString(source.kind, 256, 'mapHookEvent sourceInput kind');
     return source as AgentExternalSessionSource;
 }
 
@@ -1170,31 +1138,19 @@ function snapshotLinkData(value: unknown): AgentExternalSessionLinkData {
     } catch {
         return invalid('mapHookEvent linkData', 'must be strict bounded JSON');
     }
-    if (serializedUtf8Bytes(linkData) > AGENT_EXTERNAL_SESSION_HOOK_LIMITS.maxJsonUtf8Bytes) {
-        return invalid('mapHookEvent linkData', 'exceeds the JSON byte limit');
-    }
     return linkData;
 }
 
 function snapshotFact(value: unknown): AgentExternalSessionHookObservationFact {
-    readRecord(
-        value,
-        [
-            'kind',
-            'value',
-            'boundaryId',
-            'emptyTurnPhase',
-            'axis',
-            'evidenceClass',
-            'observedAtMs',
-            'expiresAtMs',
-        ],
-        ['kind', 'evidenceClass', 'observedAtMs'],
-        'mapHookEvent fact',
-    );
+    let strictValue: unknown;
+    try {
+        strictValue = cloneStrictPluginJsonValue(value, 'mapHookEvent fact');
+    } catch {
+        return invalid('mapHookEvent fact', 'must contain strict JSON data');
+    }
     let fact: AgentExternalSessionHookObservationFact;
     try {
-        fact = ExternalAgentObservationLeafFactV1Schema.parse(value);
+        fact = ExternalAgentObservationLeafFactV1Schema.parse(strictValue);
     } catch {
         return invalid('mapHookEvent fact', 'has an invalid fact shape');
     }

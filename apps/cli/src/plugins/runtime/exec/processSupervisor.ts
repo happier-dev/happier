@@ -6,7 +6,7 @@ import type {
     PluginProcessOutput,
     PluginProcessResult,
     PluginProcessTerminationRequest,
-} from '@happier-dev/plugin-sdk/runtime';
+} from '@happier-dev/plugin-sdk/exec';
 
 import { killProcessTree } from '@/agent/runtime/process/killProcessTree';
 import type { HostRuntimeLimitMeasurementRecorder } from '@/agent/runtime/state/runtimeLimitMeasurement';
@@ -17,6 +17,25 @@ type DisposeReason = Extract<PluginProcessTerminationRequest, { kind: 'dispose' 
 // select a smaller result buffer, but cannot turn process supervision into an
 // unbounded in-memory output collector.
 const INTERNAL_MAX_BUFFERED_PROCESS_OUTPUT_BYTES = 8 * 1024 * 1024;
+
+const HOST_PROCESS_CHILDREN = new WeakMap<
+    PluginProcessHandle,
+    Pick<ChildProcessWithoutNullStreams, 'pid'>
+>();
+
+// Host-only custody lookup. The public handle deliberately carries no OS process identity.
+export function associateSupervisedPluginProcessHandleForHost(
+    handle: PluginProcessHandle,
+    child: Pick<ChildProcessWithoutNullStreams, 'pid'>,
+): void {
+    HOST_PROCESS_CHILDREN.set(handle, child);
+}
+
+export function readSupervisedPluginProcessIdForHost(
+    handle: PluginProcessHandle,
+): number | null {
+    return HOST_PROCESS_CHILDREN.get(handle)?.pid ?? null;
+}
 
 export type SupervisedPluginProcess = Readonly<{
     child: ChildProcessWithoutNullStreams;
@@ -308,7 +327,6 @@ export function spawnSupervisedPluginProcess(input: SpawnSupervisedPluginProcess
         return disposePromise;
     };
     const handle: PluginProcessHandle = Object.freeze({
-        pid: child.pid ?? null,
         async write(data: Uint8Array) {
             await new Promise<void>((resolve, reject) => {
                 child.stdin.write(data, (error) => error ? reject(error) : resolve());
@@ -330,6 +348,7 @@ export function spawnSupervisedPluginProcess(input: SpawnSupervisedPluginProcess
         },
         dispose: () => dispose('caller'),
     });
+    associateSupervisedPluginProcessHandleForHost(handle, child);
     return Object.freeze({
         child,
         handle,

@@ -33,7 +33,6 @@ export function defineHostedWebBridgeMessage(
     return canonicalPluginHostedWebBridgeEnvelopeV1Schema.parse(message);
 }
 
-/** @experimental */
 export const PluginHostedWebCollectionUiQueryBridgeOperationV1Schema:
     PluginUiSchema<PluginHostedWebCollectionUiQueryBridgeOperationV1> =
     canonicalPluginHostedWebCollectionUiQueryBridgeOperationV1Schema;

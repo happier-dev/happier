@@ -29,9 +29,60 @@ describe('managed Provider registration', () => {
         expect(registration.commit()).toMatchObject([{
             family: 'providers',
             localId: 'gateway',
-            value: { start: expect.any(Function) },
+            value: { managedRuntime: { start: expect.any(Function) } },
         }]);
         expect(Object.isFrozen(registration.registrations()[0]?.value)).toBe(true);
+    });
+
+    it('publishes a contributed catalog format alongside the managed runtime', () => {
+        const registration = scope();
+        const start = vi.fn<ManagedProviderRuntime['start']>();
+        const parse = vi.fn(() => ({ models: [{ id: 'acme/one' }] }));
+
+        registration.api.providers.register('gateway', { start });
+        registration.api.providers.registerCatalogParser('gateway', 'acme-catalog-v3', parse);
+
+        const [published] = registration.commit();
+        if (published?.family !== 'providers') {
+            throw new Error('Expected committed Provider registration');
+        }
+        expect(published.value.managedRuntime?.start).toEqual(expect.any(Function));
+        expect(published.value.catalogParsers?.['acme-catalog-v3']).toBe(parse);
+        expect(Object.isFrozen(published.value.catalogParsers)).toBe(true);
+    });
+
+    it('publishes a catalog format for a Provider that declares no managed runtime', () => {
+        const registration = scope();
+        const parse = vi.fn(() => ({ models: [{ id: 'acme/one' }] }));
+
+        registration.api.providers.registerCatalogParser('gateway', 'acme-catalog-v3', parse);
+
+        const [published] = registration.commit();
+        if (published?.family !== 'providers') {
+            throw new Error('Expected committed Provider registration');
+        }
+        expect(published.value.managedRuntime).toBeUndefined();
+        expect(published.value.catalogParsers).toEqual({ 'acme-catalog-v3': parse });
+    });
+
+    it('rejects duplicate, undeclared, and noncallable catalog format registrations', () => {
+        const duplicate = scope();
+        const parse = vi.fn(() => ({ models: [] }));
+        duplicate.api.providers.registerCatalogParser('gateway', 'acme-catalog-v3', parse);
+        expect(() => duplicate.api.providers.registerCatalogParser('gateway', 'acme-catalog-v3', parse))
+            .toThrow(/duplicate catalog format 'acme-catalog-v3'/i);
+
+        const undeclared = scope();
+        expect(() => undeclared.api.providers.registerCatalogParser('other', 'acme-catalog-v3', parse))
+            .toThrow(/undeclared contribution 'providers\/other'/i);
+
+        const noncallable = scope();
+        noncallable.api.providers.registerCatalogParser(
+            'gateway',
+            'acme-catalog-v3',
+            null as unknown as typeof parse,
+        );
+        expect(() => noncallable.commit()).toThrow(/invalid 'providers\/gateway' runtime/i);
     });
 
     it('rejects a missing or noncallable public start operation before publication', () => {
@@ -62,9 +113,9 @@ describe('managed Provider registration', () => {
             throw new Error('Expected committed managed Provider registration');
         }
 
-        await expect(published.value.start({} as never, {} as never))
+        await expect(published.value.managedRuntime?.start({} as never, {} as never))
             .resolves.toEqual({ marker: 'captured' });
-        expect(published.value).not.toHaveProperty('unrelated');
+        expect(published.value.managedRuntime).not.toHaveProperty('unrelated');
     });
 
     it('captures the runtime method and its author receiver at commit', async () => {
@@ -90,7 +141,7 @@ describe('managed Provider registration', () => {
         }
         runtime.start = replacementStart;
 
-        await expect(published.value.start({} as never, {} as never))
+        await expect(published.value.managedRuntime?.start({} as never, {} as never))
             .resolves.toEqual({ marker: 'captured' });
         expect(committedStart).toHaveBeenCalledOnce();
         expect(replacementStart).not.toHaveBeenCalled();
@@ -121,7 +172,7 @@ describe('managed Provider registration', () => {
         duplicate.api.providers.register('gateway', { start: vi.fn() });
         expect(() => duplicate.api.providers.register('gateway', {
             start: vi.fn(),
-        })).toThrow(/duplicate contribution 'providers\/gateway'/i);
+        })).toThrow(/duplicate managed Provider runtime for Provider 'gateway'/i);
         expect(duplicate.registrations()).toEqual([]);
     });
 });

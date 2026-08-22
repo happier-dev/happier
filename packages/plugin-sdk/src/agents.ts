@@ -7,20 +7,6 @@ export type {
     AgentModelNonAcpApplyScope,
 } from '@happier-dev/agents';
 
-// These values remain owned by their Protocol / Agents policy modules. The SDK
-// only projects the exact identities needed by Agent plugin authors.
-export {
-    CLAUDE_UNIFIED_TERMINAL_DIALOG_CHOICE_REQUEST_SOURCE,
-    CURRENT_FLAGSHIP_CLAUDE_MODEL_ID,
-} from '@happier-dev/protocol/agents/claude';
-export {
-    CLAUDE_EFFORT_LEVELS,
-    buildClaudeModelOptions,
-    formatClaudeEffortLevelLabel,
-    normalizeClaudeEffortLevel,
-} from '@happier-dev/agents/providers/claude-model-options';
-export type { ClaudeEffortLevel } from '@happier-dev/agents/providers/claude-model-options';
-
 export {
     BackendSurfaceOperationCatalogV1 as AgentSurfaceOperationCatalogV1,
     PluginBackendCapabilitiesV1Schema as PluginAgentCapabilitiesV1Schema,
@@ -32,9 +18,34 @@ export type {
     AgentModelOptionOverrideRule,
     AgentModelOptionValueId,
     EnvironmentVariable,
+    PluginAgentCapabilitiesV2,
+    PluginAgentCapabilitySurfaceV2,
     PluginAgentContributionV2 as AgentContribution,
+    PluginAgentExecutionRunCapabilitiesV2,
+    PluginAgentSessionCapabilitiesV2,
 } from '@happier-dev/protocol';
 export type { PluginAgentDefinition } from './definePlugin.js';
+
+/**
+ * The Agent capability projection an Agent plugin manifest authors against.
+ *
+ * The derivation rules it applies — hosting a terminal from
+ * `localControl.attachStrategy`, appending the `fork` open route, and setting
+ * `conversationRollback` — are host rules, not plugin data. Publishing the
+ * projector is what lets an external Agent plugin author the same manifest a
+ * bundled one does instead of hand-copying rules the host is free to change.
+ */
+export {
+    projectAgentCapabilitiesV2FromDefinition,
+} from '@happier-dev/agents/definitions/agent-capabilities';
+export type {
+    AgentDefinitionCapabilityFacts,
+    AgentLocalControlDeclaration,
+    AuthoredAgentCapabilitiesV2,
+    AuthoredAgentCapabilitySurfaceV2,
+    AuthoredAgentSessionCapabilitiesV2,
+    AuthoredAgentSessionOpenRouteV2,
+} from '@happier-dev/agents/definitions/agent-capabilities';
 
 export const buildAgentTargetKeyV2: (target: Readonly<{
     kind: 'backend';

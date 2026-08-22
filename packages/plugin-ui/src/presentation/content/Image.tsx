@@ -94,6 +94,31 @@ function bytesToBase64(bytes: Uint8Array): string {
 }
 
 /**
+ * One derived platform image source per admitted byte identity.
+ *
+ * `data:` encoding is pure, so it belongs to the bytes, not to a render. The
+ * Resource store already collapses digest-equal reads onto one retained
+ * `ResourceContent`, which makes the byte array itself the admitted identity;
+ * keying the derivation on it weakly means an encoded source lives exactly as
+ * long as the bytes some mounted surface still holds. That is a derivation
+ * memo, not an image cache: it has no lifecycle, no eviction policy, no
+ * capacity, and no ability to answer for bytes nobody is holding.
+ *
+ * The whole `source` object is retained rather than the URI string, because a
+ * fresh `{ uri }` on every render re-enters the native image host's source
+ * diff and defeats memoization on `react-native-web`.
+ */
+const IMAGE_SOURCE_BY_ADMITTED_BYTES = new WeakMap<Uint8Array, Readonly<{ uri: string }>>();
+
+function resolveHappierImageSource(bytes: Uint8Array): Readonly<{ uri: string }> {
+  const derived = IMAGE_SOURCE_BY_ADMITTED_BYTES.get(bytes);
+  if (derived) return derived;
+  const source = Object.freeze({ uri: `data:image/png;base64,${bytesToBase64(bytes)}` });
+  IMAGE_SOURCE_BY_ADMITTED_BYTES.set(bytes, source);
+  return source;
+}
+
+/**
  * A brand mark is an explicit presentation variant of a bounded image. It
  * keeps opaque marks unchanged while giving transparent marks a semantic,
  * opaque backing; generic images intentionally remain bare.
@@ -140,7 +165,7 @@ export function HappierImage(props: Readonly<{
   if (props.bytes && props.bytes.byteLength > 0) {
     return (
       <ReactNativeImage
-        source={{ uri: `data:image/png;base64,${bytesToBase64(props.bytes)}` }}
+        source={resolveHappierImageSource(props.bytes)}
         accessibilityLabel={props.accessibilityLabel}
         accessible={Boolean(props.accessibilityLabel)}
         testID={props.testID}

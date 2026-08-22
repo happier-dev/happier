@@ -3,6 +3,17 @@ import { describe, expect, it } from 'vitest';
 import { validatePluginEventPayloadSchema } from './eventPayloadSchema';
 
 describe('validatePluginEventPayloadSchema JSON equality', () => {
+    it('uses the complete Protocol JSON-Schema vocabulary instead of a local subset', () => {
+        expect(validatePluginEventPayloadSchema({
+            payloadSchema: { type: 'string', minLength: 2 },
+            payload: 'x',
+        })).toMatchObject({ success: false });
+        expect(validatePluginEventPayloadSchema({
+            payloadSchema: { type: 'string', minLength: 2 },
+            payload: 'ok',
+        })).toEqual({ success: true });
+    });
+
     it('accepts nested null-prototype enum and const values independent of key order', () => {
         const payload = Object.assign(Object.create(null) as Record<string, unknown>, {
             amount: 4,

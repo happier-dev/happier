@@ -23,7 +23,6 @@ import type {
 
 import type { PluginJsonSchema } from './identity.js';
 export {
-    AUTOMATION_RESULT_DELIVERY_ACTION_REF_V1,
     AutomationIdV1Schema,
 } from '@happier-dev/protocol/automations/result-delivery';
 export type {

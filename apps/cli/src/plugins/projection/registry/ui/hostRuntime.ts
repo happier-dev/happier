@@ -1,6 +1,19 @@
-import type { FeatureDecision } from '@happier-dev/protocol';
+import {
+    DaemonHostedWebFrameCapabilityV1Schema,
+    type DaemonHostedWebFrameCapabilityV1,
+    type FeatureDecision,
+} from '@happier-dev/protocol';
+import type {
+    PluginUiChannelV1,
+    PluginUiPlatformV1,
+} from '@happier-dev/protocol/plugins/ui';
 
 import type { PluginUiProjectionHostRuntimeContext } from './projection';
+import {
+    PLUGIN_UI_HOST_API_VERSION,
+    PLUGIN_UI_REACT_NATIVE_VERSION,
+    PLUGIN_UI_REACT_VERSION,
+} from './artifactCompatibility';
 
 const REPACK_UNAVAILABLE_DIAGNOSTIC = 'repack_script_manager_unavailable';
 const REPACK_INSTALLED_ARTIFACT_LOADER_MISSING_DIAGNOSTIC =
@@ -14,9 +27,11 @@ const REACT_NATIVE_WEB_LOADER_NOT_INTEGRATED_DIAGNOSTIC = 'react_native_web_load
 const REACT_NATIVE_WEB_INSTALLED_ARTIFACT_LOADER_MISSING_DIAGNOSTIC =
     'react_native_web_installed_artifact_loader_unavailable';
 
-export const PLUGIN_UI_HOST_API_VERSION = '1.0.0';
-export const PLUGIN_UI_REACT_VERSION = '19.2.0';
-export const PLUGIN_UI_REACT_NATIVE_VERSION = '0.83.4';
+export {
+    PLUGIN_UI_HOST_API_VERSION,
+    PLUGIN_UI_REACT_NATIVE_VERSION,
+    PLUGIN_UI_REACT_VERSION,
+} from './artifactCompatibility';
 
 export type ReactNativeRepackLoaderBackendAvailability = Readonly<
     | {
@@ -34,8 +49,8 @@ export type ReactNativeHostRuntimeReadinessIdentity = Readonly<{
     hostAppVersion?: string;
     reactVersion?: string;
     reactNativeVersion?: string;
-    platform?: string;
-    channel?: string;
+    platform?: PluginUiPlatformV1;
+    channel?: PluginUiChannelV1;
     expoRuntimeVersion?: string;
     hermesVersion?: string;
     availableNativeCapabilities?: readonly string[];
@@ -104,12 +119,15 @@ export function resolvePluginUiProjectionHostRuntime(params: Readonly<{
         integrated: boolean;
         installedArtifactLoaderAvailable: boolean;
     }>;
+    /**
+     * Observed only by the exact physical frame adapter. This remains a
+     * transport fact; server Artifact hosting and Account admission are owned
+     * by their existing later-stage consumers.
+     */
+    hostedWebFrameCapability?: DaemonHostedWebFrameCapabilityV1;
     hostedWebFeatureDecision?: FeatureDecision;
     reactNativeBundlesFeatureDecision?: FeatureDecision;
     reactNativeDevHotReloadFeatureDecision?: FeatureDecision;
-    structuredMessagesFeatureDecision?: FeatureDecision;
-    reactNativeCrashDisabledContributionIds?: readonly string[];
-    reactNativeCrashDisabledByContributionId?: Readonly<Record<string, boolean>>;
 }>): PluginUiProjectionHostRuntimeContext {
     const loaderBackend: ReactNativeRepackLoaderBackendAvailability = params.reactNativeWebLoaderCapability
         ? params.reactNativeWebLoaderCapability.integrated !== true
@@ -147,15 +165,6 @@ export function resolvePluginUiProjectionHostRuntime(params: Readonly<{
                 }
                 : undefined,
         );
-    const crashDisabledContributionIds = Object.freeze([
-        ...(params.reactNativeCrashDisabledContributionIds ?? []),
-    ]);
-    const crashDisabledByContributionId: Record<string, boolean> = {
-        ...(params.reactNativeCrashDisabledByContributionId ?? {}),
-    };
-    for (const contributionId of crashDisabledContributionIds) {
-        crashDisabledByContributionId[contributionId] = true;
-    }
     const webLoaderReady = params.reactNativeWebLoaderCapability?.integrated === true
         && params.reactNativeWebLoaderCapability.installedArtifactLoaderAvailable === true;
     const webHostRuntime: ReactNativeHostRuntimeReadinessIdentity | undefined = webLoaderReady
@@ -163,8 +172,8 @@ export function resolvePluginUiProjectionHostRuntime(params: Readonly<{
         : undefined;
     const effectiveReactNativeHostRuntime: ReactNativeHostRuntimeReadinessIdentity | undefined =
         params.reactNativeHostRuntime ?? webHostRuntime;
-    const reactNativeRuntimePlatform = readNonEmptyString(effectiveReactNativeHostRuntime?.platform);
-    const reactNativeRuntimeChannel = readNonEmptyString(effectiveReactNativeHostRuntime?.channel);
+    const reactNativeRuntimePlatform = effectiveReactNativeHostRuntime?.platform;
+    const reactNativeRuntimeChannel = effectiveReactNativeHostRuntime?.channel;
     const reactNativeHostRuntimeIdentityAvailable = Boolean(reactNativeRuntimePlatform && reactNativeRuntimeChannel);
     const reactNativeLoaderBackend = loaderBackend.available && !reactNativeHostRuntimeIdentityAvailable
         ? Object.freeze({
@@ -176,12 +185,17 @@ export function resolvePluginUiProjectionHostRuntime(params: Readonly<{
             unavailableReason: 'React Native host runtime platform and channel are not available',
         })
         : loaderBackend;
+    const hostedWebFrameCapability = DaemonHostedWebFrameCapabilityV1Schema.safeParse(
+        params.hostedWebFrameCapability,
+    );
     return Object.freeze({
         hostedWeb: Object.freeze({
             featureEnabled: params.hostedWebFeatureDecision?.state === 'enabled',
-        }),
-        structuredMessages: Object.freeze({
-            featureEnabled: params.structuredMessagesFeatureDecision?.state === 'enabled',
+            ...(hostedWebFrameCapability.success
+                ? {
+                    frameCapability: Object.freeze(hostedWebFrameCapability.data),
+                }
+                : {}),
         }),
         reactNativeBundles: Object.freeze({
             featureEnabled: params.reactNativeBundlesFeatureDecision?.state === 'enabled',
@@ -191,12 +205,6 @@ export function resolvePluginUiProjectionHostRuntime(params: Readonly<{
             devHotReloadEnabled: params.reactNativeDevHotReloadFeatureDecision?.state === 'enabled',
             loaderBackendAvailable: reactNativeLoaderBackend.available,
             loaderBackendDiagnostics: reactNativeLoaderBackend.diagnostics,
-            ...(crashDisabledContributionIds.length > 0
-                ? { crashDisabledContributionIds }
-                : {}),
-            ...(Object.keys(crashDisabledByContributionId).length > 0
-                ? { crashDisabledByContributionId: Object.freeze(crashDisabledByContributionId) }
-                : {}),
             hostRuntime: Object.freeze({
                 hostAppVersion: readNonEmptyString(effectiveReactNativeHostRuntime?.hostAppVersion)
                     ?? params.hostAppVersion,
