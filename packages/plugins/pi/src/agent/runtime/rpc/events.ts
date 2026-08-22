@@ -106,6 +106,19 @@ function extractToolText(value: unknown): string | null {
   return text.length > 0 ? text : null;
 }
 
+function extractAssistantThinking(message: unknown): string | null {
+  const record = isRecord(message) ? message : null;
+  if (!record || record.role !== 'assistant' || !Array.isArray(record.content)) return null;
+  let thinking = '';
+  for (const item of record.content) {
+    const entry = isRecord(item) ? item : null;
+    if (!entry || entry.type !== 'thinking') continue;
+    const chunk = readRawString(entry.thinking);
+    if (chunk !== null) thinking += chunk;
+  }
+  return thinking.length > 0 ? thinking : null;
+}
+
 function projectMessageEvent(
   record: Readonly<Record<string, unknown>>,
   context: PiRuntimeEventProjectionContext,
@@ -114,13 +127,14 @@ function projectMessageEvent(
   if (!base) return [];
   if (readString(record.type) !== 'message_update') return [];
   const assistantMessageEvent = isRecord(record.assistantMessageEvent) ? record.assistantMessageEvent : null;
-  if (readString(assistantMessageEvent?.type) !== 'text_delta') return [];
+  const eventType = readString(assistantMessageEvent?.type);
+  if (eventType !== 'text_delta' && eventType !== 'thinking_delta') return [];
   const text = readRawString(assistantMessageEvent?.delta);
   if (text === null || text.length === 0) return [];
   return [{
     ...base,
     kind: 'message-delta',
-    channel: 'assistant',
+    channel: eventType === 'thinking_delta' ? 'reasoning' : 'assistant',
     text,
   }];
 }
@@ -316,11 +330,40 @@ export function createPiRuntimeEventProjector(): Readonly<{
   let compactionOrdinal = 0;
   let activeCompaction: ActivePiCompaction | null = null;
   let expectedHostCompaction: Pick<AgentSessionCompactRequest, 'compactionId' | 'trigger'> | null = null;
+  let accumulatedThinkingText = '';
 
   return {
     project(record, context) {
       const raw = isRecord(record) ? record : null;
       const type = readString(raw?.type);
+      if (raw && type === 'message_update') {
+        const events = projectPiRuntimeEvents(record, context);
+        for (const event of events) {
+          if (event.kind === 'message-delta' && event.channel === 'reasoning') {
+            accumulatedThinkingText += event.text;
+          }
+        }
+        return events;
+      }
+      if (raw && type === 'message_end') {
+        const fullText = extractAssistantThinking(raw.message);
+        const streamedText = accumulatedThinkingText;
+        accumulatedThinkingText = '';
+        if (!fullText) return [];
+        const text = streamedText.length === 0
+          ? fullText
+          : fullText.startsWith(streamedText)
+            ? fullText.slice(streamedText.length)
+            : `\n\n${fullText}`;
+        const base = turnEventBase(context);
+        if (!base || text.length === 0) return [];
+        return [{
+          ...base,
+          kind: 'message-delta',
+          channel: 'reasoning',
+          text,
+        }];
+      }
       if (!raw || (type !== 'compaction_start' && type !== 'compaction_end')) {
         return projectPiRuntimeEvents(record, context);
       }
@@ -354,6 +397,7 @@ export function createPiRuntimeEventProjector(): Readonly<{
       compactionOrdinal = 0;
       activeCompaction = null;
       expectedHostCompaction = null;
+      accumulatedThinkingText = '';
     },
   };
 }
