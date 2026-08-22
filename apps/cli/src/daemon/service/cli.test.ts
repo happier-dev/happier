@@ -1855,6 +1855,7 @@ describe('runDaemonServiceCliCommand', () => {
           ...actual,
           spawnSync: vi.fn((command: string, args: readonly string[] = []) => {
             if (command !== 'schtasks') {
+              lifecycleEvents.push(command);
               return { status: 0, stdout: Buffer.from(''), stderr: Buffer.from('') };
             }
             const action = String(args[0] ?? '');
@@ -1927,7 +1928,7 @@ describe('runDaemonServiceCliCommand', () => {
         output.restore();
       }
 
-      expect(lifecycleEvents.slice(0, 3)).toEqual(['stopDaemon', '/End', '/Run']);
+      expect(lifecycleEvents.slice(0, 3)).toEqual(['stopDaemon', 'powershell.exe', '/Run']);
     });
   });
 
