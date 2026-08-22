@@ -1,0 +1,196 @@
+---
+title: Monorepo port (legacy split repos)
+description: Use `hstack monorepo port` to port commits from split repos into the Happier monorepo (conflict-friendly).
+---
+
+This page documents `hstack monorepo port`, a helper that can apply commits from one or more “split repo” sources into a target Happier monorepo branch.
+
+It works by generating patches (`git format-patch`) and applying them with `git am` into the target repo.
+
+This is primarily useful when you need to import older work or external patches into the monorepo layout.
+
+---
+
+## Quickstart
+
+Show help:
+
+```bash
+hstack monorepo port --help
+```
+
+Interactive guide (recommended; TTY required):
+
+```bash
+hstack monorepo port guide
+```
+
+Non-interactive port (advanced; best-effort):
+
+```bash
+hstack monorepo port --target=/abs/path/to/happier-monorepo --branch=port/my-changes
+```
+
+Status/continue helpers (when `git am` is in progress):
+
+```bash
+hstack monorepo port status --target=/abs/path/to/monorepo
+hstack monorepo port continue --target=/abs/path/to/monorepo
+```
+
+---
+
+## What it maps
+
+`hstack monorepo port` is designed to port into the Happier monorepo layout by applying patches into:
+
+- UI: `apps/ui/` (legacy supported: `expo-app/`)
+- CLI: `apps/cli/` (legacy supported: `cli/`)
+- server: `apps/server/` (legacy supported: `server/`)
+
+This means you can port from:
+
+- legacy split repos (separate UI/CLI/server repos), or
+- another monorepo checkout (e.g. cherry-pickable change series you want to rebase onto a different base)
+
+---
+
+## Recommended workflow (interactive, safest)
+
+1) Start from a clean monorepo checkout/worktree (do not run ports in a dirty repo):
+
+```bash
+hstack wt new tmp/monorepo-port --from=upstream --use
+```
+
+2) In that worktree, create a target branch:
+
+```bash
+git checkout -b port/<name>
+```
+
+3) Run the guide (TTY):
+
+```bash
+hstack monorepo port guide --target="$(pwd)"
+```
+
+If the port stops on conflicts, you are in a normal `git am` session:
+
+- resolve conflict markers (`<<<<<<<`, `=======`, `>>>>>>>`)
+- `git add <files...>`
+- `git am --continue`
+
+If you need to abort:
+
+```bash
+git am --abort
+```
+
+---
+
+## Port helpers (guide / preflight / status / continue)
+
+The command family:
+
+- `hstack monorepo port guide` — interactive wizard (TTY only)
+- `hstack monorepo port preflight` — verifies the target is clean and ready (best-effort)
+- `hstack monorepo port status` — reports which patch/conflicts are currently blocking `git am`
+- `hstack monorepo port continue` — runs `git am --continue` (and optionally stages files when supported)
+
+---
+
+## LLM-assisted conflict resolution (optional)
+
+When a port stops on conflicts, you can ask an LLM to help resolve them:
+
+```bash
+hstack monorepo port llm --target=/abs/path/to/monorepo --launch
+```
+
+Or copy a prompt for copy/paste:
+
+```bash
+hstack monorepo port llm --target=/abs/path/to/monorepo --copy
+```
+
+---
+
+## Common failures (expected) and what to do
+
+### “target repo is not clean”
+
+The target must be clean. Fix by committing/stashing changes in the target, then re-run.
+
+### “a git am operation is already in progress”
+
+Resolve/abort the in-progress `git am` first:
+
+```bash
+git -C /abs/path/to/target am --continue
+# or
+git -C /abs/path/to/target am --abort
+```
+
+### “patch does not apply”
+
+This usually means the patch no longer matches the target base (renames/i18n churn/reformatted files).
+
+Options:
+
+- re-run on a different base (`--base=<ref>`)
+- enable 3-way fallback (`--3way`)
+- continue-on-failure (records failures but finishes): `--continue-on-failure`
+
+### Missing file path errors / double-prefixing
+
+Use `guide` mode and make sure your source is recognized correctly (monorepo sources should not get re-prefixed).
+
+---
+
+## Flags (high-signal)
+
+These are the flags you’ll most commonly use:
+
+- `--target=/abs/path/to/monorepo` (defaults to current repo root)
+- `--target-repo=<git-url>` + `--clone-target` (clone the target into a new directory)
+- `--branch=port/<name>` (create a new branch for the port)
+- `--base=<ref>` (choose the target base ref; defaults to a best-effort remote HEAD)
+- `--onto-current` (apply onto the currently checked-out branch; don’t switch branches)
+- `--dry-run` (compute/preview without applying)
+- `--skip-applied` (skip already-present patches when detected)
+- `--json` (machine-readable output)
+
+## Port strategy (recommended)
+
+1. Create an isolated stack (so you don’t touch `main`):
+
+```bash
+hstack stack new monorepo-port
+```
+
+2. Create a clean worktree for the target monorepo branch:
+
+```bash
+hstack wt new tmp/monorepo-port --from=upstream --use
+```
+
+3. Create a new branch in that worktree and port onto it (`--onto-current`).
+
+If the port stops on conflicts, you are in a normal `git am` session:
+
+- resolve conflict markers (`<<<<<<<`, `=======`, `>>>>>>>`)
+- `git add <files...>`
+- `git am --continue`
+
+## Layout mapping
+
+The Happier monorepo uses:
+
+- UI: `apps/ui`
+- CLI: `apps/cli`
+- server: `apps/server`
+
+If you are porting from older sources, you generally want your patches to land under those directories.
+
+Use the `guide` mode to avoid double-prefixing paths and to preview where patches will apply.

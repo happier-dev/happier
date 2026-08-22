@@ -1,33 +1,44 @@
 ---
-title: Clients
-description: How the app, CLI, daemon, and external MCP clients interact with Happier.
+title: Apps and interface
+description: The surfaces Happier gives you — the app, the desktop control panel, the CLI and the daemon — and the parts of the interface worth knowing about.
 ---
 
-Happier has multiple client surfaces that can all interact with the same server and account.
+Happier is the same account and the same sessions everywhere. What changes is
+the surface you reach them through, and how much of the machine that surface
+can see.
 
-Use this section to understand which surface does what:
+## Where Happier runs
 
-- **App** (`@happier-dev/app`): the desktop, web, and mobile UI for sessions, devices, approvals, and settings.
-- **CLI** (`@happier-dev/cli`): the scripting and operator client for install/auth/server profiles plus session control.
-- **Daemon**: the background process that keeps remote session control available without an open terminal.
-- **Happier MCP**: the external MCP server you run from the CLI so other MCP hosts can control Happier sessions and actions.
+- [App](/apps/app) — desktop, web and mobile. The one you will spend your time in.
+- [Desktop control panel](/apps/control-panel) — the desktop app doing the jobs that need a real machine: relay, daemon and secure-access setup.
+- [Windows](/apps/windows) — the behaviour and troubleshooting that only applies there.
+- [Custom mobile build](/apps/custom-mobile-build) — building your own app against a self-hosted server, without going through the stores.
 
-All of these clients reuse the same core control plane:
+## From a terminal
 
-- the same authenticated account/server selection
-- the same canonical action catalog
-- the same per-surface action settings
-- the same approval flow when an action is configured as approval-gated
+- [CLI](/apps/cli) — installing, signing in, and choosing which server you are talking to.
+- [CLI sessions](/apps/cli-sessions) — creating, listing, sending, resuming and attaching, all scriptable.
+- [Daemon](/apps/daemon) — keeping remote control available with no terminal open.
 
-That is why session control, action discovery, approvals, and execution runs can appear consistently across the app, CLI, session agents, voice, and external MCP hosts.
+## Inside the interface
 
-For the most common user-facing flows:
+- [Attachments and image previews](/apps/attachments)
+- [Markdown and diagrams](/apps/markdown) — how a transcript renders, and the editor for Markdown files.
+- [Themes](/apps/themes) — built-ins, your own, and moving them between devices.
+- [Keyboard shortcuts](/apps/keyboard-shortcuts) — every rebindable shortcut and the command palette.
 
-- [CLI](/apps/cli) for install/auth/server selection
-- [CLI sessions](/apps/cli-sessions) for create/list/send/resume/attach/manage
-- [Happier MCP (external)](/extending/happier-as-mcp-server) for editor/agent automation
-- [Happier MCP (external)](/extending/happier-as-mcp-server) for privileged host configuration
+## What every surface shares
 
-If you’re looking specifically for background operation and service installation, see [Daemon](/apps/daemon).
+Whichever one you use, the control plane underneath is the same: the same
+account and server selection, the same catalog of actions an agent or a person
+can invoke, the same per-surface settings for those actions, and the same
+approval flow when an action is gated.
 
-For server selection, profile switching, and multi-server behavior, see [Features → Multi-server](/accounts/multi-server).
+That is why an approval raised by a session on your laptop can be answered from
+your phone, and why voice and an external MCP host can drive the same actions
+the app exposes.
+
+## Related
+
+- [Happier as an MCP server](/extending/happier-as-mcp-server) — letting an editor or an automation drive Happier.
+- [Multiple relays](/accounts/multi-server) — server selection and profile switching.

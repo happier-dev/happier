@@ -3,7 +3,7 @@ import './global.css';
 import localFont from 'next/font/local';
 
 import { Analytics, AnalyticsNotice } from '../analytics/client';
-import { SITE_NAME, SITE_URL } from '../lib/site';
+import { SITE_DESCRIPTION, SITE_NAME, SITE_URL } from '../lib/site';
 
 /**
  * The marketing site's three families, from the site's own variable woff2 files.
@@ -46,13 +46,29 @@ const jetbrainsMono = localFont({
 export const metadata = {
   metadataBase: new URL(SITE_URL),
   title: { default: SITE_NAME, template: `%s | ${SITE_NAME}` },
+  // A page that sets no description of its own inherited nothing, so search
+  // results and share cards fell back to whatever the crawler scraped.
+  description: SITE_DESCRIPTION,
+  applicationName: SITE_NAME,
+  openGraph: { type: 'website', siteName: SITE_NAME, locale: 'en_US' },
+  twitter: { card: 'summary_large_image' },
 };
 
 export default function Layout({ children }: LayoutProps<'/'>) {
   return (
     <html lang="en" className={`${inter.variable} ${interTight.variable} ${jetbrainsMono.variable}`} suppressHydrationWarning>
       <body className="flex flex-col min-h-screen">
-        <RootProvider theme={{ defaultTheme: 'dark', enableSystem: false }}>
+        {/* `type: 'static'` is not a preference — it is what the deployment can
+            serve. The site is a static export on Cloudflare Workers assets, so
+            no server remains to answer /api/search per keystroke; that route
+            now emits a prebuilt index at build time (its `staticGET`) and the
+            client searches it in the browser. Leave this off and the search box
+            queries a route that only ever returns the whole index, and finds
+            nothing. */}
+        <RootProvider
+          theme={{ defaultTheme: 'dark', enableSystem: false }}
+          search={{ options: { type: 'static' } }}
+        >
           {children}
         </RootProvider>
         {/* Boots cookieless analytics and records one pageview per route. Both

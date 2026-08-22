@@ -62,7 +62,7 @@ If you switch back to an Agent that already ran this session **on the same machi
 Two things follow from that:
 
 - It only happens when that Agent's own provider-session resume is supported and allowed for you. An Agent you have disabled in settings, a provider that does not support resume at all, and — for Codex — a backend mode that does not offer it, all fall back to a fresh start with the **full** carried-over context instead. See [Continuing a session](/sessions/continuing-a-session).
-- The Agent's own vendor session can be gone by the time you return: providers prune, rotate and expire their session stores. Happier does not pre-check it. A dead session **fails at the first turn**, visibly, exactly like any other resume whose provider state has disappeared. This is expected. Switch to another Agent and back, or continue with a different Agent, to get a fresh start with the full context.
+- The Agent's own vendor session can be gone by the time you return: providers prune, rotate and expire their session stores. Happier does not pre-check it. The recorded boundary advances only when the provider accepts the requested native identity, including when no replay seed is needed; prompt delivery or replay-seed retirement alone is not that proof. A failed strict return leaves the earlier boundary unchanged and invalidates that identity instead of offering it again as a valid native return.
 
 ## What the arriving Agent is given
 
@@ -107,8 +107,12 @@ Happier is explicit about whether your message was sent and whether the switch h
 
 - **Nothing was sent, nothing changed.** Wrong permissions, an unsupported session, a target that is not available to the CLI performing the operation, a session that changed while you were choosing, an Agent that was still working, or an Agent that could not be stopped. Fix the cause and send again — your draft is kept.
 - **The previous Agent stopped, but the switch did not complete.** Your message was not sent. Happier reconciles the current Session facts automatically; your draft stays available and the ordinary send is the retry when the Session is still the source.
-- **The session switched, but your message was not sent.** Send it again.
+- **The session switched but the target did not start.** Your exact message is already queued and will be delivered when the Session resumes; do not send it again. The existing **Resume session** action is offered only when the Session is already the target and inactive.
 - **Happier could not confirm what happened.** While this is unresolved, the composer performs one automatic reconciliation and refuses new sends rather than risk sending your message twice.
+
+There is no *Check status*, *Resume source*, or *Resume target* control, recovery panel, polling, or
+second recovery state machine. Apart from **Resume session** for an inactive target, the composer
+banner offers no recovery action.
 
 Retrying the same armed switch reuses the same identity, so a retry admits one message rather than a duplicate.
 

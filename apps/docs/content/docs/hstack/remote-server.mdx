@@ -9,7 +9,7 @@ This page documents `hstack remote server setup`, a workflow to provision a **re
 - runs the existing guided installer: `hstack self-host install`
 - installs the server runtime as a managed service (default: **user** mode)
 
-If you want to provision a remote machine for **CLI + daemon** usage (pairing/auth included), see: `/docs/hstack/remote-daemon`.
+If you want to provision a remote machine for **CLI + daemon** usage (pairing/auth included), see: [Remote daemon setup (SSH)](/hstack/remote-daemon).
 
 ## Quickstart
 
@@ -79,7 +79,7 @@ hstack remote server setup --ssh user@host \
   --env DATABASE_URL=postgresql://user:pass@db:5432/happier
 ```
 
-Tip: for the full server env surface, see `/docs/deployment/env`.
+Tip: for the full server env surface, see [Environment variables](/self-hosting/env).
 
 ## Auto-update scheduling (daily window)
 

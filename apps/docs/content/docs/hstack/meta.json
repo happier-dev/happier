@@ -22,7 +22,9 @@
     "menubar",
     "mobile-ios",
     "tauri",
-    "isolated-linux-vm"
+    "isolated-linux-vm",
+    "edison",
+    "monorepo-port"
   ],
   "root": true
 }

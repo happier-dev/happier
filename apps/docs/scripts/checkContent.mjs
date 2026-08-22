@@ -399,6 +399,93 @@ export function checkNavCoverage({ contentRoot = DEFAULT_CONTENT_ROOT } = {}) {
   return problems;
 }
 
+/**
+ * A cross-reference written as a code span is not a link.
+ *
+ * Twenty-five of them shipped in the form `` `/docs/hstack/setup` ``: not
+ * clickable, and carrying a `/docs` prefix that has not been the site's route
+ * shape since `baseUrl` became `''`. `checkInternalLinks` rejects that prefix,
+ * but only inside a real link — the code-span form slipped straight past it,
+ * which is exactly why it survived so long.
+ *
+ * A trailing file extension is exempt: `/docs/tool-normalization.md` is a path
+ * in the repository, not a route on this site, and the prose around those says
+ * so.
+ */
+export function checkRouteCodeSpans({ contentRoot = DEFAULT_CONTENT_ROOT } = {}) {
+  const problems = [];
+  for (const file of listMdxFiles(contentRoot)) {
+    const where = relative(contentRoot, file).replace(/\\/g, '/');
+    const lines = maskFencedBlocks(readFileSync(file, 'utf8'));
+    for (let i = 0; i < lines.length; i += 1) {
+      for (const match of lines[i].matchAll(/`(\/docs\/[^`\s]*)`/g)) {
+        if (/\.[a-z]{2,4}$/.test(match[1])) continue;
+        problems.push({
+          at: `${where}:${i + 1}`,
+          label: match[1],
+          reason: 'cross-reference written as a code span — make it a link, and drop the /docs prefix',
+        });
+      }
+    }
+  }
+  return problems;
+}
+
+/**
+ * A section's `index.mdx` must lead somewhere for every page in its section.
+ *
+ * `checkNavCoverage` proves the sidebar reaches every page. This proves the
+ * *hub* does — and they are not the same claim. `apps/index.mdx` shipped
+ * titled "Clients", describing four surfaces, linking two of its own twelve
+ * pages and naming the same MCP page twice with different descriptions; the
+ * sidebar was complete the whole time, so nothing failed. `self-hosting`
+ * hid every authentication page — GitHub, OIDC, mTLS, custom providers — from
+ * the one page a self-hoster starts on.
+ *
+ * A directory entry is satisfied by a link to the sub-hub or to anything under
+ * it, since either gets the reader in.
+ */
+export function checkHubCoverage({ contentRoot = DEFAULT_CONTENT_ROOT } = {}) {
+  const problems = [];
+  const walk = (dir) => {
+    const entries = readdirSync(dir, { withFileTypes: true });
+    const dirs = entries.filter((e) => e.isDirectory()).map((e) => e.name);
+    const indexPath = join(dir, 'index.mdx');
+    const where = relative(contentRoot, dir).replace(/\\/g, '/') || '.';
+    let listed = null;
+    try {
+      listed = JSON.parse(readFileSync(join(dir, 'meta.json'), 'utf8')).pages ?? [];
+    } catch {
+      listed = null;
+    }
+    if (listed && entries.some((e) => e.isFile() && e.name === 'index.mdx')) {
+      const source = maskFencedBlocks(readFileSync(indexPath, 'utf8')).join('\n');
+      const linked = new Set([
+        ...[...source.matchAll(MARKDOWN_LINK)].map((m) => m[2]),
+        ...[...source.matchAll(JSX_HREF)].map((m) => m[1]),
+      ].map((href) => href.split('#')[0].replace(/\/+$/, '')));
+      const prefix = where === '.' ? '' : `/${where}`;
+      for (const page of listed) {
+        if (page === 'index') continue;
+        const route = `${prefix}/${page}`;
+        const reached = dirs.includes(page)
+          ? [...linked].some((href) => href === route || href.startsWith(`${route}/`))
+          : linked.has(route);
+        if (!reached) {
+          problems.push({
+            at: `${where}/index.mdx`,
+            label: route,
+            reason: 'section landing page does not link this page — a reader who starts at the hub never finds it',
+          });
+        }
+      }
+    }
+    for (const sub of dirs) walk(join(dir, sub));
+  };
+  walk(contentRoot);
+  return problems;
+}
+
 export async function runContentChecks(options = {}) {
   const { checkGeneratedPages } = await import('./generateReference.mjs');
   return {
@@ -408,6 +495,8 @@ export async function runContentChecks(options = {}) {
       ...checkFeatureEnvCoverage(options),
       ...checkCliCommandCoverage(options),
       ...checkNavCoverage(options),
+      ...checkRouteCodeSpans(options),
+      ...checkHubCoverage(options),
     ],
     generated: await checkGeneratedPages(options),
   };

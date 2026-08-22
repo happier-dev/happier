@@ -261,10 +261,26 @@ Happier refuses an operation rather than attempting one that could lose work:
 
 ## Limits
 
-- Branch and stash management are implemented for Git. Other SCM backends are read-only.
 - Line-level staging works on text diffs; binary and conflict cases fall back to whole-file actions.
 - The commit-message generator needs daemon support for execution runs.
 - Publishing a repository is supported for GitHub. GitLab and Bitbucket repository publishing are not.
+
+## Sapling
+
+Git is not the only backend. Sapling is supported too, and it is neither a full
+peer of Git nor read-only — so it is worth knowing where the line falls before
+you point Happier at a Sapling checkout.
+
+| Area | Sapling |
+| --- | --- |
+| Reading | Status, file diffs, commit diffs, log |
+| Committing | Create, commit selected paths, back out a commit |
+| Working copy | Discard changes |
+| Remotes | Fetch, pull and push — but not publishing a new repository |
+| Branches and stashes | Not supported |
+| Line-level staging | Not supported — path-level selection only |
+
+Anything branch- or stash-shaped is Git-only, as is staging individual lines.
 
 ## Related
 

@@ -8,7 +8,9 @@ import {
   checkCliCommandCoverage,
   checkFeatureEnvCoverage,
   checkInternalLinks,
+  checkHubCoverage,
   checkNavCoverage,
+  checkRouteCodeSpans,
   checkUiLabels,
   routeForFile,
   slugifyHeading,
@@ -245,4 +247,45 @@ test('a meta.json entry with no file is reported too', () => {
   });
   const problems = checkNavCoverage({ contentRoot: root });
   assert.deepEqual(problems.map((p) => p.label), ['deleted-page']);
+});
+
+test('a cross-reference written as a code span is caught, but a repo file path is not', () => {
+  // Twenty-five of these shipped. `checkInternalLinks` rejects the /docs prefix
+  // inside a real link, and saw none of them, because none of them was a link.
+  const root = fixture({
+    'hstack/setup.mdx': [
+      'See `/docs/hstack/paths-and-env` for precedence.',
+      'Implementation notes live in `/docs/tool-normalization.md` in the repository.',
+      '```',
+      'curl /docs/example',
+      '```',
+      '',
+    ].join('\n'),
+  });
+  const problems = checkRouteCodeSpans({ contentRoot: root });
+  assert.deepEqual(problems.map((p) => p.label), ['/docs/hstack/paths-and-env']);
+});
+
+test('a section landing page that skips its own pages is a dead end, even with a complete sidebar', () => {
+  // `apps/index.mdx` shipped linking two of its twelve pages; the sidebar was
+  // complete, so checkNavCoverage passed and nothing else looked.
+  const root = fixture({
+    'self-hosting/meta.json': JSON.stringify({ title: 'Self-hosting', pages: ['index', 'docker', 'auth-oidc'] }),
+    'self-hosting/index.mdx': 'Start with [Docker](/self-hosting/docker).\n',
+    'self-hosting/docker.mdx': '# Docker\n',
+    'self-hosting/auth-oidc.mdx': '# OIDC\n',
+  });
+  const problems = checkHubCoverage({ contentRoot: root });
+  assert.deepEqual(problems.map((p) => p.label), ['/self-hosting/auth-oidc']);
+});
+
+test('a hub reaches a subsection through any page inside it', () => {
+  const root = fixture({
+    'plugins/meta.json': JSON.stringify({ title: 'Plugins', pages: ['index', 'api'] }),
+    'plugins/index.mdx': 'Jump straight to [hooks](/plugins/api/hooks).\n',
+    'plugins/api/meta.json': JSON.stringify({ title: 'API', pages: ['index', 'hooks'] }),
+    'plugins/api/index.mdx': 'See [Hooks](/plugins/api/hooks).\n',
+    'plugins/api/hooks.mdx': '# Hooks\n',
+  });
+  assert.deepEqual(checkHubCoverage({ contentRoot: root }), []);
 });

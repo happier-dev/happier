@@ -5,13 +5,20 @@ import { runDocsBuild } from './build.mjs';
 
 const noContentProblems = () => ({ links: [], labels: [], generated: [] });
 
-test('runs the native typecheck before invoking the local Next build CLI', async () => {
+test('writes the redirects file and typechecks before invoking the local Next build CLI', async () => {
   const calls = [];
 
   await runDocsBuild({
     packageRoot: '/repo/apps/docs',
     processExecPath: '/managed/node',
     runContentChecksImpl: noContentProblems,
+    renderRedirectsImpl: () => '/old /new 301\n',
+    relocateMdxSourcesImpl(options) {
+      calls.push({ kind: 'relocate', options });
+    },
+    writeFileImpl(path, contents) {
+      calls.push({ kind: 'write', path, contents });
+    },
     execYarnImpl(args, options) {
       calls.push({ kind: 'yarn', args, options });
     },
@@ -22,7 +29,15 @@ test('runs the native typecheck before invoking the local Next build CLI', async
     },
   });
 
+  // Order is the point, not just presence. `next build` copies public/ into
+  // out/, so a _redirects written afterwards ships an export with every old
+  // URL dead and a green build to go with it.
   assert.deepEqual(calls, [
+    {
+      kind: 'write',
+      path: '/repo/apps/docs/public/_redirects',
+      contents: '/old /new 301\n',
+    },
     {
       kind: 'yarn',
       args: ['-s', 'types:check'],
@@ -38,6 +53,8 @@ test('runs the native typecheck before invoking the local Next build CLI', async
         stdio: 'inherit',
       },
     },
+    // AFTER the build, not before: it rearranges what the export produced.
+    { kind: 'relocate', options: { outDir: '/repo/apps/docs/out' } },
   ]);
 });
 
@@ -47,6 +64,9 @@ test('fails the build when the local Next CLI exits unsuccessfully', async () =>
       packageRoot: '/repo/apps/docs',
       processExecPath: '/managed/node',
       runContentChecksImpl: noContentProblems,
+      renderRedirectsImpl: () => '',
+      writeFileImpl() {},
+      relocateMdxSourcesImpl() {},
       execYarnImpl() {},
       resolveNextCliPathImpl: () => '/repo/node_modules/next/dist/bin/next',
       spawnSyncImpl: () => ({ status: 2 }),

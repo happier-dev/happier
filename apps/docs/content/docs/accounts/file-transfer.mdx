@@ -44,12 +44,19 @@ same way regardless of what started it.
 Both routes are server features, on by default, and can be turned off
 independently:
 
-| Variable | Default |
-| --- | --- |
-| `HAPPIER_FEATURE_MACHINES_TRANSFER_DIRECT_PEER__ENABLED` | `1` |
-| `HAPPIER_FEATURE_MACHINES_TRANSFER_SERVER_ROUTED__ENABLED` | `1` |
-| `HAPPIER_FEATURE_MACHINES_TRANSFER_SERVER_ROUTED__MAX_BYTES` | ceiling 8 GiB |
-| `HAPPIER_FEATURE_MACHINES_TRANSFER_SERVER_ROUTED__MAX_ACTIVE_TRANSFERS_PER_SOCKET` | `128` |
+| Variable | Default | Range |
+| --- | --- | --- |
+| `HAPPIER_FEATURE_MACHINES_TRANSFER_DIRECT_PEER__ENABLED` | `1` | on / off |
+| `HAPPIER_FEATURE_MACHINES_TRANSFER_SERVER_ROUTED__ENABLED` | `1` | on / off |
+| `HAPPIER_FEATURE_MACHINES_TRANSFER_SERVER_ROUTED__MAX_BYTES` | 2 GiB | clamped to 8 GiB |
+| `HAPPIER_FEATURE_MACHINES_TRANSFER_SERVER_ROUTED__MAX_ACTIVE_TRANSFERS_PER_SOCKET` | `128` | 1 – 10,000 |
+
+<Callout>
+  The size limit has a **default of 2 GiB**, not just a ceiling. A server-routed
+  transfer larger than that fails on an untouched deployment. Raising the
+  variable helps up to 8 GiB, where a hard maximum clamps it — a larger value is
+  silently reduced rather than rejected, so the setting appears to have applied.
+</Callout>
 
 Disabling the server-routed fallback means transfers only succeed where a direct
 route exists. Both depend on the `machines.transfer` control plane, so disabling

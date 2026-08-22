@@ -1,10 +1,13 @@
 import { spawnSync } from 'node:child_process';
+import { writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { execYarn } from '../../../scripts/workspaces/execYarnCommand.mjs';
 import { formatProblems, runContentChecks } from './checkContent.mjs';
+import { renderRedirects } from './generateRedirects.mjs';
+import { relocateMdxSources } from './exportMdxSources.mjs';
 
 const require = createRequire(import.meta.url);
 const defaultPackageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -20,6 +23,9 @@ export async function runDocsBuild({
   resolveNextCliPathImpl = resolveNextCliPath,
   spawnSyncImpl = spawnSync,
   runContentChecksImpl = runContentChecks,
+  renderRedirectsImpl = renderRedirects,
+  writeFileImpl = writeFile,
+  relocateMdxSourcesImpl = relocateMdxSources,
 } = {}) {
   // Before anything expensive: a broken internal link and a renamed UI label
   // both build perfectly green and both mislead every reader who hits them.
@@ -32,6 +38,19 @@ export async function runDocsBuild({
       `Docs content checks failed with ${problemCount} problem${problemCount === 1 ? '' : 's'}:\n${formatProblems(contentProblems)}`,
     );
   }
+
+  // public/_redirects has to exist BEFORE `next build`, because the export
+  // copies public/ into out/ as part of the build. Generating it after would
+  // produce an out/ with 160 dead URLs and no sign anything was wrong.
+  //
+  // It is regenerated every build rather than committed-and-trusted: the source
+  // of truth is redirects.mjs, and a stale generated file is invisible — the
+  // build is green either way and only old URLs pay for the drift.
+  await writeFileImpl(
+    resolve(packageRoot, 'public', '_redirects'),
+    renderRedirectsImpl(),
+    'utf8',
+  );
 
   execYarnImpl(['-s', 'types:check'], {
     cwd: packageRoot,
@@ -51,6 +70,11 @@ export async function runDocsBuild({
   if ((result.status ?? 1) !== 0) {
     throw new Error(`Next build failed with code ${result.status ?? 'unknown'}`);
   }
+
+  // AFTER the export, because it rearranges what the export produced: the
+  // Markdown sources move from the route's staging path to the URLs they are
+  // served at, so `<page>.mdx` is a static asset rather than a Worker rewrite.
+  await relocateMdxSourcesImpl({ outDir: resolve(packageRoot, 'out') });
 }
 
 const isEntrypoint = process.argv[1]
