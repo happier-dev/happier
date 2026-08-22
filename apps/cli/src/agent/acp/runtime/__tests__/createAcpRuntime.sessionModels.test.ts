@@ -90,6 +90,49 @@ describe('createAcpRuntime (session models)', () => {
     expect(metadata.sessionModelsV1).toEqual(metadata.acpSessionModelsV1);
   });
 
+  it('publishes ACP session models emitted while loading a resumed session', async () => {
+    const backend = createFakeAcpRuntimeBackend();
+    backend.loadSession = async () => {
+      backend.emit({
+        type: 'event',
+        name: 'session_models_state',
+        payload: {
+          currentModelId: 'model-a',
+          availableModels: [
+            { id: 'model-a', name: 'Model A' },
+            { id: 'model-b', name: 'Model B' },
+          ],
+        },
+      });
+      return { sessionId: 'sess_main' };
+    };
+    const { session, getMetadata } = createSessionClientWithMetadata({
+      initialMetadata: createTestMetadata(),
+    });
+
+    const runtime = createAcpRuntime({
+      provider: 'pi',
+      directory: '/tmp',
+      session,
+      messageBuffer: new MessageBuffer(),
+      mcpServers: {},
+      permissionHandler: createApprovedPermissionHandler(),
+      onThinkingChange: () => {},
+      ensureBackend: async () => backend,
+    });
+
+    await runtime.startOrLoad({ resumeId: 'sess_main' });
+
+    expect(getMetadata().sessionModelsV1).toMatchObject({
+      provider: 'pi',
+      currentModelId: 'model-a',
+      availableModels: [
+        { id: 'model-a', name: 'Model A' },
+        { id: 'model-b', name: 'Model B' },
+      ],
+    });
+  });
+
   it('publishes model options derived from ACP config options when models are absent', async () => {
     const backend = createFakeAcpRuntimeBackend();
     const { session, metadataUpdates, getMetadata } = createSessionClientWithMetadata({

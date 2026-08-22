@@ -1248,9 +1248,30 @@ export function createAcpRuntime(params: {
       return true;
     };
 
+    const handleSessionModelsStateMessage = (msg: AgentMessage): boolean => {
+      if (msg.type !== 'event' || msg.name !== 'session_models_state') return false;
+      publishAcpSessionModelsState({
+        session: {
+          updateMetadata: (updater) => publishRuntimeMetadataBestEffort(
+            updater,
+            'session_models_state',
+          ),
+        },
+        provider: params.provider,
+        payload: msg.payload,
+        logPrefix: `[${params.provider}]`,
+        reason: 'session_models_state',
+        requireAvailableModels: true,
+      });
+      return true;
+    };
+
     b.onMessage((msg: AgentMessage) => {
       if (handlerGeneration !== runtimeMetadataPublicationGeneration) return;
       if (handleProviderSessionInfoMessage(msg)) return;
+      // Runtime model inventory is authoritative control state, not replay transcript content.
+      // Providers such as Pi publish it from loadSession, so retain it while replay events are suppressed.
+      if (handleSessionModelsStateMessage(msg)) return;
       if (loadingSession) {
         if (msg.type === 'status' && msg.status === 'error') {
           turnAborted = true;
@@ -1592,21 +1613,6 @@ export function createAcpRuntime(params: {
                 'session_modes_state',
               );
             }
-          }
-          if (name === 'session_models_state') {
-            publishAcpSessionModelsState({
-              session: {
-                updateMetadata: (updater) => publishRuntimeMetadataBestEffort(
-                  updater,
-                  'session_models_state',
-                ),
-              },
-              provider: params.provider,
-              payload: msg.payload,
-              logPrefix: `[${params.provider}]`,
-              reason: 'session_models_state',
-              requireAvailableModels: true,
-            });
           }
           if (name === 'config_options_state' || name === 'config_options_update') {
             const payloadRecord = asRecord(msg.payload);
