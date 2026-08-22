@@ -4,6 +4,8 @@ import { describe, expect, it } from 'vitest';
 
 import unitConfig from '../../vitest.config';
 import integrationConfig from '../../vitest.integration.config';
+import g3ComposedConfig from '../../vitest.g3-composed.config';
+import providersTempConfig from '../../vitest.providers.temp.config';
 import slowConfig from '../../vitest.slow.config';
 import { workspacePackageSourcesPlugin } from '../vitestWorkspacePackageResolution';
 
@@ -41,24 +43,44 @@ describe('Vitest lane separation', () => {
             readFileSync(new URL('../../package.json', import.meta.url), 'utf8'),
         ) as { scripts?: Record<string, string> };
 
+        const unitWrapper = packageJson.scripts?.['test:unit'];
+        const unitLocal = packageJson.scripts?.['test:unit:local'];
+        const integrationWrapper = packageJson.scripts?.['test:integration'];
+        const integrationLocal = packageJson.scripts?.['test:integration:local'];
+        const slowWrapper = packageJson.scripts?.['test:slow'];
+        const slowLocal = packageJson.scripts?.['test:slow:local'];
+        const vitestWrapper = packageJson.scripts?.vitest;
+        const vitestLocal = packageJson.scripts?.['vitest:local'];
         const fastScripts = [
-            packageJson.scripts?.['test:unit'],
-            packageJson.scripts?.['test:integration'],
+            unitLocal,
+            integrationLocal,
+            slowLocal,
         ].join('\n');
 
-        expect(packageJson.scripts?.['test:unit']).toContain(
+        expect(unitWrapper).toContain('--script=test:unit:local');
+        expect(unitLocal).toContain(
             'vitest run --config vitest.config.ts',
         );
-        expect(packageJson.scripts?.['test:unit']).toContain('test:import-cycles');
-        expect(packageJson.scripts?.['test:integration']).toContain(
+        expect(unitLocal).toContain('test:import-cycles');
+        expect(integrationWrapper).toContain('--script=test:integration:local');
+        expect(integrationLocal).toContain(
             'node scripts/runVitestShards.mjs --config vitest.integration.config.ts',
         );
+        expect(slowWrapper).toContain('--script=test:slow:local');
+        expect(slowLocal).toContain('vitest run --config vitest.slow.config.ts');
         expect(fastScripts).not.toContain('runPkgrollBuild');
         expect(fastScripts).not.toContain('syncPackageDist');
+        expect(fastScripts).not.toContain('syncSharedDepsForDev');
+        expect(vitestLocal).not.toContain('syncSharedDepsForDev');
 
-        expect(packageJson.scripts?.vitest).toMatch(/(?:^|&& )vitest$/);
+        expect(vitestWrapper).toContain('--script=vitest:local');
+        expect(vitestLocal).toBe('vitest');
         expect(packageJson.scripts?.pretest).toBeUndefined();
-        expect(packageJson.scripts?.pretypecheck).toBe('yarn -s prepare:declarations');
+        expect(packageJson.scripts?.typecheck).toContain('--script=typecheck:local');
+        expect(packageJson.scripts?.['pretypecheck:local']).toBeUndefined();
+        expect(packageJson.scripts?.['typecheck:local']).not.toContain(
+            'prepare:declarations',
+        );
     });
 
     it('wires the CLI runtime import-cycle guard into root and CLI unit lanes', () => {
@@ -72,7 +94,8 @@ describe('Vitest lane separation', () => {
         expect(rootPackageJson.scripts?.['test:import-cycles']).toBe(
             'yarn workspace @happier-dev/cli test:import-cycles',
         );
-        expect(cliPackageJson.scripts?.['test:unit']).toContain('test:import-cycles');
+        expect(cliPackageJson.scripts?.['test:unit']).toContain('--script=test:unit:local');
+        expect(cliPackageJson.scripts?.['test:unit:local']).toContain('test:import-cycles');
     });
 
     it('keeps build-output dist verification out of the unit lane', () => {
@@ -84,96 +107,26 @@ describe('Vitest lane separation', () => {
         ).toBe(false);
     });
 
-    it('resolves bundled workspace packages from their source roots in the unit lane', () => {
-        const alias = unitConfig.resolve?.alias;
-        expect(Array.isArray(alias)).toBe(true);
-
-        expect(alias).toEqual(
-            expect.arrayContaining([
-                expect.objectContaining({
-                    find: '@happier-dev/cli-common',
-                    replacement: expect.stringContaining('/packages/cli-common/src'),
-                }),
-                expect.objectContaining({
-                    find: '@happier-dev/agents',
-                    replacement: expect.stringContaining('/packages/agents/src'),
-                }),
-                expect.objectContaining({
-                    find: '@happier-dev/protocol',
-                    replacement: expect.stringContaining('/packages/protocol/src'),
-                }),
-                expect.objectContaining({
-                    find: '@happier-dev/connection-supervisor',
-                    replacement: expect.stringContaining('/packages/connection-supervisor/src'),
-                }),
-                expect.objectContaining({
-                    find: '@happier-dev/transfers',
-                    replacement: expect.stringContaining('/packages/transfers/src'),
-                }),
-                expect.objectContaining({
-                    find: '@happier-dev/release-runtime',
-                    replacement: expect.stringContaining('/packages/release-runtime/src'),
-                }),
-                expect.objectContaining({
-                    find: '@happier-dev/plugins-claude',
-                    replacement: expect.stringContaining('/packages/plugins/claude/src'),
-                }),
-                expect.objectContaining({
-                    find: '@happier-dev/plugins-codex',
-                    replacement: expect.stringContaining('/packages/plugins/codex/src'),
-                }),
-                expect.objectContaining({
-                    find: '@happier-dev/plugins-ohmypi',
-                    replacement: expect.stringContaining('/packages/plugins/ohmypi/src'),
-                }),
-            ]),
-        );
+    it('uses one export-driven source plugin in every CLI source-test lane', () => {
+        for (const config of [
+            unitConfig,
+            integrationConfig,
+            g3ComposedConfig,
+            providersTempConfig,
+        ]) {
+            const aliases = config.resolve?.alias;
+            expect(Array.isArray(aliases)).toBe(true);
+            expect(aliases).not.toEqual(expect.arrayContaining([
+                expect.objectContaining({ find: expect.stringMatching(/^@happier-dev\//u) }),
+            ]));
+            expect(config.plugins).toEqual(expect.arrayContaining([workspacePackageSourcesPlugin]));
+        }
     });
 
-    it('resolves bundled workspace packages from their source roots in the integration lane', () => {
-        const alias = integrationConfig.resolve?.alias;
-        expect(Array.isArray(alias)).toBe(true);
-
-        expect(alias).toEqual(
-            expect.arrayContaining([
-                expect.objectContaining({
-                    find: '@happier-dev/cli-common',
-                    replacement: expect.stringContaining('/packages/cli-common/src'),
-                }),
-                expect.objectContaining({
-                    find: '@happier-dev/release-runtime',
-                    replacement: expect.stringContaining('/packages/release-runtime/src'),
-                }),
-                expect.objectContaining({
-                    find: '@happier-dev/plugins-claude',
-                    replacement: expect.stringContaining('/packages/plugins/claude/src'),
-                }),
-                expect.objectContaining({
-                    find: '@happier-dev/plugins-codex',
-                    replacement: expect.stringContaining('/packages/plugins/codex/src'),
-                }),
-                expect.objectContaining({
-                    find: '@happier-dev/plugins-ohmypi',
-                    replacement: expect.stringContaining('/packages/plugins/ohmypi/src'),
-                }),
-            ]),
-        );
-    });
-
-    it('resolves the protocol hooks public subpath to its source catalog', () => {
-        const expectedAlias = expect.objectContaining({
-            find: '@happier-dev/protocol/plugins/hooks',
-            replacement: expect.stringContaining('/packages/protocol/src/plugins/hooks/catalog'),
-        });
-
-        expect(unitConfig.resolve?.alias).toEqual(expect.arrayContaining([expectedAlias]));
-        expect(integrationConfig.resolve?.alias).toEqual(expect.arrayContaining([expectedAlias]));
+    it('resolves declared workspace exports through the canonical source plugin', () => {
         expect(
             workspacePackageSourcesPlugin.resolveId('@happier-dev/protocol/plugins/hooks'),
         ).toEqual(expect.stringContaining('/packages/protocol/src/plugins/hooks/catalog.ts'));
-    });
-
-    it('resolves the CLI runtime sidecar catalog from its canonical source', () => {
         expect(
             workspacePackageSourcesPlugin.resolveId(
                 '@happier-dev/cli-common/componentArtifacts/cliRuntimeSidecars',
@@ -181,15 +134,21 @@ describe('Vitest lane separation', () => {
         ).toEqual(expect.stringContaining(
             '/packages/cli-common/src/componentArtifacts/cliRuntimeSidecars.ts',
         ));
+        expect(
+            workspacePackageSourcesPlugin.resolveId('@happier-dev/channels-protocol/v1'),
+        ).toEqual(expect.stringContaining('/packages/channels-protocol/src/v1/index'));
     });
 
-    it('resolves the private Plugin SDK lock bridge from its canonical source', () => {
-        const expectedAlias = expect.objectContaining({
-            find: '@happier-dev/plugin-sdk/internal/fs/json-owner-file-lock',
-            replacement: expect.stringContaining('/packages/plugin-sdk/src/internal/fs/jsonOwnerFileLock.ts'),
-        });
-
-        expect(unitConfig.resolve?.alias).toEqual(expect.arrayContaining([expectedAlias]));
-        expect(integrationConfig.resolve?.alias).toEqual(expect.arrayContaining([expectedAlias]));
+    it('resolves the public Plugin SDK lock bridge from its declared public leaf', () => {
+        expect(
+            workspacePackageSourcesPlugin.resolveId(
+                '@happier-dev/plugin-sdk/host/fs/json-owner-file-lock',
+            ),
+        ).toEqual(expect.stringContaining(
+            '/packages/plugin-sdk/src/host/fs/json-owner-file-lock/index.public.ts',
+        ));
+        expect(workspacePackageSourcesPlugin.resolveId(
+            '@happier-dev/plugin-sdk/internal/fs/json-owner-file-lock',
+        )).toBeNull();
     });
 });

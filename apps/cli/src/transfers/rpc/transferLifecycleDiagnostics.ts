@@ -1,5 +1,5 @@
 export type TransferLifecycleDiagnosticContext = Readonly<{
-  transferKind: 'session_file' | 'session_attachment' | 'prompt_asset' | 'prompt_registry';
+  transferKind: 'session_file' | 'session_attachment' | 'prompt_asset' | 'prompt_registry' | 'composer_media_stage';
   archiveRequested?: boolean;
   destinationClass?: 'workspace' | 'os_temp';
 }>;

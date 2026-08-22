@@ -1,7 +1,7 @@
 import { buildBackendTargetKey, buildBackendTargetKeyV2, type AccountSettings } from '@happier-dev/protocol';
-import { getAgentCliRuntimeSpec, isAgentId } from '@happier-dev/agents';
 
-import { getResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import { readAgentContributionDisplayTitle } from '@/agent/catalog/agentDisplayTitle';
+import { readAgentCatalogSnapshot } from '@/agent/catalog/snapshot';
 import type {
   ResolvedAgentContribution,
 } from '@/plugins/projection/registry/types';
@@ -31,35 +31,22 @@ function readTrimmedString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
 }
 
-function readReviewEngineDefinitionField(
+/**
+ * The Agent's declared title is owned by `readAgentContributionDisplayTitle`;
+ * only the review-engine subtitle is read locally.
+ */
+function readReviewEngineDescription(
   agent: ResolvedAgentContribution,
-  field: 'title' | 'subtitle',
-): string {
+): string | undefined {
   const definitions: readonly unknown[] = [
     agent.richDefinition?.definition,
     agent.definition,
   ];
   for (const definition of definitions) {
-    const value = isRecord(definition) ? readTrimmedString(definition[field]) : '';
+    const value = isRecord(definition) ? readTrimmedString(definition.subtitle) : '';
     if (value) return value;
   }
-  return '';
-}
-
-function readReviewEngineLabel(
-  agent: ResolvedAgentContribution,
-): string {
-  const projectedTitle = readReviewEngineDefinitionField(agent, 'title');
-  if (projectedTitle) return projectedTitle;
-  return isAgentId(agent.id)
-    ? getAgentCliRuntimeSpec(agent.id).title
-    : agent.id;
-}
-
-function readReviewEngineDescription(
-  agent: ResolvedAgentContribution,
-): string | undefined {
-  return readReviewEngineDefinitionField(agent, 'subtitle') || undefined;
+  return undefined;
 }
 
 export function buildReviewEngineInventoryItems(params: Readonly<{
@@ -70,7 +57,7 @@ export function buildReviewEngineInventoryItems(params: Readonly<{
   const accountSettings = params.accountSettings ?? null;
   const includeDisabled = params.includeDisabled === true;
   const limit = normalizeLimit(params.limit);
-  const registry = getResolvedContributionRegistry();
+  const registry = readAgentCatalogSnapshot();
   const agentIdByQualifiedIdentity = new Map(
     [...registry.agentDefinitionsById.values()].flatMap((agent) => (
       agent.identity
@@ -106,7 +93,7 @@ export function buildReviewEngineInventoryItems(params: Readonly<{
       return [{
         engineId: agent.id,
         value: agent.id,
-        label: readReviewEngineLabel(agent),
+        label: readAgentContributionDisplayTitle(agent, agent.id) ?? agent.id,
         ...(description ? { description } : {}),
         enabled: isBackendEnabled(accountSettings, [targetKey, legacyTargetKey]),
         backendId: agent.id,

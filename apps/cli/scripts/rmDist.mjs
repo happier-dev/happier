@@ -1,7 +1,7 @@
 import { rmDirSafeSync } from './rmDirSafe.mjs';
 import { isAbsolute, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { withOptionalCliSharedDepsBuildLock } from './optionalWorkspaceBundleLock.mjs';
+import { withOptionalCliDistBuildLock } from './optionalWorkspaceBundleLock.mjs';
 
 export function resolveDistDir(argv = process.argv) {
   const candidate = String(argv?.[2] ?? '').trim();
@@ -15,7 +15,7 @@ export function resolveDistDir(argv = process.argv) {
 
 export async function main(argv = process.argv, options = {}) {
   const dir = resolveDistDir(argv);
-  await withOptionalCliSharedDepsBuildLock(() => {
+  await withOptionalCliDistBuildLock(() => {
     rmDirSafeSync(dir, {
       // Local dev can run with other watchers rebuilding dist; give ourselves a bit of headroom.
       retries: 25,

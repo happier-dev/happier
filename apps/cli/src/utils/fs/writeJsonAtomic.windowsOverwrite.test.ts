@@ -84,76 +84,43 @@ describe('writeJsonAtomic (windows overwrite)', () => {
     expect(unlinkMock).not.toHaveBeenCalledWith(path);
   });
 
-  it('replaces an existing file when Windows rejects rename only while the destination exists', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'happier-writeJsonAtomic-win-destination-exists-'));
-    const path = join(dir, 'state.json');
-    const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
-    let destinationExistsFailures = 0;
+  it.each(['EEXIST', 'EPERM'] as const)(
+    'fails closed after bounded persistent %s retries without moving the destination aside',
+    async (code) => {
+      const dir = await mkdtemp(join(tmpdir(), 'happier-writeJsonAtomic-win-persistent-'));
+      const path = join(dir, 'state.json');
+      const oldBytes = '{ "generation": "durable-old", "padding": "preserve-exactly" }\n';
+      const publicationFailure = new Error(code) as NodeJS.ErrnoException;
+      publicationFailure.code = code;
+      const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
 
-    vi.mocked(renameMock).mockImplementation(async (from, to) => {
-      if (String(to) === path) {
-        const destinationExists = await actual.stat(path).then(
-          () => true,
-          () => false,
-        );
-        if (destinationExists) {
-          destinationExistsFailures += 1;
-          const error = new Error('EEXIST') as NodeJS.ErrnoException;
-          error.code = 'EEXIST';
-          throw error;
+      vi.mocked(renameMock).mockImplementation(async (from, to) => {
+        const sourcePath = String(from);
+        const destinationPath = String(to);
+        if (destinationPath === path
+          && sourcePath.includes('.tmp-')
+          && !sourcePath.endsWith('.previous')) {
+          throw publicationFailure;
         }
-      }
-      await actual.rename(from, to);
-    });
-
-    await writeFile(path, '{"generation":"durable-old"}', 'utf8');
-    await writeJsonAtomic(path, { generation: 'new' });
-
-    expect(destinationExistsFailures).toBe(5);
-    expect(JSON.parse(await readFile(path, 'utf8'))).toEqual({ generation: 'new' });
-    expect(await readdir(dir)).toEqual(['state.json']);
-    expect(unlinkMock).not.toHaveBeenCalledWith(path);
-  });
-
-  it('restores the prior file when publication fails after moving it aside', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'happier-writeJsonAtomic-win-restore-'));
-    const path = join(dir, 'state.json');
-    const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
-    const publicationFailure = new Error('EIO publishing replacement') as NodeJS.ErrnoException;
-    publicationFailure.code = 'EIO';
-    let priorFileWasMovedAside = false;
-
-    vi.mocked(renameMock).mockImplementation(async (from, to) => {
-      const sourcePath = String(from);
-      const destinationPath = String(to);
-      if (destinationPath === path && !priorFileWasMovedAside) {
-        const error = new Error('EEXIST') as NodeJS.ErrnoException;
-        error.code = 'EEXIST';
-        throw error;
-      }
-      if (sourcePath === path) {
-        priorFileWasMovedAside = true;
         await actual.rename(from, to);
-        return;
+      });
+
+      await writeFile(path, oldBytes, 'utf8');
+
+      await expect(writeJsonAtomic(path, { generation: 'new' })).rejects.toBe(publicationFailure);
+
+      expect(renameMock).toHaveBeenCalledTimes(5);
+      for (const [source, destination] of vi.mocked(renameMock).mock.calls) {
+        expect(String(source)).toContain('.tmp-');
+        expect(String(source)).not.toBe(path);
+        expect(String(source)).not.toContain('.previous');
+        expect(String(destination)).toBe(path);
       }
-      if (destinationPath === path
-        && priorFileWasMovedAside
-        && sourcePath.includes('.tmp-')
-        && !sourcePath.endsWith('.previous')) {
-        throw publicationFailure;
-      }
-      await actual.rename(from, to);
-    });
-
-    await writeFile(path, '{"generation":"durable-old"}', 'utf8');
-
-    await expect(writeJsonAtomic(path, { generation: 'new' })).rejects.toBe(publicationFailure);
-
-    expect(priorFileWasMovedAside).toBe(true);
-    expect(JSON.parse(await readFile(path, 'utf8'))).toEqual({ generation: 'durable-old' });
-    expect(await readdir(dir)).toEqual(['state.json']);
-    expect(unlinkMock).not.toHaveBeenCalledWith(path);
-  });
+      expect(unlinkMock).not.toHaveBeenCalledWith(path);
+      expect(await readFile(path, 'utf8')).toBe(oldBytes);
+      expect(await readdir(dir)).toEqual(['state.json']);
+    },
+  );
 
   it('exhausts the bounded retry budget on persistent EBUSY without losing old state', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'happier-writeJsonAtomic-win-busy-fail-'));

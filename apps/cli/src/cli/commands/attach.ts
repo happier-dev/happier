@@ -2,17 +2,26 @@ import chalk from 'chalk';
 import { spawn } from 'node:child_process';
 import { hostname } from 'node:os';
 
-import { getAgentLocalControlCapability, inferAgentIdFromSessionMetadata, type AgentId } from '@happier-dev/agents';
-import { accountSettingsParse } from '@happier-dev/protocol';
+import {
+  getAgentLocalControlCapability,
+  resolveAgentIdFromSessionMetadata,
+  type AttachSessionMetadataV1,
+} from '@happier-dev/agents';
 
 import { getSessionHostBridge } from '@/agent/runtime/bridges/session/SessionHostBridge';
+import type { CatalogAgentId } from '@/agent/catalog/ids';
 import { configuration } from '@/configuration';
-import { readCredentials, readSettings, type Credentials, type Settings } from '@/persistence';
+import { readSettings, readStoredCredentials, type Settings, type StoredCredentials } from '@/persistence';
 import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
+import { resolveSessionStartAccountSettingsContext } from '@/settings/accountSettings/resolveSessionStartAccountSettingsContext';
 import { resolveSessionIdOrPrefix } from '@/session/query/resolveSessionId';
 import { fetchSessionById, fetchSessionsPage, type RawSessionListRow, type RawSessionRecord } from '@/session/transport/http/sessionsHttp';
 import { tryDecryptSessionOwnerMetadataView } from '@/session/transport/encryption/sessionEncryptionContext';
 import { createAgentAttachStatePublisher } from '@/agent/runtime/mode/switching/createAttachStatePublisher';
+import {
+  fetchAccountEncryptionCurrentness,
+} from '@/api/client/connectedServiceCredentialApi';
+import type { AccountEncryptionCurrentnessResponse } from '@happier-dev/protocol';
 import {
   readTerminalAttachmentInfo,
   type TerminalAttachmentInfo,
@@ -49,7 +58,7 @@ function spawnTmux(params: {
 type SpawnTmuxFn = typeof spawnTmux;
 
 type AttachCommandDeps = Readonly<{
-  readCredentialsFn?: () => Promise<Credentials | null>;
+  readCredentialsFn?: () => Promise<StoredCredentials | null>;
   readSettingsFn?: () => Promise<Settings>;
   fetchSessionByIdFn?: (params: { token: string; sessionId: string }) => Promise<RawSessionRecord | null>;
   fetchSessionsPageFn?: (params: { token: string; cursor?: string; limit?: number; activeOnly?: boolean; archivedOnly?: boolean }) => Promise<{
@@ -57,7 +66,7 @@ type AttachCommandDeps = Readonly<{
     nextCursor: string | null;
     hasNext: boolean;
   }>;
-  resolveSessionIdOrPrefixFn?: (params: { credentials: Credentials; idOrPrefix: string }) => Promise<
+  resolveSessionIdOrPrefixFn?: (params: { credentials: StoredCredentials; idOrPrefix: string }) => Promise<
     | { ok: true; sessionId: string }
     | { ok: false; code: string; candidates?: string[] }
   >;
@@ -78,12 +87,15 @@ type AttachCommandDeps = Readonly<{
     terminal: NonNullable<TerminalAttachmentInfo['terminal']>;
   }) => Promise<number>;
   runProviderAttachFn?: (params: {
-    agentId: AgentId;
+    agentId: CatalogAgentId;
     backendId: string;
     sessionId: string;
-    metadata: Record<string, unknown>;
+    metadata: AttachSessionMetadataV1;
   }) => Promise<number | false>;
   createProviderAttachStatePublisherFn?: typeof createAgentAttachStatePublisher;
+  getAccountEncryptionCurrentnessFn?: (
+    credentials: StoredCredentials,
+  ) => Promise<AccountEncryptionCurrentnessResponse>;
   canUseInkSelectorFn?: () => boolean;
   selectAttachableSessionIdFn?: (params: {
     rows: SessionActionSelectorRow[];
@@ -99,9 +111,10 @@ type AttachCommandDeps = Readonly<{
 type ResolvedAttachContext = Readonly<{
   sessionId: string;
   metadata: Record<string, unknown> | null;
-  agentId: AgentId | null;
-  credentials: Credentials;
+  agentId: CatalogAgentId | null;
+  credentials: StoredCredentials;
   rawSession: RawSessionRecord;
+  accountEncryptionCurrentness: AccountEncryptionCurrentnessResponse;
 }>;
 
 export async function runTmuxAttach(params: {
@@ -241,11 +254,14 @@ async function resolveAttachContext(
   sessionIdOrPrefix: string,
   deps: AttachCommandDeps,
 ): Promise<ResolvedAttachContext | null> {
-  const readCredentialsFn = deps.readCredentialsFn ?? readCredentials;
+  const readCredentialsFn = deps.readCredentialsFn ?? readStoredCredentials;
   const fetchSessionByIdFn = deps.fetchSessionByIdFn ?? fetchSessionById;
   const resolveSessionIdOrPrefixFn = deps.resolveSessionIdOrPrefixFn ?? resolveSessionIdOrPrefix;
   const tryDecryptSessionOwnerMetadataViewFn =
     deps.tryDecryptSessionOwnerMetadataViewFn ?? tryDecryptSessionOwnerMetadataView;
+  const getAccountEncryptionCurrentnessFn = deps.getAccountEncryptionCurrentnessFn
+    ?? (async (credentials: StoredCredentials) =>
+      await fetchAccountEncryptionCurrentness({ token: credentials.token }));
 
   const credentials = await readCredentialsFn();
   if (!credentials) return null;
@@ -253,19 +269,31 @@ async function resolveAttachContext(
   let rawSession = await fetchSessionByIdFn({ token: credentials.token, sessionId: sessionIdOrPrefix });
   if (!rawSession) {
     const resolved = await resolveSessionIdOrPrefixFn({ credentials, idOrPrefix: sessionIdOrPrefix });
-    if (!resolved.ok) return null;
+    if (!resolved.ok) {
+      if (resolved.code === 'session_lookup_timeout') {
+        throw new Error('Session lookup timed out; try again');
+      }
+      return null;
+    }
     rawSession = await fetchSessionByIdFn({ token: credentials.token, sessionId: resolved.sessionId });
   }
   if (!rawSession) return null;
 
-  const metadata = tryDecryptSessionOwnerMetadataViewFn({ credentials, rawSession });
-  const agentId = metadata ? inferAgentIdFromSessionMetadata(metadata) : null;
+  const accountEncryptionCurrentness = await getAccountEncryptionCurrentnessFn(credentials);
+
+  const metadata = tryDecryptSessionOwnerMetadataViewFn({
+    credentials,
+    rawSession,
+    accountEncryptionMode: accountEncryptionCurrentness.mode,
+  });
+  const agentId = metadata ? resolveAgentIdFromSessionMetadata(metadata) : null;
   return {
     sessionId: rawSession.id,
     metadata,
     agentId,
     credentials,
     rawSession,
+    accountEncryptionCurrentness,
   };
 }
 
@@ -292,9 +320,9 @@ async function selectAttachableSessionId(params: Readonly<{
   });
 }
 
-function resolveAgentAttachStrategy(agentId: AgentId | string | null | undefined): AgentAttachStrategyForExplainer {
+function resolveAgentAttachStrategy(agentId: CatalogAgentId | null | undefined): AgentAttachStrategyForExplainer {
   if (!agentId) return null;
-  const capability = getAgentLocalControlCapability(agentId as AgentId);
+  const capability = getAgentLocalControlCapability(agentId);
   if (!capability) return 'unsupported';
   return capability.attachStrategy;
 }
@@ -325,17 +353,32 @@ export async function handleAttachCommand(
   const runWindowsTerminalAttachFn = deps.runWindowsTerminalAttachFn ?? defaultRunWindowsTerminalAttach;
   const runWindowsConsoleAttachFn = deps.runWindowsConsoleAttachFn ?? defaultRunWindowsConsoleAttach;
   const runProviderAttachFn = deps.runProviderAttachFn ?? (async ({ backendId, sessionId, metadata }) => {
-    const providerAttachOps = (await getSessionHostBridge().resolveExecutionSurfaces(backendId)).attach;
-    if (!providerAttachOps) return 1;
-    return await providerAttachOps.attach({ sessionId, metadata });
+    const providerAttachSurface = (await getSessionHostBridge().resolveExecutionSurfaces(backendId)).attach;
+    if (!providerAttachSurface) return 1;
+    const result = await providerAttachSurface.attach({ sessionId, metadata });
+    return result.ok && typeof result.value.exitCode === 'number'
+      ? result.value.exitCode
+      : 1;
   });
   const createProviderAttachStatePublisherFn =
     deps.createProviderAttachStatePublisherFn ?? createAgentAttachStatePublisher;
   const canUseInkSelectorFn = deps.canUseInkSelectorFn ?? canUseInkSelector;
   const selectAttachableSessionIdFn = deps.selectAttachableSessionIdFn ?? selectAttachableSessionId;
+  const getAccountEncryptionCurrentnessFn = deps.getAccountEncryptionCurrentnessFn
+    ?? (async (credentials: StoredCredentials) =>
+      await fetchAccountEncryptionCurrentness({ token: credentials.token }));
+  let commandAccountEncryptionCurrentnessPromise:
+    Promise<AccountEncryptionCurrentnessResponse> | null = null;
+  const getCommandAccountEncryptionCurrentness = (
+    credentials: StoredCredentials,
+  ): Promise<AccountEncryptionCurrentnessResponse> => {
+    commandAccountEncryptionCurrentnessPromise ??=
+      getAccountEncryptionCurrentnessFn(credentials);
+    return commandAccountEncryptionCurrentnessPromise;
+  };
 
   const isInteractive = sessionIdOrPrefix.length === 0;
-  let credentialsForInteractive: Credentials | null = null;
+  let credentialsForInteractive: StoredCredentials | null = null;
   let currentMachineId: string | null = null;
 
   if (isInteractive) {
@@ -346,7 +389,7 @@ export async function handleAttachCommand(
       process.exit(1);
     }
 
-    credentialsForInteractive = await (deps.readCredentialsFn ?? readCredentials)();
+    credentialsForInteractive = await (deps.readCredentialsFn ?? readStoredCredentials)();
     if (!credentialsForInteractive) {
       console.error(chalk.red('Error:'), 'Not authenticated. Run "happier auth login" first.');
       process.exit(1);
@@ -356,6 +399,17 @@ export async function handleAttachCommand(
     currentMachineId = typeof settings.machineId === 'string' && settings.machineId.trim().length > 0
       ? settings.machineId.trim()
       : null;
+    const accountSettingsSnapshot = await bootstrapAccountSettingsContext({
+      credentials: credentialsForInteractive,
+      mode: 'fast',
+    });
+    const accountSettingsContext = await resolveSessionStartAccountSettingsContext({
+      startedBy: 'terminal',
+      snapshot: accountSettingsSnapshot,
+    });
+    const accountEncryptionCurrentness = await getCommandAccountEncryptionCurrentness(
+      credentialsForInteractive,
+    );
     const selectionModel = await buildAttachSelectionModel({
       credentials: credentialsForInteractive,
       currentMachineId,
@@ -363,10 +417,8 @@ export async function handleAttachCommand(
       fetchSessionsPageFn,
       readTerminalAttachmentInfoFn,
       isTmuxAvailableFn: deps.isTmuxAvailableFn ?? isTmuxAvailable,
-      accountSettings: await bootstrapAccountSettingsContext({
-        credentials: credentialsForInteractive,
-        mode: 'fast',
-      }).then((ctx) => ctx.settings).catch(() => accountSettingsParse({})),
+      accountSettings: accountSettingsContext.settings,
+      accountEncryptionMode: accountEncryptionCurrentness.mode,
     });
     const selected = await selectAttachableSessionIdFn({
       rows: selectionModel.rows,
@@ -392,7 +444,11 @@ export async function handleAttachCommand(
     process.exit(1);
   }
 
-  const context = await resolveAttachContext(sessionIdOrPrefix, deps);
+  const context = await resolveAttachContext(sessionIdOrPrefix, {
+    ...deps,
+    getAccountEncryptionCurrentnessFn:
+      getCommandAccountEncryptionCurrentness,
+  });
   const resolvedSessionId = context?.sessionId ?? sessionIdOrPrefix;
   const localInfo = await readTerminalAttachmentInfoFn({
     happyHomeDir: configuration.happyHomeDir,
@@ -407,6 +463,7 @@ export async function handleAttachCommand(
     const eligibility = await getSessionHostBridge().evaluateAttachEligibility({
       credentials: context.credentials,
       rawSession: context.rawSession,
+      accountEncryptionMode: context.accountEncryptionCurrentness.mode,
       currentMachineId: effectiveMachineId,
       currentMachineHost: hostname(),
       localAttachmentInfo: localInfo,
@@ -428,11 +485,15 @@ export async function handleAttachCommand(
     }
 
     if (eligibility.attachStrategy === 'provider_attach') {
+      // The publisher answers null for an Agent that declares no local control
+      // capability, so an installed external Agent reaches it unchanged.
       const statePublisher = createProviderAttachStatePublisherFn({
         agentId: eligibility.agentId,
         sessionId: resolvedSessionId,
         credentials: context.credentials,
         rawSession: context.rawSession,
+        getAccountEncryptionCurrentness: async () =>
+          await getAccountEncryptionCurrentnessFn(context.credentials),
       });
       if (statePublisher) {
         await statePublisher.publishAttached(true).catch(() => {});

@@ -1,8 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import type { Dirent } from 'node:fs';
-import { chmodSync, mkdirSync, readdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, readdirSync, unlinkSync, writeFileSync } from 'node:fs';
 import { readdir, unlink } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
+
+import { renameForPublicationSync } from './renameForPublicationSync';
 
 function bestEffortChmod0600Sync(path: string): void {
   if (process.platform === 'win32') return;
@@ -29,23 +31,9 @@ export function writeJsonAtomicSync(path: string, value: unknown): void {
   try {
     writeFileSync(tmpPath, JSON.stringify(value, null, 2), { encoding: 'utf-8', mode: 0o600 });
     bestEffortChmod0600Sync(tmpPath);
-    try {
-      renameSync(tmpPath, path);
-    } catch (error) {
-      const err = error as NodeJS.ErrnoException;
-      if (err?.code !== 'EEXIST' && err?.code !== 'EPERM') {
-        throw error;
-      }
-      try {
-        unlinkSync(path);
-      } catch (unlinkError) {
-        const unlinkErr = unlinkError as NodeJS.ErrnoException;
-        if (unlinkErr?.code !== 'ENOENT') {
-          throw unlinkError;
-        }
-      }
-      renameSync(tmpPath, path);
-    }
+    renameForPublicationSync(tmpPath, path, {
+      retryableCodes: new Set(['EACCES', 'EBUSY', 'EPERM', 'EEXIST']),
+    });
     bestEffortChmod0600Sync(path);
   } catch (error) {
     try {

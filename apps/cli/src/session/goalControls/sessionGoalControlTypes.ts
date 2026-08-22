@@ -1,27 +1,22 @@
-import type { AgentId } from '@happier-dev/agents';
 import type { SessionGoalSetRequestV1 } from '@happier-dev/protocol';
 
-import type { Credentials } from '@/persistence';
-import type {
-  SessionEncryptionContext,
-  SessionStoredContentEncryptionMode,
-} from '@/session/transport/encryption/sessionEncryptionContext';
+import type { CatalogAgentId } from '@/agent/catalog/ids';
+import type { StoredCredentials } from '@/persistence';
+import type { SessionStoredContentCryptoContext } from '@/session/transport/encryption/sessionEncryptionContext';
 import type { RawSessionRecord } from '@/session/transport/http/sessionsHttp';
 
 export type SessionGoalControlOperation = 'get' | 'set' | 'clear';
 
 export type SessionGoalControlAdapterParams = Readonly<{
   token: string;
-  credentials?: Credentials;
+  credentials?: StoredCredentials;
   sessionId: string;
   rawSession: RawSessionRecord;
   metadata: Record<string, unknown>;
   currentMachineId: string | null;
   sessionMachineId: string | null;
   cwd: string | null;
-  ctx: SessionEncryptionContext;
-  mode: SessionStoredContentEncryptionMode;
-}>;
+}> & SessionStoredContentCryptoContext;
 
 export type SessionGoalControlAdapter = Readonly<{
   getGoal?: (params: SessionGoalControlAdapterParams) => Promise<unknown>;
@@ -32,5 +27,5 @@ export type SessionGoalControlAdapter = Readonly<{
 }>;
 
 export type ResolveSessionGoalControlAdapter = (
-  agentId?: AgentId | null,
+  agentId?: CatalogAgentId | null,
 ) => Promise<SessionGoalControlAdapter | null>;

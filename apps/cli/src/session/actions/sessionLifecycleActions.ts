@@ -7,11 +7,21 @@ import { createForkSessionLifecycleActionHandler } from './lifecycle/createForkS
 import { createSpawnNewSessionLifecycleActionHandler } from './lifecycle/createSpawnNewSessionLifecycleActionHandler';
 import { createMachineSessionStopLifecycleActionExecutor } from './lifecycle/createStopSessionLifecycleActionExecutor';
 import type {
+    SessionLifecycleActionHandler,
     SessionLifecycleMachineDeps,
     SessionLifecycleMachineHandlers,
 } from './lifecycle/sessionLifecycleTypes';
 
 export { createMachineSessionStopLifecycleActionExecutor };
+
+/** The private machine spawn transport uses the existing lifecycle owner directly. */
+export function createMachineSessionSpawnRpcHandler(params: Readonly<{
+    handlers: Pick<SessionLifecycleMachineHandlers, 'spawnSession'>;
+}>): SessionLifecycleActionHandler {
+    return createSpawnNewSessionLifecycleActionHandler({
+        spawnSession: params.handlers.spawnSession,
+    });
+}
 
 export function createMachineSessionLifecycleActionExecutor(params: Readonly<{
     handlers: SessionLifecycleMachineHandlers;
@@ -22,9 +32,6 @@ export function createMachineSessionLifecycleActionExecutor(params: Readonly<{
         ?? sessionHostBridge.resolveExecutionSurfaces.bind(sessionHostBridge);
 
     return createSessionLifecycleRpcActionExecutor({
-        'session.spawn_new': createSpawnNewSessionLifecycleActionHandler({
-            spawnSession: params.handlers.spawnSession,
-        }),
         'session.continue_with_replay': createContinueWithReplayLifecycleActionHandler({
             sessionHostBridge,
             spawnSession: params.handlers.spawnSession,

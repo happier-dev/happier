@@ -20,6 +20,15 @@ describe('ACP permission mapping', () => {
     expect(pickPermissionOptionId(options, 'approved_for_session')).toBe('code');
   });
 
+  it('falls back to allow_once when the provider offers no session-scoped option', () => {
+    const options = [
+      { optionId: 'allow-once', kind: 'allow_once' },
+      { optionId: 'reject-once', kind: 'reject_once' },
+    ];
+
+    expect(pickPermissionOptionId(options, 'approved_for_session')).toBe('allow-once');
+  });
+
   it('maps denied to reject-once optionId when kind missing', () => {
     const options = [
       { optionId: 'allow-once' },
@@ -36,4 +45,3 @@ describe('ACP permission mapping', () => {
     expect(pickPermissionOutcome(options, 'abort')).toEqual({ outcome: 'cancelled' });
   });
 });
-

@@ -5,6 +5,8 @@ import {
   HOST_SESSION_RUNTIME_PLAN_KIND,
   type HostSessionRuntimePlan,
 } from '@/agent/runtime/session/loop/lifecycle';
+import { resolveVendorResumeIdFromSessionMetadata } from '@happier-dev/agents';
+import { applySessionStateUpdatesToMetadata } from '@happier-dev/agents/session/state/metadataWriters';
 import { withHostSessionRuntimeIdentityPublication } from './withHostSession';
 import { subscribeSessionRuntimePublicationToMetadata } from '../metadata/subscription';
 
@@ -420,5 +422,115 @@ describe('withHostSessionRuntimeIdentityPublication', () => {
     expect(created?.operations.respondToPermission).toBeTypeOf('function');
     await expect(created?.operations.respondToPermission?.('permission-1', true)).resolves.toEqual({ delivered: true });
     expect(respondToPermission).toHaveBeenCalledWith('permission-1', true);
+  });
+});
+
+/**
+ * The whole external-Agent resume vertical, composed from its real parts.
+ *
+ * An external (manifest-contributed) Agent has no generated `<vendor>SessionId`
+ * slot, so the host resolves no `providerSessionMetadataKey` for it. Its native
+ * conversation id therefore has to travel the agent-agnostic route end to end:
+ * the public `provider-session-id` event -> the session-state binding -> the
+ * runtime-descriptor metadata slot -> `resolveVendorResumeIdFromSessionMetadata`,
+ * which is what the daemon's spawn/respawn path asks for a resume id.
+ *
+ * Break any link and the daemon derives no resume id while the catalog still
+ * reports `vendorResumeSupport: 'supported'`, so a declared resume silently
+ * starts a NEW provider conversation.
+ */
+describe('external Agent native resume identity — composed host publication', () => {
+  const externalHostDescriptor = {
+    v: 1,
+    agentId: 'acme',
+    agent: {
+      backendMode: 'custom',
+      agentExtra: {
+        owner: 'happier',
+        schemaId: 'happier.hostSessionRuntimeIdentity',
+        v: 1,
+        runtimeHandle: {
+          backendId: 'acme',
+          agentId: 'acme',
+          provenance: 'external',
+        },
+      },
+    },
+  } as const;
+
+  async function runExternalAgentSession(): Promise<Record<string, unknown>> {
+    const upstream: { handler?: (message: unknown) => void } = {};
+    const runtime = createRuntimeTurnOperations({
+      // This Agent reports its native id ONLY through the public event, the way
+      // the SDK documents it.
+      readSessionIdentity: vi.fn(() => ({ sessionId: null })),
+      subscribeRuntimeEvents: vi.fn((handler) => {
+        upstream.handler = handler as (message: unknown) => void;
+        return () => { delete upstream.handler; };
+      }),
+    });
+    const plan = {
+      kind: HOST_SESSION_RUNTIME_PLAN_KIND,
+      agentId: 'acme',
+      opts: {},
+      config: { createSessionRuntime: vi.fn(async () => ({ operations: runtime })) },
+    } as unknown as HostSessionRuntimePlan;
+
+    const wrapped = withHostSessionRuntimeIdentityPublication({
+      plan,
+      identity: {
+        runtimeDescriptor: externalHostDescriptor,
+        runtimeCapabilities: null,
+        runtimeFacets: null,
+      },
+    });
+    const created = await wrapped.config.createSessionRuntime?.({} as never);
+    if (!created) throw new Error('expected wrapped runtime');
+
+    let metadata: Record<string, unknown> = {};
+    const sessionState = {
+      writeHappierField: vi.fn(async (input: { fieldId: string; value: unknown }) => {
+        metadata = applySessionStateUpdatesToMetadata(metadata as never, [
+          { fieldId: input.fieldId, value: input.value } as never,
+        ]) as never;
+        return { ok: true as const, version: 1 };
+      }),
+    };
+    subscribeSessionRuntimePublicationToMetadata({
+      session: { sessionId: 'session-1', updateMetadata: vi.fn() },
+      sessionState,
+      runtime: created.operations,
+      // No catalog-declared flat slot exists for an external Agent.
+      providerSessionMetadataKey: null,
+    } as never);
+
+    upstream.handler?.({
+      kind: 'provider-session-id',
+      sequence: 1,
+      sessionId: 'session-1',
+      emittedAtMs: 1,
+      providerSessionId: 'acme-native-1',
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    return metadata;
+  }
+
+  it('carries the native id from the public event to the daemon resume-id reader', async () => {
+    const metadata = await runExternalAgentSession();
+
+    expect(metadata.runtimeDescriptorV1).toMatchObject({
+      agentId: 'acme',
+      agent: { providerSessionId: 'acme-native-1' },
+    });
+    expect(resolveVendorResumeIdFromSessionMetadata('acme' as never, metadata))
+      .toBe('acme-native-1');
+  });
+
+  it('never lends the recorded id to a different Agent', async () => {
+    const metadata = await runExternalAgentSession();
+
+    expect(resolveVendorResumeIdFromSessionMetadata('other' as never, metadata))
+      .toBeNull();
   });
 });

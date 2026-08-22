@@ -87,6 +87,50 @@ describe('logger.debugLargeJson', () => {
         expect(content).toContain('boom');
     });
 
+    it('writes a NESTED Error with its message and code instead of "{}"', async () => {
+        // The observed defect: every daemon failure logged as `{ pid, error }`
+        // reached the log file as `{"pid":95632,"error":{}}`, because an Error
+        // carries no enumerable own properties for `JSON.stringify` to find. The
+        // top-level case was already handled; the carrying object — which is how
+        // these are actually logged — was not, and root-causing a permanently
+        // broken stop path cost a lane real time for exactly that reason.
+        process.env.DEBUG = '1';
+
+        const { logger } = (await import('@/ui/logger')) as typeof import('@/ui/logger');
+
+        const error = Object.assign(new Error('directory not empty'), { code: 'ENOTEMPTY' });
+        logger.debug('[TEST] nested error serialization', { pid: 95632, error });
+        logger.debugLargeJson('[TEST] nested error in large json', { pid: 95632, error });
+        logger.flushSync();
+
+        const content = readFileSync(logger.getLogPath(), 'utf8');
+        expect(content).not.toContain('"error":{}');
+        for (const marker of ['[TEST] nested error serialization', '[TEST] nested error in large json']) {
+            const line = content.split(marker)[1] ?? '';
+            expect(line).toContain('directory not empty');
+            expect(line).toContain('ENOTEMPTY');
+            expect(line).toContain('95632');
+        }
+    });
+
+    it('does not throw when a nested error causes a cycle', async () => {
+        process.env.DEBUG = '1';
+
+        const { logger } = (await import('@/ui/logger')) as typeof import('@/ui/logger');
+
+        const error: Error & { cause?: unknown } = new Error('looping');
+        error.cause = error;
+
+        expect(() => {
+            logger.debug('[TEST] nested cyclic error', { pid: 1, error });
+        }).not.toThrow();
+        logger.flushSync();
+
+        const content = readFileSync(logger.getLogPath(), 'utf8');
+        expect(content).toContain('[TEST] nested cyclic error');
+        expect(content).toContain('looping');
+    });
+
     it('does not throw when debugLargeJson receives circular objects', async () => {
         process.env.DEBUG = '1';
 
@@ -184,6 +228,64 @@ describe('logger.debugLargeJson', () => {
         }
     });
 
+    it('writes file-only info diagnostics without touching the interactive console', async () => {
+        const { Logger } = (await import('@/ui/logger')) as typeof import('@/ui/logger');
+        const logPath = join(tempDir, 'logs', 'file-only-info.log');
+        const isolatedLogger = new Logger(logPath);
+        const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+
+        isolatedLogger.infoFile('[TEST] slow queue', { queueName: 'test-queue' });
+        isolatedLogger.flushSync();
+
+        expect(readFileSync(logPath, 'utf8')).toContain('[TEST] slow queue');
+        expect(consoleSpy).not.toHaveBeenCalled();
+        consoleSpy.mockRestore();
+    });
+
+    it('durably records sanitized fatal errors without serializing argv or env fields', async () => {
+        const { Logger } = (await import('@/ui/logger')) as typeof import('@/ui/logger');
+        const logPath = join(tempDir, 'logs', 'fatal.log');
+        const isolatedLogger = new Logger(logPath);
+        const error = Object.assign(
+            new Error('provider startup rejected; Authorization: Bearer fatal-secret-token'),
+            {
+                argv: ['--token', 'argv-secret-value'],
+                env: { OPENAI_API_KEY: 'env-secret-value' },
+            },
+        );
+
+        expect(() => isolatedLogger.fatal(error)).not.toThrow();
+
+        const content = readFileSync(logPath, 'utf8');
+        expect(content).toContain('[FATAL] Unhandled CLI error');
+        expect(content).toContain('provider startup rejected');
+        expect(content).toContain('[REDACTED]');
+        expect(content).not.toContain('fatal-secret-token');
+        expect(content).not.toContain('argv-secret-value');
+        expect(content).not.toContain('env-secret-value');
+        expect(content).not.toContain('OPENAI_API_KEY');
+    });
+
+    it('keeps fatal reporting best-effort when thrown values cannot be inspected', async () => {
+        const { Logger } = (await import('@/ui/logger')) as typeof import('@/ui/logger');
+        const logPath = join(tempDir, 'logs', 'hostile-fatal.log');
+        const isolatedLogger = new Logger(logPath);
+        const hostileError = {
+            get stack(): string {
+                throw new Error('stack getter failed');
+            },
+            get message(): string {
+                throw new Error('message getter failed');
+            },
+            toString(): string {
+                throw new Error('toString failed');
+            },
+        };
+
+        expect(() => isolatedLogger.fatal(hostileError)).not.toThrow();
+        expect(readFileSync(logPath, 'utf8')).toContain('[FATAL] Unhandled CLI error');
+    });
+
     it('prunes daemon logs best-effort when constructing a daemon logger', async () => {
         const previousArgv = process.argv;
         process.argv = ['node', 'happier', 'daemon', 'start'];
@@ -219,7 +321,7 @@ describe('logger.debugLargeJson', () => {
         mkdirSync(logsDir, { recursive: true });
         for (let index = 0; index < 6; index += 1) {
             writeFileSync(
-                join(logsDir, `2026-06-30-10-${String(index).padStart(2, '0')}-00-pid-${index}.log`),
+                join(logsDir, `2026-06-30-10-${String(index).padStart(2, '0')}-00-pid-${910_000 + index}.log`),
                 `old session ${index}\n`,
                 'utf8',
             );
@@ -244,24 +346,24 @@ describe('logger.debugLargeJson', () => {
         mkdirSync(sessionExitDir, { recursive: true });
         for (let index = 1; index <= 7; index += 1) {
             writeFileSync(
-                join(logsDir, `2026-06-30-10-${String(index).padStart(2, '0')}-00-pid-${index}.log`),
+                join(logsDir, `2026-06-30-10-${String(index).padStart(2, '0')}-00-pid-${920_000 + index}.log`),
                 `old session ${index}\n`,
                 'utf8',
             );
         }
         writeFileSync(
             join(sessionExitDir, 'z-session-crashed-old-pid-3.json'),
-            JSON.stringify({ sessionId: 'crashed-old', pid: 3, observedAt: 10, reason: 'process-exited', code: 1 }),
+            JSON.stringify({ sessionId: 'crashed-old', pid: 920_003, observedAt: 10, reason: 'process-exited', code: 1 }),
             'utf8',
         );
         writeFileSync(
             join(sessionExitDir, 'a-session-crashed-new-pid-2.json'),
-            JSON.stringify({ sessionId: 'crashed-new', pid: 2, observedAt: 20, reason: 'process-exited', code: 1 }),
+            JSON.stringify({ sessionId: 'crashed-new', pid: 920_002, observedAt: 20, reason: 'process-exited', code: 1 }),
             'utf8',
         );
         writeFileSync(
             join(sessionExitDir, 'session-clean-pid-1.json'),
-            JSON.stringify({ sessionId: 'clean', pid: 1, reason: 'process-exited', code: 0 }),
+            JSON.stringify({ sessionId: 'clean', pid: 920_001, reason: 'process-exited', code: 0 }),
             'utf8',
         );
 
@@ -272,9 +374,34 @@ describe('logger.debugLargeJson', () => {
                 .filter(file => file.endsWith('.log') && !file.endsWith('-daemon.log'))
                 .sort();
             expect(sessionLogs).toHaveLength(4);
-            expect(sessionLogs).toContain('2026-06-30-10-02-00-pid-2.log');
-            expect(sessionLogs).not.toContain('2026-06-30-10-03-00-pid-3.log');
-            expect(sessionLogs).not.toContain('2026-06-30-10-01-00-pid-1.log');
+            expect(sessionLogs).toContain('2026-06-30-10-02-00-pid-920002.log');
+            expect(sessionLogs).not.toContain('2026-06-30-10-03-00-pid-920003.log');
+            expect(sessionLogs).not.toContain('2026-06-30-10-01-00-pid-920001.log');
+        });
+    });
+
+    it('retains a live runner log outside the normal session log budget', async () => {
+        process.env.HAPPIER_SESSION_LOG_KEEP_COUNT = '3';
+        const logsDir = join(tempDir, 'logs');
+        mkdirSync(logsDir, { recursive: true });
+        const liveRunnerLog = `2020-01-01-00-00-00-pid-${process.pid}.log`;
+        writeFileSync(join(logsDir, liveRunnerLog), 'live runner history\n', 'utf8');
+        for (let index = 1; index <= 7; index += 1) {
+            writeFileSync(
+                join(logsDir, `2026-06-30-10-${String(index).padStart(2, '0')}-00-pid-${900_000 + index}.log`),
+                `inactive session ${index}\n`,
+                'utf8',
+            );
+        }
+
+        await import('@/ui/logger');
+
+        await vi.waitFor(() => {
+            const sessionLogs = readdirSync(logsDir)
+                .filter(file => file.endsWith('.log') && !file.endsWith('-daemon.log'))
+                .sort();
+            expect(sessionLogs).toHaveLength(4);
+            expect(sessionLogs).toContain(liveRunnerLog);
         });
     });
 });

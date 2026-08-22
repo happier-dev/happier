@@ -5,4 +5,4 @@
 export {
   reclaimJsonOwnerFileLockSnapshot,
   withJsonOwnerFileLock,
-} from '@happier-dev/plugin-sdk/internal/fs/json-owner-file-lock';
+} from '@happier-dev/plugin-sdk/host/fs/json-owner-file-lock';

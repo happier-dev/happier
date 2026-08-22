@@ -45,6 +45,18 @@ describe('persistence file permissions (posix)', () => {
     expect(s.mode & 0o077).toBe(0);
   });
 
+  it('persists and reads token-only credentials without Account encryption material', async () => {
+    if (process.platform === 'win32') return;
+    const { writeCredentialsTokenOnly, readStoredCredentials } = await import('@/persistence');
+
+    await writeCredentialsTokenOnly({ token: 'plain-account-token' });
+
+    await expect(readStoredCredentials()).resolves.toEqual({
+      token: 'plain-account-token',
+      encryption: null,
+    });
+  });
+
   it('writes daemon state with no group/other permissions', async () => {
     if (process.platform === 'win32') return;
     const { configuration } = await import('@/configuration');

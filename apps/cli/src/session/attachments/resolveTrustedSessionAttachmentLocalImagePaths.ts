@@ -2,17 +2,10 @@ import { createHash } from 'node:crypto';
 import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 
-import { readAttachmentEnvelopeLocalImagePaths } from '@happier-dev/protocol';
-
-type MetadataRecord = Record<string, unknown>;
-
-function asRecord(value: unknown): MetadataRecord | null {
-    return value && typeof value === 'object' && !Array.isArray(value) ? value as MetadataRecord : null;
-}
-
-function asRecordArray(value: unknown): MetadataRecord[] {
-    return Array.isArray(value) ? value.map(asRecord).filter((entry): entry is MetadataRecord => Boolean(entry)) : [];
-}
+import {
+    readAttachmentEnvelopeLocalImagePaths,
+    readSessionAttachmentEnvelopeRecordsV1,
+} from '@happier-dev/protocol';
 
 function readString(value: unknown): string | null {
     if (typeof value !== 'string') return null;
@@ -23,13 +16,6 @@ function readString(value: unknown): string | null {
 function normalizeAttachmentPath(value: unknown): string | null {
     const rawPath = readString(value);
     return rawPath ? rawPath.replace(/[\\]+/g, '/') : null;
-}
-
-function readAttachmentEnvelope(value: MetadataRecord): MetadataRecord[] {
-    const happier = asRecord(value.happier);
-    if (happier?.kind !== 'attachments.v1') return [];
-    const payload = asRecord(happier.payload);
-    return asRecordArray(payload?.attachments);
 }
 
 function readSha256(value: unknown): string | null {
@@ -69,14 +55,11 @@ export async function resolveTrustedSessionAttachmentLocalImagePaths(params: Rea
     cwd: string;
     metadata: unknown;
 }>): Promise<ReadonlySet<string>> {
-    const metadata = asRecord(params.metadata);
     const trusted = new Set<string>();
-    if (!metadata) return trusted;
-
-    const candidatePaths = readAttachmentEnvelopeLocalImagePaths(metadata);
+    const candidatePaths = readAttachmentEnvelopeLocalImagePaths(params.metadata);
     if (candidatePaths.size === 0) return trusted;
 
-    for (const attachment of readAttachmentEnvelope(metadata)) {
+    for (const attachment of readSessionAttachmentEnvelopeRecordsV1(params.metadata)) {
         const normalizedPath = normalizeAttachmentPath(attachment.path);
         if (!normalizedPath || !candidatePaths.has(normalizedPath)) continue;
         const sha256 = readSha256(attachment.sha256);

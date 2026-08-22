@@ -12,8 +12,9 @@ import { fileURLToPath } from 'node:url';
 
 import { resolveTypeScriptCliInvocation } from '../../../scripts/workspaces/resolveTypeScriptCliInvocation.mjs';
 import { readHappyCliRuntimeInputFreshness } from '../../stack/scripts/utils/proc/cli_runtime_inputs.mjs';
+import { readCliNodeWorkspaceRuntimeIdentity } from '@happier-dev/cli-common/componentArtifacts/copyCliNodeRuntimePayload';
 import { finalizeDist, readCliDistBuildManifestFingerprint } from './finalizeDist.mjs';
-import { withOptionalCliSharedDepsBuildLock } from './optionalWorkspaceBundleLock.mjs';
+import { withOptionalCliDistBuildLock } from './optionalWorkspaceBundleLock.mjs';
 import { main as rmDist } from './rmDist.mjs';
 import { runPkgrollBuild } from './runPkgrollBuild.mjs';
 
@@ -93,7 +94,7 @@ export async function buildCliDist(options = {}) {
   const lexicalPackageRoot = resolve(String(options.packageRoot ?? process.cwd()));
   const packageJsonPath = realpathSync.native(join(lexicalPackageRoot, 'package.json'));
   const packageRoot = dirname(packageJsonPath);
-  return await withOptionalCliSharedDepsBuildLock(
+  return await withOptionalCliDistBuildLock(
     () => buildCliDistUnlocked({
       ...options,
       packageRoot,
@@ -126,6 +127,13 @@ async function buildCliDistUnlocked(options = {}) {
   if (!initialInputFreshness?.fingerprint) {
     throw new Error('[cli-build-inputs] unable to read canonical runtime inputs before build');
   }
+  const readWorkspaceRuntimeIdentity =
+    options.readWorkspaceRuntimeIdentityImpl ?? readCliNodeWorkspaceRuntimeIdentity;
+  const repoRoot = resolve(String(options.repoRoot ?? resolve(packageRoot, '..', '..')));
+  const initialWorkspaceRuntimeIdentity = readWorkspaceRuntimeIdentity({
+    repoRoot,
+    hostPackageDir: packageRoot,
+  });
   const stackAdmittedInputFingerprint = String(
     env.HAPPIER_CLI_BUILD_INPUT_FINGERPRINT ?? '',
   ).trim().toLowerCase();
@@ -135,16 +143,13 @@ async function buildCliDistUnlocked(options = {}) {
   ) {
     throw new Error('[cli-build-inputs] invalid Stack-admitted runtime input fingerprint');
   }
-  if (
-    stackAdmittedInputFingerprint
-    && stackAdmittedInputFingerprint !== initialInputFreshness.fingerprint
-  ) {
-    throw new Error(
-      '[cli-build-inputs] runtime inputs changed while package prebuild was preparing dependencies; refusing to build a mixed CLI closure',
-    );
-  }
-  const admittedInputFingerprint =
-    stackAdmittedInputFingerprint || initialInputFreshness.fingerprint;
+  // Yarn runs build:shared before this script. That preparation can canonically
+  // publish generated CLI source, so the immutable snapshot below contains the
+  // inputs observed here rather than the Stack's earlier admission. Record the
+  // fingerprint of the bytes that are actually snapshotted and compiled. A
+  // later live-source edit is still detected by the Stack when it compares this
+  // manifest with the post-build runtime inputs.
+  const compiledInputFingerprint = initialInputFreshness.fingerprint;
   const immutableSource = callerOwnsOutputDir
     ? {
         packageRoot,
@@ -178,11 +183,28 @@ async function buildCliDistUnlocked(options = {}) {
       outputDir,
       env,
     });
+    const finalWorkspaceRuntimeIdentity = readWorkspaceRuntimeIdentity({
+      repoRoot,
+      hostPackageDir: packageRoot,
+    });
+    if (
+      finalWorkspaceRuntimeIdentity.fingerprint
+      !== initialWorkspaceRuntimeIdentity.fingerprint
+    ) {
+      throw new Error(
+        '[cli-build-inputs] workspace runtime publication changed during the CLI build; '
+        + 'refusing to publish a mixed runtime closure',
+      );
+    }
     (options.finalizeDistImpl ?? finalizeDist)({
       packageRoot,
       stagingDir: resolve(immutableSource.packageRoot, outputDir),
       expectedCurrentFingerprint,
-      inputFingerprint: admittedInputFingerprint,
+      inputFingerprint: compiledInputFingerprint,
+      workspaceRuntimeIdentity: initialWorkspaceRuntimeIdentity.fingerprint,
+      ...(initialWorkspaceRuntimeIdentity.packageNames?.length > 0
+        ? { workspaceRuntimePackages: initialWorkspaceRuntimeIdentity.packageNames }
+        : {}),
     });
   } finally {
     immutableSource.cleanup();

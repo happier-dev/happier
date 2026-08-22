@@ -41,16 +41,18 @@ const env = process.env;
 function createRegistryWithPluginTool(params?: Readonly<{
   toolName?: string | null;
   trustPolicy?: 'local_trusted' | 'prompt' | 'untrusted';
+  /** Bundled first-party plugins contribute under `first_party` provenance. */
+  provenance?: 'external' | 'first_party';
 }>): ResolvedContributionRegistry {
+  const provenance = params?.provenance ?? 'external';
   return createResolvedContributionRegistry({
     agents: [],
         actions: [
       {
-        provenance: 'external',
+        provenance,
         source: { kind: 'path' },
         pluginId: 'acme.review.plugin',
         manifestPath: '/plugins/acme/review/.happier-plugin/plugin.json',
-        manifestDigest: 'sha256:acme-review',
         daemonEntryPath: '/plugins/acme/review/daemon.mjs',
         sourceSpec: {
           kind: 'path',
@@ -77,6 +79,7 @@ function createRegistryWithPluginTool(params?: Readonly<{
             cli: true,
             rpc: false,
             sdk: false,
+            plugin: false,
           },
           inputHints: null,
           inputSchema: {
@@ -97,11 +100,10 @@ function createRegistryWithPluginTool(params?: Readonly<{
     tools: params?.toolName === null
       ? []
       : [{
-          provenance: 'external',
+          provenance,
           source: { kind: 'path' },
           pluginId: 'acme.review.plugin',
           manifestPath: '/plugins/acme/review/.happier-plugin/plugin.json',
-          manifestDigest: 'sha256:acme-review',
           daemonEntryPath: '/plugins/acme/review/daemon.mjs',
           sourceSpec: {
             kind: 'path',
@@ -235,6 +237,51 @@ describe('listBuiltInHappierTools', () => {
       actionId: 'review-start',
       surface: 'agent',
       registry,
+    })).toEqual(expect.objectContaining({
+      available: false,
+      reason: 'unknown_action',
+      provenance: 'unknown',
+    }));
+  });
+
+  it('resolves an unbound plugin Action for a bundled first-party plugin on the same terms as an external one', async () => {
+    const { resolveActionToolCatalogAvailability } = await import('./actionToolCatalog');
+    // Bundled first-party plugins contribute under `first_party` provenance.
+    // Both registries below differ only in that field: the catalog policy owner
+    // is the one that decides visibility, so provenance must not change the
+    // answer for an Action with no declared tool binding.
+    expect(resolveActionToolCatalogAvailability({
+      actionId: 'acme.review.plugin/review-start',
+      surface: 'agent',
+      registry: useActiveRegistryWithPluginTool({ toolName: null, provenance: 'external' }),
+    })).toEqual(expect.objectContaining({
+      available: true,
+      reason: 'available',
+      provenance: 'external',
+    }));
+
+    expect(resolveActionToolCatalogAvailability({
+      actionId: 'acme.review.plugin/review-start',
+      surface: 'agent',
+      registry: useActiveRegistryWithPluginTool({ toolName: null, provenance: 'first_party' }),
+    })).toEqual(expect.objectContaining({
+      available: true,
+      reason: 'available',
+      provenance: 'first_party',
+    }));
+  });
+
+  it('does not let an explicit per-turn plugin tool catalog fall back to the current external registry', async () => {
+    const { resolveActionToolCatalogAvailability } = await import('./actionToolCatalog');
+    const registry = useActiveRegistryWithPluginTool();
+
+    expect(resolveActionToolCatalogAvailability({
+      actionId: 'acme.review.plugin/review-start',
+      surface: 'agent',
+      registry,
+      // The caller supplied an admitted turn catalog. An omitted external
+      // Action must not bypass composition by rereading the current registry.
+      pluginToolCatalog: [],
     })).toEqual(expect.objectContaining({
       available: false,
       reason: 'unknown_action',

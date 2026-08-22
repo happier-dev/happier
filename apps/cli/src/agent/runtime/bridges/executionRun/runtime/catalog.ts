@@ -91,10 +91,13 @@ export function createCatalogProviderExecutionRunBackend(
   };
   const env = stripUnsetEnvironmentVariables(mergedEnv, unsetEnvKeys);
   const permissionHandler = config.usesPermissionHandler === false
-    ? undefined
+      ? undefined
     : createExecutionRunPermissionHandler({
         backendId: opts.backendId,
         permissionMode: opts.permissionMode,
+        ...(opts.causalPermissionAuthority
+          ? { causalPermissionAuthority: opts.causalPermissionAuthority }
+          : {}),
       });
   const resolvedPermissionMode = normalizePermissionMode(opts.permissionMode);
 

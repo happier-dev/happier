@@ -22,19 +22,7 @@ import {
 } from './responseErrors';
 import { resolveExternalSessionTranscriptRefreshBinding } from '@/api/session/external/secureRefresh/resolveExternalSessionTranscriptRefreshBinding';
 import { loadLinkedExternalSession } from '@/api/session/external/takeover/loadLinkedExternalSession';
-import { readCredentials } from '@/persistence';
-
-async function resolveTransientMediaAllowedRoots(input: Readonly<{
-    providerOps: Awaited<ReturnType<typeof resolveExternalSessionSurfaceOps>>;
-    source: unknown;
-    remoteSessionId: string;
-}>): Promise<readonly string[]> {
-    if (!input.source || typeof input.source !== 'object' || Array.isArray(input.source)) return [];
-    return input.providerOps.resolveTranscriptMediaReadRoots?.({
-        source: input.source as Parameters<NonNullable<typeof input.providerOps.resolveTranscriptMediaReadRoots>>[0]['source'],
-        remoteSessionId: input.remoteSessionId,
-    }) ?? [];
-}
+import { readStoredCredentials } from '@/persistence';
 
 export async function executeExternalSessionTranscriptPageAction(
     raw: unknown,
@@ -50,6 +38,8 @@ export async function executeExternalSessionTranscriptPageAction(
             env: process.env,
         });
     } catch (error) {
+        const providerFailure = mapExternalSessionProviderFailureToExternalSessionsError(error);
+        if (providerFailure) return providerFailure satisfies ExternalSessionTranscriptPageResponse;
         return internalErrorResponse(
             'external_session_transcript_page.validate_source',
             error,
@@ -65,7 +55,7 @@ export async function executeExternalSessionTranscriptPageAction(
     const maxItems = parsed.data.maxItems ?? resolveDefaultMaxItems();
 
     try {
-        const providerOps = await resolveExternalSessionSurfaceOps(agentId);
+        const providerOps = validatedSource.providerOps;
         if (!providerOps.pageTranscript) {
             return externalSessionsError('agent_unavailable', 'transcript_page_not_supported') satisfies ExternalSessionTranscriptPageResponse;
         }
@@ -77,9 +67,8 @@ export async function executeExternalSessionTranscriptPageAction(
             maxBytes,
             maxItems,
         });
-        const allowedRoots = await resolveTransientMediaAllowedRoots({ providerOps, source, remoteSessionId });
         const transientMediaReadFiles = collectTransientSessionMediaReadFiles(res.items, {
-            allowedRoots,
+            allowedRoots: validatedSource.transcriptMediaReadRoots,
         });
         context?.transientMediaReadAllowance?.grantReadFiles(transientMediaReadFiles);
         return {
@@ -104,7 +93,10 @@ export async function executeExternalSessionTranscriptPageAction(
 
 export async function executeExternalSessionTranscriptReadAfterAction(
     raw: unknown,
-    context?: Pick<ExternalSessionActionContext, 'transientMediaReadAllowance'>,
+    context?: Pick<
+        ExternalSessionActionContext,
+        'deviceLocalSecretStorage' | 'transientMediaReadAllowance'
+    >,
 ): Promise<ExternalSessionTranscriptReadAfterResponse | ExternalSessionTranscriptRefreshReadAfterResponseV1> {
     const refreshRequest = ExternalSessionTranscriptRefreshReadAfterRequestV1Schema.safeParse(raw);
     if (refreshRequest.success) {
@@ -112,6 +104,12 @@ export async function executeExternalSessionTranscriptReadAfterAction(
         const currentBinding = await resolveExternalSessionTranscriptRefreshBinding({
             sessionId: request.binding.sessionId,
             cursor: request.cursor,
+            ...(context?.deviceLocalSecretStorage
+                ? {
+                    deviceLocalSecretStorage:
+                        context.deviceLocalSecretStorage,
+                }
+                : {}),
         }).catch(() => null);
         if (!currentBinding) {
             return ExternalSessionTranscriptRefreshReadAfterResponseV1Schema.parse({
@@ -127,7 +125,7 @@ export async function executeExternalSessionTranscriptReadAfterAction(
                 result: { outcome: 'source_replaced' },
             });
         }
-        const credentials = await readCredentials().catch(() => null);
+        const credentials = await readStoredCredentials().catch(() => null);
         const loaded = credentials
             ? await loadLinkedExternalSession({
                 credentials,
@@ -161,6 +159,12 @@ export async function executeExternalSessionTranscriptReadAfterAction(
             const bindingAfterRead = await resolveExternalSessionTranscriptRefreshBinding({
                 sessionId: request.binding.sessionId,
                 cursor: request.cursor,
+                ...(context?.deviceLocalSecretStorage
+                    ? {
+                        deviceLocalSecretStorage:
+                            context.deviceLocalSecretStorage,
+                    }
+                    : {}),
             }).catch(() => null);
             if (!bindingAfterRead) {
                 return ExternalSessionTranscriptRefreshReadAfterResponseV1Schema.parse({
@@ -206,6 +210,8 @@ export async function executeExternalSessionTranscriptReadAfterAction(
             env: process.env,
         });
     } catch (error) {
+        const providerFailure = mapExternalSessionProviderFailureToExternalSessionsError(error);
+        if (providerFailure) return providerFailure satisfies ExternalSessionTranscriptReadAfterResponse;
         return internalErrorResponse(
             'external_session_transcript_read_after.validate_source',
             error,
@@ -222,7 +228,7 @@ export async function executeExternalSessionTranscriptReadAfterAction(
     const maxItems = parsed.data.maxItems ?? resolveDefaultMaxItems();
 
     try {
-        const providerOps = await resolveExternalSessionSurfaceOps(agentId);
+        const providerOps = validatedSource.providerOps;
         if (!providerOps.readAfterTranscript) {
             return externalSessionsError('agent_unavailable', 'transcript_read_after_not_supported') satisfies ExternalSessionTranscriptReadAfterResponse;
         }
@@ -244,9 +250,8 @@ export async function executeExternalSessionTranscriptReadAfterAction(
             : res.outcome === 'already_current'
                 ? { items: [], nextCursor: cursor, truncated: false }
                 : { items: [], nextCursor: null, truncated: true };
-        const allowedRoots = await resolveTransientMediaAllowedRoots({ providerOps, source, remoteSessionId });
         const transientMediaReadFiles = collectTransientSessionMediaReadFiles(legacyPage.items, {
-            allowedRoots,
+            allowedRoots: validatedSource.transcriptMediaReadRoots,
         });
         context?.transientMediaReadAllowance?.grantReadFiles(transientMediaReadFiles);
         return {

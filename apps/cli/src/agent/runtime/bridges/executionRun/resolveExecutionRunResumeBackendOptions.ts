@@ -1,4 +1,4 @@
-import type { AcpConfigOptionOverridesV1, ConnectedServiceBindingsV1 } from '@happier-dev/protocol';
+import type { AcpConfigOptionOverridesV1, ConnectedServiceBindingsV1, ProviderBoundModelRef } from '@happier-dev/protocol';
 
 import type { ExecutionRunState } from './executionRunTypes';
 
@@ -18,6 +18,7 @@ import type { ExecutionRunState } from './executionRunTypes';
  */
 export type ExecutionRunResumeBackendOptions = Readonly<{
   modelId?: string;
+  modelSelection?: ProviderBoundModelRef;
   sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1;
   connectedServices?: ConnectedServiceBindingsV1 | null;
 }>;
@@ -29,6 +30,7 @@ export function resolveExecutionRunResumeBackendOptions(args: Readonly<{
   if (!launch) return {};
   return {
     ...(launch.modelId ? { modelId: launch.modelId } : {}),
+    ...(launch.modelSelection ? { modelSelection: launch.modelSelection } : {}),
     ...(launch.sessionConfigOptionOverrides
       ? { sessionConfigOptionOverrides: launch.sessionConfigOptionOverrides }
       : {}),

@@ -7,6 +7,26 @@ import { createDeferred } from '@/testkit/async/deferred';
 import { createFakeAcpRuntimeBackend } from '@/testkit/backends/acpRuntimeBackend';
 import { createApprovedPermissionHandler } from '@/testkit/backends/permissionHandler';
 import { createSessionClientWithMetadata } from '@/testkit/backends/sessionFixtures';
+import {
+  AgentSessionRuntimeEventV1Schema,
+  type AgentSessionRuntimeEventV1,
+} from '@happier-dev/protocol';
+
+function collectRuntimeEvents(runtime: Readonly<{
+  subscribeRuntimeEvents: (handler: (message: unknown) => void) => () => void;
+}>): AgentSessionRuntimeEventV1[] {
+  const events: AgentSessionRuntimeEventV1[] = [];
+  runtime.subscribeRuntimeEvents((message) => {
+    events.push(AgentSessionRuntimeEventV1Schema.parse(message));
+  });
+  return events;
+}
+
+function isFallbackSidechainMessage(event: AgentSessionRuntimeEventV1, sidechainId: string): boolean {
+  return event.kind === 'transcript-message-committed'
+    && event.role === 'assistant'
+    && event.sidechainId === sidechainId;
+}
 
 describe('createAcpRuntime (sidechain import)', () => {
   it('imports Task sub-session replay as sidechain messages when tool-result includes sessionId metadata', async () => {
@@ -62,12 +82,7 @@ describe('createAcpRuntime (sidechain import)', () => {
     const replayBackend = createFakeAcpRuntimeBackend();
     replayBackend.loadSessionWithReplayCapture = async (_id: string) => ({ sessionId: 'ses_123', replay: [] });
 
-    const importedSidechain = createDeferred<void>();
-    const { session, committed } = createSessionClientWithMetadata({
-      onSendAgentMessageCommitted: (body) => {
-        if (body.sidechainId === 'tool_task_1' && body.type === 'message') importedSidechain.resolve(undefined);
-      },
-    });
+    const { session, committed } = createSessionClientWithMetadata();
 
     const runtime = createAcpRuntime({
       provider: 'opencode',
@@ -80,6 +95,7 @@ describe('createAcpRuntime (sidechain import)', () => {
       ensureBackend: async () => mainBackend,
       createReplayBackend: async () => replayBackend,
     });
+    const runtimeEvents = collectRuntimeEvents(runtime);
 
     await runtime.sendTurnPrompt('session setup');
 
@@ -93,8 +109,10 @@ describe('createAcpRuntime (sidechain import)', () => {
     };
     mainBackend.emit(taskResult);
 
-    await importedSidechain.promise;
-    expect(committed.some((body) => body.sidechainId === 'tool_task_1' && body.type === 'message')).toBe(true);
+    await vi.waitFor(() => {
+      expect(runtimeEvents.some((event) => isFallbackSidechainMessage(event, 'tool_task_1'))).toBe(true);
+    });
+    expect(committed.some((body) => body.sidechainId === 'tool_task_1' && body.type === 'message')).toBe(false);
   });
 
   it('falls back to importing Task output as a sidechain message when replay capture throws', async () => {
@@ -104,12 +122,7 @@ describe('createAcpRuntime (sidechain import)', () => {
       throw new Error('Replay not supported');
     };
 
-    const importedSidechain = createDeferred<void>();
-    const { session, committed } = createSessionClientWithMetadata({
-      onSendAgentMessageCommitted: (body) => {
-        if (body.sidechainId === 'tool_task_1' && body.type === 'message') importedSidechain.resolve(undefined);
-      },
-    });
+    const { session, committed } = createSessionClientWithMetadata();
 
     const runtime = createAcpRuntime({
       provider: 'opencode',
@@ -122,6 +135,7 @@ describe('createAcpRuntime (sidechain import)', () => {
       ensureBackend: async () => mainBackend,
       createReplayBackend: async () => replayBackend,
     });
+    const runtimeEvents = collectRuntimeEvents(runtime);
 
     await runtime.sendTurnPrompt('session setup');
 
@@ -135,8 +149,10 @@ describe('createAcpRuntime (sidechain import)', () => {
     };
     mainBackend.emit(taskResult);
 
-    await importedSidechain.promise;
-    expect(committed.some((body) => body.sidechainId === 'tool_task_1' && body.type === 'message')).toBe(true);
+    await vi.waitFor(() => {
+      expect(runtimeEvents.some((event) => isFallbackSidechainMessage(event, 'tool_task_1'))).toBe(true);
+    });
+    expect(committed.some((body) => body.sidechainId === 'tool_task_1' && body.type === 'message')).toBe(false);
   });
 
   it('evicts tool-call name cache when maxEntries is exceeded', async () => {

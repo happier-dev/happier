@@ -7,11 +7,16 @@ import { listBuiltInHappierTools } from "@/agent/tools/happierTools/listBuiltInH
 import type { RpcHandlerManagerLike } from "@/api/rpc/types";
 import type { Metadata } from "@/api/types";
 import type { PermissionMode } from "@/api/types";
-import type { ProviderTranscriptDispatchRequest } from "@/api/session/client/transcript/providerDispatch";
 import { configuration } from "@/configuration";
-import type { Credentials } from '@/persistence';
+import type { StoredCredentials } from '@/persistence';
+import type { AgentCompositionToolSelection } from '@/plugins/runtime/hooks/execution/dispatchAgentTurnHooks';
+import type { ProjectedPluginToolCatalogEntry } from '@/plugins/runtime/toolCatalog';
 import type { ExecutionRunServiceResult, WaitForExecutionRunResult } from "@/session/services/executionRuns";
-import type { AccountSettings, BackendTargetRefV2 } from '@happier-dev/protocol';
+import type {
+    AccountSettings,
+    BackendTargetRefV2,
+    SessionInputCausalPermissionAuthorityV1,
+} from '@happier-dev/protocol';
 import {
     createMcpActionEnablement,
     createMcpActionSettingsProvider,
@@ -31,23 +36,67 @@ export type HappyMcpExecutionRunService = Readonly<{
 export type HappyMcpSessionClient = {
     sessionId: string;
     rpcHandlerManager: RpcHandlerManagerLike;
-    sendProviderMessage(request: ProviderTranscriptDispatchRequest): void;
     updateMetadata(updater: (metadata: Metadata) => Metadata): void | Promise<void>;
     getMetadataSnapshot?(): Metadata | null;
     getPermissionMode?(): PermissionMode | null | undefined;
+    getActiveTurnCausalPermissionAuthority?(): SessionInputCausalPermissionAuthorityV1 | null | undefined;
     getBackendTarget?(): BackendTargetRefV2 | null | undefined;
     getCurrentSessionLocation?(): Readonly<{
         path?: string | null;
         host?: string | null;
         machineId?: string | null;
     }> | null | undefined;
+    getActiveAgentCompositionToolSelection?(): AgentCompositionToolSelection | null | undefined;
     executionRuns?: HappyMcpExecutionRunService;
 };
+
+export function filterPluginToolsForActiveAgentComposition(
+    pluginToolCatalog: readonly ProjectedPluginToolCatalogEntry[],
+    selection: AgentCompositionToolSelection | null | undefined,
+): readonly ProjectedPluginToolCatalogEntry[] {
+    if (!selection || selection.managedPluginIds.length === 0) {
+        return pluginToolCatalog;
+    }
+    const managedPluginIds = new Set(selection.managedPluginIds);
+    const selectedToolIds = new Set(selection.selectedTools.map(
+        (tool) => `${tool.pluginId}/${tool.localId}`,
+    ));
+    const currentUnmanagedTools = pluginToolCatalog.filter((tool) => {
+        const separatorIndex = tool.toolId.indexOf('/');
+        const pluginId = separatorIndex > 0 ? tool.toolId.slice(0, separatorIndex) : null;
+        return pluginId === null || !managedPluginIds.has(pluginId);
+    });
+    const selectedTurnTools = selection.selectedToolBindings.flatMap((binding) => {
+        const separatorIndex = binding.tool.toolId.indexOf('/');
+        const pluginId = separatorIndex > 0 ? binding.tool.toolId.slice(0, separatorIndex) : null;
+        const immutableGenerationId = binding.expectedContributorImmutableGenerationId.trim();
+        if (
+            pluginId === null
+            || !managedPluginIds.has(pluginId)
+            || !selectedToolIds.has(binding.tool.toolId)
+            || immutableGenerationId.length === 0
+        ) {
+            return [];
+        }
+        return [Object.freeze({
+            ...binding.tool,
+            expectedContributorImmutableGenerationId: immutableGenerationId,
+        })];
+    });
+    // The daemon catalog remains the sole current catalog for unmanaged tools.
+    // Managed selections use only the immutable snapshot admitted for this
+    // turn; a missing/invalid binding fails closed instead of rereading a
+    // replacement plugin after a reload.
+    return Object.freeze([
+        ...currentUnmanagedTools,
+        ...selectedTurnTools,
+    ].sort((left, right) => left.name.localeCompare(right.name) || left.toolId.localeCompare(right.toolId)));
+}
 
 export async function startHappyServer(
     client: HappyMcpSessionClient,
     opts?: Readonly<{
-        credentials?: Credentials | null;
+        credentials?: StoredCredentials | null;
         accountSettings?: AccountSettings | null;
         getAccountSettings?: (() => AccountSettings | null) | null;
     }>,
@@ -68,7 +117,10 @@ export async function startHappyServer(
       code: 'daemon_unavailable',
     }));
     return daemonCatalog.kind === 'available'
-      ? daemonCatalog.tools
+      ? filterPluginToolsForActiveAgentComposition(
+        daemonCatalog.tools,
+        client.getActiveAgentCompositionToolSelection?.() ?? null,
+      )
       : Object.freeze([]);
   };
   const initialPluginToolCatalog = await readCurrentPluginToolCatalog();

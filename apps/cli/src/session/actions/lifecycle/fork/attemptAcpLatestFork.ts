@@ -8,8 +8,8 @@ import { createConnectedServiceForkLaunchContext } from '@/session/fork/connecte
 import { updateSessionMetadataWithRetry } from '@/session/metadata/updateSessionMetadataWithRetry';
 import { isAmbiguousSpawnSessionFailure } from '@/session/shared/spawnNonce';
 import type { ForkResultV1 } from '@happier-dev/agents';
-import { applySessionStateUpdatesToMetadata } from '@happier-dev/agents/session/state/metadataWriters';
 import { readRuntimeDescriptorV1FromMetadata } from '@happier-dev/protocol';
+import { applyAgentAuthoredSessionStateUpdatesToMetadata } from '@/agent/runtime/state/agentAuthoredSessionStateUpdates';
 
 import {
     archiveSessionBestEffort,
@@ -53,9 +53,10 @@ export async function attemptAcpLatestFork(params: Readonly<{
                     errorMessage: 'ACP fork returned an empty providerSessionId',
                 };
             }
-            const launchMetadata = applySessionStateUpdatesToMetadata(
+            const launchMetadata = applyAgentAuthoredSessionStateUpdatesToMetadata(
                 {},
                 forked.launch.sessionStateUpdates ?? [],
+                'fork.launch.sessionStateUpdates',
             );
             const runtimeDescriptorV1 = readRuntimeDescriptorV1FromMetadata(launchMetadata) ?? undefined;
             const runtimeSelection = readCanonicalSpawnRuntimeSelection({ runtimeDescriptorV1 });

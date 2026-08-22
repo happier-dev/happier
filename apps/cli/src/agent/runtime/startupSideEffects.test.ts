@@ -6,10 +6,15 @@ import {
   reportPersistedTakeoverRuntimeBound,
   reportSessionToDaemonIfRunning,
   resolveTerminalAttachmentPersistenceBinding,
+  sendTerminalFallbackMessageIfNeeded,
 } from '@/agent/runtime/startupSideEffects';
 import type { Metadata } from '@/api/types';
 
 const metadataStub = {} as Metadata;
+const publisherPrecondition = {
+  machineId: 'machine-1',
+  committedFenceMs: 1,
+} as const;
 
 describe('startup side effects: daemon session reporting retry', () => {
   it('resolves the existing bound tmux identity for local host persistence', () => {
@@ -34,6 +39,109 @@ describe('startup side effects: daemon session reporting retry', () => {
     });
   });
 
+  it('reports newer concurrent metadata even when the older in-flight report succeeds', async () => {
+    let releaseFirstAttempt!: (value: { error?: string }) => void;
+    const firstAttempt = new Promise<{ error?: string }>((resolve) => {
+      releaseFirstAttempt = resolve;
+    });
+    const observedMetadata: Metadata[] = [];
+    const notifyDaemonSessionStartedFn = vi.fn(async (_sessionId: string, metadata: Metadata) => {
+      observedMetadata.push(metadata);
+      return observedMetadata.length === 1 ? await firstAttempt : {};
+    });
+    const deps = { notifyDaemonSessionStartedFn };
+
+    const first = reportSessionToDaemonIfRunning(
+      { sessionId: 'session-newer-metadata', metadata: { startedBy: 'terminal' } as Metadata },
+      deps,
+    );
+    await vi.waitFor(() => expect(notifyDaemonSessionStartedFn).toHaveBeenCalledTimes(1));
+    const latestMetadata = { startedBy: 'daemon', claudeSessionId: 'claude-current' } as Metadata;
+    const second = reportSessionToDaemonIfRunning(
+      { sessionId: 'session-newer-metadata', metadata: latestMetadata, requireDaemonAck: true },
+      deps,
+    );
+
+    releaseFirstAttempt({});
+    await Promise.all([first, second]);
+
+    expect(observedMetadata).toEqual([
+      { startedBy: 'terminal' },
+      latestMetadata,
+    ]);
+  });
+
+  it('coalesces concurrent reports for one session and retries with the latest metadata and strongest readiness requirement', async () => {
+    let releaseFirstAttempt!: (value: { error?: string }) => void;
+    const firstAttempt = new Promise<{ error?: string }>((resolve) => {
+      releaseFirstAttempt = resolve;
+    });
+    const observedMetadata: Metadata[] = [];
+    let calls = 0;
+    let now = 0;
+    const notifyDaemonSessionStartedFn = vi.fn(async (_sessionId: string, metadata: Metadata) => {
+      observedMetadata.push(metadata);
+      calls += 1;
+      if (calls === 1) return await firstAttempt;
+      return {};
+    });
+    const deps = {
+      notifyDaemonSessionStartedFn,
+      sleepFn: async (ms: number) => {
+        now += ms;
+      },
+      nowFn: () => now,
+      retryTimeoutMs: 1_000,
+      retryIntervalMs: 100,
+    };
+
+    const first = reportSessionToDaemonIfRunning(
+      { sessionId: 'session-coalesced', metadata: { startedBy: 'terminal' } as Metadata },
+      deps,
+    );
+    await vi.waitFor(() => expect(notifyDaemonSessionStartedFn).toHaveBeenCalledTimes(1));
+    const latestMetadata = { startedBy: 'daemon', claudeSessionId: 'claude-current' } as Metadata;
+    const second = reportSessionToDaemonIfRunning(
+      { sessionId: 'session-coalesced', metadata: latestMetadata, requireDaemonAck: true },
+      deps,
+    );
+
+    releaseFirstAttempt({ error: 'No daemon running, no state file found' });
+    await Promise.all([first, second]);
+
+    expect(notifyDaemonSessionStartedFn).toHaveBeenCalledTimes(2);
+    expect(observedMetadata).toEqual([
+      { startedBy: 'terminal' },
+      latestMetadata,
+    ]);
+  });
+
+  it('admits the terminal fallback notice through committed transcript delivery', async () => {
+    const sendSessionEvent = vi.fn();
+    const enqueueSessionEventCommitted = vi.fn(async () => ({
+      persisted: true,
+      delivered: false,
+    }));
+
+    await sendTerminalFallbackMessageIfNeeded({
+      session: {
+        sendSessionEvent,
+        enqueueSessionEventCommitted,
+      } as never,
+      terminal: {
+        mode: 'plain',
+        requested: 'tmux',
+        fallbackReason: 'tmux is unavailable',
+      },
+    });
+
+    expect(enqueueSessionEventCommitted).toHaveBeenCalledWith({
+      type: 'message',
+      message: expect.stringContaining("couldn't be started in tmux"),
+    });
+    expect(sendSessionEvent).not.toHaveBeenCalled();
+  });
+
   it('requires one exact daemon acknowledgement for persisted-takeover admission', async () => {
     const notifyDaemonSessionStartedFn = vi.fn(async () => ({ status: 'ok' as const }));
 
@@ -41,8 +149,10 @@ describe('startup side effects: daemon session reporting retry', () => {
       sessionId: 'session-takeover',
       metadata: { startedBy: 'daemon' } as Metadata,
       correlation: {
+        mode: 'persisted' as const,
         operationId: 'operation-1',
         attemptId: 'attempt-1',
+        publisherPrecondition,
       },
     }, {
       notifyDaemonSessionStartedFn,
@@ -55,8 +165,10 @@ describe('startup side effects: daemon session reporting retry', () => {
       {
         timeoutMs: 1_234,
         persistedTakeoverAdmission: {
+          mode: 'persisted',
           operationId: 'operation-1',
           attemptId: 'attempt-1',
+          publisherPrecondition,
           phase: 'admit',
         },
       },
@@ -70,8 +182,10 @@ describe('startup side effects: daemon session reporting retry', () => {
       sessionId: 'session-takeover',
       metadata: { startedBy: 'daemon' } as Metadata,
       correlation: {
+        mode: 'persisted' as const,
         operationId: 'operation-1',
         attemptId: 'attempt-1',
+        publisherPrecondition,
       },
     }, {
       notifyDaemonSessionStartedFn,
@@ -84,8 +198,10 @@ describe('startup side effects: daemon session reporting retry', () => {
       {
         timeoutMs: 1_234,
         persistedTakeoverAdmission: {
+          mode: 'persisted',
           operationId: 'operation-1',
           attemptId: 'attempt-1',
+          publisherPrecondition,
           phase: 'runtime_bound',
         },
       },
@@ -102,8 +218,10 @@ describe('startup side effects: daemon session reporting retry', () => {
       sessionId: 'session-takeover',
       metadata: { startedBy: 'daemon' } as Metadata,
       correlation: {
+        mode: 'persisted' as const,
         operationId: 'operation-1',
         attemptId: 'attempt-1',
+        publisherPrecondition,
       },
     };
 
@@ -120,8 +238,10 @@ describe('startup side effects: daemon session reporting retry', () => {
       {
         timeoutMs: 1_234,
         persistedTakeoverAdmission: {
+          mode: 'persisted',
           operationId: 'operation-1',
           attemptId: 'attempt-1',
+          publisherPrecondition,
           phase: 'runtime_bound',
         },
       },
@@ -133,8 +253,10 @@ describe('startup side effects: daemon session reporting retry', () => {
       {
         timeoutMs: 1_234,
         persistedTakeoverAdmission: {
+          mode: 'persisted',
           operationId: 'operation-1',
           attemptId: 'attempt-1',
+          publisherPrecondition,
           phase: 'runtime_bound',
         },
       },
@@ -150,8 +272,10 @@ describe('startup side effects: daemon session reporting retry', () => {
       sessionId: 'session-takeover',
       metadata: { startedBy: 'daemon' } as Metadata,
       correlation: {
+        mode: 'persisted',
         operationId: 'operation-1',
         attemptId: 'attempt-1',
+        publisherPrecondition,
       },
     }, {
       notifyDaemonSessionStartedFn,
@@ -168,8 +292,10 @@ describe('startup side effects: daemon session reporting retry', () => {
       sessionId: 'session-takeover',
       metadata: { startedBy: 'daemon' } as Metadata,
       correlation: {
+        mode: 'persisted',
         operationId: 'operation-1',
         attemptId: 'attempt-1',
+        publisherPrecondition,
       },
     }, {
       notifyDaemonSessionStartedFn: async () => ({

@@ -2,6 +2,7 @@ import type { VoiceAgentManager } from '@/agent/voice/agent/VoiceAgentManager';
 import type { ExecutionRunState } from './executionRunTypes';
 import type { ExecutionRunController } from '@/agent/executionRuns/controllers/types';
 import type { FinishExecutionRun } from './executionRunFinishRun';
+import { settleExecutionRunController } from './settleExecutionRunController';
 
 export async function stopExecutionRun(args: Readonly<{
   runId: string;
@@ -47,22 +48,14 @@ export async function stopExecutionRun(args: Readonly<{
     finishedAtMs,
   };
 
-  args.finishRun(args.runId, { status: 'cancelled', summary: 'Cancelled', finishedAtMs }, { output });
-  if (ctrl.kind === 'backend') {
-    try {
-      await ctrl.backend.dispose();
-    } catch {
-      // ignore
-    }
-  }
   try {
-    await ctrl.terminalMarkerWritePromise;
-  } catch {
-    // ignore
-  }
-  ctrl.resolveTerminal();
-  if (args.controllers.get(args.runId) === ctrl) {
-    args.controllers.delete(args.runId);
+    await args.finishRun(args.runId, { status: 'cancelled', summary: 'Cancelled', finishedAtMs }, { output });
+  } finally {
+    await settleExecutionRunController({
+      runId: args.runId,
+      controller: ctrl,
+      controllers: args.controllers,
+    });
   }
   return { ok: true };
 }

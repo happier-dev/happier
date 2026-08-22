@@ -1,34 +1,64 @@
-import type { SessionScopedServicesV1 } from '@happier-dev/agents';
+import type { SessionHandle } from '@happier-dev/plugin-sdk/sessions';
 import type {
-    HostTerminalOrchestration,
-    HostTerminalControlReturnReason,
-    HostTerminalLaunchRequest,
-    HostTerminalProcessTermination,
-    HostTerminalRunResult,
+    ForkAvailabilityRequestV1 as HostForkAvailabilityRequestV1,
+    ForkRequestV1 as HostForkRequestV1,
+    ReplayForkChildLaunchRequestV1 as HostReplayForkChildLaunchRequestV1,
+} from '@happier-dev/agents';
+import {
+    HostTerminalModelSelectionBlockedError,
+    type HostTerminalOrchestration,
+    type HostTerminalControlReturnReason,
+    type HostTerminalLaunchRequest,
+    type HostTerminalProcessTermination,
+    type HostTerminalRunResult,
 } from '@/agent/runtime/session/terminal/contract';
 import type {
     AgentRuntime,
     AgentTerminalControlPresentation,
     AgentTerminalLaunchPlan,
-} from '@happier-dev/plugin-sdk/agent-runtime';
+} from '@happier-dev/plugin-sdk/agents/runtime';
+import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import {
+    assertAgentAuthoredSessionStateUpdates,
+} from '@/agent/runtime/state/agentAuthoredSessionStateUpdates';
 
 import type { ResolvedAgentRuntimeContribution } from '../../../plugins/projection/registry/types';
-import { projectAgentVisibleSessionMetadata } from '../sessionMetadataVisibility';
 
 import type {
     BackendExecutionSurfaces,
     EngineResolutionDiagnostic,
 } from './engineRegistryTypes';
 type TerminalRuntimeLaunch = NonNullable<NonNullable<BackendExecutionSurfaces['terminalRuntime']>['launch']>;
+type TerminalLaunchMetadata = Parameters<
+    NonNullable<NonNullable<AgentRuntime['surfaces']>['terminal']>['resolveLaunch']
+>[0]['metadata'];
 type TerminalRuntimeLaunchServicesResolver = (
     request: HostTerminalLaunchRequest,
-) => SessionScopedServicesV1 | null | Promise<SessionScopedServicesV1 | null>;
+) => SessionHandle | null | Promise<SessionHandle | null>;
 type TerminalRuntimeLaunchSignalResolver = (
     request: HostTerminalLaunchRequest,
 ) => AbortSignal | undefined;
 type TerminalRuntimeHostOrchestrationResolver = (
     request: HostTerminalLaunchRequest,
 ) => HostTerminalOrchestration | null | Promise<HostTerminalOrchestration | null>;
+type AgentRuntimeSurfaceInvocationContextResolver = (
+    request: Readonly<{
+        cwd: string;
+        /** A Happier Session id, never a vendor/provider session id. */
+        happierSessionId?: string;
+    }>,
+) => Promise<PluginInvocationContext>;
+type AgentRuntimeForkSurface = NonNullable<NonNullable<AgentRuntime['surfaces']>['fork']>;
+type AgentRuntimeHandoffSurface = NonNullable<NonNullable<AgentRuntime['surfaces']>['handoff']>;
+type AgentRuntimeForkAvailabilityRequest = Parameters<NonNullable<AgentRuntimeForkSurface['evaluateAvailability']>>[0];
+type AgentRuntimeForkRequest = Parameters<NonNullable<AgentRuntimeForkSurface['fork']>>[0];
+type AgentRuntimeReplayForkChildLaunchRequest = Parameters<NonNullable<AgentRuntimeForkSurface['resolveReplayChildLaunch']>>[0];
+type HostAcpSessionOperations = NonNullable<HostForkRequestV1['acp']>;
+type HostAcpSessionResult = Awaited<ReturnType<HostAcpSessionOperations['loadSession']>>;
+type HostAcpForkSessionResult = Awaited<ReturnType<HostAcpSessionOperations['forkSession']>>;
+type AgentRuntimeAcpSessionOperations = NonNullable<AgentRuntimeForkRequest['acp']>;
+type AgentRuntimeAcpSessionResult = Awaited<ReturnType<AgentRuntimeAcpSessionOperations['loadSession']>>;
+type AgentRuntimeAcpForkSessionResult = Awaited<ReturnType<AgentRuntimeAcpSessionOperations['forkSession']>>;
 
 function normalizeTerminalRuntimeLaunchRequest(request: unknown): HostTerminalLaunchRequest {
     if (!request || typeof request !== 'object' || Array.isArray(request)) {
@@ -166,13 +196,371 @@ function assertNativeAgentTerminalLaunchPlan(value: unknown): asserts value is A
     if (value.resultMetadata !== undefined) {
         assertPlainRecord(value.resultMetadata, 'resultMetadata');
         assertOnlyKeys(value.resultMetadata, ['sessionStateUpdates'], 'resultMetadata');
-        if (
-            value.resultMetadata.sessionStateUpdates !== undefined
-            && !Array.isArray(value.resultMetadata.sessionStateUpdates)
-        ) {
-            throw new Error("Native Agent terminal launch plan 'resultMetadata.sessionStateUpdates' must be an array");
+        if (value.resultMetadata.sessionStateUpdates !== undefined) {
+            assertAgentAuthoredSessionStateUpdates(
+                value.resultMetadata.sessionStateUpdates,
+                'resultMetadata.sessionStateUpdates',
+            );
         }
     }
+}
+
+function readString(value: unknown): string | undefined {
+    return typeof value === 'string' ? value : undefined;
+}
+
+function readBoolean(value: unknown): boolean | undefined {
+    return typeof value === 'boolean' ? value : undefined;
+}
+
+function readStringArray(value: unknown): readonly string[] | undefined {
+    return Array.isArray(value) && value.every((entry) => typeof entry === 'string') ? value : undefined;
+}
+
+function projectTerminalRuntimeMetadata(value: unknown): TerminalLaunchMetadata['terminalRuntime'] {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+    assertPlainRecord(value, 'metadata.terminalRuntime');
+    const metadata = value;
+    const projected = {
+        ...(readStringArray(metadata.claudeArgs) ? { claudeArgs: readStringArray(metadata.claudeArgs) } : {}),
+        ...(readStringArray(metadata.codexArgs) ? { codexArgs: readStringArray(metadata.codexArgs) } : {}),
+        ...(readBoolean(metadata.promptInteractive) !== undefined ? { promptInteractive: readBoolean(metadata.promptInteractive) } : {}),
+        ...(readString(metadata.conversationId) !== undefined ? { conversationId: readString(metadata.conversationId) } : {}),
+        ...(readBoolean(metadata.continueLatest) !== undefined ? { continueLatest: readBoolean(metadata.continueLatest) } : {}),
+        ...(readBoolean(metadata.sandbox) !== undefined ? { sandbox: readBoolean(metadata.sandbox) } : {}),
+        ...(readString(metadata.logFile) !== undefined ? { logFile: readString(metadata.logFile) } : {}),
+        ...(readBoolean(metadata.print) !== undefined ? { print: readBoolean(metadata.print) } : {}),
+        ...(readBoolean(metadata.unsafeSkipPermissions) !== undefined ? { unsafeSkipPermissions: readBoolean(metadata.unsafeSkipPermissions) } : {}),
+    };
+    return Object.keys(projected).length > 0 ? Object.freeze(projected) : undefined;
+}
+
+function projectAntigravityTerminalMetadata(value: unknown) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+    assertPlainRecord(value, 'metadata.antigravity');
+    const metadata = value;
+    const projected = {
+        ...(readBoolean(metadata.promptInteractive) !== undefined ? { promptInteractive: readBoolean(metadata.promptInteractive) } : {}),
+        ...(readString(metadata.conversationId) !== undefined ? { conversationId: readString(metadata.conversationId) } : {}),
+        ...(readBoolean(metadata.continueLatest) !== undefined ? { continueLatest: readBoolean(metadata.continueLatest) } : {}),
+        ...(readBoolean(metadata.sandbox) !== undefined ? { sandbox: readBoolean(metadata.sandbox) } : {}),
+        ...(readString(metadata.logFile) !== undefined ? { logFile: readString(metadata.logFile) } : {}),
+        ...(readBoolean(metadata.print) !== undefined ? { print: readBoolean(metadata.print) } : {}),
+        ...(readBoolean(metadata.unsafeSkipPermissions) !== undefined ? { unsafeSkipPermissions: readBoolean(metadata.unsafeSkipPermissions) } : {}),
+    };
+    return Object.keys(projected).length > 0 ? Object.freeze(projected) : undefined;
+}
+
+function projectTerminalAgentLaunchMetadata(
+    metadata: Readonly<Record<string, unknown>>,
+): TerminalLaunchMetadata {
+    const terminalRuntime = projectTerminalRuntimeMetadata(metadata.terminalRuntime);
+    const antigravity = projectAntigravityTerminalMetadata(metadata.antigravity);
+    return Object.freeze({
+        ...(terminalRuntime ? { terminalRuntime } : {}),
+        ...(antigravity ? { antigravity } : {}),
+        ...(readString(metadata.providerSessionId) !== undefined ? { providerSessionId: readString(metadata.providerSessionId) } : {}),
+        ...(readString(metadata.codexSessionId) !== undefined ? { codexSessionId: readString(metadata.codexSessionId) } : {}),
+        ...(readString(metadata.resumeId) !== undefined ? { resumeId: readString(metadata.resumeId) } : {}),
+        ...(readString(metadata.permissionMode) !== undefined ? { permissionMode: readString(metadata.permissionMode) } : {}),
+        ...(readStringArray(metadata.codexArgs) ? { codexArgs: readStringArray(metadata.codexArgs) } : {}),
+        ...(readStringArray(metadata.claudeArgs) ? { claudeArgs: readStringArray(metadata.claudeArgs) } : {}),
+        ...(readString(metadata.fallbackModel) !== undefined ? { fallbackModel: readString(metadata.fallbackModel) } : {}),
+        ...(readString(metadata.customSystemPrompt) !== undefined ? { customSystemPrompt: readString(metadata.customSystemPrompt) } : {}),
+        ...(readString(metadata.appendSystemPrompt) !== undefined ? { appendSystemPrompt: readString(metadata.appendSystemPrompt) } : {}),
+    });
+}
+
+function assertCurrentNativeAgentSurfaceGeneration(params: Readonly<{
+    agentId: string;
+    isCurrent: () => boolean;
+}>): void {
+    if (!params.isCurrent()) {
+        throw new Error(`Native Agent surface operation for '${params.agentId}' belongs to a retired runtime generation`);
+    }
+}
+
+async function resolveNativeAgentSurfaceInvocationContext(params: Readonly<{
+    agentId: string;
+    isCurrent: () => boolean;
+    createInvocationContext?: AgentRuntimeSurfaceInvocationContextResolver;
+    cwd: string;
+    happierSessionId?: string;
+}>): Promise<PluginInvocationContext> {
+    assertCurrentNativeAgentSurfaceGeneration(params);
+    if (!params.createInvocationContext) {
+        throw new Error(`Native Agent surface operation for '${params.agentId}' requires host invocation services`);
+    }
+    const context = await params.createInvocationContext({
+        cwd: params.cwd,
+        ...(params.happierSessionId ? { happierSessionId: params.happierSessionId } : {}),
+    });
+    assertCurrentNativeAgentSurfaceGeneration(params);
+    return context;
+}
+
+function assertCurrentNativeAgentSurfaceInvocation(
+    params: Readonly<{
+        agentId: string;
+        isCurrent: () => boolean;
+    }>,
+    context: PluginInvocationContext,
+): void {
+    assertCurrentNativeAgentSurfaceGeneration(params);
+    if (context.signal.aborted) {
+        throw context.signal.reason instanceof Error
+            ? context.signal.reason
+            : new Error(`Native Agent surface operation for '${params.agentId}' was cancelled`);
+    }
+}
+
+function projectHostAcpSessionResultForAgentRuntime(
+    result: HostAcpSessionResult,
+): AgentRuntimeAcpSessionResult {
+    if (result.ok) {
+        return {
+            ok: true,
+            value: {
+                providerSessionId: result.value.providerSessionId,
+            },
+        };
+    }
+    return {
+        ok: false,
+        code: result.code,
+        ...(result.message !== undefined ? { message: result.message } : {}),
+        ...(result.retryable !== undefined ? { retryable: result.retryable } : {}),
+    };
+}
+
+function projectHostAcpForkSessionResultForAgentRuntime(
+    result: HostAcpForkSessionResult,
+): AgentRuntimeAcpForkSessionResult {
+    if (result.ok) {
+        return {
+            ok: true,
+            value: {
+                providerSessionId: result.value.providerSessionId,
+            },
+        };
+    }
+    return {
+        ok: false,
+        code: result.code,
+        ...(result.message !== undefined ? { message: result.message } : {}),
+        ...(result.retryable !== undefined ? { retryable: result.retryable } : {}),
+    };
+}
+
+function projectHostAcpSessionOperationsForAgentRuntime(params: Readonly<{
+    operations: HostAcpSessionOperations;
+    agentId: string;
+    isCurrent: () => boolean;
+    context: PluginInvocationContext;
+}>): AgentRuntimeAcpSessionOperations {
+    const invokeLoadSession = async (
+        request: Parameters<HostAcpSessionOperations['loadSession']>[0],
+    ): Promise<AgentRuntimeAcpSessionResult> => {
+        assertCurrentNativeAgentSurfaceInvocation(params, params.context);
+        const result = await params.operations.loadSession({
+            ...request,
+            signal: params.context.signal,
+        });
+        assertCurrentNativeAgentSurfaceInvocation(params, params.context);
+        return projectHostAcpSessionResultForAgentRuntime(result);
+    };
+    const invokeForkSession = async (
+        request: Parameters<HostAcpSessionOperations['forkSession']>[0],
+    ): Promise<AgentRuntimeAcpForkSessionResult> => {
+        assertCurrentNativeAgentSurfaceInvocation(params, params.context);
+        const result = await params.operations.forkSession({
+            ...request,
+            signal: params.context.signal,
+        });
+        assertCurrentNativeAgentSurfaceInvocation(params, params.context);
+        return projectHostAcpForkSessionResultForAgentRuntime(result);
+    };
+    return Object.freeze({
+        loadSession: async (request) => await invokeLoadSession({
+            backendId: request.backendId,
+            ...(request.directory !== undefined ? { directory: request.directory } : {}),
+            providerSessionId: request.providerSessionId,
+        }),
+        forkSession: async (request) => await invokeForkSession({
+            backendId: request.backendId,
+            ...(request.directory !== undefined ? { directory: request.directory } : {}),
+            sourceProviderSessionId: request.sourceProviderSessionId,
+        }),
+    });
+}
+
+function projectHostForkAvailabilityRequestForAgentRuntime(
+    request: HostForkAvailabilityRequestV1,
+): AgentRuntimeForkAvailabilityRequest {
+    return {
+        operation: request.operation,
+        parentSessionId: request.parentSessionId,
+        parentMetadata: request.parentMetadata,
+        directory: request.directory,
+        forkPoint: request.forkPoint,
+    };
+}
+
+function projectHostForkRequestForAgentRuntime(params: Readonly<{
+    request: HostForkRequestV1;
+    agentId: string;
+    isCurrent: () => boolean;
+    context: PluginInvocationContext;
+}>): AgentRuntimeForkRequest {
+    const { request } = params;
+    return {
+        parentSessionId: request.parentSessionId,
+        parentMetadata: request.parentMetadata,
+        directory: request.directory,
+        forkPoint: request.forkPoint,
+        ...(request.acp
+            ? {
+                acp: projectHostAcpSessionOperationsForAgentRuntime({
+                    operations: request.acp,
+                    agentId: params.agentId,
+                    isCurrent: params.isCurrent,
+                    context: params.context,
+                }),
+            }
+            : {}),
+    };
+}
+
+function projectHostReplayForkChildLaunchRequestForAgentRuntime(
+    request: HostReplayForkChildLaunchRequestV1,
+): AgentRuntimeReplayForkChildLaunchRequest {
+    return {
+        parentSessionId: request.parentSessionId,
+        parentMetadata: request.parentMetadata,
+        directory: request.directory,
+        forkPoint: request.forkPoint,
+    };
+}
+
+function bindNativeAgentForkSurface(params: Readonly<{
+    runtime: AgentRuntime;
+    agentId: string;
+    isCurrent: () => boolean;
+    createInvocationContext?: AgentRuntimeSurfaceInvocationContextResolver;
+}>): BackendExecutionSurfaces['fork'] {
+    const fork = params.runtime.surfaces?.fork;
+    if (!fork || (!fork.evaluateAvailability && !fork.fork && !fork.resolveReplayChildLaunch)) {
+        return null;
+    }
+    return Object.freeze({
+        ...(fork.evaluateAvailability
+            ? {
+                evaluateAvailability: async (
+                    request: HostForkAvailabilityRequestV1,
+                ) => {
+                    const context = await resolveNativeAgentSurfaceInvocationContext({
+                        ...params,
+                        cwd: request.directory,
+                        happierSessionId: request.parentSessionId,
+                    });
+                    const result = await fork.evaluateAvailability!(
+                        projectHostForkAvailabilityRequestForAgentRuntime(request),
+                        context,
+                    );
+                    assertCurrentNativeAgentSurfaceGeneration(params);
+                    return result;
+                },
+            }
+            : {}),
+        ...(fork.fork
+            ? {
+                fork: async (
+                    request: HostForkRequestV1,
+                ) => {
+                    const context = await resolveNativeAgentSurfaceInvocationContext({
+                        ...params,
+                        cwd: request.directory,
+                        happierSessionId: request.parentSessionId,
+                    });
+                    const result = await fork.fork!(
+                        projectHostForkRequestForAgentRuntime({
+                            request,
+                            agentId: params.agentId,
+                            isCurrent: params.isCurrent,
+                            context,
+                        }),
+                        context,
+                    );
+                    assertCurrentNativeAgentSurfaceGeneration(params);
+                    return result;
+                },
+            }
+            : {}),
+        ...(fork.resolveReplayChildLaunch
+            ? {
+                resolveReplayChildLaunch: async (
+                    request: HostReplayForkChildLaunchRequestV1,
+                ) => {
+                    const context = await resolveNativeAgentSurfaceInvocationContext({
+                        ...params,
+                        cwd: request.directory,
+                        happierSessionId: request.parentSessionId,
+                    });
+                    const result = await fork.resolveReplayChildLaunch!(
+                        projectHostReplayForkChildLaunchRequestForAgentRuntime(request),
+                        context,
+                    );
+                    assertCurrentNativeAgentSurfaceGeneration(params);
+                    return result;
+                },
+            }
+            : {}),
+    });
+}
+
+function bindNativeAgentHandoffSurface(params: Readonly<{
+    runtime: AgentRuntime;
+    agentId: string;
+    isCurrent: () => boolean;
+    createInvocationContext?: AgentRuntimeSurfaceInvocationContextResolver;
+}>): BackendExecutionSurfaces['handoff'] {
+    const handoff = params.runtime.surfaces?.handoff;
+    if (!handoff) return null;
+    return Object.freeze({
+        ...(handoff.evaluateAvailability
+            ? {
+                evaluateAvailability: async (
+                    request: Parameters<NonNullable<AgentRuntimeHandoffSurface['evaluateAvailability']>>[0],
+                ) => {
+                    const context = await resolveNativeAgentSurfaceInvocationContext({
+                        ...params,
+                        cwd: process.cwd(),
+                    });
+                    const result = await handoff.evaluateAvailability!(request, context);
+                    assertCurrentNativeAgentSurfaceGeneration(params);
+                    return result;
+                },
+            }
+            : {}),
+        exportBundle: async (request) => {
+            const context = await resolveNativeAgentSurfaceInvocationContext({
+                ...params,
+                cwd: request.directory,
+            });
+            const result = await handoff.exportBundle(request, context);
+            assertCurrentNativeAgentSurfaceGeneration(params);
+            return result;
+        },
+        importBundle: async (request) => {
+            const context = await resolveNativeAgentSurfaceInvocationContext({
+                ...params,
+                cwd: request.targetDirectory,
+            });
+            const result = await handoff.importBundle(request, context);
+            assertCurrentNativeAgentSurfaceGeneration(params);
+            return result;
+        },
+    });
 }
 
 function mapTerminalProcessTerminationToExitCode(termination: HostTerminalProcessTermination): number {
@@ -199,15 +587,27 @@ export function resolveBackendExecutionSurfacesFromNativeAgentRuntime(params: Re
     resolveTerminalRuntimeLaunchServices?: TerminalRuntimeLaunchServicesResolver;
     resolveTerminalRuntimeLaunchSignal?: TerminalRuntimeLaunchSignalResolver;
     resolveTerminalRuntimeHostOrchestration?: TerminalRuntimeHostOrchestrationResolver;
+    createAgentRuntimeSurfaceInvocationContext?: AgentRuntimeSurfaceInvocationContextResolver;
 }>): BackendExecutionSurfaces {
-    const terminal = params.runtime.surfaces?.terminal;
+    const runtimeSurfaces = params.runtime.surfaces;
+    const attach = runtimeSurfaces?.attach ?? null;
+    const checkpoint = runtimeSurfaces?.checkpoint ?? null;
+    const surfaceBindingParams = {
+        runtime: params.runtime,
+        agentId: params.agentId,
+        isCurrent: params.isCurrent,
+        createInvocationContext: params.createAgentRuntimeSurfaceInvocationContext,
+    };
+    const fork = bindNativeAgentForkSurface(surfaceBindingParams);
+    const handoff = bindNativeAgentHandoffSurface(surfaceBindingParams);
+    const terminal = runtimeSurfaces?.terminal;
     if (!terminal) return {
         terminalRuntime: null,
         externalSession: null,
-        attach: null,
-        handoff: null,
-        fork: null,
-        checkpoint: null,
+        attach,
+        handoff,
+        fork,
+        checkpoint,
     };
     if (!params.declaredAgentSurfaceFamilies.has('terminalRuntime')) {
         params.diagnostics.push({
@@ -220,10 +620,10 @@ export function resolveBackendExecutionSurfacesFromNativeAgentRuntime(params: Re
         return {
             terminalRuntime: null,
             externalSession: null,
-            attach: null,
-            handoff: null,
-            fork: null,
-            checkpoint: null,
+            attach,
+            handoff,
+            fork,
+            checkpoint,
         };
     }
 
@@ -245,7 +645,8 @@ export function resolveBackendExecutionSurfacesFromNativeAgentRuntime(params: Re
         const plan = await terminal.resolveLaunch({
             sessionId: request.sessionId,
             cwd: request.directory,
-            metadata: projectAgentVisibleSessionMetadata(request.metadata),
+            metadata: projectTerminalAgentLaunchMetadata(request.metadata),
+            modelSelection: request.modelSelection,
         });
         assertNativeAgentTerminalLaunchPlan(plan);
         assertCurrentNativeAgentTerminalGeneration(params);
@@ -273,17 +674,28 @@ export function resolveBackendExecutionSurfacesFromNativeAgentRuntime(params: Re
             presentation: plan.presentation?.onLaunch,
         });
         try {
-            const processHandle = await host.process.launch({
-                executable: executable.executable,
-                args: [...executable.args, ...plan.argv],
-                cwd: request.directory,
-                ...(Object.keys(environment).length > 0 ? { env: environment } : {}),
-                ...(unsetEnvKeys.length > 0 ? { unsetEnvKeys } : {}),
-                stdio: plan.process?.stdio,
-                windowsHide: plan.process?.windowsHide,
-                windowsVerbatimArguments: plan.process?.windowsVerbatimArguments,
-                signal: request.signal,
-            });
+            // Keep every awaited preparation step above this permit. Its
+            // exact-current check linearizes the launch, and the first local
+            // effect must be the process-owner invocation with no intervening
+            // await or competing currentness decision.
+            const permittedLaunch =
+                await request.runWithCurrentPublisherPermit(
+                    () => host.process.launch({
+                        executable: executable.executable,
+                        args: [...executable.args, ...plan.argv],
+                        cwd: request.directory,
+                        ...(Object.keys(environment).length > 0 ? { env: environment } : {}),
+                        ...(unsetEnvKeys.length > 0 ? { unsetEnvKeys } : {}),
+                        stdio: plan.process?.stdio,
+                        windowsHide: plan.process?.windowsHide,
+                        windowsVerbatimArguments: plan.process?.windowsVerbatimArguments,
+                        signal: request.signal,
+                    }),
+                );
+            if (permittedLaunch.status === 'blocked') {
+                throw new HostTerminalModelSelectionBlockedError();
+            }
+            const processHandle = permittedLaunch.value;
             if (!params.isCurrent()) {
                 await processHandle.stop().catch(() => undefined);
                 assertCurrentNativeAgentTerminalGeneration(params);
@@ -341,7 +753,11 @@ export function resolveBackendExecutionSurfacesFromNativeAgentRuntime(params: Re
                 inputSubscription?.unsubscribe();
             }
         } finally {
-            await host.transcriptFollow?.releaseActiveBindings().catch(() => undefined);
+            // `ES-PEP-EU2` removes the redundant readiness path now that one
+            // terminal-follow barrier exists. The barrier that admits the
+            // binding before launch is the same owner that releases it exactly
+            // once, and it races the ready binding against this launch; a second
+            // release here would dispose a binding that owner still holds.
             await publishNativeAgentTerminalControlPresentation({
                 host,
                 presentation: plan.presentation?.onExit,
@@ -369,59 +785,9 @@ export function resolveBackendExecutionSurfacesFromNativeAgentRuntime(params: Re
     return {
         terminalRuntime: Object.freeze({ launch }),
         externalSession: null,
-        attach: null,
-        handoff: null,
-        fork: null,
-        checkpoint: null,
-    };
-}
-
-function assertNoDuplicateSurfaceOperations<TSurface extends object>(
-    surfaceName: keyof BackendExecutionSurfaces,
-    handlerSurface: TSurface | null,
-    engineSurface: TSurface | null,
-): void {
-    if (!handlerSurface || !engineSurface) {
-        return;
-    }
-    for (const operation of Object.keys(handlerSurface) as Array<keyof TSurface & string>) {
-        if (
-            typeof handlerSurface[operation] === 'function'
-            && typeof engineSurface[operation] === 'function'
-        ) {
-            throw new Error(`Duplicate backend surface operation '${String(surfaceName)}.${operation}' from handler and engine surfaces`);
-        }
-    }
-}
-
-function mergeSurface<TSurface extends object>(
-    surfaceName: keyof BackendExecutionSurfaces,
-    handlerSurface: TSurface | null,
-    engineSurface: TSurface | null,
-): TSurface | null {
-    assertNoDuplicateSurfaceOperations(surfaceName, handlerSurface, engineSurface);
-    if (!handlerSurface) {
-        return engineSurface;
-    }
-    if (!engineSurface) {
-        return handlerSurface;
-    }
-    return {
-        ...handlerSurface,
-        ...engineSurface,
-    } as TSurface;
-}
-
-export function mergeBackendExecutionSurfaces(
-    handlerSurfaces: BackendExecutionSurfaces,
-    engineSurfaces: BackendExecutionSurfaces,
-): BackendExecutionSurfaces {
-    return {
-        terminalRuntime: mergeSurface('terminalRuntime', handlerSurfaces.terminalRuntime, engineSurfaces.terminalRuntime),
-        externalSession: null,
-        attach: mergeSurface('attach', handlerSurfaces.attach, engineSurfaces.attach),
-        handoff: mergeSurface('handoff', handlerSurfaces.handoff, engineSurfaces.handoff),
-        fork: mergeSurface('fork', handlerSurfaces.fork, engineSurfaces.fork),
-        checkpoint: mergeSurface('checkpoint', handlerSurfaces.checkpoint, engineSurfaces.checkpoint),
+        attach,
+        handoff,
+        fork,
+        checkpoint,
     };
 }

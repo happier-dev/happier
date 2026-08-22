@@ -1,3 +1,4 @@
+import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import axios from 'axios';
 import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import { fetchServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
@@ -35,6 +36,7 @@ async function defaultPostJson(params: Readonly<{
         params.body,
         {
             headers: {
+                ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
                 Authorization: `Bearer ${params.token}`,
                 'Content-Type': 'application/json',
             },

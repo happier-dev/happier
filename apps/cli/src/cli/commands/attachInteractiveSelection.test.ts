@@ -78,8 +78,26 @@ describe('formatAttachIneligibilityFooter', () => {
       attachScope: 'remote',
       metadata,
     });
+    const evaluateAvailability = vi.fn(async () => ({
+      available: false as const,
+      reasonCode: 'agent_unavailable' as const,
+      retryable: true,
+      safeMessage: 'Provider attach target is unreachable.',
+    }));
+    sessionHostBridgeState.resolveExecutionSurfaces.mockResolvedValue({
+      terminalRuntime: null,
+      externalSession: null,
+      attach: {
+        evaluateAvailability,
+        attach: vi.fn(),
+      },
+      handoff: null,
+      fork: null,
+      checkpoint: null,
+    });
 
     const model = await buildAttachSelectionModel({
+      accountEncryptionMode: 'plain',
       credentials: {
         token: 'token-1',
         encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
@@ -103,6 +121,16 @@ describe('formatAttachIneligibilityFooter', () => {
         disabled: true,
       }),
     ]);
+    await expect(model.probeSessionIdFn('sid_plugin_remote_attach_1')).resolves.toEqual({
+      reachable: false,
+      reason: 'Provider attach target is unreachable.',
+    });
+    expect(evaluateAvailability).toHaveBeenCalledWith({
+      operation: 'attach',
+      sessionId: 'sid_plugin_remote_attach_1',
+      metadata,
+      depth: 'live',
+    });
   });
 
   it('explains same-host machine-id mismatches without calling them another physical machine', async () => {
@@ -128,6 +156,7 @@ describe('formatAttachIneligibilityFooter', () => {
     });
 
     const model = await buildAttachSelectionModel({
+      accountEncryptionMode: 'plain',
       credentials: {
         token: 'token-1',
         encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },

@@ -5,6 +5,10 @@ import { describe, expect, it, vi } from 'vitest';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
+import {
+  createPlainSessionOwnerMetadataEnvelopeV1,
+  type SessionOwnerMetadataV1,
+} from '@happier-dev/protocol';
 
 const envScope = createEnvKeyScope([
   'HAPPIER_HOME_DIR',
@@ -223,6 +227,28 @@ describe('createBaseSessionForAttach', () => {
       const attachDir = join(dir, 'tmp', 'session-attach');
       await mkdir(attachDir, { recursive: true });
       const filePath = join(attachDir, 'attach-layout-v1.json');
+      const ownerMetadata: SessionOwnerMetadataV1 = {
+        v: 1,
+        workspace: {
+          path: '/private/worktree',
+          host: 'private-host',
+          homeDir: '/private/home',
+        },
+        nativeSession: {
+          codexSessionId: 'private-vendor-id',
+          runtimeDescriptorV1: {
+            v: 1,
+            agentId: 'codex',
+            backendMode: 'appServer',
+            providerSessionId: 'private-vendor-id',
+          },
+        },
+        runtime: {
+          tools: ['Read', 'Bash'],
+        },
+      };
+      const ownerMetadataEnvelope =
+        createPlainSessionOwnerMetadataEnvelopeV1(ownerMetadata);
       await writeFile(filePath, JSON.stringify({
         v: 2,
         encryptionMode: 'plain',
@@ -233,27 +259,8 @@ describe('createBaseSessionForAttach', () => {
             summary: { text: 'Safe summary', updatedAt: 1 },
             agentPresentation: { agentId: 'codex' },
           },
-          ownerMetadata: {
-            v: 1,
-            workspace: {
-              path: '/private/worktree',
-              host: 'private-host',
-              homeDir: '/private/home',
-            },
-            nativeSession: {
-              codexSessionId: 'private-vendor-id',
-              runtimeDescriptorV1: {
-                v: 1,
-                agentId: 'codex',
-                backendMode: 'appServer',
-                providerSessionId: 'private-vendor-id',
-              },
-            },
-            runtime: {
-              tools: ['Read', 'Bash'],
-            },
-          },
-          ownerMetadataCiphertext: 'selected-owner-ciphertext',
+          ownerMetadata,
+          ownerMetadataEnvelope,
           metadataVersion: 3,
           agentState: { controlledByUser: false },
           agentStateVersion: 2,
@@ -269,15 +276,8 @@ describe('createBaseSessionForAttach', () => {
 
       expect(session).toMatchObject({
         metadataLayoutVersion: 1,
-        ownerMetadataCiphertext: 'selected-owner-ciphertext',
-        ownerMetadata: {
-          v: 1,
-          workspace: {
-            path: '/private/worktree',
-            host: 'private-host',
-            homeDir: '/private/home',
-          },
-        },
+        ownerMetadata,
+        ownerMetadataEnvelope,
         metadataVersion: 3,
         metadata: {
           path: '/private/worktree',

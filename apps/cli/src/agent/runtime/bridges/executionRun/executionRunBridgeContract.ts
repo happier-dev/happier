@@ -32,9 +32,12 @@ export interface ExecutionRunHostBridgeContract {
   waitForTerminal(runId: string): Promise<void>;
   getPublic(runId: string): ExecutionRunPublicState | null;
   listPublic(): readonly ExecutionRunPublicState[];
-  listPublicForRequest(request: ExecutionRunListRequest): readonly ExecutionRunPublicState[];
+  listPublicForRequest(
+    request: ExecutionRunListRequest,
+    scopeSessionId?: string | null,
+  ): readonly ExecutionRunPublicState[];
   getDepthByRunId(runId: string): number | null;
-  getDepthByCallId(callId: string): number | null;
+  getDepthByCallId(callId: string, scopeSessionId?: string | null): number | null;
   start(params: ExecutionRunManagerStartParams): Promise<ExecutionRunStartResult>;
   send(
     runId: string,

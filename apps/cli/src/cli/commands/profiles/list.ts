@@ -2,7 +2,7 @@ import { cyan, dim, emphasis, gray, kv, sectionTitle } from '@happier-dev/cli-co
 
 import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
 import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
-import { readCredentials } from '@/persistence';
+import { readStoredCredentials } from '@/persistence';
 import { readProfilesFromAccountSettings } from '@/settings/profiles/readProfilesFromAccountSettings';
 import { mapProfileToListItem, type ProfilesListItem } from '@/settings/profiles/profileListProjection';
 
@@ -38,11 +38,11 @@ export async function runProfilesListCommand(args: string[]): Promise<void> {
   const json = wantsJson(args);
   const refreshSettings = args.includes('--refresh-settings');
 
-  const credentials = await readCredentials();
+  const credentials = await readStoredCredentials();
   if (!credentials) {
     const profiles = readProfilesFromAccountSettings({}).visibleProfiles.map(mapProfileToListItem);
     if (json) {
-      printJsonEnvelope({ ok: true, kind: 'profiles_list', data: { authenticated: false, profiles } });
+      await printJsonEnvelope({ ok: true, kind: 'profiles_list', data: { authenticated: false, profiles } });
       return;
     }
     printProfilesHuman(profiles, false);
@@ -60,7 +60,7 @@ export async function runProfilesListCommand(args: string[]): Promise<void> {
     .sort((a, b) => a.name.localeCompare(b.name));
 
   if (json) {
-    printJsonEnvelope({ ok: true, kind: 'profiles_list', data: { authenticated: true, profiles } });
+    await printJsonEnvelope({ ok: true, kind: 'profiles_list', data: { authenticated: true, profiles } });
     return;
   }
 

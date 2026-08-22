@@ -246,6 +246,45 @@ describe('createSessionProviderInputOutcomeNormalizer', () => {
     ]);
   });
 
+  it('preserves exact pre-provider admission proof on the canonical rejection settlement', () => {
+    const observeSettlement = vi.fn();
+    const observe = createSessionProviderInputOutcomeNormalizer({
+      getTarget: () => ({
+        sessionId: 'session-1',
+        hasPendingProviderInput: (localId) => localId === 'admission-unavailable-local',
+        observeProviderInputSettlement: observeSettlement,
+      }),
+    });
+
+    observe({
+      type: 'input-rejected-before-provider',
+      localId: 'admission-unavailable-local',
+      userMessageSeq: 42,
+      userMessageSeqs: [42],
+      reason: 'provider_unavailable_before_acceptance',
+      diagnostic: {
+        code: 'daemon_turn_admission_unavailable',
+        severity: 'error',
+      },
+      retryable: true,
+      retireLocalCustodyAfterDurableBlock: true,
+    });
+
+    expect(observeSettlement).toHaveBeenCalledExactlyOnceWith({
+      kind: 'rejected_before_effect',
+      localId: 'admission-unavailable-local',
+      userMessageSeq: 42,
+      userMessageSeqs: [42],
+      reason: 'provider_unavailable_before_acceptance',
+      diagnostic: {
+        code: 'daemon_turn_admission_unavailable',
+        severity: 'error',
+      },
+      retryable: true,
+      retireLocalCustodyAfterDurableBlock: true,
+    });
+  });
+
   it('maps unsupported provider action to an irreversible exact pre-effect rejection', () => {
     const observeSettlement = vi.fn();
     const observe = createSessionProviderInputOutcomeNormalizer({

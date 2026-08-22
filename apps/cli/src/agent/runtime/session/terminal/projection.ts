@@ -17,7 +17,9 @@ import type { SubagentStatusV1 } from '@happier-dev/protocol';
 
 type TerminalProjectionSession = Readonly<{
     sessionId: string;
-    sendSessionEvent?: (event: SessionEventMessage) => void;
+    enqueueSessionEventCommitted: (
+        event: SessionEventMessage,
+    ) => Promise<Readonly<{ persisted: boolean; delivered: boolean }>>;
     updateMetadata: (updater: (metadata: Metadata) => Metadata) => Promise<void> | void;
     updateAgentState: (updater: (state: AgentState) => AgentState) => Promise<void> | void;
 }>;
@@ -46,14 +48,17 @@ function normalizeCompletionStatus(
     return 'completed';
 }
 
-function publishSwitchEvent(
+async function publishSwitchEvent(
     session: TerminalProjectionSession,
     projection: HostTerminalControlProjection,
-): void {
+): Promise<Readonly<{ persisted: boolean; delivered: boolean }> | null> {
     if (projection.target !== 'local' && projection.target !== 'remote') {
-        return;
+        return null;
     }
-    session.sendSessionEvent?.({ type: 'switch', mode: projection.target });
+    return await session.enqueueSessionEventCommitted({
+        type: 'switch',
+        mode: projection.target,
+    });
 }
 
 function publishAgentControlState(
@@ -151,9 +156,18 @@ export function createTerminalRuntimeProjectionHostService(
     const logPrefix = params.logPrefix ?? '[terminal-runtime]';
 
     return Object.freeze({
-        publishControlState: (projection) => {
-            publishSwitchEvent(params.session, projection);
+        publishControlState: async (projection) => {
+            let admission: Awaited<ReturnType<typeof publishSwitchEvent>>;
+            try {
+                admission = await publishSwitchEvent(params.session, projection);
+            } catch (error) {
+                publishAgentControlState(params.session, projection, logPrefix);
+                throw error;
+            }
             publishAgentControlState(params.session, projection, logPrefix);
+            if (admission && !admission.persisted) {
+                throw new Error('Terminal switch transcript event was not durably admitted');
+            }
         },
         publishProviderSessionId: async (projection) => await publishProviderSessionId(params.session, projection),
         publishSubagentStarted: async (projection) => {

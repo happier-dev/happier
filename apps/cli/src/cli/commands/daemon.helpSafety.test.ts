@@ -45,7 +45,7 @@ vi.mock('@/daemon/runtime/spawnDetachedDaemonStartSync', () => ({
 }));
 
 vi.mock('@/persistence', () => ({
-  readCredentials: vi.fn(async () => sideEffectMock('readCredentials')),
+  readStoredCredentials: vi.fn(async () => sideEffectMock('readStoredCredentials')),
   readSettings: vi.fn(async () => sideEffectMock('readSettings')),
 }));
 

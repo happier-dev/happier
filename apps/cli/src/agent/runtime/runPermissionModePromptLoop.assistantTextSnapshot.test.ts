@@ -26,10 +26,12 @@ describe('runPermissionModePromptLoop assistant text snapshots', () => {
     const abortController = new AbortController();
     let shouldExit = false;
     let promptCount = 0;
+    let resolveFinalReadyAdmission!: () => void;
 
     const session = {
       sessionId: 'session-1',
       sendSessionEvent: vi.fn(),
+      enqueueSessionEventCommitted: vi.fn(async () => ({ persisted: true, delivered: false })),
       getLastObservedMessageSeq: () => promptCount,
       getTurnAssistantTextSnapshotStore: () => snapshotStore,
       getMetadataSnapshot: () => ({ permissionMode: 'default', permissionModeUpdatedAt: 0 }),
@@ -47,18 +49,21 @@ describe('runPermissionModePromptLoop assistant text snapshots', () => {
       waitingForCommandLabel: 'Codex',
       logPrefix: '[test]',
       includeAssistantPreviewText: true,
-      sendReadyWithPushNotificationFn: ((opts) => {
+      sendReadyWithPushNotificationFn: (async (opts) => {
         readyBodies.push(opts.assistantPreviewText);
         if (readyBodies.length === 1) {
           queue.push({ text: 'second', localId: 'm2' }, { permissionMode: 'default' });
         } else if (readyBodies.length === 2) {
           shouldExit = true;
           abortController.abort();
+          await new Promise<void>((resolve) => {
+            resolveFinalReadyAdmission = resolve;
+          });
         }
       }) as typeof sendReadyWithPushNotification,
     });
 
-    await runPermissionModePromptLoop({
+    const loop = runPermissionModePromptLoop({
       providerName: 'Codex',
       agentMessageType: 'codex',
       explicitPermissionMode: undefined,
@@ -97,6 +102,19 @@ describe('runPermissionModePromptLoop assistant text snapshots', () => {
       setCurrentPermissionModeUpdatedAt: vi.fn(),
       formatPromptErrorMessage: (error) => String(error),
     });
+
+    await vi.waitFor(() => {
+      expect(readyBodies).toHaveLength(2);
+    });
+    let loopSettled = false;
+    void loop.finally(() => {
+      loopSettled = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(loopSettled).toBe(false);
+
+    resolveFinalReadyAdmission();
+    await loop;
 
     expect(readyBodies).toEqual(['First answer', null]);
   });

@@ -132,6 +132,9 @@ describe('authAndSetupMachineIfNeeded (non-TTY) (status+claim)', () => {
       const result = await authAndSetupMachineIfNeeded();
 
       expect(result.credentials.token).toBe('token-1');
+      if (!result.credentials.encryption) {
+        throw new Error('Expected legacy encryption credentials');
+      }
       expect(result.credentials.encryption.type).toBe('legacy');
     } finally {
       output.restore();
@@ -267,8 +270,8 @@ describe('authAndSetupMachineIfNeeded (non-TTY) (status+claim)', () => {
       const expectedPublic = tweetnacl.box.keyPair.fromSecretKey(privateKey).publicKey;
 
       expect(result.credentials.token).toBe('token-1');
-      expect(result.credentials.encryption.type).toBe('dataKey');
-      if (result.credentials.encryption.type !== 'dataKey') {
+      expect(result.credentials.encryption?.type).toBe('dataKey');
+      if (result.credentials.encryption?.type !== 'dataKey') {
         throw new Error('Expected dataKey credentials');
       }
       expect(result.credentials.encryption.machineKey).toEqual(privateKey);

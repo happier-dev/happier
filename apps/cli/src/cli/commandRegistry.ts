@@ -6,7 +6,6 @@ import type {
 } from '@happier-dev/protocol';
 
 import type { AgentCatalogEntry } from '@/agent/catalog/types';
-import type { DirectConnectedServiceEnvironmentResolver } from '@/providers/lifecycle/prepareDirectLaunch';
 import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
 import {
   handlePluginCommandCliCommand,
@@ -41,7 +40,6 @@ export type CommandContext = Readonly<{
       confirmation: SessionProviderBindingSecurityChangeConfirmationV1,
     ) => Promise<boolean>;
     connectedServices?: ConnectedServiceBindingsV1 | null;
-    resolveConnectedServiceEnvironment?: DirectConnectedServiceEnvironmentResolver;
     sessionAttachFilePath?: string;
   }>;
 }>;
@@ -67,6 +65,7 @@ function lazyCommandHandler(loadHandler: CommandHandlerLoader): CommandHandler {
 }
 
 const handleAttachCliCommand = lazyCommandHandler(async () => (await import('./commands/attach')).handleAttachCliCommand);
+const handleAutomationCliCommand = lazyCommandHandler(async () => (await import('./commands/automation')).handleAutomationCliCommand);
 const handleConfiguredAcpCatalogCliCommand = lazyCommandHandler(async () => (
   await import('@/agent/acp/catalog/configured/handleCatalogCliCommand')
 ).handleConfiguredAcpCatalogCliCommand);
@@ -100,6 +99,8 @@ const handleUninstallCliCommand = lazyCommandHandler(async () => (await import('
 
 const staticCommandRegistryEntries: Readonly<Record<string, CommandRegistryEntry>> = {
   attach: { handler: handleAttachCliCommand },
+  automation: { handler: handleAutomationCliCommand },
+  automations: { handler: handleAutomationCliCommand },
   'acp-catalog': { handler: handleConfiguredAcpCatalogCliCommand },
   auth: { handler: handleAuthCliCommand },
   'bug-report': { handler: handleBugReportCliCommand },
@@ -126,6 +127,7 @@ const staticCommandRegistryEntries: Readonly<Record<string, CommandRegistryEntry
   resume: { handler: handleResumeCliCommand },
   service: { handler: handleServiceCliCommand },
   session: { handler: handleSessionCliCommand },
+  // Backwards-compatible plural alias; keep the singular command canonical in help.
   sessions: { handler: handleSessionCliCommand },
   server: { handler: handleServerCliCommand },
   self: { handler: handleSelfCliCommand },

@@ -2,11 +2,14 @@ import type { ExecutionRunBackendStartContext } from '@/agent/executionRuns/regi
 import type { ExecutionRunBackendIsolation } from '@/agent/executionRuns/registry/executionRunBackendTypes';
 import type {
     AnyTerminalRuntimeOps,
-    ProviderAttachOps,
 } from '@/agent/catalog/types';
 import type { ExternalSessionExecutionSurface } from '@/session/external/providerOps';
-import type { CheckpointSurfaceV1, ForkSurfaceV1, HandoffSurfaceV1 } from '@happier-dev/agents';
-import type { AcpConfigOptionOverridesV1, BackendTargetRefV2Input } from '@happier-dev/protocol';
+import type { AttachSurfaceV1, CheckpointSurfaceV1, ForkSurfaceV1, HandoffSurfaceV1 } from '@happier-dev/agents';
+import type { AcpConfigOptionOverridesV1, BackendTargetRefV2Input, HostSemanticEventV1, ProviderBoundModelRef, ProviderErrorV1, SessionInputCausalPermissionAuthorityV1 } from '@happier-dev/protocol';
+import type {
+    AgentSessionConfigurationSnapshot,
+    AgentSessionProviderBinding,
+} from '@happier-dev/plugin-sdk/agents/runtime';
 import type {
     ResolvedAgentRuntimeContribution,
     ResolvedContributionProvenance,
@@ -21,7 +24,7 @@ import type { HostSessionRuntimePlan } from '@/agent/runtime/session/loop/lifecy
 export type BackendExecutionSurfaces = Readonly<{
     terminalRuntime: AnyTerminalRuntimeOps | null;
     externalSession: ExternalSessionExecutionSurface | null;
-    attach: ProviderAttachOps | null;
+    attach: AttachSurfaceV1 | null;
     handoff: HandoffSurfaceV1 | null;
     fork: ForkSurfaceV1 | null;
     checkpoint: CheckpointSurfaceV1 | null;
@@ -33,8 +36,17 @@ export type CreateCliExecutionRunBackendParams = Readonly<{
     backendId: string;
     backendTarget?: BackendTargetRefV2Input;
     modelId?: string;
+    modelSelection?: ProviderBoundModelRef;
     sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1;
+    configuration?: AgentSessionConfigurationSnapshot;
+    providerBinding?: AgentSessionProviderBinding;
+    revalidateProviderBeforeOpen?: () => Promise<Readonly<
+        { ok: true } | { ok: false; error: ProviderErrorV1 }
+    >>;
+    sanitizeProviderDiagnosticText?: (value: string) => string;
     permissionMode: string;
+    /** Host-only active-turn authority; never a public backend request field. */
+    causalPermissionAuthority?: SessionInputCausalPermissionAuthorityV1;
     accountSettings?: Readonly<Record<string, unknown>> | null;
     start?: ExecutionRunBackendStartContext | null;
     isolation?: ExecutionRunBackendIsolation;
@@ -118,10 +130,13 @@ export type EngineAdapterResolution = Readonly<{
     engineAdapter: CliEngineAdapter;
     executionSurfaces: BackendExecutionSurfaces;
     diagnostics: readonly EngineResolutionDiagnostic[];
+    publishHostEvent?: (event: HostSemanticEventV1) => void;
 }>;
 
 export type ResolvedCliEngineRegistry = Readonly<{
     contributions: ResolvedContributionRegistry;
+    /** Reads the exact immutable generation that the serving runtime has applied for one plugin. */
+    resolveCurrentPluginGeneration(pluginId: string): Promise<string | null>;
     resolveForBackendId(backendId: string): Promise<EngineAdapterResolution | null>;
     resolveExecutionSurfaces(backendId?: string | null): Promise<BackendExecutionSurfaces>;
 }>;

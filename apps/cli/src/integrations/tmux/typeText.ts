@@ -152,7 +152,7 @@ export async function pasteTextViaTmuxBuffer(params: Readonly<{
   submitRetryDelayMs?: number;
   timeoutMs?: number;
   wait?: (delayMs: number) => Promise<void>;
-  verifyBeforeSubmit?: (params: Readonly<{ text: string; remainingTimeoutMs?: number }>) => Promise<boolean>;
+  verifyStagedBeforeSubmit?: (params: Readonly<{ text: string; remainingTimeoutMs?: number }>) => Promise<boolean>;
   verifyAfterSubmit?: (params: Readonly<{ text: string; remainingTimeoutMs?: number }>) => Promise<boolean>;
 }>): Promise<TmuxNativePasteTextResult> {
   const progress: TmuxNativePasteProgress = {
@@ -227,9 +227,11 @@ export async function pasteTextViaTmuxBuffer(params: Readonly<{
     await (params.wait ?? defaultWait)(submitDelayMs);
   }
 
+  const submissionDeadline = createTerminalHostDeadline(params.timeoutMs);
+
   async function sendSubmitEnter(): Promise<'success' | 'timeout' | 'failed'> {
     const submitDeadline = createTerminalHostDeadline(resolvePromptSubmitTimeoutMs({
-      remainingTimeoutMs: remainingTerminalHostDeadlineMs(deadline),
+      remainingTimeoutMs: remainingTerminalHostDeadlineMs(submissionDeadline),
       fallbackTimeoutMs: params.timeoutMs,
     }));
     return timedCommandSucceeded(params.executor, ['send-keys', '-t', params.target, 'C-m'], submitDeadline);
@@ -237,9 +239,9 @@ export async function pasteTextViaTmuxBuffer(params: Readonly<{
 
   const submission = await runTerminalPromptSubmission({
     promptText: normalizedText,
-    ...(params.verifyBeforeSubmit
+    ...(params.verifyStagedBeforeSubmit
       ? {
-        verifyBeforeSubmit: async ({ promptText, remainingTimeoutMs }) => params.verifyBeforeSubmit?.({
+        verifyStagedBeforeSubmit: async ({ promptText, remainingTimeoutMs }) => params.verifyStagedBeforeSubmit?.({
           text: promptText,
           remainingTimeoutMs,
         }) ?? false,
@@ -254,7 +256,7 @@ export async function pasteTextViaTmuxBuffer(params: Readonly<{
         }) ?? false,
       }
       : {}),
-    remainingTimeoutMs: () => remainingTerminalHostDeadlineMs(deadline),
+    remainingTimeoutMs: () => remainingTerminalHostDeadlineMs(submissionDeadline),
     wait: params.wait ?? defaultWait,
     submitRetryDelayMs: params.submitRetryDelayMs ?? 0,
   });

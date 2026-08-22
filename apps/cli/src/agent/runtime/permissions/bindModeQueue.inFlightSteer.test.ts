@@ -280,6 +280,40 @@ describe('registerPermissionModeMessageQueueBinding (in-flight steer)', () => {
     expect(rejectPromptBeforeProvider).not.toHaveBeenCalled();
   });
 
+  it('isolates a claimed interrupt-and-send action behind a provider-protected startup turn', async () => {
+    const { session, emitUserMessage } = createSessionHarness();
+    const { queue, spyPush, spyIsolate } = createQueue();
+    const rejectPromptBeforeProvider = vi.fn();
+
+    registerPermissionModeMessageQueueBinding({
+      session,
+      queue,
+      getCurrentPermissionMode: () => 'default',
+      setCurrentPermissionMode: () => {},
+      inFlightSteer: {
+        isTurnInFlight: () => true,
+        supportsInFlightSteer: () => true,
+        steerText: vi.fn(async () => {}),
+        rejectPromptBeforeProvider,
+        interruptActiveTurn: vi.fn(async () => ({
+          status: 'deferred_until_turn_end' as const,
+        })),
+      },
+    } as any);
+
+    emitUserMessage({
+      content: { text: 'send after provider startup finishes' },
+      localId: 'protected-startup-send',
+      meta: {},
+      pendingProviderAction: 'interrupt_and_send',
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(spyPush).not.toHaveBeenCalled();
+    expect(spyIsolate).toHaveBeenCalledTimes(1);
+    expect(rejectPromptBeforeProvider).not.toHaveBeenCalled();
+  });
+
   it.each([
     ['the interrupt capability is unavailable', undefined],
     [
@@ -515,11 +549,32 @@ describe('registerPermissionModeMessageQueueBinding (in-flight steer)', () => {
       },
     } as any);
 
-    emitUserMessage({ content: { text: 'steer me' }, localId: 'local-1', meta: {} });
+    emitUserMessage({
+      content: { text: 'steer me' },
+      localId: 'local-1',
+      meta: {
+        happierProvenanceV1: {
+          v: 1,
+          kind: 'automation',
+          automationId: 'automation-1',
+          runId: 'run-1',
+        },
+      },
+    });
     await new Promise<void>((resolve) => setImmediate(resolve));
     await new Promise<void>((resolve) => setImmediate(resolve));
 
-    expect(steerText).toHaveBeenCalledWith('SEED\n\nsteer me', { localId: 'local-1', localIds: ['local-1'] });
+    expect(steerText).toHaveBeenCalledWith([
+      '<happier_input_context v="1">',
+      'source_kind="automation"',
+      'automation_id="automation-1"',
+      'automation_run_id="run-1"',
+      '</happier_input_context>',
+      '',
+      'SEED',
+      '',
+      'steer me',
+    ].join('\n'), { localId: 'local-1', localIds: ['local-1'] });
     expect(spyPush).not.toHaveBeenCalled();
 
     const finalMeta = session.getMetadataSnapshot();

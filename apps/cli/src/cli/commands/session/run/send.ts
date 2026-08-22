@@ -1,22 +1,21 @@
 import chalk from 'chalk';
 
-import type { Credentials } from '@/persistence';
+import type { StoredCredentials } from '@/persistence';
 import { ExecutionRunSendRequestSchema } from '@happier-dev/protocol';
 
 import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
-import { hasFlag } from '@/cli/commands/shared/argvFlags';
+import { hasFlag, readCommandPositionals } from '@/cli/commands/shared/argvFlags';
 import { SESSION_HELP_LINES } from '@/cli/commands/session/shared/sessionCommandUsage';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 import { normalizeActionExecuteResult } from '@/cli/commands/session/shared/normalizeActionExecuteResult';
+import { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
 
 export async function cmdSessionRunSend(
   argv: string[],
-  deps: Readonly<{ readCredentialsFn: () => Promise<Credentials | null> }>,
+  deps: Readonly<{ readCredentialsFn: () => Promise<StoredCredentials | null> }>,
 ): Promise<void> {
   const json = wantsJson(argv);
-  const idOrPrefix = String(argv[2] ?? '').trim();
-  const runId = String(argv[3] ?? '').trim();
-  const message = String(argv[4] ?? '').trim();
+  const [idOrPrefix = '', runId = '', message = ''] = readCommandPositionals(argv, { startIndex: 2 });
   const resume = hasFlag(argv, '--resume');
 
   if (!idOrPrefix || !runId || !message) {
@@ -26,7 +25,7 @@ export async function cmdSessionRunSend(
   const credentials = await deps.readCredentialsFn();
   if (!credentials) {
     if (json) {
-      printJsonEnvelope({ ok: false, kind: 'session_run_send', error: { code: 'not_authenticated' } });
+      await printJsonEnvelope({ ok: false, kind: 'session_run_send', error: { code: 'not_authenticated' } });
       return;
     }
     console.error(chalk.red('Error:'), 'Not authenticated. Run "happier auth login" first.');
@@ -39,17 +38,26 @@ export async function cmdSessionRunSend(
     delivery: 'steer_if_supported',
     ...(resume ? { resume: true } : {}),
   });
+  const sessionTarget = await resolveSessionTransportContext({ credentials, idOrPrefix });
+  if (!sessionTarget.ok) {
+    if (json) {
+      await printJsonEnvelope({ ok: false, kind: 'session_run_send', error: { code: sessionTarget.code, ...(sessionTarget.candidates ? { candidates: sessionTarget.candidates } : {}) } });
+      return;
+    }
+    throw new Error(sessionTarget.code);
+  }
+  const sessionId = sessionTarget.sessionId;
 
   const executor = createCliActionExecutorFromCredentials({ credentials });
   const actionRes = await executor.execute(
     'execution.run.send',
-    { sessionId: idOrPrefix, ...request },
+    { sessionId, ...request },
     { surface: 'cli', defaultSessionId: null },
   );
   const normalized = normalizeActionExecuteResult(actionRes);
   if (!normalized.ok) {
     if (json) {
-      printJsonEnvelope({
+      await printJsonEnvelope({
         ok: false,
         kind: 'session_run_send',
         error: { code: normalized.errorCode, ...(normalized.errorMessage ? { message: normalized.errorMessage } : {}) },
@@ -60,7 +68,7 @@ export async function cmdSessionRunSend(
   }
 
   if (json) {
-    printJsonEnvelope({ ok: true, kind: 'session_run_send', data: { sessionId: idOrPrefix, runId, sent: true } });
+    await printJsonEnvelope({ ok: true, kind: 'session_run_send', data: { sessionId, runId, sent: true } });
     return;
   }
 

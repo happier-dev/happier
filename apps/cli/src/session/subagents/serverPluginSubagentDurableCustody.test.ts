@@ -15,6 +15,10 @@ const credentials = {
   token: 'account-token',
   encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(7) },
 };
+const tokenOnlyCredentials = {
+  token: 'account-token',
+  encryption: null,
+} as const;
 const capability = {
   capability: 'session.subagents.durable-custody.v1',
   maxRecords: 256,
@@ -48,6 +52,38 @@ beforeEach(() => {
 });
 
 describe('server-backed plugin subagent custody', () => {
+  it('re-resolves credentials for every operation and fails closed after local revocation', async () => {
+    let currentCredentials: typeof credentials | null = credentials;
+    vi.spyOn(axios, 'get').mockImplementation(async (url) => String(url).endsWith('/capability')
+      ? { status: 200, data: capability } as never
+      : String(url).includes('/subagents/custody')
+        ? { status: 200, data: { records: [] } } as never
+        : { status: 200, data: { session: rawSession('plain') } } as never);
+    const custody = createServerPluginSubagentDurableCustody({
+      credentials,
+      readCredentials: async () => currentCredentials,
+      identity,
+    });
+
+    await custody.list({ scope: 'credential-currentness' });
+    currentCredentials = { ...credentials, token: 'rotated-account-token' };
+    await custody.list({ scope: 'credential-currentness' });
+
+    const custodyRequests = vi.mocked(axios.get).mock.calls.filter(([url]) => (
+      String(url).includes('/subagents/custody') && !String(url).endsWith('/capability')
+    ));
+    expect(custodyRequests.map(([, config]) => config?.headers?.Authorization)).toEqual([
+      'Bearer account-token',
+      'Bearer rotated-account-token',
+    ]);
+
+    currentCredentials = null;
+    const callsBeforeRevocation = vi.mocked(axios.get).mock.calls.length;
+    await expect(custody.list({ scope: 'credential-currentness' }))
+      .rejects.toMatchObject({ code: 'plugin_subagent_credentials_unavailable' });
+    expect(vi.mocked(axios.get).mock.calls).toHaveLength(callsBeforeRevocation);
+  });
+
   it('sends explicit actor-wide immutable-generation retirement and safely retries after response loss', async () => {
     vi.spyOn(axios, 'get').mockResolvedValue({ status: 200, data: capability } as never);
     let attempts = 0;
@@ -194,6 +230,54 @@ describe('server-backed plugin subagent custody', () => {
     })).rejects.toMatchObject({ code: 'plugin_subagent_server_response_invalid' });
     expect(post).not.toHaveBeenCalled();
     expect(await current.store.list()).toEqual([]);
+  });
+
+  it('keeps token-only plain custody writable and retained encrypted custody locked', async () => {
+    let encryptionMode: 'plain' | 'e2ee' = 'plain';
+    vi.spyOn(axios, 'get').mockImplementation(async (url) => String(url).endsWith('/capability')
+      ? { status: 200, data: capability } as never
+      : { status: 200, data: { session: rawSession(encryptionMode) } } as never);
+    const post = vi.spyOn(axios, 'post').mockImplementation(async (_url, body) => {
+      const request = body as Record<string, unknown>;
+      return {
+        status: 200,
+        data: {
+          record: {
+            subagentId: request.subagentId,
+            groupId: request.groupId,
+            status: request.status,
+            revision: 0,
+            updatedAt: 300,
+          },
+          replayed: false,
+        },
+      } as never;
+    });
+    const custody = createServerPluginSubagentDurableCustody({
+      credentials: tokenOnlyCredentials,
+      identity,
+    });
+
+    await expect(custody.mutate({
+      scope: 'plain',
+      operationId: 'plain-operation',
+      subagentId: 'plain-subagent',
+      status: 'running',
+      detail: { visible: true },
+    })).resolves.toMatchObject({ status: 'running' });
+    expect(post.mock.calls[0]?.[1]).toMatchObject({
+      content: { t: 'plain', v: { visible: true } },
+    });
+
+    encryptionMode = 'e2ee';
+    await expect(custody.mutate({
+      scope: 'retained-encrypted',
+      operationId: 'encrypted-operation',
+      subagentId: 'encrypted-subagent',
+      status: 'running',
+      detail: { secret: true },
+    })).rejects.toMatchObject({ code: 'encryption_material_unavailable' });
+    expect(post).toHaveBeenCalledOnce();
   });
 
   it('retries capability negotiation after a transient server failure', async () => {

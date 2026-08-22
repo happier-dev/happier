@@ -21,8 +21,15 @@ const { downloadMock, extractMock, extractRootMock, platformState } = vi.hoisted
   },
 }));
 
-const { failingRenameTargets } = vi.hoisted(() => ({
+const { failingRenameTargets, concurrencyState } = vi.hoisted(() => ({
   failingRenameTargets: new Map<string, number>(),
+  concurrencyState: {
+    pauseFirstPromotion: false,
+    onPromotionPaused: null as (() => void) | null,
+    promotionRelease: null as Promise<void> | null,
+    stagedCandidateCount: 0,
+    onSecondCandidateStaged: null as (() => void) | null,
+  },
 }));
 
 vi.mock('node:fs/promises', async (importOriginal) => {
@@ -31,6 +38,15 @@ vi.mock('node:fs/promises', async (importOriginal) => {
   return {
     ...actual,
     rename: vi.fn(async (from: string, to: string) => {
+      if (from.split(/[\\/]/).includes('extract') && /(?:^|[\\/])(?:next|candidate)$/.test(to)) {
+        concurrencyState.stagedCandidateCount += 1;
+        if (concurrencyState.stagedCandidateCount === 2) concurrencyState.onSecondCandidateStaged?.();
+      }
+      if (concurrencyState.pauseFirstPromotion && /(?:^|[\\/])current$/.test(to)) {
+        concurrencyState.pauseFirstPromotion = false;
+        concurrencyState.onPromotionPaused?.();
+        await concurrencyState.promotionRelease;
+      }
       const remainingFailures = failingRenameTargets.get(to) ?? 0;
       if (remainingFailures > 0) {
         if (remainingFailures === 1) {
@@ -100,12 +116,23 @@ beforeEach(() => {
 
 afterEach(async () => {
   failingRenameTargets.clear();
+  concurrencyState.pauseFirstPromotion = false;
+  concurrencyState.onPromotionPaused = null;
+  concurrencyState.promotionRelease = null;
+  concurrencyState.stagedCandidateCount = 0;
+  concurrencyState.onSecondCandidateStaged = null;
   for (const dir of tempDirs) {
     await rm(dir, { recursive: true, force: true });
   }
   tempDirs.clear();
   vi.resetModules();
 });
+
+function deferred(): Readonly<{ promise: Promise<void>; resolve: () => void }> {
+  let resolve!: () => void;
+  const promise = new Promise<void>((resolver) => { resolve = resolver; });
+  return { promise, resolve };
+}
 
 describe('chromium-for-testing managed source adapter', () => {
   it('downloads the pinned archive digest-verified, unpacks, and promotes an executable into current', async () => {
@@ -142,6 +169,57 @@ describe('chromium-for-testing managed source adapter', () => {
     if (!result.ok) return;
     await expect(access(result.executablePath, fsConstants.F_OK)).resolves.toBeUndefined();
     expect(result.executablePath.includes('current')).toBe(true);
+  });
+
+  it('keeps concurrent installs isolated until their serialized promotions commit', async () => {
+    configurationState.happyHomeDir = await makeTempHome();
+    const mod = await import('./chromiumForTesting');
+    const asset = pinnedAsset('linux-x64');
+    const promotionPaused = deferred();
+    const releasePromotion = deferred();
+    const secondCandidateStaged = deferred();
+    let extractedRelease = 0;
+
+    downloadMock.mockImplementation(async (params: { destinationPath: string }) => {
+      await writeFile(params.destinationPath, 'fake-archive-bytes');
+    });
+    extractRootMock.mockImplementation(async (params: { extractDir: string }) => {
+      extractedRelease += 1;
+      const payloadRoot = join(params.extractDir, `chrome-release-${extractedRelease}`);
+      await mkdir(payloadRoot, { recursive: true });
+      await writeFile(join(payloadRoot, 'chrome'), `release-${extractedRelease}`, 'utf8');
+      return payloadRoot;
+    });
+    concurrencyState.pauseFirstPromotion = true;
+    concurrencyState.onPromotionPaused = promotionPaused.resolve;
+    concurrencyState.promotionRelease = releasePromotion.promise;
+    concurrencyState.onSecondCandidateStaged = secondCandidateStaged.resolve;
+
+    try {
+      const firstPromise = mod.installChromiumForTesting({
+        platform: 'linux',
+        arch: 'x64',
+        asset,
+        pinnedVersion: '127.0.6533.88',
+      });
+      await promotionPaused.promise;
+      const secondPromise = mod.installChromiumForTesting({
+        platform: 'linux',
+        arch: 'x64',
+        asset,
+        pinnedVersion: '127.0.6533.88',
+      });
+      await secondCandidateStaged.promise;
+      releasePromotion.resolve();
+
+      const [first, second] = await Promise.all([firstPromise, secondPromise]);
+      expect(first.ok).toBe(true);
+      expect(second.ok).toBe(true);
+      await expect(readFile(join(configurationState.happyHomeDir, 'tools', 'browser-chromium', 'current', 'chrome'), 'utf8'))
+        .resolves.toBe('release-2');
+    } finally {
+      releasePromotion.resolve();
+    }
   });
 
   it('fails closed when the pinned digest is missing (external-artifact remainder), writing no current', async () => {

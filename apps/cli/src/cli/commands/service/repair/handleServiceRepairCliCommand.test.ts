@@ -205,6 +205,25 @@ describe('handleServiceRepairCliCommand', () => {
     resolveDaemonServiceListEntriesMock.mockClear();
   });
 
+  it('guides explicit plugin recovery without changing the installed service plan', async () => {
+    const { handleServiceRepairCliCommand } = await import('./handleServiceRepairCliCommand');
+    const output = captureConsoleText();
+    try {
+      await handleServiceRepairCliCommand({
+        argv: ['repair', '--plugin-recovery', '--yes'],
+        commandPath: 'happier service',
+      });
+
+      expect(output.text()).toContain('Plugin recovery');
+      expect(output.text()).toContain('happier daemon start --plugin-recovery');
+      expect(output.text()).toContain('does not modify the installed background service');
+      expect(output.text()).toContain('Stop any currently running daemon or background service first');
+      expect(applyBackgroundServiceRepairPlanMock).not.toHaveBeenCalled();
+    } finally {
+      output.restore();
+    }
+  });
+
   it('fails closed when executing system-scoped repair on linux without root privileges', async () => {
     const { handleServiceRepairCliCommand } = await import('./handleServiceRepairCliCommand');
 

@@ -20,7 +20,7 @@ import {
 } from '@happier-dev/protocol';
 import {
     AGENT_EXTERNAL_SESSION_HOOK_LIMITS,
-} from '@happier-dev/plugin-sdk/experimental/sessions';
+} from '@happier-dev/plugin-sdk/sessions/external';
 
 import { detectCliSnapshotOnDaemonPath } from '@/capabilities/snapshots/cliSnapshot';
 import { configuration } from '@/configuration';
@@ -83,14 +83,27 @@ const defaultDependencies: PluginSessionHookManagementHostDependencies = {
     applyInstallationAction: applyExternalSessionHookInstallationAction,
 };
 
-type CurrentRuntime = Readonly<{
+type CurrentExternalSessionsRuntime = Readonly<{
     agentId: string;
     agent: PluginContributionIdentityV1;
     lease: AgentRuntimeRegistrationLease & Required<Pick<
         AgentRuntimeRegistrationLease,
-        'externalSessions' | 'externalSessionHooks' | 'retirementSignal'
+        'externalSessions' | 'retirementSignal'
     >>;
 }>;
+
+type CurrentRuntime = CurrentExternalSessionsRuntime & Readonly<{
+    lease: CurrentExternalSessionsRuntime['lease'] & Required<Pick<
+        AgentRuntimeRegistrationLease,
+        'externalSessionHooks'
+    >>;
+}>;
+
+function hasExternalSessionHooks(
+    current: CurrentExternalSessionsRuntime,
+): current is CurrentRuntime {
+    return current.lease.externalSessionHooks !== undefined;
+}
 
 type ResolvedInstallation = Readonly<{
     current: CurrentRuntime;
@@ -140,10 +153,10 @@ function agentKey(agent: PluginContributionIdentityV1): string {
     return JSON.stringify([agent.pluginId, agent.localId]);
 }
 
-function findCurrentRuntime(
+function findCurrentExternalSessionsRuntime(
     registry: ResolvedExecutablePluginRuntimeRegistry,
     agent: PluginContributionIdentityV1,
-): CurrentRuntime | null {
+): CurrentExternalSessionsRuntime | null {
     const definitions = [...registry.contributes.agentDefinitionsById.values()]
         .filter((candidate) => (
             candidate.identity?.pluginId === agent.pluginId
@@ -157,7 +170,6 @@ function findCurrentRuntime(
         || lease.pluginId !== agent.pluginId
         || lease.agentId !== definition.id
         || !lease.externalSessions
-        || !lease.externalSessionHooks
         || !lease.retirementSignal
         || lease.retirementSignal.aborted
         || !lease.isCurrent()
@@ -167,21 +179,31 @@ function findCurrentRuntime(
     return {
         agentId: definition.id,
         agent,
-        lease: lease as CurrentRuntime['lease'],
+        lease: lease as CurrentExternalSessionsRuntime['lease'],
     };
 }
 
-function listCurrentRuntimes(
+function findCurrentRuntime(
     registry: ResolvedExecutablePluginRuntimeRegistry,
-): readonly CurrentRuntime[] {
+    agent: PluginContributionIdentityV1,
+): CurrentRuntime | null {
+    const current = findCurrentExternalSessionsRuntime(registry, agent);
+    return current && hasExternalSessionHooks(current) ? current : null;
+}
+
+function listCurrentExternalSessionsRuntimes(
+    registry: ResolvedExecutablePluginRuntimeRegistry,
+): readonly CurrentExternalSessionsRuntime[] {
     return [...registry.contributes.agentDefinitionsById.values()]
         .flatMap((definition) => {
             const identity = definition.identity;
             return identity
-                ? findCurrentRuntime(registry, identity)
+                ? findCurrentExternalSessionsRuntime(registry, identity)
                 : null;
         })
-        .filter((value): value is CurrentRuntime => value !== null);
+        .filter(
+            (value): value is CurrentExternalSessionsRuntime => value !== null,
+        );
 }
 
 function projectCustodiedEntries(
@@ -550,6 +572,20 @@ function ownedEventIds(
     return [...new Set(record.ownedEntries.map((entry) => entry.eventId))];
 }
 
+function hasEnabledIngressPrincipals(
+    listener: QualifiedExternalSessionHookListener,
+    record: ExternalSessionHookInstallationRecord,
+): boolean {
+    return ownedEventIds(record).every((eventId) => (
+        listener.readCredentialState({
+            qualifiedContributionId: record.qualifiedAgent,
+            hostInstallationId: record.hostInstallationId,
+            installationPrincipalRef: record.ingressPrincipalRef,
+            eventId,
+        }).state === 'enabled'
+    ));
+}
+
 function recordMatchesResolution(
     record: ExternalSessionHookInstallationRecord,
     resolution: ResolvedInstallation,
@@ -688,9 +724,11 @@ export function createPluginSessionHookManagementHost(input: Readonly<{
 
     const operationIsCurrent = (
         current?: CurrentRuntime,
+        signal?: AbortSignal,
     ): boolean => (
         !disposed
         && !lifecycleController.signal.aborted
+        && !signal?.aborted
         && featureEnabled()
         && (
             !current
@@ -699,6 +737,11 @@ export function createPluginSessionHookManagementHost(input: Readonly<{
                 && !current.lease.retirementSignal.aborted
             )
         )
+    );
+    const operationSignal = (signal?: AbortSignal): AbortSignal => (
+        signal
+            ? AbortSignal.any([lifecycleController.signal, signal])
+            : lifecycleController.signal
     );
     const mutationTails = new Map<string, Promise<void>>();
     const mutationKey = (
@@ -962,10 +1005,13 @@ export function createPluginSessionHookManagementHost(input: Readonly<{
             return await hydration;
         },
 
-        async status(target: PluginSessionHookStatusInputV1):
+        async status(
+            target: PluginSessionHookStatusInputV1,
+            options?: Readonly<{ signal?: AbortSignal }>,
+        ):
         Promise<PluginSessionHookStatusResponseV1> {
             const releaseOperation = admitOperation();
-            if (!releaseOperation || !featureEnabled()) {
+            if (!releaseOperation || !featureEnabled() || options?.signal?.aborted) {
                 return failure('operation_failed', false);
             }
             const registryLease = await dependencies
@@ -980,7 +1026,9 @@ export function createPluginSessionHookManagementHost(input: Readonly<{
                 const listenerAvailable = listener !== null;
                 if (target.intent === 'passive_inventory') {
                     const current =
-                        listCurrentRuntimes(registryLease.registry);
+                        listCurrentExternalSessionsRuntimes(
+                            registryLease.registry,
+                        );
                     return await projectPluginSessionHookStatusInventory(
                         target,
                         {
@@ -1020,6 +1068,19 @@ export function createPluginSessionHookManagementHost(input: Readonly<{
                                             : attention(
                                                 'agent_unavailable',
                                             );
+                                    }
+                                    if (!hasExternalSessionHooks(runtime)) {
+                                        return custody
+                                            ? {
+                                                state: 'unavailable',
+                                                installationId:
+                                                    custody.installationId,
+                                            }
+                                            : {
+                                                state: 'unsupported',
+                                                reason:
+                                                    'installation_unsupported',
+                                            };
                                     }
                                     const fullRecord = custody
                                         ? await dependencies
@@ -1065,7 +1126,14 @@ export function createPluginSessionHookManagementHost(input: Readonly<{
                                     }
                                     if (
                                         custody?.state === 'active'
-                                        && !listenerAvailable
+                                        && (
+                                            !listener
+                                            || !fullRecord
+                                            || !hasEnabledIngressPrincipals(
+                                                listener,
+                                                fullRecord,
+                                            )
+                                        )
                                     ) {
                                         return attention(
                                             'listener_unavailable',
@@ -1206,6 +1274,21 @@ export function createPluginSessionHookManagementHost(input: Readonly<{
                     if (!fullRecord) {
                         return failure('installation_replaced', false);
                     }
+                    if (
+                        fullRecord.state === 'active'
+                        && (
+                            !listener
+                            || !hasEnabledIngressPrincipals(
+                                listener,
+                                fullRecord,
+                            )
+                        )
+                    ) {
+                        return pointSuccess(attention(
+                            'listener_unavailable',
+                            target.installationId,
+                        ));
+                    }
                 } else {
                     const custody = await scanForCustody();
                     if (custody === 'present') {
@@ -1229,10 +1312,23 @@ export function createPluginSessionHookManagementHost(input: Readonly<{
                     return failure('agent_unavailable', false);
                 }
                 const definition = definitions[0]!;
-                let runtime = findCurrentRuntime(
-                    registryLease.registry,
-                    target.agent,
-                );
+                const currentExternalSessionsRuntime =
+                    findCurrentExternalSessionsRuntime(
+                        registryLease.registry,
+                        target.agent,
+                    );
+                let runtime = currentExternalSessionsRuntime
+                    && hasExternalSessionHooks(
+                        currentExternalSessionsRuntime,
+                    )
+                    ? currentExternalSessionsRuntime
+                    : null;
+                if (
+                    currentExternalSessionsRuntime
+                    && !runtime
+                ) {
+                    return failure('installation_unsupported', false);
+                }
                 if (
                     registryLease.registry.agentRuntimesByAgentId.has(
                         definition.id,
@@ -1252,10 +1348,20 @@ export function createPluginSessionHookManagementHost(input: Readonly<{
                     } catch {
                         return failure('operation_failed', true);
                     }
-                    runtime = findCurrentRuntime(
-                        registryLease.registry,
-                        target.agent,
-                    );
+                    const activatedExternalSessionsRuntime =
+                        findCurrentExternalSessionsRuntime(
+                            registryLease.registry,
+                            target.agent,
+                        );
+                    if (
+                        activatedExternalSessionsRuntime
+                        && !hasExternalSessionHooks(
+                            activatedExternalSessionsRuntime,
+                        )
+                    ) {
+                        return failure('installation_unsupported', false);
+                    }
+                    runtime = activatedExternalSessionsRuntime;
                 }
                 if (!runtime) {
                     return failure('agent_unavailable', true);
@@ -1307,7 +1413,7 @@ export function createPluginSessionHookManagementHost(input: Readonly<{
                     current: runtime,
                     dependencies,
                     ...(fullRecord ? { custodyRecord: fullRecord } : {}),
-                    signal: lifecycleController.signal,
+                    signal: operationSignal(options?.signal),
                 }).catch((): Resolution => ({
                     ok: false,
                     reason: 'operation_failed',
@@ -1438,10 +1544,13 @@ export function createPluginSessionHookManagementHost(input: Readonly<{
             }
         },
 
-        async install(target: PluginSessionHookInstallInputV1):
+        async install(
+            target: PluginSessionHookInstallInputV1,
+            options?: Readonly<{ signal?: AbortSignal }>,
+        ):
         Promise<PluginSessionHookInstallResponseV1> {
             const releaseOperation = admitOperation();
-            if (!releaseOperation || !featureEnabled()) {
+            if (!releaseOperation || !featureEnabled() || options?.signal?.aborted) {
                 return failure('operation_failed', false);
             }
             const registryLease = await dependencies
@@ -1476,7 +1585,7 @@ export function createPluginSessionHookManagementHost(input: Readonly<{
                     machineId: input.machineId,
                     current,
                     dependencies,
-                    signal: lifecycleController.signal,
+                    signal: operationSignal(options?.signal),
                 });
                 if (!resolution.ok) {
                     return failure(
@@ -1488,6 +1597,22 @@ export function createPluginSessionHookManagementHost(input: Readonly<{
                 }
                 if (resolution.value.readiness.kind === 'needs_attention') {
                     return failure('installation_unsupported', false);
+                }
+                const listener = await input.listener.catch(() => null);
+                if (!listener) return failure('listener_unavailable', true);
+                const preview = await planInstallPreview({
+                    resolution: resolution.value,
+                    listener,
+                    dependencies,
+                });
+                if (!preview.ok) {
+                    return failure(
+                        preview.code,
+                        preview.code === 'operation_failed',
+                    );
+                }
+                if (preview.preview.previewId !== target.expectedPreviewId) {
+                    return failure('concurrent_edit', true);
                 }
                 const existingRecord =
                     await dependencies.readInstallationRecord(recordPath({
@@ -1542,22 +1667,6 @@ export function createPluginSessionHookManagementHost(input: Readonly<{
                         }),
                     });
                 }
-                const listener = await input.listener.catch(() => null);
-                if (!listener) return failure('listener_unavailable', true);
-                const preview = await planInstallPreview({
-                    resolution: resolution.value,
-                    listener,
-                    dependencies,
-                });
-                if (!preview.ok) {
-                    return failure(
-                        preview.code,
-                        preview.code === 'operation_failed',
-                    );
-                }
-                if (preview.preview.previewId !== target.expectedPreviewId) {
-                    return failure('concurrent_edit', true);
-                }
                 const credentials: Awaited<ReturnType<
                     QualifiedExternalSessionHookListener[
                         'createOrReuseCredential'
@@ -1590,7 +1699,7 @@ export function createPluginSessionHookManagementHost(input: Readonly<{
                             credential.installationPrincipalRef;
                         credentials.push(credential);
                         listener.disable(credential.eventPrincipalRef);
-                        if (!operationIsCurrent(current)) {
+                        if (!operationIsCurrent(current, options?.signal)) {
                             throw new Error(
                                 'Session-hook management host disposed',
                             );
@@ -1632,7 +1741,7 @@ export function createPluginSessionHookManagementHost(input: Readonly<{
                                 current: current.lease.generation,
                             },
                             isCurrent: () => (
-                                operationIsCurrent(current)
+                                operationIsCurrent(current, options?.signal)
                             ),
                             materializeOwnedEntry: ({ event }) => {
                                 const credential =
@@ -1664,7 +1773,7 @@ export function createPluginSessionHookManagementHost(input: Readonly<{
                     durable = true;
                     if (
                         applied.state !== 'installed_disabled'
-                        || !operationIsCurrent(current)
+                        || !operationIsCurrent(current, options?.signal)
                     ) {
                         return failure('installation_replaced', false);
                     }
@@ -1692,7 +1801,7 @@ export function createPluginSessionHookManagementHost(input: Readonly<{
                             current,
                             dependencies,
                             custodyRecord: stagedRecord,
-                            signal: lifecycleController.signal,
+                            signal: operationSignal(options?.signal),
                         });
                     } catch {
                         return PluginSessionHookInstallResponseV1Schema.parse({
@@ -1704,7 +1813,7 @@ export function createPluginSessionHookManagementHost(input: Readonly<{
                         });
                     }
                     if (
-                        !operationIsCurrent(current)
+                        !operationIsCurrent(current, options?.signal)
                         || !readiness.ok
                     ) {
                         return PluginSessionHookInstallResponseV1Schema.parse({
@@ -1762,10 +1871,10 @@ export function createPluginSessionHookManagementHost(input: Readonly<{
                                 expected: current.lease.generation,
                                 current: current.lease.generation,
                             },
-                            isCurrent: () => operationIsCurrent(current),
+                            isCurrent: () => operationIsCurrent(current, options?.signal),
                         });
                     if (!enabled.ok) return mapActionError(enabled.code);
-                    if (!operationIsCurrent(current)) {
+                    if (!operationIsCurrent(current, options?.signal)) {
                         await dependencies.applyInstallationAction({
                             action: 'disable',
                             activeServerDir,
@@ -1835,10 +1944,13 @@ export function createPluginSessionHookManagementHost(input: Readonly<{
             }
         },
 
-        async disable(mutation: PluginSessionHookInstallationMutationInputV1):
+        async disable(
+            mutation: PluginSessionHookInstallationMutationInputV1,
+            options?: Readonly<{ signal?: AbortSignal }>,
+        ):
         Promise<PluginSessionHookToggleResponseV1> {
             const releaseOperation = admitOperation();
-            if (!releaseOperation || !featureEnabled()) {
+            if (!releaseOperation || !featureEnabled() || options?.signal?.aborted) {
                 return failure('operation_failed', false);
             }
             try {
@@ -1853,7 +1965,7 @@ export function createPluginSessionHookManagementHost(input: Readonly<{
                     installationIdentity: record.installationIdentity,
                     executableIdentity: record.executableIdentity,
                     ingressPrincipalRef: record.ingressPrincipalRef,
-                    isCurrent: () => operationIsCurrent(),
+                    isCurrent: () => operationIsCurrent(undefined, options?.signal),
                 });
                 if (!applied.ok) return mapActionError(applied.code);
                 const listener = await input.listener.catch(() => null);
@@ -1885,10 +1997,13 @@ export function createPluginSessionHookManagementHost(input: Readonly<{
             }
         },
 
-        async enable(mutation: PluginSessionHookInstallationMutationInputV1):
+        async enable(
+            mutation: PluginSessionHookInstallationMutationInputV1,
+            options?: Readonly<{ signal?: AbortSignal }>,
+        ):
         Promise<PluginSessionHookToggleResponseV1> {
             const releaseOperation = admitOperation();
-            if (!releaseOperation || !featureEnabled()) {
+            if (!releaseOperation || !featureEnabled() || options?.signal?.aborted) {
                 return failure('operation_failed', false);
             }
             const record = await loadRecord(mutation);
@@ -1923,7 +2038,7 @@ export function createPluginSessionHookManagementHost(input: Readonly<{
                         current,
                         dependencies,
                         custodyRecord: record,
-                        signal: lifecycleController.signal,
+                        signal: operationSignal(options?.signal),
                     });
                 } catch {
                     return PluginSessionHookToggleResponseV1Schema.parse({
@@ -1935,7 +2050,7 @@ export function createPluginSessionHookManagementHost(input: Readonly<{
                     });
                 }
                 if (
-                    !operationIsCurrent(current)
+                    !operationIsCurrent(current, options?.signal)
                     || !resolution.ok
                 ) {
                     return PluginSessionHookToggleResponseV1Schema.parse({
@@ -2003,7 +2118,7 @@ export function createPluginSessionHookManagementHost(input: Readonly<{
                             });
                         credentials.push(credential);
                         listener.disable(credential.eventPrincipalRef);
-                        if (!operationIsCurrent(current)) {
+                        if (!operationIsCurrent(current, options?.signal)) {
                             return failure('installation_replaced', false);
                         }
                     }
@@ -2024,11 +2139,11 @@ export function createPluginSessionHookManagementHost(input: Readonly<{
                         current: current.lease.generation,
                     },
                     isCurrent: () => (
-                        operationIsCurrent(current)
+                        operationIsCurrent(current, options?.signal)
                     ),
                 });
                 if (!applied.ok) return mapActionError(applied.code);
-                if (!operationIsCurrent(current)) {
+                if (!operationIsCurrent(current, options?.signal)) {
                     await dependencies.applyInstallationAction({
                         action: 'disable',
                         activeServerDir,
@@ -2074,10 +2189,13 @@ export function createPluginSessionHookManagementHost(input: Readonly<{
             }
         },
 
-        async uninstall(mutation: PluginSessionHookInstallationMutationInputV1):
+        async uninstall(
+            mutation: PluginSessionHookInstallationMutationInputV1,
+            options?: Readonly<{ signal?: AbortSignal }>,
+        ):
         Promise<PluginSessionHookUninstallResponseV1> {
             const releaseOperation = admitOperation();
-            if (!releaseOperation || !featureEnabled()) {
+            if (!releaseOperation || !featureEnabled() || options?.signal?.aborted) {
                 return failure('operation_failed', false);
             }
             const record = await loadRecord(mutation);
@@ -2098,7 +2216,7 @@ export function createPluginSessionHookManagementHost(input: Readonly<{
                             record.installationIdentity,
                         executableIdentity: record.executableIdentity,
                         ingressPrincipalRef: record.ingressPrincipalRef,
-                        isCurrent: () => operationIsCurrent(),
+                        isCurrent: () => operationIsCurrent(undefined, options?.signal),
                     });
                 if (!disabled.ok) return mapActionError(disabled.code);
                 for (const eventId of ownedEventIds(record)) {
@@ -2129,7 +2247,7 @@ export function createPluginSessionHookManagementHost(input: Readonly<{
                             record.installationIdentity,
                         executableIdentity: record.executableIdentity,
                         ingressPrincipalRef: record.ingressPrincipalRef,
-                        isCurrent: () => operationIsCurrent(),
+                        isCurrent: () => operationIsCurrent(undefined, options?.signal),
                     });
                 if (!applied.ok) return mapActionError(applied.code);
                 return PluginSessionHookUninstallResponseV1Schema.parse({
@@ -2145,9 +2263,9 @@ export function createPluginSessionHookManagementHost(input: Readonly<{
     };
     return {
         ...host,
-        status: async (target) => (
+        status: async (target, options) => (
             target.intent === 'passive_inventory'
-                ? await host.status(target)
+                ? await host.status(target, options)
                 : await withMutationLock(
                     mutationKey(
                         target.agent,
@@ -2158,27 +2276,27 @@ export function createPluginSessionHookManagementHost(input: Readonly<{
                                 target.agent,
                             ),
                     ),
-                    async () => await host.status(target),
+                    async () => await host.status(target, options),
                 )
         ),
-        install: async (target) => await withMutationLock(
+        install: async (target, options) => await withMutationLock(
             mutationKey(
                 target.agent,
                 hostInstallationId(input.machineId, target.agent),
             ),
-            async () => await host.install(target),
+            async () => await host.install(target, options),
         ),
-        disable: async (target) => await withMutationLock(
+        disable: async (target, options) => await withMutationLock(
             mutationKey(target.agent, target.installationId),
-            async () => await host.disable(target),
+            async () => await host.disable(target, options),
         ),
-        enable: async (target) => await withMutationLock(
+        enable: async (target, options) => await withMutationLock(
             mutationKey(target.agent, target.installationId),
-            async () => await host.enable(target),
+            async () => await host.enable(target, options),
         ),
-        uninstall: async (target) => await withMutationLock(
+        uninstall: async (target, options) => await withMutationLock(
             mutationKey(target.agent, target.installationId),
-            async () => await host.uninstall(target),
+            async () => await host.uninstall(target, options),
         ),
     };
 }

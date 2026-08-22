@@ -1,6 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import {
+    ExternalSessionViewerLeaseCapacityExceededError,
+} from '@/api/session/external/leases/createExternalSessionFollowLeaseManager';
+import {
+    ExternalSessionFollowFailureError,
+} from '@/session/external/externalSessionFollowFailure';
 import { ExternalSessionProviderFailureError } from '@/session/external/providerOps';
+import { isAgentExternalSessionsFailureCode } from '@happier-dev/plugin-sdk/sessions/external';
 
 const { debugLog } = vi.hoisted(() => ({
     debugLog: vi.fn(),
@@ -15,9 +22,9 @@ vi.mock('@/ui/logger', () => ({
 import {
     internalErrorResponse,
     logExternalSessionsInternalError,
+    mapExternalSessionCorridorFailureToExternalSessionsError,
     mapActionFailureToExternalSessionsError,
     mapExternalSessionProviderFailureToExternalSessionsError,
-    mapExternalTakeoverResultToDirectTakeoverResponse,
 } from './responseErrors';
 
 const SENTINELS = [
@@ -141,6 +148,7 @@ describe('External Sessions structural error diagnostics', () => {
             code: 'provider_error',
             message: `${SENTINELS[1]} ${SENTINELS[0]} ${SENTINELS[4]}`,
             operation: `read:${SENTINELS[2]}`,
+            retryable: true,
         });
 
         expect(
@@ -149,6 +157,7 @@ describe('External Sessions structural error diagnostics', () => {
             ok: false,
             errorCode: 'agent_unavailable',
             error: 'agent_unavailable',
+            retryable: true,
         });
         expect(mapActionFailureToExternalSessionsError({
             ok: false,
@@ -161,19 +170,108 @@ describe('External Sessions structural error diagnostics', () => {
         });
     });
 
-    it('does not expose takeover failure details in outward diagnostics', () => {
-        const result = mapExternalTakeoverResultToDirectTakeoverResponse({
+    it('classifies each corridor failure class and leaves anything else to the internal-error envelope', () => {
+        expect(mapExternalSessionCorridorFailureToExternalSessionsError(
+            new ExternalSessionFollowFailureError(
+                'follow_unavailable',
+                `live follow unavailable for ${SENTINELS[0]}`,
+            ),
+        )).toEqual({
             ok: false,
-            errorCode: 'spawn_failed',
-            error: `${SENTINELS[0]} ${SENTINELS[2]} ${SENTINELS[4]}`,
+            errorCode: 'agent_unavailable',
+            error: 'external_session_follow_unavailable',
+            retryable: false,
         });
+        expect(mapExternalSessionCorridorFailureToExternalSessionsError(
+            new ExternalSessionFollowFailureError('source_changed', SENTINELS[0]),
+        )).toEqual({
+            ok: false,
+            errorCode: 'agent_unavailable',
+            error: 'external_session_source_changed',
+            retryable: true,
+        });
+        expect(mapExternalSessionCorridorFailureToExternalSessionsError(
+            new ExternalSessionViewerLeaseCapacityExceededError(),
+        )).toEqual({
+            ok: false,
+            errorCode: 'agent_unavailable',
+            error: 'external_session_viewer_capacity_exceeded',
+        });
+        expect(mapExternalSessionCorridorFailureToExternalSessionsError(
+            new ExternalSessionProviderFailureError({
+                code: 'source_invalid',
+                message: SENTINELS[1],
+                operation: 'validateSource',
+            }),
+        )).toEqual({
+            ok: false,
+            errorCode: 'invalid_request',
+            error: 'invalid_request',
+            retryable: false,
+        });
+        expect(mapExternalSessionCorridorFailureToExternalSessionsError(
+            new Error(`unexpected defect at ${SENTINELS[0]}`),
+        )).toBeNull();
+        expectNoSentinels(
+            mapExternalSessionCorridorFailureToExternalSessionsError(
+                new ExternalSessionFollowFailureError('agent_unavailable', SENTINELS[0]),
+            ),
+        );
+    });
 
-        expect(result).toEqual({
+    it('answers a host-owned conflict and an unrecognized failure code with the internal-error outcome', () => {
+        expect(mapExternalSessionCorridorFailureToExternalSessionsError(
+            new ExternalSessionProviderFailureError({
+                code: 'conflict',
+                message: SENTINELS[1],
+                operation: 'externalSession.lookupByTags',
+            }),
+        )).toEqual({
             ok: false,
             errorCode: 'internal_error',
-            error: 'spawn_failed',
+            error: 'internal_error',
+            retryable: false,
         });
-        expectNoSentinels(result);
+        expect(mapExternalSessionProviderFailureToExternalSessionsError(
+            new ExternalSessionProviderFailureError({
+                code: 'not_a_contribution_failure_code',
+                message: SENTINELS[1],
+                operation: 'pageTranscript',
+            }),
+        )).toEqual({
+            ok: false,
+            errorCode: 'internal_error',
+            error: 'internal_error',
+            retryable: false,
+        });
+    });
+
+    it('keeps every contribution failure code the SDK admits on an Agent-facing outcome', () => {
+        for (const code of [
+            'source_unreachable',
+            'agent_unavailable',
+            'unsupported',
+            'unavailable',
+            'not_authorized',
+            'cancelled',
+            'agent_error',
+            'timeout',
+        ]) {
+            expect(isAgentExternalSessionsFailureCode(code)).toBe(true);
+            expect(mapExternalSessionProviderFailureToExternalSessionsError(
+                new ExternalSessionProviderFailureError({
+                    code,
+                    message: SENTINELS[1],
+                    operation: 'pageTranscript',
+                }),
+            )).toEqual({
+                ok: false,
+                errorCode: 'agent_unavailable',
+                error: 'agent_unavailable',
+                retryable: false,
+            });
+        }
+        expect(isAgentExternalSessionsFailureCode('conflict')).toBe(false);
     });
 
     it('keeps outward internal-error diagnostics on the explicit safe code', () => {

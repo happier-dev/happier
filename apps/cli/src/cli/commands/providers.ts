@@ -1,5 +1,5 @@
 import type { CommandContext } from '@/cli/commandRegistry';
-import { printJsonEnvelope } from '@/cli/output/jsonEnvelope';
+import { printJsonEnvelope, writeJsonStdout } from '@/cli/output/jsonEnvelope';
 import { executeProvidersCommand, ProviderCliError } from './providers/index';
 import { hasFlag } from './providers/args';
 import { resolveProviderCliDependencies } from './providers/deps';
@@ -57,16 +57,16 @@ export async function handleProvidersCliCommand(
             return;
         }
         if (json) {
-            printJsonEnvelope(result);
+            await printJsonEnvelope(result);
             return;
         }
-        console.log(JSON.stringify(result.data, null, 2));
+        await writeJsonStdout(result.data, { pretty: true });
     } catch (error) {
         const cliError = error instanceof ProviderCliError
             ? error
             : new ProviderCliError('operation_failed', error instanceof Error ? error.message : 'Unknown provider operation failure');
         if (json) {
-            printJsonEnvelope({
+            await printJsonEnvelope({
                 ok: false,
                 kind: `providers_${String(args[0] ?? 'unknown').replaceAll('-', '_')}`,
                 error: { code: cliError.code, message: cliError.message, ...(cliError.details === undefined ? {} : { details: cliError.details }) },

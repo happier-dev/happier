@@ -2,7 +2,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 
 import { getActionSpec, isActionSpecSurfacedOn, type ActionId } from '@happier-dev/protocol';
 
-import type { Credentials } from '@/persistence';
+import type { StoredCredentials } from '@/persistence';
 import { registerHappierMcpResources } from '@/mcp/resources/registerHappierMcpResources';
 import { createActionToolExecutorBridge } from '@/agent/tools/happierTools/createActionToolExecutorBridge';
 import { createChangeTitleToolHandler } from '@/agent/tools/happierTools/createChangeTitleToolHandler';
@@ -24,21 +24,24 @@ function readSessionIdFromToolArgs(args: unknown): string | null {
 }
 
 export function createExternalMcpServer(params: Readonly<{
-  credentials: Credentials;
+  credentials: StoredCredentials;
   defaultSessionId?: string | null;
   pluginToolCatalog?: readonly ProjectedPluginToolCatalogEntry[];
 }>): Readonly<{ mcp: McpServer; toolNames: string[] }> {
   const toolSurface = 'mcp' as const;
 
   const ctx = resolveSessionEncryptionContextFromCredentials(params.credentials);
+  const cryptoContext = ctx
+    ? { mode: 'e2ee' as const, ctx }
+    : { mode: 'plain' as const, ctx: null };
   let defaultSessionId: string | null = normalizeId(params.defaultSessionId) || null;
 
   const { executor: baseExecutor } = createCliActionExecutorHarness(
     {
+      ...cryptoContext,
       token: params.credentials.token,
       credentials: params.credentials,
       sessionId: 'cli-global',
-      ctx,
     },
     {
       sessionTargetPrimarySet: async ({ sessionId }) => {

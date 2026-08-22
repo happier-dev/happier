@@ -89,8 +89,16 @@ describe('executionRun intent profile registry', () => {
       actions: [{ kind: 'contributionAction' as const, action: 'publish' }],
     };
     const catalog = buildExecutionRunProfileCatalog([
-      { pluginId: 'happier.review.coderabbit', definition },
-      { pluginId: 'happier.review.deepsec', definition: { ...definition, title: 'DeepSec review' } },
+      {
+        pluginId: 'happier.review.coderabbit',
+        immutableGenerationId: 'immutable-coderabbit',
+        definition,
+      },
+      {
+        pluginId: 'happier.review.deepsec',
+        immutableGenerationId: 'immutable-deepsec',
+        definition: { ...definition, title: 'DeepSec review' },
+      },
     ]);
 
     expect(listExecutionRunProfileContributionDescriptors(catalog).map((entry) => entry.id)).toEqual([
@@ -105,6 +113,7 @@ describe('executionRun intent profile registry', () => {
   it('never cross-resolves a review host action onto a non-review intent', () => {
     const catalog = buildExecutionRunProfileCatalog([{
       pluginId: 'happier.review.coderabbit',
+      immutableGenerationId: 'immutable-coderabbit',
       definition: {
         id: 'review', intent: 'review', title: 'Review', promptAsset: 'review-prompt',
         compatibleAgents: ['reviewer'],
@@ -120,6 +129,7 @@ describe('executionRun intent profile registry', () => {
   it('uses the contributed intent as the qualified runtime-profile owner and fails stale or mismatched selections closed', () => {
     const catalog = buildExecutionRunProfileCatalog([{
       pluginId: 'acme.review',
+      immutableGenerationId: 'immutable-review',
       definition: {
         id: 'review', intent: 'review', title: 'Review', promptAsset: 'review-prompt',
         compatibleAgents: ['reviewer'],
@@ -139,6 +149,7 @@ describe('executionRun intent profile registry', () => {
     const requestedAssets: string[] = [];
     const catalog = buildExecutionRunProfileCatalog([{
       pluginId: 'acme.delegate',
+      immutableGenerationId: 'immutable-generation-current',
       definition: {
         id: 'research', intent: 'delegate', title: 'Research',
         promptAsset: 'research-prompt',
@@ -146,7 +157,6 @@ describe('executionRun intent profile registry', () => {
         defaults: { retention: 'ephemeral', runClass: 'bounded', io: 'streaming' },
       },
     }], {
-      generationId: 'generation-current',
       resolvePromptAssetBlocks: async ({ promptAsset }) => {
         requestedAssets.push(`${promptAsset.pluginId}/${promptAsset.localId}`);
         return [{ id: 'selected', scope: 'session', text: 'Research policy' }];
@@ -167,7 +177,7 @@ describe('executionRun intent profile registry', () => {
         retentionPolicy: 'resumable',
         runClass: 'long_lived',
         ioMode: 'request_response',
-        profileGenerationId: 'generation-current',
+        profileGenerationId: 'immutable-generation-current',
       },
     });
 
@@ -185,7 +195,7 @@ describe('executionRun intent profile registry', () => {
         intent: 'delegate',
         backendTarget: { kind: 'builtInAgent', agentId: 'researcher' },
         instructions: 'Inspect.', permissionMode: 'read_only', retentionPolicy: 'ephemeral',
-        runClass: 'bounded', ioMode: 'streaming', profileGenerationId: 'generation-stale',
+        runClass: 'bounded', ioMode: 'streaming', profileGenerationId: 'immutable-generation-stale',
       },
     })).rejects.toMatchObject({ code: 'execution_run_profile_stale' });
 
@@ -196,7 +206,7 @@ describe('executionRun intent profile registry', () => {
         backendTarget: { kind: 'builtInAgent', agentId: 'coderabbit' },
         instructions: 'Inspect.', permissionMode: 'read_only', retentionPolicy: 'ephemeral',
         runClass: 'bounded', ioMode: 'streaming',
-        profileGenerationId: 'generation-current',
+        profileGenerationId: 'immutable-generation-current',
       },
     })).rejects.toThrow(/compatible/i);
   });
@@ -204,6 +214,7 @@ describe('executionRun intent profile registry', () => {
   it('matches compatible Agent references by typed plugin identity rather than provider-like local ids', async () => {
     const catalog = buildExecutionRunProfileCatalog([{
       pluginId: 'acme.review',
+      immutableGenerationId: 'immutable-review',
       definition: {
         id: 'review', intent: 'review', title: 'Review', promptAsset: 'review-prompt',
         compatibleAgents: [{ pluginId: 'acme.review', localId: 'reviewer' }],
@@ -220,7 +231,7 @@ describe('executionRun intent profile registry', () => {
       request: {
         intent: 'review', backendTarget: { kind: 'builtInAgent', agentId: 'reviewer' },
         instructions: 'Review.', permissionMode: 'read_only', retentionPolicy: 'ephemeral',
-        runClass: 'bounded', ioMode: 'streaming',
+        runClass: 'bounded', ioMode: 'streaming', profileGenerationId: 'immutable-review',
       },
     })).rejects.toMatchObject({ code: 'execution_run_profile_agent_incompatible' });
   });
@@ -228,6 +239,7 @@ describe('executionRun intent profile registry', () => {
   it('fails a gated contributed profile closed through the shared availability owner', async () => {
     const catalog = buildExecutionRunProfileCatalog([{
       pluginId: 'acme.review',
+      immutableGenerationId: 'immutable-review',
       definition: {
         id: 'review', intent: 'review', title: 'Review', promptAsset: 'review-prompt',
         compatibleAgents: ['reviewer'],
@@ -245,7 +257,7 @@ describe('executionRun intent profile registry', () => {
       request: {
         intent: 'review', backendTarget: { kind: 'builtInAgent', agentId: 'reviewer' },
         instructions: 'Review.', permissionMode: 'read_only', retentionPolicy: 'ephemeral',
-        runClass: 'bounded', ioMode: 'streaming',
+        runClass: 'bounded', ioMode: 'streaming', profileGenerationId: 'immutable-review',
       },
     })).rejects.toMatchObject({ code: 'execution_run_profile_unavailable' });
   });

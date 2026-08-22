@@ -2,9 +2,10 @@ import { EventEmitter } from 'node:events';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-const { spawnMock, requireJavaScriptRuntimeExecutableMock } = vi.hoisted(() => ({
+const { spawnMock, requireJavaScriptRuntimeExecutableMock, killProcessTreeMock } = vi.hoisted(() => ({
   spawnMock: vi.fn(),
   requireJavaScriptRuntimeExecutableMock: vi.fn(async (): Promise<string> => process.execPath),
+  killProcessTreeMock: vi.fn(async (_proc: unknown, _opts?: unknown) => {}),
 }));
 
 vi.mock('child_process', () => ({
@@ -15,9 +16,17 @@ vi.mock('@/packagedRuntime/js/requireJavaScriptRuntimeExecutable', () => ({
   requireJavaScriptRuntimeExecutable: requireJavaScriptRuntimeExecutableMock,
 }));
 
+// The process-tree helper is the OS boundary owner; its cross-platform process
+// semantics have their own focused suite. This wrapper test proves ripgrep
+// delegates cancellation to that owner instead of settling only its RPC promise.
+vi.mock('@/agent/runtime/process/killProcessTree', () => ({
+  killProcessTree: (proc: unknown, opts?: unknown) => killProcessTreeMock(proc, opts),
+}));
+
 describe('ripgrep runtime resolution', () => {
   afterEach(() => {
     vi.restoreAllMocks();
+    killProcessTreeMock.mockReset();
     requireJavaScriptRuntimeExecutableMock.mockReset();
     requireJavaScriptRuntimeExecutableMock.mockResolvedValue(process.execPath);
   });
@@ -68,5 +77,42 @@ describe('ripgrep runtime resolution', () => {
 
     await expect(run(['describe', 'needle'])).rejects.toThrow(/HAPPIER_JS_RUNTIME_PATH/);
     expect(spawnMock).not.toHaveBeenCalled();
+  });
+
+  it('terminates the launcher process tree when its caller cancels', async () => {
+    const stdout = new EventEmitter();
+    const stderr = new EventEmitter();
+    const child = new EventEmitter() as EventEmitter & {
+      pid: number;
+      stdout: EventEmitter;
+      stderr: EventEmitter;
+    };
+    child.pid = 4242;
+    child.stdout = stdout;
+    child.stderr = stderr;
+    spawnMock.mockReturnValue(child);
+    const controller = new AbortController();
+
+    const { run } = await import('./index');
+    const pending = (run as unknown as (
+      args: string[],
+      options: Readonly<{ signal: AbortSignal }>,
+    ) => Promise<unknown>)(['--files'], { signal: controller.signal });
+    await vi.waitFor(() => expect(spawnMock).toHaveBeenCalledTimes(1));
+
+    controller.abort();
+
+    const settled = await Promise.race([
+      pending.then(
+        () => ({ status: 'resolved' as const }),
+        (error: unknown) => ({ status: 'rejected' as const, error }),
+      ),
+      new Promise<{ status: 'pending' }>((resolve) => setTimeout(() => resolve({ status: 'pending' }), 50)),
+    ]);
+    expect(settled).toMatchObject({
+      status: 'rejected',
+      error: { name: 'AbortError', code: 'RIPGREP_ABORTED' },
+    });
+    expect(killProcessTreeMock).toHaveBeenCalledWith(child, undefined);
   });
 });

@@ -69,7 +69,7 @@ const MANUAL_TOOL_EQUIVALENT_ACTION_IDS = new Map<string, ActionId>([
   ['action_spec_get', 'action.spec.get'],
   ['action_options_resolve', 'action.options.resolve'],
 ]);
-const DIRECT_MANUAL_TOOL_NAMES = new Set(['change_title', 'plugins_reload']);
+const DIRECT_MANUAL_TOOL_NAMES = new Set(['change_title']);
 
 function resolveCurrentRuntimeRegistry() {
   const activeRegistry = pluginReloadController.getState().activeRegistry;
@@ -85,11 +85,20 @@ function resolveActionToolRegistry(params?: Readonly<{
   return params?.registry ?? activeRegistry ?? getResolvedContributionRegistry();
 }
 
+/**
+ * A plugin-contributed Action is visible when the CURRENT runtime registry's
+ * catalog policy says so. Provenance is not part of that decision: a bundled
+ * first-party plugin contributes under `first_party` and reaches the agent
+ * surface through the same declaration + policy path as an installed one, and
+ * `projectExecutablePluginToolCatalog` — the tool-binding owner — applies no
+ * provenance filter either. `pluginId` is what separates a plugin contribution
+ * from a host built-in Action spec.
+ */
 function isAuthorizedPluginToolContribution(
   action: ResolvedActionContribution,
   registry: ResolvedContributionRegistry,
 ): boolean {
-  if (action.provenance !== 'external' || !action.pluginId) return false;
+  if (!action.pluginId) return false;
   const activeRegistry = resolveCurrentRuntimeRegistry();
   if (!activeRegistry || activeRegistry.contributes !== registry) return false;
   return activeRegistry.targetActionInvocations?.evaluateCatalogPolicy(
@@ -227,7 +236,22 @@ export function resolveActionToolCatalogAvailability(params: Readonly<{
           surface,
           availableSurfaces,
           provenance: 'external',
-        };
+      };
+  }
+
+  // An explicitly supplied catalog is a bounded admission snapshot (for
+  // example, the active Agent-composition turn). It is authoritative for
+  // external Actions, so an omitted plugin tool must not fall through to a
+  // mutable global registry and bypass the admitted selection.
+  if (params.pluginToolCatalog !== undefined) {
+    return {
+      available: false,
+      reason: 'unknown_action',
+      actionId,
+      surface,
+      availableSurfaces: [],
+      provenance: 'unknown',
+    };
   }
 
   const pluginAction = getPluginActionContributionById(actionId, { registry: params.registry });

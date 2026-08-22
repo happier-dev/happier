@@ -1,4 +1,4 @@
-import type { Credentials } from '@/persistence';
+import type { StoredCredentials } from '@/persistence';
 import type { RawTranscriptRow } from '@/session/replay/fetchEncryptedTranscriptMessages';
 
 import { getSessionTranscript } from './getSessionTranscript';
@@ -13,7 +13,7 @@ export type SessionRecentMessageRow = Readonly<{
 
 export type GetSessionRecentMessagesResult =
   | Readonly<{ ok: true; sessionId: string; messages: readonly SessionRecentMessageRow[]; nextCursor: string | null }>
-  | Readonly<{ ok: false; errorCode: string; errorMessage: string; candidates?: string[] }>;
+  | Readonly<{ ok: false; errorCode: string; errorMessage: string; candidates?: readonly string[] }>;
 
 function readPlainPayloadRole(row: RawTranscriptRow): string | null {
   const content = row.content && typeof row.content === 'object' && !Array.isArray(row.content)
@@ -28,7 +28,7 @@ function readPlainPayloadRole(row: RawTranscriptRow): string | null {
 
 export function extractRecentMessagesFromTranscriptRows(params: Readonly<{
   rows: readonly RawTranscriptRow[];
-  ctx: Readonly<{ encryptionKey: Uint8Array; encryptionVariant: 'legacy' | 'dataKey' }>;
+  ctx: Readonly<{ encryptionKey: Uint8Array; encryptionVariant: 'legacy' | 'dataKey' }> | null;
   includeUser: boolean;
   includeAssistant: boolean;
   maxCharsPerMessage: number | null;
@@ -64,7 +64,7 @@ export function extractRecentMessagesFromTranscriptRows(params: Readonly<{
 }
 
 export async function getSessionRecentMessages(params: Readonly<{
-  credentials: Credentials;
+  credentials: StoredCredentials;
   idOrPrefix: string;
   limit?: number;
   cursor?: string | null;

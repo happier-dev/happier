@@ -1,37 +1,36 @@
 import { describe, expect, it, vi } from 'vitest';
 
-const runEphemeralExecutionRunTextPromptMock = vi.fn();
-
-vi.mock('@/agent/runtime/bridges/executionRun/runtime/textPrompt', () => ({
-  runEphemeralExecutionRunTextPrompt: (...args: unknown[]) => runEphemeralExecutionRunTextPromptMock(...args),
-}));
-
 import { runEphemeralExecutionRunTextPromptWithRunnerConfig } from './textPromptWithRunnerConfig';
 
 describe('runEphemeralExecutionRunTextPromptWithRunnerConfig', () => {
-  it('passes the configured backend id through to custom backends instead of manufacturing customAcp', async () => {
-    const backend = {};
-    const createRuntime = vi.fn(() => backend as never);
-    runEphemeralExecutionRunTextPromptMock.mockResolvedValue('ok');
+  it('starts a configured ACP backend through the canonical action instead of constructing a local runtime', async () => {
+    const executeStart = vi.fn(async () => ({
+      ok: true as const,
+      result: {
+        runId: 'run_1',
+        wait: {
+          ok: true,
+          status: 'succeeded',
+          result: { latestToolResult: 'ok' },
+        },
+      },
+    }));
 
-    await runEphemeralExecutionRunTextPromptWithRunnerConfig({
+    await expect(runEphemeralExecutionRunTextPromptWithRunnerConfig({
       cwd: '/tmp/workspace',
       sessionId: 'sess-1',
       runner: {
         backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
       },
-      intent: 'replay_summary',
+      intent: 'task',
       prompt: 'Return OK',
-      createRuntime,
-    });
+      executeStart,
+    })).resolves.toBe('ok');
 
-    expect(createRuntime).toHaveBeenCalledWith(expect.objectContaining({
-      backendId: 'review-bot',
+    expect(executeStart).toHaveBeenCalledWith(expect.objectContaining({
       backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
-    }));
-    expect(runEphemeralExecutionRunTextPromptMock).toHaveBeenCalledWith(expect.objectContaining({
-      backendId: 'review-bot',
-      backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
-    }));
+      intent: 'task',
+      waitForCompletion: true,
+    }), { surface: 'cli', defaultSessionId: 'sess-1' });
   });
 });

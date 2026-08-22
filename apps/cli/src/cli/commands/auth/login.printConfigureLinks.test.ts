@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Credentials, Settings } from '@/persistence';
+import type { Settings, StoredCredentials } from '@/persistence';
 import type { ActiveServerStoredTokenValidationResult } from '@/auth/validateStoredAuthTokenAgainstActiveServer';
 
 const authAndSetupMachineIfNeededMock = vi.hoisted(() => vi.fn(async () => ({
@@ -9,11 +9,16 @@ const authAndSetupMachineIfNeededMock = vi.hoisted(() => vi.fn(async () => ({
 const validateStoredAuthTokenAgainstActiveServerMock = vi.hoisted(() =>
   vi.fn<(token: string) => Promise<ActiveServerStoredTokenValidationResult>>(async () => ({ state: 'valid', httpStatus: 200 })),
 );
-const readCredentialsMock = vi.hoisted(() => vi.fn<() => Promise<Credentials | null>>(async () => null));
+const readStoredCredentialsMock = vi.hoisted(() => vi.fn<() => Promise<StoredCredentials | null>>(async () => null));
 const readSettingsMock = vi.hoisted(() => vi.fn<() => Promise<Partial<Settings>>>(async () => ({})));
 const clearCredentialsMock = vi.hoisted(() => vi.fn(async () => {}));
 const clearMachineIdMock = vi.hoisted(() => vi.fn<(opts?: unknown) => Promise<void>>(async () => {}));
 const stopDaemonMock = vi.hoisted(() => vi.fn(async () => {}));
+const isDaemonStopIncompleteErrorMock = vi.hoisted(() => vi.fn((error: unknown) => (
+  typeof error === 'object'
+  && error !== null
+  && (error as { code?: unknown }).code === 'daemon_stop_incomplete'
+)));
 
 vi.mock('@/ui/auth', () => ({
   authAndSetupMachineIfNeeded: () => authAndSetupMachineIfNeededMock(),
@@ -28,13 +33,14 @@ vi.mock('@/server/serverSelection', () => ({
 }));
 
 vi.mock('@/persistence', () => ({
-  readCredentials: () => readCredentialsMock(),
+  readStoredCredentials: () => readStoredCredentialsMock(),
   readSettings: () => readSettingsMock(),
   clearCredentials: () => clearCredentialsMock(),
   clearMachineId: (opts?: unknown) => clearMachineIdMock(opts),
 }));
 
 vi.mock('@/daemon/controlClient', () => ({
+  isDaemonStopIncompleteError: (error: unknown) => isDaemonStopIncompleteErrorMock(error),
   stopDaemon: () => stopDaemonMock(),
 }));
 
@@ -54,6 +60,7 @@ function createJwtWithSubject(subject: string): string {
 
 describe('happier auth login --print-configure-links', () => {
   const prev = process.env.HAPPIER_AUTH_PRINT_CONFIGURE_LINKS;
+  const prevWaitTimeout = process.env.HAPPIER_AUTH_WAIT_TIMEOUT_MS;
 
   beforeEach(() => {
     // This test relies on per-file module mocks; ensure we never reuse a cached login module
@@ -64,6 +71,8 @@ describe('happier auth login --print-configure-links', () => {
   afterEach(() => {
     if (prev === undefined) delete process.env.HAPPIER_AUTH_PRINT_CONFIGURE_LINKS;
     else process.env.HAPPIER_AUTH_PRINT_CONFIGURE_LINKS = prev;
+    if (prevWaitTimeout === undefined) delete process.env.HAPPIER_AUTH_WAIT_TIMEOUT_MS;
+    else process.env.HAPPIER_AUTH_WAIT_TIMEOUT_MS = prevWaitTimeout;
     authAndSetupMachineIfNeededMock.mockReset();
     authAndSetupMachineIfNeededMock.mockResolvedValue({
       machineId: 'm1',
@@ -71,13 +80,14 @@ describe('happier auth login --print-configure-links', () => {
     });
     validateStoredAuthTokenAgainstActiveServerMock.mockReset();
     validateStoredAuthTokenAgainstActiveServerMock.mockResolvedValue({ state: 'valid', httpStatus: 200 });
-    readCredentialsMock.mockReset();
-    readCredentialsMock.mockResolvedValue(null);
+    readStoredCredentialsMock.mockReset();
+    readStoredCredentialsMock.mockResolvedValue(null);
     readSettingsMock.mockReset();
     readSettingsMock.mockResolvedValue({});
     clearCredentialsMock.mockReset();
     clearMachineIdMock.mockReset();
     stopDaemonMock.mockReset();
+    isDaemonStopIncompleteErrorMock.mockClear();
     vi.resetModules();
   });
 
@@ -106,8 +116,41 @@ describe('happier auth login --print-configure-links', () => {
     }
   });
 
+  it('passes a positive --wait-timeout to the auth polling owner', async () => {
+    delete process.env.HAPPIER_AUTH_WAIT_TIMEOUT_MS;
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      const { handleAuthLogin } = await import('./login');
+      await handleAuthLogin(['--wait-timeout', '300']);
+      expect(process.env.HAPPIER_AUTH_WAIT_TIMEOUT_MS).toBe('300000');
+      expect(authAndSetupMachineIfNeededMock).toHaveBeenCalled();
+    } finally {
+      consoleSpy.mockRestore();
+    }
+  });
+
+  it('recognizes a valid token-only credential as authenticated', async () => {
+    readStoredCredentialsMock.mockResolvedValue({
+      token: 'plain-token',
+      encryption: null,
+    });
+    readSettingsMock.mockResolvedValue({ machineId: 'plain-machine' });
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    try {
+      const { handleAuthLogin } = await import('./login');
+      await handleAuthLogin([]);
+
+      expect(validateStoredAuthTokenAgainstActiveServerMock).toHaveBeenCalledWith('plain-token');
+      expect(authAndSetupMachineIfNeededMock).not.toHaveBeenCalled();
+      expect(consoleSpy.mock.calls.flat().join('\n')).toContain('Already authenticated');
+    } finally {
+      consoleSpy.mockRestore();
+    }
+  });
+
   it('repairs rejected stored credentials instead of reporting already authenticated', async () => {
-    readCredentialsMock.mockResolvedValue({
+    readStoredCredentialsMock.mockResolvedValue({
       token: 'stale-token',
       encryption: { type: 'legacy', secret: new Uint8Array(32) },
     });
@@ -134,8 +177,66 @@ describe('happier auth login --print-configure-links', () => {
     }
   });
 
+  it('does not clear credentials, machine identity, or re-authenticate when invalid-token repair cannot stop the daemon', async () => {
+    readStoredCredentialsMock.mockResolvedValue({
+      token: 'stale-token',
+      encryption: { type: 'legacy', secret: new Uint8Array(32) },
+    });
+    readSettingsMock.mockResolvedValue({ machineId: 'machine-1' });
+    validateStoredAuthTokenAgainstActiveServerMock.mockResolvedValue({
+      state: 'invalid',
+      httpStatus: 401,
+      reasonCode: 'not_authenticated',
+    });
+    const incomplete = Object.assign(new Error('daemon stop incomplete'), {
+      code: 'daemon_stop_incomplete',
+      reason: 'process_identity_unverified',
+      pid: 12345,
+    });
+    stopDaemonMock.mockRejectedValueOnce(incomplete);
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    try {
+      const { handleAuthLogin } = await import('./login');
+
+      await expect(handleAuthLogin([])).rejects.toBe(incomplete);
+
+      expect(clearCredentialsMock).not.toHaveBeenCalled();
+      expect(clearMachineIdMock).not.toHaveBeenCalled();
+      expect(authAndSetupMachineIfNeededMock).not.toHaveBeenCalled();
+    } finally {
+      consoleSpy.mockRestore();
+    }
+  });
+
+  it('does not clear credentials, machine identity, or re-authenticate when force login cannot stop the daemon', async () => {
+    readStoredCredentialsMock.mockResolvedValue({
+      token: createJwtWithSubject('account-force'),
+      encryption: { type: 'legacy', secret: new Uint8Array(32) },
+    });
+    const incomplete = Object.assign(new Error('daemon stop incomplete'), {
+      code: 'daemon_stop_incomplete',
+      reason: 'force_kill_unconfirmed',
+      pid: 54321,
+    });
+    stopDaemonMock.mockRejectedValueOnce(incomplete);
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    try {
+      const { handleAuthLogin } = await import('./login');
+
+      await expect(handleAuthLogin(['--force'])).rejects.toBe(incomplete);
+
+      expect(clearCredentialsMock).not.toHaveBeenCalled();
+      expect(clearMachineIdMock).not.toHaveBeenCalled();
+      expect(authAndSetupMachineIfNeededMock).not.toHaveBeenCalled();
+    } finally {
+      consoleSpy.mockRestore();
+    }
+  });
+
   it('preserves force-auth replacement candidate using existing credential subject when settings are legacy', async () => {
-    readCredentialsMock.mockResolvedValue({
+    readStoredCredentialsMock.mockResolvedValue({
       token: createJwtWithSubject('account-legacy'),
       encryption: { type: 'legacy', secret: new Uint8Array(32) },
     });

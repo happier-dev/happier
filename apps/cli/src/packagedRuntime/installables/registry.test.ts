@@ -163,7 +163,7 @@ describe('getRuntimeInstallableAdapter', () => {
     }
   });
 
-  it('refuses externally-owned managed PyPI wheel assets even when a registry object is hand-built', async () => {
+  it('adapts externally-owned managed PyPI wheel assets from an admitted registry', async () => {
     const descriptor = InstallableDependencyDescriptorSchema.parse({
       id: 'acme-pypi-wheel-tool',
       key: 'acme-pypi-wheel-tool',
@@ -216,7 +216,10 @@ describe('getRuntimeInstallableAdapter', () => {
 
     await expect(
       getRuntimeInstallableAdapter('acme-pypi-wheel-tool' as InstallableKey, { installablesRegistry }),
-    ).rejects.toThrow(/curated first-party/i);
+    ).resolves.toMatchObject({
+      key: 'acme-pypi-wheel-tool',
+      capabilityId: 'dep.acme-pypi-wheel-tool',
+    });
   });
 });
 

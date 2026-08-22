@@ -22,7 +22,7 @@ describe('dispatchProviderNativeFork', () => {
         agentRuntimeDescriptorV1: {
           v: 1,
           agentId: 'codex',
-          provider: { backendMode: 'appServer', providerSessionId: 'codex_parent_1', home: 'connectedService', connectedServiceId: 'openai-codex', connectedServiceProfileId: 'work', homePath: '/tmp/connected-codex-home' },
+          provider: { backendMode: 'appServer', providerSessionId: 'codex_parent_1', home: 'connectedService', connectedServiceId: 'openai-codex', connectedServiceProfileId: 'work', connectedServiceGroupId: 'team', homePath: '/tmp/connected-codex-home' },
         },
         codexSessionId: 'codex_parent_1',
         codexBackendMode: 'mcp',
@@ -34,20 +34,14 @@ describe('dispatchProviderNativeFork', () => {
     expect(fork).toHaveBeenCalledWith({
       parentSessionId: 'happy_parent',
       parentMetadata: {
-        agentRuntimeDescriptorV1: {
-          v: 1,
-          agentId: 'codex',
-          provider: {
-            backendMode: 'appServer',
-            providerSessionId: 'codex_parent_1',
-            home: 'connectedService',
-            connectedServiceId: 'openai-codex',
-            connectedServiceProfileId: 'work',
-            homePath: '/tmp/connected-codex-home',
-          },
-        },
+        providerSessionId: 'codex_parent_1',
         codexSessionId: 'codex_parent_1',
-        codexBackendMode: 'mcp',
+        codexBackendMode: 'appServer',
+        codexHome: 'connectedService',
+        codexConnectedServiceId: 'openai-codex',
+        codexConnectedServiceProfileId: 'work',
+        codexConnectedServiceGroupId: 'team',
+        codexHomePath: '/tmp/connected-codex-home',
       },
       directory: '/tmp/project',
       forkPoint: { kind: 'latest' },
@@ -58,6 +52,39 @@ describe('dispatchProviderNativeFork', () => {
         environmentVariables: { CODEX_HOME: '/tmp/connected-codex-home' },
       },
     });
+  });
+
+  it('projects OpenCode-safe fields from the canonical descriptor without forwarding the raw envelope', async () => {
+    const fork = vi.fn().mockResolvedValue(null);
+
+    await dispatchProviderNativeFork({
+      forkSurface: { fork },
+      parentSessionId: 'happy_opencode_parent',
+      parentMetadata: {
+        runtimeDescriptorV1: {
+          v: 1,
+          agentId: 'opencode',
+          agent: {
+            backendMode: 'server',
+            providerSessionId: ' opencode-parent-1 ',
+            serverBaseUrl: 'http://127.0.0.1:49196',
+            serverBaseUrlExplicit: true,
+          },
+        },
+      },
+      directory: '/tmp/project',
+      forkPoint: { type: 'latest' },
+    });
+
+    expect(fork).toHaveBeenCalledWith(expect.objectContaining({
+      parentMetadata: {
+        providerSessionId: 'opencode-parent-1',
+        opencodeSessionId: 'opencode-parent-1',
+        opencodeBackendMode: 'server',
+        opencodeServerBaseUrl: 'http://127.0.0.1:49196/',
+        opencodeServerBaseUrlExplicit: true,
+      },
+    }));
   });
 
   it('does not expose a provider-native fork when the bridge-resolved surface has no fork operation', async () => {

@@ -14,7 +14,7 @@ import { readBackgroundServiceHealth } from '@/daemon/service/readBackgroundServ
 import { readDaemonStatusSnapshot } from '@/daemon/statusSnapshot';
 import { resolveBackgroundServiceRepairPlanForCurrentRuntime } from '@/diagnostics/backgroundServiceRepair/resolveBackgroundServiceRepairPlanForCurrentRuntime';
 import type { DaemonServiceMode } from '@/daemon/service/plan';
-import { readCredentials } from '@/persistence';
+import { readStoredCredentials } from '@/persistence';
 
 import { buildServiceRepairReport } from './buildServiceRepairReport';
 import type {
@@ -140,7 +140,7 @@ async function resolveAuthProfilesFromDaemonStatuses(
     return profiles;
   }
 
-  const credentials = await readCredentials().catch(() => null);
+  const credentials = await readStoredCredentials().catch(() => null);
   const token = String(credentials?.token ?? '').trim();
   if (!token) {
     return profiles;

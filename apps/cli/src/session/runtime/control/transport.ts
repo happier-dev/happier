@@ -11,12 +11,9 @@ import type {
   SessionConnectedServiceAuthReadRuntimeIdentityResponseV1,
 } from '@happier-dev/protocol';
 
-import type { Credentials } from '@/persistence';
+import type { StoredCredentials } from '@/persistence';
 import { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
-import type {
-  SessionEncryptionContext,
-  SessionStoredContentEncryptionMode,
-} from '@/session/transport/encryption/sessionEncryptionContext';
+import type { SessionEncryptionContext } from '@/session/transport/encryption/sessionEncryptionContext';
 import { callSessionRpc } from '@/session/transport/rpc/sessionRpc';
 
 type ResolvedTransport = Awaited<ReturnType<typeof resolveSessionTransportContext>>;
@@ -57,16 +54,19 @@ export type SessionConnectedServiceAuthTransport = Readonly<{
 }>;
 
 export type CreateSessionConnectedServiceAuthTransportParams = Readonly<{
-  credentials?: Credentials | null;
+  credentials?: StoredCredentials | null;
   sessionId: string;
 }>;
 
 export type CreateResolvedSessionConnectedServiceAuthTransportParams = Readonly<{
   token: string;
   sessionId: string;
-  ctx: SessionEncryptionContext;
-  mode: SessionStoredContentEncryptionMode;
-}>;
+}> & (
+  | Readonly<{ ctx: null; mode: 'plain' }>
+  | Readonly<{ ctx: SessionEncryptionContext; mode: 'e2ee' }>
+);
+
+type SessionRpcTransport = CreateResolvedSessionConnectedServiceAuthTransportParams;
 
 type ResponseSchema<T> = Readonly<{
   safeParse(value: unknown): { success: true; data: T } | { success: false };
@@ -85,28 +85,75 @@ function failure<T = never>(code: string): SessionConnectedServiceAuthTransportR
   };
 }
 
+function unresolvedTransportFailure<T = never>(
+  transport: Extract<ResolvedTransport, { ok: false }>,
+): SessionConnectedServiceAuthTransportResult<T> {
+  return failure(
+    transport.code === 'encryption_material_unavailable'
+      ? transport.code
+      : 'session_transport_unavailable',
+  );
+}
+
 function aborted<T = never>(
   options?: SessionConnectedServiceAuthTransportOptions,
 ): SessionConnectedServiceAuthTransportResult<T> | null {
   return options?.signal?.aborted ? failure('runtime_control_aborted') : null;
 }
 
+function createSessionRpcTransport(
+  token: string,
+  transport: Extract<ResolvedTransport, { ok: true }>,
+): SessionRpcTransport {
+  return transport.mode === 'plain'
+    ? {
+        token,
+        sessionId: transport.sessionId,
+        mode: transport.mode,
+        ctx: transport.ctx,
+      }
+    : {
+        token,
+        sessionId: transport.sessionId,
+        mode: transport.mode,
+        ctx: transport.ctx,
+      };
+}
+
+async function callResolvedSessionRpc(params: Readonly<{
+  transport: SessionRpcTransport;
+  method: string;
+  request: unknown;
+}>): Promise<unknown> {
+  return params.transport.mode === 'plain'
+    ? await callSessionRpc({
+        token: params.transport.token,
+        sessionId: params.transport.sessionId,
+        mode: params.transport.mode,
+        ctx: params.transport.ctx,
+        method: `${params.transport.sessionId}:${params.method}`,
+        request: params.request,
+      })
+    : await callSessionRpc({
+        token: params.transport.token,
+        sessionId: params.transport.sessionId,
+        mode: params.transport.mode,
+        ctx: params.transport.ctx,
+        method: `${params.transport.sessionId}:${params.method}`,
+        request: params.request,
+      });
+}
+
 async function callConnectedServiceAuthSessionRpc<T>(params: Readonly<{
-  token: string;
-  sessionId: string;
-  ctx: SessionEncryptionContext;
-  mode: SessionStoredContentEncryptionMode;
+  transport: SessionRpcTransport;
   method: string;
   request: unknown;
   responseSchema: ResponseSchema<T>;
   failureCode: string;
 }>): Promise<SessionConnectedServiceAuthTransportResult<T>> {
-  const rawResponse = await callSessionRpc({
-    token: params.token,
-    sessionId: params.sessionId,
-    ctx: params.ctx,
-    mode: params.mode,
-    method: `${params.sessionId}:${params.method}`,
+  const rawResponse = await callResolvedSessionRpc({
+    transport: params.transport,
+    method: params.method,
     request: params.request,
   });
   const parsedResponse = params.responseSchema.safeParse(rawResponse);
@@ -141,21 +188,19 @@ export function createSessionConnectedServiceAuthTransport(
       if (abortedResult) return abortedResult;
       const transport = await resolveTransport();
       if (options?.signal?.aborted) return failure('runtime_control_aborted');
-      return transport.ok ? success(true) : failure('session_transport_unavailable');
+      return transport.ok ? success(true) : unresolvedTransportFailure(transport);
     },
     invalidateConnectedServiceAuthTransports: async (options) => {
       const abortedResult = aborted(options);
       if (abortedResult) return abortedResult;
       const transport = await resolveTransport();
-      if (!transport.ok || !params.credentials) return failure('session_transport_unavailable');
+      if (!transport.ok) return unresolvedTransportFailure(transport);
+      if (!params.credentials) return failure('session_transport_unavailable');
       if (options?.signal?.aborted) return failure('runtime_control_aborted');
 
-      const rawResponse = await callSessionRpc({
-        token: params.credentials.token,
-        sessionId: transport.sessionId,
-        ctx: transport.ctx,
-        mode: transport.mode,
-        method: `${transport.sessionId}:${SESSION_RPC_METHODS.SESSION_CONNECTED_SERVICE_AUTH_INVALIDATE_TRANSPORTS}`,
+      const rawResponse = await callResolvedSessionRpc({
+        transport: createSessionRpcTransport(params.credentials.token, transport),
+        method: SESSION_RPC_METHODS.SESSION_CONNECTED_SERVICE_AUTH_INVALIDATE_TRANSPORTS,
         request: {},
       });
       const parsedResponse = SessionConnectedServiceAuthInvalidateTransportsResponseV1Schema.safeParse(rawResponse);
@@ -171,13 +216,11 @@ export function createSessionConnectedServiceAuthTransport(
       const abortedResult = aborted<SessionConnectedServiceAuthApplyGenerationResponseV1>(options);
       if (abortedResult) return abortedResult;
       const transport = await resolveTransport();
-      if (!transport.ok || !params.credentials) return failure('session_transport_unavailable');
+      if (!transport.ok) return unresolvedTransportFailure(transport);
+      if (!params.credentials) return failure('session_transport_unavailable');
       if (options?.signal?.aborted) return failure('runtime_control_aborted');
       return await callConnectedServiceAuthSessionRpc({
-        token: params.credentials.token,
-        sessionId: transport.sessionId,
-        ctx: transport.ctx,
-        mode: transport.mode,
+        transport: createSessionRpcTransport(params.credentials.token, transport),
         method: SESSION_RPC_METHODS.SESSION_CONNECTED_SERVICE_AUTH_APPLY_GENERATION,
         request,
         responseSchema: SessionConnectedServiceAuthApplyGenerationResponseV1Schema,
@@ -191,13 +234,11 @@ export function createSessionConnectedServiceAuthTransport(
       const abortedResult = aborted<SessionConnectedServiceAuthReadRuntimeIdentityResponseV1>(options);
       if (abortedResult) return abortedResult;
       const transport = await resolveTransport();
-      if (!transport.ok || !params.credentials) return failure('session_transport_unavailable');
+      if (!transport.ok) return unresolvedTransportFailure(transport);
+      if (!params.credentials) return failure('session_transport_unavailable');
       if (options?.signal?.aborted) return failure('runtime_control_aborted');
       return await callConnectedServiceAuthSessionRpc({
-        token: params.credentials.token,
-        sessionId: transport.sessionId,
-        ctx: transport.ctx,
-        mode: transport.mode,
+        transport: createSessionRpcTransport(params.credentials.token, transport),
         method: SESSION_RPC_METHODS.SESSION_CONNECTED_SERVICE_AUTH_READ_RUNTIME_IDENTITY,
         request,
         responseSchema: SessionConnectedServiceAuthReadRuntimeIdentityResponseV1Schema,
@@ -216,12 +257,9 @@ export function createResolvedSessionConnectedServiceAuthTransport(
     invalidateConnectedServiceAuthTransports: async (options) => {
       const abortedResult = aborted(options);
       if (abortedResult) return abortedResult;
-      const rawResponse = await callSessionRpc({
-        token: params.token,
-        sessionId: params.sessionId,
-        ctx: params.ctx,
-        mode: params.mode,
-        method: `${params.sessionId}:${SESSION_RPC_METHODS.SESSION_CONNECTED_SERVICE_AUTH_INVALIDATE_TRANSPORTS}`,
+      const rawResponse = await callResolvedSessionRpc({
+        transport: params,
+        method: SESSION_RPC_METHODS.SESSION_CONNECTED_SERVICE_AUTH_INVALIDATE_TRANSPORTS,
         request: {},
       });
       const parsedResponse = SessionConnectedServiceAuthInvalidateTransportsResponseV1Schema.safeParse(rawResponse);
@@ -237,10 +275,7 @@ export function createResolvedSessionConnectedServiceAuthTransport(
       const abortedResult = aborted<SessionConnectedServiceAuthApplyGenerationResponseV1>(options);
       if (abortedResult) return abortedResult;
       return await callConnectedServiceAuthSessionRpc({
-        token: params.token,
-        sessionId: params.sessionId,
-        ctx: params.ctx,
-        mode: params.mode,
+        transport: params,
         method: SESSION_RPC_METHODS.SESSION_CONNECTED_SERVICE_AUTH_APPLY_GENERATION,
         request,
         responseSchema: SessionConnectedServiceAuthApplyGenerationResponseV1Schema,
@@ -254,10 +289,7 @@ export function createResolvedSessionConnectedServiceAuthTransport(
       const abortedResult = aborted<SessionConnectedServiceAuthReadRuntimeIdentityResponseV1>(options);
       if (abortedResult) return abortedResult;
       return await callConnectedServiceAuthSessionRpc({
-        token: params.token,
-        sessionId: params.sessionId,
-        ctx: params.ctx,
-        mode: params.mode,
+        transport: params,
         method: SESSION_RPC_METHODS.SESSION_CONNECTED_SERVICE_AUTH_READ_RUNTIME_IDENTITY,
         request,
         responseSchema: SessionConnectedServiceAuthReadRuntimeIdentityResponseV1Schema,

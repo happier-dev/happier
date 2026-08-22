@@ -2,12 +2,14 @@ import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import {
+import * as workspaceBundleLock from '../../../scripts/workspaces/workspaceBundleLock.mjs';
+
+const {
   DEFAULT_WORKSPACE_BUNDLE_LOCK_TIMEOUT_MS,
   resolveWorkspaceBundleLockPath,
   withWorkspaceBundleLock,
   withWorkspaceBundleLockSync,
-} from '../../../scripts/workspaces/workspaceBundleLock.mjs';
+} = workspaceBundleLock;
 
 export {
   DEFAULT_WORKSPACE_BUNDLE_LOCK_TIMEOUT_MS,
@@ -29,6 +31,16 @@ export function findRepoRoot(startDir) {
 }
 
 export function resolveCliSharedDepsBuildLockPath(repoRoot) {
+  if (typeof workspaceBundleLock.resolveCliSharedDepsBuildLockPath === 'function') {
+    return workspaceBundleLock.resolveCliSharedDepsBuildLockPath(repoRoot);
+  }
+  // Source-dev can execute a freshly-updated CLI script beside an older mounted
+  // cli-common helper. Keep the lock identity deterministic until that package
+  // output is refreshed; this fallback is path construction, not a second lock owner.
+  return resolve(repoRoot, '.project', 'tmp', 'cli-shared-deps.lock');
+}
+
+export function resolveCliDistBuildLockPath(repoRoot) {
   return resolveWorkspaceBundleLockPath(repoRoot);
 }
 
@@ -104,5 +116,23 @@ export function withOptionalCliSharedDepsBuildLockSync(fn, options = {}) {
     timeoutMs,
     pollIntervalMs: options.lockPollIntervalMs ?? options.pollIntervalMs ?? 250,
     staleAfterMs: options.lockStaleAfterMs ?? options.staleAfterMs ?? timeoutMs,
+  });
+}
+
+export async function withOptionalCliDistBuildLock(fn, options = {}) {
+  const repoRoot = resolve(String(options.repoRoot ?? findRepoRoot(options.startDir)));
+  return await withOptionalCliSharedDepsBuildLock(fn, {
+    ...options,
+    repoRoot,
+    lockPath: options.lockPath ?? resolveCliDistBuildLockPath(repoRoot),
+  });
+}
+
+export function withOptionalCliDistBuildLockSync(fn, options = {}) {
+  const repoRoot = resolve(String(options.repoRoot ?? findRepoRoot(options.startDir)));
+  return withOptionalCliSharedDepsBuildLockSync(fn, {
+    ...options,
+    repoRoot,
+    lockPath: options.lockPath ?? resolveCliDistBuildLockPath(repoRoot),
   });
 }

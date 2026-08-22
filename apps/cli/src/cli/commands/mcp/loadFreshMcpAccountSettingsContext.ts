@@ -1,10 +1,10 @@
 import type { AccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
-import type { Credentials } from '@/persistence';
+import type { StoredCredentials } from '@/persistence';
 
 import type { McpCommandDeps } from './deps';
 
 export async function loadFreshMcpAccountSettingsContext(
-  credentials: Credentials,
+  credentials: StoredCredentials,
   deps: McpCommandDeps,
 ): Promise<AccountSettingsContext> {
   return deps.bootstrapAccountSettingsContext({

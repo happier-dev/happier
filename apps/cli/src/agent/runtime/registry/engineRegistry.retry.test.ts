@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { readHookEventEnvelopeV1 } from '@happier-dev/protocol';
 
 import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
@@ -34,7 +33,6 @@ vi.mock('./engineRegistry/resolution', async (importOriginal) => ({
 }));
 
 function createContributionRegistry(params?: Readonly<{
-    generationId?: string;
     includePluginBackend?: boolean;
 }>): ResolvedContributionRegistry {
     const agentDefinitionsById = new Map();
@@ -55,7 +53,6 @@ function createContributionRegistry(params?: Readonly<{
     }
 
     return {
-        generationId: params?.generationId ?? 'retry-registry',
         agents: Object.freeze([]),
                 actions: Object.freeze([]),
         resources: Object.freeze([]),
@@ -78,12 +75,9 @@ function createRuntimeRegistry(contributes: ResolvedContributionRegistry): Resol
         hookHandlersByHookId: new Map(),
         agentRuntimesByAgentId: new Map(),
         scmHostingProvidersById: new Map(),
-        networkAllowedUrlOriginsByPluginId: new Map(),
-        processSpawnAllowedPathsByPluginId: new Map(),
         pluginDiagnosticsByPluginId: Object.freeze({}),
         addRuntimeDisposable: (_pluginId, disposable) => disposable,
-        createAgentInvocationServices: () => createUnavailablePluginServices(),
-        readHookEventEnvelopeV1,
+        createAgentInvocationServices: async () => createUnavailablePluginServices(),
         retireConsumers: () => {},
         dispose: async () => {},
     };
@@ -99,7 +93,7 @@ describe('resolveCliEngineRegistry retry cache eviction', () => {
 
     it('retries canonical runtime lease acquisition after a transient failure', async () => {
         const contributions = createContributionRegistry();
-        const runtimeRegistry = createRuntimeRegistry(createContributionRegistry({ generationId: 'runtime-registry' }));
+        const runtimeRegistry = createRuntimeRegistry(createContributionRegistry());
         const resolution = Object.freeze({ backendId: 'acme.retry.backend', source: 'second-attempt' });
 
         resolveMergedContributionRegistryMock.mockResolvedValue(contributions);
@@ -124,7 +118,7 @@ describe('resolveCliEngineRegistry retry cache eviction', () => {
 
     it('retries backend resolution after a transient failure and reacquires the canonical lease', async () => {
         const contributions = createContributionRegistry();
-        const runtimeRegistry = createRuntimeRegistry(createContributionRegistry({ generationId: 'runtime-registry' }));
+        const runtimeRegistry = createRuntimeRegistry(createContributionRegistry());
         const resolution = Object.freeze({ backendId: 'acme.retry.backend', source: 'retry-success' });
 
         resolveMergedContributionRegistryMock.mockResolvedValue(contributions);

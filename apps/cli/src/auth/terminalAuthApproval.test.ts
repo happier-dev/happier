@@ -104,5 +104,32 @@ describe('approveTerminalAuthRequest', () => {
       expect(url).toBe('http://127.0.0.1:53288/v1/auth/response');
     });
   });
-});
 
+  it('reports a typed upgrade requirement for token-only credentials without posting a keyed response', async () => {
+    await withTempDir('happier-cli-terminal-auth-approval-token-only-', async (homeDir) => {
+      envScope.patch({
+        HAPPIER_HOME_DIR: homeDir,
+        HAPPIER_SERVER_URL: 'https://api.happier.dev',
+        HAPPIER_LOCAL_SERVER_URL: undefined,
+        HAPPIER_PUBLIC_SERVER_URL: undefined,
+        HAPPIER_WEBAPP_URL: undefined,
+        HAPPIER_ACTIVE_SERVER_ID: undefined,
+      });
+
+      const configMod = await import('@/configuration');
+      configMod.reloadConfiguration();
+      const persistence = await import('@/persistence');
+      await persistence.writeCredentialsTokenOnly({ token: 'token-only-1' });
+
+      const approval = await import('./terminalAuthApproval');
+      const terminalPublicKey = Buffer.alloc(32, 3).toString('base64');
+      await expect(
+        approval.approveTerminalAuthRequest({ publicKey: terminalPublicKey }),
+      ).rejects.toMatchObject({
+        name: 'TokenOnlyTerminalApprovalUpgradeRequiredError',
+        code: 'TOKEN_ONLY_TERMINAL_APPROVAL_UPGRADE_REQUIRED',
+      });
+      expect(mockPost).not.toHaveBeenCalled();
+    });
+  });
+});

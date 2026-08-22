@@ -2,14 +2,17 @@ import { randomBytes as nodeRandomBytes } from 'node:crypto';
 
 import {
   SESSION_METADATA_LAYOUT_VERSION_V1,
+  createPlainSessionOwnerMetadataEnvelopeV1,
   createSessionOwnerMetadataV1,
   projectSessionSharedMetadataV1,
-  sealSessionOwnerMetadataV1,
+  sealSessionOwnerMetadataEnvelopeV1,
+  type AccountScopedCryptoMaterial,
+  type SessionOwnerMetadataEnvelopeV1,
   type SessionOwnerMetadataV1,
 } from '@happier-dev/protocol';
 
 import { encodeBase64, encrypt } from '@/api/encryption';
-import type { Credentials } from '@/persistence';
+import type { StoredCredentials } from '@/persistence';
 
 export class SessionMetadataPrivacyUpgradeRequiredError extends Error {
   readonly code = 'metadata_privacy_upgrade_required' as const;
@@ -22,30 +25,52 @@ export class SessionMetadataPrivacyUpgradeRequiredError extends Error {
   }
 }
 
-type SessionMetadataEnvelopeBuildParams = Readonly<{
-  credentials: Credentials;
+type SessionMetadataEnvelopeBuildBaseParams = Readonly<{
+  credentials: StoredCredentials;
+  accountEncryptionMode: 'plain' | 'e2ee';
   metadata: unknown;
   agentState: unknown | null;
-  storedContentMode: 'plain' | 'e2ee';
-  encryptionKey: Uint8Array;
-  encryptionVariant: 'legacy' | 'dataKey';
 }>;
+
+type SessionMetadataEnvelopeBuildParams =
+  | SessionMetadataEnvelopeBuildBaseParams & Readonly<{
+      storedContentMode: 'plain';
+    }>
+  | SessionMetadataEnvelopeBuildBaseParams & Readonly<{
+      storedContentMode: 'e2ee';
+      encryptionKey: Uint8Array;
+      encryptionVariant: 'legacy' | 'dataKey';
+    }>;
 
 type SessionMetadataEnvelopeFields = Readonly<{
   metadataLayoutVersion: typeof SESSION_METADATA_LAYOUT_VERSION_V1;
   sharedMetadata: Readonly<{ ciphertext: string }>;
-  ownerMetadata: Readonly<{ ciphertext: string }>;
-  agentState: string | null;
-}>;
-
-type SessionMetadataLayoutZeroCreateFields = Readonly<{
-  metadata: string;
+  ownerMetadata: SessionOwnerMetadataEnvelopeV1;
   agentState: string | null;
 }>;
 
 export type SessionMetadataEnvelopeTupleFields = SessionMetadataEnvelopeFields & Readonly<{
   ownerMetadataValue: SessionOwnerMetadataV1;
 }>;
+
+function resolveAccountEncryptionMaterial(
+  credentials: StoredCredentials,
+): AccountScopedCryptoMaterial {
+  if (!credentials.encryption) {
+    throw new SessionMetadataPrivacyUpgradeRequiredError([
+      'accountEncryptionMaterial',
+    ]);
+  }
+  return credentials.encryption.type === 'legacy'
+    ? {
+        type: 'legacy',
+        secret: credentials.encryption.secret,
+      }
+    : {
+        type: 'dataKey',
+        machineKey: credentials.encryption.machineKey,
+      };
+}
 
 export function buildSessionMetadataEnvelopeFields(
   params: SessionMetadataEnvelopeBuildParams,
@@ -62,15 +87,6 @@ export function buildSessionMetadataEnvelopeFields(
       ownerMetadata.unsupportedFields,
     );
   }
-  const ownerCryptoMaterial = params.credentials.encryption.type === 'legacy'
-    ? {
-        type: 'legacy' as const,
-        secret: params.credentials.encryption.secret,
-      }
-    : {
-        type: 'dataKey' as const,
-        machineKey: params.credentials.encryption.machineKey,
-      };
   const sharedMetadataCiphertext = params.storedContentMode === 'plain'
     ? JSON.stringify(sharedMetadata)
     : encodeBase64(encrypt(
@@ -91,13 +107,17 @@ export function buildSessionMetadataEnvelopeFields(
   return {
     metadataLayoutVersion: SESSION_METADATA_LAYOUT_VERSION_V1,
     sharedMetadata: { ciphertext: sharedMetadataCiphertext },
-    ownerMetadata: {
-      ciphertext: sealSessionOwnerMetadataV1({
-        material: ownerCryptoMaterial,
-        ownerMetadata: ownerMetadata.ownerMetadata,
-        randomBytes: (length) => nodeRandomBytes(length),
-      }),
-    },
+    ownerMetadata: params.accountEncryptionMode === 'plain'
+      ? createPlainSessionOwnerMetadataEnvelopeV1(
+          ownerMetadata.ownerMetadata,
+        )
+      : sealSessionOwnerMetadataEnvelopeV1({
+          material: resolveAccountEncryptionMaterial(
+            params.credentials,
+          ),
+          ownerMetadata: ownerMetadata.ownerMetadata,
+          randomBytes: (length) => nodeRandomBytes(length),
+        }),
     agentState: agentStateCiphertext,
     ownerMetadataValue: ownerMetadata.ownerMetadata,
   };
@@ -105,26 +125,10 @@ export function buildSessionMetadataEnvelopeFields(
 
 export function buildSessionMetadataEnvelopeCreateFields(
   params: SessionMetadataEnvelopeBuildParams,
-): SessionMetadataLayoutZeroCreateFields {
-  const metadata = params.storedContentMode === 'plain'
-    ? JSON.stringify(params.metadata)
-    : encodeBase64(encrypt(
-        params.encryptionKey,
-        params.encryptionVariant,
-        params.metadata,
-      ));
-  const agentState = params.agentState === null
-    ? null
-    : params.storedContentMode === 'plain'
-      ? JSON.stringify(params.agentState)
-      : encodeBase64(encrypt(
-          params.encryptionKey,
-          params.encryptionVariant,
-          params.agentState,
-        ));
-
-  return {
-    metadata,
-    agentState,
-  };
+): SessionMetadataEnvelopeFields {
+  const {
+    ownerMetadataValue: _ownerMetadataValue,
+    ...fields
+  } = buildSessionMetadataEnvelopeFields(params);
+  return fields;
 }

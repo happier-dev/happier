@@ -3,7 +3,6 @@ import {
     chmod,
     mkdir,
     open,
-    readFile,
     stat,
     unlink,
     type FileHandle,
@@ -15,6 +14,10 @@ import type {
     ExternalSessionsSource,
     PluginContributionIdentityV1,
 } from '@happier-dev/protocol';
+import {
+    compareExternalSessionCandidatePrecedence,
+    resolveExternalSessionCandidateIdentityKey,
+} from '@happier-dev/plugin-sdk/sessions/external';
 
 import {
     ExternalSessionProviderFailureError,
@@ -22,6 +25,7 @@ import {
     type ExternalSessionExecutionSurface,
 } from '@/session/external/providerOps';
 import { EXTERNAL_SESSIONS_INVOCATION_POLICY } from '@/session/external/agentExternalSessionsInvocation';
+import { preservesExternalSessionSourceIdentity } from '@/session/external/sourceIdentity';
 import { withJsonOwnerFileLock } from '@/utils/fs/jsonOwnerFileLock';
 import { writeBytesAtomic, writeJsonAtomic } from '@/utils/fs/writeJsonAtomic';
 
@@ -35,11 +39,20 @@ type StrictJson =
 
 type StrictJsonObject = Readonly<{ [key: string]: StrictJson }>;
 
+/**
+ * `title` is the one content-derived field the index persists, by approved
+ * amendment (2026-08-07): a session's FIRST user message is immutable, so it is
+ * not volatile state, and a partial page is served without hydration — without
+ * it, every row of every in-progress build is a bare identifier, which on a
+ * large corpus is the permanent state. It is stored only when the source chunk
+ * supplies it; the host never derives, hydrates or invents one here.
+ */
 type StoredCandidate = Readonly<{
     remoteSessionId: string;
     updatedAtMs: number;
     createdAtMs?: number;
     archived?: boolean;
+    title?: string;
     linkData?: StrictJsonObject;
 }>;
 
@@ -67,7 +80,21 @@ type CandidateIndexRecord = Readonly<{
     state: 'building' | 'complete';
     agentKey: string;
     sourceKey: string;
+    /**
+     * Digest of {@link head}: the published identity of the first chunk this
+     * generation is anchored to. A completed generation keeps only this, because
+     * a completed index has nothing left to absorb — any first-chunk difference
+     * is a new generation.
+     */
     startToken: string;
+    /**
+     * The anchor rows themselves, kept only while the crawl is still in progress
+     * so an arrival ahead of the anchor can be told apart from a change inside
+     * the region already crawled. Bounded by {@link INDEX_SCAN_CHUNK_LIMIT}
+     * entries of a fixed width, so it stays inside the record envelope the file
+     * ceiling already reserves outside the candidate byte budget.
+     */
+    head?: readonly string[];
     scanCursor: string | null;
     scanned: number;
     total?: number;
@@ -101,6 +128,7 @@ type CandidateIndexFileIdentity = Readonly<{
 const INDEX_CURSOR_PREFIX = 'happier_external_candidate_index_v1:';
 const MAX_INDEX_CANDIDATES = 250_000;
 const MAX_INDEX_SERIALIZED_BYTES = 64 * 1024 * 1024;
+const MAX_INDEX_FILE_BYTES = MAX_INDEX_SERIALIZED_BYTES + (16 * 1024);
 const INDEX_SCAN_CHUNK_LIMIT = 50;
 // A fast 10k crawl fits one slice; slower leaves checkpoint often enough to keep Browse progress responsive.
 const INDEX_CONTINUATION_CALL_LIMIT = 250;
@@ -314,6 +342,10 @@ function sanitizeCandidate(value: ExternalSessionCandidatesPage['candidates'][nu
         || !Number.isSafeInteger(value.updatedAtMs)
         || (value.createdAtMs !== undefined && !Number.isSafeInteger(value.createdAtMs))
         || (value.archived !== undefined && typeof value.archived !== 'boolean')
+        || (
+            value.title !== undefined
+            && (typeof value.title !== 'string' || value.title.length === 0)
+        )
     ) return null;
     const rawLinkData = Reflect.get(value as object, 'linkData');
     const parsedLinkData = rawLinkData === undefined ? undefined : readStrictJson(rawLinkData);
@@ -331,36 +363,12 @@ function sanitizeCandidate(value: ExternalSessionCandidatesPage['candidates'][nu
         updatedAtMs: value.updatedAtMs,
         ...(value.createdAtMs === undefined ? {} : { createdAtMs: value.createdAtMs }),
         ...(value.archived === undefined ? {} : { archived: value.archived }),
+        ...(value.title === undefined ? {} : { title: value.title }),
         ...(linkData === undefined ? {} : { linkData }),
     });
 }
 
-export function resolveExternalSessionCandidateIdentityKey(candidate: Readonly<{
-    remoteSessionId: string;
-    linkData?: unknown;
-}>): string {
-    if (!candidate.remoteSessionId) {
-        throw new Error('External-session candidate identity requires a remote session id');
-    }
-    const parsedLinkData = candidate.linkData === undefined
-        ? null
-        : readStrictJson(candidate.linkData);
-    if (
-        candidate.linkData !== undefined
-        && (
-            !parsedLinkData
-            || typeof parsedLinkData !== 'object'
-            || Array.isArray(parsedLinkData)
-        )
-    ) {
-        throw new Error('External-session candidate identity requires strict JSON link data');
-    }
-    const linkData = parsedLinkData as StrictJsonObject | null;
-    return digest(canonicalJson({
-        remoteSessionId: candidate.remoteSessionId,
-        linkData,
-    }));
-}
+export { resolveExternalSessionCandidateIdentityKey };
 
 function candidateIdentity(candidate: StoredCandidate): string {
     return resolveExternalSessionCandidateIdentityKey(candidate);
@@ -395,7 +403,18 @@ export async function hydrateExternalSessionCandidateThroughAgentSource(params: 
             : { linkData: params.candidate.linkData },
         ...(params.signal === undefined ? {} : { signal: params.signal }),
     });
-    const page = await params.providerOps.listCandidates({
+    if (
+        resolved.remoteSessionId !== params.candidate.remoteSessionId
+        || !preservesExternalSessionSourceIdentity(params.source, resolved.source)
+    ) {
+        throw new ExternalSessionProviderFailureError({
+            code: 'source_invalid',
+            operation: 'resolveLinkIdentity',
+            message: 'External-session candidate identity rewrote admitted source identity',
+        });
+    }
+    const expectedIdentity = candidateIdentity(params.candidate);
+    let page = await params.providerOps.listCandidates({
         source: resolved.source,
         limit: 1,
         searchTerm: params.candidate.remoteSessionId,
@@ -403,19 +422,37 @@ export async function hydrateExternalSessionCandidateThroughAgentSource(params: 
         ...(params.maxBytes === undefined ? {} : { maxBytes: params.maxBytes }),
         ...(params.signal === undefined ? {} : { signal: params.signal }),
     });
-    const expectedIdentity = candidateIdentity(params.candidate);
-    const hydrated = page.candidates.find(
-        (candidate) => resolveExternalSessionCandidateIdentityKey(candidate) === expectedIdentity,
-    );
-    if (!hydrated) {
-        throw new ExternalSessionProviderFailureError({
-            code: 'candidate_not_found',
-            operation: 'listCandidates',
-            message: 'External-session candidate disappeared while hydrating an indexed page',
-            retryable: true,
+    let continuationCalls = 0;
+    const continuationCursors = new Set<string>();
+    while (true) {
+        const hydrated = page.candidates.find(
+            (candidate) => resolveExternalSessionCandidateIdentityKey(candidate) === expectedIdentity,
+        );
+        if (hydrated) return hydrated;
+        if (
+            page.nextCursor === null
+            || continuationCalls >= INDEX_CONTINUATION_CALL_LIMIT
+        ) break;
+        const cursor = page.nextCursor;
+        if (continuationCursors.has(cursor)) break;
+        continuationCursors.add(cursor);
+        continuationCalls += 1;
+        page = await params.providerOps.listCandidates({
+            source: resolved.source,
+            cursor,
+            limit: 1,
+            searchTerm: params.candidate.remoteSessionId,
+            searchMode: 'fast',
+            ...(params.maxBytes === undefined ? {} : { maxBytes: params.maxBytes }),
+            ...(params.signal === undefined ? {} : { signal: params.signal }),
         });
     }
-    return hydrated;
+    throw new ExternalSessionProviderFailureError({
+        code: 'candidate_not_found',
+        operation: 'listCandidates',
+        message: 'External-session candidate disappeared while hydrating an indexed page',
+        retryable: true,
+    });
 }
 
 function emptyCorpusDigest(): CandidateCorpusDigest {
@@ -456,16 +493,8 @@ function corpusDigestsEqual(
         && left.count === right.count;
 }
 
-function compareCandidateSortKey(left: string, right: string): number {
-    if (left < right) return -1;
-    if (left > right) return 1;
-    return 0;
-}
-
 function compareCandidates(left: StoredCandidate, right: StoredCandidate): number {
-    return right.updatedAtMs - left.updatedAtMs
-        || compareCandidateSortKey(left.remoteSessionId, right.remoteSessionId)
-        || compareCandidateSortKey(candidateIdentity(left), candidateIdentity(right));
+    return compareExternalSessionCandidatePrecedence(left, right);
 }
 
 function sortCandidates(candidates: readonly StoredCandidate[]): readonly StoredCandidate[] {
@@ -556,7 +585,7 @@ function isExactKeys(record: Record<string, unknown>, keys: readonly string[]): 
 function parseStoredCandidate(value: unknown): StoredCandidate | null {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
     const record = value as Record<string, unknown>;
-    const optionalKeys = ['createdAtMs', 'archived', 'linkData'].filter((key) => record[key] !== undefined);
+    const optionalKeys = ['createdAtMs', 'archived', 'title', 'linkData'].filter((key) => record[key] !== undefined);
     if (!isExactKeys(record, ['remoteSessionId', 'updatedAtMs', ...optionalKeys])) return null;
     return sanitizeCandidate(record as ExternalSessionCandidatesPage['candidates'][number]);
 }
@@ -569,7 +598,7 @@ function parsePersistedCompleteCandidate(
 ): StoredCandidate | null {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
     const record = value as Record<string, unknown>;
-    const optionalKeys = ['createdAtMs', 'archived', 'linkData'].filter((key) => record[key] !== undefined);
+    const optionalKeys = ['createdAtMs', 'archived', 'title', 'linkData'].filter((key) => record[key] !== undefined);
     if (!isExactKeys(record, [
         'remoteSessionId',
         'updatedAtMs',
@@ -593,6 +622,15 @@ function parsePersistedCompleteCandidate(
         )
     ) return null;
     return candidate;
+}
+
+function parseHeadAnchor(value: unknown): readonly string[] | null {
+    if (
+        !Array.isArray(value)
+        || value.length > INDEX_SCAN_CHUNK_LIMIT
+        || value.some((entry) => typeof entry !== 'string' || !HEAD_ANCHOR_ENTRY_PATTERN.test(entry))
+    ) return null;
+    return Object.freeze([...value] as string[]);
 }
 
 function parseCorpusDigest(value: unknown): CandidateCorpusDigest | null {
@@ -689,6 +727,7 @@ function parseIndexRecord(
         const record = value as Record<string, unknown>;
         const optionalKeys = [
             'total',
+            'head',
             'validation',
             'continuationHistory',
             'indexGeneration',
@@ -721,6 +760,8 @@ function parseIndexRecord(
                 record.total,
             )
             || !Array.isArray(record.candidates)
+            || (record.state === 'building' && record.head === undefined)
+            || (record.state === 'complete' && record.head !== undefined)
             || (record.state === 'building' && record.indexGeneration !== undefined)
             || (record.state === 'building' && record.candidateCount !== undefined)
             || (record.state === 'building' && record.continuationHistory === undefined)
@@ -736,6 +777,11 @@ function parseIndexRecord(
                 )
             )
             || (record.state === 'complete' && record.scanCursor !== null)
+        ) return null;
+        const head = record.head === undefined ? undefined : parseHeadAnchor(record.head);
+        if (
+            head === null
+            || (head !== undefined && record.startToken !== candidateHeadAnchorToken(head))
         ) return null;
         const candidates = record.state === 'complete'
             ? record.candidates.map((candidate, index) => parsePersistedCompleteCandidate(
@@ -810,6 +856,7 @@ function parseIndexRecord(
             agentKey: expected.agentKey,
             sourceKey: expected.sourceKey,
             startToken: record.startToken,
+            ...(head === undefined ? {} : { head }),
             scanCursor: record.scanCursor as string | null,
             scanned: record.scanned as number,
             ...(record.total === undefined ? {} : { total: record.total as number }),
@@ -828,8 +875,31 @@ async function readIndexRecord(
     indexPath: string,
     expected: Readonly<{ agentKey: string; sourceKey: string }>,
 ): Promise<CandidateIndexRecord | null> {
-    const raw = await readFile(indexPath, 'utf8').catch(() => null);
-    return raw === null ? null : parseIndexRecord(raw, expected);
+    const handle = await open(indexPath, 'r').catch(() => null);
+    if (!handle) return null;
+    try {
+        const stats = await handle.stat({ bigint: true }).catch(() => null);
+        if (
+            !stats
+            || stats.size < 1n
+            || stats.size > BigInt(MAX_INDEX_FILE_BYTES)
+        ) return null;
+        const buffer = Buffer.alloc(Number(stats.size));
+        let bytesRead = 0;
+        while (bytesRead < buffer.byteLength) {
+            const result = await handle.read(
+                buffer,
+                bytesRead,
+                buffer.byteLength - bytesRead,
+                bytesRead,
+            );
+            if (result.bytesRead === 0) return null;
+            bytesRead += result.bytesRead;
+        }
+        return parseIndexRecord(buffer.toString('utf8'), expected);
+    } finally {
+        await handle.close();
+    }
 }
 
 type CompleteCandidateIndexHeader = Readonly<{
@@ -1167,7 +1237,19 @@ function computeCandidatePageDigest(
     }));
 }
 
-function buildValidationToken(page: ExternalSessionCandidatesPage): string {
+const HEAD_ANCHOR_ENTRY_PATTERN = /^[a-f0-9]{128}$/;
+
+/**
+ * The rows a generation is anchored to: the first chunk exactly as it read when
+ * the crawl started, one entry per row pairing that row's identity with its
+ * content digest.
+ *
+ * Only rows are anchored. Preparation progress is scan bookkeeping about work in
+ * front of the crawl — a corpus that grew a container, a source that counts its
+ * sweep differently — and is not evidence about the region already crawled, so
+ * it must not decide whether a generation survives.
+ */
+function candidateHeadAnchor(page: ExternalSessionCandidatesPage): readonly string[] {
     const candidates = page.candidates.map(sanitizeCandidate);
     if (candidates.some((candidate) => candidate === null)) {
         throw new ExternalSessionProviderFailureError({
@@ -1177,11 +1259,110 @@ function buildValidationToken(page: ExternalSessionCandidatesPage): string {
             retryable: false,
         });
     }
-    return digest(canonicalJson({
-        candidates,
-        nextCursor: page.nextCursor,
-        preparation: page.preparation,
-    }));
+    return Object.freeze((candidates as StoredCandidate[]).map(
+        (candidate) => `${candidateIdentity(candidate)}${digest(canonicalJson(candidate))}`,
+    ));
+}
+
+function candidateHeadAnchorToken(anchor: readonly string[]): string {
+    return digest(canonicalJson(anchor));
+}
+
+/**
+ * Whether an in-progress crawl's anchor still holds against a freshly read first
+ * chunk.
+ *
+ * A row APPEARING at the head is not evidence that the corpus already scanned has
+ * changed: newest-first traversal puts every newly created session in front of
+ * the crawl, where it pushes an anchor row out of the head window without
+ * touching anything the build already holds. Such a row is absorbed — the build
+ * keeps its cursor, its crawled rows and its corpus chain, and the arrival is
+ * served by the generation that follows this one.
+ *
+ * A row the anchor DID hold whose content moved is the opposite fact, and still
+ * restarts the generation. So does an anchor that is no longer visible at all:
+ * once every anchored row has left the head window there is nothing left to
+ * check the crawl against, so the build fails closed rather than absorbing
+ * without evidence.
+ */
+function candidateHeadAnchorHolds(
+    anchor: readonly string[],
+    fresh: readonly string[],
+): boolean {
+    if (anchor.length === 0) return fresh.length === 0;
+    const anchoredContentByIdentity = new Map(
+        anchor.map((entry) => [entry.slice(0, 64), entry.slice(64)] as const),
+    );
+    let anchoredRowsStillVisible = 0;
+    for (const entry of fresh) {
+        const anchoredContent = anchoredContentByIdentity.get(entry.slice(0, 64));
+        if (anchoredContent === undefined) continue;
+        if (anchoredContent !== entry.slice(64)) return false;
+        anchoredRowsStillVisible += 1;
+    }
+    return anchoredRowsStillVisible > 0;
+}
+
+/**
+ * A completed generation has nothing left to absorb, so it keeps the strict
+ * whole-first-chunk identity it published; an in-progress crawl absorbs
+ * arrivals ahead of its anchor.
+ */
+function candidateIndexAnchorHolds(
+    record: CandidateIndexRecord,
+    freshAnchor: readonly string[],
+): boolean {
+    return record.state === 'building' && record.head
+        ? candidateHeadAnchorHolds(record.head, freshAnchor)
+        : record.startToken === candidateHeadAnchorToken(freshAnchor);
+}
+
+/**
+ * How many rows of a freshly read first chunk sit AHEAD of an in-progress
+ * crawl's anchor.
+ *
+ * Absorbing an arrival at the anchor check alone only defers the restart:
+ * validation re-traverses the whole source from the true head, so an absorbed
+ * row would enter validation's corpus chain, fail the comparison against the
+ * chain the crawl accumulated, and discard the finished crawl. The rows in front
+ * of the anchor are the same rows the anchor check already ruled are not
+ * evidence about the crawled region, so validation skips exactly them and begins
+ * its sweep at the first anchored row — the row the crawl itself began at.
+ *
+ * A completed generation is anchored by strict whole-chunk identity and so has
+ * nothing in front of it, and a first chunk holding no anchored row at all is no
+ * evidence about the crawled region: both start the sweep at the true head, so
+ * the corpus comparison fails closed instead of absorbing without evidence.
+ */
+function countCandidatesAheadOfAnchor(
+    record: CandidateIndexRecord,
+    freshCandidates: readonly StoredCandidate[],
+): number {
+    if (record.state !== 'building' || !record.head) return 0;
+    const anchoredIdentities = new Set(record.head.map((entry) => entry.slice(0, 64)));
+    const firstAnchored = freshCandidates.findIndex(
+        (candidate) => anchoredIdentities.has(candidateIdentity(candidate)),
+    );
+    return firstAnchored < 0 ? 0 : firstAnchored;
+}
+
+/**
+ * The corpus chain a validation sweep starts from: the freshly read first chunk
+ * with any rows that arrived in front of the crawl's anchor skipped.
+ *
+ * Only the head is skipped. Every row from the first anchored row onward is
+ * chained exactly as the crawl chained it, so a mutation, reordering, insertion
+ * or removal anywhere inside the crawled region still breaks the comparison and
+ * restarts the generation.
+ */
+function beginValidationCorpus(
+    record: CandidateIndexRecord,
+    freshCandidates: readonly StoredCandidate[],
+): CandidateCorpusDigest {
+    return extendCorpusDigest(
+        emptyCorpusDigest(),
+        freshCandidates.slice(countCandidatesAheadOfAnchor(record, freshCandidates)),
+    );
 }
 
 function readPreparedChunk(page: ExternalSessionCandidatesPage): Readonly<{
@@ -1240,12 +1421,14 @@ function createBuildingRecord(
         Buffer.byteLength(JSON.stringify(chunk.candidates), 'utf8'),
         Buffer.byteLength(JSON.stringify(continuationHistory), 'utf8'),
     );
+    const head = candidateHeadAnchor(initialPage);
     return Object.freeze({
         v: 2,
         state: 'building',
         agentKey: keys.agentKey,
         sourceKey: keys.sourceKey,
-        startToken: buildValidationToken(initialPage),
+        startToken: candidateHeadAnchorToken(head),
+        head,
         scanCursor: chunk.nextCursor,
         scanned: chunk.scanned,
         ...(chunk.total === undefined ? {} : { total: chunk.total }),
@@ -1254,6 +1437,14 @@ function createBuildingRecord(
         candidates: chunk.candidates,
     });
 }
+
+/**
+ * A continuation read either yields the next scan chunk, or reports that the
+ * corpus moved underneath the build and the index was restarted.
+ */
+type CandidateContinuationRead =
+    | Readonly<{ kind: 'chunk'; page: ExternalSessionCandidatesPage }>
+    | Readonly<{ kind: 'rebuilt'; response: ExternalSessionCandidatesPage }>;
 
 function sourceInvalid(message: string): ExternalSessionProviderFailureError {
     return new ExternalSessionProviderFailureError({
@@ -1280,28 +1471,43 @@ function addPreparationProgress(
     return combined;
 }
 
-function preparationResponse(
-    page: ExternalSessionCandidatesPage,
-    progressOffset = 0,
-    totalOffset = progressOffset,
-): ExternalSessionCandidatesPage {
-    if (!page.preparation) {
-        throw new Error('Candidate-index preparation response requires preparation state');
+/**
+ * A preparing index serves the rows it has already crawled so Browse can show a
+ * growing page instead of nothing. Each served row is stamped and re-parsed
+ * through the persisted content-address guard the completed index uses, so a
+ * partial page can never publish a row a completed page would reject.
+ */
+function selectServablePreparingCandidatePage(
+    record: CandidateIndexRecord,
+    limit: number,
+): readonly StoredCandidate[] {
+    const sorted = record.state === 'complete'
+        ? record.candidates
+        : sortCandidates(record.candidates);
+    const indexGeneration = record.state === 'complete' && record.indexGeneration
+        ? record.indexGeneration
+        : computeIndexGeneration(record.corpus, sorted);
+    const page: StoredCandidate[] = [];
+    for (const [indexOrdinal, candidate] of sorted.slice(0, limit).entries()) {
+        const verified = parsePersistedCompleteCandidate(
+            {
+                ...candidate,
+                indexOrdinal,
+                contentAddressDigest: computePersistedCandidateDigest(
+                    indexGeneration,
+                    sorted.length,
+                    indexOrdinal,
+                    candidate,
+                ),
+            },
+            indexGeneration,
+            sorted.length,
+            indexOrdinal,
+        );
+        if (!verified) break;
+        page.push(verified);
     }
-    const preparation = progressOffset === 0 && totalOffset === 0
-        ? page.preparation
-        : Object.freeze({
-            ...page.preparation,
-            scanned: addPreparationProgress(progressOffset, page.preparation.scanned),
-            ...(page.preparation.total === undefined
-                ? {}
-                : { total: addPreparationProgress(totalOffset, page.preparation.total) }),
-        });
-    return Object.freeze({
-        candidates: Object.freeze([]),
-        nextCursor: null,
-        preparation,
-    });
+    return Object.freeze(page);
 }
 
 function publishCandidatePage(
@@ -1684,6 +1890,7 @@ export async function executeExternalSessionCandidateQuery(params: Readonly<{
     }
 
     await ensurePrivateDirectory(paths.directory);
+    const initialAnchor = candidateHeadAnchor(initialPage);
     return await withCandidateIndexLock(paths.lockPath, async () => {
         const freshBuilding = createBuildingRecord(keys, initialPage);
         const continuationWorkStartedAt = performance.now();
@@ -1692,9 +1899,67 @@ export async function executeExternalSessionCandidateQuery(params: Readonly<{
             continuationCalls < INDEX_CONTINUATION_CALL_LIMIT
             && performance.now() - continuationWorkStartedAt < INDEX_CONTINUATION_WORK_BUDGET_MS
         );
+        /**
+         * A preparation response reports build progress and, when the index already
+         * holds digest-verified rows, the page it has crawled so far. It never emits
+         * a continuation cursor: only a completed generation is page-addressable.
+         *
+         * Partial rows preserve the one immutable content-derived field admitted by
+         * `StoredCandidate`: a source-supplied first-message title. The host neither
+         * derives nor refreshes titles during preparation, and it does not persist a
+         * working directory or another candidate representation. The shared publish
+         * path still applies the normal bounds and link-identity projection to the
+         * selected page without making the entire in-progress index page-addressable.
+         */
+        const preparationResponse = async (
+            page: ExternalSessionCandidatesPage,
+            servedCandidates: readonly StoredCandidate[] = [],
+            progressOffset = 0,
+            totalOffset = progressOffset,
+        ): Promise<ExternalSessionCandidatesPage> => {
+            if (!page.preparation) {
+                throw new Error('Candidate-index preparation response requires preparation state');
+            }
+            const preparation = progressOffset === 0 && totalOffset === 0
+                ? page.preparation
+                : Object.freeze({
+                    ...page.preparation,
+                    scanned: addPreparationProgress(progressOffset, page.preparation.scanned),
+                    ...(page.preparation.total === undefined
+                        ? {}
+                        : { total: addPreparationProgress(totalOffset, page.preparation.total) }),
+                });
+            return await hydrateAndPublishStoredCandidatePage({
+                storedCandidates: servedCandidates,
+                nextCursor: null,
+                limit,
+                maxBytes,
+                hydrateCandidate: undefined,
+                invalidate: async () => undefined,
+                publish: async (built) => publishCandidatePage(
+                    Object.freeze({ ...built, preparation }),
+                    limit,
+                    maxBytes,
+                ),
+            });
+        };
         const rebuildAndThrow = async (message: string): Promise<never> => {
             await writeJsonAtomic(paths.indexPath, freshBuilding);
             throw sourceInvalid(message);
+        };
+        /**
+         * Corpus drift is not a listing failure: the snapshot moved, so the index
+         * restarts from the fresh first chunk and the caller keeps seeing
+         * preparation progress instead of a typed source failure.
+         */
+        const rebuildAndReport = async (): Promise<ExternalSessionCandidatesPage> => {
+            await writeJsonAtomic(paths.indexPath, freshBuilding);
+            return await preparationResponse(
+                initialPage,
+                [],
+                0,
+                initialPage.preparation?.total ?? 0,
+            );
         };
         const requireContinuationProgress = async (params: Readonly<{
             phase: 'build' | 'validation';
@@ -1745,24 +2010,22 @@ export async function executeExternalSessionCandidateQuery(params: Readonly<{
             history.identitySet.add(cursorIdentity);
             history.serializedBytes += additionalSerializedBytes;
         };
-        const readContinuation = async (
-            cursor: string,
-            phase: 'build' | 'validation',
-        ): Promise<ExternalSessionCandidatesPage> => {
+        const readContinuation = async (cursor: string): Promise<CandidateContinuationRead> => {
             continuationCalls += 1;
             try {
-                return await params.listCandidates({
-                    cursor,
-                    limit: INDEX_SCAN_CHUNK_LIMIT,
-                });
+                return {
+                    kind: 'chunk',
+                    page: await params.listCandidates({
+                        cursor,
+                        limit: INDEX_SCAN_CHUNK_LIMIT,
+                    }),
+                };
             } catch (error) {
                 if (
                     error instanceof ExternalSessionProviderFailureError
                     && error.code === 'source_invalid'
                 ) {
-                    return await rebuildAndThrow(
-                        `External-session candidate index source changed during ${phase}`,
-                    );
+                    return { kind: 'rebuilt', response: await rebuildAndReport() };
                 }
                 throw error;
             }
@@ -1797,12 +2060,14 @@ export async function executeExternalSessionCandidateQuery(params: Readonly<{
                     }),
                 });
                 await writeJsonAtomic(paths.indexPath, validating);
-                return preparationResponse(page, record.state === 'building' ? record.scanned : 0);
+                return await preparationResponse(
+                    page,
+                    selectServablePreparingCandidatePage(record, limit),
+                    record.state === 'building' ? record.scanned : 0,
+                );
             }
             if (!corpusDigestsEqual(record.corpus, corpus)) {
-                return await rebuildAndThrow(
-                    'External-session candidate corpus changed during validation',
-                );
+                return await rebuildAndReport();
             }
             const sorted = record.state === 'complete'
                 ? record.candidates
@@ -1851,7 +2116,9 @@ export async function executeExternalSessionCandidateQuery(params: Readonly<{
                 'utf8',
             );
             while (true) {
-                const page = await readContinuation(scanCursor, 'validation');
+                const read = await readContinuation(scanCursor);
+                if (read.kind === 'rebuilt') return read.response;
+                const page = read.page;
                 const chunk = readPreparedChunk(page);
                 await requireContinuationProgress({
                     phase: 'validation',
@@ -1885,24 +2152,27 @@ export async function executeExternalSessionCandidateQuery(params: Readonly<{
                     validation,
                 });
                 await writeJsonAtomic(paths.indexPath, validating);
-                return preparationResponse(page, record.state === 'building' ? record.scanned : 0);
+                return await preparationResponse(
+                    page,
+                    selectServablePreparingCandidatePage(record, limit),
+                    record.state === 'building' ? record.scanned : 0,
+                );
             }
         };
         const beginValidation = async (
             record: CandidateIndexRecord,
             allowContinuation: boolean,
         ): Promise<ExternalSessionCandidatesPage> => {
-            if (record.startToken !== buildValidationToken(initialPage)) {
-                return await rebuildAndThrow(
-                    'External-session candidate corpus first chunk changed',
-                );
+            if (!candidateIndexAnchorHolds(record, initialAnchor)) {
+                return await rebuildAndReport();
             }
             const initialChunk = readPreparedChunk(initialPage);
+            const initialCorpus = beginValidationCorpus(record, initialChunk.candidates);
             if (!initialChunk.nextCursor) {
                 return await finishOrPersistValidation(
                     record,
                     initialPage,
-                    initialChunk.corpus,
+                    initialCorpus,
                 );
             }
             const initialContinuationHistory = Object.freeze([
@@ -1922,13 +2192,14 @@ export async function executeExternalSessionCandidateQuery(params: Readonly<{
                         scanCursor: initialChunk.nextCursor,
                         scanned: initialChunk.scanned,
                         ...(initialChunk.total === undefined ? {} : { total: initialChunk.total }),
-                        corpus: initialChunk.corpus,
+                        corpus: initialCorpus,
                         continuationHistory: initialContinuationHistory,
                     }),
                 });
                 await writeJsonAtomic(paths.indexPath, validating);
-                return preparationResponse(
+                return await preparationResponse(
                     initialPage,
+                    selectServablePreparingCandidatePage(record, limit),
                     record.state === 'building' ? record.scanned : 0,
                 );
             }
@@ -1938,7 +2209,7 @@ export async function executeExternalSessionCandidateQuery(params: Readonly<{
                     scanCursor: initialChunk.nextCursor,
                     scanned: initialChunk.scanned,
                     ...(initialChunk.total === undefined ? {} : { total: initialChunk.total }),
-                    corpus: initialChunk.corpus,
+                    corpus: initialCorpus,
                     continuationHistory: initialContinuationHistory,
                 }),
             );
@@ -1947,27 +2218,29 @@ export async function executeExternalSessionCandidateQuery(params: Readonly<{
         const existing = await readIndexRecord(paths.indexPath, keys);
         if (!existing) {
             await writeJsonAtomic(paths.indexPath, freshBuilding);
-            return preparationResponse(
+            return await preparationResponse(
                 initialPage,
+                [],
                 0,
                 initialPage.preparation?.total ?? 0,
             );
         }
 
-        if (existing.startToken !== buildValidationToken(initialPage)) {
-            return await rebuildAndThrow(
-                'External-session candidate corpus first chunk changed',
-            );
+        if (!candidateIndexAnchorHolds(existing, initialAnchor)) {
+            return await rebuildAndReport();
         }
 
         if (existing.validation) {
-            return await continueValidation(
-                existing,
-                existing.validation,
-            );
+            return await continueValidation(existing, existing.validation);
         }
 
         if (existing.state === 'building' && existing.scanCursor) {
+            /**
+             * The partial page is drawn from the rows that were already persisted and
+             * digest-verified when this slice started; rows crawled during this slice
+             * become servable on the next one, once they too have round-tripped.
+             */
+            const persistedPage = selectServablePreparingCandidatePage(existing, limit);
             let scanCursor: string | null = existing.scanCursor;
             let scanned = existing.scanned;
             let total = existing.total;
@@ -1982,6 +2255,7 @@ export async function executeExternalSessionCandidateQuery(params: Readonly<{
                 agentKey: existing.agentKey,
                 sourceKey: existing.sourceKey,
                 startToken: existing.startToken,
+                ...(existing.head === undefined ? {} : { head: existing.head }),
                 scanCursor,
                 scanned,
                 ...(total === undefined ? {} : { total }),
@@ -1991,7 +2265,9 @@ export async function executeExternalSessionCandidateQuery(params: Readonly<{
             });
             while (scanCursor) {
                 const consumedCursor = scanCursor;
-                const page = await readContinuation(consumedCursor, 'build');
+                const read = await readContinuation(consumedCursor);
+                if (read.kind === 'rebuilt') return read.response;
+                const page = read.page;
                 const chunk = readPreparedChunk(page);
                 await requireContinuationProgress({
                     phase: 'build',
@@ -2016,8 +2292,9 @@ export async function executeExternalSessionCandidateQuery(params: Readonly<{
                 if (canContinueWorkSlice()) continue;
                 const building = snapshotBuilding();
                 await writeJsonAtomic(paths.indexPath, building);
-                return preparationResponse(
+                return await preparationResponse(
                     page,
+                    persistedPage,
                     0,
                     page.preparation?.total ?? 0,
                 );

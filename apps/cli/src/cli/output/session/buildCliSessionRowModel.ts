@@ -1,7 +1,8 @@
 import {
-  inferAgentIdFromSessionMetadata,
+  resolveAgentIdFromSessionMetadata,
   evaluateVendorResumeEligibility,
   isLinkedVendorResumeIdentityCurrent,
+  resolveVendorResumeIdFromSessionMetadata,
   type VendorResumeEligibility,
 } from '@happier-dev/agents';
 import {
@@ -10,17 +11,25 @@ import {
   readRuntimeDescriptorV1FromMetadata,
   readSystemSessionMetadataFromMetadata,
   type AccountSettings,
+  type AccountEncryptionCurrentnessResponse,
 } from '@happier-dev/protocol';
 
-import type { Credentials } from '@/persistence';
+import type { StoredCredentials } from '@/persistence';
 import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
-import { tryDecryptSessionOwnerMetadataView } from '@/session/transport/encryption/sessionEncryptionContext';
+import { tryDecryptSessionPresentationMetadataView } from '@/session/transport/encryption/sessionEncryptionContext';
 import type { RawSessionListRow, RawSessionRecord } from '@/session/transport/http/sessionsHttp';
 import { resolveEngineRuntimeContribution } from '@/agent/runtime/registry/engineRegistry/contributions';
 
+/**
+ * What the CLI shows for a Session whose metadata declares no Agent. An
+ * unreadable identity is displayed as unknown rather than as the default Agent,
+ * which would be indistinguishable from a Session that really runs it.
+ */
+export const UNKNOWN_CLI_SESSION_AGENT_LABEL = 'unknown';
+
 export type CliSessionRowModel = Readonly<{
   id: string;
-  agentId: ReturnType<typeof inferAgentIdFromSessionMetadata>;
+  agentId: ReturnType<typeof resolveAgentIdFromSessionMetadata>;
   createdAt: number;
   updatedAt: number;
   active: boolean;
@@ -38,10 +47,10 @@ export type CliSessionRowModel = Readonly<{
 type ResumeContributionRegistry = Pick<ResolvedContributionRegistry, 'agentDefinitionsById'>;
 
 function resolveLinkedSessionCurrentAgent(
-  agentId: string,
+  agentId: string | null,
   contributionRegistry: ResumeContributionRegistry | null,
 ) {
-  const contribution = contributionRegistry?.agentDefinitionsById.get(agentId);
+  const contribution = agentId ? contributionRegistry?.agentDefinitionsById.get(agentId) : null;
   const identity = contribution?.identity;
   const sources = contribution?.richDefinition?.definition.surfaces?.externalSession?.sources;
   if (!identity || !sources || sources.length === 0) return null;
@@ -81,19 +90,6 @@ function normalizeVendorResumeSupportLevel(value: unknown): 'supported' | 'exper
     : 'unsupported';
 }
 
-function readPluginProviderResumeConfig(providerDefinition: unknown): Readonly<{
-  supportLevel: 'supported' | 'experimental' | 'unsupported';
-  vendorResumeIdField: string | null;
-}> {
-  const providerRecord = asRecord(providerDefinition);
-  const sessionRecord = asRecord(providerRecord?.session);
-  const resumeRecord = asRecord(sessionRecord?.resume);
-  return {
-    supportLevel: normalizeVendorResumeSupportLevel(resumeRecord?.supportLevel),
-    vendorResumeIdField: resumeRecord ? readOptionalNonEmptyString(resumeRecord, 'vendorResumeIdField') : null,
-  };
-}
-
 function isConfiguredBackendDisabledByAccountSettings(params: Readonly<{
   configuredBackendId: string | null;
   accountSettings: Record<string, unknown> | null;
@@ -131,15 +127,13 @@ function evaluatePluginVendorResumeEligibility(params: Readonly<{
     return { eligible: false, reasonCode: 'backend_disabled_by_account_settings' };
   }
 
-  // Plugin providers have a minimal contract definition plus an optional rich definition
-  // that preserves additional (still internal) plugin-specific fields such as session.resume.
-  const pluginResumeDefinition = providerContribution.richDefinition?.provenance === 'external'
-    ? providerContribution.richDefinition.definition
-    : providerContribution.definition;
-  const resumeConfig = readPluginProviderResumeConfig(pluginResumeDefinition);
-  const supportLevel = resumeConfig.supportLevel !== 'unsupported'
-    ? resumeConfig.supportLevel
-    : normalizeVendorResumeSupportLevel(providerContribution.catalogEntry?.vendorResumeSupport);
+  // A contributed Agent declares its native-resume support through the one
+  // catalog-entry projection (`catalog.vendorResume`, else inferred from
+  // `capabilities.sessions.open`). It has no second, definition-local resume
+  // block: `PluginAgentContributionV2` is strict and declares no `session` key.
+  const supportLevel = normalizeVendorResumeSupportLevel(
+    providerContribution.catalogEntry?.vendorResumeSupport,
+  );
   if (supportLevel === 'unsupported') {
     return { eligible: false, reasonCode: 'agent_unsupported' };
   }
@@ -147,21 +141,20 @@ function evaluatePluginVendorResumeEligibility(params: Readonly<{
     return { eligible: false, reasonCode: 'experimental_disabled' };
   }
 
-  const runtimeProviderRecord = asRecord(runtimeDescriptor?.agent);
-  const runtimeDescriptorVendorResumeId = runtimeDescriptor?.agentId === providerId && runtimeProviderRecord
-    ? readOptionalNonEmptyString(runtimeProviderRecord, 'providerSessionId')
-    : null;
-  const metadataVendorResumeId = resumeConfig.vendorResumeIdField
-    ? readOptionalNonEmptyString(metadata, resumeConfig.vendorResumeIdField)
-    : null;
-  const vendorResumeId = runtimeDescriptorVendorResumeId ?? metadataVendorResumeId;
+  // ONE owner decides what a Session's native resume id is, for a contributed
+  // Agent exactly as for a bundled one. This row model used to re-derive it
+  // from the runtime descriptor itself, which is how the CLI listing and the
+  // daemon's spawn path came to disagree about whether a Session was resumable.
+  const vendorResumeId = resolveVendorResumeIdFromSessionMetadata(providerId, metadata);
   if (!vendorResumeId) {
     return { eligible: false, reasonCode: 'vendor_resume_id_missing' };
   }
   if (!isLinkedVendorResumeIdentityCurrent({
     agentId: providerId,
     metadata,
-    vendorResumeIdField: resumeConfig.vendorResumeIdField,
+    // No catalog-declared flat slot exists for a contributed Agent; the shared
+    // owner reads the agent-agnostic runtime-descriptor slot instead.
+    vendorResumeIdField: null,
     linkedSessionCurrentAgent: resolveLinkedSessionCurrentAgent(providerId, contributionRegistry),
   })) {
     return { eligible: false, reasonCode: 'linked_session_identity_unverified' };
@@ -187,8 +180,9 @@ function resolveArchivedAtValue(raw: RawSessionListRow | RawSessionRecord): numb
 }
 
 export function buildCliSessionRowModel(params: Readonly<{
-  credentials: Credentials;
+  credentials: StoredCredentials;
   rawSession: RawSessionListRow | RawSessionRecord;
+  accountEncryptionMode: AccountEncryptionCurrentnessResponse['mode'];
   accountSettings?: AccountSettings | null;
   contributionRegistry?: ResumeContributionRegistry | null;
 }>): CliSessionRowModel {
@@ -200,15 +194,19 @@ export function buildCliSessionRowModel(params: Readonly<{
   const activeAt = raw.activeAt;
   const archivedAt = resolveArchivedAtValue(raw);
 
-  const metadata = tryDecryptSessionOwnerMetadataView({
+  const metadata = tryDecryptSessionPresentationMetadataView({
     credentials: params.credentials,
+    accountEncryptionMode: params.accountEncryptionMode,
     rawSession: params.rawSession,
   });
   const metaRecord = metadata && typeof metadata === 'object' && !Array.isArray(metadata)
     ? (metadata as Record<string, unknown>)
     : null;
 
-  const agentId = inferAgentIdFromSessionMetadata(metaRecord);
+  const agentPresentation = asRecord(metaRecord?.agentPresentation);
+  const agentId = (agentPresentation
+    ? readOptionalNonEmptyString(agentPresentation, 'agentId')
+    : null) ?? resolveAgentIdFromSessionMetadata(metaRecord);
 
   const tag = metaRecord ? readOptionalNonEmptyString(metaRecord, 'tag') : null;
   const title = metaRecord ? readTitleFromMetadata(metaRecord) : null;
@@ -233,7 +231,10 @@ export function buildCliSessionRowModel(params: Readonly<{
       params.contributionRegistry ?? null,
     ),
   };
-  const vendorResume = pluginVendorResume ?? evaluateVendorResumeEligibility(vendorResumeInput);
+  const builtInVendorResume: VendorResumeEligibility = agentId
+    ? evaluateVendorResumeEligibility({ ...vendorResumeInput, agentId })
+    : { eligible: false, reasonCode: 'agent_unsupported' };
+  const vendorResume = pluginVendorResume ?? builtInVendorResume;
 
   const encryptionMode: 'plain' | 'e2ee' = raw.encryptionMode === 'plain' ? 'plain' : 'e2ee';
 

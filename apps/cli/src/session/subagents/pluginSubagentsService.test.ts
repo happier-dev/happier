@@ -94,6 +94,41 @@ describe('createPluginSubagentsService', () => {
     subscription.dispose();
   });
 
+  it.each(['abort', 'retire'] as const)(
+    'does not report stale observation success when the caller or generation reaches %s during host mirroring',
+    async (settlement) => {
+      const canonicalStore = createHostSubagentStore();
+      let releaseMirror!: () => void;
+      const mirrorGate = new Promise<void>((resolve) => { releaseMirror = resolve; });
+      const upsert = vi.fn(async (request: Parameters<typeof canonicalStore.upsert>[0]) => {
+        await mirrorGate;
+        return await canonicalStore.upsert(request);
+      });
+      const store = Object.freeze({ ...canonicalStore, upsert });
+      const controller = new AbortController();
+      let current = true;
+      const service = createPluginSubagentsService({
+        store,
+        identity,
+        isCurrent: () => current,
+        durableCustody: createDurableCustody(),
+      });
+      const pending = service.observe(
+        { observationId: 'deferred-child', status: 'running' },
+        { signal: controller.signal },
+      );
+      await vi.waitFor(() => expect(upsert).toHaveBeenCalledOnce());
+
+      if (settlement === 'abort') controller.abort();
+      else current = false;
+      releaseMirror();
+
+      await expect(pending).rejects.toMatchObject({
+        code: settlement === 'abort' ? 'plugin_operation_aborted' : 'plugin_generation_retired',
+      });
+    },
+  );
+
   it('qualifies observations by owner, rejects terminal regression, and rejects legacy ledger inputs', async () => {
     const store = createHostSubagentStore();
     const custody = createDurableCustody();

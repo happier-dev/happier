@@ -73,6 +73,37 @@ describe('createExternalMcpServer', () => {
     expect(capturedSurface).toBe('mcp');
   });
 
+  it('uses the canonical plain Session crypto context for token-only credentials', async () => {
+    vi.resetModules();
+
+    let capturedHarnessParams: Record<string, unknown> | null = null;
+    vi.doMock('@/session/actions/createCliActionExecutorHarness', () => ({
+      createCliActionExecutorHarness: (params: Record<string, unknown>) => {
+        capturedHarnessParams = params;
+        return {
+          executor: {
+            execute: async () => ({ ok: false, errorCode: 'not_implemented' }),
+          },
+        };
+      },
+    }));
+
+    const { createExternalMcpServer } = await import('@/mcp/createExternalMcpServer');
+    const credentials = {
+      token: 'plain-token',
+      encryption: null,
+    } as const;
+
+    createExternalMcpServer({ credentials });
+
+    expect(capturedHarnessParams).toMatchObject({
+      credentials,
+      token: 'plain-token',
+      mode: 'plain',
+      ctx: null,
+    });
+  });
+
   it('passes through approval_request_created for execution_run_start tool calls via the shared action executor', async () => {
     vi.resetModules();
 

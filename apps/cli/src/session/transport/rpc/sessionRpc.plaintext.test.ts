@@ -102,7 +102,7 @@ describe('callSessionRpc (plaintext sessions)', () => {
       mode: 'plain',
       method: 'sess_1:demo.method',
       request: { a: 1 },
-      ctx: { encryptionKey: new Uint8Array(32), encryptionVariant: 'dataKey' },
+      ctx: null,
     });
 
     expect(sockets.createUserScopedSocket).toHaveBeenCalledWith({ token: 't' });
@@ -119,7 +119,7 @@ describe('callSessionRpc (plaintext sessions)', () => {
       mode: 'plain',
       method: 'sess_1:demo.method',
       request: req,
-      ctx: { encryptionKey: new Uint8Array(32), encryptionVariant: 'dataKey' },
+      ctx: null,
     });
 
     expect(res).toEqual({ echoed: req });
@@ -144,7 +144,7 @@ describe('callSessionRpc (plaintext sessions)', () => {
         mode: 'plain',
         method: 'sess_1:demo.method',
         request: { a: 1 },
-        ctx: { encryptionKey: new Uint8Array(32), encryptionVariant: 'dataKey' },
+        ctx: null,
       }),
     ).rejects.toSatisfy((error: unknown) => readRpcErrorCode(error) === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE);
     expect(nextSocket?.disconnectCalls).toBe(1);
@@ -152,7 +152,7 @@ describe('callSessionRpc (plaintext sessions)', () => {
   });
 
   it('closes the socket when connection fails before the RPC emit', async () => {
-    const { callSessionRpc } = await import('./sessionRpc');
+    const { callSessionRpc, readSessionRpcRequestDisposition } = await import('./sessionRpc');
     configureNextSocket = (socket) => {
       socket.connectError = new Error('connect failed');
     };
@@ -162,10 +162,12 @@ describe('callSessionRpc (plaintext sessions)', () => {
       mode: 'plain',
       method: 'sess_1:demo.method',
       request: { a: 1 },
-      ctx: { encryptionKey: new Uint8Array(32), encryptionVariant: 'dataKey' },
+      ctx: null,
     });
 
-    await expect(promise).rejects.toThrow('connect failed');
+    const error = await promise.catch((caught: unknown) => caught);
+    expect(error).toMatchObject({ message: 'connect failed' });
+    expect(readSessionRpcRequestDisposition(error)).toBe('notSent');
     expect(nextSocket?.disconnectCalls).toBe(1);
     expect(nextSocket?.closeCalls).toBe(1);
     expect(nextSocket?.listenerCount('connect')).toBe(0);
@@ -173,7 +175,7 @@ describe('callSessionRpc (plaintext sessions)', () => {
   });
 
   it('closes the socket when emit throws synchronously', async () => {
-    const { callSessionRpc } = await import('./sessionRpc');
+    const { callSessionRpc, readSessionRpcRequestDisposition } = await import('./sessionRpc');
     configureNextSocket = (socket) => {
       socket.emitError = new Error('emit failed');
     };
@@ -183,17 +185,19 @@ describe('callSessionRpc (plaintext sessions)', () => {
       mode: 'plain',
       method: 'sess_1:demo.method',
       request: { a: 1 },
-      ctx: { encryptionKey: new Uint8Array(32), encryptionVariant: 'dataKey' },
+      ctx: null,
     });
 
-    await expect(promise).rejects.toThrow('emit failed');
+    const error = await promise.catch((caught: unknown) => caught);
+    expect(error).toMatchObject({ message: 'emit failed' });
+    expect(readSessionRpcRequestDisposition(error)).toBe('outcomeUnknown');
     expect(nextSocket?.disconnectCalls).toBe(1);
     expect(nextSocket?.closeCalls).toBe(1);
   });
 
   it('closes the socket when the RPC ack times out', async () => {
     vi.useFakeTimers();
-    const { callSessionRpc } = await import('./sessionRpc');
+    const { callSessionRpc, readSessionRpcRequestDisposition } = await import('./sessionRpc');
     configureNextSocket = (socket) => {
       socket.ackMode = 'never';
     };
@@ -204,12 +208,14 @@ describe('callSessionRpc (plaintext sessions)', () => {
       method: 'sess_1:demo.method',
       request: { a: 1 },
       timeoutMs: 10,
-      ctx: { encryptionKey: new Uint8Array(32), encryptionVariant: 'dataKey' },
+      ctx: null,
     });
-    const rejection = expect(promise).rejects.toThrow('RPC call timeout');
+    const errorPromise = promise.catch((caught: unknown) => caught);
     await vi.advanceTimersByTimeAsync(10);
 
-    await rejection;
+    const error = await errorPromise;
+    expect(error).toMatchObject({ message: 'RPC call timeout' });
+    expect(readSessionRpcRequestDisposition(error)).toBe('outcomeUnknown');
     expect(nextSocket?.disconnectCalls).toBe(1);
     expect(nextSocket?.closeCalls).toBe(1);
   });

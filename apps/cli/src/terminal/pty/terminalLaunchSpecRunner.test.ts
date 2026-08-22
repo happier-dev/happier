@@ -9,7 +9,11 @@ function createRunnerScriptHarness() {
   const scriptPath = resolve(__dirname, '../../../scripts/terminal_launch_spec_runner.cjs');
   const source = readFileSync(scriptPath, 'utf8').replace(/^#!.*\n/, '');
   const child = new EventEmitter();
-  const spawn = vi.fn(() => child);
+  const spawn = vi.fn((
+    _command: string,
+    _args: readonly string[],
+    _options: Readonly<Record<string, unknown>>,
+  ) => child);
   const fakeProcess = Object.assign(new EventEmitter(), {
     argv: ['node', scriptPath],
     env: {},

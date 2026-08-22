@@ -4,6 +4,9 @@ import { join, relative } from 'node:path';
 import { performance } from 'node:perf_hooks';
 
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
+import type {
+    AgentExternalSessionsManagedEndpointRead,
+} from '@happier-dev/plugin-sdk/sessions/external';
 import {
     activate as activateClaudePlugin,
     PLUGIN_MANIFEST as CLAUDE_PLUGIN_MANIFEST,
@@ -14,6 +17,7 @@ import {
     ExternalSessionProviderFailureError,
     type ExternalSessionCandidatesPage,
 } from '@/session/external/providerOps';
+import { createUnavailablePluginServices } from '@/plugins/runtime/invocation/services/unavailable';
 
 import {
     executeExternalSessionCandidateQuery,
@@ -25,11 +29,17 @@ import {
 } from './candidateQuery';
 
 const roots: string[] = [];
+const unavailableManagedEndpointRead: AgentExternalSessionsManagedEndpointRead =
+    async () => {
+        throw new Error('Managed endpoint read is unavailable in this file-backed fixture');
+    };
+const unavailableInvocationExec = createUnavailablePluginServices().exec;
 
 type MutableCandidate = {
     remoteSessionId: string;
     updatedAtMs: number;
     linkData: { projectId: string };
+    title?: string;
 };
 
 function candidateFixture(
@@ -81,8 +91,10 @@ async function readUntilPublished(
     let sourceInvalidCount = 0;
     for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
         try {
+            // A building index now serves the rows it already holds, so publication is
+            // the absence of preparation state rather than the presence of candidates.
             const result = await query();
-            if (result.candidates.length > 0) return { result, sourceInvalidCount };
+            if (!result.preparation) return { result, sourceInvalidCount };
         } catch (error) {
             if (
                 error
@@ -142,6 +154,160 @@ describe('External Sessions candidate query owner', () => {
             operation: 'resolveLinkIdentity',
         });
         expect(resolveLinkIdentity).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([
+        {
+            name: 'same-kind source rewrite',
+            resolvedIdentity: {
+                remoteSessionId: 'session-1',
+                source: { kind: 'claudeConfig', configDir: '/rewritten/source' },
+            },
+        },
+        {
+            name: 'remote-session id rewrite',
+            resolvedIdentity: {
+                remoteSessionId: 'session-2',
+                source: { kind: 'claudeConfig', configDir: '/private/source' },
+            },
+        },
+    ])('rejects a $name before the second candidate lookup', async ({ resolvedIdentity }) => {
+        const listCandidates = vi.fn();
+
+        await expect(hydrateExternalSessionCandidateThroughAgentSource({
+            source: { kind: 'claudeConfig', configDir: '/private/source' },
+            candidate: {
+                remoteSessionId: 'session-1',
+                updatedAtMs: 1,
+                linkData: { projectId: 'project-a' },
+            },
+            providerOps: {
+                resolveLinkIdentity: async () => resolvedIdentity,
+                listCandidates,
+            },
+        })).rejects.toMatchObject({
+            name: 'ExternalSessionProviderFailureError',
+            code: 'source_invalid',
+            operation: 'resolveLinkIdentity',
+        });
+
+        expect(listCandidates).not.toHaveBeenCalled();
+    });
+
+    it('allows candidate identity hydration to add source fields', async () => {
+        const candidate = {
+            remoteSessionId: 'session-1',
+            updatedAtMs: 1,
+            linkData: { projectId: 'project-a' },
+        } as const;
+        const listCandidates = vi.fn(async () => ({
+            candidates: [candidate],
+            nextCursor: null,
+        }));
+
+        await expect(hydrateExternalSessionCandidateThroughAgentSource({
+            source: { kind: 'claudeConfig', configDir: '/private/source' },
+            candidate,
+            providerOps: {
+                resolveLinkIdentity: async ({ source, remoteSessionId }) => ({
+                    remoteSessionId,
+                    source: { ...source, canonicalConfigFile: '/private/source/config.json' },
+                }),
+                listCandidates,
+            },
+        })).resolves.toEqual(candidate);
+
+        expect(listCandidates).toHaveBeenCalledWith(expect.objectContaining({
+            source: {
+                kind: 'claudeConfig',
+                configDir: '/private/source',
+                canonicalConfigFile: '/private/source/config.json',
+            },
+        }));
+    });
+
+    it('continues bounded candidate hydration when the exact match is beyond the first inspected entry', async () => {
+        const caller = new AbortController();
+        const candidate = {
+            remoteSessionId: 'session-1',
+            updatedAtMs: 1,
+            linkData: { projectId: 'project-a' },
+        } as const;
+        const listCandidates = vi.fn(async ({ cursor }: Readonly<{ cursor?: string }>) => (
+            cursor
+                ? {
+                    candidates: [candidate],
+                    nextCursor: null,
+                }
+                : {
+                    candidates: [],
+                    nextCursor: 'scan:1',
+                    searchIncomplete: true,
+                }
+        ));
+
+        await expect(hydrateExternalSessionCandidateThroughAgentSource({
+            source: { kind: 'ohMyPiAgentDir', agentDir: '/private/source' },
+            candidate,
+            providerOps: {
+                resolveLinkIdentity: async ({ source, remoteSessionId }) => ({
+                    remoteSessionId,
+                    source,
+                }),
+                listCandidates,
+            },
+            maxBytes: 4_096,
+            signal: caller.signal,
+        })).resolves.toEqual(candidate);
+
+        expect(listCandidates).toHaveBeenCalledTimes(2);
+        expect(listCandidates).toHaveBeenNthCalledWith(1, {
+            source: { kind: 'ohMyPiAgentDir', agentDir: '/private/source' },
+            limit: 1,
+            searchTerm: 'session-1',
+            searchMode: 'fast',
+            maxBytes: 4_096,
+            signal: caller.signal,
+        });
+        expect(listCandidates).toHaveBeenNthCalledWith(2, {
+            source: { kind: 'ohMyPiAgentDir', agentDir: '/private/source' },
+            cursor: 'scan:1',
+            limit: 1,
+            searchTerm: 'session-1',
+            searchMode: 'fast',
+            maxBytes: 4_096,
+            signal: caller.signal,
+        });
+    });
+
+    it('stops candidate hydration when a continuation cursor does not advance', async () => {
+        const listCandidates = vi.fn(async () => ({
+            candidates: [],
+            nextCursor: 'scan:1',
+            searchIncomplete: true,
+        }));
+
+        await expect(hydrateExternalSessionCandidateThroughAgentSource({
+            source: { kind: 'ohMyPiAgentDir', agentDir: '/private/source' },
+            candidate: {
+                remoteSessionId: 'session-1',
+                updatedAtMs: 1,
+                linkData: { projectId: 'project-a' },
+            },
+            providerOps: {
+                resolveLinkIdentity: async ({ source, remoteSessionId }) => ({
+                    remoteSessionId,
+                    source,
+                }),
+                listCandidates,
+            },
+        })).rejects.toMatchObject({
+            code: 'candidate_not_found',
+            operation: 'listCandidates',
+            retryable: true,
+        });
+
+        expect(listCandidates).toHaveBeenCalledTimes(2);
     });
 
     it('enforces exact source-work, continuation-history, and combined private-byte ceilings', () => {
@@ -237,7 +403,7 @@ describe('External Sessions candidate query owner', () => {
         ))).rejects.toMatchObject({ code: 'ENOENT' });
     });
 
-    it('persists exact preparation chunks privately and exposes candidates only after the index is complete', async () => {
+    it('persists exact preparation chunks privately and serves only the rows it has already indexed', async () => {
         const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-candidate-index-'));
         roots.push(activeServerDir);
         const listCandidates = vi.fn(async ({ cursor }: Readonly<{ cursor?: string }>) => cursor
@@ -258,7 +424,7 @@ describe('External Sessions candidate query owner', () => {
                 candidates: [
                     {
                         remoteSessionId: 'oldest',
-                        title: 'must not be persisted',
+                        title: 'Immutable first user message',
                         updatedAtMs: 10,
                         linkData: { projectId: 'project-a' },
                     },
@@ -300,10 +466,21 @@ describe('External Sessions candidate query owner', () => {
         });
         expect(listCandidates).toHaveBeenCalledTimes(1);
 
-        await expect(executeExternalSessionCandidateQuery(base)).resolves.toMatchObject({
-            candidates: [],
+        // The crawl has now covered the corpus, so the preparation page already
+        // serves the final ordering while the validation pass is still outstanding.
+        const building = await executeExternalSessionCandidateQuery(base);
+        expect(building).toMatchObject({
+            candidates: [
+                { remoteSessionId: 'newest', updatedAtMs: 30 },
+                { remoteSessionId: 'middle', updatedAtMs: 20 },
+            ],
+            nextCursor: null,
             preparation: { kind: 'building_candidate_index', scanned: 5 },
         });
+        expect(building.candidates.map((candidate) => candidate.title)).toEqual([
+            undefined,
+            undefined,
+        ]);
         const completed = await executeExternalSessionCandidateQuery(base);
         expect(completed).toMatchObject({
             candidates: [
@@ -336,8 +513,11 @@ describe('External Sessions candidate query owner', () => {
         ]);
         const raw = await readFile(indexPath, 'utf8');
         expect(raw).not.toContain('/private/source');
-        expect(raw).not.toContain('must not be persisted');
         expect(raw).not.toContain('candidateKey');
+        // The source-supplied title is the one content-derived field the index
+        // keeps (approved amendment, 2026-08-07): a first user message is
+        // immutable, and a partial page is served without hydration.
+        expect(raw).toContain('Immutable first user message');
         expect(JSON.parse(raw)).toMatchObject({
             v: 2,
             state: 'complete',
@@ -390,7 +570,10 @@ describe('External Sessions candidate query owner', () => {
             },
         });
         await expect(executeExternalSessionCandidateQuery(base)).resolves.toMatchObject({
-            candidates: [],
+            candidates: [
+                { remoteSessionId: 'newest' },
+                { remoteSessionId: 'middle' },
+            ],
             preparation: {
                 kind: 'building_candidate_index',
                 scanned: 5,
@@ -576,7 +759,7 @@ describe('External Sessions candidate query owner', () => {
         const nowSpy = vi.spyOn(performance, 'now').mockImplementation(() => fakeNowMs);
         try {
             await expect(query()).resolves.toMatchObject({
-                candidates: [],
+                candidates: [expect.objectContaining({ remoteSessionId: 'oldest' })],
                 preparation: { scanned: 2 },
             });
             await expect(query()).rejects.toMatchObject({
@@ -655,17 +838,23 @@ describe('External Sessions candidate query owner', () => {
         progress.push(initial.preparation!);
         const nowSpy = vi.spyOn(performance, 'now').mockImplementation(() => fakeNowMs);
         try {
+            // Each slice serves the rows persisted before it started, so the partial
+            // page grows alongside the progress it reports.
             const building = await query();
             expect(building).toMatchObject({
-                candidates: [],
                 preparation: { scanned: 100, total: 240 },
             });
+            expect(building.candidates).toHaveLength(50);
+            expect(building.candidates[0]?.remoteSessionId).toBe('session-49');
             progress.push(building.preparation!);
             const validating = await query();
             expect(validating).toMatchObject({
-                candidates: [],
                 preparation: { scanned: 170, total: 240 },
             });
+            // This slice finishes the crawl, so its partial page is already the
+            // final ordering even though the validation pass has not published yet.
+            expect(validating.candidates).toHaveLength(50);
+            expect(validating.candidates[0]?.remoteSessionId).toBe('session-119');
             progress.push(validating.preparation!);
         } finally {
             nowSpy.mockRestore();
@@ -787,10 +976,10 @@ describe('External Sessions candidate query owner', () => {
         });
         const nowSpy = vi.spyOn(performance, 'now').mockImplementation(() => fakeNowMs);
         try {
-            await expect(query()).resolves.toMatchObject({
-                candidates: [],
-                preparation: { scanned: 150 },
-            });
+            const slice = await query();
+            expect(slice).toMatchObject({ preparation: { scanned: 150 } });
+            expect(slice.candidates).toHaveLength(50);
+            expect(slice.candidates[0]?.remoteSessionId).toBe('session-0049');
         } finally {
             nowSpy.mockRestore();
         }
@@ -888,7 +1077,153 @@ describe('External Sessions candidate query owner', () => {
         );
     });
 
-    it('hydrates only the selected cold and warm index rows without persisting titles', async () => {
+    it('serves the candidates already indexed while the index is still building', async () => {
+        const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-candidate-partial-page-'));
+        roots.push(activeServerDir);
+        const corpus = Array.from({ length: 125 }, (_, index): MutableCandidate => ({
+            remoteSessionId: `session-${String(index).padStart(3, '0')}`,
+            updatedAtMs: index,
+            linkData: { projectId: 'project-a' },
+        }));
+        const boundedSource = createBoundedCandidateSource(corpus);
+        let fakeNowMs = 0;
+        const listCandidates = async (request: Readonly<{ cursor?: string; limit: number }>) => {
+            if (request.cursor) fakeNowMs += 300;
+            return await boundedSource(request);
+        };
+        const query = () => executeExternalSessionCandidateQuery({
+            activeServerDir,
+            agentIdentity: { pluginId: 'happier.claude', localId: 'claude' },
+            source: { kind: 'claudeConfig', configDir: '/private/source' },
+            limit: 2,
+            listCandidates,
+        });
+
+        await expect(query()).resolves.toMatchObject({
+            candidates: [],
+            nextCursor: null,
+            preparation: { kind: 'building_candidate_index', scanned: 2 },
+        });
+
+        const nowSpy = vi.spyOn(performance, 'now').mockImplementation(() => fakeNowMs);
+        try {
+            const building = await query();
+            expect(building.preparation).toMatchObject({ kind: 'building_candidate_index' });
+            expect(building.nextCursor).toBeNull();
+            expect(building.candidates.map((candidate) => candidate.remoteSessionId)).toEqual([
+                'session-001',
+                'session-000',
+            ]);
+            expect(building.candidates.map((candidate) => candidate.candidateKey)).toEqual([
+                expect.stringMatching(/^[a-f0-9]{64}$/),
+                expect.stringMatching(/^[a-f0-9]{64}$/),
+            ]);
+
+            const advanced = await query();
+            expect(advanced.preparation).toMatchObject({ kind: 'building_candidate_index' });
+            expect(advanced.candidates.map((candidate) => candidate.remoteSessionId)).toEqual([
+                'session-051',
+                'session-050',
+            ]);
+        } finally {
+            nowSpy.mockRestore();
+        }
+    });
+
+    it('serves the source-supplied title on the rows it has already indexed', async () => {
+        const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-candidate-partial-title-'));
+        roots.push(activeServerDir);
+        const corpus = Array.from({ length: 125 }, (_, index): MutableCandidate => ({
+            remoteSessionId: `session-${String(index).padStart(3, '0')}`,
+            updatedAtMs: index,
+            linkData: { projectId: 'project-a' },
+            // Only the odd rows have a usable first user message; the rest stay
+            // identifier-only rather than being given an invented title.
+            ...(index % 2 === 1 ? { title: `First message ${index}` } : {}),
+        }));
+        const boundedSource = createBoundedCandidateSource(corpus);
+        let fakeNowMs = 0;
+        const listCandidates = async (request: Readonly<{ cursor?: string; limit: number }>) => {
+            if (request.cursor) fakeNowMs += 300;
+            return await boundedSource(request);
+        };
+        const query = () => executeExternalSessionCandidateQuery({
+            activeServerDir,
+            agentIdentity: { pluginId: 'happier.claude', localId: 'claude' },
+            source: { kind: 'claudeConfig', configDir: '/private/source' },
+            limit: 2,
+            listCandidates,
+        });
+
+        await query();
+        const nowSpy = vi.spyOn(performance, 'now').mockImplementation(() => fakeNowMs);
+        try {
+            const building = await query();
+            expect(building.preparation).toMatchObject({ kind: 'building_candidate_index' });
+            // A partial row is served without hydration, so a title it can only get
+            // from the source chunk proves the index carried it through.
+            expect(building.candidates.map((candidate) => [
+                candidate.remoteSessionId,
+                candidate.title,
+            ])).toEqual([
+                ['session-001', 'First message 1'],
+                ['session-000', undefined],
+            ]);
+        } finally {
+            nowSpy.mockRestore();
+        }
+        expect(await readFile(await findCandidateIndexPath(activeServerDir), 'utf8'))
+            .toContain('First message 1');
+    });
+
+    it('serves the fully crawled page while the validation pass is still running', async () => {
+        const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-candidate-validation-page-'));
+        roots.push(activeServerDir);
+        const corpus = Array.from({ length: 120 }, (_, index): MutableCandidate => ({
+            remoteSessionId: `session-${String(index).padStart(3, '0')}`,
+            updatedAtMs: index,
+            linkData: { projectId: 'project-a' },
+        }));
+        const boundedSource = createBoundedCandidateSource(corpus);
+        let fakeNowMs = 0;
+        const listCandidates = async (request: Readonly<{ cursor?: string; limit: number }>) => {
+            if (request.cursor) fakeNowMs += 300;
+            return await boundedSource(request);
+        };
+        const query = () => executeExternalSessionCandidateQuery({
+            activeServerDir,
+            agentIdentity: { pluginId: 'happier.claude', localId: 'claude' },
+            source: { kind: 'claudeConfig', configDir: '/private/source' },
+            limit: 2,
+            listCandidates,
+        });
+
+        const validating: Awaited<ReturnType<typeof query>>[] = [];
+        const nowSpy = vi.spyOn(performance, 'now').mockImplementation(() => fakeNowMs);
+        try {
+            for (let rootCall = 0; rootCall < 40; rootCall += 1) {
+                const page = await query();
+                if (!page.preparation) break;
+                validating.push(page);
+            }
+        } finally {
+            nowSpy.mockRestore();
+        }
+
+        // Once the crawl has covered the corpus the validation pass keeps reporting
+        // preparation, but the page it serves is already the final ordering.
+        const finalOrdering = validating.filter((page) => (
+            page.candidates[0]?.remoteSessionId === 'session-119'
+        ));
+        expect(finalOrdering.length).toBeGreaterThan(0);
+        expect(finalOrdering[0]?.candidates.map((candidate) => candidate.remoteSessionId)).toEqual([
+            'session-119',
+            'session-118',
+        ]);
+        expect(finalOrdering[0]?.nextCursor).toBeNull();
+    });
+
+    it('hydrates only the selected cold and warm index rows without persisting hydrated titles', async () => {
         const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-candidate-hydration-'));
         roots.push(activeServerDir);
         const corpus = Array.from({ length: 12 }, (_, index): MutableCandidate => ({
@@ -921,6 +1256,8 @@ describe('External Sessions candidate query owner', () => {
         ]);
         expect(cold.result.candidates.every((candidate) => candidate.details?.hydrated === true)).toBe(true);
         expect(hydrateCandidate).toHaveBeenCalledTimes(3);
+        // A hydrated title is a live projection of the current source and is still
+        // never persisted; only a title the source chunk itself supplied is.
         expect(await readFile(await findCandidateIndexPath(activeServerDir), 'utf8')).not.toContain('cold:session');
 
         hydrateCandidate.mockClear();
@@ -1438,25 +1775,167 @@ describe('External Sessions candidate query owner', () => {
         expect(firstComplete.nextCursor).toEqual(expect.any(String));
 
         sourceGeneration = 'generation-b';
-        await expect(query()).rejects.toMatchObject({
-            code: 'source_invalid',
-            operation: 'listCandidates',
-            retryable: true,
+        await expect(query()).resolves.toEqual({
+            candidates: [],
+            nextCursor: null,
+            preparation: { kind: 'building_candidate_index', scanned: 1 },
         });
         await expect(query(firstComplete.nextCursor ?? undefined)).rejects.toMatchObject({
             code: 'invalid_request',
             operation: 'listCandidates',
         });
-        await expect(query()).resolves.toEqual({
-            candidates: [],
-            nextCursor: null,
-            preparation: { kind: 'building_candidate_index', scanned: 3 },
-        });
-        await query();
-        const rebuilt = await query();
-        expect(rebuilt.candidates.map((candidate) => candidate.remoteSessionId)).toEqual([
+        const rebuilt = await readUntilPublished(query);
+        expect(rebuilt.sourceInvalidCount).toBe(0);
+        expect(rebuilt.result.candidates.map((candidate) => candidate.remoteSessionId)).toEqual([
             'generation-b-newest',
         ]);
+    });
+
+    it('reports continuing preparation when the corpus first chunk changes mid-build', async () => {
+        const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-candidate-first-chunk-drift-'));
+        roots.push(activeServerDir);
+        let generation = 'g1';
+        const listCandidates = vi.fn(async ({ cursor }: Readonly<{ cursor?: string }>) => cursor
+            ? {
+                candidates: [{ remoteSessionId: `${generation}-newest`, updatedAtMs: 20 }],
+                nextCursor: null,
+                preparation: { kind: 'building_candidate_index' as const, scanned: 2 },
+            }
+            : {
+                candidates: [{ remoteSessionId: `${generation}-oldest`, updatedAtMs: 10 }],
+                nextCursor: `scan:${generation}`,
+                preparation: { kind: 'building_candidate_index' as const, scanned: 1 },
+            });
+        const query = () => executeExternalSessionCandidateQuery({
+            activeServerDir,
+            agentIdentity: { pluginId: 'happier.claude', localId: 'claude' },
+            source: { kind: 'claudeConfig', configDir: '/private/source' },
+            limit: 1,
+            listCandidates,
+        });
+
+        await expect(query()).resolves.toMatchObject({
+            candidates: [],
+            preparation: { kind: 'building_candidate_index' },
+        });
+
+        generation = 'g2';
+
+        await expect(query()).resolves.toMatchObject({
+            candidates: [],
+            nextCursor: null,
+            preparation: { kind: 'building_candidate_index' },
+        });
+        const driftedRecord = JSON.parse(
+            await readFile(await findCandidateIndexPath(activeServerDir), 'utf8'),
+        ) as Readonly<{
+            state: string;
+            candidates: readonly Readonly<{ remoteSessionId: string }>[];
+        }>;
+        expect(driftedRecord.state).toBe('building');
+        expect(driftedRecord.candidates.map((candidate) => candidate.remoteSessionId)).toEqual([
+            'g2-oldest',
+        ]);
+    });
+
+    it('reports continuing preparation when the agent source changes during index continuation', async () => {
+        const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-candidate-continuation-drift-'));
+        roots.push(activeServerDir);
+        let continuationFails = false;
+        const listCandidates = vi.fn(async ({ cursor }: Readonly<{ cursor?: string }>) => {
+            if (cursor) {
+                if (continuationFails) {
+                    throw new ExternalSessionProviderFailureError({
+                        code: 'source_invalid',
+                        operation: 'listCandidates',
+                        message: 'Agent candidate source changed during continuation',
+                        retryable: true,
+                    });
+                }
+                return {
+                    candidates: [{ remoteSessionId: 'newest', updatedAtMs: 20 }],
+                    nextCursor: null,
+                    preparation: { kind: 'building_candidate_index' as const, scanned: 2 },
+                };
+            }
+            return {
+                candidates: [{ remoteSessionId: 'oldest', updatedAtMs: 10 }],
+                nextCursor: 'scan:stable-root',
+                preparation: { kind: 'building_candidate_index' as const, scanned: 1 },
+            };
+        });
+        const query = () => executeExternalSessionCandidateQuery({
+            activeServerDir,
+            agentIdentity: { pluginId: 'happier.claude', localId: 'claude' },
+            source: { kind: 'claudeConfig', configDir: '/private/source' },
+            limit: 1,
+            listCandidates,
+        });
+
+        await query();
+        continuationFails = true;
+
+        await expect(query()).resolves.toMatchObject({
+            candidates: [],
+            nextCursor: null,
+            preparation: { kind: 'building_candidate_index' },
+        });
+        const driftedRecord = JSON.parse(
+            await readFile(await findCandidateIndexPath(activeServerDir), 'utf8'),
+        ) as Readonly<{
+            state: string;
+            candidates: readonly Readonly<{ remoteSessionId: string }>[];
+        }>;
+        expect(driftedRecord.state).toBe('building');
+        expect(driftedRecord.candidates.map((candidate) => candidate.remoteSessionId)).toEqual([
+            'oldest',
+        ]);
+    });
+
+    it('keeps a building index when the agent cursor bytes change but the first chunk does not', async () => {
+        const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-candidate-opaque-cursor-'));
+        roots.push(activeServerDir);
+        let firstChunkRequests = 0;
+        const listCandidates = vi.fn(async ({ cursor }: Readonly<{ cursor?: string }>) => {
+            if (cursor) {
+                return {
+                    candidates: [{ remoteSessionId: 'newest', updatedAtMs: 20 }],
+                    nextCursor: null,
+                    preparation: { kind: 'building_candidate_index' as const, scanned: 2 },
+                };
+            }
+            firstChunkRequests += 1;
+            return {
+                candidates: [{ remoteSessionId: 'oldest', updatedAtMs: 10 }],
+                nextCursor: `scan:opaque-${firstChunkRequests}`,
+                preparation: { kind: 'building_candidate_index' as const, scanned: 1 },
+            };
+        });
+        const query = () => executeExternalSessionCandidateQuery({
+            activeServerDir,
+            agentIdentity: { pluginId: 'happier.claude', localId: 'claude' },
+            source: { kind: 'claudeConfig', configDir: '/private/source' },
+            limit: 10,
+            listCandidates,
+        });
+
+        await query();
+        const indexPath = await findCandidateIndexPath(activeServerDir);
+        const buildingRecord = JSON.parse(await readFile(indexPath, 'utf8')) as Readonly<{
+            startToken: string;
+        }>;
+
+        const published = await readUntilPublished(query);
+
+        expect(published.sourceInvalidCount).toBe(0);
+        expect(published.result.candidates.map((candidate) => candidate.remoteSessionId)).toEqual([
+            'newest',
+            'oldest',
+        ]);
+        const publishedRecord = JSON.parse(await readFile(indexPath, 'utf8')) as Readonly<{
+            startToken: string;
+        }>;
+        expect(publishedRecord.startToken).toBe(buildingRecord.startToken);
     });
 
     it('serializes concurrent build requests without publishing a partial merge', async () => {
@@ -1484,7 +1963,9 @@ describe('External Sessions candidate query owner', () => {
         const results = await Promise.all([execute(), execute(), execute()]);
 
         expect(results.filter((result) => result.preparation)).toHaveLength(2);
-        expect(results.filter((result) => result.candidates.length > 0)).toEqual([
+        // Exactly one request publishes, and no served page — published or partial —
+        // exposes a half-merged crawl.
+        expect(results.filter((result) => !result.preparation)).toEqual([
             expect.objectContaining({
                 candidates: [
                     expect.objectContaining({ remoteSessionId: 'newest' }),
@@ -1492,6 +1973,10 @@ describe('External Sessions candidate query owner', () => {
                 ],
             }),
         ]);
+        expect(results.every((result) => (
+            result.candidates.length === 0
+            || result.candidates.map((candidate) => candidate.remoteSessionId).join() === 'newest,oldest'
+        ))).toBe(true);
         expect(listCandidates).toHaveBeenCalledTimes(5);
     });
 
@@ -1520,7 +2005,7 @@ describe('External Sessions candidate query owner', () => {
         corpus[110]!.updatedAtMs = 10_000;
         const refreshed = await readUntilPublished(query);
 
-        expect(refreshed.sourceInvalidCount).toBeGreaterThan(0);
+        expect(refreshed.sourceInvalidCount).toBe(0);
         expect(refreshed.result.candidates[0]).toMatchObject({
             remoteSessionId: 'session-110',
             updatedAtMs: 10_000,
@@ -1585,6 +2070,8 @@ describe('External Sessions candidate query owner', () => {
                 maxSerializedBytes: 1_048_576,
                 signal: new AbortController().signal,
                 deadlineAtMs: Date.now() + 15_000,
+                managedEndpointRead: unavailableManagedEndpointRead,
+                exec: unavailableInvocationExec,
             });
             if (!result.ok) {
                 throw new ExternalSessionProviderFailureError({
@@ -1615,7 +2102,7 @@ describe('External Sessions candidate query owner', () => {
         );
         const refreshed = await readUntilPublished(query);
 
-        expect(refreshed.sourceInvalidCount).toBeGreaterThan(0);
+        expect(refreshed.sourceInvalidCount).toBe(0);
         expect(refreshed.result.candidates[0]).toMatchObject({
             remoteSessionId: 'hidden-session',
             updatedAtMs: (initialMtimeSeconds + 10_000) * 1_000,
@@ -1649,7 +2136,7 @@ describe('External Sessions candidate query owner', () => {
 
         const published = await readUntilPublished(query);
 
-        expect(published.sourceInvalidCount).toBeGreaterThan(0);
+        expect(published.sourceInvalidCount).toBe(0);
         expect(published.result.candidates[0]).toMatchObject({
             remoteSessionId: 'session-001',
             updatedAtMs: 20_000,
@@ -1751,7 +2238,7 @@ describe('External Sessions candidate query owner', () => {
         mutate(corpus);
         const refreshed = await readUntilPublished(query);
 
-        expect(refreshed.sourceInvalidCount).toBeGreaterThan(0);
+        expect(refreshed.sourceInvalidCount).toBe(0);
         expect(refreshed.result.candidates[0]?.remoteSessionId).toBe(expectedId);
     });
 
@@ -1772,6 +2259,43 @@ describe('External Sessions candidate query owner', () => {
             remoteSessionId: 'shared-session',
             linkData: { projectId: 'project-a' },
         }));
+    });
+
+    it('keeps duplicate native ids as distinct private Browse rows in opaque identity order', async () => {
+        const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-candidate-private-duplicate-'));
+        roots.push(activeServerDir);
+        const listCandidates = createBoundedCandidateSource([
+            {
+                remoteSessionId: 'shared-session',
+                updatedAtMs: 10,
+                linkData: { projectId: 'project-b' },
+            },
+            {
+                remoteSessionId: 'shared-session',
+                updatedAtMs: 10,
+                linkData: { projectId: 'project-a' },
+            },
+        ]);
+
+        const published = await readUntilPublished(async () => (
+            await executeExternalSessionCandidateQuery({
+                activeServerDir,
+                agentIdentity: {
+                    pluginId: 'happier.agent.claude',
+                    localId: 'claude',
+                },
+                source: { kind: 'claudeConfig', home: 'user' },
+                limit: 50,
+                listCandidates,
+            })
+        ));
+
+        expect(published.result.candidates).toHaveLength(2);
+        expect(published.result.candidates.map((candidate) => candidate.linkData)).toEqual([
+            { projectId: 'project-a' },
+            { projectId: 'project-b' },
+        ]);
+        expect(new Set(published.result.candidates.map((candidate) => candidate.candidateKey)).size).toBe(2);
     });
 
     it('uses a locale-independent tie-breaker for equal-timestamp indexed candidates', async () => {

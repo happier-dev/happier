@@ -1,6 +1,7 @@
 import { errorFrame, ok } from '@happier-dev/cli-common/output';
 
-import type { Credentials } from '@/persistence';
+import type { StoredCredentials } from '@/persistence';
+import { readCommandPositionals } from '@/cli/commands/shared/argvFlags';
 import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 import { normalizeActionExecuteResult } from './shared/normalizeActionExecuteResult';
@@ -8,11 +9,10 @@ import { tryHandleApprovalRequestCreated } from './shared/tryHandleApprovalReque
 
 export async function cmdSessionSetTitle(
   argv: string[],
-  deps: Readonly<{ readCredentialsFn: () => Promise<Credentials | null> }>,
+  deps: Readonly<{ readCredentialsFn: () => Promise<StoredCredentials | null> }>,
 ): Promise<void> {
   const json = wantsJson(argv);
-  const idOrPrefix = String(argv[1] ?? '').trim();
-  const title = String(argv[2] ?? '').trim();
+  const [idOrPrefix = '', title = ''] = readCommandPositionals(argv, { startIndex: 1 });
   if (!idOrPrefix || !title) {
     throw new Error('Usage: happier session set-title <session-id-or-prefix> <title> [--json]');
   }
@@ -20,7 +20,7 @@ export async function cmdSessionSetTitle(
   const credentials = await deps.readCredentialsFn();
   if (!credentials) {
     if (json) {
-      printJsonEnvelope({ ok: false, kind: 'session_set_title', error: { code: 'not_authenticated' } });
+      await printJsonEnvelope({ ok: false, kind: 'session_set_title', error: { code: 'not_authenticated' } });
       return;
     }
     console.error(errorFrame('Error:', ['Not authenticated. Run "happier auth login" first.']));
@@ -36,7 +36,7 @@ export async function cmdSessionSetTitle(
   const normalized = normalizeActionExecuteResult(actionRes as any);
   if (!normalized.ok) {
     if (json) {
-      printJsonEnvelope({
+      await printJsonEnvelope({
         ok: false,
         kind: 'session_set_title',
         error: { code: normalized.errorCode, ...(normalized.candidates ? { candidates: normalized.candidates } : {}), ...(normalized.errorMessage ? { message: normalized.errorMessage } : {}) },
@@ -47,11 +47,11 @@ export async function cmdSessionSetTitle(
   }
 
   const result = normalized.data as any;
-  if (tryHandleApprovalRequestCreated({ envelopeKind: 'session_set_title', json, result })) {
+  if (await tryHandleApprovalRequestCreated({ envelopeKind: 'session_set_title', json, result })) {
     return;
   }
   if (json) {
-    printJsonEnvelope({ ok: true, kind: 'session_set_title', data: { sessionId: result.sessionId, title } });
+    await printJsonEnvelope({ ok: true, kind: 'session_set_title', data: { sessionId: result.sessionId, title } });
     return;
   }
   console.log(ok(`Title set for ${result.sessionId}`));

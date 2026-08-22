@@ -1,18 +1,20 @@
-import { access, chmod, mkdir, mkdtemp, rename, rm, writeFile } from 'node:fs/promises';
+import { access, chmod, mkdir, rename, rm, writeFile } from 'node:fs/promises';
 import { constants as fsConstants } from 'node:fs';
 import { basename, dirname, join, delimiter as PATH_DELIMITER } from 'node:path';
-import { tmpdir } from 'node:os';
 
 import type { InstallableDependencyDescriptor } from '@happier-dev/protocol';
 import { GH_INSTALLABLE_DESCRIPTOR } from '@happier-dev/protocol';
-import { downloadGitHubReleaseAsset, promoteManagedCurrentInstall } from '@happier-dev/cli-common/agents';
+import {
+  createManagedToolScratchDir,
+  downloadGitHubReleaseAsset,
+  promoteManagedCurrentInstall,
+} from '@happier-dev/cli-common/agents';
 import { extractReleasePayloadRootFromArchive } from '@happier-dev/cli-common/firstPartyRuntime';
 import { resolveWindowsCommandOnPath } from '@happier-dev/cli-common/process';
-import { hasCodexAcpRuntimeInstallableAdapterPolicy } from '@happier-dev/plugins-codex/agent/installables/codexAcp';
 import { fetchGitHubLatestRelease } from '@happier-dev/release-runtime/github';
 
 import { configuration } from '@/configuration';
-import { createCodexAcpRuntimeInstallableAdapter } from './codexAcpRuntimeInstallable';
+import { readCatalogEntriesSnapshot } from '@/agent/catalog/registry';
 import { ghRuntimeInstallable } from '../ghRuntimeInstallable';
 import type { RuntimeInstallableAdapter } from '../registry';
 import { runCliCommandBestEffort } from '@/capabilities/cliAuth/shared';
@@ -187,12 +189,16 @@ async function installGitHubReleaseBinary(descriptor: GitHubReleaseBinaryInstall
       ...(githubFetchImpl ? { fetchImpl: githubFetchImpl } : {}),
     });
     const asset = selectReleaseAsset(release);
-    const scratchDir = await mkdtemp(join(tmpdir(), `happier-${descriptor.key}-`));
+    const installRoot = managedInstallDir(descriptor);
+    const scratchDir = await createManagedToolScratchDir({
+      installDir: installRoot,
+      prefix: descriptor.key,
+    });
     try {
       const archivePath = join(scratchDir, basename(asset.name));
       const extractDir = join(scratchDir, 'extract');
-      const nextDir = join(managedInstallDir(descriptor), 'next');
-      const nextBinPath = join(nextDir, 'bin', process.platform === 'win32' && !primaryCommand(descriptor).endsWith('.exe')
+      const candidateDir = join(scratchDir, 'candidate');
+      const candidateBinPath = join(candidateDir, 'bin', process.platform === 'win32' && !primaryCommand(descriptor).endsWith('.exe')
         ? `${primaryCommand(descriptor)}.exe`
         : primaryCommand(descriptor));
 
@@ -202,7 +208,6 @@ async function installGitHubReleaseBinary(descriptor: GitHubReleaseBinaryInstall
         digest: asset.digest,
         userAgent: 'happier-cli',
       });
-      await rm(nextDir, { recursive: true, force: true });
       const payloadRoot = await extractReleasePayloadRootFromArchive({
         archivePath,
         archiveName: asset.name,
@@ -211,10 +216,10 @@ async function installGitHubReleaseBinary(descriptor: GitHubReleaseBinaryInstall
       const payloadBinPath = join(payloadRoot, 'bin', process.platform === 'win32' && !primaryCommand(descriptor).endsWith('.exe')
         ? `${primaryCommand(descriptor)}.exe`
         : primaryCommand(descriptor));
-      await mkdir(dirname(nextBinPath), { recursive: true });
-      await rename(payloadBinPath, nextBinPath);
+      await mkdir(dirname(candidateBinPath), { recursive: true });
+      await rename(payloadBinPath, candidateBinPath);
       if (process.platform !== 'win32') {
-        await chmod(nextBinPath, 0o755);
+        await chmod(candidateBinPath, 0o755);
       }
       await writeInstallLog({
         logPath,
@@ -228,8 +233,8 @@ async function installGitHubReleaseBinary(descriptor: GitHubReleaseBinaryInstall
         ],
       });
       await promoteManagedCurrentInstall({
-        installRoot: managedInstallDir(descriptor),
-        candidatePath: nextDir,
+        installRoot,
+        candidatePath: candidateDir,
       });
       return { ok: true, logPath };
     } finally {
@@ -326,8 +331,9 @@ export async function getGitHubReleaseBinaryRuntimeInstallableAdapter(
   if (!isGitHubReleaseBinaryDescriptor(descriptor)) {
     return null;
   }
-  if (hasCodexAcpRuntimeInstallableAdapterPolicy(descriptor)) {
-    return createCodexAcpRuntimeInstallableAdapter(descriptor);
+  for (const entry of Object.values(readCatalogEntriesSnapshot())) {
+    const projectedAdapter = await entry.getRuntimeInstallableAdapter?.(descriptor);
+    if (projectedAdapter) return projectedAdapter;
   }
   if (descriptor.key === GH_INSTALLABLE_DESCRIPTOR.key) {
     return ghRuntimeInstallable;

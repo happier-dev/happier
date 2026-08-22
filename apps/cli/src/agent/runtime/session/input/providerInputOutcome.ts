@@ -1,5 +1,5 @@
 import type { ProviderBoundModelRef } from '@happier-dev/protocol';
-import type { AgentSessionRuntimeEvent } from '@happier-dev/plugin-sdk/agent-runtime';
+import type { AgentSessionRuntimeEvent } from '@happier-dev/plugin-sdk/agents/runtime';
 
 type NativeInputAcceptedEvent = Extract<
     AgentSessionRuntimeEvent,
@@ -43,6 +43,13 @@ export type RuntimeExactProviderInputOutcome =
         delivery: NativeInputDeliveryFailedEvent['delivery'];
         issue: NativeInputDeliveryFailedEvent['issue'];
         duplicateRisk: NativeInputDeliveryFailedEvent['duplicateRisk'];
+    }>)
+    | (RuntimeExactProviderInputOutcomeBase & Readonly<{
+        type: 'input-rejected-before-provider';
+        reason: 'provider_unavailable_before_acceptance';
+        diagnostic: NativeInputRejectedEvent['diagnostic'];
+        retryable: true;
+        retireLocalCustodyAfterDurableBlock: true;
     }>);
 
 type RuntimeAcceptedOutcome = Extract<RuntimeExactProviderInputOutcome, Readonly<{ type: 'input-accepted' }>>;
@@ -102,6 +109,7 @@ export type SessionProviderInputOutcome =
         reason: SessionProviderInputRejectedBeforeEffectReason;
         diagnostic: RuntimeRejectedOutcome['diagnostic'];
         retryable: RuntimeRejectedOutcome['retryable'];
+        retireLocalCustodyAfterDurableBlock?: true;
     }>)
     | (SessionProviderInputOutcomeIdentity & Readonly<{
         kind: 'effect_may_have_occurred';
@@ -217,6 +225,16 @@ export function normalizeHostProviderInputOutcome(
                 reason: 'provider_rejected_before_acceptance',
                 diagnostic: outcome.diagnostic,
                 retryable: outcome.retryable,
+            };
+        case 'input-rejected-before-provider':
+            return {
+                kind: 'rejected_before_effect',
+                ...identity,
+                reason: outcome.reason,
+                diagnostic: outcome.diagnostic,
+                retryable: outcome.retryable,
+                retireLocalCustodyAfterDurableBlock:
+                    outcome.retireLocalCustodyAfterDurableBlock,
             };
         case 'input-custody-unknown':
             return {

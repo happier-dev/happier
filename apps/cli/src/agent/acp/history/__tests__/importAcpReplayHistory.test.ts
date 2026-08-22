@@ -2,19 +2,26 @@ import { describe, it, expect } from 'vitest';
 
 import { importAcpReplayHistoryV1 } from '../importAcpReplayHistory';
 import type { AcpReplayHistorySessionClient } from '@/agent/acp/sessionClient';
+import type { TranscriptSessionPort } from '@/api/session/transcriptPort';
 import type { Metadata } from '@/api/types';
 import { CHANGE_TITLE_INSTRUCTION } from '@/agent/runtime/changeTitleInstruction';
 
 function createFakeSession(params?: {
   existing?: Array<{ role: 'user' | 'agent'; text: string }>;
   onAgentCommitted?: (body: unknown) => void;
+  userAdmission?: () => Promise<Readonly<{ persisted: boolean; delivered: boolean }>>;
+  agentAdmission?: (
+    body: unknown,
+    opts: Parameters<NonNullable<TranscriptSessionPort['enqueueAgentMessageCommitted']>>[2],
+  ) => Promise<Readonly<{ persisted: boolean; delivered: boolean }>>;
 }) {
   const calls = {
     fetch: 0,
     sendUser: 0,
-    sendAgent: 0,
+    enqueueAgent: 0,
     updateMetadata: 0,
     agentCommitted: [] as any[],
+    agentAdmissionOptions: [] as Array<Parameters<NonNullable<TranscriptSessionPort['enqueueAgentMessageCommitted']>>[2]>,
   };
 
   const baseMetadata: Metadata = {
@@ -32,13 +39,16 @@ function createFakeSession(params?: {
       calls.fetch += 1;
       return params?.existing ?? [];
     },
-    async sendUserTextMessageCommitted(_text: string) {
+    async enqueueUserTextMessageCommitted(_text, _opts) {
       calls.sendUser += 1;
+      return await params?.userAdmission?.() ?? { persisted: true, delivered: false };
     },
-    async sendAgentMessageCommitted(_provider, body, _opts) {
-      calls.sendAgent += 1;
+    async enqueueAgentMessageCommitted(_provider, body, opts) {
+      calls.enqueueAgent += 1;
       calls.agentCommitted.push(body);
+      calls.agentAdmissionOptions.push(opts);
       params?.onAgentCommitted?.(body);
+      return await params?.agentAdmission?.(body, opts) ?? { persisted: true, delivered: false };
     },
     updateMetadata(fn) {
       calls.updateMetadata += 1;
@@ -75,7 +85,7 @@ describe('importAcpReplayHistoryV1', () => {
 
     expect(calls.fetch).toBe(1);
     expect(calls.sendUser).toBe(0);
-    expect(calls.sendAgent).toBe(0);
+    expect(calls.enqueueAgent).toBe(0);
     expect(calls.updateMetadata).toBe(0);
   });
 
@@ -111,7 +121,7 @@ describe('importAcpReplayHistoryV1', () => {
     expect(calls.fetch).toBe(1);
     expect(permissionPrompted).toBe(true);
     expect(calls.sendUser).toBe(0);
-    expect(calls.sendAgent).toBe(0);
+    expect(calls.enqueueAgent).toBe(0);
     expect(calls.updateMetadata).toBe(0);
   });
 
@@ -135,7 +145,7 @@ describe('importAcpReplayHistoryV1', () => {
 
     expect(calls.fetch).toBe(0);
     expect(calls.sendUser).toBe(0);
-    expect(calls.sendAgent).toBe(0);
+    expect(calls.enqueueAgent).toBe(0);
     expect(calls.updateMetadata).toBe(0);
   });
 
@@ -159,8 +169,75 @@ describe('importAcpReplayHistoryV1', () => {
 
     expect(calls.fetch).toBe(1);
     expect(calls.sendUser).toBe(1);
-    expect(calls.sendAgent).toBe(1);
+    expect(calls.enqueueAgent).toBe(1);
     expect(calls.updateMetadata).toBe(1);
+  });
+
+  it('durably admits replayed agent rows in order with stable history provenance and local ids', async () => {
+    const { session, calls } = createFakeSession();
+    const input = {
+      session,
+      provider: 'claude' as const,
+      remoteSessionId: 'session-123',
+      replay: [
+        { type: 'message', role: 'agent', text: 'first' },
+        { type: 'message', role: 'agent', text: 'second' },
+      ],
+      permissionHandler: {
+        handleToolCall: () => {
+          throw new Error('permission handler should not be called when overlap is unambiguous');
+        },
+      } as any,
+    };
+
+    await importAcpReplayHistoryV1(input);
+    const firstRunOptions = calls.agentAdmissionOptions.map((opts) => ({ ...opts }));
+    await importAcpReplayHistoryV1(input);
+
+    expect(calls.agentCommitted).toEqual([
+      { type: 'message', message: 'first' },
+      { type: 'message', message: 'second' },
+      { type: 'message', message: 'first' },
+      { type: 'message', message: 'second' },
+    ]);
+    expect(firstRunOptions).toHaveLength(2);
+    expect(calls.agentAdmissionOptions.slice(2)).toEqual(firstRunOptions);
+    expect(firstRunOptions).toEqual([
+      expect.objectContaining({
+        localId: expect.stringMatching(/^acp-import:v1:claude:session-123:0:/),
+        meta: { importedFrom: 'acp-history', remoteSessionId: 'session-123' },
+        provenance: { kind: 'non_dependent', source: 'history' },
+      }),
+      expect.objectContaining({
+        localId: expect.stringMatching(/^acp-import:v1:claude:session-123:1:/),
+        meta: { importedFrom: 'acp-history', remoteSessionId: 'session-123' },
+        provenance: { kind: 'non_dependent', source: 'history' },
+      }),
+    ]);
+  });
+
+  it('fails and stops before watermarking when durable custody rejects a replayed agent row', async () => {
+    const { session, calls } = createFakeSession({
+      agentAdmission: async () => ({ persisted: false, delivered: false }),
+    });
+
+    await expect(importAcpReplayHistoryV1({
+      session,
+      provider: 'claude',
+      remoteSessionId: 'session-123',
+      replay: [
+        { type: 'message', role: 'agent', text: 'first' },
+        { type: 'message', role: 'agent', text: 'must not be admitted' },
+      ],
+      permissionHandler: {
+        handleToolCall: () => {
+          throw new Error('permission handler should not be called when overlap is unambiguous');
+        },
+      } as any,
+    })).rejects.toThrow(/durable custody/i);
+
+    expect(calls.enqueueAgent).toBe(1);
+    expect(calls.updateMetadata).toBe(0);
   });
 
   it('treats cancelled tool results as errors when importing full replay', async () => {
@@ -270,10 +347,27 @@ describe('importAcpReplayHistoryV1', () => {
     });
 
     await thinkingCommitted;
-    expect(calls.sendAgent).toBe(2);
+    expect(calls.enqueueAgent).toBe(2);
     expect(calls.agentCommitted).toEqual([
       { type: 'message', message: 'hello' },
       { type: 'thinking', text: 'Hello' },
     ]);
+  });
+
+  it('does not advance history import when durable user custody is rejected', async () => {
+    const { session, calls } = createFakeSession({
+      userAdmission: async () => ({ persisted: false, delivered: false }),
+    });
+
+    await expect(importAcpReplayHistoryV1({
+      session,
+      provider: 'opencode',
+      remoteSessionId: 'session-123',
+      replay: [{ type: 'message', role: 'user', text: 'history prompt' }] as any,
+      permissionHandler: { handleToolCall: async () => ({ decision: 'approved' }) } as any,
+    })).rejects.toThrow('durable transcript custody');
+
+    expect(calls.sendUser).toBe(1);
+    expect(calls.updateMetadata).toBe(0);
   });
 });

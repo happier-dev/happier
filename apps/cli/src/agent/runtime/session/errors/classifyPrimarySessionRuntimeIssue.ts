@@ -7,6 +7,7 @@ import type {
 import {
   ConnectedServiceIdSchema,
   readConnectedServiceLimitCategoryV1,
+  SessionRuntimeIssueSourceV1Schema,
 } from '@happier-dev/protocol';
 import { sanitizeConnectedServiceRuntimeFailureClassification } from '@/daemon/connectedServices/runtimeAuth/sanitizeConnectedServiceRuntimeFailureClassification';
 import { hasConnectedServiceRuntimeAuthRecoveryContext } from './connectedServiceRuntimeAuthRecoveryContext';
@@ -67,6 +68,13 @@ function extractErrorTextParts(error: unknown): string[] {
 function extractErrorText(error: unknown): string {
   return extractErrorTextParts(error)
     .join(' ');
+}
+
+function readDeclaredRuntimeIssueSource(error: unknown): SessionRuntimeIssueSourceV1 | null {
+  const details = readRecord(readRecord(error)?.details);
+  if (details?.v !== 1) return null;
+  const parsed = SessionRuntimeIssueSourceV1Schema.safeParse(details.source);
+  return parsed.success ? parsed.data : null;
 }
 
 function refineStatusErrorSource(input: ClassifyPrimarySessionRuntimeIssueInput): SessionRuntimeIssueSourceV1 {
@@ -337,9 +345,14 @@ export function classifyPrimarySessionRuntimeIssue(
     runtimeAuthClassification,
   );
   const runtimeAuthSource = refineRuntimeAuthClassificationSource(runtimeAuthClassification);
+  const declaredSource = input.cause === 'session_error'
+    ? readDeclaredRuntimeIssueSource(input.error)
+    : null;
   const agentProcessExitAfterSwitch = readProviderProcessExitAfterSwitchDetails(input.error);
   const source = runtimeAuthSource
     ? runtimeAuthSource
+    : declaredSource
+    ? declaredSource
     : input.cause === 'process_exit' && agentProcessExitAfterSwitch
     ? 'agent_process_exit_after_switch'
     : input.cause === 'status_error'

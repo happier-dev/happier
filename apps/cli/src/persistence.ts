@@ -638,16 +638,32 @@ const credentialsSchema = z.object({
   }).nullish()
 })
 
+export type AccountEncryptionCredentials =
+  | {
+    type: 'legacy', secret: Uint8Array
+  }
+  | {
+    type: 'dataKey', publicKey: Uint8Array, machineKey: Uint8Array
+  };
+
 export type Credentials = {
   token: string,
-  encryption: {
-    type: 'legacy', secret: Uint8Array
-  } | {
-    type: 'dataKey', publicKey: Uint8Array, machineKey: Uint8Array
-  }
+  encryption: AccountEncryptionCredentials
 }
 
+export type TokenOnlyCredentials = {
+  token: string;
+  encryption: null;
+}
+
+export type StoredCredentials = Credentials | TokenOnlyCredentials;
+
 export async function readCredentials(): Promise<Credentials | null> {
+  const credentials = await readStoredCredentials();
+  return credentials?.encryption ? credentials : null;
+}
+
+export async function readStoredCredentials(): Promise<StoredCredentials | null> {
   const primaryPath = configuration.privateKeyFile;
   const legacyPath = configuration.legacyPrivateKeyFile;
   const canUseLegacy =
@@ -678,10 +694,13 @@ export async function readCredentials(): Promise<Credentials | null> {
         }
       }
     }
+    return {
+      token: credentials.token,
+      encryption: null,
+    };
   } catch {
     return null
   }
-  return null
 }
 
 export async function writeCredentialsLegacy(credentials: { secret: Uint8Array, token: string }): Promise<void> {
@@ -709,6 +728,20 @@ export async function writeCredentialsDataKey(credentials: { publicKey: Uint8Arr
   await bestEffortChmod(configuration.privateKeyFile, 0o600)
 
   // Migrate legacy single-server credential file (cloud server only).
+  if (configuration.activeServerId === 'cloud' && configuration.legacyPrivateKeyFile !== configuration.privateKeyFile) {
+    if (existsSync(configuration.legacyPrivateKeyFile)) {
+      await unlink(configuration.legacyPrivateKeyFile).catch(() => {});
+    }
+  }
+}
+
+export async function writeCredentialsTokenOnly(credentials: { token: string }): Promise<void> {
+  await ensureHappyHomeDirExists();
+  await writeFile(configuration.privateKeyFile, JSON.stringify({
+    token: credentials.token
+  }, null, 2), { mode: 0o600 });
+  await bestEffortChmod(configuration.privateKeyFile, 0o600)
+
   if (configuration.activeServerId === 'cloud' && configuration.legacyPrivateKeyFile !== configuration.privateKeyFile) {
     if (existsSync(configuration.legacyPrivateKeyFile)) {
       await unlink(configuration.legacyPrivateKeyFile).catch(() => {});
@@ -913,13 +946,8 @@ export async function readDaemonState(): Promise<DaemonLocallyPersistedState | n
           return null;
         }
         const normalized = normalizeDaemonState(parsed.data);
-        if (candidatePath !== configuration.daemonStateFile) {
-          try {
-            writeDaemonState(normalized);
-          } catch (promotionError) {
-            logger.warn(`[PERSISTENCE] Failed to promote legacy daemon state into canonical path: ${candidatePath}`, promotionError);
-          }
-        }
+        // Legacy discovery stays read-only. An arbitrary CLI reader does not own the daemon
+        // lifecycle lock and must not overwrite a successor's canonical publication.
         return normalized;
       } catch (error) {
         // A SyntaxError from JSON.parse indicates the file is corrupt; retrying won't fix it.
@@ -955,7 +983,10 @@ export async function readDaemonState(): Promise<DaemonLocallyPersistedState | n
 }
 
 /**
- * Write daemon state to local file (synchronously for atomic operation)
+ * Test/fixture-only unowned daemon-state publication.
+ *
+ * Production callers use writeDaemonStateForLockOwner so only the exact lifecycle-lock holder
+ * can publish. Keeping this raw helper avoids duplicating fixture serialization across tests.
  */
 export function writeDaemonState(state: DaemonLocallyPersistedState): void {
   writeJsonAtomicSync(configuration.daemonStateFile, state);
@@ -963,25 +994,18 @@ export function writeDaemonState(state: DaemonLocallyPersistedState): void {
 }
 
 /**
- * Clean up daemon state file and, for stale cleanup paths, the lock file.
+ * Test/fixture-only broad teardown for isolated temporary homes.
  */
-export async function clearDaemonState(options: Readonly<{ includeLockFile?: boolean }> = {}): Promise<void> {
+export async function clearDaemonStateForTestTeardown(
+  options: Readonly<{ includeLockFile?: boolean }> = {},
+): Promise<void> {
   const includeLockFile = options.includeLockFile ?? true;
   if (existsSync(configuration.daemonStateFile)) {
     await unlink(configuration.daemonStateFile);
   }
   await cleanupAtomicWriteTempFiles(configuration.daemonStateFile);
   await cleanupLegacyDaemonStateFilesBestEffort();
-  // A state cleanup must not remove a live daemon's independent singleton proof.
-  if (includeLockFile) {
-    const snapshot = readDaemonLockSnapshot();
-    if (snapshot) {
-      const owner = await inspectDaemonLockSnapshotOwner(snapshot);
-      if (owner.status === 'replaceable') {
-        await reclaimJsonOwnerFileLockSnapshot(configuration.daemonLockFile, snapshot.raw);
-      }
-    }
-  }
+  if (includeLockFile) await clearReplaceableDaemonLock();
 }
 
 /**
@@ -1005,6 +1029,92 @@ type DaemonLockSnapshot = Readonly<{
 
 const currentProcessStartedAtMs = Math.max(0, Math.trunc(Date.now() - process.uptime() * 1_000));
 const daemonLockRawByHandle = new WeakMap<FileHandle, string>();
+
+export type DaemonStateOwner = Readonly<
+  Pick<DaemonLocallyPersistedState, 'pid' | 'httpPort' | 'startedAt' | 'controlToken'>
+>;
+
+function isCurrentDaemonLockHandleOwner(lockHandle: FileHandle): boolean {
+  const ownRaw = daemonLockRawByHandle.get(lockHandle);
+  if (!ownRaw) return false;
+  const current = readDaemonLockSnapshot();
+  return current?.raw === ownRaw
+    && current.record?.pid === process.pid;
+}
+
+export function daemonStateMatchesOwner(
+  state: DaemonLocallyPersistedState,
+  expectedOwner: DaemonStateOwner,
+): boolean {
+  return state.pid === expectedOwner.pid
+    && state.httpPort === expectedOwner.httpPort
+    && state.startedAt === expectedOwner.startedAt
+    && state.controlToken === expectedOwner.controlToken;
+}
+
+/**
+ * Publish daemon state only while the caller still owns the exact structured lifecycle lock.
+ *
+ * The ownership check and atomic state rename are synchronous on one JS thread. A successor
+ * therefore cannot acquire the released lock between the check and the publication.
+ */
+export function writeDaemonStateForLockOwner(
+  lockHandle: FileHandle,
+  state: DaemonLocallyPersistedState,
+): boolean {
+  if (state.pid !== process.pid || !isCurrentDaemonLockHandleOwner(lockHandle)) {
+    return false;
+  }
+  writeDaemonState(state);
+  return true;
+}
+
+/**
+ * Remove only this process's state while it still owns the exact lifecycle lock.
+ *
+ * Self-restart predecessors have already released their lock, so they preserve the successor's
+ * canonical state and all adjacent atomic/legacy publications.
+ */
+export function clearDaemonStateForLockOwner(
+  lockHandle: FileHandle,
+  expectedOwner: DaemonStateOwner,
+): boolean {
+  if (
+    expectedOwner.pid !== process.pid
+    || !isCurrentDaemonLockHandleOwner(lockHandle)
+  ) {
+    return false;
+  }
+
+  let current: DaemonLocallyPersistedState;
+  try {
+    const parsed = DaemonLocallyPersistedStateSchema.safeParse(
+      JSON.parse(readFileSync(configuration.daemonStateFile, 'utf8')),
+    );
+    if (!parsed.success) return false;
+    current = normalizeDaemonState(parsed.data);
+  } catch {
+    return false;
+  }
+  if (!daemonStateMatchesOwner(current, expectedOwner)) return false;
+
+  try {
+    unlinkSync(configuration.daemonStateFile);
+  } catch {
+    return false;
+  }
+  try {
+    cleanupAtomicWriteTempFilesSync(configuration.daemonStateFile);
+  } catch {
+    // best-effort after exact lifecycle ownership was proven
+  }
+  try {
+    cleanupLegacyDaemonStateFilesBestEffortSync();
+  } catch {
+    // best-effort after exact lifecycle ownership was proven
+  }
+  return true;
+}
 
 export type DaemonLockOwnerInspection =
   | Readonly<{ status: 'missing' }>
@@ -1033,6 +1143,20 @@ function readDaemonLockSnapshot(): DaemonLockSnapshot | null {
 
 export function readDaemonLockPid(): number | null {
   return readDaemonLockSnapshot()?.pid ?? null;
+}
+
+/**
+ * Returns the structured lifecycle identity recorded by the active daemon lock.
+ * Legacy PID-only locks deliberately do not satisfy identity-sensitive callers.
+ */
+export function readDaemonLockOwnerIdentity(): Readonly<{
+  pid: number;
+  processStartedAtMs: number;
+}> | null {
+  const record = readDaemonLockSnapshot()?.record;
+  return record
+    ? { pid: record.pid, processStartedAtMs: record.processStartedAtMs }
+    : null;
 }
 
 async function inspectDaemonLockSnapshotOwner(snapshot: DaemonLockSnapshot): Promise<DaemonLockOwnerInspection> {
@@ -1074,6 +1198,15 @@ async function inspectDaemonLockSnapshotOwner(snapshot: DaemonLockSnapshot): Pro
 export async function inspectDaemonLockOwner(): Promise<DaemonLockOwnerInspection> {
   const snapshot = readDaemonLockSnapshot();
   return snapshot ? await inspectDaemonLockSnapshotOwner(snapshot) : { status: 'missing' };
+}
+
+export async function clearReplaceableDaemonLock(): Promise<void> {
+  const snapshot = readDaemonLockSnapshot();
+  if (!snapshot) return;
+  const owner = await inspectDaemonLockSnapshotOwner(snapshot);
+  if (owner.status === 'replaceable') {
+    await reclaimJsonOwnerFileLockSnapshot(configuration.daemonLockFile, snapshot.raw);
+  }
 }
 
 export async function acquireDaemonLock(

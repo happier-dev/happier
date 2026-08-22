@@ -24,7 +24,7 @@ import {
 import type { CommandContext } from '@/cli/commandRegistry';
 import { configuration } from '@/configuration';
 import { parseOauthRedirectPaste } from '@/cloud/parseOauthRedirectPaste';
-import { readCredentials } from '@/persistence';
+import { readStoredCredentials } from '@/persistence';
 import { resolveMergedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
 import { promptInput, promptSecretInput } from '@/terminal/prompts/promptInput';
@@ -232,7 +232,7 @@ function findTarget(
 }
 
 async function createDaemonClient(): Promise<ConnectedAccountDaemonClient> {
-  const credentials = await readCredentials();
+  const credentials = await readStoredCredentials();
   if (!credentials) {
     throw new Error(
       `Not authenticated with Happier. Run ${cmd('happier auth login')} first.`,

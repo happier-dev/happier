@@ -13,8 +13,11 @@ import type {
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import type {
   AgentExternalSessionsContribution,
+  AgentExternalSessionsManagedEndpointRead,
+} from '@happier-dev/plugin-sdk/sessions/external';
+import type {
   AgentExternalSessionSource,
-} from '@happier-dev/plugin-sdk/experimental/sessions';
+} from '@happier-dev/plugin-sdk/sessions/external';
 import {
   activate as activateClaudePlugin,
   PLUGIN_MANIFEST as CLAUDE_PLUGIN_MANIFEST,
@@ -41,6 +44,11 @@ const readCredentialsMock = vi.fn();
 const loadLinkedExternalSessionMock = vi.fn();
 const resolveSurfaceMock = vi.fn();
 const prepareItemMock = vi.fn();
+const stageItemMock = vi.fn((input: { item: unknown } & Record<string, unknown>) => ({
+  v: 1,
+  kind: 'external_session_historical_import_staged_item',
+  ...input,
+}));
 const fetchSessionByIdMock = vi.fn();
 
 const { MockExternalSessionHistoricalImportRequiredItemError } = vi.hoisted(() => ({
@@ -55,7 +63,7 @@ const { MockExternalSessionHistoricalImportRequiredItemError } = vi.hoisted(() =
 }));
 
 vi.mock('@/persistence', () => ({
-  readCredentials: (...args: unknown[]) => readCredentialsMock(...args),
+  readStoredCredentials: (...args: unknown[]) => readCredentialsMock(...args),
 }));
 vi.mock('@/api/session/external/takeover/loadLinkedExternalSession', () => ({
   loadLinkedExternalSession: (...args: unknown[]) => loadLinkedExternalSessionMock(...args),
@@ -67,11 +75,8 @@ vi.mock('@/api/session/external/import/importExternalSessionTranscript', () => (
   ExternalSessionHistoricalImportRequiredItemError:
     MockExternalSessionHistoricalImportRequiredItemError,
   prepareExternalSessionHistoricalImportItem: (...args: unknown[]) => prepareItemMock(...args),
-  stageExternalSessionHistoricalImportItem: ({ item }: { item: unknown }) => ({
-    v: 1,
-    kind: 'external_session_historical_import_staged_item',
-    item,
-  }),
+  stageExternalSessionHistoricalImportItem: (input: { item: unknown } & Record<string, unknown>) =>
+    stageItemMock(input),
   readExternalSessionHistoricalImportStagedItem: (value: unknown) => value,
   validateExternalSessionHistoricalImportStagedItem: ({ staged }: {
     staged: { item: unknown };
@@ -82,11 +87,45 @@ vi.mock('@/session/transport/http/sessionsHttp', () => ({
 }));
 
 import { createExternalSessionOperationExclusion } from '@/session/external/operationExclusion';
+import { createUnavailablePluginServices } from '@/plugins/runtime/invocation/services/unavailable';
+import {
+  createExternalSessionOperationPrivateStagingStore,
+} from '@/session/external/staging/operationPrivateStaging';
 
 import { createDefaultExternalSessionMaterializeActionExecutor } from './materializeDefault';
+import { listExternalSessionOperationRecords } from './operationRecordStore';
 
 const roots: string[] = [];
 const loopbackServers: Server[] = [];
+const unavailableManagedEndpointRead: AgentExternalSessionsManagedEndpointRead =
+  async () => {
+    throw new Error('Managed endpoint read is unavailable in this file-backed fixture');
+  };
+const unavailableInvocationExec = createUnavailablePluginServices().exec;
+
+function createLoopbackManagedEndpointRead(baseUrl: string) {
+  const requestedPaths: string[] = [];
+  const managedEndpointRead = vi.fn<AgentExternalSessionsManagedEndpointRead>(
+    async ({ pathAndQuery, headers }) => {
+      if (!pathAndQuery.startsWith('/')) {
+        throw new Error('Managed endpoint reads must use a relative path and query');
+      }
+      requestedPaths.push(pathAndQuery);
+      const response = await fetch(new URL(pathAndQuery, `${baseUrl}/`), {
+        method: 'GET',
+        ...(headers ? { headers } : {}),
+      });
+      return {
+        ok: response.ok,
+        status: response.status,
+        statusText: response.statusText,
+        headers: Object.fromEntries(response.headers.entries()),
+        body: response.body,
+      };
+    },
+  );
+  return { managedEndpointRead, requestedPaths };
+}
 const machineOnlyPriorStableStorage = {
   state: 'machine_only',
 } satisfies ExternalSessionPriorStableStorageV1;
@@ -107,6 +146,7 @@ function inspectAuthorityResponse(
 
 function createRealContributionProviderOps(input: Readonly<{
   contribution: AgentExternalSessionsContribution;
+  managedEndpointRead?: AgentExternalSessionsManagedEndpointRead;
   source: AgentExternalSessionSource;
   remoteSessionId: string;
 }>) {
@@ -115,6 +155,8 @@ function createRealContributionProviderOps(input: Readonly<{
     signal: new AbortController().signal,
     deadlineAtMs: Date.now() + 30_000,
     maxSerializedBytes,
+    managedEndpointRead: input.managedEndpointRead ?? unavailableManagedEndpointRead,
+    exec: unavailableInvocationExec,
   });
   const pageTranscript = vi.fn(async (request: Readonly<{
     cursor?: string;
@@ -163,6 +205,7 @@ async function runRealContributionMaterialization(input: Readonly<{
   agentId: string;
   contribution: AgentExternalSessionsContribution;
   id: string;
+  managedEndpointRead?: AgentExternalSessionsManagedEndpointRead;
   onFirstBatch?: () => Promise<void>;
   qualifiedIdentity: LinkedExternalSessionQualifiedIdentityV1;
   remoteSessionId: string;
@@ -205,7 +248,6 @@ async function runRealContributionMaterialization(input: Readonly<{
     providerOps: {
       pageTranscript: providerOps.pageTranscript,
       readAfterTranscript: providerOps.readAfterTranscript,
-      resolveTranscriptMediaReadRoots: async () => [],
     },
   });
   prepareItemMock.mockImplementation(async ({ item }: { item: { id: string } }) => ({
@@ -221,6 +263,7 @@ async function runRealContributionMaterialization(input: Readonly<{
   });
 
   let acceptedThroughServerSeq = 0;
+  const acceptedLocalIds: string[] = [];
   let firstBatch = true;
   const commandKinds: string[] = [];
   const sendHistoricalCommand = vi.fn(async (
@@ -241,6 +284,7 @@ async function runRealContributionMaterialization(input: Readonly<{
       };
     }
     if (command.kind === 'batch') {
+      acceptedLocalIds.push(...command.items.map((item) => item.localId));
       acceptedThroughServerSeq += command.items.length;
       if (firstBatch) {
         firstBatch = false;
@@ -304,6 +348,7 @@ async function runRealContributionMaterialization(input: Readonly<{
     },
   });
   return {
+    acceptedLocalIds,
     commandKinds,
     providerOps,
     result,
@@ -409,6 +454,8 @@ describe('default external session materialize capture', () => {
       signal: new AbortController().signal,
       deadlineAtMs: Date.now() + 30_000,
       maxSerializedBytes: 512 * 1024,
+      managedEndpointRead: unavailableManagedEndpointRead,
+      exec: unavailableInvocationExec,
     });
     const pageTranscript = vi.fn(async (request: Readonly<{
       cursor?: string;
@@ -454,7 +501,6 @@ describe('default external session materialize capture', () => {
       providerOps: {
         pageTranscript,
         readAfterTranscript,
-        resolveTranscriptMediaReadRoots: async () => [],
       },
     });
     prepareItemMock.mockImplementation(async ({ item }: {
@@ -646,6 +692,8 @@ describe('default external session materialize capture', () => {
       signal: new AbortController().signal,
       deadlineAtMs: Date.now() + 30_000,
       maxSerializedBytes: 512 * 1024,
+      managedEndpointRead: unavailableManagedEndpointRead,
+      exec: unavailableInvocationExec,
     });
     const pageTranscript = vi.fn(async (request: Readonly<{
       cursor?: string;
@@ -691,7 +739,6 @@ describe('default external session materialize capture', () => {
       providerOps: {
         pageTranscript,
         readAfterTranscript,
-        resolveTranscriptMediaReadRoots: async () => [],
       },
     });
     prepareItemMock.mockImplementation(async ({ item }: {
@@ -889,6 +936,8 @@ describe('default external session materialize capture', () => {
       signal: new AbortController().signal,
       deadlineAtMs: Date.now() + 30_000,
       maxSerializedBytes: 512 * 1024,
+      managedEndpointRead: unavailableManagedEndpointRead,
+      exec: unavailableInvocationExec,
     });
     const pageTranscript = vi.fn(async (request: Readonly<{
       cursor?: string;
@@ -934,7 +983,6 @@ describe('default external session materialize capture', () => {
       providerOps: {
         pageTranscript,
         readAfterTranscript,
-        resolveTranscriptMediaReadRoots: async () => [],
       },
     });
     prepareItemMock.mockImplementation(async ({ item }: {
@@ -1162,6 +1210,90 @@ describe('default external session materialize capture', () => {
     expect(materialized.providerOps.readAfterTranscript).toHaveBeenCalled();
   });
 
+  it('imports more than 1,000 real Codex rollout messages exactly once in source order', async () => {
+    const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-materialize-codex-large-'));
+    roots.push(activeServerDir);
+    const codexHome = join(activeServerDir, 'codex-home');
+    const sessionsDir = join(codexHome, 'sessions', '2026', '07', '28');
+    const remoteSessionId = '33333333-3333-3333-3333-333333333333';
+    const fileName = `rollout-2026-07-28T00-00-00-${remoteSessionId}.jsonl`;
+    const fileRelPath = `sessions/2026/07/28/${fileName}`;
+    const transcriptPath = join(sessionsDir, fileName);
+    const messageCount = 1_001;
+    const sessionMeta = JSON.stringify({
+      type: 'session_meta',
+      timestamp: '2026-07-28T00:00:00.000Z',
+      payload: {
+        id: remoteSessionId,
+        timestamp: '2026-07-28T00:00:00.000Z',
+        cwd: '/workspace',
+      },
+    });
+    let offsetBytes = Buffer.byteLength(`${sessionMeta}\n`, 'utf8');
+    const expectedAcceptedLocalIds: string[] = [];
+    const transcriptLines = [sessionMeta];
+    for (let index = 0; index < messageCount; index += 1) {
+      const transcriptLine = JSON.stringify({
+        type: 'response_item',
+        timestamp: new Date(Date.UTC(2026, 6, 28, 0, 0, index + 1)).toISOString(),
+        payload: {
+          type: 'message',
+          role: 'assistant',
+          content: [{ type: 'output_text', text: `large-import-message-${index}` }],
+        },
+      });
+      transcriptLines.push(transcriptLine);
+      expectedAcceptedLocalIds.push(
+        `history:codex:${fileRelPath}:${String(offsetBytes).padStart(12, '0')}:000`,
+      );
+      offsetBytes += Buffer.byteLength(`${transcriptLine}\n`, 'utf8');
+    }
+    await mkdir(sessionsDir, { recursive: true });
+    await writeFile(transcriptPath, `${transcriptLines.join('\n')}\n`, 'utf8');
+
+    vi.stubEnv('CODEX_HOME', codexHome);
+    const activation = await createPluginTestkit({
+      manifest: CODEX_PLUGIN_MANIFEST,
+      module: { activate: activateCodexPlugin },
+    });
+    const contribution = activation.registration('agents', 'codex')?.externalSessions;
+    await activation.dispose();
+    if (!contribution) {
+      throw new Error('Codex External Sessions contribution was not registered');
+    }
+
+    const materialized = await runRealContributionMaterialization({
+      activeServerDir,
+      agentId: 'codex',
+      contribution,
+      id: 'codex-large-import',
+      qualifiedIdentity: {
+        v: 1,
+        agent: { pluginId: 'happier.agent.codex', localId: 'codex' },
+        source: { kind: 'codexHome', contractVersion: 1 },
+      },
+      remoteSessionId,
+      source: { kind: 'codexHome', home: 'user', homePath: codexHome },
+    });
+
+    expect(materialized.result).toMatchObject({
+      ok: true,
+      progress: {
+        status: 'completed',
+        checkpoint: {
+          stagedItemCount: messageCount,
+          importedItemCount: messageCount,
+          acceptedThroughServerSeq: messageCount,
+        },
+      },
+    });
+    expect(materialized.acceptedLocalIds).toEqual(expectedAcceptedLocalIds);
+    expect(new Set(materialized.acceptedLocalIds).size).toBe(messageCount);
+    expect(materialized.commandKinds[0]).toBe('begin');
+    expect(materialized.commandKinds.at(-1)).toBe('finalize');
+    expect(materialized.commandKinds.filter((kind) => kind === 'batch')).toHaveLength(6);
+  });
+
   it('uses the activated OpenCode leaf to distinguish internal compaction from idless unknown rows', async () => {
     const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-materialize-opencode-real-'));
     roots.push(activeServerDir);
@@ -1182,6 +1314,7 @@ describe('default external session materialize capture', () => {
       }
       throw new Error(`Unexpected OpenCode test request: ${url.pathname}`);
     });
+    const managedEndpoint = createLoopbackManagedEndpointRead(baseUrl);
     vi.stubEnv('HAPPIER_OPENCODE_SERVER_URL', baseUrl);
     const activation = await createPluginTestkit({
       manifest: OPENCODE_PLUGIN_MANIFEST,
@@ -1198,6 +1331,7 @@ describe('default external session materialize capture', () => {
       'readAfterTranscript',
       'resolveLinkIdentity',
       'resolveLinkedIdentity',
+      'resolveManagedEndpointService',
       'resolveSource',
     ]);
 
@@ -1223,6 +1357,7 @@ describe('default external session materialize capture', () => {
       agentId: 'opencode',
       contribution,
       id: 'opencode-compaction',
+      managedEndpointRead: managedEndpoint.managedEndpointRead,
       qualifiedIdentity: opencodeQualifiedIdentity,
       remoteSessionId: compactionSessionId,
       source: opencodeSource,
@@ -1250,6 +1385,8 @@ describe('default external session materialize capture', () => {
       },
     });
     expect(compaction.commandKinds).toEqual(['begin', 'batch', 'finalize']);
+    expect(managedEndpoint.managedEndpointRead).toHaveBeenCalled();
+    expect(managedEndpoint.requestedPaths.every((path) => path.startsWith('/'))).toBe(true);
 
     const unknownSessionId = 'opencode-idless-unknown';
     messagesBySession.set(unknownSessionId, [visibleMessage('message-initial')]);
@@ -1258,6 +1395,7 @@ describe('default external session materialize capture', () => {
       agentId: 'opencode',
       contribution,
       id: 'opencode-idless-unknown',
+      managedEndpointRead: managedEndpoint.managedEndpointRead,
       qualifiedIdentity: opencodeQualifiedIdentity,
       remoteSessionId: unknownSessionId,
       source: opencodeSource,
@@ -1281,6 +1419,222 @@ describe('default external session materialize capture', () => {
     });
     expect(unknown.commandKinds).toEqual(['begin', 'batch']);
     expect(unknown.providerOps.readAfterTranscript).toHaveBeenCalled();
+  });
+
+  it('feeds each empty-source final catch-up page through staging before reading the next page and preserves chronological replay', async () => {
+    const activeServerDir = await mkdtemp(join(
+      tmpdir(),
+      'happier-materialize-empty-final-catch-up-streaming-',
+    ));
+    roots.push(activeServerDir);
+    readCredentialsMock.mockResolvedValue({
+      token: 'token',
+      encryption: { type: 'legacy', secret: new Uint8Array([1]) },
+    });
+    const linked = {
+      rawSession: {
+        currentStorageState: 'machine_only',
+        metadataVersion: 7,
+      },
+      metadata: {
+        externalSessionV1: {
+          v: 1,
+          agentId: 'codex',
+          machineId: 'machine-1',
+          remoteSessionId: 'remote-empty-final-catch-up',
+          source,
+          qualifiedIdentity,
+          linkedAtMs: 1,
+        },
+      },
+      sessionPath: null,
+      agentId: 'codex',
+      machineId: 'machine-1',
+      remoteSessionId: 'remote-empty-final-catch-up',
+      linkGeneration: 'link-1',
+      source,
+      codexBackendMode: null,
+    };
+    loadLinkedExternalSessionMock.mockResolvedValue({ ok: true, session: linked });
+    const stagingObserver = createExternalSessionOperationPrivateStagingStore({
+      activeServerDir,
+      limits: {
+        perOperation: { maxItems: 100_000, maxBytes: 512 * 1024 * 1024 },
+        aggregate: { maxItems: 500_000, maxBytes: 2 * 1024 * 1024 * 1024 },
+      },
+    });
+    let uncursoredPageReads = 0;
+    let stagedPagesBeforeSecondSourceRead: number | null = null;
+    let stagedItemsBeforeSecondSourceRead: number | null = null;
+    const pageTranscript = vi.fn(async (input: Readonly<{
+      cursor?: string;
+      maxItems: number;
+    }>) => {
+      if (input.cursor === 'older-1') {
+        const [record] = await listExternalSessionOperationRecords(activeServerDir);
+        if (!record) throw new Error('Expected the final catch-up operation record.');
+        const checkpoint = await stagingObserver.readCaptureCheckpoint({
+          operationId: record.operationId,
+        });
+        if (checkpoint.status !== 'ready') {
+          throw new Error('Expected first final catch-up page to be staged.');
+        }
+        stagedPagesBeforeSecondSourceRead = checkpoint.sourcePagesRead;
+        stagedItemsBeforeSecondSourceRead = checkpoint.stagedItemCount;
+        return {
+          items: [{ id: 'older-final-item' }],
+          nextCursor: null,
+          tailCursor: 'tail-final-1',
+          hasMore: false,
+          truncated: false,
+        };
+      }
+      if (input.maxItems === 1) {
+        return uncursoredPageReads < 2
+          ? {
+            items: [],
+            nextCursor: null,
+            tailCursor: null,
+            hasMore: false,
+            truncated: false,
+          }
+          : {
+            items: [{ id: 'newer-final-item' }],
+            nextCursor: 'older-1',
+            tailCursor: 'tail-final-1',
+            hasMore: true,
+            truncated: false,
+          };
+      }
+      uncursoredPageReads += 1;
+      return uncursoredPageReads === 1
+        ? {
+          items: [],
+          nextCursor: null,
+          tailCursor: null,
+          hasMore: false,
+          truncated: false,
+        }
+        : {
+          items: [{ id: 'newer-final-item' }],
+          nextCursor: 'older-1',
+          tailCursor: 'tail-final-1',
+          hasMore: true,
+          truncated: false,
+        };
+    });
+    resolveSurfaceMock.mockResolvedValue({
+      resource: {
+        pluginGeneration: 'contribution-1',
+        retirementSignal: new AbortController().signal,
+      },
+      providerOps: {
+        pageTranscript,
+        readAfterTranscript: vi.fn(async () => ({
+          outcome: 'already_current' as const,
+        })),
+      },
+    });
+    prepareItemMock.mockImplementation(async ({ item }: { item: { id: string } }) => ({
+      localId: `history:${item.id}`,
+      sidechainId: null,
+      messageRole: 'user',
+      content: { t: 'plain', v: { role: 'user', text: item.id } },
+    }));
+    const serverOrder: string[] = [];
+    fetchSessionByIdMock.mockImplementation(async () => ({
+      materializationPublicationId: 'publication-empty-final-catch-up',
+      materializedThroughSourceAt: 100,
+      publishedThroughServerSeq: serverOrder.length,
+    }));
+    const sendHistoricalCommand = vi.fn(async (
+      command: ExternalSessionOperationSocketCommandV1,
+    ): Promise<ExternalSessionOperationSocketResponseV1> => {
+      const authority = inspectAuthorityResponse(command, machineOnlyPriorStableStorage);
+      if (authority) return authority;
+      if (command.kind === 'begin' || command.kind === 'resume') {
+        return {
+          v: 1,
+          kind: 'ready',
+          claim: command.claim,
+          revision: command.expectedRevision,
+          historicalImportJobId: 'job-empty-final-catch-up',
+          limits: { maxItems: 200, maxSerializedBytes: 524_288 },
+          priorStableStorage: machineOnlyPriorStableStorage,
+        };
+      }
+      if (command.kind === 'batch') {
+        serverOrder.push(...command.items.map((entry) => entry.localId));
+        return {
+          v: 1,
+          kind: 'batch_accepted',
+          claim: command.claim,
+          revision: command.expectedRevision,
+          batchId: command.batchId,
+          acceptedThroughServerSeq: serverOrder.length,
+        };
+      }
+      if (command.kind === 'finalize') {
+        return {
+          v: 1,
+          kind: 'finalized',
+          claim: command.claim,
+          revision: command.expectedRevision,
+          acceptedThroughServerSeq: command.expectedAcceptedThroughServerSeq,
+          publication: {
+            materializationPublicationId: 'publication-empty-final-catch-up',
+            materializedThroughSourceAt: 100,
+            publishedThroughServerSeq: command.expectedAcceptedThroughServerSeq,
+          },
+        };
+      }
+      throw new Error(`Unexpected historical import command: ${command.kind}`);
+    });
+    const executor = createDefaultExternalSessionMaterializeActionExecutor({
+      activeServerDir,
+      operationExclusion: createExternalSessionOperationExclusion({
+        activeServerDir,
+        ownerId: 'materialize-empty-final-catch-up-streaming-test',
+      }),
+      sendHistoricalCommand,
+      publishProgress: async () => undefined,
+    });
+
+    const result = await executor.start({
+      request: {
+        v: 1,
+        idempotencyKey: 'default-empty-final-catch-up-streaming',
+        sessionId: 'session-empty-final-catch-up-streaming',
+        source: {
+          machineId: 'machine-1',
+          remoteSessionId: 'remote-empty-final-catch-up',
+          qualifiedIdentity,
+          linkGeneration: 'link-1',
+          sourceGeneration: 'source-1',
+          contributionGeneration: 'contribution-1',
+        },
+        plan: 'materialize',
+        targetStorageMode: 'external-linked',
+        targetRuntimeMode: null,
+      },
+    });
+
+    // The initial empty capture has already staged its capture and final-
+    // validation groups. The first appended page must become the third group
+    // before the iterator asks the source for its older sibling.
+    expect(stagedPagesBeforeSecondSourceRead).toBe(3);
+    expect(stagedItemsBeforeSecondSourceRead).toBe(1);
+    expect(result).toMatchObject({
+      ok: true,
+      progress: {
+        status: 'completed',
+        checkpoint: { stagedItemCount: 2, importedItemCount: 2 },
+      },
+    });
+    expect(serverOrder).toEqual([
+      'history:older-final-item',
+      'history:newer-final-item',
+    ]);
   });
 
   it('rechecks after import acknowledgements and imports a bounded append before finalizing', async () => {
@@ -1358,7 +1712,6 @@ describe('default external session materialize capture', () => {
       providerOps: {
         pageTranscript,
         readAfterTranscript,
-        resolveTranscriptMediaReadRoots: async () => [],
       },
     });
     prepareItemMock.mockImplementation(async ({ item }: { item: { id: string } }) => ({
@@ -1477,6 +1830,191 @@ describe('default external session materialize capture', () => {
       .toEqual(['tail-1', 'tail-1', 'tail-diagnostic', 'tail-2', 'tail-2']);
   });
 
+  it.each([
+    ['plain-one', 1, 'plain'],
+    ['plain-many', 20, 'plain'],
+    ['e2ee-keyed', 1, 'e2ee'],
+  ] as const)(
+    'bounds current-link reads per replay phase and group for %s',
+    async (caseLabel, itemCount, encryptionMode) => {
+    const activeServerDir = await mkdtemp(join(tmpdir(), `happier-materialize-bounded-currentness-${itemCount}-`));
+    roots.push(activeServerDir);
+    readCredentialsMock.mockImplementation(async () => ({
+      token: 'token',
+      encryption: encryptionMode === 'plain'
+        ? null
+        : {
+          type: 'dataKey' as const,
+          publicKey: new Uint8Array([1, 2]),
+          machineKey: new Uint8Array([3, 4]),
+        },
+    }));
+    const linked = {
+      rawSession: {
+        currentStorageState: 'machine_only',
+        metadataVersion: 7,
+        encryptionMode,
+        dataEncryptionKey: encryptionMode === 'plain' ? null : ' ZGVr ',
+      },
+      metadata: {
+        externalSessionV1: {
+          v: 1,
+          agentId: 'codex',
+          machineId: 'machine-1',
+          remoteSessionId: 'remote-1',
+          source,
+          qualifiedIdentity,
+          linkedAtMs: 1,
+        },
+      },
+      sessionPath: null,
+      agentId: 'codex',
+      machineId: 'machine-1',
+      remoteSessionId: 'remote-1',
+      linkGeneration: 'link-1',
+      source,
+      codexBackendMode: null,
+    };
+    let linkReadCount = 0;
+    loadLinkedExternalSessionMock.mockImplementation(async () => {
+      linkReadCount += 1;
+      return {
+        ok: true,
+        session: {
+          ...linked,
+          rawSession: {
+            ...linked.rawSession,
+            dataEncryptionKey: encryptionMode === 'plain'
+              ? null
+              : linkReadCount % 2 === 0 ? 'ZGVr' : ' ZGVr ',
+          },
+        },
+      };
+    });
+
+    const transcriptItems = Array.from({ length: itemCount }, (_, index) => ({
+      id: `item-${index}`,
+    }));
+    const pageTranscript = vi.fn(async () => ({
+      items: transcriptItems,
+      nextCursor: null,
+      tailCursor: `tail-${itemCount}`,
+      hasMore: false,
+      truncated: false,
+    }));
+    resolveSurfaceMock.mockResolvedValue({
+      resource: {
+        pluginGeneration: 'contribution-1',
+        retirementSignal: new AbortController().signal,
+      },
+      providerOps: {
+        pageTranscript,
+        readAfterTranscript: vi.fn(async () => ({ outcome: 'already_current' as const })),
+      },
+    });
+    prepareItemMock.mockImplementation(async ({ item }: { item: { id: string } }) => ({
+      localId: `history:${item.id}`,
+      sidechainId: null,
+      messageRole: 'user',
+      content: { t: 'plain', v: { role: 'user', text: item.id } },
+    }));
+    fetchSessionByIdMock.mockResolvedValue({
+      materializationPublicationId: 'publication-bounded-currentness',
+      materializedThroughSourceAt: 100,
+      publishedThroughServerSeq: transcriptItems.length,
+    });
+
+    let linkReadsAtImportBegin = -1;
+    let linkReadsAtFirstBatch = -1;
+    let credentialReadsAtImportBegin = -1;
+    let credentialReadsAtFirstBatch = -1;
+    const sendHistoricalCommand = vi.fn(async (
+      command: ExternalSessionOperationSocketCommandV1,
+    ): Promise<ExternalSessionOperationSocketResponseV1> => {
+      const authority = inspectAuthorityResponse(command, machineOnlyPriorStableStorage);
+      if (authority) return authority;
+      if (command.kind === 'begin') {
+        linkReadsAtImportBegin = loadLinkedExternalSessionMock.mock.calls.length;
+        credentialReadsAtImportBegin = readCredentialsMock.mock.calls.length;
+        return {
+          v: 1,
+          kind: 'ready',
+          claim: command.claim,
+          revision: command.expectedRevision,
+          historicalImportJobId: 'job-bounded-currentness',
+          limits: { maxItems: 200, maxSerializedBytes: 524_288 },
+          priorStableStorage: machineOnlyPriorStableStorage,
+        };
+      }
+      if (command.kind === 'batch') {
+        linkReadsAtFirstBatch = loadLinkedExternalSessionMock.mock.calls.length;
+        credentialReadsAtFirstBatch = readCredentialsMock.mock.calls.length;
+        return {
+          v: 1,
+          kind: 'batch_accepted',
+          claim: command.claim,
+          revision: command.expectedRevision,
+          batchId: command.batchId,
+          acceptedThroughServerSeq: command.items.length,
+        };
+      }
+      if (command.kind === 'finalize') {
+        return {
+          v: 1,
+          kind: 'finalized',
+          claim: command.claim,
+          revision: command.expectedRevision,
+          acceptedThroughServerSeq: command.expectedAcceptedThroughServerSeq,
+          publication: {
+            materializationPublicationId: 'publication-bounded-currentness',
+            materializedThroughSourceAt: 100,
+            publishedThroughServerSeq: command.expectedAcceptedThroughServerSeq,
+          },
+        };
+      }
+      return {
+        v: 1,
+        kind: 'error',
+        errorCode: 'invalid_state',
+        message: 'Unexpected historical import command.',
+      };
+    });
+    const executor = createDefaultExternalSessionMaterializeActionExecutor({
+      activeServerDir,
+      operationExclusion: createExternalSessionOperationExclusion({
+        activeServerDir,
+        ownerId: `materialize-bounded-currentness-${caseLabel}-test`,
+      }),
+      sendHistoricalCommand,
+      publishProgress: async () => undefined,
+    });
+
+    const result = await executor.start({
+      request: {
+        v: 1,
+        idempotencyKey: `default-bounded-currentness-${caseLabel}`,
+        sessionId: 'session-1',
+        source: {
+          machineId: 'machine-1',
+          remoteSessionId: 'remote-1',
+          qualifiedIdentity,
+          linkGeneration: 'link-1',
+          sourceGeneration: 'source-1',
+          contributionGeneration: 'contribution-1',
+        },
+        plan: 'materialize',
+        targetStorageMode: 'external-linked',
+        targetRuntimeMode: null,
+      },
+    });
+
+    expect(result).toMatchObject({ ok: true, progress: { status: 'completed' } });
+    expect(linkReadsAtImportBegin).toBeGreaterThanOrEqual(0);
+    expect(linkReadsAtFirstBatch - linkReadsAtImportBegin).toBe(3);
+    expect(credentialReadsAtFirstBatch - credentialReadsAtImportBegin).toBe(4);
+    },
+  );
+
   it('fences malformed-source UTF-8 diagnostics before any historical write, finalize, or publication', async () => {
     const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-materialize-malformed-utf8-'));
     roots.push(activeServerDir);
@@ -1544,7 +2082,6 @@ describe('default external session materialize capture', () => {
       providerOps: {
         pageTranscript,
         readAfterTranscript,
-        resolveTranscriptMediaReadRoots: async () => [],
       },
     });
     const sendHistoricalCommand = vi.fn(async (
@@ -1684,15 +2221,21 @@ describe('default external session materialize capture', () => {
         }
         : { outcome: 'already_current' as const }
     ));
+    const transcriptMediaReadRoots = ['/tmp/codex-materialize-media'];
+    const validateSource = vi.fn(async ({ source: candidateSource }) => ({
+      ok: true as const,
+      source: candidateSource,
+      transcriptMediaReadRoots,
+    }));
     resolveSurfaceMock.mockResolvedValue({
       resource: {
         pluginGeneration: 'contribution-1',
         retirementSignal: new AbortController().signal,
       },
       providerOps: {
+        validateSource,
         pageTranscript,
         readAfterTranscript,
-        resolveTranscriptMediaReadRoots: async () => [],
       },
     });
     prepareItemMock.mockImplementation(async ({ item }: { item: { id: string } }) => ({
@@ -1808,6 +2351,10 @@ describe('default external session materialize capture', () => {
       'history:newest',
       'history:appended',
     ]);
+    expect(validateSource).toHaveBeenCalledTimes(2);
+    expect(stageItemMock).toHaveBeenCalledWith(expect.objectContaining({
+      sourceReadRoots: transcriptMediaReadRoots,
+    }));
 
     pageTranscript.mockImplementation(async (input: Readonly<{ maxItems: number }>) => (
       input.maxItems === 1
@@ -2038,7 +2585,6 @@ describe('default external session materialize capture', () => {
         providerOps: {
           pageTranscript,
           readAfterTranscript,
-          resolveTranscriptMediaReadRoots: async () => [],
         },
       });
       prepareItemMock.mockImplementation(async ({ item }: { item: { id: string } }) => ({

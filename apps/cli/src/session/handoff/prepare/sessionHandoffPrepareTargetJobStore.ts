@@ -246,6 +246,16 @@ export type SessionHandoffPrepareTargetJobStore = Readonly<{
       current: SessionHandoffPrepareTargetJobRecord,
     ) => Omit<SessionHandoffPrepareTargetJobRecord, 'schemaVersion'>,
   ) => Promise<SessionHandoffPrepareTargetJobRecord | null>;
+  upgradeReadyV1ToPreparedV2: (input: Readonly<{
+    jobId: string;
+    sessionId: string;
+  }>) => Promise<SessionHandoffPrepareTargetJobRecordV2>;
+  transitionPredecessorV2: (
+    jobId: string,
+    updater: (
+      current: SessionHandoffPrepareTargetJobRecordV2,
+    ) => Omit<SessionHandoffPrepareTargetJobRecordV2, 'schemaVersion'> | null,
+  ) => Promise<SessionHandoffPrepareTargetJobRecordV2 | null>;
   hydrateInterrupted: (jobId: string, nowMs: number) => Promise<SessionHandoffPrepareTargetJobRecord | null>;
   acceptPrepareTargetResume: (input: Readonly<{
     jobId: string;
@@ -345,6 +355,64 @@ function assertV2Identity(
         throw new Error('Session handoff prepare recovery attempt must rejoin its fence or accept the current revision');
       }
     }
+  }
+}
+
+function assertPredecessorV2Transition(
+  current: SessionHandoffPrepareTargetJobRecordV2,
+  next: SessionHandoffPrepareTargetJobRecordV2,
+): void {
+  assertV2Identity(current, next);
+  if (current.recordKind === 'prepared_target' && next.recordKind === 'prepared_target') {
+    if (current.resume.status === 'not_attempted') {
+      if (
+        next.resume.status !== 'not_attempted'
+        && next.resume.status !== 'preexisting_unowned'
+        && next.resume.status !== 'attempted'
+      ) {
+        throw new Error('Session handoff predecessor resume cannot skip directly to confirmed');
+      }
+    } else if (current.resume.status === 'preexisting_unowned') {
+      if (next.resume.status !== 'preexisting_unowned') {
+        throw new Error('Session handoff predecessor unowned resume classification is immutable');
+      }
+    } else if (current.resume.status === 'attempted') {
+      if (
+        (next.resume.status !== 'attempted' && next.resume.status !== 'confirmed')
+        || next.resume.attemptId !== current.resume.attemptId
+        || next.resume.acceptedAtMs !== current.resume.acceptedAtMs
+      ) {
+        throw new Error('Session handoff predecessor resume attempt identity is immutable');
+      }
+    } else if (
+      next.resume.status !== 'confirmed'
+      || next.resume.attemptId !== current.resume.attemptId
+      || next.resume.acceptedAtMs !== current.resume.acceptedAtMs
+      || next.resume.confirmedAtMs !== current.resume.confirmedAtMs
+    ) {
+      throw new Error('Session handoff predecessor confirmed resume is immutable');
+    }
+  }
+  if (current.terminal.status === 'completed' || current.terminal.status === 'aborted') {
+    throw new Error('Session handoff predecessor terminal state is immutable');
+  }
+  if (
+    current.terminal.status === 'aborting'
+    && (
+      (next.terminal.status !== 'aborting' && next.terminal.status !== 'aborted')
+      || next.terminal.operationId !== current.terminal.operationId
+    )
+  ) {
+    throw new Error('Session handoff predecessor abort operation identity is immutable');
+  }
+  const terminalRevision =
+    next.terminal.status === 'aborting'
+      ? next.terminal.claimedRevision
+      : next.terminal.status === 'completed' || next.terminal.status === 'aborted'
+        ? next.terminal.completedRevision
+        : null;
+  if (terminalRevision !== null && terminalRevision !== next.transitionRevision) {
+    throw new Error('Session handoff predecessor terminal revision must match the transition');
   }
 }
 
@@ -512,7 +580,7 @@ export async function recoverSessionHandoffPrepareTargetJobsAfterRestart(input: 
 async function readPrepareTargetJobFile(filePath: string): Promise<SessionHandoffPrepareTargetJobRecord | null> {
   try {
     const raw = await readFile(filePath, 'utf8');
-    const value = JSON.parse(raw) as unknown;
+    const value = normalizePredecessorV2RecoveryActions(JSON.parse(raw) as unknown);
     const parsed = SessionHandoffPrepareTargetJobRecordSchema.safeParse(value);
     return parsed.success ? parsed.data : null;
   } catch (error) {
@@ -522,6 +590,49 @@ async function readPrepareTargetJobFile(filePath: string): Promise<SessionHandof
     }
     throw error;
   }
+}
+
+/**
+ * The exact remote-dev 1b32cdc6 V2 record can persist retry_target_cleanup, which the current
+ * recovery owner intentionally replaced with retrying the idempotent abort RPC while keeping the
+ * source stopped. Normalize only this persisted predecessor seam; do not loosen the protocol-wide
+ * recovery-action union. Remove with the V2 predecessor adapter once those records are unreachable.
+ */
+function normalizePredecessorV2RecoveryActions(value: unknown): unknown {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+  const record = value as Record<string, unknown>;
+  if (record.schemaVersion !== SESSION_HANDOFF_PREPARE_TARGET_JOB_SCHEMA_VERSION_V2) return value;
+  const normalizeStatus = (candidate: unknown): unknown => {
+    if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return candidate;
+    const status = candidate as Record<string, unknown>;
+    if (!Array.isArray(status.recoveryActions) || !status.recoveryActions.includes('retry_target_cleanup')) {
+      return candidate;
+    }
+    return {
+      ...status,
+      recoveryActions: status.recoveryActions.filter(
+        (action) => action !== 'retry_target_cleanup',
+      ),
+    };
+  };
+  const prepareTargetResult =
+    record.prepareTargetResult
+    && typeof record.prepareTargetResult === 'object'
+    && !Array.isArray(record.prepareTargetResult)
+      ? record.prepareTargetResult as Record<string, unknown>
+      : null;
+  return {
+    ...record,
+    status: normalizeStatus(record.status),
+    ...(prepareTargetResult
+      ? {
+          prepareTargetResult: {
+            ...prepareTargetResult,
+            status: normalizeStatus(prepareTargetResult.status),
+          },
+        }
+      : {}),
+  };
 }
 export function createSessionHandoffPrepareTargetJobStore(input: Readonly<{
   activeServerDir: string;
@@ -634,6 +745,60 @@ export function createSessionHandoffPrepareTargetJobStore(input: Readonly<{
           schemaVersion: SESSION_HANDOFF_PREPARE_TARGET_JOB_SCHEMA_VERSION_V1,
         });
         assertV1Identity(current, next);
+        await writeJsonAtomic(jobPath, next);
+        return next;
+      });
+    },
+    async upgradeReadyV1ToPreparedV2(upgradeInput) {
+      const jobPath = resolveJobPath(upgradeInput.jobId);
+      return await withPrepareTargetJobMutationLock(jobPath, async () => {
+        const current = await readPrepareTargetJobFile(jobPath);
+        if (!current) {
+          throw new Error(`Session handoff prepare-target job not found: ${upgradeInput.jobId}`);
+        }
+        if (current.schemaVersion === SESSION_HANDOFF_PREPARE_TARGET_JOB_SCHEMA_VERSION_V2) {
+          if (
+            current.recordKind !== 'prepared_target'
+            || current.sessionId !== upgradeInput.sessionId
+          ) {
+            throw new Error('Existing v2 handoff job does not match the exact target session');
+          }
+          return current;
+        }
+        if (current.status.status !== 'ready_for_cutover' || !current.prepareTargetResult) {
+          throw new Error('Only a ready v1 target job can be promoted for predecessor V2 resume');
+        }
+        const promoted = SessionHandoffPreparedTargetJobRecordV2Schema.parse({
+          ...current,
+          schemaVersion: SESSION_HANDOFF_PREPARE_TARGET_JOB_SCHEMA_VERSION_V2,
+          recordKind: 'prepared_target',
+          sessionId: upgradeInput.sessionId,
+          transitionRevision: 0,
+          prepareRecovery: { status: 'not_attempted' },
+          resume: { status: 'not_attempted' },
+          terminal: { status: 'open' },
+          targetCleanup: { status: 'not_required' },
+        });
+        await writeJsonAtomic(jobPath, promoted);
+        return promoted;
+      });
+    },
+    async transitionPredecessorV2(jobId, updater) {
+      const jobPath = resolveJobPath(jobId);
+      return await withPrepareTargetJobMutationLock(jobPath, async () => {
+        const current = await readPrepareTargetJobFile(jobPath);
+        if (!current) return null;
+        if (current.schemaVersion !== SESSION_HANDOFF_PREPARE_TARGET_JOB_SCHEMA_VERSION_V2) {
+          throw new Error('Predecessor V2 transition cannot mutate a v1 handoff job');
+        }
+        const baseline = structuredClone(current);
+        const nextInput = updater(structuredClone(baseline));
+        if (nextInput === null) return baseline;
+        const next = SessionHandoffPrepareTargetJobRecordV2Schema.parse({
+          ...nextInput,
+          schemaVersion: SESSION_HANDOFF_PREPARE_TARGET_JOB_SCHEMA_VERSION_V2,
+        });
+        assertPredecessorV2Transition(baseline, next);
         await writeJsonAtomic(jobPath, next);
         return next;
       });

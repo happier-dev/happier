@@ -1,3 +1,4 @@
+import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import axios from 'axios';
 
 import {
@@ -10,13 +11,13 @@ import {
 
 import { configuration } from '@/configuration';
 import { createDefaultPluginInstallationPublisherHeader } from '@/plugins/installations/publisherProof';
-import type { Credentials } from '@/persistence';
+import type { StoredCredentials } from '@/persistence';
 import { resolveServerHttpBaseUrl } from '@/session/transport/http/serverHttpBaseUrl';
 
 const REQUEST_PATH = '/v1/plugins/permissions/grants/request';
 
 export async function requestReviewCommentDirectWriteGrant(params: Readonly<{
-  credentials: Credentials;
+  credentials: StoredCredentials;
   input: PluginPermissionGrantRequestActionInputV1;
 }>): Promise<PluginPermissionGrantRequestActionOutputV1> {
   const body = PluginPermissionGrantRequestActionInputV1Schema.parse(params.input);
@@ -30,6 +31,7 @@ export async function requestReviewCommentDirectWriteGrant(params: Readonly<{
     body,
     {
       headers: {
+        ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
         Authorization: `Bearer ${params.credentials.token}`,
         ...(publisherHeader
           ? { [PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1]: publisherHeader }

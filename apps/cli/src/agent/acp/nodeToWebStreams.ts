@@ -94,11 +94,9 @@ export function nodeToWebStreams(
                     settled = true;
                     stdin.off('drain', onDrain);
                     clearActiveWriteErrorHandler();
-                    if (isBenignWriteError(error)) {
-                        resolve();
-                        return;
+                    if (!isBenignWriteError(error)) {
+                        logger.debug(`[nodeToWebStreams] Error writing to stdin:`, error);
                     }
-                    logger.debug(`[nodeToWebStreams] Error writing to stdin:`, error);
                     if (error instanceof Error) {
                         reject(error);
                         return;

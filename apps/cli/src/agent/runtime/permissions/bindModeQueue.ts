@@ -1,18 +1,22 @@
 import type { Metadata, PermissionMode, UserMessage } from '@/api/types';
 import {
   readPendingLocalId,
-  readSessionMessageModelSelectionV1,
-  type ProviderBoundModelRef,
-} from '@happier-dev/protocol';
-import {
-  readAttachmentEnvelopeLocalImagePaths,
   readHappierStructuredInputV1FromMeta,
-} from '@happier-dev/protocol/runtime';
+  readSessionInputCausalPermissionAuthorityV1,
+  readSessionMessageProvenanceV1,
+  readSessionMessageModelSelectionV1,
+  renderSessionInputContextBlockV1,
+  renderSessionInputContextPromptV1,
+  type ProviderBoundModelRef,
+  type SessionInputCausalPermissionAuthorityV1,
+} from '@happier-dev/protocol';
+import { readAdmittedHappierStructuredInputV1FromMeta } from '@happier-dev/protocol/runtime';
 
 import { pushMessageToQueueWithSpecialCommands, type SpecialCommandQueue } from '@/agent/runtime/queueSpecialCommands';
 import { resolveAppendSystemPromptModeOverride } from '@/agent/runtime/permissions/appendSystemPrompt';
 import { resolveProviderPromptWithReplaySeed } from '@/agent/runtime/replaySeed/replaySeedV1';
 import { isNonSteerablePromptPayload } from '@/cli/parsers/specialCommands';
+import { readAdmittedSessionMediaInputForDispatchV1 } from '@/session/services/admitSessionStructuredInputV1';
 
 import { resolvePermissionModeUpdatedAtFromMessage } from './modeCanonical';
 import { resolvePermissionModeForQueueingUserMessage } from './modeFromUserMessage';
@@ -48,6 +52,7 @@ export type InFlightConfigApplyOutcome = Readonly<
 
 export type InFlightInterruptOutcome = Readonly<
   | { status: 'interrupted' }
+  | { status: 'deferred_until_turn_end' }
   | { status: 'unsupported'; reason?: string | undefined }
 >;
 
@@ -98,6 +103,7 @@ export type InFlightSteerController = Readonly<{
       localIds?: readonly string[];
       userMessageSeq?: number | null;
       userMessageSeqs?: readonly number[];
+      causalPermissionAuthority?: SessionInputCausalPermissionAuthorityV1;
     }>,
   ) => Promise<void>;
   /**
@@ -142,7 +148,13 @@ export function registerPermissionModeMessageQueueBinding(opts: {
   getCurrentPermissionMode: () => PermissionMode | undefined;
   setCurrentPermissionMode: (mode: PermissionMode | undefined) => void;
   inFlightSteer?: InFlightSteerController | null;
-}): { bindSession: (session: PermissionModeQueueSessionBinding) => void } {
+}): {
+  bindSession: (session: PermissionModeQueueSessionBinding) => void;
+  releaseRejectedBeforeProviderPromptIdentity: (
+    session: PermissionModeQueueSessionBinding,
+    message: PermissionModeQueuedPrompt,
+  ) => void;
+} {
   let steerSequence: Promise<void> = Promise.resolve();
   let didReplaySeedBootstrapForSteer = false;
   let currentSession = opts.session;
@@ -186,13 +198,52 @@ export function registerPermissionModeMessageQueueBinding(opts: {
     opts.setCurrentPermissionMode(resolvedMode.currentPermissionMode);
 
     const text = message.content.text;
-    const structuredInput = readHappierStructuredInputV1FromMeta(message.meta, {
-      allowedLocalImagePaths: readAttachmentEnvelopeLocalImagePaths(message.meta),
-    });
+    // The queue consumes the canonical envelope Message admission persisted.
+    // It must not rerun ingress local-path trust; alias-only legacy metadata is
+    // the sole path that still reaches the compatibility reader below.
+    const admittedStructuredInput = readAdmittedHappierStructuredInputV1FromMeta(message.meta);
+    const causalPermissionAuthority = readSessionInputCausalPermissionAuthorityV1(message.meta);
+    const provenance = readSessionMessageProvenanceV1(message.meta);
+    const inputContextBlock = provenance
+      ? renderSessionInputContextBlockV1({ provenance })
+      : '';
     const queuedPromptIdentityFields = {
       ...(localIds.length === 0 ? {} : { localIds }),
       ...(userMessageSeq === null ? {} : { userMessageSeq, userMessageSeqs: [userMessageSeq] }),
     };
+    if (admittedStructuredInput.status === 'invalid') {
+      try {
+        opts.inFlightSteer?.rejectPromptBeforeProvider?.({
+          ...(localIds.length === 0 ? {} : { localIds }),
+          userMessageSeq,
+          ...(userMessageSeq === null ? {} : { userMessageSeqs: [userMessageSeq] }),
+        });
+      } catch {
+        // Fail-closed consumption must not crash the session queue binding.
+      }
+      return true;
+    }
+    const structuredInput = admittedStructuredInput.status === 'admitted'
+      ? admittedStructuredInput.structuredInput
+      : readHappierStructuredInputV1FromMeta(message.meta);
+    const admittedSessionMedia = structuredInput
+      ? readAdmittedSessionMediaInputForDispatchV1({
+          meta: message.meta,
+          structuredInput,
+        })
+      : { status: 'absent' as const };
+    if (admittedSessionMedia.status === 'invalid') {
+      try {
+        opts.inFlightSteer?.rejectPromptBeforeProvider?.({
+          ...(localIds.length === 0 ? {} : { localIds }),
+          userMessageSeq,
+          ...(userMessageSeq === null ? {} : { userMessageSeqs: [userMessageSeq] }),
+        });
+      } catch {
+        // Fail-closed consumption must not crash the session queue binding.
+      }
+      return true;
+    }
     // Alias-normalized change signal (ported S-6): a raw compare against the previous mode reads
     // an alias respelling ('acceptEdits' vs 'safe-yolo') as a change and wrongly blocks steering.
     const didChangePermissionMode = resolvedMode.didChange;
@@ -233,20 +284,37 @@ export function registerPermissionModeMessageQueueBinding(opts: {
       ...(modelSelection
         ? { modelSelection }
         : {}),
+      ...(causalPermissionAuthority ? { causalPermissionAuthority } : {}),
+      ...(inputContextBlock ? { inputContextBlock } : {}),
     };
     const queuedPrompt: PermissionModeQueuedPrompt = {
       text,
       localId,
       ...queuedPromptIdentityFields,
       ...(structuredInput ? { structuredInput } : {}),
+      ...(admittedSessionMedia.status === 'admitted'
+        ? { sessionMedia: admittedSessionMedia.media }
+        : {}),
+      ...(causalPermissionAuthority ? { causalPermissionAuthority } : {}),
+      ...(inputContextBlock ? { inputContextBlock } : {}),
     };
 
     if (pendingProviderAction === 'send' || pendingProviderAction === 'interrupt_and_send') {
       const enqueueClaimedSend = (): void => {
-        opts.queue.pushIsolateAndClear(
-          queuedPrompt,
-          queueMode,
-        );
+        if (structuredInput) {
+          opts.queue.pushIsolate(queuedPrompt, queueMode);
+          return;
+        }
+        if (isNonSteerablePromptPayload(text)) {
+          pushMessageToQueueWithSpecialCommands({
+            queue: opts.queue,
+            message: queuedPrompt,
+            text,
+            mode: queueMode,
+          });
+          return;
+        }
+        opts.queue.pushIsolateAndClear(queuedPrompt, queueMode);
       };
       if (pendingProviderAction === 'interrupt_and_send') {
         const interruptActiveTurn = opts.inFlightSteer?.interruptActiveTurn;
@@ -276,7 +344,10 @@ export function registerPermissionModeMessageQueueBinding(opts: {
           }
           if (
             !isCurrentBinding(session, messageBindingGeneration)
-            || outcome.status !== 'interrupted'
+            || (
+              outcome.status !== 'interrupted'
+              && outcome.status !== 'deferred_until_turn_end'
+            )
           ) {
             rejectUnsupportedInterrupt();
             return;
@@ -396,6 +467,7 @@ export function registerPermissionModeMessageQueueBinding(opts: {
           try {
             if (stopForLostBinding()) return;
             let providerText = text;
+            let settleReplaySeedOnProviderAcceptance: (() => Promise<unknown>) | null = null;
             if (typeof session.getMetadataSnapshot === 'function') {
               try {
                 if (stopForLostBinding()) return;
@@ -429,6 +501,7 @@ export function registerPermissionModeMessageQueueBinding(opts: {
                 if (stopForLostBinding()) return;
                 didReplaySeedBootstrapForSteer = true;
                 providerText = seedResolution.providerPrompt;
+                settleReplaySeedOnProviderAcceptance = seedResolution.settleOnProviderAcceptance;
               } catch {
                 if (stopForLostBinding()) return;
                 // Best-effort only; fall back to steering the raw user text.
@@ -445,11 +518,25 @@ export function registerPermissionModeMessageQueueBinding(opts: {
               if (isExactClaimedSteer) {
                 rejectExactSteerBeforeProvider();
               } else {
-                queueBlockedSteer(providerText);
+                // Queue the raw user text, not the seeded prompt: the seed is still unretired
+                // because no provider accepted it, so the prompt loop applies it on dispatch.
+                // Queueing the seeded text here would prefix the seed twice.
+                queueBlockedSteer();
               }
               return;
             }
-            await steer.steerText(providerText, { localId, ...queuedPromptIdentityFields });
+            const dispatchText = renderSessionInputContextPromptV1({
+              provenanceBlock: inputContextBlock,
+              transformedUserText: providerText,
+            });
+            await steer.steerText(dispatchText, {
+              localId,
+              ...queuedPromptIdentityFields,
+              ...(causalPermissionAuthority ? { causalPermissionAuthority } : {}),
+            });
+            // The steer reached the provider; only now may the activation seed retire. A throw
+            // above leaves it in place so the context survives the retry.
+            await settleReplaySeedOnProviderAcceptance?.();
             if (stopForLostBinding()) return;
             return;
           } catch {
@@ -481,7 +568,7 @@ export function registerPermissionModeMessageQueueBinding(opts: {
     }
 
     if (structuredInput) {
-      opts.queue.pushIsolateAndClear(queuedPrompt, queueMode);
+      opts.queue.pushIsolate(queuedPrompt, queueMode);
     } else {
       pushMessageToQueueWithSpecialCommands({
         queue: opts.queue,
@@ -525,6 +612,23 @@ export function registerPermissionModeMessageQueueBinding(opts: {
     }
   };
 
+  const releaseRejectedBeforeProviderPromptIdentity = (
+    session: PermissionModeQueueSessionBinding,
+    message: PermissionModeQueuedPrompt,
+  ): void => {
+    if (session !== currentSession) return;
+    const localIds = new Set<string>([message.localId, ...(message.localIds ?? [])]
+      .filter((localId): localId is string => typeof localId === 'string' && localId.length > 0));
+    for (const localId of localIds) {
+      handledUserPromptLocalIds.delete(localId);
+    }
+    for (const userMessageSeq of [message.userMessageSeq, ...(message.userMessageSeqs ?? [])]) {
+      if (typeof userMessageSeq === 'number' && Number.isFinite(userMessageSeq)) {
+        handledUserPromptSeqs.delete(userMessageSeq);
+      }
+    }
+  };
+
   const bindSession = (session: PermissionModeQueueSessionBinding) => {
     currentBindingAbortController.abort('permission-mode-queue-session-rebound');
     currentBindingAbortController = new AbortController();
@@ -537,7 +641,7 @@ export function registerPermissionModeMessageQueueBinding(opts: {
 
   bindSession(opts.session);
 
-  return { bindSession };
+  return { bindSession, releaseRejectedBeforeProviderPromptIdentity };
 }
 
 function resolveModelOverrideFromUserMessage(

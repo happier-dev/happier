@@ -9,7 +9,7 @@ export type PluginsRegistryCommandDeps = Readonly<{
   machineId: string;
   promptSecret: (prompt: string) => Promise<string>;
   allocateProfileId?: () => string;
-  write: (value: unknown) => void;
+  write: (value: unknown) => void | Promise<void>;
 }>;
 
 function readValue(args: readonly string[], flag: string): string | null {
@@ -49,7 +49,7 @@ export async function handlePluginsRegistryCommand(
   if (!action || action === 'help') throw new Error('Expected registry command: add, login, test, list, logout, or remove');
 
   if (action === 'list') {
-    deps.write({ kind: 'plugins_registry_list', snapshot: await deps.service.snapshot() });
+    await deps.write({ kind: 'plugins_registry_list', snapshot: await deps.service.snapshot() });
     return;
   }
 
@@ -73,7 +73,7 @@ export async function handlePluginsRegistryCommand(
         allowPrivateNetwork: args.includes('--allow-private-network'),
       },
     }));
-    deps.write({ kind: 'plugins_registry_add', profileId, snapshot: result.snapshot });
+    await deps.write({ kind: 'plugins_registry_add', profileId, snapshot: result.snapshot });
     return;
   }
 
@@ -89,7 +89,7 @@ export async function handlePluginsRegistryCommand(
       action: 'login', machineId: deps.machineId, expectedRevision: current.revision,
       mutationId, profileId, credential: { kind: 'bearer_token', secret },
     }));
-    deps.write({ kind: 'plugins_registry_login', profileId, snapshot: result.snapshot });
+    await deps.write({ kind: 'plugins_registry_login', profileId, snapshot: result.snapshot });
     return;
   }
 
@@ -97,7 +97,7 @@ export async function handlePluginsRegistryCommand(
     const result = requireSuccess(await deps.service.mutate({
       action, machineId: deps.machineId, expectedRevision: current.revision, mutationId, profileId,
     }));
-    deps.write({ kind: `plugins_registry_${action}`, profileId, snapshot: result.snapshot });
+    await deps.write({ kind: `plugins_registry_${action}`, profileId, snapshot: result.snapshot });
     return;
   }
 

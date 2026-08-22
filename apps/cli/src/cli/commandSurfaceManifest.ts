@@ -6,6 +6,7 @@ import {
 } from '@/agent/runtime/registry/commandContracts';
 import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
 import { listProjectedPluginCommandRootHelpEntries } from '@/cli/pluginCommandContributions';
+import { SESSION_HELP_LINES } from '@/cli/commands/session/shared/sessionCommandUsage';
 
 export type CliCommandSurfaceEntry = CommandSurfaceDescriptorInput;
 
@@ -26,6 +27,12 @@ const COMMAND_SURFACE_MANIFEST: readonly CliCommandSurfaceEntry[] = [
     command: 'auth',
     rootHelpLabel: 'happier auth',
     rootHelpDescription: 'Manage authentication',
+    allowTmux: false,
+  },
+  {
+    command: 'automation',
+    rootHelpLabel: 'happier automation',
+    rootHelpDescription: 'Trigger and manage automations',
     allowTmux: false,
   },
   {
@@ -144,7 +151,19 @@ const COMMAND_SURFACE_MANIFEST: readonly CliCommandSurfaceEntry[] = [
     allowTmux: false,
   },
   {
+    command: 'resume',
+    rootHelpLabel: SESSION_HELP_LINES.resume,
+    rootHelpDescription: 'Resume an inactive session',
+    allowTmux: true,
+  },
+  {
+    // Compatibility alias: intentionally accepted but omitted from root help.
     command: 'sessions',
+    allowTmux: false,
+  },
+  {
+    // Compatibility alias: intentionally accepted but omitted from root help.
+    command: 'automations',
     allowTmux: false,
   },
   {

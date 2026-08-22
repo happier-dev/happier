@@ -5,7 +5,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { deriveBoxPublicKeyFromSeed } from '@happier-dev/protocol';
 
 import { configuration, reloadConfiguration } from '@/configuration';
-import { updateSettings, writeCredentialsDataKey } from '@/persistence';
+import {
+  updateSettings,
+  writeCredentialsDataKey,
+  writeCredentialsTokenOnly,
+} from '@/persistence';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { withTempDir } from '@/testkit/fs/tempDir';
 import { captureConsoleText } from '@/testkit/logger/captureOutput';
@@ -99,6 +103,53 @@ describe('happier auth status --json', () => {
           expect(parsed.data?.machineId).toBe('mid_123');
           expect(parsed.data?.token).toBeUndefined();
           expect(raw).not.toContain('token_super_secret');
+          expect(process.exitCode).toBe(0);
+        } finally {
+          output.restore();
+        }
+      });
+    } finally {
+      envScope.restore();
+      envScope = createEnvKeyScope(envKeys);
+      reloadConfiguration();
+      process.exitCode = prevExitCode;
+    }
+  });
+
+  it('reports token-only credentials as authenticated without fabricating encryption material', async () => {
+    const prevExitCode = process.exitCode;
+    process.exitCode = undefined;
+    try {
+      await withTempDir('happier-auth-status-json-token-only-', async (home) => {
+        const output = captureConsoleText();
+
+        try {
+          envScope.patch({ HAPPIER_HOME_DIR: home });
+          reloadConfiguration();
+          vi.stubGlobal('fetch', vi.fn(async () => {
+            throw new Error('network unavailable');
+          }));
+
+          await writeCredentialsTokenOnly({ token: 'token_plain_account' });
+
+          await handleAuthCommand(['status', '--json']);
+
+          const raw = output.text().trim();
+          const parsed = JSON.parse(raw) as {
+            ok: boolean;
+            kind: string;
+            data?: {
+              authenticated?: boolean;
+              encryption?: { type?: string };
+              token?: string;
+            };
+          };
+          expect(parsed.ok).toBe(true);
+          expect(parsed.kind).toBe('auth_status');
+          expect(parsed.data?.authenticated).toBe(true);
+          expect(parsed.data?.encryption).toEqual({ type: 'none' });
+          expect(parsed.data?.token).toBeUndefined();
+          expect(raw).not.toContain('token_plain_account');
           expect(process.exitCode).toBe(0);
         } finally {
           output.restore();

@@ -150,7 +150,7 @@ describe('handleDaemonCliCommand takeover handling', () => {
         });
     });
 
-    it('takes over a legacy manual relay runtime without startup metadata when daemon start uses --takeover', async () => {
+  it('takes over a legacy manual relay runtime without startup metadata when daemon start uses --takeover', async () => {
         await withTempDir('happier-daemon-start-legacy-takeover-', async (homeDir) => {
             envScope.patch({
                 HAPPIER_HOME_DIR: homeDir,
@@ -200,6 +200,40 @@ describe('handleDaemonCliCommand takeover handling', () => {
                 }),
             }));
             expect(output.text()).toContain('Taking over the current manual relay runtime');
-        });
     });
+  });
+
+  it('starts an explicitly requested plugin recovery daemon with recovery mode in the detached child', async () => {
+    await withTempDir('happier-daemon-start-plugin-recovery-', async (homeDir) => {
+      envScope.patch({
+        HAPPIER_HOME_DIR: homeDir,
+        HAPPIER_ACTIVE_SERVER_ID: 'cloud',
+        HAPPIER_PUBLIC_RELEASE_CHANNEL: 'stable',
+      });
+      spawnDetachedDaemonStartSyncMock.mockResolvedValueOnce({ unref() {} });
+      vi.resetModules();
+      const { handleDaemonCliCommand } = await import('./daemon');
+      const exitSpy = vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
+        throw new Error(`exit:${code ?? ''}`);
+      }) as never);
+      const output = captureConsoleText();
+
+      try {
+        await expect(handleDaemonCliCommand({
+          args: ['daemon', 'start', '--plugin-recovery'],
+          rawArgv: ['node', 'happier', 'daemon', 'start', '--plugin-recovery'],
+          terminalRuntime: null,
+        })).rejects.toThrow(/exit:0/);
+      } finally {
+        output.restore();
+        exitSpy.mockRestore();
+      }
+
+      expect(spawnDetachedDaemonStartSyncMock).toHaveBeenCalledWith(expect.objectContaining({
+        env: expect.objectContaining({
+          HAPPIER_DAEMON_PLUGIN_RECOVERY: '1',
+        }),
+      }));
+    });
+  });
 });

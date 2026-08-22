@@ -88,7 +88,7 @@ describe('happier session actions (unit)', () => {
         id: 'sess-1',
         metadata: {},
       },
-      ctx: { type: 'plain' as const },
+      ctx: null,
       mode: 'plain' as const,
     });
     execute.mockResolvedValueOnce({ ok: true, result: { started: true } });
@@ -132,7 +132,7 @@ describe('happier session actions (unit)', () => {
         id: 'sess-1',
         metadata: {},
       },
-      ctx: { type: 'plain' as const },
+      ctx: null,
       mode: 'plain' as const,
     });
     execute.mockResolvedValueOnce({
@@ -177,7 +177,7 @@ describe('happier session actions (unit)', () => {
         id: 'sess-1',
         metadata: {},
       },
-      ctx: { type: 'plain' as const },
+      ctx: null,
       mode: 'plain' as const,
     });
     execute.mockResolvedValueOnce({
@@ -225,7 +225,7 @@ describe('happier session actions (unit)', () => {
         id: 'sess-1',
         metadata: {},
       },
-      ctx: { type: 'plain' as const },
+      ctx: null,
       mode: 'plain' as const,
     });
     execute.mockResolvedValueOnce({ ok: true, result: { ok: true } });
@@ -267,7 +267,7 @@ describe('happier session actions (unit)', () => {
         id: 'sess-1',
         metadata: {},
       },
-      ctx: { type: 'plain' as const },
+      ctx: null,
       mode: 'plain' as const,
     });
     execute.mockResolvedValueOnce({ ok: true, result: { sessions: [] } });
@@ -310,7 +310,7 @@ describe('happier session actions (unit)', () => {
         id: 'sess-1',
         metadata: {},
       },
-      ctx: { type: 'plain' as const },
+      ctx: null,
       mode: 'plain' as const,
     });
     createCliActionExecutor.mockImplementationOnce(() => {

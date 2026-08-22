@@ -54,6 +54,63 @@ async function expectZellijStartupTimeoutFailure(action: () => Promise<unknown>,
 }
 
 describe('createZellijTerminalHostAdapter', () => {
+  it('gives staging and Enter their own bounded phase after a slow successful write', async () => {
+    let nowMs = 1_000;
+    const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => nowMs);
+    const prompt = 'continue';
+    const calls: string[] = [];
+    const actions = createActions({
+      pasteText: vi.fn(async () => {
+        calls.push('write');
+        nowMs += 100;
+      }),
+      sendEnter: vi.fn(async (params) => {
+        expect(params.timeoutMs).toBeGreaterThan(0);
+        calls.push('enter');
+      }),
+      dumpScreen: vi.fn(async (params) => {
+        expect(params.timeoutMs).toBeGreaterThan(0);
+        return calls.includes('enter') ? 'Claude Code\n❯' : `Claude Code\n❯ ${prompt}`;
+      }),
+    });
+    const adapter = createTestZellijAdapter({
+      zellijBinary: '/tools/zellij',
+      socketDir: '/tmp/zellij-sock',
+      actions,
+      actionTimeoutMs: 100,
+      promptSubmitVerification: {
+        shouldVerifyAfterSubmit: () => true,
+        verifyAfterSubmit: ({ promptText, screenText }) => screenText.includes(promptText),
+      },
+    });
+
+    try {
+      await expect(adapter.injectUserPrompt({
+        kind: 'zellij',
+        sessionName: 'session-a',
+        paneId: 'terminal_42',
+        socketDir: '/tmp/zellij-sock',
+        attachMetadata: {
+          attachStrategy: 'terminal_host',
+          topology: 'exclusive',
+          locality: 'same_machine',
+          maxClients: null,
+          requiresLocalAttachmentInfo: true,
+          liveProbe: 'required',
+        },
+      }, {
+        text: prompt,
+        multiline: false,
+        origin: { kind: 'ui_pending', nonce: 'nonce-slow-write' },
+        scheduling: { timeoutMs: 100 },
+      })).resolves.toMatchObject({ status: 'injected' });
+    } finally {
+      nowSpy.mockRestore();
+    }
+
+    expect(calls).toEqual(['write', 'enter']);
+  });
+
   it('leaves a foreign live pane untouched when attaching a colliding named session', async () => {
     const actions = createActions({
       listPanes: vi.fn(async () => [
@@ -169,7 +226,7 @@ describe('createZellijTerminalHostAdapter', () => {
     }));
   });
 
-  it('does not wait for a delayed pre-submit collapsed marker and settles once after Enter', async () => {
+  it('waits for a delayed pre-submit collapsed marker and settles once after Enter', async () => {
     const prompt = Array.from({ length: 6_000 }, (_, index) => `line ${index} ${'x'.repeat(36)}`).join('\n');
     const waits: number[] = [];
     let dumpCount = 0;
@@ -192,8 +249,6 @@ describe('createZellijTerminalHostAdapter', () => {
       actionTimeoutMs: 1_000,
       pasteMaxBytes: 1024 * 1024,
       promptSubmitVerification: {
-        shouldVerifyBeforeSubmit: () => false,
-        verifyBeforeSubmit: () => true,
         shouldVerifyAfterSubmit: () => true,
         verifyAfterSubmit: ({ screenText }) => screenText.includes('[Pasted text #1 +5999 lines]'),
       },
@@ -228,8 +283,8 @@ describe('createZellijTerminalHostAdapter', () => {
       paneId: 'terminal_42',
     });
 
-    expect(waits).toEqual([50]);
-    expect(actions.dumpScreen).toHaveBeenCalledTimes(1);
+    expect(waits).toEqual([250, 250, 50, 50]);
+    expect(actions.dumpScreen).toHaveBeenCalledTimes(5);
     expect(actions.sendEnter).toHaveBeenCalledTimes(1);
   });
 
@@ -271,6 +326,68 @@ describe('createZellijTerminalHostAdapter', () => {
 
     expect(actions.dumpScreen).not.toHaveBeenCalled();
     expect(actions.sendEnter).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports post-submit verification failure without claiming the live zellij host is unreachable', async () => {
+    const prompt = 'queued prompt remains visible';
+    const actions = createActions({
+      dumpScreen: vi.fn(async () => `> ${prompt}`),
+    });
+    const adapter = createTestZellijAdapter({
+      zellijBinary: '/tools/zellij',
+      socketDir: '/tmp/zellij-sock',
+      actions,
+      now: () => 208,
+      wait: async () => {},
+      promptSubmitVerification: {
+        shouldVerifyAfterSubmit: () => true,
+        verifyAfterSubmit: ({ screenText }) => screenText.includes(prompt),
+      },
+    });
+
+    await expect(adapter.injectUserPrompt({
+      kind: 'zellij',
+      sessionName: 'session-a',
+      paneId: 'terminal_42',
+      socketDir: '/tmp/zellij-sock',
+      attachMetadata: {
+        attachStrategy: 'terminal_host',
+        topology: 'exclusive',
+        locality: 'same_machine',
+        maxClients: null,
+        requiresLocalAttachmentInfo: true,
+        liveProbe: 'required',
+      },
+    }, {
+      text: prompt,
+      multiline: false,
+      origin: { kind: 'ui_pending', nonce: 'nonce-zellij-verification-failed' },
+      scheduling: { timeoutMs: 1_000 },
+    })).resolves.toMatchObject({
+      status: 'failed',
+      reason: 'verification_failed',
+      phase: 'after_enter_unknown',
+      duplicateRisk: 'possible',
+      recoverable: true,
+      hostKind: 'zellij',
+      hostSessionName: 'session-a',
+      paneId: 'terminal_42',
+    });
+    await expect(adapter.evaluateLiveness({
+      kind: 'zellij',
+      sessionName: 'session-a',
+      paneId: 'terminal_42',
+      socketDir: '/tmp/zellij-sock',
+      attachMetadata: {
+        attachStrategy: 'terminal_host',
+        topology: 'exclusive',
+        locality: 'same_machine',
+        maxClients: null,
+        requiresLocalAttachmentInfo: true,
+        liveProbe: 'required',
+      },
+    })).resolves.toMatchObject({ paneAlive: true, paneDead: false });
+    expect(actions.sendEnter).toHaveBeenCalledTimes(2);
   });
 
   it('blocks over-cap zellij prompts before any write or Enter', async () => {
@@ -1322,7 +1439,7 @@ describe('createZellijTerminalHostAdapter', () => {
       },
     });
 
-    expect(liveness.paneCurrentCommand).toContain('ANTHROPIC_API_KEY=[redacted-token]');
+    expect(liveness.paneCurrentCommand).toContain('ANTHROPIC_API_KEY=[REDACTED]');
     expect(liveness.paneCurrentCommand).not.toContain('sk-ant-secret-value');
   });
 

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtemp, rm, readFile } from 'node:fs/promises';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -11,15 +11,23 @@ import { buildLaunchAgentPlistXml } from '@/daemon/service/darwin';
 import { resolveDaemonServiceCliRuntimeFromEnv, resolveDaemonServicePaths, type DaemonServiceListEntry } from '@/daemon/service/cli';
 import { renderSystemdServiceUnit, renderWindowsScheduledTaskWrapperPs1 } from '@happier-dev/cli-common/service';
 import { captureConsoleLogAndMuteStdout } from '@/testkit/logger/captureOutput';
+import type { ProbeServerVersionResult } from '@/server/serverTest';
 
 let promptAnswers: string[] = [];
 let promptQuestions: string[] = [];
-const { resolveInstalledDaemonServiceInventoryForCurrentRelayMock } = vi.hoisted(() => ({
+const { probeServerVersionMock, resolveInstalledDaemonServiceInventoryForCurrentRelayMock } = vi.hoisted(() => ({
+  probeServerVersionMock: vi.fn<(serverUrl: string) => Promise<ProbeServerVersionResult>>(),
   resolveInstalledDaemonServiceInventoryForCurrentRelayMock: vi.fn<(...args: unknown[]) => Promise<readonly DaemonServiceListEntry[]>>(async () => []),
+}));
+
+vi.mock('@/server/serverTest', () => ({
+  probeServerVersion: (serverUrl: string) => probeServerVersionMock(serverUrl),
 }));
 
 vi.mock('node:readline', () => ({
   createInterface: () => ({
+    once: () => {},
+    removeListener: () => {},
     question: (prompt: string, cb: (answer: string) => void) => {
       promptQuestions.push(prompt);
       cb(promptAnswers.shift() ?? '');
@@ -79,7 +87,16 @@ function setTtyMode(stdinIsTTY: boolean, stdoutIsTTY: boolean): () => void {
 }
 
 afterEach(() => {
+  probeServerVersionMock.mockReset();
   resolveInstalledDaemonServiceInventoryForCurrentRelayMock.mockReset();
+});
+
+beforeEach(() => {
+  probeServerVersionMock.mockResolvedValue({
+    ok: true,
+    url: 'https://relay.example.test/v1/version',
+    version: 'test',
+  });
 });
 
 function installDefaultFollowingServiceFixture(homeDir: string): void {
@@ -151,6 +168,41 @@ function installDefaultFollowingServiceFixture(homeDir: string): void {
 }
 
 describe('happier server add guided flow', () => {
+  it('refuses to persist an unreachable relay unless the user explicitly overrides the check', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'happier-server-add-unreachable-'));
+    const prevHome = process.env.HAPPIER_HOME_DIR;
+    const restoreTty = setTtyMode(false, false);
+    probeServerVersionMock.mockResolvedValue({
+      ok: false,
+      url: 'https://typo.example.test/v1/version',
+      status: null,
+      error: 'getaddrinfo ENOTFOUND typo.example.test',
+    });
+
+    try {
+      process.env.HAPPIER_HOME_DIR = home;
+      reloadConfiguration();
+
+      await expect(handleServerCommand([
+        'add',
+        '--name',
+        'Typo',
+        '--server-url',
+        'https://typo.example.test',
+        '--use',
+      ])).rejects.toThrow(/--yes/);
+
+      const settings = await readSettings();
+      expect(settings.servers?.Typo).toBeUndefined();
+    } finally {
+      restoreTty();
+      if (prevHome === undefined) delete process.env.HAPPIER_HOME_DIR;
+      else process.env.HAPPIER_HOME_DIR = prevHome;
+      reloadConfiguration();
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
   it('guides for missing required values in interactive mode', async () => {
     const home = await mkdtemp(join(tmpdir(), 'happier-server-add-guided-'));
     const prevHome = process.env.HAPPIER_HOME_DIR;

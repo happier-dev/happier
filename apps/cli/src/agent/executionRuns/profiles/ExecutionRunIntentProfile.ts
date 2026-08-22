@@ -8,7 +8,7 @@ import type {
 } from '@happier-dev/protocol';
 
 export type ExecutionRunProfileStartParams = Readonly<{
-  sessionId: string;
+  sessionId: string | null;
   runId: string;
   callId: string;
   sidechainId: string;
@@ -104,6 +104,11 @@ export type ExecutionRunProfilePrepareStartParams = Readonly<{
 export type ExecutionRunIntentProfile = Readonly<{
   intent: ExecutionRunIntent;
   transcriptMaterialization: 'full' | 'none';
+  /**
+   * Detached scope is an explicit profile capability. Existing Session-shaped
+   * profiles retain their established Session semantics unless they opt in.
+   */
+  supportsDetached?: boolean;
   buildPrompt: (params: ExecutionRunProfileStartParams) => string;
   prepareStartParams?: (
     params: ExecutionRunProfilePrepareStartParams,

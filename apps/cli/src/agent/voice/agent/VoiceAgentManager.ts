@@ -4,7 +4,9 @@ import type { AgentMessage } from '@/agent/core/AgentMessage';
 import type { ExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';
 import {
   extractVoiceActionsFromAssistantText,
+  buildBackendTargetKeyV2,
   readBackendTargetRefV2,
+  type ProviderBoundModelRef,
   type ExecutionRunResumeHandle,
   type VoiceAssistantAction,
 } from '@happier-dev/protocol';
@@ -45,6 +47,30 @@ export type {
 } from './voiceAgentTypes';
 export { VoiceAgentError } from './voiceAgentTypes';
 
+function areVoiceModelSelectionsEqual(
+  left: ProviderBoundModelRef | undefined,
+  right: ProviderBoundModelRef | undefined,
+): boolean {
+  if (!left || !right) return left === right;
+  return left.agentTargetKey === right.agentTargetKey
+    && left.providerConnectionId === right.providerConnectionId
+    && left.modelId === right.modelId;
+}
+
+function assertVoiceModelSelectionMatches(
+  selection: ProviderBoundModelRef | undefined,
+  input: Readonly<{ agentId: string; modelId: string; role: 'chat' | 'commit' }>,
+): void {
+  if (!selection) return;
+  const targetKey = buildBackendTargetKeyV2({ kind: 'backend', backendId: input.agentId });
+  if (selection.agentTargetKey !== targetKey || selection.modelId !== input.modelId) {
+    throw new VoiceAgentError(
+      'VOICE_AGENT_START_FAILED',
+      `${input.role} model selection does not match the Voice Agent target and model`,
+    );
+  }
+}
+
 export class VoiceAgentManager {
   private static readonly MAX_HISTORY_TURNS = 48;
   private static readonly MAX_TURN_TEXT_CHARS = 4_000;
@@ -54,6 +80,8 @@ export class VoiceAgentManager {
   private readonly resolveSystemAppendBlocks: (args: ResolveVoiceSystemAppendBlocksArgs) => Promise<readonly string[]>;
   private readonly responseTimeoutMs: number;
   private readonly getNowMs: () => number;
+  private readonly onIdleReaped: ((voiceAgentId: string) => Promise<void>) | null;
+  private readonly onTerminalFailure: ((voiceAgentId: string, reason: 'backend_replacement_failed') => Promise<void>) | null;
   private readonly voiceAgents = new Map<string, VoiceAgentInstance>();
   private readonly runtimeDisposals = new WeakMap<ExecutionRunHostRuntime, Promise<void>>();
   private readonly reaper: NodeJS.Timeout;
@@ -138,6 +166,10 @@ export class VoiceAgentManager {
       replacementBackend = voiceAgent.createRuntime({
         agentId: voiceAgent.agentId,
         modelId: voiceAgent.chatModelId,
+        ...(voiceAgent.chatModelSelection ? { modelSelection: voiceAgent.chatModelSelection } : {}),
+        ...(voiceAgent.sessionConfigOptionOverrides
+          ? { sessionConfigOptionOverrides: voiceAgent.sessionConfigOptionOverrides }
+          : {}),
         permissionIntent: voiceAgent.permissionIntent,
         start: { intent: 'voice_agent' },
         ...(voiceAgent.connectedServices !== undefined ? { connectedServices: voiceAgent.connectedServices } : {}),
@@ -165,6 +197,7 @@ export class VoiceAgentManager {
       voiceAgent.chatBackend = replacementBackend;
       voiceAgent.chatSessionId = replacementSession.sessionId;
       voiceAgent.chatGeneration = replacementGeneration;
+      voiceAgent.chatSessionSeeded = false;
       voiceAgent.clearChatBuffer();
       voiceAgent.unsubscribeChatMessages = replacementUnsubscribe;
       this.unsubscribeBestEffort(previousUnsubscribe);
@@ -176,6 +209,7 @@ export class VoiceAgentManager {
       if (this.voiceAgents.get(voiceAgent.id) === voiceAgent) this.voiceAgents.delete(voiceAgent.id);
       voiceAgent.activeTurnStream = null;
       await voiceAgent.dispose();
+      await this.onTerminalFailure?.(voiceAgent.id, 'backend_replacement_failed');
       return;
     }
     if (replacementBackend !== previousBackend) {
@@ -190,6 +224,8 @@ export class VoiceAgentManager {
     responseTimeoutMs?: number;
     getNowMs?: () => number;
     reaperIntervalMs?: number;
+    onIdleReaped?: (voiceAgentId: string) => Promise<void>;
+    onTerminalFailure?: (voiceAgentId: string, reason: 'backend_replacement_failed') => Promise<void>;
   }>) {
     const createRuntime = opts.createRuntime ?? opts.createBackend;
     if (!createRuntime) {
@@ -202,6 +238,8 @@ export class VoiceAgentManager {
         ? Math.floor(opts.responseTimeoutMs)
         : 120_000;
     this.getNowMs = opts.getNowMs ?? (() => Date.now());
+    this.onIdleReaped = typeof opts.onIdleReaped === 'function' ? opts.onIdleReaped : null;
+    this.onTerminalFailure = typeof opts.onTerminalFailure === 'function' ? opts.onTerminalFailure : null;
     const intervalMs = Math.max(5_000, Math.floor(opts.reaperIntervalMs ?? 30_000));
     this.reaper = setInterval(() => {
       void this.reapIdle();
@@ -237,6 +275,10 @@ export class VoiceAgentManager {
       commitBackend = voiceAgent.createRuntime({
         agentId: voiceAgent.agentId,
         modelId: voiceAgent.commitModelId,
+        ...(voiceAgent.commitModelSelection ? { modelSelection: voiceAgent.commitModelSelection } : {}),
+        ...(voiceAgent.sessionConfigOptionOverrides
+          ? { sessionConfigOptionOverrides: voiceAgent.sessionConfigOptionOverrides }
+          : {}),
         permissionIntent: voiceAgent.permissionIntent,
         start: { intent: 'voice_agent' },
         ...(voiceAgent.connectedServices !== undefined ? { connectedServices: voiceAgent.connectedServices } : {}),
@@ -273,6 +315,16 @@ export class VoiceAgentManager {
     if (this.disposed) {
       throw new VoiceAgentError('VOICE_AGENT_START_FAILED', 'Manager is disposed');
     }
+    assertVoiceModelSelectionMatches(params.chatModelSelection, {
+      agentId: params.agentId,
+      modelId: params.chatModelId,
+      role: 'chat',
+    });
+    assertVoiceModelSelectionMatches(params.commitModelSelection, {
+      agentId: params.agentId,
+      modelId: params.commitModelId,
+      role: 'commit',
+    });
 
     const voiceAgentId = typeof params.voiceAgentId === 'string' && params.voiceAgentId.trim().length > 0
       ? params.voiceAgentId.trim()
@@ -312,6 +364,10 @@ export class VoiceAgentManager {
       const chatBackend = (chatBackendForCleanup = createRuntime({
         agentId: params.agentId,
         modelId: params.chatModelId,
+        ...(params.chatModelSelection ? { modelSelection: params.chatModelSelection } : {}),
+        ...(params.sessionConfigOptionOverrides
+          ? { sessionConfigOptionOverrides: params.sessionConfigOptionOverrides }
+          : {}),
         permissionIntent: params.permissionIntent,
         start: { intent: 'voice_agent' },
         ...(params.connectedServices !== undefined ? { connectedServices: params.connectedServices } : {}),
@@ -348,12 +404,18 @@ export class VoiceAgentManager {
         verbosity,
         chatModelId: params.chatModelId,
         commitModelId: params.commitModelId,
+        ...(params.chatModelSelection ? { chatModelSelection: params.chatModelSelection } : {}),
+        ...(params.commitModelSelection ? { commitModelSelection: params.commitModelSelection } : {}),
+        ...(params.sessionConfigOptionOverrides
+          ? { sessionConfigOptionOverrides: params.sessionConfigOptionOverrides }
+          : {}),
         initialContext: params.initialContext,
         ...(params.connectedServices !== undefined ? { connectedServices: params.connectedServices } : {}),
         disabledActionIds,
         memoryRecallGuidanceEnabled,
         systemAppendBlocks: [...systemAppendBlocks],
-        bootstrapped: Boolean(resume.chatSessionId),
+        chatSessionSeeded: Boolean(resume.chatSessionId),
+        welcomed: Boolean(resume.chatSessionId),
         history: [] as VoiceAgentTurn[],
         lastUsedAt: this.getNowMs(),
         idleTtlMs,
@@ -412,7 +474,8 @@ export class VoiceAgentManager {
           throw new VoiceAgentError('VOICE_AGENT_START_FAILED', 'Bootstrap failed');
         }
         instance.clearChatBuffer();
-        instance.bootstrapped = !shouldDeferInitialContextUntilFirstTurn;
+        instance.chatSessionSeeded = !shouldDeferInitialContextUntilFirstTurn;
+        instance.welcomed = !shouldDeferInitialContextUntilFirstTurn;
       }
 
       return {
@@ -465,7 +528,7 @@ export class VoiceAgentManager {
     voiceAgent.lastUsedAt = this.getNowMs();
 		    const run = (async () => {
 		      voiceAgent.clearChatBuffer();
-          const prompt = voiceAgent.bootstrapped
+          const prompt = voiceAgent.chatSessionSeeded
             ? buildVoiceAgentUserTurnPrompt({ userText: params.userText })
             : buildVoiceAgentSeededUserTurnPrompt({
                 verbosity: voiceAgent.verbosity,
@@ -479,7 +542,8 @@ export class VoiceAgentManager {
 		      if (voiceAgent.chatBackend.waitForTurnCompletion) {
 		        await voiceAgent.chatBackend.waitForTurnCompletion(this.resolveResponseTimeoutMs());
 		      }
-          voiceAgent.bootstrapped = true;
+          voiceAgent.chatSessionSeeded = true;
+          voiceAgent.welcomed = true;
 		      const extracted = extractVoiceActionsFromAssistantText(voiceAgent.chatBuffer);
 		      const assistantText = this.normalizeAssistantTextForActions(extracted.assistantText, extracted.actions);
 		      appendVoiceAgentHistoryTurn(voiceAgent.history, {
@@ -506,8 +570,8 @@ export class VoiceAgentManager {
       throw new VoiceAgentError('VOICE_AGENT_BUSY', 'Voice agent busy');
     }
 
-    // Idempotent: when the session is already bootstrapped, a welcome would likely pollute vendor memory.
-    if (voiceAgent.bootstrapped) return { assistantText: '' };
+    // Idempotent across backend replacement: a second welcome would pollute conversation memory.
+    if (voiceAgent.welcomed) return { assistantText: '' };
 
     voiceAgent.lastUsedAt = this.getNowMs();
     const run = (async () => {
@@ -525,9 +589,10 @@ export class VoiceAgentManager {
       if (voiceAgent.chatBackend.waitForTurnCompletion) {
         await voiceAgent.chatBackend.waitForTurnCompletion(this.resolveResponseTimeoutMs());
       }
-      const assistantText = voiceAgent.chatBuffer.trim();
+      const assistantText = extractVoiceActionsFromAssistantText(voiceAgent.chatBuffer).assistantText;
       voiceAgent.clearChatBuffer();
-      voiceAgent.bootstrapped = true;
+      voiceAgent.chatSessionSeeded = true;
+      voiceAgent.welcomed = true;
       return { assistantText };
     })();
 
@@ -539,7 +604,11 @@ export class VoiceAgentManager {
     }
   }
 
-  async startTurnStream(params: Readonly<{ voiceAgentId: string; userText: string }>): Promise<VoiceAgentTurnStreamStartResult> {
+  async startTurnStream(params: Readonly<{
+    voiceAgentId: string;
+    userText: string;
+    onTurnFinal?: (assistantText: string) => Promise<void> | void;
+  }>): Promise<VoiceAgentTurnStreamStartResult> {
     const voiceAgent = this.voiceAgents.get(params.voiceAgentId);
     if (!voiceAgent) throw new VoiceAgentError('VOICE_AGENT_NOT_FOUND', 'Voice agent not found');
     if (voiceAgent.lifecycleInFlight || voiceAgent.inFlight || voiceAgent.activeTurnStream) {
@@ -587,7 +656,7 @@ export class VoiceAgentManager {
 
     const run = (async () => {
       try {
-        const prompt = voiceAgent.bootstrapped
+        const prompt = voiceAgent.chatSessionSeeded
           ? buildVoiceAgentUserTurnPrompt({ userText: params.userText })
           : buildVoiceAgentSeededUserTurnPrompt({
               verbosity: voiceAgent.verbosity,
@@ -603,7 +672,8 @@ export class VoiceAgentManager {
           await voiceAgent.chatBackend.waitForTurnCompletion(this.resolveResponseTimeoutMs());
         }
         if (settleCancelled()) return;
-        voiceAgent.bootstrapped = true;
+        voiceAgent.chatSessionSeeded = true;
+        voiceAgent.welcomed = true;
         if (settleCancelled()) return;
 
         // Flush any held chars that were buffered for action-tag detection.
@@ -629,6 +699,8 @@ export class VoiceAgentManager {
         });
         if (settleCancelled()) return;
         stream.completedHistory = true;
+        if (settleCancelled()) return;
+        await params.onTurnFinal?.(cleanText);
         if (settleCancelled()) return;
         for (const [actionIndex, action] of extracted.actions.entries()) {
           stream.events.push({
@@ -744,7 +816,12 @@ export class VoiceAgentManager {
 
     voiceAgent.lastUsedAt = this.getNowMs();
 		    const run = (async () => {
-          const canReuseChatBackend = voiceAgent.commitIsolation !== true && voiceAgent.commitModelId === voiceAgent.chatModelId;
+          const canReuseChatBackend = voiceAgent.commitIsolation !== true
+            && voiceAgent.commitModelId === voiceAgent.chatModelId
+            && areVoiceModelSelectionsEqual(
+              voiceAgent.chatModelSelection,
+              voiceAgent.commitModelSelection,
+            );
           if (canReuseChatBackend) {
             voiceAgent.clearChatBuffer();
             const effectiveMaxChars =
@@ -796,7 +873,7 @@ export class VoiceAgentManager {
     if (voiceAgent.lifecycleInFlight) {
       await voiceAgent.lifecycleInFlight.catch(() => {});
     } else if (voiceAgent.activeTurnStream) {
-      if (voiceAgent.activeTurnStream.done) {
+      if (voiceAgent.activeTurnStream.done || voiceAgent.activeTurnStream.completedHistory) {
         // Stop retires the whole voice-agent instance; it is not a claim that
         // an already committed turn was cancelled. Public turn cancellation
         // rejects this state so the bridge can preserve its durable pair.
@@ -815,18 +892,36 @@ export class VoiceAgentManager {
 		    return { ok: true };
 		  }
 
-		  private async reapIdle(): Promise<void> {
-		    const now = this.getNowMs();
-		    const toDispose: VoiceAgentInstance[] = [];
+  private async reapIdle(): Promise<void> {
+    const now = this.getNowMs();
+    const reaping: Promise<void>[] = [];
     for (const voiceAgent of this.voiceAgents.values()) {
       if (voiceAgent.lifecycleInFlight || voiceAgent.inFlight) continue;
-      if (now - voiceAgent.lastUsedAt > voiceAgent.idleTtlMs) {
-        this.voiceAgents.delete(voiceAgent.id);
-        toDispose.push(voiceAgent);
-      }
+      if (now - voiceAgent.lastUsedAt <= voiceAgent.idleTtlMs) continue;
+
+      const lifecycle = (async () => {
+        try {
+          await this.onIdleReaped?.(voiceAgent.id);
+        } finally {
+          if (this.voiceAgents.get(voiceAgent.id) === voiceAgent) {
+            this.voiceAgents.delete(voiceAgent.id);
+          }
+          await voiceAgent.dispose();
+        }
+      })();
+      voiceAgent.lifecycleInFlight = lifecycle;
+      reaping.push(lifecycle);
+      void lifecycle.then(
+        () => {
+          if (voiceAgent.lifecycleInFlight === lifecycle) voiceAgent.lifecycleInFlight = null;
+        },
+        () => {
+          if (voiceAgent.lifecycleInFlight === lifecycle) voiceAgent.lifecycleInFlight = null;
+        },
+      );
     }
-    if (toDispose.length === 0) return;
-    await Promise.allSettled(toDispose.map((m) => m.dispose()));
+    if (reaping.length === 0) return;
+    await Promise.allSettled(reaping);
   }
 
   private async cancelActiveTurnStream(
@@ -834,7 +929,7 @@ export class VoiceAgentManager {
     stream: VoiceAgentTurnStreamState,
     options?: Readonly<{ awaitCompletion?: boolean; replaceBackend?: boolean }>,
   ): Promise<void> {
-    if (stream.done) {
+    if (stream.done || stream.completedHistory) {
       throw new VoiceAgentError(
         'VOICE_AGENT_TURN_COMPLETED',
         'Turn already completed and cannot be cancelled',

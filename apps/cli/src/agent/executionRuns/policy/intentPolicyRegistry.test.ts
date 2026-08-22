@@ -44,6 +44,7 @@ describe('executionRun intent policy registry', () => {
 
   it('gates voice-agent execution through the canonical voice.agent feature decision', () => {
     expect(EXECUTION_RUN_INTENT_POLICY_REGISTRY.voice_agent.requiredFeatureId).toBe('voice.agent');
+    expect(EXECUTION_RUN_INTENT_POLICY_REGISTRY.task.requiredFeatureId).toBeUndefined();
   });
 
   it('uses the review bounded timeout override only for review runs', () => {
@@ -73,6 +74,18 @@ describe('executionRun intent policy registry', () => {
     expect(validateExecutionRunStartIntentPolicy({
       intent: 'review',
       permissionMode: 'read_only',
+      retentionPolicy: 'ephemeral',
+      runClass: 'long_lived',
+      ioMode: 'request_response',
+    })).toEqual({
+      ok: false,
+      error: 'Unsupported runClass',
+      errorCode: 'execution_run_not_allowed',
+    });
+
+    expect(validateExecutionRunStartIntentPolicy({
+      intent: 'task',
+      permissionMode: 'no_tools',
       retentionPolicy: 'ephemeral',
       runClass: 'long_lived',
       ioMode: 'request_response',

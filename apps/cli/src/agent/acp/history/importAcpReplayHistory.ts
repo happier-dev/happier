@@ -7,8 +7,25 @@ import { updateMetadataBestEffort } from '@/api/session/sessionWritesBestEffort'
 import type { AcpReplayHistorySessionClient } from '@/agent/acp/sessionClient';
 import { extractThinkingTextFromThinkToolInput, isThinkingToolName } from '@/agent/acp/bridge/thinkingToolCall';
 import { CHANGE_TITLE_INSTRUCTION } from '@/agent/runtime/changeTitleInstruction';
+import { enqueueAcpReplayAgentMessage } from './enqueueAcpReplayAgentMessage';
 
 type TranscriptTextItem = { role: 'user' | 'agent'; text: string };
+
+async function enqueueAcpReplayUserMessage(params: Readonly<{
+  session: AcpReplayHistorySessionClient;
+  text: string;
+  localId: string;
+  remoteSessionId: string;
+}>): Promise<void> {
+  const admission = await params.session.enqueueUserTextMessageCommitted(params.text, {
+    localId: params.localId,
+    meta: { importedFrom: 'acp-history', remoteSessionId: params.remoteSessionId },
+    provenance: { kind: 'non_dependent', source: 'history' },
+  });
+  if (!admission.persisted) {
+    throw new Error('ACP replay user message was not admitted to durable transcript custody');
+  }
+}
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -242,13 +259,21 @@ async function importMessageDeltas(
     });
 
     if (msg.role === 'user') {
-      await params.session.sendUserTextMessageCommitted(msg.text, { localId, meta: { importedFrom: 'acp-history' } });
+      await enqueueAcpReplayUserMessage({
+        session: params.session,
+        text: msg.text,
+        localId,
+        remoteSessionId: params.remoteSessionId,
+      });
     } else {
-      await params.session.sendAgentMessageCommitted(
-        params.provider,
-        { type: 'message', message: msg.text },
-        { localId, meta: { importedFrom: 'acp-history', remoteSessionId: params.remoteSessionId } },
-      );
+      await enqueueAcpReplayAgentMessage({
+        session: params.session,
+        provider: params.provider,
+        body: { type: 'message', message: msg.text },
+        localId,
+        meta: { importedFrom: 'acp-history', remoteSessionId: params.remoteSessionId },
+        provenanceSource: 'history',
+      });
     }
   }
 
@@ -297,13 +322,21 @@ async function importFullReplay(
         key: `${role}:${text}`,
       });
       if (role === 'user') {
-        await params.session.sendUserTextMessageCommitted(text, { localId, meta: { importedFrom: 'acp-history' } });
+        await enqueueAcpReplayUserMessage({
+          session: params.session,
+          text,
+          localId,
+          remoteSessionId: params.remoteSessionId,
+        });
       } else {
-        await params.session.sendAgentMessageCommitted(
-          params.provider,
-          { type: 'message', message: text },
-          { localId, meta: { importedFrom: 'acp-history', remoteSessionId: params.remoteSessionId } },
-        );
+        await enqueueAcpReplayAgentMessage({
+          session: params.session,
+          provider: params.provider,
+          body: { type: 'message', message: text },
+          localId,
+          meta: { importedFrom: 'acp-history', remoteSessionId: params.remoteSessionId },
+          provenanceSource: 'history',
+        });
       }
       continue;
     }
@@ -325,11 +358,14 @@ async function importFullReplay(
             index: i,
             key: `thinking:${toolCallId}:${safeStringifyForKey(text)}`,
           });
-          await params.session.sendAgentMessageCommitted(
-            params.provider,
-            { type: 'thinking', text },
-            { localId, meta: { importedFrom: 'acp-history', remoteSessionId: params.remoteSessionId } },
-          );
+          await enqueueAcpReplayAgentMessage({
+            session: params.session,
+            provider: params.provider,
+            body: { type: 'thinking', text },
+            localId,
+            meta: { importedFrom: 'acp-history', remoteSessionId: params.remoteSessionId },
+            provenanceSource: 'history',
+          });
         }
         continue;
       }
@@ -339,17 +375,20 @@ async function importFullReplay(
         index: i,
         key: `tool_call:${toolCallId}:${kind ?? ''}:${safeStringifyForKey(rawInput ?? null)}`,
       });
-      await params.session.sendAgentMessageCommitted(
-        params.provider,
-        {
+      await enqueueAcpReplayAgentMessage({
+        session: params.session,
+        provider: params.provider,
+        body: {
           type: 'tool-call',
           callId: toolCallId,
           name,
           input: rawInput ?? {},
           id: `import-${toolCallId}`,
         },
-        { localId, meta: { importedFrom: 'acp-history', remoteSessionId: params.remoteSessionId } },
-      );
+        localId,
+        meta: { importedFrom: 'acp-history', remoteSessionId: params.remoteSessionId },
+        provenanceSource: 'history',
+      });
       continue;
     }
 
@@ -369,17 +408,20 @@ async function importFullReplay(
         key: `tool_result:${toolCallId}:${status}:${safeStringifyForKey(rawOutput)}`,
       });
       const isError = status === 'error' || status === 'failed' || status === 'cancelled';
-      await params.session.sendAgentMessageCommitted(
-        params.provider,
-        {
+      await enqueueAcpReplayAgentMessage({
+        session: params.session,
+        provider: params.provider,
+        body: {
           type: 'tool-result',
           callId: toolCallId,
           output: rawOutput,
           id: `import-${toolCallId}-result`,
           isError,
         },
-        { localId, meta: { importedFrom: 'acp-history', remoteSessionId: params.remoteSessionId } },
-      );
+        localId,
+        meta: { importedFrom: 'acp-history', remoteSessionId: params.remoteSessionId },
+        provenanceSource: 'history',
+      });
     }
   }
 }

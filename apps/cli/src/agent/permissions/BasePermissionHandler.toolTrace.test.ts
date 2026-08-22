@@ -4,17 +4,11 @@ import { join } from 'node:path';
 import { BasePermissionHandler, type PermissionResult } from './BasePermissionHandler';
 import { __resetToolTraceForTests } from '@/agent/tools/trace/toolTrace';
 import { withToolTraceFile } from '@/testkit/logger/toolTraceFile';
-
-class FakeRpcHandlerManager {
-    handlers = new Map<string, (payload: any) => any>();
-    registerHandler(_name: string, handler: any) {
-        this.handlers.set(_name, handler);
-    }
-}
+import { ServerBoundPermissionRpcHandlerManager } from './testkit/serverBoundPermissionRpcHandlerManager';
 
 class FakeSession {
     sessionId = 'test-session-id';
-    rpcHandlerManager = new FakeRpcHandlerManager();
+    rpcHandlerManager = new ServerBoundPermissionRpcHandlerManager(this.sessionId);
     agentState: any = { requests: {}, completedRequests: {} };
 
     updateAgentState(updater: any) {

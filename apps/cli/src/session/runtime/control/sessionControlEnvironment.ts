@@ -1,13 +1,15 @@
-import { SESSION_REQUESTED_DIRECTORY_ENV } from '@/agent/runtime/resolveRequestedSessionDirectory';
+import {
+  SESSION_MACHINE_WORKSPACE_PATH_ENV,
+  SESSION_REQUESTED_DIRECTORY_ENV,
+} from '@/agent/runtime/resolveRequestedSessionDirectory';
 import { HAPPIER_SESSION_CONNECTED_SERVICES_BINDINGS_ENV_KEY } from '@/agent/runtime/sessionConnectedServicesBindingsEnv';
 import { HAPPIER_SESSION_CONNECTED_SERVICE_MATERIALIZATION_IDENTITY_ENV_KEY } from '@/agent/runtime/sessionConnectedServiceMaterializationIdentityEnv';
 import {
-  HAPPIER_PLUGIN_LOCAL_SERVICES_BRIDGE_TOKEN_ENV_KEY,
-  HAPPIER_PLUGIN_LOCAL_SERVICES_BRIDGE_TOKEN_FILE_ENV_KEY,
-} from '@/daemon/local/services/pluginBridgeProtocol';
+  HAPPIER_AGENT_RUNTIME_RUNNER_BOOTSTRAP_FILE_ENV_KEY,
+} from '@/agent/runtime/session/process/agentRuntimeRunnerProtocol';
 import {
-  HAPPIER_AGENT_RUNTIME_DAEMON_BRIDGE_TOKEN_FILE_ENV_KEY,
-} from '@/agent/runtime/session/process/agentRuntimeDaemonBridgeProtocol';
+  HAPPIER_AGENT_RUNTIME_DAEMON_SERVICE_AUTHORITY_FILE_ENV_KEY,
+} from '@/daemon/agentRuntime/sessionBridgeAuthorization';
 import { HAPPIER_SPAWN_EXPLICIT_ENV_KEYS_JSON_ENV_VAR } from '@/daemon/spawn/spawnExplicitEnvKeysMarker';
 import {
   HAPPIER_CONNECTED_SERVICE_MATERIALIZED_ENV_KEYS_ENV_KEY,
@@ -15,6 +17,10 @@ import {
   HAPPIER_CONNECTED_SERVICE_TARGET_MATERIALIZED_ROOT_ENV_KEY,
 } from '@/daemon/connectedServices/connectedServiceChildEnvironment';
 import { HAPPIER_PROVIDER_BINDING_LAUNCH_MATERIALIZATION_V1_ENV_KEY } from '@/plugins/runtime/providerBindings/handoff';
+
+/** Daemon-issued, one-shot correlation for a terminal startup result. */
+export const HAPPIER_SESSION_STARTUP_SPAWN_NONCE_ENV_KEY =
+  'HAPPIER_SESSION_STARTUP_SPAWN_NONCE';
 
 /**
  * Exact environment keys whose values are owned by Happier's session-launch
@@ -40,12 +46,13 @@ export const SYSTEM_SESSION_CONTROL_ENV_KEYS = Object.freeze([
   HAPPIER_SESSION_CONNECTED_SERVICE_MATERIALIZATION_IDENTITY_ENV_KEY,
   HAPPIER_PROVIDER_BINDING_LAUNCH_MATERIALIZATION_V1_ENV_KEY,
   SESSION_REQUESTED_DIRECTORY_ENV,
+  SESSION_MACHINE_WORKSPACE_PATH_ENV,
   HAPPIER_SPAWN_EXPLICIT_ENV_KEYS_JSON_ENV_VAR,
   'HAPPIER_SESSION_ATTACH_FILE',
   'HAPPIER_STACK_PROCESS_KIND',
-  HAPPIER_PLUGIN_LOCAL_SERVICES_BRIDGE_TOKEN_ENV_KEY,
-  HAPPIER_PLUGIN_LOCAL_SERVICES_BRIDGE_TOKEN_FILE_ENV_KEY,
-  HAPPIER_AGENT_RUNTIME_DAEMON_BRIDGE_TOKEN_FILE_ENV_KEY,
+  HAPPIER_AGENT_RUNTIME_RUNNER_BOOTSTRAP_FILE_ENV_KEY,
+  HAPPIER_AGENT_RUNTIME_DAEMON_SERVICE_AUTHORITY_FILE_ENV_KEY,
+  HAPPIER_SESSION_STARTUP_SPAWN_NONCE_ENV_KEY,
   'TMUX_SESSION_NAME',
   'TMUX_TMPDIR',
 ] as const);
@@ -134,4 +141,17 @@ export function resolveAbsentSessionControlEnvKeys(
       .map(([key]) => key.toUpperCase()),
   );
   return SESSION_CONTROL_ENV_KEYS.filter((key) => !explicitNames.has(key));
+}
+
+/**
+ * Returns the daemon-issued nonce accepted by the canonical spawn ingress.
+ * Whitespace-only ambient values are absent, never an alternate attempt.
+ */
+export function readSessionStartupSpawnNonceFromEnv(
+  env: NodeJS.ProcessEnv = process.env,
+): string | null {
+  const value = typeof env[HAPPIER_SESSION_STARTUP_SPAWN_NONCE_ENV_KEY] === 'string'
+    ? env[HAPPIER_SESSION_STARTUP_SPAWN_NONCE_ENV_KEY]!.trim()
+    : '';
+  return value || null;
 }

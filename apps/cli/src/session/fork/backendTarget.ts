@@ -1,14 +1,16 @@
-import { CATALOG_AGENT_IDS, type CatalogAgentId } from '@/agent/catalog/ids';
+import type { CatalogAgentId } from '@/agent/catalog/ids';
+import { isCatalogAgentId } from '@/agent/catalog/resolution';
 import { buildConfiguredAcpBackendSessionMetadata } from '@/agent/acp/catalog/configured/sessionMetadata';
-import type { Credentials } from '@/persistence';
+import type { StoredCredentials } from '@/persistence';
 import { resolveAvailableAccountSettings } from '@/settings/accountSettings/resolveAvailableAccountSettings';
 import { configuration } from '@/configuration';
 import type { AccountSettings, BackendTargetRefV1, BackendTargetRefV2 } from '@happier-dev/protocol';
 import {
   readAcpConfiguredBackendV1FromMetadata,
   readRuntimeDescriptorV1FromMetadata,
+  resolveLinkedExternalSessionMetadataV1,
 } from '@happier-dev/protocol';
-import { inferAgentIdFromSessionMetadata } from '@happier-dev/agents';
+import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 import {
   resolveConfiguredAcpBackendFromAccountSettingsOrPlugins,
   type ResolvedConfiguredAcpBackend,
@@ -18,10 +20,6 @@ import {
   isConcreteLegacyConfiguredBackendId,
   isLegacyConfiguredBackendVendorSessionCarrier,
 } from '@/session/backendTargets/compat/legacyConfiguredBackend';
-
-function isCatalogAgentId(value: string): value is CatalogAgentId {
-  return (CATALOG_AGENT_IDS as readonly string[]).includes(value);
-}
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -87,8 +85,21 @@ export type SessionForkBackendTargetResolution =
 
 export async function resolveSessionForkBackendTarget(params: Readonly<{
   parentMetadata: Record<string, unknown>;
-  credentials: Credentials;
+  credentials: StoredCredentials;
 }>): Promise<SessionForkBackendTargetResolution> {
+  const linkedSessionResolution = resolveLinkedExternalSessionMetadataV1(
+    params.parentMetadata,
+  );
+  if (
+    !linkedSessionResolution.ok
+    && linkedSessionResolution.error !== 'linked_session_not_found'
+  ) {
+    return {
+      ok: false,
+      errorMessage: linkedSessionResolution.error,
+    };
+  }
+
   const metadataConfiguredBackend = readAcpConfiguredBackendV1FromMetadata(params.parentMetadata);
   const flavorConfiguredBackendId = readConfiguredAcpBackendIdFromFlavor(params.parentMetadata);
   const candidateConfiguredBackendId = metadataConfiguredBackend?.backendId ?? flavorConfiguredBackendId ?? null;
@@ -139,9 +150,19 @@ export async function resolveSessionForkBackendTarget(params: Readonly<{
     }
   }
 
-  const unknownAgentId = '__unknown__' as CatalogAgentId;
-  const agentRaw = inferAgentIdFromSessionMetadata(params.parentMetadata, unknownAgentId);
-  if (agentRaw === unknownAgentId || !isCatalogAgentId(agentRaw)) {
+  const agentRaw = resolveAgentIdFromSessionMetadata(params.parentMetadata);
+  if (!agentRaw || !isCatalogAgentId(agentRaw)) {
+    return {
+      ok: false,
+      errorMessage: 'Session metadata missing agent flavor',
+    };
+  }
+
+  const backendTargetRefs = resolveConcreteCompatBackendTargetRefs({
+    kind: 'builtInAgent',
+    agentId: agentRaw,
+  });
+  if (!backendTargetRefs) {
     return {
       ok: false,
       errorMessage: 'Session metadata missing agent flavor',
@@ -152,8 +173,8 @@ export async function resolveSessionForkBackendTarget(params: Readonly<{
     ok: true,
     catalogAgentId: agentRaw,
     agentHintAgentId: agentRaw,
-    backendTargetV2: resolveConcreteCompatBackendTargetRefs({ kind: 'builtInAgent', agentId: agentRaw })!.backendTargetV2,
-    backendTarget: { kind: 'builtInAgent', agentId: agentRaw },
+    backendTargetV2: backendTargetRefs.backendTargetV2,
+    backendTarget: backendTargetRefs.backendTarget,
     replayFlavor: agentRaw,
     metadataOverlay: {},
     configuredAcp: null,

@@ -104,6 +104,58 @@ describe('authAndSetupMachineIfNeeded (machine id binding)', () => {
     }
   });
 
+  it('uses an existing token-only credential without starting keyed authentication', async () => {
+    const homeDir = mkdtempSync(join(tmpdir(), 'happier-cli-auth-token-only-'));
+    process.env.HAPPIER_HOME_DIR = homeDir;
+    process.env.HAPPIER_ACTIVE_SERVER_ID = 'cloud';
+    delete process.env.HAPPIER_SESSION_AUTOSTART_DAEMON;
+
+    try {
+      const settingsPath = join(homeDir, 'settings.json');
+      writeFileSync(
+        settingsPath,
+        JSON.stringify({
+          schemaVersion: 6,
+          onboardingCompleted: true,
+          activeServerId: 'cloud',
+          servers: {
+            cloud: {
+              id: 'cloud',
+              name: 'cloud',
+              serverUrl: 'https://api.happier.dev',
+              webappUrl: 'https://app.happier.dev',
+              createdAt: 0,
+              updatedAt: 0,
+              lastUsedAt: 0,
+            },
+          },
+          machineIdByServerId: { cloud: 'machine-token-only' },
+        }, null, 2),
+        'utf8',
+      );
+
+      const serverDir = join(homeDir, 'servers', 'cloud');
+      mkdirSync(serverDir, { recursive: true });
+      writeFileSync(
+        join(serverDir, 'access.key'),
+        JSON.stringify({ token: makeJwtWithSub('acct-plain') }, null, 2),
+        'utf8',
+      );
+
+      vi.resetModules();
+      const { authAndSetupMachineIfNeeded } = await import('./auth');
+      const result = await authAndSetupMachineIfNeeded();
+
+      expect(result.credentials).toEqual({
+        token: makeJwtWithSub('acct-plain'),
+        encryption: null,
+      });
+      expect(result.machineId).toBe('machine-token-only');
+    } finally {
+      rmSync(homeDir, { recursive: true, force: true });
+    }
+  });
+
   it('falls back to server-scoped machine ids when the token payload cannot be decoded', async () => {
     const homeDir = mkdtempSync(join(tmpdir(), 'happier-cli-auth-machine-id-invalid-token-'));
     process.env.HAPPIER_HOME_DIR = homeDir;

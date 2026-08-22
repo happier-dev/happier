@@ -1,11 +1,11 @@
 import type { PermissionIntent } from '@happier-dev/agents';
 
-import type { Credentials } from '@/persistence';
+import type { StoredCredentials } from '@/persistence';
 
 import { updateSessionStateFieldForTarget } from './updateSessionStateFieldForTarget';
 
 export async function setSessionPermissionMode(params: Readonly<{
-  credentials: Credentials;
+  credentials: StoredCredentials;
   idOrPrefix: string;
   permissionMode: PermissionIntent;
   updatedAt?: number;

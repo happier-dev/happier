@@ -8,7 +8,7 @@ import { commandRegistry } from '@/cli/commandRegistry';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 import { captureConsoleLogAndMuteStdout } from '@/testkit/logger/captureOutput';
-import { addServerProfile } from '@/server/serverProfiles';
+import { addServerProfile, getActiveServerProfile } from '@/server/serverProfiles';
 
 function createFakeSsh(scenario: Readonly<{
     outputs?: readonly Readonly<{ status?: number; stdout?: string; stderr?: string }>[];
@@ -321,6 +321,43 @@ describe('happier relay access --json', () => {
         }
     });
 
+    it('adopts a configured local share URL in the active relay profile', async () => {
+        await addServerProfile({
+            name: 'selfhost',
+            serverUrl: 'https://old-relay.example.test',
+            localServerUrl: 'http://127.0.0.1:3005',
+            webappUrl: 'https://old-app.example.test',
+            use: true,
+        });
+
+        const output = captureConsoleLogAndMuteStdout();
+        const prevExitCode = process.exitCode;
+        process.exitCode = undefined;
+        try {
+            await commandRegistry.relay({
+                args: ['relay', 'access', 'configure', '--provider', 'lan', '--url', 'https://relay.lan.example.test', '--json'],
+                rawArgv: ['node', 'happier', 'relay', 'access', 'configure', '--provider', 'lan', '--url', 'https://relay.lan.example.test', '--json'],
+                terminalRuntime: null,
+            });
+
+            const active = await getActiveServerProfile();
+            expect(active.serverUrl).toBe('https://relay.lan.example.test');
+            expect(active.localServerUrl).toBe('http://127.0.0.1:3005');
+
+            await commandRegistry.relay({
+                args: ['relay', 'access', 'disable', '--json'],
+                rawArgv: ['node', 'happier', 'relay', 'access', 'disable', '--json'],
+                terminalRuntime: null,
+            });
+            const afterDisable = await getActiveServerProfile();
+            expect(afterDisable.serverUrl).toBe('http://127.0.0.1:3005');
+            expect(afterDisable.localServerUrl).toBeUndefined();
+        } finally {
+            output.restore();
+            process.exitCode = prevExitCode;
+        }
+    });
+
     it('disables relay access by removing the persisted config file', async () => {
         const persistedPath = join(home, 'relay', 'access', 'local.json');
         mkdirSync(join(home, 'relay', 'access'), { recursive: true });
@@ -347,6 +384,34 @@ describe('happier relay access --json', () => {
         } finally {
             output.restore();
             process.exitCode = prevExitCode;
+        }
+    });
+
+    it('does not overwrite an active relay profile changed after access was configured', async () => {
+        await addServerProfile({
+            name: 'selfhost',
+            serverUrl: 'https://user-selected.example.test',
+            localServerUrl: 'http://127.0.0.1:3005',
+            webappUrl: 'https://user-selected.example.test',
+            use: true,
+        });
+        const persistedPath = join(home, 'relay', 'access', 'local.json');
+        mkdirSync(join(home, 'relay', 'access'), { recursive: true });
+        writeFileSync(persistedPath, JSON.stringify({ providerId: 'lan', url: 'https://old-provider.example.test' }), 'utf8');
+
+        const output = captureConsoleLogAndMuteStdout();
+        try {
+            await commandRegistry.relay({
+                args: ['relay', 'access', 'disable', '--json'],
+                rawArgv: ['node', 'happier', 'relay', 'access', 'disable', '--json'],
+                terminalRuntime: null,
+            });
+
+            const active = await getActiveServerProfile();
+            expect(active.serverUrl).toBe('https://user-selected.example.test');
+            expect(active.localServerUrl).toBe('http://127.0.0.1:3005');
+        } finally {
+            output.restore();
         }
     });
 
@@ -491,6 +556,71 @@ describe('happier relay access --json', () => {
             output.restore();
             process.exitCode = prevExitCode;
             fakeTailscale.cleanup();
+        }
+    });
+
+    it('uses an active loopback server URL as the relay-access upstream', async () => {
+        const relayEnvScope = createEnvKeyScope([
+            'HAPPIER_SERVER_URL',
+            'HAPPIER_LOCAL_SERVER_URL',
+            'HAPPIER_PUBLIC_SERVER_URL',
+            'HAPPIER_ACTIVE_SERVER_ID',
+            'HAPPIER_WEBAPP_URL',
+        ]);
+        relayEnvScope.patch({
+            HAPPIER_SERVER_URL: undefined,
+            HAPPIER_LOCAL_SERVER_URL: undefined,
+            HAPPIER_PUBLIC_SERVER_URL: undefined,
+            HAPPIER_ACTIVE_SERVER_ID: undefined,
+            HAPPIER_WEBAPP_URL: undefined,
+        });
+        const now = Date.now();
+        writeFileSync(join(home, 'settings.json'), JSON.stringify({
+            schemaVersion: 6,
+            onboardingCompleted: true,
+            activeServerId: 'selfhost',
+            servers: {
+                selfhost: {
+                    id: 'selfhost',
+                    name: 'selfhost',
+                    serverUrl: 'http://127.0.0.1:3005',
+                    webappUrl: 'http://127.0.0.1:3005',
+                    createdAt: now,
+                    updatedAt: now,
+                    lastUsedAt: now,
+                },
+            },
+        }), 'utf8');
+        reloadConfiguration();
+
+        const fakeTailscale = createFakeTailscale({
+            statusJson: {
+                BackendState: 'NeedsLogin',
+                AuthURL: 'https://login.tailscale.com/a/example',
+                Self: {},
+                CurrentTailnet: {},
+                TailscaleIPs: [],
+            },
+        });
+
+        try {
+            await withPatchedPath(fakeTailscale.binDir, async () => {
+                await commandRegistry.relay({
+                    args: ['relay', 'access', 'configure', '--provider', 'tailscaleServe'],
+                    rawArgv: ['node', 'happier', 'relay', 'access', 'configure', '--provider', 'tailscaleServe'],
+                    terminalRuntime: null,
+                });
+            });
+
+            expect(fakeTailscale.readInvocations()).toContainEqual([
+                'serve',
+                '--bg',
+                'http://127.0.0.1:3005',
+            ]);
+        } finally {
+            fakeTailscale.cleanup();
+            relayEnvScope.restore();
+            reloadConfiguration();
         }
     });
 

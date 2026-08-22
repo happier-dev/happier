@@ -565,6 +565,7 @@ async function waitForNextInput<Mode, Message>(
   const metadataWaitRetryBackoffMs =
     opts.metadataWaitRetryBackoffMs ?? DEFAULT_SESSION_METADATA_WAIT_RETRY_BACKOFF_MS;
   const refreshBeforeQueuedBatch = opts.refreshBeforeQueuedBatch !== false;
+  let timedMaterializationRejoinConsumed = false;
 
   while (true) {
     const controller = new AbortController();
@@ -598,7 +599,7 @@ async function waitForNextInput<Mode, Message>(
         return await returnBatch(opts, existingBatch, refreshBeforeQueuedBatch);
       }
 
-      await materializePendingMessage(opts);
+      const materializationRetryAfterMs = await materializePendingMessage(opts);
 
       const materializedBatch = await collectQueuedBatch(opts);
       if (materializedBatch) {
@@ -615,7 +616,24 @@ async function waitForNextInput<Mode, Message>(
         continue;
       }
 
-      const winner = await armedWake;
+      let winner: WakeWinner | Readonly<{ kind: 'retry' }>;
+      if (materializationRetryAfterMs === null || timedMaterializationRejoinConsumed) {
+        winner = await armedWake;
+      } else {
+        timedMaterializationRejoinConsumed = true;
+        winner = await Promise.race([
+          armedWake,
+          waitForSessionMetadataRetryBackoff({
+            abortSignal: controller.signal,
+            backoffMs: materializationRetryAfterMs,
+          }).then(() => ({ kind: 'retry' as const })),
+        ]);
+      }
+
+      if (winner.kind === 'retry') {
+        controller.abort('sessionProviderInputConsumer-materialization-retry');
+        continue;
+      }
 
       if (winner.kind === 'meta' && !winner.ok) {
         controller.abort('sessionProviderInputConsumer-meta-false');
@@ -693,14 +711,14 @@ async function collectQueuedBatch<Mode, Message>(
 
 async function materializePendingMessage<Mode, Message>(
   opts: WaitForNextInputOptions<Mode, Message>,
-): Promise<void> {
-  await opts.runPendingMaterializationExclusive(async () => {
-    if (opts.abortSignal.aborted || !opts.isAdmitted() || opts.hasLocalInputCustody()) return;
-    if (isSessionPendingDrainBlocked(opts.session)) return;
-    if ((await (opts.beforePendingMaterialize?.() ?? true)) !== true) return;
-    if (!opts.isAdmitted() || opts.hasLocalInputCustody()) return;
-    if ((await reconcilePendingProviderInputCustodyBeforeMaterialization(opts.session)) !== true) return;
-    if (opts.abortSignal.aborted || !opts.isAdmitted() || opts.hasLocalInputCustody()) return;
+): Promise<number | null> {
+  return await opts.runPendingMaterializationExclusive(async () => {
+    if (opts.abortSignal.aborted || !opts.isAdmitted() || opts.hasLocalInputCustody()) return null;
+    if (isSessionPendingDrainBlocked(opts.session)) return null;
+    if ((await (opts.beforePendingMaterialize?.() ?? true)) !== true) return null;
+    if (!opts.isAdmitted() || opts.hasLocalInputCustody()) return null;
+    if ((await reconcilePendingProviderInputCustodyBeforeMaterialization(opts.session)) !== true) return null;
+    if (opts.abortSignal.aborted || !opts.isAdmitted() || opts.hasLocalInputCustody()) return null;
 
     let result: MaterializeNextPendingResult;
     try {
@@ -714,11 +732,14 @@ async function materializePendingMessage<Mode, Message>(
         throw new PendingQueueMaterializationAuthError();
       }
       logger.debug('[INPUT-CONSUMER] Pending materialization episode failed nonfatally', { error });
-      return;
+      return null;
     }
     if (result.type === 'auth_failure' || (result.type === 'deferred' && result.reason === 'supervisor_auth_failed')) {
       throw new PendingQueueMaterializationAuthError();
     }
+    return result.type === 'retryable_transport' && result.retryAfterMs !== undefined
+      ? result.retryAfterMs
+      : null;
   });
 }
 

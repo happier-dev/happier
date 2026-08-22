@@ -1,4 +1,4 @@
-import type { Credentials } from '@/persistence';
+import type { StoredCredentials } from '@/persistence';
 import { isActionEnabledByEnv, readActionsSettingsFromEnv } from '@/settings/actionsSettings';
 import { dispatchBuiltInHappierTool } from './dispatchBuiltInHappierTool';
 import { createActionToolExecutorBridge } from './createActionToolExecutorBridge';
@@ -8,7 +8,7 @@ import { resolveSessionTransportContext } from '@/session/services/resolveSessio
 import { readDaemonPluginCatalog } from '@/daemon/controlClient';
 
 export async function callBuiltInHappierTool(params: Readonly<{
-  credentials: Credentials;
+  credentials: StoredCredentials;
   sessionId: string;
   toolName: string;
   args: unknown;
@@ -26,6 +26,13 @@ export async function callBuiltInHappierTool(params: Readonly<{
         ...(sessionTarget.candidates ? { candidates: sessionTarget.candidates } : {}),
       };
     }
+    if (sessionTarget.code === 'session_lookup_timeout') {
+      return {
+        ok: false,
+        errorCode: sessionTarget.code,
+        error: 'Session lookup timed out; try again',
+      };
+    }
     return {
       ok: false,
       errorCode: sessionTarget.code,
@@ -35,13 +42,12 @@ export async function callBuiltInHappierTool(params: Readonly<{
       ...(sessionTarget.candidates ? { candidates: sessionTarget.candidates } : {}),
     };
   }
-  const { rawSession, ctx, mode, sessionId } = sessionTarget;
+  const { rawSession, sessionId } = sessionTarget;
   const executor = createCliActionExecutor({
+    ...sessionTarget,
     token: params.credentials.token,
     credentials: params.credentials,
     sessionId,
-    ctx,
-    mode,
     rawSession,
   });
   const actionsSettings = readActionsSettingsFromEnv();

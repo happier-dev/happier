@@ -1,20 +1,36 @@
 import type { Metadata } from '@/api/types';
 import type {
-  AgentSessionHostServices,
-} from '@happier-dev/plugin-sdk/agent-runtime';
-
-type AgentSessionModelsSource = Parameters<AgentSessionHostServices['models']['bind']>[0];
-type AgentSessionModelsSnapshot = ReturnType<AgentSessionModelsSource['read']>;
+  AgentSessionModelsSnapshot,
+  AgentSessionModelsSource,
+} from '@happier-dev/plugin-sdk/agents/runtime';
+import {
+  readExactSessionActiveModelSelectionV1,
+  readSessionProviderBindingMetadataStateV1,
+  type ProviderBoundModelRef,
+  type SessionActiveModelSelectionV1,
+} from '@happier-dev/protocol';
 
 type SessionModelsState = NonNullable<Metadata['sessionModelsV1']>;
 type SessionModel = SessionModelsState['availableModels'][number];
 
 type ModelPublisherSession = Readonly<{
   getMetadataSnapshot(): Metadata | null;
-  updateMetadata(updater: (current: Metadata) => Metadata): Promise<void> | void;
+  updateMetadataAsCurrentPublisher(
+    updater: (current: Metadata) => Metadata,
+  ): Promise<void> | void;
   on(event: 'metadata-updated', listener: () => void): unknown;
   off(event: 'metadata-updated', listener: () => void): unknown;
 }>;
+
+function publisherAuthorityLostError(message: string): Error & {
+  code: 'session_publisher_authority_lost';
+  retryable: false;
+} {
+  return Object.assign(new Error(message), {
+    code: 'session_publisher_authority_lost' as const,
+    retryable: false as const,
+  });
+}
 
 function stateFingerprint(state: SessionModelsState | null): string {
   return JSON.stringify(state);
@@ -30,11 +46,13 @@ function stateForAgent(
 function mergeOptions(
   runtime: NonNullable<NonNullable<AgentSessionModelsSnapshot['models']>[number]['modelOptions']> | undefined,
   base: SessionModel['modelOptions'],
+  suppressedOptionIds: readonly string[] | undefined = undefined,
 ): SessionModel['modelOptions'] {
   const output: NonNullable<SessionModel['modelOptions']> = [];
   const seen = new Set<string>();
+  const suppressed = new Set(suppressedOptionIds ?? []);
   for (const option of [...(runtime ?? []), ...(base ?? [])]) {
-    if (seen.has(option.id)) continue;
+    if (seen.has(option.id) || suppressed.has(option.id)) continue;
     seen.add(option.id);
     output.push({
       id: option.id,
@@ -43,6 +61,11 @@ function mergeOptions(
       type: option.type,
       currentValue: option.currentValue,
       ...(option.options === undefined ? {} : { options: [...option.options] }),
+      // Producer-declared. A runtime snapshot cannot author this fact, so dropping it here
+      // would silently erase what the persisted catalog already carries.
+      ...(option.overridesWhenOn === undefined
+        ? {}
+        : { overridesWhenOn: option.overridesWhenOn }),
     });
   }
   return output.length > 0 ? output : undefined;
@@ -78,7 +101,7 @@ function mergeState(params: Readonly<{
       ...(model.extendedContextModelId === undefined
         ? {}
         : { extendedContextModelId: model.extendedContextModelId }),
-      ...(model.modelOptions?.length ? { modelOptions: mergeOptions(model.modelOptions, undefined) } : {}),
+      ...(modelOptions ? { modelOptions } : {}),
     });
   }
   for (const model of params.base?.availableModels ?? []) {
@@ -89,7 +112,11 @@ function mergeState(params: Readonly<{
       continue;
     }
     const existing = availableModels[existingIndex]!;
-    const modelOptions = mergeOptions(existing.modelOptions, model.modelOptions);
+    const modelOptions = mergeOptions(
+      existing.modelOptions,
+      model.modelOptions,
+      suppressedOptionIdsByModelId.get(model.id),
+    );
     availableModels[existingIndex] = {
       ...existing,
       ...(existing.description === undefined && model.description !== undefined
@@ -125,6 +152,9 @@ function mergeState(params: Readonly<{
     updatedAt: Date.now(),
     currentModelId,
     availableModels,
+    ...(params.previous?.activeSelectionV1
+      ? { activeSelectionV1: params.previous.activeSelectionV1 }
+      : {}),
   };
 }
 
@@ -152,14 +182,35 @@ function mergeBaseState(
     updatedAt: Math.max(canonical.updatedAt, legacyAcp.updatedAt),
     currentModelId,
     availableModels,
+    ...(canonical.activeSelectionV1
+      ? { activeSelectionV1: canonical.activeSelectionV1 }
+      : {}),
   };
 }
 
 export function createSessionRuntimeModelsPublisher(params: Readonly<{
   agentId: string;
+  agentTargetKey?: string;
+  runnerProcessIdentity?: Readonly<{
+    pid: number;
+    processStartTimeMs: number;
+  }> | null;
+  initialActiveSelection?: SessionActiveModelSelectionV1 | null;
   session: ModelPublisherSession;
   source: AgentSessionModelsSource;
-}>): Readonly<{ flush(): Promise<void>; stopAndDrain(): Promise<void>; dispose(): void }> {
+}>): Readonly<{
+  publishActiveSelection(input: Readonly<{
+    selection: ProviderBoundModelRef;
+    activeSelectionV1: SessionActiveModelSelectionV1;
+    publishActive(): Promise<void>;
+  }>): Promise<void>;
+  releaseActiveSelectionAuthority(input: Readonly<{
+    selection: ProviderBoundModelRef;
+  }>): Promise<void>;
+  flush(): Promise<void>;
+  stopAndDrain(): Promise<void>;
+  dispose(): void;
+}> {
   let stopped = false;
   let runtime = params.source.read();
   const initialMetadata = params.session.getMetadataSnapshot();
@@ -176,6 +227,20 @@ export function createSessionRuntimeModelsPublisher(params: Readonly<{
   );
   let lastPublished: SessionModelsState | null = null;
   let pending: Promise<void> = Promise.resolve();
+  let terminalError: unknown = null;
+  let authoritativeSelection =
+    params.initialActiveSelection
+    && params.runnerProcessIdentity
+    && params.initialActiveSelection.runner.pid
+      === params.runnerProcessIdentity.pid
+    && params.initialActiveSelection.runner.processStartTimeMs
+      === params.runnerProcessIdentity.processStartTimeMs
+    && params.initialActiveSelection.selection.agentTargetKey
+      === params.agentTargetKey
+      ? params.initialActiveSelection
+      : null;
+  let publicationSuppressed = false;
+  let publicationRequestedWhileSuppressed = false;
 
   const stopAcceptingPublications = (): void => {
     if (stopped) return;
@@ -184,25 +249,129 @@ export function createSessionRuntimeModelsPublisher(params: Readonly<{
     params.session.off('metadata-updated', onMetadataUpdated);
   };
 
+  const retainTerminalError = (error: unknown): void => {
+    terminalError ??= error;
+    if (
+      typeof (error as { code?: unknown } | null)?.code === 'string'
+      && (error as { code: string }).code
+        === 'session_publisher_authority_lost'
+    ) {
+      stopAcceptingPublications();
+    }
+  };
+
+  const throwTerminalError = (): void => {
+    if (terminalError !== null) throw terminalError;
+  };
+
+  const ownOperation = (operation: Promise<void>): void => {
+    pending = operation.catch((error: unknown) => {
+      retainTerminalError(error);
+    });
+  };
+
+  const createRuntimeReadbackFact = (
+    metadata: Metadata,
+    state: SessionModelsState,
+    runtimeCurrentModelId: string,
+  ): SessionActiveModelSelectionV1 | null => {
+    const runner = params.runnerProcessIdentity;
+    const agentTargetKey = params.agentTargetKey;
+    if (!runner || !agentTargetKey) return null;
+    const bindingState = readSessionProviderBindingMetadataStateV1(metadata);
+    let providerConnectionId: ProviderBoundModelRef['providerConnectionId'];
+    if (bindingState.kind === 'absent') {
+      providerConnectionId = null;
+    } else if (
+      bindingState.kind === 'valid'
+      && bindingState.binding.model?.id === runtimeCurrentModelId
+    ) {
+      providerConnectionId = bindingState.binding.connectionId;
+    } else {
+      return null;
+    }
+    const fact: SessionActiveModelSelectionV1 = {
+      v: 1,
+      selection: {
+        agentTargetKey,
+        providerConnectionId,
+        modelId: runtimeCurrentModelId,
+      },
+      source: 'runtime_readback',
+      runner,
+    };
+    return readExactSessionActiveModelSelectionV1({
+      metadata: {
+        ...metadata,
+        sessionModelsV1: {
+          ...state,
+          activeSelectionV1: fact,
+        },
+      },
+      agentId: params.agentId,
+      agentTargetKey,
+      currentRunnerProcessIdentity: runner,
+    });
+  };
+
   const publish = (): void => {
-    pending = pending.then(async () => {
+    if (publicationSuppressed) {
+      publicationRequestedWhileSuppressed = true;
+      return;
+    }
+    const operation = pending.then(async () => {
+      throwTerminalError();
       if (stopped) return;
-      const observedCurrent =
-        params.session.getMetadataSnapshot()?.sessionModelsV1 ?? null;
+      const metadata = params.session.getMetadataSnapshot();
+      const observedCurrent = metadata?.sessionModelsV1 ?? null;
       const current = stateForAgent(observedCurrent, params.agentId);
       const base = mergeBaseState(canonicalBase, legacyAcpBase);
-      const desired = mergeState({ agentId: params.agentId, base, previous: current, runtime });
+      const merged = mergeState({
+        agentId: params.agentId,
+        base,
+        previous: current,
+        runtime,
+        authoritativeCurrentModelId:
+          authoritativeSelection?.selection.modelId ?? null,
+      });
+      const runtimeCurrentModelId =
+        typeof runtime.currentModelId === 'string'
+        && runtime.currentModelId.length > 0
+          ? runtime.currentModelId
+          : null;
+      const activeSelectionV1 =
+        merged && metadata
+          ? authoritativeSelection
+            ?? (
+              runtimeCurrentModelId
+                ? createRuntimeReadbackFact(
+                    metadata,
+                    merged,
+                    runtimeCurrentModelId,
+                  )
+                : null
+            )
+          : null;
+      const desired = merged
+        ? {
+            ...merged,
+            ...(activeSelectionV1
+              ? { activeSelectionV1 }
+              : { activeSelectionV1: undefined }),
+          }
+        : null;
       if (stateFingerprint(observedCurrent) === stateFingerprint(desired)) {
         lastPublished = desired;
         return;
       }
       lastPublished = desired;
-      await params.session.updateMetadata((metadata) => {
+      await params.session.updateMetadataAsCurrentPublisher((metadata) => {
         if (desired) return { ...metadata, sessionModelsV1: desired };
         const { sessionModelsV1: _removed, ...rest } = metadata;
         return rest;
       });
     });
+    ownOperation(operation);
   };
 
   const onMetadataUpdated = (): void => {
@@ -230,12 +399,88 @@ export function createSessionRuntimeModelsPublisher(params: Readonly<{
   });
 
   return Object.freeze({
+    publishActiveSelection: async (input) => {
+      await pending;
+      throwTerminalError();
+      const operation = pending.then(async () => {
+        if (stopped) {
+          throw publisherAuthorityLostError(
+            'Session runtime model publisher is stopped',
+          );
+        }
+        const previousAuthority = authoritativeSelection;
+        const ownRunner = params.runnerProcessIdentity;
+        if (
+          !ownRunner
+          || ownRunner.pid !== input.activeSelectionV1.runner.pid
+          || ownRunner.processStartTimeMs
+            !== input.activeSelectionV1.runner.processStartTimeMs
+          || input.selection.agentTargetKey
+            !== input.activeSelectionV1.selection.agentTargetKey
+          || input.selection.providerConnectionId
+            !== input.activeSelectionV1.selection.providerConnectionId
+          || input.selection.modelId
+            !== input.activeSelectionV1.selection.modelId
+        ) {
+          throw new Error(
+            'Active model publication requires the current host process witness and exact selection',
+          );
+        }
+        authoritativeSelection = input.activeSelectionV1;
+        publicationSuppressed = true;
+        publicationRequestedWhileSuppressed = false;
+        try {
+          await input.publishActive();
+        } catch (error) {
+          authoritativeSelection = previousAuthority;
+          throw error;
+        } finally {
+          publicationSuppressed = false;
+        }
+      });
+      ownOperation(operation);
+      await operation;
+      const shouldPublish =
+        publicationRequestedWhileSuppressed || authoritativeSelection !== null;
+      publicationRequestedWhileSuppressed = false;
+      if (shouldPublish) publish();
+      await pending;
+      throwTerminalError();
+    },
+    releaseActiveSelectionAuthority: async (input) => {
+      await pending;
+      throwTerminalError();
+      if (stopped) {
+        throw publisherAuthorityLostError(
+          'Session runtime model publisher is stopped',
+        );
+      }
+      if (
+        authoritativeSelection
+        && (
+          authoritativeSelection.selection.agentTargetKey
+            !== input.selection.agentTargetKey
+          || authoritativeSelection.selection.providerConnectionId
+            !== input.selection.providerConnectionId
+          || authoritativeSelection.selection.modelId
+            !== input.selection.modelId
+        )
+      ) {
+        return;
+      }
+      authoritativeSelection = null;
+      publish();
+      await pending;
+      throwTerminalError();
+    },
     flush: async () => {
       await pending;
+      throwTerminalError();
     },
     stopAndDrain: async () => {
       stopAcceptingPublications();
       await pending;
+      throwTerminalError();
     },
     dispose() {
       stopAcceptingPublications();

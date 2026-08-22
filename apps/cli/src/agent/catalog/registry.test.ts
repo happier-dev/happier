@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
-import { AGENT_IDS, BUILT_IN_ACP_CONFIG, DEFAULT_AGENT_ID, getAgentCore } from '@happier-dev/agents';
+import { AGENT_IDS, DEFAULT_AGENT_ID, getAgentCore } from '@happier-dev/agents';
 
 import { LEGACY_CUSTOM_ACP_COMPAT_AGENT_ID } from '@/agent/acp/catalog/compat/customAcp';
 
 import {
   AGENTS,
+  CatalogAgentNotInstalledError,
   readCatalogEntriesSnapshot,
   requireCatalogEntry,
 } from './registry';
@@ -16,6 +17,15 @@ import {
   resolveCatalogAgentId,
   resolveCatalogAgentIdForCliSubcommand,
 } from './resolution';
+
+function captureThrown(run: () => unknown): unknown {
+  try {
+    run();
+    return null;
+  } catch (error) {
+    return error;
+  }
+}
 
 describe('agent catalog registry read API', () => {
   it('exposes the merged catalog snapshot through the AGENTS proxy', () => {
@@ -38,8 +48,12 @@ describe('agent catalog registry read API', () => {
     }
   });
 
-  it('throws when requiring a missing entry instead of falling back silently', () => {
-    expect(() => requireCatalogEntry('__missing__' as never)).toThrow(/missing catalog agent entry/i);
+  it('throws the canonical not-installed failure instead of falling back silently', () => {
+    const thrown = captureThrown(() => requireCatalogEntry('__missing__' as never));
+
+    expect(thrown).toBeInstanceOf(CatalogAgentNotInstalledError);
+    expect(thrown).toMatchObject({ code: 'agent_not_installed', agentId: '__missing__' });
+    expect((thrown as Error).message).toContain("'__missing__'");
   });
 
   it('projects plugin-owned providers without host built-in catalog entries', async () => {
@@ -84,13 +98,10 @@ describe('agent catalog registry read API', () => {
     expect(requireCatalogEntry('codex').getHeadlessTmuxArgvTransform).toBeUndefined();
 
     const promptSubmitVerification = await claudeEntry.getTerminalPromptSubmitVerificationPolicy?.();
-    expect(promptSubmitVerification?.shouldVerifyBeforeSubmit('first\nsecond')).toBe(false);
     expect(promptSubmitVerification?.shouldVerifyAfterSubmit('first\nsecond')).toBe(true);
     expect(requireCatalogEntry('codex').getTerminalPromptSubmitVerificationPolicy).toBeUndefined();
 
-    await expect(claudeEntry.getPreflightSessionControlsProbeAdapter?.()).resolves.toMatchObject({
-      probeModelsRaw: expect.any(Function),
-    });
+    expect(claudeEntry.getPreflightSessionControlsProbeAdapter).toBeUndefined();
     await expect(opencodeEntry.getPreflightSessionControlsProbeAdapter?.()).resolves.toMatchObject({
       failureCacheStrategy: 'cooldown',
       cliModelsCommandArgs: ['models'],
@@ -98,13 +109,6 @@ describe('agent catalog registry read API', () => {
     });
     expect(requireCatalogEntry('kiro').getCliCommandHandler).toBeTypeOf('function');
     expect(requireCatalogEntry('ohMyPi').getCliCommandHandler).toBeTypeOf('function');
-  });
-
-  it('does not let host built-in ACP config shadow plugin-authored ACP runtime specs', () => {
-    const snapshot = readCatalogEntriesSnapshot();
-
-    for (const agentId of Object.keys(BUILT_IN_ACP_CONFIG)) {
-    }
   });
 });
 
@@ -119,11 +123,22 @@ describe('agent catalog id resolution', () => {
   it('resolves runtime agent ids and CLI subcommands through the catalog', () => {
     const codexSubcommand = requireCatalogEntry('codex').cliSubcommand;
 
-    expect(resolveCatalogAgentId()).toBe(DEFAULT_AGENT_ID);
-    expect(resolveCatalogAgentId('codex-experimental' as never)).toBe('codex');
-    expect(resolveCatalogAgentId('__unknown__' as never)).toBe(DEFAULT_AGENT_ID);
+    expect(resolveCatalogAgentId('codex')).toBe('codex');
     expect(resolveAgentCliSubcommand('codex')).toBe(codexSubcommand);
     expect(resolveCatalogAgentIdForCliSubcommand(codexSubcommand)).toBe('codex');
     expect(resolveCatalogAgentIdForCliSubcommand('__missing__')).toBeNull();
+  });
+
+  it('answers an absent or uninstalled Agent with null instead of the default Agent', () => {
+    // An absent id is not a request for Claude, and an uninstalled id is not a
+    // request for any other installed Agent's facts.
+    expect(resolveCatalogAgentId()).toBeNull();
+    expect(resolveCatalogAgentId(null)).toBeNull();
+    expect(resolveCatalogAgentId('   ')).toBeNull();
+    expect(resolveCatalogAgentId('codex-experimental')).toBeNull();
+    expect(resolveCatalogAgentId('__unknown__')).toBeNull();
+    expect(resolveCatalogAgentId('__unknown__')).not.toBe(DEFAULT_AGENT_ID);
+    expect(resolveAgentCliSubcommand('__unknown__')).toBeNull();
+    expect(resolveAgentCliSubcommand()).toBeNull();
   });
 });

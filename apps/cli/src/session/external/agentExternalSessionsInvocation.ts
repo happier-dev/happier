@@ -1,40 +1,45 @@
 import { createHash } from 'node:crypto';
 
 import {
+    AgentExternalSessionTranscriptRawRecordSchema,
+    ExternalSessionUserProjectionSchema,
     PluginAgentExternalSessionLinkDataSchema,
+    resolveTranscriptBodySemanticEvent,
     SessionMessageRoleSchema,
+    SidechainIdSchema,
+    type AgentExternalSessionTranscriptRawRecord,
     type PluginAgentExternalSessionLinkData,
     type PluginAgentExternalSessionLinkDataValue,
     type SessionMessageRole,
 } from '@happier-dev/protocol';
 import type {
-    AgentExternalSessionCandidate,
-    AgentExternalSessionSource,
     AgentExternalSessionTranscriptItem,
     AgentExternalSessionsContribution,
     AgentExternalSessionsFailureCode,
-    AgentExternalSessionsListCandidatesResult,
+    AgentExternalSessionsManagedEndpointRead,
     AgentExternalSessionsReadAfterDiagnostic,
+    AgentExternalSessionsResult,
+} from '@happier-dev/plugin-sdk/sessions/external';
+import { isAgentExternalSessionsFailureCode } from '@happier-dev/plugin-sdk/sessions/external';
+import type { ExecService } from '@happier-dev/plugin-sdk/exec';
+import type {
+    AgentExternalSessionCandidate,
+    AgentExternalSessionSource,
+    AgentExternalSessionsListCandidatesResult,
     AgentExternalSessionsReadAfterTranscriptResult,
     AgentExternalSessionsResolveSourceResult,
     AgentExternalSessionsResolvedIdentity,
-    AgentExternalSessionsResult,
     AgentExternalSessionsTranscriptPage,
-} from '@happier-dev/plugin-sdk/experimental/sessions';
+} from '@happier-dev/plugin-sdk/sessions/external';
 
-const FAILURE_CODES = new Set<AgentExternalSessionsFailureCode>([
-    'source_invalid',
-    'source_unreachable',
-    'candidate_not_found',
-    'agent_unavailable',
-    'unsupported',
-    'unavailable',
-    'not_authorized',
-    'invalid_request',
-    'cancelled',
-    'agent_error',
-    'timeout',
-]);
+import {
+    serializeManagedServiceEndpointReadRequestHeaders,
+} from '@/agent/runtime/session/process/managedServiceEndpointReadHeaders';
+import {
+    filesystemPathComparisonKey,
+    isFilesystemPathAbsolute,
+    normalizeFilesystemPathForPolicy,
+} from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
 
 const MAX_SOURCE_KIND_CODE_UNITS = 256;
 const MAX_ID_CODE_UNITS = 2_000;
@@ -48,8 +53,19 @@ const MAX_READ_AFTER_DIAGNOSTIC_POSITIONS = 200;
 const MAX_NATIVE_CURSOR_CODE_UNITS = 2_000;
 const MAX_QUALIFIED_CURSOR_CODE_UNITS = 4_096;
 const MAX_SOURCE_SERIALIZED_BYTES = 262_144;
+const MAX_TRANSCRIPT_MEDIA_READ_ROOTS = 16;
+const MAX_TRANSCRIPT_MEDIA_READ_ROOT_CODE_UNITS = 4_096;
 const MAX_JSON_DEPTH = 8;
 const MAX_JSON_ENTRIES = 256;
+/**
+ * Transcript content is not link metadata: a legitimate agent record nests
+ * provider-native tool payloads well past the link-data shape bounds, and the
+ * settled per-result byte budget is the size authority. These bounds only keep
+ * the structural walk finite and match the transcript bounds the downstream
+ * public-service projection already applies.
+ */
+const MAX_TRANSCRIPT_RAW_DEPTH = 24;
+const MAX_TRANSCRIPT_RAW_NODES = 8_192;
 
 export const EXTERNAL_SESSIONS_INVOCATION_POLICY = Object.freeze({
     deadlineMs: 15_000,
@@ -73,7 +89,193 @@ type ContributionIdentity = Readonly<{
     pluginId: string;
     agentId: string;
     generation: string;
+    contributionQualifiedId: string;
+    immutableGenerationId: string | null;
 }>;
+
+export type AgentExternalSessionsManagedEndpointReadHost = (
+    input: Readonly<{
+        identity: ContributionIdentity;
+        source: AgentExternalSessionSource;
+        signal: AbortSignal;
+    }>,
+) => Promise<AgentExternalSessionsManagedEndpointRead>;
+
+export function createUnavailableAgentExternalSessionsManagedEndpointRead(): AgentExternalSessionsManagedEndpointRead {
+    return Object.freeze(async () => {
+        throw new Error('Agent External Sessions managed endpoint read is unavailable');
+    });
+}
+
+function readManagedEndpointResponseByteBudget(
+    value: number | undefined,
+): number | undefined {
+    if (value === undefined) return undefined;
+    if (!Number.isSafeInteger(value) || value < 1) {
+        throw new TypeError(
+            'Agent External Sessions managed endpoint response byte budget must be a positive safe integer',
+        );
+    }
+    return value;
+}
+
+function createManagedEndpointResponseByteBudgetError(maxResponseBytes: number): Error {
+    return new Error(
+        `Agent External Sessions managed endpoint response exceeds its ${maxResponseBytes}-byte operation budget`,
+    );
+}
+
+function boundManagedEndpointResponseBody(
+    response: Awaited<ReturnType<AgentExternalSessionsManagedEndpointRead>>,
+    maxResponseBytes: number | undefined,
+): Awaited<ReturnType<AgentExternalSessionsManagedEndpointRead>> {
+    if (maxResponseBytes === undefined || response.body === null) return response;
+
+    let reader: ReadableStreamDefaultReader<Uint8Array> | null = response.body.getReader();
+    let settled = false;
+    let readerReleased = false;
+    let receivedBytes = 0;
+    const releaseReader = (activeReader: ReadableStreamDefaultReader<Uint8Array>): void => {
+        if (reader === activeReader) reader = null;
+        if (readerReleased) return;
+        readerReleased = true;
+        activeReader.releaseLock();
+    };
+    const cancelReader = async (reason: unknown): Promise<void> => {
+        if (settled) return;
+        settled = true;
+        const activeReader = reader;
+        if (!activeReader) return;
+        try {
+            await activeReader.cancel(reason);
+        } catch {
+            // The operation budget remains authoritative even if the transport
+            // cannot acknowledge cancellation.
+        } finally {
+            releaseReader(activeReader);
+        }
+    };
+    const body = new ReadableStream<Uint8Array>({
+        async pull(controller) {
+            const activeReader = reader;
+            if (!activeReader) {
+                controller.close();
+                return;
+            }
+            try {
+                const result = await activeReader.read();
+                if (result.done) {
+                    settled = true;
+                    releaseReader(activeReader);
+                    controller.close();
+                    return;
+                }
+                if (result.value.byteLength > maxResponseBytes - receivedBytes) {
+                    const error = createManagedEndpointResponseByteBudgetError(
+                        maxResponseBytes,
+                    );
+                    await cancelReader(error);
+                    controller.error(error);
+                    return;
+                }
+                receivedBytes += result.value.byteLength;
+                controller.enqueue(result.value);
+            } catch (error) {
+                settled = true;
+                releaseReader(activeReader);
+                controller.error(error);
+            }
+        },
+        async cancel(reason) {
+            await cancelReader(reason);
+        },
+    });
+    return Object.freeze({ ...response, body });
+}
+
+type WithoutHostStampedInvocationServices<T> = T extends unknown
+    ? Omit<T, 'managedEndpointRead' | 'exec'>
+    : never;
+
+/**
+ * Host-facing facade. The host supplies only the ordinary operation input; the
+ * generation-bound owner stamps the capability into the plugin leaf request.
+ */
+export type BoundedAgentExternalSessionsContribution = Readonly<{
+    [Method in keyof AgentExternalSessionsContribution]:
+        AgentExternalSessionsContribution[Method] extends (
+            request: infer Request,
+        ) => infer Result
+            ? (request: WithoutHostStampedInvocationServices<Request>) => Result
+            : never;
+}>;
+
+export async function bindAgentExternalSessionsManagedEndpointRead(input: Readonly<{
+    identity: ContributionIdentity;
+    source: AgentExternalSessionSource;
+    signal: AbortSignal;
+    isCurrent(): boolean;
+    retirementSignal: AbortSignal;
+    host?: AgentExternalSessionsManagedEndpointReadHost;
+    maxResponseBytes?: number;
+}>): Promise<AgentExternalSessionsManagedEndpointRead> {
+    const unavailable = createUnavailableAgentExternalSessionsManagedEndpointRead();
+    const maxResponseBytes = readManagedEndpointResponseByteBudget(input.maxResponseBytes);
+    if (!input.isCurrent() || input.retirementSignal.aborted) {
+        return unavailable;
+    }
+    if (input.signal.aborted || !input.host) return unavailable;
+    let exactRead: AgentExternalSessionsManagedEndpointRead;
+    try {
+        exactRead = await input.host({
+            identity: input.identity,
+            source: input.source,
+            signal: input.signal,
+        });
+    } catch {
+        return unavailable;
+    }
+    if (
+        !input.isCurrent()
+        || input.retirementSignal.aborted
+        || input.signal.aborted
+    ) return unavailable;
+    return Object.freeze(async (request) => {
+        if (!input.isCurrent() || input.retirementSignal.aborted) {
+            throw new Error(
+                'Agent External Sessions managed endpoint read belongs to a retired generation',
+            );
+        }
+        if (input.signal.aborted) throw input.signal.reason;
+        const requestHeaders = serializeManagedServiceEndpointReadRequestHeaders(
+            request.headers,
+        );
+        const admittedRequest = request.headers === undefined
+            ? request
+            : Object.freeze({
+                ...request,
+                headers: requestHeaders,
+            });
+        if (!input.isCurrent() || input.retirementSignal.aborted) {
+            throw new Error(
+                'Agent External Sessions managed endpoint read belongs to a retired generation',
+            );
+        }
+        if (input.signal.aborted) throw input.signal.reason;
+        const response = await exactRead(admittedRequest);
+        if (!input.isCurrent() || input.retirementSignal.aborted) {
+            await response.body?.cancel().catch(() => undefined);
+            throw new Error(
+                'Agent External Sessions managed endpoint read belongs to a retired generation',
+            );
+        }
+        if (input.signal.aborted) {
+            await response.body?.cancel().catch(() => undefined);
+            throw input.signal.reason;
+        }
+        return boundManagedEndpointResponseBody(response, maxResponseBytes);
+    });
+}
 
 type CursorScope = Readonly<{
     method: 'listCandidates' | 'pageTranscript' | 'readAfterTranscript';
@@ -226,12 +428,134 @@ function parseLinkData(value: unknown): PluginAgentExternalSessionLinkData | nul
     return parsed.success ? parsed.data : null;
 }
 
+const INVALID_TRANSCRIPT_RAW = Symbol('invalid-transcript-raw');
+
+/**
+ * Deep-copies a contribution-supplied transcript record into host-owned plain
+ * JSON. The copy rejects accessors, exotic prototypes, symbol keys, cycles and
+ * non-finite numbers, and stays mutable so the canonical record schema's
+ * normalizing preprocess can run against host bytes rather than plugin bytes.
+ */
+function snapshotTranscriptRawJson(
+    value: unknown,
+    depth: number,
+    state: { nodes: number; ancestors: Set<object> },
+): unknown {
+    state.nodes += 1;
+    if (state.nodes > MAX_TRANSCRIPT_RAW_NODES || depth > MAX_TRANSCRIPT_RAW_DEPTH) {
+        return INVALID_TRANSCRIPT_RAW;
+    }
+    if (value === null || typeof value === 'boolean' || typeof value === 'string') return value;
+    if (typeof value === 'number') return Number.isFinite(value) ? value : INVALID_TRANSCRIPT_RAW;
+    if (typeof value !== 'object') return INVALID_TRANSCRIPT_RAW;
+    if (state.ancestors.has(value)) return INVALID_TRANSCRIPT_RAW;
+    state.ancestors.add(value);
+    try {
+        if (Array.isArray(value)) {
+            const expectedKeys = new Set<PropertyKey>([
+                'length',
+                ...Array.from({ length: value.length }, (_, index) => String(index)),
+            ]);
+            const keys = Reflect.ownKeys(value);
+            if (keys.length !== expectedKeys.size || keys.some((key) => !expectedKeys.has(key))) {
+                return INVALID_TRANSCRIPT_RAW;
+            }
+            const snapshot: unknown[] = [];
+            for (let index = 0; index < value.length; index += 1) {
+                const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+                if (!descriptor || !descriptor.enumerable || !('value' in descriptor)) {
+                    return INVALID_TRANSCRIPT_RAW;
+                }
+                const item = snapshotTranscriptRawJson(descriptor.value, depth + 1, state);
+                if (item === INVALID_TRANSCRIPT_RAW) return INVALID_TRANSCRIPT_RAW;
+                snapshot.push(item);
+            }
+            return snapshot;
+        }
+        const prototype = Object.getPrototypeOf(value);
+        if (prototype !== Object.prototype && prototype !== null) return INVALID_TRANSCRIPT_RAW;
+        const keys = Reflect.ownKeys(value);
+        if (keys.some((key) => typeof key !== 'string')) return INVALID_TRANSCRIPT_RAW;
+        const snapshot: Record<string, unknown> = {};
+        for (const key of keys as string[]) {
+            const descriptor = Object.getOwnPropertyDescriptor(value, key);
+            if (!descriptor || !descriptor.enumerable || !('value' in descriptor)) {
+                return INVALID_TRANSCRIPT_RAW;
+            }
+            const item = snapshotTranscriptRawJson(descriptor.value, depth + 1, state);
+            if (item === INVALID_TRANSCRIPT_RAW) return INVALID_TRANSCRIPT_RAW;
+            snapshot[key] = item;
+        }
+        return snapshot;
+    } finally {
+        state.ancestors.delete(value);
+    }
+}
+
+function freezeTranscriptRawJson(value: unknown): void {
+    if (value === null || typeof value !== 'object' || Object.isFrozen(value)) return;
+    Object.freeze(value);
+    for (const nested of Object.values(value as Record<string, unknown>)) {
+        freezeTranscriptRawJson(nested);
+    }
+}
+
+/**
+ * Single admission point for current Agent-contribution transcript output.
+ * Persisted Session history keeps its separate provenance-pinned compatibility
+ * reader; current producers must emit this exact envelope.
+ */
+function parseTranscriptRawRecord(value: unknown): AgentExternalSessionTranscriptRawRecord | null {
+    const snapshot = snapshotTranscriptRawJson(value, 0, { nodes: 0, ancestors: new Set() });
+    if (snapshot === INVALID_TRANSCRIPT_RAW) return null;
+    const parsed = AgentExternalSessionTranscriptRawRecordSchema.safeParse(snapshot);
+    if (!parsed.success) return null;
+    freezeTranscriptRawJson(parsed.data);
+    return parsed.data;
+}
+
 function parseBoundedString(value: unknown, maximum: number, allowEmpty = false): string | null {
     return typeof value === 'string'
         && (allowEmpty || value.length > 0)
         && value.length <= maximum
         ? value
         : null;
+}
+
+/**
+ * Plugin leaves may declare source-owned directories, but only the host owns
+ * the later real-path authorization of a concrete media file. Snapshot this
+ * bounded, platform-normalized evidence here so it cannot become link data or
+ * a per-page metadata channel.
+ */
+function parseTranscriptMediaReadRoots(value: unknown): readonly string[] | undefined | null {
+    if (value === undefined) return undefined;
+    if (!Array.isArray(value) || value.length > MAX_TRANSCRIPT_MEDIA_READ_ROOTS) return null;
+    const roots: string[] = [];
+    const seen = new Set<string>();
+    for (const entry of value) {
+        const root = parseBoundedString(entry, MAX_TRANSCRIPT_MEDIA_READ_ROOT_CODE_UNITS);
+        if (
+            root === null
+            || root.trim() !== root
+            || root.includes('\0')
+            || !isFilesystemPathAbsolute(root)
+        ) {
+            return null;
+        }
+        const normalized = normalizeFilesystemPathForPolicy(root);
+        const key = filesystemPathComparisonKey(normalized);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        roots.push(normalized);
+    }
+    return Object.freeze(roots);
+}
+
+function parseOptionalSidechainId(value: unknown): string | null | undefined | false {
+    if (value === undefined || value === null) return value;
+    const parsed = SidechainIdSchema.safeParse(value);
+    return parsed.success && typeof parsed.data === 'string' ? parsed.data : false;
 }
 
 function parseTimestamp(value: unknown): number | null {
@@ -278,26 +602,60 @@ function parseCandidate(value: unknown): AgentExternalSessionCandidate | null {
 }
 
 function parseTranscriptItem(value: unknown): AgentExternalSessionTranscriptItem | null {
-    const record = readStrictRecord(value, ['id', 'createdAtMs', 'raw'], ['localId', 'messageRole']);
+    const record = readStrictRecord(
+        value,
+        ['id', 'createdAtMs', 'raw'],
+        ['localId', 'sidechainId', 'messageRole', 'userProjection'],
+    );
     if (!record) return null;
     const id = parseBoundedString(record.id, MAX_ID_CODE_UNITS);
     const createdAtMs = parseTimestamp(record.createdAtMs);
     const localId = record.localId === undefined || record.localId === null
         ? record.localId
         : parseBoundedString(record.localId, MAX_ID_CODE_UNITS);
+    const sidechainId = parseOptionalSidechainId(record.sidechainId);
     const role = record.messageRole === undefined || record.messageRole === null
         ? record.messageRole
         : SessionMessageRoleSchema.safeParse(record.messageRole).success
             ? record.messageRole as SessionMessageRole
             : false;
-    const raw = parseLinkData(record.raw);
-    if (id === null || createdAtMs === null || localId === null || role === false || raw === null) return null;
+    const raw = parseTranscriptRawRecord(record.raw);
+    const parsedUserProjection = record.userProjection === undefined
+        ? undefined
+        : ExternalSessionUserProjectionSchema.safeParse(record.userProjection);
+    const userProjection = parsedUserProjection === undefined
+        ? undefined
+        : parsedUserProjection.success
+            ? parsedUserProjection.data
+            : null;
+    const derivedRole = raw?.role === 'user'
+        ? 'user'
+        : raw?.role === 'agent'
+            ? resolveTranscriptBodySemanticEvent({
+                protocol: 'acp',
+                body: raw.content,
+            })?.role ?? null
+            : null;
+    if (
+        id === null
+        || createdAtMs === null
+        || localId === null
+        || sidechainId === false
+        || role === false
+        || raw === null
+        || derivedRole === null
+        || (role !== undefined && role !== null && role !== derivedRole)
+        || userProjection === null
+        || (userProjection !== undefined && derivedRole !== 'user')
+    ) return null;
     return Object.freeze({
         id,
         createdAtMs,
         raw,
         ...(localId === undefined ? {} : { localId }),
+        ...(sidechainId === undefined ? {} : { sidechainId }),
         ...(role === undefined ? {} : { messageRole: role }),
+        ...(userProjection === undefined ? {} : { userProjection }),
     });
 }
 
@@ -369,7 +727,7 @@ function decodeInputCursor(
 
 function parseFailure(value: unknown): AgentExternalSessionsResult<never> | null {
     const record = readStrictRecord(value, ['ok', 'code'], ['message', 'retryable']);
-    if (!record || record.ok !== false || !FAILURE_CODES.has(record.code as AgentExternalSessionsFailureCode)) {
+    if (!record || record.ok !== false || !isAgentExternalSessionsFailureCode(record.code)) {
         return null;
     }
     const message = record.message === undefined
@@ -386,9 +744,17 @@ function parseFailure(value: unknown): AgentExternalSessionsResult<never> | null
 }
 
 function parseResolveSourceValue(value: unknown): AgentExternalSessionsResolveSourceResult | null {
-    const record = readStrictRecord(value, ['source']);
+    const record = readStrictRecord(value, ['source'], ['transcriptMediaReadRoots']);
     const parsedSource = record ? parseSource(record.source) : null;
-    return parsedSource ? Object.freeze({ source: parsedSource }) : null;
+    const transcriptMediaReadRoots = record
+        ? parseTranscriptMediaReadRoots(record.transcriptMediaReadRoots)
+        : null;
+    return parsedSource && transcriptMediaReadRoots !== null
+        ? Object.freeze({
+            source: parsedSource,
+            ...(transcriptMediaReadRoots === undefined ? {} : { transcriptMediaReadRoots }),
+        })
+        : null;
 }
 
 function parseCandidatePreparation(
@@ -449,13 +815,23 @@ function parseListCandidatesValue(
 }
 
 function parseResolvedIdentityValue(value: unknown): AgentExternalSessionsResolvedIdentity | null {
-    const record = readStrictRecord(value, ['source', 'remoteSessionId', 'linkData']);
+    const record = readStrictRecord(
+        value,
+        ['source', 'remoteSessionId', 'linkData'],
+        ['transcriptMediaReadRoots'],
+    );
     if (!record) return null;
     const parsedSource = parseSource(record.source);
     const remoteSessionId = parseBoundedString(record.remoteSessionId, MAX_ID_CODE_UNITS);
     const linkData = parseLinkData(record.linkData);
-    return parsedSource && remoteSessionId && linkData
-        ? Object.freeze({ source: parsedSource, remoteSessionId, linkData })
+    const transcriptMediaReadRoots = parseTranscriptMediaReadRoots(record.transcriptMediaReadRoots);
+    return parsedSource && remoteSessionId && linkData && transcriptMediaReadRoots !== null
+        ? Object.freeze({
+            source: parsedSource,
+            remoteSessionId,
+            linkData,
+            ...(transcriptMediaReadRoots === undefined ? {} : { transcriptMediaReadRoots }),
+        })
         : null;
 }
 
@@ -493,6 +869,8 @@ function parseTranscriptPageValue(
         || (record.tailCursor !== undefined && record.tailCursor !== null && tailCursor === null)
         || hasMore === null
         || truncated === null
+        || (hasMore === true && nextCursor === null)
+        || (hasMore === false && nextCursor !== null)
     ) {
         return null;
     }
@@ -619,15 +997,36 @@ function readMaxItems(value: unknown, ceiling: number): number | null {
         : null;
 }
 
-async function invokeBounded<T>(params: Readonly<{
+export type BoundedExternalSessionsOperationResult<T> =
+    | Readonly<{ status: 'fulfilled'; value: T }>
+    | Readonly<{ status: 'rejected' }>
+    | Readonly<{ status: 'retired' }>
+    | Readonly<{ status: 'cancelled' }>
+    | Readonly<{ status: 'timeout' }>;
+
+/**
+ * Runs one leaf operation inside the canonical External Sessions admission
+ * boundary. Callers provide an absolute ceiling; this owner applies the
+ * ordinary per-call ceiling, cancellation, retirement, and timer cleanup.
+ */
+export async function invokeBoundedExternalSessionsOperation<T>(params: Readonly<{
     signal: AbortSignal;
     retirementSignal: AbortSignal;
     isCurrent(): boolean;
-    operation(signal: AbortSignal, deadlineAtMs: number): Promise<unknown> | unknown;
-    parse(value: unknown): AgentExternalSessionsResult<T>;
-}>): Promise<AgentExternalSessionsResult<T>> {
-    if (!params.isCurrent() || params.retirementSignal.aborted) return unavailable();
-    if (params.signal.aborted) return cancelled();
+    deadlineAtMs?: number;
+    operation(signal: AbortSignal, deadlineAtMs: number): Promise<T> | T;
+}>): Promise<BoundedExternalSessionsOperationResult<T>> {
+    if (!params.isCurrent() || params.retirementSignal.aborted) {
+        return Object.freeze({ status: 'retired' });
+    }
+    if (params.signal.aborted) return Object.freeze({ status: 'cancelled' });
+
+    const nowMs = Date.now();
+    const deadlineAtMs = Math.min(
+        nowMs + EXTERNAL_SESSIONS_INVOCATION_POLICY.deadlineMs,
+        params.deadlineAtMs ?? Number.POSITIVE_INFINITY,
+    );
+    if (deadlineAtMs <= nowMs) return Object.freeze({ status: 'timeout' });
 
     const operationController = new AbortController();
     let terminal: 'retired' | 'cancelled' | 'timeout' | null = null;
@@ -650,8 +1049,7 @@ async function invokeBounded<T>(params: Readonly<{
     } else if (params.signal.aborted) {
         finish('cancelled');
     }
-    const deadlineAtMs = Date.now() + EXTERNAL_SESSIONS_INVOCATION_POLICY.deadlineMs;
-    const timer = setTimeout(() => finish('timeout'), EXTERNAL_SESSIONS_INVOCATION_POLICY.deadlineMs);
+    const timer = setTimeout(() => finish('timeout'), Math.max(0, deadlineAtMs - nowMs));
     const settled = Promise.resolve()
         .then(() => terminal === null
             ? params.operation(operationController.signal, deadlineAtMs)
@@ -665,15 +1063,57 @@ async function invokeBounded<T>(params: Readonly<{
             settled,
             terminalPromise.then(() => ({ status: 'terminal' as const })),
         ]);
-        if (!params.isCurrent() || params.retirementSignal.aborted || terminal === 'retired') return unavailable();
-        if (params.signal.aborted || terminal === 'cancelled') return cancelled();
-        if (terminal === 'timeout' || outcome.status === 'terminal') return timeout();
-        if (outcome.status === 'rejected') return agentError();
-        return params.parse(outcome.value);
+        if (!params.isCurrent() || params.retirementSignal.aborted || terminal === 'retired') {
+            return Object.freeze({ status: 'retired' });
+        }
+        if (params.signal.aborted || terminal === 'cancelled') {
+            return Object.freeze({ status: 'cancelled' });
+        }
+        if (terminal === 'timeout' || outcome.status === 'terminal') {
+            return Object.freeze({ status: 'timeout' });
+        }
+        if (outcome.status === 'rejected') {
+            return Object.freeze({ status: 'rejected' });
+        }
+        return Object.freeze({ status: 'fulfilled', value: outcome.value });
     } finally {
+        if (!operationController.signal.aborted) {
+            operationController.abort(new Error('Agent External Sessions invocation settled'));
+        }
         clearTimeout(timer);
         params.retirementSignal.removeEventListener('abort', retire);
         params.signal.removeEventListener('abort', cancel);
+    }
+}
+
+async function invokeBounded<T>(params: Readonly<{
+    signal: AbortSignal;
+    retirementSignal: AbortSignal;
+    isCurrent(): boolean;
+    deadlineAtMs?: number;
+    operation(signal: AbortSignal, deadlineAtMs: number): Promise<unknown> | unknown;
+    parse(value: unknown): AgentExternalSessionsResult<T>;
+}>): Promise<AgentExternalSessionsResult<T>> {
+    const outcome = await invokeBoundedExternalSessionsOperation({
+        signal: params.signal,
+        retirementSignal: params.retirementSignal,
+        isCurrent: params.isCurrent,
+        ...(params.deadlineAtMs === undefined
+            ? {}
+            : { deadlineAtMs: params.deadlineAtMs }),
+        operation: params.operation,
+    });
+    switch (outcome.status) {
+        case 'fulfilled':
+            return params.parse(outcome.value);
+        case 'rejected':
+            return agentError();
+        case 'retired':
+            return unavailable();
+        case 'cancelled':
+            return cancelled();
+        case 'timeout':
+            return timeout();
     }
 }
 
@@ -682,11 +1122,46 @@ export function createBoundedAgentExternalSessionsContribution(params: Readonly<
     identity: ContributionIdentity;
     isCurrent(): boolean;
     retirementSignal: AbortSignal;
-}>): AgentExternalSessionsContribution {
+    managedEndpointRead?: AgentExternalSessionsManagedEndpointReadHost;
+    /**
+     * The caller owns construction of the generic Agent invocation service.
+     * This wrapper owns only its admission, currentness, cancellation, and
+     * result bounds before passing that service to a contribution callback.
+     */
+    createInvocationExec(signal: AbortSignal): Promise<ExecService>;
+}>): BoundedAgentExternalSessionsContribution {
     const terminalBeforeAdmission = (signal: AbortSignal): AgentExternalSessionsResult<never> | null => {
         if (!params.isCurrent() || params.retirementSignal.aborted) return unavailable();
         if (signal.aborted) return cancelled();
         return null;
+    };
+    const bindManagedEndpointRead = async (
+        source: AgentExternalSessionSource,
+        signal: AbortSignal,
+    ): Promise<AgentExternalSessionsManagedEndpointRead> =>
+        await bindAgentExternalSessionsManagedEndpointRead({
+            identity: params.identity,
+            source,
+            signal,
+            isCurrent: params.isCurrent,
+            retirementSignal: params.retirementSignal,
+            host: params.managedEndpointRead,
+        });
+    const assertOperationAdmissible = (signal: AbortSignal): void => {
+        if (!params.isCurrent() || params.retirementSignal.aborted) {
+            throw new Error('Agent External Sessions invocation belongs to a retired generation');
+        }
+        if (signal.aborted) throw signal.reason;
+    };
+    const bindInvocationContext = async (
+        source: AgentExternalSessionSource,
+        signal: AbortSignal,
+    ) => {
+        const managedEndpointRead = await bindManagedEndpointRead(source, signal);
+        assertOperationAdmissible(signal);
+        const exec = await params.createInvocationExec(signal);
+        assertOperationAdmissible(signal);
+        return Object.freeze({ managedEndpointRead, exec });
     };
     const wrap = Object.freeze({
         async resolveSource(request) {
@@ -702,12 +1177,20 @@ export function createBoundedAgentExternalSessionsContribution(params: Readonly<
                 signal: request.signal,
                 retirementSignal: params.retirementSignal,
                 isCurrent: params.isCurrent,
-                operation: (signal, deadlineAtMs) => params.contribution.resolveSource({
-                    source: parsedSource,
-                    signal,
-                    deadlineAtMs,
-                    maxSerializedBytes,
-                }),
+                deadlineAtMs: request.deadlineAtMs,
+                operation: async (signal, deadlineAtMs) => {
+                    const invocation = await bindInvocationContext(
+                        parsedSource,
+                        signal,
+                    );
+                    return await params.contribution.resolveSource({
+                        source: parsedSource,
+                        signal,
+                        deadlineAtMs,
+                        maxSerializedBytes,
+                        ...invocation,
+                    });
+                },
                 parse: (value) => parseAndBoundResult(value, parseResolveSourceValue, maxSerializedBytes),
             });
         },
@@ -744,16 +1227,24 @@ export function createBoundedAgentExternalSessionsContribution(params: Readonly<
                 signal: request.signal,
                 retirementSignal: params.retirementSignal,
                 isCurrent: params.isCurrent,
-                operation: (signal, deadlineAtMs) => params.contribution.listCandidates({
-                    source: parsedSource,
-                    signal,
-                    deadlineAtMs,
-                    maxSerializedBytes,
-                    maxItems,
-                    ...(typeof cursor === 'string' ? { cursor } : {}),
-                    ...(searchTerm === undefined ? {} : { searchTerm }),
-                    ...(request.searchMode === undefined ? {} : { searchMode: request.searchMode }),
-                }),
+                deadlineAtMs: request.deadlineAtMs,
+                operation: async (signal, deadlineAtMs) => {
+                    const invocation = await bindInvocationContext(
+                        parsedSource,
+                        signal,
+                    );
+                    return await params.contribution.listCandidates({
+                        source: parsedSource,
+                        signal,
+                        deadlineAtMs,
+                        maxSerializedBytes,
+                        ...invocation,
+                        maxItems,
+                        ...(typeof cursor === 'string' ? { cursor } : {}),
+                        ...(searchTerm === undefined ? {} : { searchTerm }),
+                        ...(request.searchMode === undefined ? {} : { searchMode: request.searchMode }),
+                    });
+                },
                 parse: (value) => parseAndBoundResult(
                     value,
                     (candidate) => parseListCandidatesValue(candidate, maxItems, params.identity, scope),
@@ -776,14 +1267,22 @@ export function createBoundedAgentExternalSessionsContribution(params: Readonly<
                 signal: request.signal,
                 retirementSignal: params.retirementSignal,
                 isCurrent: params.isCurrent,
-                operation: (signal, deadlineAtMs) => params.contribution.resolveLinkIdentity({
-                    source: parsedSource,
-                    remoteSessionId,
-                    ...(linkData === undefined ? {} : { linkData }),
-                    signal,
-                    deadlineAtMs,
-                    maxSerializedBytes,
-                }),
+                deadlineAtMs: request.deadlineAtMs,
+                operation: async (signal, deadlineAtMs) => {
+                    const invocation = await bindInvocationContext(
+                        parsedSource,
+                        signal,
+                    );
+                    return await params.contribution.resolveLinkIdentity({
+                        source: parsedSource,
+                        remoteSessionId,
+                        ...(linkData === undefined ? {} : { linkData }),
+                        signal,
+                        deadlineAtMs,
+                        maxSerializedBytes,
+                        ...invocation,
+                    });
+                },
                 parse: (value) => parseAndBoundResult(value, parseResolvedIdentityValue, maxSerializedBytes),
             });
         },
@@ -802,14 +1301,22 @@ export function createBoundedAgentExternalSessionsContribution(params: Readonly<
                 signal: request.signal,
                 retirementSignal: params.retirementSignal,
                 isCurrent: params.isCurrent,
-                operation: (signal, deadlineAtMs) => params.contribution.resolveLinkedIdentity({
-                    source: parsedSource,
-                    remoteSessionId,
-                    linkData,
-                    signal,
-                    deadlineAtMs,
-                    maxSerializedBytes,
-                }),
+                deadlineAtMs: request.deadlineAtMs,
+                operation: async (signal, deadlineAtMs) => {
+                    const invocation = await bindInvocationContext(
+                        parsedSource,
+                        signal,
+                    );
+                    return await params.contribution.resolveLinkedIdentity({
+                        source: parsedSource,
+                        remoteSessionId,
+                        linkData,
+                        signal,
+                        deadlineAtMs,
+                        maxSerializedBytes,
+                        ...invocation,
+                    });
+                },
                 parse: (value) => parseAndBoundResult(value, parseResolvedIdentityValue, maxSerializedBytes),
             });
         },
@@ -844,16 +1351,24 @@ export function createBoundedAgentExternalSessionsContribution(params: Readonly<
                 signal: request.signal,
                 retirementSignal: params.retirementSignal,
                 isCurrent: params.isCurrent,
-                operation: (signal, deadlineAtMs) => params.contribution.pageTranscript({
-                    source: parsedSource,
-                    remoteSessionId,
-                    direction: request.direction,
-                    signal,
-                    deadlineAtMs,
-                    maxSerializedBytes,
-                    maxItems,
-                    ...(typeof cursor === 'string' ? { cursor } : {}),
-                }),
+                deadlineAtMs: request.deadlineAtMs,
+                operation: async (signal, deadlineAtMs) => {
+                    const invocation = await bindInvocationContext(
+                        parsedSource,
+                        signal,
+                    );
+                    return await params.contribution.pageTranscript({
+                        source: parsedSource,
+                        remoteSessionId,
+                        direction: request.direction,
+                        signal,
+                        deadlineAtMs,
+                        maxSerializedBytes,
+                        ...invocation,
+                        maxItems,
+                        ...(typeof cursor === 'string' ? { cursor } : {}),
+                    });
+                },
                 parse: (value) => parseAndBoundResult(
                     value,
                     (candidate) => parseTranscriptPageValue(candidate, maxItems, params.identity, scope),
@@ -882,15 +1397,23 @@ export function createBoundedAgentExternalSessionsContribution(params: Readonly<
                 signal: request.signal,
                 retirementSignal: params.retirementSignal,
                 isCurrent: params.isCurrent,
-                operation: (signal, deadlineAtMs) => params.contribution.readAfterTranscript({
-                    source: parsedSource,
-                    remoteSessionId,
-                    cursor,
-                    signal,
-                    deadlineAtMs,
-                    maxSerializedBytes,
-                    maxItems,
-                }),
+                deadlineAtMs: request.deadlineAtMs,
+                operation: async (signal, deadlineAtMs) => {
+                    const invocation = await bindInvocationContext(
+                        parsedSource,
+                        signal,
+                    );
+                    return await params.contribution.readAfterTranscript({
+                        source: parsedSource,
+                        remoteSessionId,
+                        cursor,
+                        signal,
+                        deadlineAtMs,
+                        maxSerializedBytes,
+                        ...invocation,
+                        maxItems,
+                    });
+                },
                 parse: (value) => parseAndBoundResult(
                     value,
                     (candidate) => parseReadAfterTranscriptValue(
@@ -904,6 +1427,6 @@ export function createBoundedAgentExternalSessionsContribution(params: Readonly<
                 ),
             });
         },
-    } satisfies AgentExternalSessionsContribution);
+    } satisfies BoundedAgentExternalSessionsContribution);
     return wrap;
 }

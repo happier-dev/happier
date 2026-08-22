@@ -29,6 +29,5 @@ export {
     internalErrorResponse,
     mapActionFailureToExternalSessionsError,
     mapExternalTakeoverResultToDirectTakeoverPersistResponse,
-    mapExternalTakeoverResultToDirectTakeoverResponse,
     type ExternalSessionsErrorCode,
 } from './responseErrors';

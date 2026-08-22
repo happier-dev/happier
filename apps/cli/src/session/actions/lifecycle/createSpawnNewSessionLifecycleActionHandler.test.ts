@@ -4,10 +4,136 @@ import {
   SPAWN_SESSION_ERROR_CODES,
   type SpawnSessionOptions,
 } from '@/session/shared/spawnSessionContract';
+import { logger } from '@/ui/logger';
+import {
+  deriveSessionCreationTagV1,
+  SessionCreationCorrespondenceV1Schema,
+} from '@happier-dev/protocol';
+
+vi.mock('@/ui/logger', () => ({
+  logger: {
+    debug: vi.fn(),
+  },
+}));
 
 import { createSpawnNewSessionLifecycleActionHandler } from './createSpawnNewSessionLifecycleActionHandler';
 
 describe('createSpawnNewSessionLifecycleActionHandler', () => {
+  it('preserves accepted spawn identity for method-specific RPC projection', async () => {
+    const spawnSession = vi.fn(async (_options: SpawnSessionOptions) => ({
+      type: 'success',
+      spawnNonce: 'spawn-nonce-1',
+      sessionIdStatus: 'pending',
+    } as const));
+    const handler = createSpawnNewSessionLifecycleActionHandler({ spawnSession });
+
+    await expect(handler({
+      directory: '/tmp/project',
+      spawnNonce: 'spawn-nonce-1',
+      backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
+    })).resolves.toEqual({
+      type: 'success',
+      spawnNonce: 'spawn-nonce-1',
+      sessionIdStatus: 'pending',
+    });
+  });
+
+  it('forwards the admitted creation identity, immutable recipe, and initial title to the daemon owner', async () => {
+    const spawnSession = vi.fn(async (_options: SpawnSessionOptions) => ({
+      type: 'success',
+      sessionId: 'session-created',
+    } as const));
+    const handler = createSpawnNewSessionLifecycleActionHandler({ spawnSession });
+    const sessionCreationTag = deriveSessionCreationTagV1({
+      callerCreationNamespace: 'user',
+      creationKey: 'creation-1',
+    });
+    const sessionCreationCorrespondence = SessionCreationCorrespondenceV1Schema.parse({
+      v: 1,
+      sessionCreationTag,
+      recipe: {
+        execution: { machineId: 'machine-exact', directory: '/tmp/project' },
+        organization: { folderId: 'folder-original', tagIds: ['tag-original'] },
+        agentTarget: {
+          kind: 'agent',
+          identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
+        },
+        modelSelection: null,
+        profileId: null,
+        requestedPermissionMode: null,
+        agentModeId: null,
+        configuration: null,
+        connectedServices: null,
+        mcpSelection: null,
+        transcriptStorage: null,
+        terminal: null,
+        agentSessionStartupInstructionsMarkerV1: null,
+        checkout: null,
+      },
+    });
+
+    await expect(handler({
+      directory: '/tmp/project',
+      machineId: 'machine-exact',
+      backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
+      sessionCreationTag,
+      sessionCreationCorrespondence,
+      initialTitle: 'Atomic initial title',
+    })).resolves.toEqual({ type: 'success', sessionId: 'session-created' });
+
+    expect(spawnSession).toHaveBeenCalledWith(expect.objectContaining({
+      sessionCreationTag,
+      sessionCreationCorrespondence,
+      initialTitle: 'Atomic initial title',
+    }));
+  });
+
+  it('keeps private spawn request and result identities out of persistent diagnostics', async () => {
+    const privateDirectory = '/Users/private-user/work/client-project';
+    const privateMachineId = 'machine-private-identity';
+    const privateProfileId = 'profile-private-identity';
+    const privateBackendId = 'backend-private-identity';
+    const privateEnvironmentKey = 'PRIVATE_CUSTOMER_TOKEN';
+    const privateEnvironmentValue = 'private-environment-value';
+    const privateSessionId = 'session-private-identity';
+    const spawnSession = vi.fn(async (_options: SpawnSessionOptions) => ({
+      type: 'success',
+      sessionId: privateSessionId,
+    } as const));
+    const handler = createSpawnNewSessionLifecycleActionHandler({ spawnSession });
+
+    await handler({
+      directory: privateDirectory,
+      machineId: privateMachineId,
+      profileId: privateProfileId,
+      backendTarget: {
+        kind: 'backend',
+        backendId: privateBackendId,
+        configuredBackendId: privateBackendId,
+        sourceKind: 'configured',
+      },
+      environmentVariables: {
+        [privateEnvironmentKey]: privateEnvironmentValue,
+      },
+    });
+
+    const diagnostics = JSON.stringify(vi.mocked(logger.debug).mock.calls);
+    for (const privateFact of [
+      privateDirectory,
+      privateMachineId,
+      privateProfileId,
+      privateBackendId,
+      privateEnvironmentKey,
+      privateEnvironmentValue,
+      privateSessionId,
+    ]) {
+      expect(diagnostics).not.toContain(privateFact);
+    }
+    expect(logger.debug).toHaveBeenCalledWith(
+      '[API MACHINE] Session spawn succeeded',
+    );
+  });
+
   it('derives a stable fresh-spawn nonce from the caller session id when none is provided', async () => {
     const spawnSession = vi.fn(async (_options: SpawnSessionOptions) => ({
       type: 'success',

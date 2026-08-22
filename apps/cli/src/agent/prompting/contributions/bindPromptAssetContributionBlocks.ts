@@ -1,6 +1,6 @@
 import type { PromptBlockV1 } from '@happier-dev/protocol';
 
-import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
+import type { ResolvedPromptAssetContribution } from '@/plugins/projection/registry/types';
 import type { StablePluginResourcesOwner } from '@/plugins/runtime/invocation/services/resources';
 import {
   evaluateContributionAvailability,
@@ -18,7 +18,8 @@ function failResource(message: string): never {
 }
 
 export async function bindPromptAssetContributionBlocks(params: Readonly<{
-  registry: Pick<ResolvedContributionRegistry, 'generationId' | 'promptAssets'>;
+  promptAssets: readonly ResolvedPromptAssetContribution[];
+  resolveContributionGeneration(pluginId: string): string | null;
   resources: StablePluginResourcesOwner | undefined;
   agent: Readonly<{ pluginId: string; localId: string }>;
   selectedAsset?: Readonly<{ pluginId: string; localId: string }>;
@@ -26,18 +27,22 @@ export async function bindPromptAssetContributionBlocks(params: Readonly<{
   isGenerationCurrent(): boolean;
   facts: ContributionPolicyFacts;
 }>): Promise<readonly PromptBlockV1[]> {
-  const generationId = params.registry.generationId;
-  if (!generationId || !params.isGenerationCurrent()) {
+  if (!params.isGenerationCurrent()) {
     return failResource('Prompt asset generation is stale');
   }
   return await resolvePromptAssetContributionBlocks({
     agent: params.agent,
     ...(params.selectedAsset ? { selectedAsset: params.selectedAsset } : {}),
-    contributions: (params.registry.promptAssets ?? []).map((asset) => ({
-      pluginId: asset.pluginId,
-      generationId,
-      definition: asset.definition,
-    })),
+    contributions: params.promptAssets.flatMap((asset) => {
+      const generationId = params.resolveContributionGeneration(asset.pluginId);
+      return generationId
+        ? [Object.freeze({
+          pluginId: asset.pluginId,
+          generationId,
+          definition: asset.definition,
+        })]
+        : [];
+    }),
     evaluateAvailability(availability) {
       const decision = evaluateContributionAvailability({ availability, facts: params.facts });
       if (decision.outcome === 'unavailable') {
@@ -55,13 +60,11 @@ export async function bindPromptAssetContributionBlocks(params: Readonly<{
       if (!params.isGenerationCurrent() || params.signal.aborted) {
         return failResource('Prompt asset generation is stale');
       }
-      if (!params.resources?.hasPlugin(request.pluginId)
-        || !params.resources.hasPlugin(request.resourcePluginId)) {
+      if (!params.resources?.hasPlugin(request.resourcePluginId)) {
         return failResource('Prompt asset resource generation is unavailable');
       }
       const service = params.resources.bind({
         pluginId: request.resourcePluginId,
-        generation: request.generationId,
         signal: params.signal,
         isGenerationCurrent: params.isGenerationCurrent,
       });

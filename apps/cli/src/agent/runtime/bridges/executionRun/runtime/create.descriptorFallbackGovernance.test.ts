@@ -5,13 +5,8 @@ import type {
     ExecutionRunHostRuntimeMessageHandler,
 } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';
 
-const getExecutionRunBackendDescriptorMock = vi.fn();
 const resolveBackendEngineAdapterResolutionMock = vi.fn();
 const TEST_SECONDARY_BACKEND_ID = `${'secondary'}.${'backend'}` as never;
-
-vi.mock('@/agent/executionRuns/registry/executionRunBackendRegistry', () => ({
-    getExecutionRunBackendDescriptor: (...args: unknown[]) => getExecutionRunBackendDescriptorMock(...args),
-}));
 
 vi.mock('@/agent/runtime/registry/engineRegistry', () => ({
     resolveBackendEngineAdapterResolution: (...args: unknown[]) => resolveBackendEngineAdapterResolutionMock(...args),
@@ -50,13 +45,11 @@ function withFastFailure<T>(promise: Promise<T>): Promise<T> {
 describe('createExecutionRunBackend (descriptor fallback governance)', () => {
     beforeEach(() => {
         vi.resetModules();
-        getExecutionRunBackendDescriptorMock.mockReset();
         resolveBackendEngineAdapterResolutionMock.mockReset();
     });
 
     it('fails closed for non-review backends when engine registry resolution is missing (even if a descriptor is present)', async () => {
         const descriptorFactory = vi.fn(() => createStubBackend('descriptor'));
-        getExecutionRunBackendDescriptorMock.mockReturnValue({ factory: descriptorFactory });
         resolveBackendEngineAdapterResolutionMock.mockResolvedValue(null);
 
         const { createExecutionRunRuntime } = await import('./create');
@@ -76,7 +69,6 @@ describe('createExecutionRunBackend (descriptor fallback governance)', () => {
         const { MissingBoundCliRuntimeCoreError } = await import('@/agent/runtime/registry/createCliRuntimeCore');
 
         const descriptorFactory = vi.fn(() => createStubBackend('review'));
-        getExecutionRunBackendDescriptorMock.mockReturnValue({ factory: descriptorFactory });
         resolveBackendEngineAdapterResolutionMock.mockResolvedValue({
             backendId: reviewId,
             agentId: 'review-provider',

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import {
+    cancelLatestUsageLimitRecoveryInMetadataAfterExplicitStop,
     mergeUsageLimitRecoveryFieldIntoMetadata,
     persistUsageLimitRecoveryFieldDurably,
 } from './persistUsageLimitRecoveryFieldDurably';
@@ -99,6 +100,35 @@ describe('mergeUsageLimitRecoveryFieldIntoMetadata', () => {
 });
 
 describe('persistUsageLimitRecoveryFieldDurably', () => {
+    it('cancels the latest active recovery generation after explicit Stop', () => {
+        const replacement = intent('replacement', {
+            armedAtMs: 300,
+            runtimeAuthRecoveryAttemptId: 'runtime-b',
+            status: 'checking',
+            attemptCount: 2,
+        });
+
+        expect(cancelLatestUsageLimitRecoveryInMetadataAfterExplicitStop({
+            untouched: true,
+            [key]: replacement,
+        })).toEqual({
+            untouched: true,
+            [key]: {
+                ...replacement,
+                status: 'cancelled',
+                nextCheckAtMs: null,
+            },
+        });
+    });
+
+    it('leaves terminal and malformed recovery metadata unchanged after explicit Stop', () => {
+        const terminal = { [key]: intent('terminal', { status: 'exhausted' }) };
+        const malformed = { [key]: { status: 'waiting' } };
+
+        expect(cancelLatestUsageLimitRecoveryInMetadataAfterExplicitStop(terminal)).toBe(terminal);
+        expect(cancelLatestUsageLimitRecoveryInMetadataAfterExplicitStop(malformed)).toBe(malformed);
+    });
+
     it('stages exactly one daemon-authored usage-limit field mutation', async () => {
         const stageUsageLimitRecoveryMutation = vi.fn(async () => undefined);
 

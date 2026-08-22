@@ -1,5 +1,5 @@
 import type { BackendTargetRefV1, BackendTargetRefV2, BackendTargetRefV2Input } from '@happier-dev/protocol';
-import { CATALOG_AGENT_IDS, type CatalogAgentId } from '@/agent/catalog/ids';
+import { isCatalogAgentId } from '@/agent/catalog/resolution';
 import { resolveConcreteCompatBackendTargetRefs } from '@/session/backendTargets/resolveConcreteBackendTargetRefs';
 import {
   isLegacyConfiguredBackendAgentCompatible,
@@ -22,10 +22,6 @@ export type ContinueWithReplayBackendTargetResolution =
       errorMessage: string;
     }>;
 
-function isCatalogAgentId(value: string): value is CatalogAgentId {
-  return !isLegacyConfiguredBackendSentinelId(value) && (CATALOG_AGENT_IDS as readonly string[]).includes(value);
-}
-
 export function resolveContinueWithReplayBackendTarget(params: Readonly<{
   agent?: string;
   backendTarget?: BackendTargetRefV2Input | null;
@@ -42,7 +38,7 @@ export function resolveContinueWithReplayBackendTarget(params: Readonly<{
       return { ok: false, errorMessage: 'agent or backendTarget is required' };
     }
     const compatBackendTargetInput = readLegacyReplayCompatBackendTargetInput(legacyAgent);
-    if (compatBackendTargetInput) {
+    if (compatBackendTargetInput?.sourceKind === 'configured') {
       const refs = resolveConcreteCompatBackendTargetRefs(compatBackendTargetInput);
       if (!refs) {
         return { ok: false, errorMessage: 'Unknown agent id' };

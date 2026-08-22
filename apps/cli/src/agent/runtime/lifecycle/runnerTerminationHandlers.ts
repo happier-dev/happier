@@ -1,6 +1,7 @@
 import type { EventEmitter } from 'node:events';
 
 import { writeSessionExitReportSync } from '@/session/diagnostics/sessionExitReport';
+import { logger } from '@/ui/logger';
 
 import {
   computeRunnerTerminationOutcome,
@@ -53,7 +54,7 @@ function writeRunnerTerminationSessionExitReport(params: Readonly<{
         terminationKind: params.event.kind,
         terminationSignal: params.event.kind === 'signal' ? params.event.signal : null,
         terminationRequestedAt: observedAt,
-        terminationReason: params.outcome.archiveReason ?? null,
+        terminationReason: params.outcome.terminationReason,
       },
     });
   } catch {
@@ -85,6 +86,14 @@ export function registerRunnerTerminationHandlers(params: Readonly<{
   const terminate = (event: RunnerTerminationEvent) => {
     if (terminated) return;
     terminated = true;
+
+    if (event.kind === 'unhandledRejection' || event.kind === 'uncaughtException') {
+      try {
+        logger.fatal(event.kind === 'unhandledRejection' ? event.reason : event.error);
+      } catch {
+        // Fatal diagnostics must never replace runner cleanup and exit semantics.
+      }
+    }
 
     const outcome = computeRunnerTerminationOutcome(event);
     writeRunnerTerminationSessionExitReport({ options: params.sessionExitReport, event, outcome });

@@ -3,7 +3,8 @@ import {
     ScmRepoModeSchema,
     type ScmBackendContribution,
 } from '@happier-dev/protocol';
-import type { ScmBackendRuntimeRegistration, ScmHostingProviderRuntimeServices } from '@happier-dev/plugin-sdk/experimental/scm';
+import type { BackendRuntimeRegistration as ScmBackendRuntimeRegistration } from '@happier-dev/plugin-sdk/scm/backend';
+import type { HostingProviderRuntimeServices as ScmHostingProviderRuntimeServices } from '@happier-dev/plugin-sdk/scm/hosting';
 
 import type { PluginCompatibilityDiagnostic } from '@/plugins/validation/diagnostics/types';
 

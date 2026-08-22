@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 
 import { describe, expect, it, vi } from 'vitest';
 
+import { createHttpStatusError } from '@/api/client/httpStatusError';
 import { encodeBase64, encrypt } from '@/api/encryption';
 import type { FileBackedTranscriptSessionStore } from '@/api/session/fileBackedTranscripts/store';
 import {
@@ -154,6 +155,7 @@ describe('createCliActionExecutor transcript actions', () => {
     const executor = createCliActionExecutor({
       token: 'token-1',
       sessionId: 'session-1',
+      mode: 'e2ee',
       ctx: { encryptionKey, encryptionVariant: 'dataKey' },
       transcriptStore: store,
       writeTranscriptItems,
@@ -183,6 +185,65 @@ describe('createCliActionExecutor transcript actions', () => {
     ]);
   });
 
+  it('returns the existing upgrade_required result when transcript.import reaches a pre-adapter server', async () => {
+    const writeTranscriptItems = vi.fn(async () => {
+      throw createHttpStatusError(404, 'Server upgrade required before transcript import.', 'upgrade_required');
+    });
+    const executor = createTranscriptExecutor({ writeTranscriptItems });
+
+    await expect(executor.execute('transcript.import', {
+      items: [{
+        id: 'history-1',
+        content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'one' } } },
+      }],
+    }, { surface: 'rpc', defaultSessionId: 'session-1' })).resolves.toEqual({
+      ok: true,
+      result: {
+        ok: false,
+        errorCode: 'upgrade_required',
+        message: 'Server upgrade required before transcript import.',
+      },
+    });
+
+    expect(writeTranscriptItems).toHaveBeenCalledOnce();
+  });
+
+  it('admits plugin transcript imports through the canonical caller policy before writing', async () => {
+    const writeTranscriptItems = vi.fn(async (
+      _sessionId: string,
+      _items: readonly TranscriptItem[],
+    ) => ({ imported: 1, cursor: 'tail-import' }));
+    const executor = createTranscriptExecutor({ writeTranscriptItems });
+    const input = {
+      items: [{
+        id: 'history-1',
+        content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'one' } } },
+      }],
+    };
+
+    await expect(executor.execute('transcript.import', input, {
+      surface: 'plugin',
+    })).resolves.toEqual({
+      ok: false,
+      errorCode: 'plugin_action_caller_required',
+      error: 'plugin_action_caller_required',
+    });
+    expect(writeTranscriptItems).not.toHaveBeenCalled();
+
+    await expect(executor.execute('transcript.import', input, {
+      surface: 'plugin',
+      actionCaller: {
+        kind: 'plugin',
+        pluginId: 'happier.agent.acme',
+        contributionLocalId: 'acme.sample',
+      },
+    })).resolves.toMatchObject({
+      ok: true,
+      result: { ok: true, imported: 1, cursor: 'tail-import' },
+    });
+    expect(writeTranscriptItems).toHaveBeenCalledTimes(1);
+  });
+
   it('namespaces generated transcript import ids per import operation', async () => {
     const plainContent = { t: 'plain', v: { role: 'agent', content: { type: 'text', text: 'imported row' } } };
     const writeTranscriptItems = vi.fn(async (
@@ -192,6 +253,7 @@ describe('createCliActionExecutor transcript actions', () => {
     const executor = createCliActionExecutor({
       token: 'token-1',
       sessionId: 'session-1',
+      mode: 'e2ee',
       ctx: { encryptionKey: new Uint8Array(32).fill(3), encryptionVariant: 'dataKey' },
       transcriptStore: createTranscriptStore({}),
       writeTranscriptItems,

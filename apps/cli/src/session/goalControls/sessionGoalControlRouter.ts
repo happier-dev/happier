@@ -1,18 +1,16 @@
-import {
-  inferAgentIdFromSessionMetadata,
-  type AgentId,
-} from '@happier-dev/agents';
+import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 import type { SessionGoalSetRequestV1 } from '@happier-dev/protocol';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
 
 import { resolveInactiveSessionGoalControls } from '@/agent/catalog/sessionControlAdapters';
-import type { Credentials } from '@/persistence';
-import { resolveMachineControlLocalityProof } from '@/session/machineControlLocality';
+import type { CatalogAgentId } from '@/agent/catalog/ids';
+import type { StoredCredentials } from '@/persistence';
+import {
+  resolveMachineControlLocalityProof,
+  resolveSessionMachineWorkspacePath,
+} from '@/session/machineControlLocality';
 import { updateSessionMetadataWithRetry } from '@/session/metadata/updateSessionMetadataWithRetry';
-import type {
-  SessionEncryptionContext,
-  SessionStoredContentEncryptionMode,
-} from '@/session/transport/encryption/sessionEncryptionContext';
+import type { SessionStoredContentCryptoContext } from '@/session/transport/encryption/sessionEncryptionContext';
 import type { RawSessionRecord } from '@/session/transport/http/sessionsHttp';
 import type {
   ResolveSessionGoalControlAdapter,
@@ -22,20 +20,18 @@ import type {
 
 type RouteSessionGoalControlParams = Readonly<{
   token: string;
-  credentials?: Credentials;
+  credentials?: StoredCredentials;
   sessionId: string;
   rawSession: RawSessionRecord;
   metadata: Record<string, unknown> | null;
   currentMachineId: string | null;
   currentMachineHost?: string | null;
   currentMachineHomeDir?: string | null;
-  ctx: SessionEncryptionContext;
-  mode: SessionStoredContentEncryptionMode;
   operation: SessionGoalControlOperation;
   request?: SessionGoalSetRequestV1;
   callLiveSessionRpc: () => Promise<unknown>;
   resolveAdapter?: ResolveSessionGoalControlAdapter;
-}>;
+}> & SessionStoredContentCryptoContext;
 
 function stableError(errorCode: string): Readonly<{ ok: false; errorCode: string; error: string }> {
   return { ok: false, errorCode, error: errorCode };
@@ -65,8 +61,8 @@ function resolveSessionMachineHomeDir(
   return readString(metadata.homeDir) ?? resolveRawSessionString(rawSession, 'homeDir');
 }
 
-function resolveAgentId(metadata: Record<string, unknown>): AgentId | null {
-  return inferAgentIdFromSessionMetadata(metadata);
+function resolveAgentId(metadata: Record<string, unknown>): CatalogAgentId | null {
+  return resolveAgentIdFromSessionMetadata(metadata);
 }
 
 function buildAdapterParams(
@@ -74,7 +70,7 @@ function buildAdapterParams(
   metadata: Record<string, unknown>,
   sessionMachineId: string,
 ): SessionGoalControlAdapterParams {
-  return {
+  const base = {
     token: params.token,
     ...(params.credentials ? { credentials: params.credentials } : {}),
     sessionId: params.sessionId,
@@ -82,10 +78,15 @@ function buildAdapterParams(
     metadata,
     currentMachineId: params.currentMachineId,
     sessionMachineId,
-    cwd: resolveRawSessionString(params.rawSession, 'path') ?? readString(metadata.path),
-    ctx: params.ctx,
-    mode: params.mode,
-  };
+    cwd: resolveSessionMachineWorkspacePath({
+      metadata,
+      currentMachineId: params.currentMachineId,
+      candidatePath: resolveRawSessionString(params.rawSession, 'path') ?? readString(metadata.path),
+    }),
+  } as const;
+  return params.mode === 'plain'
+    ? { ...base, mode: params.mode, ctx: params.ctx }
+    : { ...base, mode: params.mode, ctx: params.ctx };
 }
 
 function readMetadataResult(value: unknown): Record<string, unknown> | null {
@@ -169,14 +170,14 @@ export async function routeSessionGoalControl(params: RouteSessionGoalControlPar
     return stableError('session_goal_control_session_machine_unknown');
   }
   if (
-    sessionMachineId !== currentMachineId
-    && !resolveMachineControlLocalityProof({
+    !await resolveMachineControlLocalityProof({
       sessionMachineId,
       currentMachineId,
       sessionHost: resolveSessionMachineHost(metadata, params.rawSession),
       sessionHomeDir: resolveSessionMachineHomeDir(metadata, params.rawSession),
       currentMachineHost: params.currentMachineHost,
       currentMachineHomeDir: params.currentMachineHomeDir,
+      credentials: { token: params.token },
     })
   ) {
     return stableError('session_goal_control_remote_unavailable');

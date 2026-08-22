@@ -4,13 +4,13 @@ import { createInterface } from 'node:readline';
 
 import {
   clearCredentials,
-  clearDaemonState,
-  readCredentials,
+  readStoredCredentials,
   updateSettings,
 } from '@/persistence';
 import { configuration } from '@/configuration';
-import { stopDaemon } from '@/daemon/controlClient';
+import { isDaemonStopIncompleteError, stopDaemon } from '@/daemon/controlClient';
 import { stopAllDaemonsBestEffort } from '@/daemon/multiDaemon';
+import { clearActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { clearServerScopedAuthStateInSettings } from './clearServerScopedAuthState';
 
 export async function handleAuthLogout(args: string[]): Promise<void> {
@@ -19,7 +19,7 @@ export async function handleAuthLogout(args: string[]): Promise<void> {
   const targetServerId = configuration.activeServerId;
 
   if (!logoutAll) {
-    const credentials = await readCredentials();
+    const credentials = await readStoredCredentials();
     if (!credentials) {
       console.log(chalk.yellow('Not currently authenticated'));
       return;
@@ -51,34 +51,46 @@ export async function handleAuthLogout(args: string[]): Promise<void> {
 
   if (answer.toLowerCase() === 'y' || answer.toLowerCase() === 'yes') {
     try {
+      // Logout revokes this process's Account Settings incumbent even when a
+      // best-effort daemon stop cannot complete. A later login publishes a
+      // fresh lifecycle through the canonical snapshot owner.
+      clearActiveAccountSettingsSnapshot();
       if (logoutAll) {
-        try {
-          await stopAllDaemonsBestEffort();
-        } catch {
-          // best-effort
-        }
+        await stopAllDaemonsBestEffort();
         if (existsSync(happyDir)) {
           rmSync(happyDir, { recursive: true, force: true });
         }
       } else {
+        let daemonStopIncomplete: Error | null = null;
         try {
-          await stopDaemon();
-          console.log(chalk.gray('Stopped daemon'));
-        } catch {
-          // ignore
+          const stopped = await stopDaemon();
+          if (stopped.status === 'stopped') {
+            console.log(chalk.gray('Stopped daemon'));
+          }
+        } catch (error) {
+          if (isDaemonStopIncompleteError(error)) {
+            daemonStopIncomplete = error;
+          } else {
+            throw error;
+          }
         }
 
         await clearCredentials();
-        await clearDaemonState().catch(() => {});
 
         await updateSettings((settings) => {
           return clearServerScopedAuthStateInSettings(settings, targetServerId);
         });
+
+        // Credential removal is still authoritative for this CLI process, but
+        // do not claim logout succeeded while a verified daemon may retain its
+        // separate process-local Account custody.
+        if (daemonStopIncomplete) throw daemonStopIncomplete;
       }
 
       console.log(chalk.green('✓ Successfully logged out'));
       console.log(chalk.gray('  Run "happier auth login" to authenticate again'));
     } catch (error) {
+      if (isDaemonStopIncompleteError(error)) throw error;
       throw new Error(`Failed to logout: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
     return;

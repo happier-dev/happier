@@ -1,6 +1,6 @@
 import type { MetadataUpdatePort } from '@happier-dev/agents';
 
-import type { Credentials } from '@/persistence';
+import type { StoredCredentials } from '@/persistence';
 import { updateSessionMetadataForTarget } from '@/session/services/updateSessionMetadataForTarget';
 
 function isForbiddenMetadataUpdateError(error: unknown): boolean {
@@ -21,7 +21,7 @@ function isForbiddenMetadataUpdateError(error: unknown): boolean {
 }
 
 export function createCliSessionStateMetadataUpdatePort(params: Readonly<{
-  credentials: Credentials;
+  credentials: StoredCredentials;
 }>): MetadataUpdatePort {
   return {
     update: async (sessionId, updater, opts) => {

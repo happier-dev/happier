@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { readHookEventEnvelopeV1 } from '@happier-dev/protocol';
 
 import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
@@ -22,9 +21,8 @@ vi.mock('@/plugins/runtime/reload/runtimeLease', () => ({
   acquireAuthoritativePluginRuntimeRegistryLease: acquireAuthoritativePluginRuntimeRegistryLeaseMock,
 }));
 
-function createContributionRegistry(generationId: string): ResolvedContributionRegistry {
+function createContributionRegistry(): ResolvedContributionRegistry {
   return {
-    generationId,
     agents: Object.freeze([]),
         actions: Object.freeze([]),
     resources: Object.freeze([]),
@@ -47,14 +45,11 @@ function createRuntimeRegistry(contributes: ResolvedContributionRegistry): Resol
     scmHostingProvidersById: new Map(),
     scmBackendsById: new Map(),
     scmBackendRegistrations: Object.freeze([]),
-    networkAllowedUrlOriginsByPluginId: new Map(),
-    processSpawnAllowedPathsByPluginId: new Map(),
     pluginDiagnosticsByPluginId: Object.freeze({}),
     activatedPluginIds: new Set(),
     activateContributionsOnDemand: async () => [],
     addRuntimeDisposable: (_pluginId, disposable) => disposable,
-    createAgentInvocationServices: () => createUnavailablePluginServices(),
-    readHookEventEnvelopeV1,
+    createAgentInvocationServices: async () => createUnavailablePluginServices(),
     retireConsumers: () => {},
     dispose: async () => {},
   };
@@ -67,7 +62,7 @@ describe('SCM backend registry runtime lease convergence', () => {
   });
 
   it('uses the authoritative plugin runtime lease for the default backend registry', async () => {
-    const runtimeRegistry = createRuntimeRegistry(createContributionRegistry('authoritative-scm-runtime'));
+    const runtimeRegistry = createRuntimeRegistry(createContributionRegistry());
     acquireAuthoritativePluginRuntimeRegistryLeaseMock.mockResolvedValue({
       registry: runtimeRegistry,
       source: 'active',
@@ -83,7 +78,7 @@ describe('SCM backend registry runtime lease convergence', () => {
 
   it('activates hosting-provider producers before backend consumers and then re-reads the authoritative registry', async () => {
     const contributes = {
-      ...createContributionRegistry('authoritative-scm-demand'),
+      ...createContributionRegistry(),
       activationTargets: Object.freeze([
         { pluginId: 'acme.scm', manifest: { contributes: {} } },
         { pluginId: 'acme.hosting', manifest: { contributes: {} } },
@@ -136,7 +131,7 @@ describe('SCM backend registry runtime lease convergence', () => {
   });
 
   it('retains the authoritative runtime lease until the complete SCM operation settles', async () => {
-    const runtimeRegistry = createRuntimeRegistry(createContributionRegistry('authoritative-scm-operation'));
+    const runtimeRegistry = createRuntimeRegistry(createContributionRegistry());
     acquireAuthoritativePluginRuntimeRegistryLeaseMock.mockResolvedValue({
       registry: runtimeRegistry,
       source: 'active',
@@ -170,7 +165,7 @@ describe('SCM backend registry runtime lease convergence', () => {
   });
 
   it('releases the authoritative runtime lease when an SCM operation fails', async () => {
-    const runtimeRegistry = createRuntimeRegistry(createContributionRegistry('authoritative-scm-failure'));
+    const runtimeRegistry = createRuntimeRegistry(createContributionRegistry());
     acquireAuthoritativePluginRuntimeRegistryLeaseMock.mockResolvedValue({
       registry: runtimeRegistry,
       source: 'active',
@@ -187,7 +182,7 @@ describe('SCM backend registry runtime lease convergence', () => {
 
   it('releases the authoritative runtime lease when SCM activation fails', async () => {
     const contributes = {
-      ...createContributionRegistry('authoritative-scm-activation-failure'),
+      ...createContributionRegistry(),
       scmBackends: Object.freeze([{
         pluginId: 'acme.scm',
         definition: { id: 'failing' },

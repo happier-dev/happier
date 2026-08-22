@@ -1,6 +1,5 @@
-import type { McpServerSpecV1 } from '@happier-dev/plugin-sdk/experimental/mcp';
-
 import { assertMcpRuntimeServerRegistrationSafe } from './hosted/safety';
+import type { PluginHostedMcpServerSpec } from './hosted/runtimeTypes';
 import type { HostedMcpRuntimeEndpoint } from './runtimeTypes';
 
 /**
@@ -13,13 +12,13 @@ import type { HostedMcpRuntimeEndpoint } from './runtimeTypes';
  */
 export type PluginHostedMcpServerRegistryV1 = Readonly<{
     has: (pluginId: string, specId: string) => boolean;
-    add: (pluginId: string, spec: McpServerSpecV1) => void;
+    add: (pluginId: string, spec: PluginHostedMcpServerSpec) => void;
     remove: (pluginId: string, specId: string) => void;
-    list: (pluginId: string) => readonly McpServerSpecV1[];
+    list: (pluginId: string) => readonly PluginHostedMcpServerSpec[];
 }>;
 
 export function createPluginHostedMcpServerRegistry(): PluginHostedMcpServerRegistryV1 {
-    const active = new Map<string, McpServerSpecV1>();
+    const active = new Map<string, PluginHostedMcpServerSpec>();
     function key(pluginId: string, specId: string): string {
         return `${pluginId}:${specId}`;
     }
@@ -49,17 +48,17 @@ export type PluginHostedMcpRuntimeEndpointHandle = Readonly<{
 
 export type PluginHostedMcpServerHandle = Readonly<{
     id: string;
-    spec: McpServerSpecV1;
+    spec: PluginHostedMcpServerSpec;
     endpoint?: HostedMcpRuntimeEndpoint;
     dispose(): Promise<void>;
 }>;
 
 export type StartPluginHostedMcpRuntimeEndpoint = (params: Readonly<{
     pluginId: string;
-    spec: McpServerSpecV1;
+    spec: PluginHostedMcpServerSpec;
 }>) => Promise<PluginHostedMcpRuntimeEndpointHandle> | PluginHostedMcpRuntimeEndpointHandle;
 
-function requestsLoopbackHttpExposure(spec: McpServerSpecV1): boolean {
+function requestsLoopbackHttpExposure(spec: PluginHostedMcpServerSpec): boolean {
     return spec.transport.kind === 'hosted'
         && spec.transport.exposure?.kind === 'loopbackHttp'
         && spec.transport.exposure.requested === true;
@@ -95,7 +94,7 @@ function assertSanitizedHostedEndpoint(endpoint: HostedMcpRuntimeEndpoint): void
 
 export async function createPluginHostedMcpServerHandle(params: Readonly<{
     pluginId: string;
-    spec: McpServerSpecV1;
+    spec: PluginHostedMcpServerSpec;
     registry: PluginHostedMcpServerRegistryV1;
     startRuntimeEndpoint?: StartPluginHostedMcpRuntimeEndpoint;
 }>): Promise<PluginHostedMcpServerHandle> {

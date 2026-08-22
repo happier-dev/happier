@@ -1,6 +1,33 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import {
+  AgentSessionRuntimeEventV1Schema,
+  type AgentSessionRuntimeEventV1,
+} from '@happier-dev/protocol';
+
+import { createAcpToolIdentity } from '@/agent/acp/toolCalls';
 import type { EphemeralSendOutcome } from '@/api/session/client/transcript/ephemeralSendOutcome';
+
+let nextRuntimeEventSequence = 0;
+
+function canonicalRuntimeEvent(input: Readonly<Record<string, unknown>>): AgentSessionRuntimeEventV1 {
+  return AgentSessionRuntimeEventV1Schema.parse({
+    sequence: ++nextRuntimeEventSequence,
+    ...input,
+  });
+}
+
+function toolIdentity(params: Readonly<{
+  toolCallId: string;
+  sidechainId?: string | null;
+}>): ReturnType<typeof createAcpToolIdentity> {
+  return createAcpToolIdentity({
+    sessionId: 'session-1',
+    turnId: 'turn-1',
+    sidechainId: params.sidechainId ?? null,
+    toolCallId: params.toolCallId,
+  });
+}
 
 function createRuntimeToolProjectionFixture(
   ephemeralOutcomes: EphemeralSendOutcome[] = [{ accepted: true, epoch: 1 }],
@@ -27,7 +54,7 @@ function createRuntimeToolProjectionFixture(
     _provider: string,
     body: Record<string, unknown>,
     opts: { localId: string },
-  ) => {
+  ): Promise<Readonly<{ persisted: boolean; delivered: boolean }>> => {
     sendOrder.push(`durable:${opts.localId}`);
     durableWrites.push({ localId: opts.localId, body });
     durableRows.set(opts.localId, body);
@@ -40,7 +67,7 @@ function createRuntimeToolProjectionFixture(
     runtimeMessageDeltaBridge: {
       appendAssistantDelta: vi.fn(),
       appendThinkingDelta: vi.fn(),
-      flushAll: vi.fn(async () => undefined),
+      flushAll: vi.fn(async () => []),
     },
     session: {
       sessionId: 'session-1',
@@ -81,16 +108,15 @@ describe('projectRuntimeTranscriptEvent tool lifecycle', () => {
       session: fixture.session,
       provider: 'cursor',
       runtimeMessageDeltaBridge: fixture.runtimeMessageDeltaBridge,
-      event: {
+      event: canonicalRuntimeEvent({
         kind: 'tool-progress',
         sessionId: 'session-1',
         emittedAtMs: 101,
         turnId: 'turn-1',
         sidechainId: 'sidechain-1',
         toolCallId: 'call-1',
-        localId: 'acp-call-v1:bounded-call',
         progress: mergedToolProgress({ sidechainId: 'sidechain-1' }),
-      },
+      }),
     })).resolves.toEqual({ projected: true, kind: 'tool-progress' });
 
     expect(fixture.session.sendAgentMessageEphemeral).toHaveBeenCalledWith(
@@ -111,11 +137,11 @@ describe('projectRuntimeTranscriptEvent tool lifecycle', () => {
             content: null,
           },
         },
-        id: 'acp-call-v1:bounded-call',
+        id: toolIdentity({ toolCallId: 'call-1', sidechainId: 'sidechain-1' }).callLocalId,
         sidechainId: 'sidechain-1',
       },
       {
-        localId: 'acp-call-v1:bounded-call',
+        localId: toolIdentity({ toolCallId: 'call-1', sidechainId: 'sidechain-1' }).callLocalId,
         createdAt: 101,
         updatedAt: 101,
         meta: {
@@ -141,25 +167,24 @@ describe('projectRuntimeTranscriptEvent tool lifecycle', () => {
       emittedAtMs: 101,
       turnId: 'turn-1',
       toolCallId: 'call-1',
-      localId: 'acp-call-v1:bounded-call',
       progress: mergedToolProgress(),
     };
 
     await expect(projectRuntimeTranscriptEvent({
       session: fixture.session,
       provider: 'cursor',
-      event: firstEvent,
+      event: canonicalRuntimeEvent(firstEvent),
     })).resolves.toEqual({ projected: false, reason: 'ephemeral_not_accepted' });
     expect(fixture.session.sendAgentMessageEphemeral).toHaveBeenCalledTimes(1);
 
     await expect(projectRuntimeTranscriptEvent({
       session: fixture.session,
       provider: 'cursor',
-      event: {
+      event: canonicalRuntimeEvent({
         ...firstEvent,
         emittedAtMs: 102,
         progress: mergedToolProgress({ title: 'Read enriched README', observedAtMs: 102 }),
-      },
+      }),
     })).resolves.toEqual({ projected: true, kind: 'tool-progress' });
     expect(fixture.session.sendAgentMessageEphemeral).toHaveBeenCalledTimes(2);
     expect(fixture.session.enqueueAgentMessageCommitted).not.toHaveBeenCalled();
@@ -175,16 +200,41 @@ describe('projectRuntimeTranscriptEvent tool lifecycle', () => {
     await expect(projectRuntimeTranscriptEvent({
       session: fixture.session,
       provider: 'cursor',
-      event: {
+      event: canonicalRuntimeEvent({
         kind: 'tool-progress',
         sessionId: 'session-1',
         emittedAtMs: 101,
         turnId: 'turn-1',
         toolCallId: 'call-1',
-        localId: 'acp-call-v1:bounded-call',
         progress: mergedToolProgress(),
-      },
+      }),
     })).rejects.toThrow('unexpected transcript port rejection');
+  });
+
+  it('rejects a stable tool fact when the durable queue returns no custody', async () => {
+    const { projectRuntimeTranscriptEvent } = await import('./projectRuntimeTranscriptEvent');
+    const fixture = createRuntimeToolProjectionFixture();
+    fixture.session.enqueueAgentMessageCommitted.mockResolvedValueOnce({
+      persisted: false,
+      delivered: false,
+    });
+
+    await expect(projectRuntimeTranscriptEvent({
+      session: fixture.session,
+      provider: 'cursor',
+      event: canonicalRuntimeEvent({
+        kind: 'tool-result',
+        sessionId: 'session-1',
+        emittedAtMs: 103,
+        turnId: 'turn-1',
+        toolCallId: 'call-1',
+        output: { text: 'required tool result' },
+      }),
+    })).rejects.toMatchObject({
+      code: 'runtime_transcript_required_admission_failed',
+      reason: 'durable_custody_rejected',
+      eventKind: 'tool-result',
+    });
   });
 
   it('promotes progress to a durable call before its distinct result using emitted bounded identities', async () => {
@@ -193,66 +243,55 @@ describe('projectRuntimeTranscriptEvent tool lifecycle', () => {
       { accepted: true, epoch: 1 },
       { accepted: true, epoch: 1 },
     ]);
-    const hostileId = ' vendor-call \nnext\0byte ';
-    const callLocalId = 'acp-call-v1:bounded-call';
-    const resultLocalId = 'acp-result-v1:bounded-result';
+    const hostileId = 'vendor-call\nnext\0byte';
+    const identity = toolIdentity({ toolCallId: hostileId });
+    const callLocalId = identity.callLocalId;
+    const resultLocalId = identity.resultLocalId;
 
     for (const [emittedAtMs, title] of [[101, 'Sparse'], [102, 'Enriched']] as const) {
       await projectRuntimeTranscriptEvent({
         session: fixture.session,
         provider: 'cursor',
         runtimeMessageDeltaBridge: fixture.runtimeMessageDeltaBridge,
-        event: {
+        event: canonicalRuntimeEvent({
           kind: 'tool-progress',
           sessionId: 'session-1',
           emittedAtMs,
           turnId: 'turn-1',
           toolCallId: hostileId,
-          localId: callLocalId,
           progress: mergedToolProgress({
             toolCallId: hostileId,
-            localId: callLocalId,
-            resultLocalId,
             title,
             observedAtMs: emittedAtMs,
           }),
-        },
+        }),
       });
     }
     await projectRuntimeTranscriptEvent({
       session: fixture.session,
       provider: 'cursor',
       runtimeMessageDeltaBridge: fixture.runtimeMessageDeltaBridge,
-      event: {
+      event: canonicalRuntimeEvent({
         kind: 'tool-call',
         sessionId: 'session-1',
         emittedAtMs: 103,
         turnId: 'turn-1',
         toolCallId: hostileId,
-        localId: callLocalId,
         toolName: 'Read',
-        toolInput: { path: 'README.md' },
-        toolSnapshot: mergedToolProgress({
-          toolCallId: hostileId,
-          localId: callLocalId,
-          resultLocalId,
-          status: 'completed',
-          observedAtMs: 103,
-        }),
-      },
+        input: { path: 'README.md' },
+      }),
     });
     await projectRuntimeTranscriptEvent({
       session: fixture.session,
       provider: 'cursor',
-      event: {
+      event: canonicalRuntimeEvent({
         kind: 'tool-result',
         sessionId: 'session-1',
         emittedAtMs: 104,
         turnId: 'turn-1',
         toolCallId: hostileId,
-        localId: resultLocalId,
         output: { text: 'done' },
-      },
+      }),
     });
 
     expect(fixture.sendOrder).toEqual([
@@ -278,87 +317,85 @@ describe('projectRuntimeTranscriptEvent tool lifecycle', () => {
     const { projectRuntimeTranscriptEvent } = await import('./projectRuntimeTranscriptEvent');
     const fixture = createRuntimeToolProjectionFixture();
     const progress = mergedToolProgress({ toolName: 'createPlan', kind: 'other', title: 'Create Plan' });
+    const planCallLocalId = toolIdentity({ toolCallId: 'plan-call' }).callLocalId;
 
     await projectRuntimeTranscriptEvent({
       session: fixture.session,
       provider: 'cursor',
-      event: {
+      event: canonicalRuntimeEvent({
         kind: 'tool-progress',
         sessionId: 'session-1',
         emittedAtMs: 101,
         turnId: 'turn-1',
         toolCallId: 'plan-call',
-        localId: 'acp-call-v1:plan',
         progress: { ...progress, toolCallId: 'plan-call', localId: 'acp-call-v1:plan' },
-      },
+      }),
     });
     await projectRuntimeTranscriptEvent({
       session: fixture.session,
       provider: 'cursor',
       runtimeMessageDeltaBridge: fixture.runtimeMessageDeltaBridge,
-      event: {
+      event: canonicalRuntimeEvent({
         kind: 'tool-call',
         sessionId: 'session-1',
         emittedAtMs: 102,
         turnId: 'turn-1',
         toolCallId: 'plan-call',
-        localId: 'acp-call-v1:plan',
         toolName: 'createPlan',
-        toolInput: {},
-        toolSnapshot: { ...progress, toolCallId: 'plan-call', localId: 'acp-call-v1:plan', status: 'cancelled' },
-      },
+        input: {},
+      }),
     });
     await projectRuntimeTranscriptEvent({
       session: fixture.session,
       provider: 'cursor',
       runtimeMessageDeltaBridge: fixture.runtimeMessageDeltaBridge,
-      event: {
+      event: canonicalRuntimeEvent({
         kind: 'turn-complete',
         sessionId: 'session-1',
         emittedAtMs: 103,
         turnId: 'turn-1',
-      },
+      }),
     });
 
     expect(fixture.session.sendAgentMessageEphemeral).toHaveBeenCalledTimes(1);
     expect(fixture.durableRows.size).toBe(1);
-    expect(fixture.durableRows.get('acp-call-v1:plan')).toMatchObject({
+    expect(fixture.durableRows.get(planCallLocalId)).toMatchObject({
       type: 'tool-call',
       callId: 'plan-call',
     });
     expect([...fixture.durableRows.values()].some((body) => body.type === 'tool-result')).toBe(false);
   });
 
-  it('derives bounded deterministic call and result identities when a generic runtime producer omits localId', async () => {
+  it('derives bounded deterministic call and result identities from canonical tool events', async () => {
     const { projectRuntimeTranscriptEvent } = await import('./projectRuntimeTranscriptEvent');
     const fixture = createRuntimeToolProjectionFixture();
-    const hostileId = ' generic \ncall\0id ';
+    const hostileId = 'generic \ncall\0id';
 
     await projectRuntimeTranscriptEvent({
       session: fixture.session,
       provider: 'claude',
       runtimeMessageDeltaBridge: fixture.runtimeMessageDeltaBridge,
-      event: {
+      event: canonicalRuntimeEvent({
         kind: 'tool-call',
         sessionId: 'session-1',
         emittedAtMs: 101,
         turnId: 'turn-1',
         toolCallId: hostileId,
         toolName: 'Read',
-        toolInput: { path: 'README.md' },
-      },
+        input: { path: 'README.md' },
+      }),
     });
     await projectRuntimeTranscriptEvent({
       session: fixture.session,
       provider: 'claude',
-      event: {
+      event: canonicalRuntimeEvent({
         kind: 'tool-result',
         sessionId: 'session-1',
         emittedAtMs: 102,
         turnId: 'turn-1',
         toolCallId: hostileId,
         output: 'done',
-      },
+      }),
     });
 
     const [call, result] = fixture.durableWrites;
@@ -371,46 +408,44 @@ describe('projectRuntimeTranscriptEvent tool lifecycle', () => {
     expect(result?.body.id).toBe(result?.localId);
   });
 
-  it('converges late call enrichment and materially richer result revisions through stable durable localIds', async () => {
+  it('keeps canonical tool revisions at stable durable localIds', async () => {
     const { projectRuntimeTranscriptEvent } = await import('./projectRuntimeTranscriptEvent');
     const fixture = createRuntimeToolProjectionFixture();
-    const callLocalId = 'acp-call-v1:revision-call';
-    const resultLocalId = 'acp-result-v1:revision-result';
+    const identity = toolIdentity({ toolCallId: 'call-1' });
+    const callLocalId = identity.callLocalId;
+    const resultLocalId = identity.resultLocalId;
 
-    const projectCall = async (title: string, emittedAtMs: number) => projectRuntimeTranscriptEvent({
+    const projectCall = async (input: Record<string, unknown>, emittedAtMs: number) => projectRuntimeTranscriptEvent({
       session: fixture.session,
       provider: 'cursor',
       runtimeMessageDeltaBridge: fixture.runtimeMessageDeltaBridge,
-      event: {
+      event: canonicalRuntimeEvent({
         kind: 'tool-call',
         sessionId: 'session-1',
         emittedAtMs,
         turnId: 'turn-1',
         toolCallId: 'call-1',
-        localId: callLocalId,
         toolName: 'Read',
-        toolInput: { path: 'README.md' },
-        toolSnapshot: mergedToolProgress({ title, status: 'completed', observedAtMs: emittedAtMs }),
-      },
+        input,
+      }),
     });
     const projectResult = async (output: unknown, isError: boolean, emittedAtMs: number) => projectRuntimeTranscriptEvent({
       session: fixture.session,
       provider: 'cursor',
-      event: {
+      event: canonicalRuntimeEvent({
         kind: 'tool-result',
         sessionId: 'session-1',
         emittedAtMs,
         turnId: 'turn-1',
         toolCallId: 'call-1',
-        localId: resultLocalId,
         output,
         isError,
-      },
+      }),
     });
 
-    await projectCall('Initial title', 101);
+    await projectCall({ path: 'README.md', revision: 'initial' }, 101);
     await projectResult({ text: 'partial' }, false, 102);
-    await projectCall('Late richer title', 103);
+    await projectCall({ path: 'README.md', revision: 'later' }, 103);
     await projectResult({ text: 'final', exitCode: 1 }, true, 104);
 
     expect(fixture.sendOrder).toEqual([
@@ -423,7 +458,7 @@ describe('projectRuntimeTranscriptEvent tool lifecycle', () => {
     expect(fixture.durableRows.get(callLocalId)).toMatchObject({
       type: 'tool-call',
       id: callLocalId,
-      input: { _acp: { title: 'Late richer title' } },
+      input: { path: 'README.md', revision: 'later' },
     });
     expect(fixture.durableRows.get(resultLocalId)).toMatchObject({
       type: 'tool-result',
@@ -437,36 +472,33 @@ describe('projectRuntimeTranscriptEvent tool lifecycle', () => {
   it('uses one call identity across ephemeral promotion so a durable boundary can replace the live card', async () => {
     const { projectRuntimeTranscriptEvent } = await import('./projectRuntimeTranscriptEvent');
     const fixture = createRuntimeToolProjectionFixture();
-    const localId = 'acp-call-v1:one-card';
+    const localId = toolIdentity({ toolCallId: 'call-1' }).callLocalId;
 
     await projectRuntimeTranscriptEvent({
       session: fixture.session,
       provider: 'cursor',
-      event: {
+      event: canonicalRuntimeEvent({
         kind: 'tool-progress',
         sessionId: 'session-1',
         emittedAtMs: 101,
         turnId: 'turn-1',
         toolCallId: 'call-1',
-        localId,
         progress: mergedToolProgress({ localId }),
-      },
+      }),
     });
     await projectRuntimeTranscriptEvent({
       session: fixture.session,
       provider: 'cursor',
       runtimeMessageDeltaBridge: fixture.runtimeMessageDeltaBridge,
-      event: {
+      event: canonicalRuntimeEvent({
         kind: 'tool-call',
         sessionId: 'session-1',
         emittedAtMs: 102,
         turnId: 'turn-1',
         toolCallId: 'call-1',
-        localId,
         toolName: 'Read',
-        toolInput: { path: 'README.md' },
-        toolSnapshot: mergedToolProgress({ localId, status: 'completed', observedAtMs: 102 }),
-      },
+        input: { path: 'README.md' },
+      }),
     });
 
     const ephemeralBody = fixture.session.sendAgentMessageEphemeral.mock.calls[0]?.[1];
@@ -476,49 +508,46 @@ describe('projectRuntimeTranscriptEvent tool lifecycle', () => {
     expect(fixture.durableRows.size).toBe(1);
   });
 
-  it('encodes cleared full-snapshot metadata so terminal promotion cannot retain stale progress fields', async () => {
+  it('encodes cleared canonical progress metadata without retaining stale fields', async () => {
     const { projectRuntimeTranscriptEvent } = await import('./projectRuntimeTranscriptEvent');
     const fixture = createRuntimeToolProjectionFixture();
-    const localId = 'acp-call-v1:cleared-fields';
+    const localId = toolIdentity({ toolCallId: 'call-1' }).callLocalId;
 
     await projectRuntimeTranscriptEvent({
       session: fixture.session,
       provider: 'cursor',
-      event: {
+      event: canonicalRuntimeEvent({
         kind: 'tool-progress',
         sessionId: 'session-1',
         emittedAtMs: 101,
         turnId: 'turn-1',
         toolCallId: 'call-1',
-        localId,
         progress: mergedToolProgress({ localId }),
-      },
+      }),
     });
+    const {
+      title: _title,
+      kind: _kind,
+      locations: _locations,
+      ...clearedProgress
+    } = mergedToolProgress({ localId, status: 'completed', observedAtMs: 102 });
     await projectRuntimeTranscriptEvent({
       session: fixture.session,
       provider: 'cursor',
-      runtimeMessageDeltaBridge: fixture.runtimeMessageDeltaBridge,
-      event: {
-        kind: 'tool-call',
+      event: canonicalRuntimeEvent({
+        kind: 'tool-progress',
         sessionId: 'session-1',
         emittedAtMs: 102,
         turnId: 'turn-1',
         toolCallId: 'call-1',
-        localId,
-        toolName: 'Read',
-        toolInput: { path: 'README.md' },
-        toolSnapshot: {
-          ...mergedToolProgress({ localId, status: 'completed', observedAtMs: 102 }),
-          title: undefined,
-          kind: undefined,
-          locations: undefined,
-        },
-      },
+        progress: clearedProgress,
+      }),
     });
 
-    const durableBody = fixture.durableRows.get(localId);
-    expect(durableBody).toMatchObject({
+    const ephemeralBody = fixture.session.sendAgentMessageEphemeral.mock.calls[1]?.[1];
+    expect(ephemeralBody).toMatchObject({
       type: 'tool-call',
+      id: localId,
       input: {
         _acp: {
           title: null,

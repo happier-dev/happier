@@ -54,7 +54,11 @@ export async function createDefaultTerminalHostAdapterInventory(params: Readonly
     }));
   }
   if (platform === 'win32') {
-    adapters.push(dependencies.createPtyTerminalHostAdapter());
+    adapters.push(dependencies.createPtyTerminalHostAdapter({
+      ...(params.promptSubmitVerification
+        ? { promptSubmitVerification: params.promptSubmitVerification }
+        : {}),
+    }));
   }
 
   const shouldConfigureZellij = platform !== 'win32' || params.preference === 'zellij';

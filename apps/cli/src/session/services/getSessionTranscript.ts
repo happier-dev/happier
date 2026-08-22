@@ -1,19 +1,48 @@
-import type { Credentials } from '@/persistence';
+import type { StoredCredentials } from '@/persistence';
+import {
+  SESSION_TRANSCRIPT_GET_MAX_LIMIT,
+  type SessionTranscriptGetExternalShareableResultV1,
+  type SessionTranscriptGetResult,
+} from '@happier-dev/protocol/actions';
 
-import { fetchTranscriptSemanticPage, type FetchTranscriptSemanticPageResult } from './transcript/fetchTranscriptSemanticPage';
-import type { SemanticTranscriptItem, TranscriptDirection, TranscriptScope } from './transcript/semanticTranscriptItem';
+import { fetchEncryptedTranscriptMessagesPage } from '@/session/replay/fetchEncryptedTranscriptMessages';
+import { fetchTranscriptSemanticPage } from './transcript/fetchTranscriptSemanticPage';
+import { projectExternalShareableTranscriptPage } from './transcript/projectExternalShareableTranscriptPage';
+import type { TranscriptDirection, TranscriptScope } from './transcript/semanticTranscriptItem';
 import { resolveSessionTransportContext } from './resolveSessionTransportContext';
 
-export type GetSessionTranscriptResult =
-  | Readonly<{
-      ok: true;
-      sessionId: string;
-      items: readonly SemanticTranscriptItem[];
-      nextCursor: string | null;
-      hasMore: boolean;
-      diagnostics: FetchTranscriptSemanticPageResult['diagnostics'];
-    }>
-  | Readonly<{ ok: false; errorCode: string; errorMessage: string; candidates?: string[] }>;
+type GetSessionTranscriptErrorResult = Extract<SessionTranscriptGetResult, Readonly<{ ok: false }>>;
+
+export type GetSessionTranscriptResult = Exclude<
+  SessionTranscriptGetResult,
+  Readonly<{ projection: 'externalShareableV1' }>
+>;
+
+export type GetExternalShareableSessionTranscriptResult =
+  | SessionTranscriptGetExternalShareableResultV1
+  | GetSessionTranscriptErrorResult;
+
+type GetSessionTranscriptParams = Readonly<{
+  credentials: StoredCredentials;
+  idOrPrefix: string;
+  limit?: number;
+  cursor?: string | null;
+  direction?: TranscriptDirection;
+  scope?: TranscriptScope;
+  sidechainId?: string | null;
+  roles?: readonly ('user' | 'assistant')[];
+  includeTools?: boolean;
+  includeReasoning?: boolean;
+  includeEvents?: boolean;
+  includeMeta?: boolean;
+  includeRaw?: boolean;
+  includeStructuredPayload?: boolean;
+  maxCharsPerMessage?: number | null;
+  maxRawPayloadChars?: number | null;
+  projection?: 'externalShareableV1';
+  callerPluginId?: string | null;
+  signal?: AbortSignal;
+}>;
 
 function clampInt(value: unknown, params: Readonly<{ min: number; max: number; fallback: number }>): number {
   const parsed = typeof value === 'number' ? value : Number(value);
@@ -41,27 +70,32 @@ function mapTranscriptRolesToStoredRoles(roles: readonly ('user' | 'assistant')[
   return out;
 }
 
-export async function getSessionTranscript(params: Readonly<{
-  credentials: Credentials;
-  idOrPrefix: string;
-  limit?: number;
-  cursor?: string | null;
-  direction?: TranscriptDirection;
-  scope?: TranscriptScope;
-  sidechainId?: string | null;
-  roles?: readonly ('user' | 'assistant')[];
-  includeTools?: boolean;
-  includeReasoning?: boolean;
-  includeEvents?: boolean;
-  includeMeta?: boolean;
-  includeRaw?: boolean;
-  includeStructuredPayload?: boolean;
-  maxCharsPerMessage?: number | null;
-  maxRawPayloadChars?: number | null;
-}>): Promise<GetSessionTranscriptResult> {
+function parseExternalCursor(value: string | null | undefined): number {
+  if (value === null || value === undefined || value === '') return 0;
+  const normalized = value.trim();
+  const parsed = Number.parseInt(normalized, 10);
+  if (!Number.isSafeInteger(parsed) || parsed < 0 || String(parsed) !== normalized) {
+    throw new Error('invalid_cursor');
+  }
+  return parsed;
+}
+
+export function getSessionTranscript(
+  params: GetSessionTranscriptParams & Readonly<{ projection: 'externalShareableV1' }>,
+): Promise<GetExternalShareableSessionTranscriptResult>;
+export function getSessionTranscript(
+  params: GetSessionTranscriptParams & Readonly<{ projection?: undefined; callerPluginId?: undefined }>,
+): Promise<GetSessionTranscriptResult>;
+export function getSessionTranscript(
+  params: GetSessionTranscriptParams,
+): Promise<GetSessionTranscriptResult | GetExternalShareableSessionTranscriptResult>;
+export async function getSessionTranscript(
+  params: GetSessionTranscriptParams,
+): Promise<GetSessionTranscriptResult | GetExternalShareableSessionTranscriptResult> {
   const sessionTarget = await resolveSessionTransportContext({
     credentials: params.credentials,
     idOrPrefix: params.idOrPrefix,
+    ...(params.signal ? { signal: params.signal } : {}),
   });
   if (!sessionTarget.ok) {
     return {
@@ -70,6 +104,65 @@ export async function getSessionTranscript(params: Readonly<{
       errorMessage: sessionTarget.code,
       ...(sessionTarget.candidates ? { candidates: sessionTarget.candidates } : {}),
     };
+  }
+
+  if (params.projection === 'externalShareableV1') {
+    try {
+      const cursorSeq = parseExternalCursor(params.cursor);
+      const limit = clampInt(params.limit, { min: 1, max: SESSION_TRANSCRIPT_GET_MAX_LIMIT, fallback: 20 });
+      const rawPage = await fetchEncryptedTranscriptMessagesPage({
+        token: params.credentials.token,
+        sessionId: sessionTarget.sessionId,
+        limit: 100,
+        afterSeq: cursorSeq,
+        scope: 'main',
+        roles: ['user', 'agent'],
+        projection: 'externalShareableV1',
+        ...(params.signal ? { signal: params.signal } : {}),
+      });
+      params.signal?.throwIfAborted();
+      const snapshot = rawPage.externalShareableSnapshot;
+      if (!snapshot) {
+        return {
+          ok: false,
+          errorCode: 'external_shareable_snapshot_unavailable',
+          errorMessage: 'external_shareable_snapshot_unavailable',
+        };
+      }
+      const page = await projectExternalShareableTranscriptPage({
+        sessionId: sessionTarget.sessionId,
+        rows: rawPage.messages,
+        turns: snapshot.turns,
+        ctx: sessionTarget.ctx,
+        callerPluginId: params.callerPluginId,
+        cursorSeq,
+        limit,
+        upstreamHasMore: rawPage.hasMore,
+        publicationBlocked: rawPage.publicationBlocked === true,
+        ...(snapshot.publicationBlockedFromSeq !== undefined
+          ? { publicationBlockedFromSeq: snapshot.publicationBlockedFromSeq }
+          : {}),
+        ...(snapshot.turnSettlementBlockedFromSeq !== undefined
+          ? { turnSettlementBlockedFromSeq: snapshot.turnSettlementBlockedFromSeq }
+          : {}),
+        ...(snapshot.referencedUserRows !== undefined
+          ? { referencedUserRows: snapshot.referencedUserRows }
+          : {}),
+      });
+      params.signal?.throwIfAborted();
+      return {
+        ok: true,
+        sessionId: sessionTarget.sessionId,
+        projection: 'externalShareableV1',
+        ...page,
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error ?? '');
+      if (message === 'invalid_cursor') {
+        return { ok: false, errorCode: 'invalid_cursor', errorMessage: 'invalid_cursor' };
+      }
+      throw error;
+    }
   }
 
   const roles = normalizeTranscriptRoles(params.roles);
@@ -87,7 +180,7 @@ export async function getSessionTranscript(params: Readonly<{
   const includeRaw = params.includeRaw === true || params.includeStructuredPayload === true;
   const includeEventLikeItems =
     params.includeTools === true || params.includeReasoning === true || params.includeEvents === true;
-  const limit = clampInt(params.limit, { min: 1, max: 100, fallback: 20 });
+  const limit = clampInt(params.limit, { min: 1, max: SESSION_TRANSCRIPT_GET_MAX_LIMIT, fallback: 20 });
   const maxCharsPerMessage = params.maxCharsPerMessage === null
     ? null
     : params.maxCharsPerMessage === undefined
@@ -120,6 +213,7 @@ export async function getSessionTranscript(params: Readonly<{
       maxTextChars: maxCharsPerMessage,
       maxPayloadChars: maxRawPayloadChars,
       maxTotalPayloadBytes: 256 * 1024,
+      ...(params.signal ? { signal: params.signal } : {}),
     });
     return { ok: true, sessionId: sessionTarget.sessionId, ...page };
   } catch (error) {

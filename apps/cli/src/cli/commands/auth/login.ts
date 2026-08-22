@@ -1,9 +1,9 @@
 import os from 'node:os';
 
-import { validateStoredAuthTokenAgainstActiveServer } from '@/auth/validateStoredAuthTokenAgainstActiveServer';
-import { clearCredentials, clearMachineId, readCredentials, readSettings } from '@/persistence';
+import { resolveActiveServerAuthReadiness } from '@/auth/resolveActiveServerAuthReadiness';
+import { clearCredentials, clearMachineId, readStoredCredentials } from '@/persistence';
 import { authAndSetupMachineIfNeeded } from '@/ui/auth';
-import { stopDaemon } from '@/daemon/controlClient';
+import { isDaemonStopIncompleteError, stopDaemon } from '@/daemon/controlClient';
 import { logger } from '@/ui/logger';
 import { applyServerSelectionFromArgs } from '@/server/serverSelection';
 import { createOutputBuilder, definitionList, errorFrame, ok, warn } from '@happier-dev/cli-common/output';
@@ -12,7 +12,19 @@ import { decodeJwtPayload } from '@/cloud/decodeJwtPayload';
 import { showAuthHelp } from './help';
 import { resolveAuthMethodFlag } from './methodFlag';
 
-function readAccountIdFromCredentials(credentials: Awaited<ReturnType<typeof readCredentials>>): string | null {
+function readWaitTimeoutSecondsFlag(args: readonly string[]): number | null {
+  const index = args.indexOf('--wait-timeout');
+  if (index < 0) return null;
+  const raw = String(args[index + 1] ?? '').trim();
+  const seconds = Number.parseInt(raw, 10);
+  if (!Number.isFinite(seconds) || seconds <= 0) {
+    console.error(errorFrame('Error:', ['--wait-timeout needs a positive number of seconds, for example `--wait-timeout 300`.']));
+    process.exit(1);
+  }
+  return seconds;
+}
+
+function readAccountIdFromCredentials(credentials: Awaited<ReturnType<typeof readStoredCredentials>>): string | null {
   const token = typeof credentials?.token === 'string' ? credentials.token : '';
   if (!token) return null;
   const payload = decodeJwtPayload(token);
@@ -31,6 +43,7 @@ export async function handleAuthLogin(args: string[]): Promise<void> {
   const forceAuth = args.includes('--force') || args.includes('-f');
   const noOpen = args.includes('--no-open') || args.includes('--no-browser') || args.includes('--no-browser-open');
   const printConfigureLinks = args.includes('--print-configure-links');
+  const waitTimeoutSeconds = readWaitTimeoutSecondsFlag(args);
   let method: 'web' | 'mobile' | null = null;
   try {
     method = resolveAuthMethodFlag(args);
@@ -48,8 +61,12 @@ export async function handleAuthLogin(args: string[]): Promise<void> {
     process.env.HAPPIER_AUTH_PRINT_CONFIGURE_LINKS = '1';
   }
 
+  if (waitTimeoutSeconds !== null) {
+    process.env.HAPPIER_AUTH_WAIT_TIMEOUT_MS = String(waitTimeoutSeconds * 1000);
+  }
+
   if (forceAuth) {
-    const replacementAccountId = readAccountIdFromCredentials(await readCredentials());
+    const replacementAccountId = readAccountIdFromCredentials(await readStoredCredentials());
     const out = createOutputBuilder();
     out.line(warn('Force authentication requested.'));
     out.blank();
@@ -68,6 +85,7 @@ export async function handleAuthLogin(args: string[]): Promise<void> {
       await stopDaemon();
       console.log(ok('Stopped daemon'));
     } catch (error) {
+      if (isDaemonStopIncompleteError(error)) throw error;
       logger.debug('Daemon was not running or failed to stop:', error);
     }
 
@@ -81,12 +99,10 @@ export async function handleAuthLogin(args: string[]): Promise<void> {
   }
 
   if (!forceAuth) {
-    let existingCreds = await readCredentials();
-    const settings = await readSettings();
+    const readiness = await resolveActiveServerAuthReadiness();
+    let existingCreds = readiness.credentials;
 
-    if (existingCreds) {
-      const authValidation = await validateStoredAuthTokenAgainstActiveServer(existingCreds.token);
-      if (authValidation.state === 'invalid') {
+    if (readiness.unusableReason === 'credentials-rejected' && existingCreds) {
         const replacementAccountId = readAccountIdFromCredentials(existingCreds);
         const out = createOutputBuilder();
         out.line(warn('Stored credentials were rejected by the selected server'));
@@ -99,20 +115,20 @@ export async function handleAuthLogin(args: string[]): Promise<void> {
           await stopDaemon();
           console.log(ok('Stopped daemon'));
         } catch (error) {
+          if (isDaemonStopIncompleteError(error)) throw error;
           logger.debug('Daemon was not running or failed to stop during auth repair:', error);
         }
 
         await clearCredentials();
         await clearMachineId({ preserveReplacementCandidate: true, replacementReason: 'reauth', replacementAccountId });
         existingCreds = null;
-      }
     }
 
-    if (existingCreds && settings?.machineId) {
+    if (existingCreds && readiness.machineRegistered) {
       const out = createOutputBuilder();
       out.line(ok('Already authenticated'));
       out.definitionList([
-        { label: 'Machine ID', value: settings.machineId },
+        { label: 'Machine ID', value: readiness.machineId ?? '' },
         { label: 'Host', value: os.hostname() },
       ], { indent: '  ' });
       out.line('  Use \'happier auth login --force\' to re-authenticate');
@@ -120,7 +136,7 @@ export async function handleAuthLogin(args: string[]): Promise<void> {
       return;
     }
 
-    if (existingCreds && !settings?.machineId) {
+    if (existingCreds && !readiness.machineRegistered) {
       const out = createOutputBuilder();
       out.line(warn('Credentials exist but machine ID is missing'));
       out.line(`  This can happen if --auth flag was used previously`);

@@ -49,21 +49,53 @@ function summarizeProjectedPendingRequests(value: unknown): AgentStateSummary | 
   return { pendingRequestsCount };
 }
 
+/**
+ * The Session projection only carries the pending-request count, so a projected observation may
+ * replace that count and nothing else. Merging it onto the freshest AgentState observation keeps
+ * `controlledByUser` intact; otherwise a Session held by a live local terminal would be summarized
+ * as idle and could be stopped underneath its user.
+ */
+function mergeProjectedPendingRequestCount(
+  projected: AgentStateSummary | null,
+  observedAgentState: AgentStateSummary | null,
+): AgentStateSummary | null {
+  if (!projected) return null;
+  const controlledByUser = projected.controlledByUser ?? observedAgentState?.controlledByUser;
+  return {
+    ...(controlledByUser !== undefined ? { controlledByUser } : {}),
+    pendingRequestsCount: projected.pendingRequestsCount,
+  };
+}
+
+function readUpdateBodyAgentStateCiphertext(body: unknown): string | null {
+  const value = (body as { agentState?: { value?: unknown } } | null)?.agentState?.value;
+  if (typeof value !== 'string') return null;
+  return value.trim().length > 0 ? value : null;
+}
+
+function readSessionSnapshotAgentStateCiphertext(session: unknown): string | null {
+  const value = (session as { agentState?: unknown } | null)?.agentState;
+  if (typeof value !== 'string') return null;
+  return value.trim() || null;
+}
+
 function summarizeAgentStateCiphertext(params: Readonly<{
   ciphertextBase64: string | null;
   sessionEncryptionMode: SessionStoredContentEncryptionMode;
-  ctx: SessionEncryptionContext;
+  ctx: SessionEncryptionContext | null;
 }>): AgentStateSummary | null {
   if (!params.ciphertextBase64) return null;
   try {
-    const decrypted =
-      params.sessionEncryptionMode === 'plain'
-        ? JSON.parse(params.ciphertextBase64)
-        : decrypt(
+    const decrypted = params.sessionEncryptionMode === 'plain'
+      ? JSON.parse(params.ciphertextBase64)
+      : params.ctx
+        ? decrypt(
             params.ctx.encryptionKey,
             params.ctx.encryptionVariant,
             decodeBase64(params.ciphertextBase64, 'base64'),
-          );
+          )
+        : null;
+    if (decrypted === null) return null;
     return summarizeAgentState(decrypted);
   } catch {
     return null;
@@ -73,11 +105,12 @@ function summarizeAgentStateCiphertext(params: Readonly<{
 function tryDecryptMessageEnvelope(params: Readonly<{
   content: unknown;
   sessionEncryptionMode: SessionStoredContentEncryptionMode;
-  ctx: SessionEncryptionContext;
+  ctx: SessionEncryptionContext | null;
 }>): unknown | null {
   const parsed = SessionMessageContentSchema.safeParse(params.content);
   if (!parsed.success) return null;
   if (parsed.data.t === 'plain') return parsed.data.v;
+  if (!params.ctx) return null;
   try {
     return decrypt(
       params.ctx.encryptionKey,
@@ -92,7 +125,7 @@ function tryDecryptMessageEnvelope(params: Readonly<{
 export async function waitForIdleViaSocket(params: Readonly<{
   token: string;
   sessionId: string;
-  ctx: SessionEncryptionContext;
+  ctx: SessionEncryptionContext | null;
   sessionEncryptionMode: SessionStoredContentEncryptionMode;
   timeoutMs: number;
   initialTurnActivity: SessionTurnActivity;
@@ -104,14 +137,15 @@ export async function waitForIdleViaSocket(params: Readonly<{
   // Seed with the latest agentState ciphertext from snapshot, if available.
   initialAgentStateCiphertextBase64: string | null;
 }>): Promise<{ idle: true; observedAt: number }> {
+  const initialObservedAgentState = summarizeAgentStateCiphertext({
+    ciphertextBase64: params.initialAgentStateCiphertextBase64,
+    sessionEncryptionMode: params.sessionEncryptionMode,
+    ctx: params.ctx,
+  });
   const initial =
     params.initialAgentStateSummary !== undefined
-      ? params.initialAgentStateSummary
-      : summarizeAgentStateCiphertext({
-          ciphertextBase64: params.initialAgentStateCiphertextBase64,
-          sessionEncryptionMode: params.sessionEncryptionMode,
-          ctx: params.ctx,
-        });
+      ? mergeProjectedPendingRequestCount(params.initialAgentStateSummary, initialObservedAgentState)
+      : initialObservedAgentState;
   let latestSummary = initial;
   let pendingUserTurns = params.initialTurnActivity.pendingUserTurns;
   let activeTaskInFlight = params.initialTurnActivity.activeTaskInFlight;
@@ -243,17 +277,21 @@ export async function waitForIdleViaSocket(params: Readonly<{
               pendingUserTurns = refreshedProjectionActivity.pendingUserTurns;
               activeTaskInFlight = refreshedProjectionActivity.activeTaskInFlight;
             }
+            const refreshedProjectedSummary = preferProjectionUpdates
+              ? summarizeProjectedPendingRequests(refreshedSession)
+              : null;
+            const refreshedObservedAgentState = summarizeAgentStateCiphertext({
+              ciphertextBase64: readSessionSnapshotAgentStateCiphertext(refreshedSession),
+              sessionEncryptionMode: params.sessionEncryptionMode,
+              ctx: params.ctx,
+            });
             latestSummary =
-              (preferProjectionUpdates ? summarizeProjectedPendingRequests(refreshedSession) : null)
-              ?? summarizeAgentStateCiphertext({
-                ciphertextBase64:
-                  typeof refreshedSession?.agentState === 'string'
-                    ? String(refreshedSession.agentState).trim() || null
-                    : null,
-                sessionEncryptionMode: params.sessionEncryptionMode,
-                ctx: params.ctx,
-              });
-            if (latestSummary) {
+              mergeProjectedPendingRequestCount(
+                refreshedProjectedSummary,
+                refreshedObservedAgentState ?? latestSummary,
+              )
+              ?? refreshedObservedAgentState;
+            if (refreshedProjectedSummary || refreshedObservedAgentState) {
               hasFreshAgentStateObservation = true;
             }
 
@@ -293,7 +331,16 @@ export async function waitForIdleViaSocket(params: Readonly<{
 
         const shouldReadProjection = preferProjectionUpdates || !readyCompletesPendingUserTurns;
         const projectedActivity = shouldReadProjection ? detectSessionTurnActivityFromProjection(body) : null;
-        const projectedSummary = shouldReadProjection ? summarizeProjectedPendingRequests(body) : null;
+        const projectedSummary = shouldReadProjection
+          ? mergeProjectedPendingRequestCount(
+              summarizeProjectedPendingRequests(body),
+              summarizeAgentStateCiphertext({
+                ciphertextBase64: readUpdateBodyAgentStateCiphertext(body),
+                sessionEncryptionMode: params.sessionEncryptionMode,
+                ctx: params.ctx,
+              }) ?? latestSummary,
+            )
+          : null;
         const projectedTurnStatus = shouldReadProjection ? readSessionProjectedTurnStatus(body.latestTurnStatus) : null;
         const canUseTerminalProjection =
           preferProjectionUpdates
@@ -520,7 +567,7 @@ export async function waitForIdleViaSocket(params: Readonly<{
 export async function readLatestAgentStateSummaryViaSocket(params: Readonly<{
   token: string;
   sessionId: string;
-  ctx: SessionEncryptionContext;
+  ctx: SessionEncryptionContext | null;
   sessionEncryptionMode: SessionStoredContentEncryptionMode;
   timeoutMs: number;
 }>): Promise<AgentStateSummary | null> {
@@ -571,14 +618,16 @@ export async function readLatestAgentStateSummaryViaSocket(params: Readonly<{
       if (typeof agentStateCiphertext !== 'string' || agentStateCiphertext.trim().length === 0) return;
 
       try {
-        const decrypted =
-          params.sessionEncryptionMode === 'plain'
-            ? JSON.parse(agentStateCiphertext)
-            : decrypt(
+        const decrypted = params.sessionEncryptionMode === 'plain'
+          ? JSON.parse(agentStateCiphertext)
+          : params.ctx
+            ? decrypt(
                 params.ctx.encryptionKey,
                 params.ctx.encryptionVariant,
                 decodeBase64(agentStateCiphertext, 'base64'),
-              );
+              )
+            : null;
+        if (decrypted === null) return;
         const summary = summarizeAgentState(decrypted);
         clearTimeout(timer);
         cleanup();

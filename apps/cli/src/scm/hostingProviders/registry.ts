@@ -3,9 +3,11 @@ import {
     type ScmHostingProviderContribution,
 } from '@happier-dev/protocol';
 import type {
-    ScmHostingProviderRuntimeAdapter,
-    ScmHostingProviderRuntimeRegistration,
-} from '@happier-dev/plugin-sdk/experimental/scm';
+    HostingProviderRuntimeAdapter as ScmHostingProviderRuntimeAdapter,
+    HostingProviderRuntimeRegistration as ScmHostingProviderRuntimeRegistration,
+} from '@happier-dev/plugin-sdk/scm/hosting';
+import { createGuardedRuntimeView } from '@/plugins/runtime/guardedRuntimeView';
+
 import { runWithHostingProviderExecutionAuthority } from './executionAuthority';
 
 export type ScmHostingProviderDescriptor = Readonly<Omit<ScmHostingProviderContribution, 'title'> & {
@@ -181,23 +183,30 @@ function bindRuntimeAdapter(
     binding: ScmHostingProviderRuntimeBinding,
 ): ScmHostingProviderRuntimeAdapter {
     const target = binding.registration.adapter;
-    const bound = Object.create(Object.getPrototypeOf(target)) as Record<PropertyKey, unknown>;
-    for (const property of Reflect.ownKeys(target)) {
-        const descriptor = Object.getOwnPropertyDescriptor(target, property);
-        if (!descriptor) continue;
-        const value = 'value' in descriptor ? descriptor.value : undefined;
-        Object.defineProperty(bound, property, {
-            ...descriptor,
-            ...(typeof value === 'function' ? {
-                value: (...args: readonly unknown[]) => runWithHostingProviderExecutionAuthority({
+    const boundMethods = new WeakMap<Function, Function>();
+
+    // Registration already published a frozen, receiver-bound callback map.
+    // This consumer adds only its execution-authority context at invocation;
+    // rebuilding descriptors here would create a second runtime topology.
+    return createGuardedRuntimeView({
+        owner: target,
+        guard: (value) => {
+            if (typeof value !== 'function') return value;
+            const method = value as (...args: readonly unknown[]) => unknown;
+            const cached = boundMethods.get(method);
+            if (cached) return cached;
+            const bound = Object.freeze((...args: readonly unknown[]) => runWithHostingProviderExecutionAuthority(
+                {
                     pluginId: binding.pluginId,
                     generation: binding.generation,
                     contributionId: binding.registration.id,
-                }, () => Reflect.apply(value, target, args)),
-            } : {}),
-        });
-    }
-    return Object.freeze(bound) as ScmHostingProviderRuntimeAdapter;
+                },
+                () => Reflect.apply(method, target, args),
+            ));
+            boundMethods.set(method, bound);
+            return bound;
+        },
+    });
 }
 
 function createUnknownProvider(remoteName: string | null): UnresolvedScmHostingProvider {

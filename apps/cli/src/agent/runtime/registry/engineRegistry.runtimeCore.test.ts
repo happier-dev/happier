@@ -4,9 +4,6 @@ import { join } from 'node:path';
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
-    PluginSubagentsServiceV1,
-} from '@happier-dev/agents';
-import type {
     ExecClientHandleV1,
     JsonRpcClientV1,
 } from '@/plugins/runtime/exec/privateContract';
@@ -14,12 +11,13 @@ import {
     type AgentExecutionRunEvent,
     type AgentRuntime,
     type AgentSessionHostServices,
-} from '@happier-dev/plugin-sdk/agent-runtime';
+} from '@happier-dev/plugin-sdk/agents/runtime';
 import {
     accountSettingsParse,
     BackendSurfaceOperationCatalogV1,
     buildProviderAccountUsageRecordId,
     type BackendSurfaceDeclarationV1,
+    type PluginAgentContributionV2,
     type ProviderAccountUsageRecordKeyV1,
     type ProviderAccountUsageSnapshotV1,
 } from '@happier-dev/protocol';
@@ -34,15 +32,22 @@ import type { Credentials } from '@/persistence';
 import type {
     ProviderAccountUsageAdoptionV1,
 } from '@/daemon/connectedServices/accountUsage/adoption';
+import type {
+    ResolvedAgentContribution,
+    ResolvedContributionRegistry,
+} from '@/plugins/projection/registry/types';
+import { createUnavailablePluginServices } from '@/plugins/runtime/invocation/services/unavailable';
 import {
     resolveBackendEngineAdapterResolution,
     resolveCliEngineRegistry,
 } from './engineRegistry';
-import type { ResolveEngineRegistryParams } from './engineRegistry/types';
+import type {
+    ResolveEngineRegistryParams,
+    RunnerAgentSessionRuntimeSource,
+} from './engineRegistry/types';
 
 const {
     resolveMergedContributionRegistryMock,
-    getExecutionRunBackendDescriptorMock,
     resolveExecutablePluginRuntimeRegistryMock,
     resolvePluginBackendSurfaceHandlersMock,
     pluginReloadControllerStateMock,
@@ -59,9 +64,6 @@ const {
     notifyDaemonProviderAccountUsageSnapshotMock,
 } = vi.hoisted(() => ({
     resolveMergedContributionRegistryMock: vi.fn<(...args: unknown[]) => unknown>(),
-    getExecutionRunBackendDescriptorMock: vi.fn<(...args: unknown[]) => unknown>((..._args: unknown[]) => {
-        throw new Error('legacy executionRunBackendRegistry must not be used when runtimeCore exist');
-    }),
     resolveExecutablePluginRuntimeRegistryMock: vi.fn<(...args: unknown[]) => unknown>(),
     resolvePluginBackendSurfaceHandlersMock: vi.fn<(...args: unknown[]) => unknown>(),
     pluginReloadControllerStateMock: vi.fn<(...args: unknown[]) => unknown>(),
@@ -99,6 +101,7 @@ vi.mock('./resolvePluginBackendSurfaceHandlers', () => ({
 
 vi.mock('@/persistence', () => ({
     readCredentials: readCredentialsMock,
+    readStoredCredentials: readCredentialsMock,
     readSettings: readSettingsMock,
 }));
 
@@ -124,10 +127,6 @@ vi.mock('@/session/actions/approvals/artifactStore', () => ({
     createCliApprovalsArtifactStore: createCliApprovalsArtifactStoreMock,
 }));
 
-vi.mock('@/agent/executionRuns/registry/executionRunBackendRegistry', () => ({
-    getExecutionRunBackendDescriptor: getExecutionRunBackendDescriptorMock,
-}));
-
 vi.mock('@/daemon/connectedServices/catalogHooks', async (importOriginal) => ({
     ...await importOriginal<typeof import('@/daemon/connectedServices/catalogHooks')>(),
     getConnectedServiceRuntimeAuthAdapter: (...args: unknown[]) =>
@@ -146,7 +145,6 @@ function createLeaseRuntimeRegistry(contributes: unknown): Record<string, unknow
         scmHostingProvidersById: new Map(),
         pluginDiagnosticsByPluginId: {},
         activateContributionsOnDemand: vi.fn(async () => []),
-        readHookEventEnvelopeV1: vi.fn(),
         dispose: vi.fn(async () => undefined),
     };
 }
@@ -232,7 +230,6 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
             ok: true,
             result: { status: 'snapshot_advanced', recordId: 'paug_v1_placeholder', persisted: true },
         });
-        getExecutionRunBackendDescriptorMock.mockClear();
         pluginReloadControllerStateMock.mockReturnValue({
             generation: 0,
             activeRegistry: null,
@@ -308,6 +305,34 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
         return {
             credentials: createTestCredentials(),
             ...overrides,
+        };
+    }
+
+    function createRuntimePlacementSessionClient(sessionId: string) {
+        let metadata: Record<string, unknown> = {
+            path: '/tmp/runtime-placement',
+            host: 'test',
+            homeDir: '/tmp',
+            happyHomeDir: '/tmp/.happier',
+            happyLibDir: '/tmp/.happier/lib',
+            happyToolsDir: '/tmp/.happier/tools',
+        };
+        return {
+            sessionId,
+            rpcHandlerManager: {
+                registerHandler: () => {},
+            },
+            updateAgentState: async () => {},
+            updateMetadata: async (
+                updater: (state: Record<string, unknown>) => Record<string, unknown>,
+            ) => {
+                metadata = updater(metadata);
+            },
+            getMetadataSnapshot: () => metadata,
+            getAgentStateSnapshot: () => ({}),
+            readSessionTurnsProjection: async () => null,
+            on: () => {},
+            off: () => {},
         };
     }
 
@@ -657,6 +682,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
     function createRuntimeRegistry(params: Readonly<{
         contributes: unknown;
         backendId: string;
+        agentId?: string;
         pluginId: string;
         createRuntime?: () => Promise<AgentRuntime> | AgentRuntime;
     }>): Record<string, unknown> {
@@ -668,7 +694,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
                     [params.backendId, {
                         pluginId: params.pluginId,
                         pluginVersion: '0.0.0',
-                        agentId: params.backendId,
+                        agentId: params.agentId ?? params.backendId,
                         generation: '1',
                         hasPrimaryRuntime: true,
                         isCurrent: () => true,
@@ -678,8 +704,148 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
                 : new Map(),
             pluginDiagnosticsByPluginId: {},
             activateContributionsOnDemand: vi.fn(async () => []),
-            readHookEventEnvelopeV1: vi.fn(),
             dispose: vi.fn(async () => undefined),
+        };
+    }
+
+    function seedExternalPrimaryAgentRegistry(params: Readonly<{
+        sessions: boolean;
+        executionRuns: boolean;
+        externalSessions?: boolean;
+    }>) {
+        const agentId = 'primary-agent';
+        const backendId = agentId;
+        const pluginId = 'acme.primary';
+        const commonDefinition = {
+            id: agentId,
+            title: {
+                key: 'plugins.acme.primary.title',
+                fallback: 'Acme Primary',
+            },
+            description: {
+                key: 'plugins.acme.primary.description',
+                fallback: 'Acme Primary',
+            },
+            runtime: { kind: 'custom' as const },
+            ...(params.externalSessions
+                ? {
+                    surfaces: {
+                        externalSession: { sources: [] },
+                    },
+                }
+                : {}),
+        };
+        let richDefinition: PluginAgentContributionV2;
+        if (params.sessions && params.executionRuns) {
+            richDefinition = {
+                ...commonDefinition,
+                primary: 'sessions',
+                capabilities: {
+                    sessions: {
+                        open: ['create'],
+                        delivery: ['newTurn'],
+                        cancel: true,
+                    },
+                    executionRuns: {
+                        open: ['create'],
+                        checkpoint: true,
+                        stop: true,
+                    },
+                    ...(params.externalSessions
+                        ? { surfaces: ['externalSessions' as const] }
+                        : {}),
+                },
+            };
+        } else if (params.sessions) {
+            richDefinition = {
+                ...commonDefinition,
+                primary: 'sessions',
+                capabilities: {
+                    sessions: {
+                        open: ['create'],
+                        delivery: ['newTurn'],
+                        cancel: true,
+                    },
+                    ...(params.externalSessions
+                        ? { surfaces: ['externalSessions' as const] }
+                        : {}),
+                },
+            };
+        } else if (params.executionRuns) {
+            richDefinition = {
+                ...commonDefinition,
+                primary: 'executionRuns',
+                capabilities: {
+                    executionRuns: {
+                        open: ['create'],
+                        checkpoint: true,
+                        stop: true,
+                    },
+                    ...(params.externalSessions
+                        ? { surfaces: ['externalSessions' as const] }
+                        : {}),
+                },
+            };
+        } else {
+            throw new Error('External primary Agent fixture requires a primary runtime capability');
+        }
+        const agent = {
+            id: agentId,
+            identity: { pluginId, localId: agentId },
+            provenance: 'external' as const,
+            source: { kind: 'path' as const },
+            definition: {
+                kindVersion: 1 as const,
+                id: agentId,
+                ownedBackendIds: [backendId],
+            },
+            richDefinition: {
+                provenance: 'external' as const,
+                definition: richDefinition,
+            },
+            runtimeSpec: null,
+            pluginId,
+            daemonEntryPath: '/tmp/acme.primary/daemon.mjs',
+        } satisfies ResolvedAgentContribution;
+        const contributes = {
+            agents: [agent],
+            actions: [],
+            resources: [],
+            activationTargets: [],
+            catalogEntriesById: {},
+            agentDefinitionsById: new Map([[agentId, agent]]),
+            pluginDiagnosticsByPluginId: {},
+        } satisfies ResolvedContributionRegistry;
+        resolveMergedContributionRegistryMock.mockResolvedValue(contributes);
+        return { agentId, backendId, pluginId, agent, contributes };
+    }
+
+    function createRunnerSessionRuntimeSourceFixture(params: Readonly<{
+        agent: ResolvedAgentContribution;
+        backendId: string;
+        pluginId: string;
+        generation: string;
+    }>): RunnerAgentSessionRuntimeSource {
+        return {
+            identity: {
+                pluginId: params.pluginId,
+                pluginVersion: '1.0.0',
+                agentId: params.agent.id,
+                backendId: params.backendId,
+                generation: params.generation,
+                immutableGenerationId: params.generation,
+                isCurrent: () => true,
+            },
+            agentContribution: params.agent,
+            createRuntime: async (): Promise<AgentRuntime> => ({
+                sessions: {
+                    open: async () => {
+                        throw new Error('not invoked during resolution');
+                    },
+                },
+            }),
+            createInvocationServices: () => ({}) as never,
+            authorizeNewTurn: async () => ({ status: 'admitted' as const }),
         };
     }
 
@@ -688,17 +854,16 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
         agentId?: string;
         pluginId?: string;
         runtimeCoreFactory?: (params: unknown) => unknown;
-    }>): Record<string, unknown> {
+    }>): ResolvedContributionRegistry {
         const backendId = params.backendId ?? 'acme.firstparty.backend';
         const agentId = params.agentId ?? 'claude';
         const pluginId = params.pluginId ?? 'happier.agent.acme';
-        const runtimeCoreFactory = params.runtimeCoreFactory;
         const agent = {
             id: agentId,
-            provenance: 'first_party',
-            source: { kind: 'bundled' },
+            provenance: 'first_party' as const,
+            source: { kind: 'bundled' as const },
             definition: {
-                kindVersion: 1,
+                kindVersion: 1 as const,
                 id: agentId,
                 ownedBackendIds: [backendId],
             },
@@ -706,37 +871,17 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
             runtimeSpec: null,
             pluginId,
             manifestPath: `bundled:${pluginId}`,
-            manifestDigest: `bundled:@happier-dev/plugins-acme@0.0.0`,
             daemonEntryPath: '@happier-dev/plugins-acme',
-        };
-        const backend = {
-            id: backendId,
-            agentId,
-            provenance: 'first_party',
-            source: { kind: 'bundled' },
-            definition: {
-                kindVersion: 1,
-                id: backendId,
-                agentId,
-            },
-            richDefinition: undefined,
-            runtimeKind: 'custom',
-            surfaceHandlers: [],
-            pluginId,
-            manifestPath: `bundled:${pluginId}`,
-            manifestDigest: `bundled:@happier-dev/plugins-acme@0.0.0`,
-            daemonEntryPath: '@happier-dev/plugins-acme',
-            ...(runtimeCoreFactory ? { getRuntimeCore: async () => runtimeCoreFactory } : {}),
-        };
+        } satisfies ResolvedAgentContribution;
         const registry = {
             agents: [agent],
-            agentRuntimes: [backend],
             actions: [],
-                        catalogEntriesById: {},
-            agentRuntimeDefinitionsById: new Map([[backendId, backend]]),
+            resources: [],
+            activationTargets: [],
+            catalogEntriesById: {},
             agentDefinitionsById: new Map([[agentId, agent]]),
             pluginDiagnosticsByPluginId: {},
-        };
+        } satisfies ResolvedContributionRegistry;
         resolveMergedContributionRegistryMock.mockResolvedValue(registry);
         return registry;
     }
@@ -907,7 +1052,6 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
         ))
             .resolves
             .toBeNull();
-        expect(getExecutionRunBackendDescriptorMock).not.toHaveBeenCalled();
     });
 
     it('adapts a native Agent execution-run factory through the canonical host runtime', async () => {
@@ -942,7 +1086,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
             executionRuns: Object.freeze({ open }),
         });
         const operationServices = Object.freeze({ availability: vi.fn() });
-        const createAgentInvocationServices = vi.fn(() => operationServices);
+        const createAgentInvocationServices = vi.fn(async () => operationServices);
         const contributes = await resolveMergedContributionRegistryMock();
         resolveExecutablePluginRuntimeRegistryMock.mockResolvedValue({
             contributes,
@@ -959,7 +1103,6 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
             ]),
             pluginDiagnosticsByPluginId: {},
             createAgentInvocationServices,
-            readHookEventEnvelopeV1: vi.fn(),
             activateContributionsOnDemand: vi.fn(async () => []),
             dispose: vi.fn(async () => undefined),
         });
@@ -1047,7 +1190,6 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
         expect(disposeWatch).toHaveBeenCalledOnce();
         expect(dispose).toHaveBeenCalledOnce();
         expect(send).not.toHaveBeenCalled();
-        expect(getExecutionRunBackendDescriptorMock).not.toHaveBeenCalled();
     });
 
     it('projects a declared native Agent terminal launch plan without replacing its execution-run runtime', async () => {
@@ -1096,7 +1238,6 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
                 }],
             ]),
             pluginDiagnosticsByPluginId: {},
-            readHookEventEnvelopeV1: vi.fn(),
             activateContributionsOnDemand: vi.fn(async () => []),
             dispose: vi.fn(async () => undefined),
         });
@@ -1518,39 +1659,19 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
         );
         const resolution = await registry.resolveForBackendId('codex');
 
-        expect(runtimeCoreFactory).toHaveBeenCalledTimes(1);
+        expect(runtimeCoreFactory).not.toHaveBeenCalled();
         await expect(
             resolution?.engineAdapter.runtimeCore.createSessionRuntime({ cwd: '/tmp/codex' }),
-        ).resolves.toEqual({
-            source: 'custom-runtimeCore',
-            params: { cwd: '/tmp/codex' },
-        });
-        expect(
+        ).rejects.toThrow(/bound host runtimeCore/i);
+        expect(() =>
             resolution?.engineAdapter.runtimeCore.createExecutionRunBackend({
                 cwd: '/tmp/codex',
                 backendId: 'codex',
                 permissionMode: 'read_only',
             }),
-        ).toEqual(expect.objectContaining({
-            source: 'custom-runtimeCore',
-            provisionSession: expect.any(Function),
-            readResumeSupport: expect.any(Function),
-            sendPrompt: expect.any(Function),
-            cancel: expect.any(Function),
-            subscribeMessages: expect.any(Function),
-            dispose: expect.any(Function),
-            params: {
-                cwd: '/tmp/codex',
-                backendId: 'codex',
-                permissionMode: 'read_only',
-            },
-        }));
-        expect(customRuntimeCore.createSessionRuntime).toHaveBeenCalledWith({ cwd: '/tmp/codex' });
-        expect(customRuntimeCore.createExecutionRunBackend).toHaveBeenCalledWith({
-            cwd: '/tmp/codex',
-            backendId: 'codex',
-            permissionMode: 'read_only',
-        });
+        ).toThrow(/bound host runtimeCore/i);
+        expect(customRuntimeCore.createSessionRuntime).not.toHaveBeenCalled();
+        expect(customRuntimeCore.createExecutionRunBackend).not.toHaveBeenCalled();
     });
 
     it('selects the legacy host runtime owner when no plugin engine is registered', async () => {
@@ -1587,29 +1708,20 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
 
         expect(resolution?.runtimeOwner).toEqual({
             backendId,
-            selected: {
-                kind: 'legacy_host',
-                ownerId: backendId,
-                provenance: 'first_party',
-            },
-            candidates: [{
-                kind: 'legacy_host',
-                ownerId: backendId,
-                provenance: 'first_party',
-            }],
+            selected: null,
+            candidates: [],
         });
         expect(resolution?.selectedSource).toBeUndefined();
         await expect(resolution?.engineAdapter.runtimeCore.createSessionRuntime({ cwd: '/repo' }))
-            .resolves
-            .toEqual({ owner: 'legacy-host-session' });
-        expect(resolution?.engineAdapter.runtimeCore.createExecutionRunBackend({
+            .rejects.toThrow(/bound host runtimeCore/i);
+        expect(() => resolution?.engineAdapter.runtimeCore.createExecutionRunBackend({
             cwd: '/repo',
             backendId,
             permissionMode: 'read_only',
-        })).toEqual(expect.objectContaining({ owner: 'legacy-host-execution' }));
-        expect(runtimeCoreFactory).toHaveBeenCalledTimes(1);
-        expect(hostRuntimeCore.createSessionRuntime).toHaveBeenCalledTimes(1);
-        expect(hostRuntimeCore.createExecutionRunBackend).toHaveBeenCalledTimes(1);
+        })).toThrow(/bound host runtimeCore/i);
+        expect(runtimeCoreFactory).not.toHaveBeenCalled();
+        expect(hostRuntimeCore.createSessionRuntime).not.toHaveBeenCalled();
+        expect(hostRuntimeCore.createExecutionRunBackend).not.toHaveBeenCalled();
     });
 
     it('selects a bundled plugin engine for a first-party backend after the legacy host owner is removed', async () => {
@@ -1674,7 +1786,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
         expect(createPluginRuntime).toHaveBeenCalledTimes(1);
     });
 
-    it('fails closed before child activation when a daemon-spawned native backend has no carrier', async () => {
+    it('fails closed before child activation when a daemon-spawned native backend has no runner runtime source', async () => {
         const backendId = 'acme.firstparty.backend';
         const pluginId = 'happier.agent.acme';
         seedFirstPartyOwnerRegistry({
@@ -1683,68 +1795,62 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
         });
 
         const registry = await resolveCliEngineRegistry({
-            requireDaemonAgentRuntimeCarrier: true,
+            requireRunnerAgentSessionRuntimeSource: true,
         });
 
         await expect(registry.resolveForBackendId(backendId))
             .rejects
-            .toMatchObject({ code: 'DAEMON_AGENT_RUNTIME_CARRIER_MISSING' });
+            .toMatchObject({ code: 'RUNNER_AGENT_SESSION_RUNTIME_SOURCE_MISSING' });
         expect(resolveExecutablePluginRuntimeRegistryMock).not.toHaveBeenCalled();
         expect(resolveMergedContributionRegistryMock).toHaveBeenCalledTimes(1);
     });
 
-    it('fails closed before child activation when the daemon carrier belongs to another backend', async () => {
+    it('fails closed before child activation when the runner runtime source belongs to another backend', async () => {
         const backendId = 'acme.firstparty.backend';
         const pluginId = 'happier.agent.acme';
-        seedFirstPartyOwnerRegistry({
+        const contributes = seedFirstPartyOwnerRegistry({
             backendId,
             pluginId,
         });
+        const agent = contributes.agentDefinitionsById.get(backendId)!;
 
         const registry = await resolveCliEngineRegistry({
-            requireDaemonAgentRuntimeCarrier: true,
-            nativeAgentRuntimeCarrier: {
-                descriptor: {
-                    v: 1,
+            requireRunnerAgentSessionRuntimeSource: true,
+            runnerAgentSessionRuntimeSource: {
+                agentContribution: agent,
+                identity: {
                     pluginId,
                     pluginVersion: '0.0.0',
                     agentId: 'claude',
                     backendId: 'acme.other.backend',
                     generation: '1',
-                    factoryControls: {
-                        continuation: false,
-                        goals: false,
-                        catalog: false,
-                        usageLimitRecovery: false,
-                    },
+                    isCurrent: () => true,
                 },
-                runtime: {
+                createRuntime: async () => ({
                     sessions: {
                         open: async () => {
-                            throw new Error('mismatched carrier must not be invoked');
+                            throw new Error('mismatched runtime source must not be invoked');
                         },
                     },
+                }),
+                createInvocationServices: () => {
+                    throw new Error('mismatched source services unavailable');
                 },
-                externalSessionHostOperations: {
-                    bindSession() {
-                        throw new Error(
-                            'mismatched carrier host operations must not be invoked',
-                        );
-                    },
+                authorizeNewTurn: async () => {
+                    throw new Error('mismatched source must not authorize');
                 },
-                isCurrent: () => true,
             },
         });
 
         await expect(registry.resolveForBackendId(backendId))
             .rejects
-            .toMatchObject({ code: 'DAEMON_AGENT_RUNTIME_CARRIER_MISSING' });
+            .toMatchObject({ code: 'RUNNER_AGENT_SESSION_RUNTIME_SOURCE_MISSING' });
         expect(resolveExecutablePluginRuntimeRegistryMock).not.toHaveBeenCalled();
     });
 
-    it('uses the matching parent-owned carrier for a daemon-spawned native backend', async () => {
-        const backendId = 'acme.firstparty.backend';
+    it('uses the matching runner-owned runtime source for a daemon-spawned native backend', async () => {
         const agentId = 'claude';
+        const backendId = agentId;
         const pluginId = 'happier.agent.acme';
         const contributes = seedFirstPartyOwnerRegistry({
             backendId,
@@ -1756,33 +1862,33 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
         };
 
         const registry = await resolveCliEngineRegistry({
-            contributes:
-                contributes as unknown as NonNullable<ResolveEngineRegistryParams['contributes']>,
-            requireDaemonAgentRuntimeCarrier: true,
-            nativeAgentRuntimeCarrier: {
-                descriptor: {
-                    v: 1,
+            contributes,
+            requireRunnerAgentSessionRuntimeSource: true,
+            runnerAgentSessionRuntimeSource: {
+                agentContribution:
+                    contributes.agentDefinitionsById.get(agentId)!,
+                identity: {
                     pluginId,
                     pluginVersion: '0.0.0',
                     agentId,
                     backendId,
                     generation: '1',
-                    factoryControls: {
-                        continuation: false,
-                        goals: false,
-                        catalog: false,
-                        usageLimitRecovery: false,
-                    },
+                    isCurrent: () => true,
                 },
-                runtime: carriedRuntime,
+                createRuntime: async () => carriedRuntime,
+                createInvocationServices: () => {
+                    throw new Error('services are not invoked during resolution');
+                },
+                authorizeNewTurn: async () => ({
+                    status: 'admitted' as const,
+                }),
                 externalSessionHostOperations: {
                     bindSession() {
                         throw new Error(
-                            'carrier host operations are not invoked during resolution',
+                            'runner host operations are not invoked during resolution',
                         );
                     },
                 },
-                isCurrent: () => true,
             },
         });
 
@@ -1798,7 +1904,710 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
         expect(resolveExecutablePluginRuntimeRegistryMock).not.toHaveBeenCalled();
     });
 
-    it('allows an explicit legacy host runtimeCore in a daemon-spawned child without a carrier', async () => {
+    it('selects a matching runner-owned session runtime source without constructing it during resolution', async () => {
+        const agentId = 'claude';
+        const backendId = agentId;
+        const pluginId = 'happier.agent.acme';
+        const contributes = seedFirstPartyOwnerRegistry({
+            backendId,
+            agentId,
+            pluginId,
+        });
+        const createRuntime = vi.fn(async (): Promise<AgentRuntime> => ({
+            sessions: {
+                open: async () => {
+                    throw new Error('not invoked during resolution');
+                },
+            },
+        }));
+        const daemonTurnContributionsBridge = {
+            resolvePrompt: vi.fn(),
+            resolveAgentComposition: vi.fn(),
+            resolveComposerReference: vi.fn(async () => {
+                throw new Error('not invoked while selecting the runtime source');
+            }),
+            resolveComposerAttachment: vi.fn(async () => {
+                throw new Error('not invoked while selecting the runtime source');
+            }),
+            afterComposerAttachmentMessageAccepted: vi.fn(async () => {
+                throw new Error('not invoked while selecting the runtime source');
+            }),
+            transformAgentContext: vi.fn(),
+            transformSessionInput: vi.fn(),
+            transformAgentRequest: vi.fn(),
+        };
+        const daemonModelTransitionAuthorizer = vi.fn();
+
+        const registry = await resolveCliEngineRegistry({
+            contributes,
+            requireRunnerAgentSessionRuntimeSource: true,
+            runnerAgentSessionRuntimeSource: {
+                agentContribution:
+                    contributes.agentDefinitionsById.get(agentId)!,
+                identity: {
+                    pluginId,
+                    pluginVersion: '0.0.0',
+                    agentId,
+                    backendId,
+                    generation: '1',
+                    isCurrent: () => true,
+                },
+                createRuntime,
+                createInvocationServices: () => ({}) as never,
+                authorizeNewTurn: async () => ({
+                    status: 'admitted' as const,
+                }),
+                daemonTurnContributionsBridge,
+                daemonModelTransitionAuthorizer,
+            },
+        });
+
+        const resolution = await registry.resolveForBackendId(backendId);
+
+        expect(resolution).toMatchObject({
+            selectedSource: 'plugin',
+            runtimeOwner: {
+                selected: {
+                    kind: 'plugin_engine',
+                    ownerId: pluginId,
+                },
+            },
+        });
+        expect(createRuntime).not.toHaveBeenCalled();
+        await expect(
+            resolution?.engineAdapter.runtimeCore.createSessionRuntime(
+                createPluginSessionLaunchParams({ cwd: '/repo' }),
+            ),
+        ).resolves.toMatchObject({
+            kind: 'hostSessionRuntimePlan',
+            config: {
+                createSessionRuntime: expect.any(Function),
+            },
+            deps: {
+                daemonModelTransitionAuthorizer,
+                sessionLoopLifecycleDeps: {
+                    daemonTurnContributionsBridge,
+                },
+            },
+        });
+        expect(createRuntime).not.toHaveBeenCalled();
+        expect(resolveExecutablePluginRuntimeRegistryMock).not.toHaveBeenCalled();
+    });
+
+    it('keeps a pinned G runner Session resolvable when desired H removes the Agent', async () => {
+        const {
+            agent,
+            backendId,
+            pluginId,
+            contributes: generationGContributes,
+        } = seedExternalPrimaryAgentRegistry({
+            sessions: true,
+            executionRuns: false,
+        });
+        const desiredHWithoutAgent = {
+            ...generationGContributes,
+            agents: [],
+            agentDefinitionsById: new Map(),
+        };
+        const runnerAgentSessionRuntimeSource =
+            createRunnerSessionRuntimeSourceFixture({
+                agent,
+                backendId,
+                pluginId,
+                generation: 'generation-g',
+            });
+
+        const registry = await resolveCliEngineRegistry({
+            contributes: desiredHWithoutAgent,
+            requireRunnerAgentSessionRuntimeSource: true,
+            runnerAgentSessionRuntimeSource,
+        });
+
+        const resolution = await registry.resolveForBackendId(backendId);
+
+        expect(resolution?.agent).toBe(agent);
+        expect(resolution?.engineAdapter.runtimeCore.createSessionRuntime)
+            .toEqual(expect.any(Function));
+        expect(pluginReloadControllerTryAcquireRuntimeRegistryMock)
+            .not.toHaveBeenCalled();
+    });
+
+    it('constructs a pinned G runner Session from G declarations after desired H mutates them', async () => {
+        const {
+            agent: generationGAgent,
+            backendId,
+            pluginId,
+            contributes: generationGContributes,
+        } = seedExternalPrimaryAgentRegistry({
+            sessions: true,
+            executionRuns: false,
+        });
+        const generationGDefinition = generationGAgent.richDefinition?.definition;
+        if (
+            !generationGDefinition
+            || !('primary' in generationGDefinition)
+            || generationGDefinition.primary !== 'sessions'
+        ) {
+            throw new Error(
+                'Expected the generation G Agent fixture to retain its Session-primary rich definition',
+            );
+        }
+        const generationHAgent = {
+            ...generationGAgent,
+            richDefinition: {
+                provenance: 'external' as const,
+                definition: {
+                    ...generationGDefinition,
+                    capabilities: {
+                        ...generationGDefinition.capabilities,
+                        sessions: {
+                            open: ['resume'] as const,
+                            delivery: ['newTurn'] as const,
+                            cancel: true,
+                        },
+                    },
+                },
+            },
+        } satisfies ResolvedAgentContribution;
+        const desiredHContributes = {
+            ...generationGContributes,
+            agents: [generationHAgent],
+            agentDefinitionsById: new Map([[generationHAgent.id, generationHAgent]]),
+        };
+        const runnerAgentSessionRuntimeSource =
+            createRunnerSessionRuntimeSourceFixture({
+                agent: generationGAgent,
+                backendId,
+                pluginId,
+                generation: 'generation-g',
+            });
+
+        const registry = await resolveCliEngineRegistry({
+            contributes: desiredHContributes,
+            requireRunnerAgentSessionRuntimeSource: true,
+            runnerAgentSessionRuntimeSource,
+        });
+
+        const resolution = await registry.resolveForBackendId(backendId);
+
+        expect(resolution?.agent).toBe(generationGAgent);
+        const resolvedCapabilities =
+            resolution?.agent.richDefinition?.definition.capabilities;
+        expect(
+            resolvedCapabilities && 'sessions' in resolvedCapabilities
+                ? resolvedCapabilities.sessions?.open
+                : undefined,
+        ).toEqual(['create']);
+        expect(pluginReloadControllerTryAcquireRuntimeRegistryMock)
+            .not.toHaveBeenCalled();
+    });
+
+    it('constructs an unpinned new Session from desired H declarations', async () => {
+        const {
+            agent: generationHAgent,
+            agentId,
+            backendId,
+            pluginId,
+            contributes: generationHContributes,
+        } = seedExternalPrimaryAgentRegistry({
+            sessions: true,
+            executionRuns: false,
+        });
+        const runtimeRegistry = completeLeaseRuntimeRegistryFixture(
+            createRuntimeRegistry({
+                contributes: generationHContributes,
+                backendId,
+                agentId,
+                pluginId,
+                createRuntime: async () => ({
+                    sessions: {
+                        open: async () => {
+                            throw new Error('not invoked during resolution');
+                        },
+                    },
+                }),
+            }),
+            generationHContributes,
+        );
+        resolvePluginBackendSurfaceHandlersMock.mockResolvedValue({
+            diagnostics: [],
+        });
+
+        const registry = await resolveCliEngineRegistry({
+            runtimeRegistry: runtimeRegistry as NonNullable<
+                ResolveEngineRegistryParams['runtimeRegistry']
+            >,
+        });
+
+        const resolution = await registry.resolveForBackendId(backendId);
+
+        expect(resolution?.agent).toBe(generationHAgent);
+        expect(resolution?.engineAdapter.runtimeCore.createSessionRuntime)
+            .toEqual(expect.any(Function));
+    });
+
+    it('selects a matching runner-owned external Session without acquiring the daemon process-local registry', async () => {
+        const {
+            agentId,
+            backendId,
+            pluginId,
+            contributes,
+        } = seedExternalPrimaryAgentRegistry({
+            sessions: true,
+            executionRuns: false,
+        });
+        pluginReloadControllerStateMock.mockReturnValue({
+            generation: 1,
+            activeRegistry: null,
+            lastResult: null,
+        });
+        resolvePluginBackendSurfaceHandlersMock.mockResolvedValue({
+            surfaces: {
+                terminalRuntime: null,
+                externalSession: null,
+                attach: null,
+                handoff: null,
+                fork: null,
+                checkpoint: null,
+            },
+            diagnostics: [],
+        });
+        const runnerCreateRuntime = vi.fn(async (): Promise<AgentRuntime> => ({
+            sessions: {
+                open: async () => {
+                    throw new Error('not invoked while selecting the runtime source');
+                },
+            },
+        }));
+        const daemonTurnContributionsBridge = {
+            resolvePrompt: vi.fn(),
+            resolveAgentComposition: vi.fn(),
+            resolveComposerReference: vi.fn(async () => {
+                throw new Error('not invoked while selecting the runtime source');
+            }),
+            resolveComposerAttachment: vi.fn(async () => {
+                throw new Error('not invoked while selecting the runtime source');
+            }),
+            afterComposerAttachmentMessageAccepted: vi.fn(async () => {
+                throw new Error('not invoked while selecting the runtime source');
+            }),
+            transformAgentContext: vi.fn(),
+            transformSessionInput: vi.fn(),
+            transformAgentRequest: vi.fn(),
+        };
+
+        const registry = await resolveCliEngineRegistry({
+            contributes,
+            requireRunnerAgentSessionRuntimeSource: true,
+            runnerAgentSessionRuntimeSource: {
+                agentContribution:
+                    contributes.agentDefinitionsById.get(agentId)!,
+                identity: {
+                    pluginId,
+                    pluginVersion: '0.0.0',
+                    agentId,
+                    backendId,
+                    generation: 'runner-generation-1',
+                    isCurrent: () => true,
+                },
+                createRuntime: runnerCreateRuntime,
+                createInvocationServices: () => ({}) as never,
+                authorizeNewTurn: async () => ({ status: 'admitted' as const }),
+                daemonTurnContributionsBridge,
+            },
+        });
+        const resolution = await registry.resolveForBackendId(backendId);
+
+        expect(pluginReloadControllerTryAcquireRuntimeRegistryMock).not.toHaveBeenCalled();
+        expect(runnerCreateRuntime).not.toHaveBeenCalled();
+        await expect(
+            resolution?.engineAdapter.runtimeCore.createSessionRuntime(
+                createPluginSessionLaunchParams({
+                    directory: '/tmp/runtime-placement',
+                    backendTarget: { kind: 'backend', backendId },
+                }),
+            ),
+        ).resolves.toMatchObject({
+            kind: 'hostSessionRuntimePlan',
+            deps: {
+                sessionLoopLifecycleDeps: {
+                    daemonTurnContributionsBridge,
+                },
+            },
+        });
+        expect(runnerCreateRuntime).not.toHaveBeenCalled();
+    });
+
+    it('projects the runner current-global External Sessions surface without acquiring the executable registry', async () => {
+        const {
+            agentId,
+            backendId,
+            pluginId,
+            contributes,
+        } = seedExternalPrimaryAgentRegistry({
+            sessions: true,
+            executionRuns: false,
+            externalSessions: true,
+        });
+        pluginReloadControllerStateMock.mockReturnValue({
+            generation: 1,
+            activeRegistry: null,
+            lastResult: null,
+        });
+        const currentExternalSessionProviderOps = {
+            validateSource: vi.fn(),
+            listCandidates: vi.fn(),
+            resolveLinkIdentity: vi.fn(),
+            canonicalizeLinkedSession: vi.fn(),
+            pageTranscript: vi.fn(),
+            readAfterTranscript: vi.fn(),
+        };
+        const createRuntime = vi.fn(async (): Promise<AgentRuntime> => ({
+            sessions: {
+                open: async () => {
+                    throw new Error('not invoked during resolution');
+                },
+            },
+        }));
+
+        const registry = await resolveCliEngineRegistry({
+            contributes,
+            requireRunnerAgentSessionRuntimeSource: true,
+            runnerAgentSessionRuntimeSource: {
+                agentContribution:
+                    contributes.agentDefinitionsById.get(agentId)!,
+                identity: {
+                    pluginId,
+                    pluginVersion: '0.0.0',
+                    agentId,
+                    backendId,
+                    generation: 'runner-generation-1',
+                    isCurrent: () => true,
+                },
+                createRuntime,
+                createInvocationServices: () => ({}) as never,
+                authorizeNewTurn: async () => ({
+                    status: 'admitted' as const,
+                }),
+                currentExternalSessionProviderOps,
+            },
+        });
+        const resolution = await registry.resolveForBackendId(backendId);
+
+        expect(resolution?.executionSurfaces.externalSession).toMatchObject({
+            validateSource: currentExternalSessionProviderOps.validateSource,
+            listCandidates: currentExternalSessionProviderOps.listCandidates,
+            resolveLinkIdentity: currentExternalSessionProviderOps.resolveLinkIdentity,
+            canonicalizeLinkedSession: currentExternalSessionProviderOps.canonicalizeLinkedSession,
+            pageTranscript: currentExternalSessionProviderOps.pageTranscript,
+            readAfterTranscript: currentExternalSessionProviderOps.readAfterTranscript,
+        });
+        expect(createRuntime).not.toHaveBeenCalled();
+        expect(pluginReloadControllerTryAcquireRuntimeRegistryMock)
+            .not.toHaveBeenCalled();
+        expect(resolveExecutablePluginRuntimeRegistryMock)
+            .not.toHaveBeenCalled();
+    });
+
+    it.each([
+        ['missing', null],
+        ['mismatched', 'acme.other.backend'],
+    ] as const)(
+        'fails an external Session Agent with a %s runner source before daemon runtime effects',
+        async (_label, runnerBackendId) => {
+            const {
+                agentId,
+                backendId,
+                pluginId,
+                contributes,
+            } = seedExternalPrimaryAgentRegistry({
+                sessions: true,
+                executionRuns: false,
+            });
+            const daemonCreateRuntime = vi.fn(async (): Promise<AgentRuntime> => ({
+                sessions: {
+                    open: async () => {
+                        throw new Error('daemon must not open the primary Session runtime');
+                    },
+                },
+            }));
+            const runtimeRegistry = completeLeaseRuntimeRegistryFixture(
+                createRuntimeRegistry({
+                    contributes,
+                    backendId,
+                    agentId,
+                    pluginId,
+                    createRuntime: daemonCreateRuntime,
+                }),
+                contributes,
+            );
+            pluginReloadControllerStateMock.mockReturnValue({
+                generation: 1,
+                activeRegistry: runtimeRegistry,
+                lastResult: null,
+            });
+            const runnerCreateRuntime = vi.fn(async (): Promise<AgentRuntime> => ({
+                sessions: {
+                    open: async () => {
+                        throw new Error('mismatched runner must not be invoked');
+                    },
+                },
+            }));
+
+            const registry = await resolveCliEngineRegistry({
+                contributes,
+                requireRunnerAgentSessionRuntimeSource: true,
+                ...(runnerBackendId
+                    ? {
+                        runnerAgentSessionRuntimeSource: {
+                            agentContribution:
+                                contributes.agentDefinitionsById.get(agentId)!,
+                            identity: {
+                                pluginId,
+                                pluginVersion: '0.0.0',
+                                agentId,
+                                backendId: runnerBackendId,
+                                generation: 'runner-generation-1',
+                                isCurrent: () => true,
+                            },
+                            createRuntime: runnerCreateRuntime,
+                            createInvocationServices: () => ({}) as never,
+                            authorizeNewTurn: async () => ({ status: 'admitted' as const }),
+                        },
+                    }
+                    : {}),
+            });
+
+            await expect(registry.resolveForBackendId(backendId))
+                .rejects
+                .toMatchObject({
+                    code: 'RUNNER_AGENT_SESSION_RUNTIME_SOURCE_MISSING',
+                });
+            expect(pluginReloadControllerTryAcquireRuntimeRegistryMock).not.toHaveBeenCalled();
+            expect(daemonCreateRuntime).not.toHaveBeenCalled();
+            expect(runnerCreateRuntime).not.toHaveBeenCalled();
+        },
+    );
+
+    it('keeps an external execution-run-only Agent on its daemon-owned runtime', async () => {
+        const {
+            agentId,
+            backendId,
+            pluginId,
+            contributes,
+        } = seedExternalPrimaryAgentRegistry({
+            sessions: false,
+            executionRuns: true,
+        });
+        const openExecutionRun = vi.fn(async () => ({
+            send: vi.fn(async () => ({ status: 'admitted' as const })),
+            stop: vi.fn(async () => ({ status: 'requested' as const })),
+            watch: () => ({ dispose: () => {} }),
+            dispose: vi.fn(async () => undefined),
+        }));
+        const daemonCreateRuntime = vi.fn(async (): Promise<AgentRuntime> => ({
+            executionRuns: { open: openExecutionRun },
+        }));
+        const runtimeRegistry = completeLeaseRuntimeRegistryFixture(
+            createRuntimeRegistry({
+                contributes,
+                backendId,
+                agentId,
+                pluginId,
+                createRuntime: daemonCreateRuntime,
+            }),
+            contributes,
+        );
+        pluginReloadControllerStateMock.mockReturnValue({
+            generation: 1,
+            activeRegistry: runtimeRegistry,
+            lastResult: null,
+        });
+        resolvePluginBackendSurfaceHandlersMock.mockResolvedValue({
+            surfaces: {
+                terminalRuntime: null,
+                externalSession: null,
+                attach: null,
+                handoff: null,
+                fork: null,
+                checkpoint: null,
+            },
+            diagnostics: [],
+        });
+
+        const registry = await resolveCliEngineRegistry({
+            contributes,
+        });
+        const resolution = await registry.resolveForBackendId(backendId);
+        const executionRuntime = resolution?.engineAdapter.runtimeCore
+            .createExecutionRunBackend({
+                cwd: '/repo',
+                runId: 'execution-only-run',
+                backendId,
+                permissionMode: 'read_only',
+                start: { intent: 'review' },
+            });
+
+        expect(daemonCreateRuntime).toHaveBeenCalledOnce();
+        await expect(executionRuntime?.provisionSession()).resolves.toEqual({
+            sessionId: 'execution-only-run',
+        });
+        await expect(
+            executionRuntime?.sendPrompt(
+                'execution-only-run',
+                'Review these changes',
+            ),
+        ).resolves.toBeUndefined();
+        expect(openExecutionRun).toHaveBeenCalledOnce();
+        await executionRuntime?.dispose();
+    });
+
+    it('keeps combined external Session and execution-run runtime instances in their distinct runner and daemon realms', async () => {
+        const {
+            agentId,
+            backendId,
+            pluginId,
+            contributes,
+        } = seedExternalPrimaryAgentRegistry({
+            sessions: true,
+            executionRuns: true,
+        });
+        const daemonSessionOpen = vi.fn(async () => {
+            throw new Error('daemon must not open the primary Session runtime');
+        });
+        const daemonExecutionOpen = vi.fn(async () => ({
+            send: vi.fn(async () => ({ status: 'admitted' as const })),
+            stop: vi.fn(async () => ({ status: 'requested' as const })),
+            watch: () => ({ dispose: () => {} }),
+            dispose: vi.fn(async () => undefined),
+        }));
+        const daemonCreateRuntime = vi.fn(async (): Promise<AgentRuntime> => ({
+            sessions: { open: daemonSessionOpen },
+            executionRuns: { open: daemonExecutionOpen },
+        }));
+        const runtimeRegistry = completeLeaseRuntimeRegistryFixture(
+            createRuntimeRegistry({
+                contributes,
+                backendId,
+                agentId,
+                pluginId,
+                createRuntime: daemonCreateRuntime,
+            }),
+            contributes,
+        );
+        pluginReloadControllerStateMock.mockReturnValue({
+            generation: 1,
+            activeRegistry: null,
+            lastResult: null,
+        });
+        resolvePluginBackendSurfaceHandlersMock.mockResolvedValue({
+            surfaces: {
+                terminalRuntime: null,
+                externalSession: null,
+                attach: null,
+                handoff: null,
+                fork: null,
+                checkpoint: null,
+            },
+            diagnostics: [],
+        });
+        const runnerSessionDispose = vi.fn(async () => undefined);
+        const runnerSessionOpen = vi.fn(async () => ({
+            send: vi.fn(async () => ({ status: 'admitted' as const })),
+            watch: () => ({ dispose: () => {} }),
+            dispose: runnerSessionDispose,
+        }));
+        const runnerCreateRuntime = vi.fn(async (): Promise<AgentRuntime> => ({
+            sessions: { open: runnerSessionOpen },
+        }));
+
+        const registry = await resolveCliEngineRegistry({
+            contributes,
+            requireRunnerAgentSessionRuntimeSource: true,
+            runnerAgentSessionRuntimeSource: {
+                agentContribution:
+                    contributes.agentDefinitionsById.get(agentId)!,
+                identity: {
+                    pluginId,
+                    pluginVersion: '0.0.0',
+                    agentId,
+                    backendId,
+                    generation: 'runner-generation-1',
+                    isCurrent: () => true,
+                },
+                createRuntime: runnerCreateRuntime,
+                createInvocationServices: async () => createUnavailablePluginServices(),
+                authorizeNewTurn: async () => ({ status: 'admitted' as const }),
+            },
+        });
+        const resolution = await registry.resolveForBackendId(backendId);
+
+        expect(pluginReloadControllerTryAcquireRuntimeRegistryMock).not.toHaveBeenCalled();
+        expect(daemonCreateRuntime).not.toHaveBeenCalled();
+        expect(runnerCreateRuntime).not.toHaveBeenCalled();
+        const plan = await resolution?.engineAdapter.runtimeCore
+            .createSessionRuntime(
+                createPluginSessionLaunchParams({
+                    directory: '/tmp/runtime-placement',
+                    backendTarget: { kind: 'backend', backendId },
+                }),
+            ) as HostSessionRuntimePlanForTest | undefined;
+        if (!plan?.config.createSessionRuntime) {
+            throw new Error('Expected runner-owned Agent host Session runtime plan');
+        }
+        const createdSessionRuntime = await plan.config.createSessionRuntime({
+            directory: '/tmp/runtime-placement',
+            metadata: {},
+            machineId: 'machine-1',
+            agentTargetKey: `plugin:${pluginId}:${agentId}`,
+            session: createRuntimePlacementSessionClient('session-placement'),
+            transcriptSession: {},
+            messageBuffer: {},
+            mcpServers: {},
+            permissionHandler: {},
+            getPermissionMode: () => 'default',
+            setThinking: () => {},
+            memoryRecallGuidanceEnabled: false,
+            runnerProcessIdentity: null,
+            startupModelSelection: null,
+        } as never) as Readonly<{
+            operations: Readonly<{ resetOrDisposeRuntime(): Promise<void> }>;
+        }>;
+
+        expect(runnerCreateRuntime).toHaveBeenCalledOnce();
+        expect(runnerSessionOpen).toHaveBeenCalledOnce();
+        expect(daemonSessionOpen).not.toHaveBeenCalled();
+
+        const daemonRegistry = await resolveCliEngineRegistry({
+            contributes,
+            runtimeRegistry:
+                runtimeRegistry as unknown as NonNullable<ResolveEngineRegistryParams['runtimeRegistry']>,
+        });
+        const daemonResolution = await daemonRegistry.resolveForBackendId(
+            backendId,
+        );
+        const executionRuntime = daemonResolution?.engineAdapter.runtimeCore
+            .createExecutionRunBackend({
+                cwd: '/repo',
+                runId: 'combined-execution-run',
+                backendId,
+                permissionMode: 'read_only',
+                start: { intent: 'review' },
+            });
+        await executionRuntime?.provisionSession();
+        await executionRuntime?.sendPrompt(
+            'combined-execution-run',
+            'Review these changes',
+        );
+        expect(daemonExecutionOpen).toHaveBeenCalledOnce();
+        expect(daemonSessionOpen).not.toHaveBeenCalled();
+
+        await executionRuntime?.dispose();
+        await createdSessionRuntime.operations.resetOrDisposeRuntime();
+        expect(runnerSessionDispose).toHaveBeenCalledOnce();
+    });
+
+    it('allows an explicit legacy host runtimeCore in a daemon-spawned child without a runner runtime source', async () => {
         const backendId = 'acme.firstparty.backend';
         const pluginId = 'happier.agent.acme';
         const runtimeCoreFactory = vi.fn(async () => ({
@@ -1814,19 +2623,16 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
         });
 
         const registry = await resolveCliEngineRegistry({
-            contributes:
-                contributes as unknown as NonNullable<ResolveEngineRegistryParams['contributes']>,
-            requireDaemonAgentRuntimeCarrier: true,
+            contributes,
+            requireRunnerAgentSessionRuntimeSource: true,
         });
 
-        await expect(registry.resolveForBackendId(backendId)).resolves.toMatchObject({
-            runtimeOwner: {
-                selected: {
-                    kind: 'legacy_host',
-                    ownerId: backendId,
-                },
-            },
-        });
+        await expect(registry.resolveForBackendId(backendId))
+            .rejects.toMatchObject({
+                code:
+                    'RUNNER_AGENT_SESSION_RUNTIME_SOURCE_MISSING',
+            });
+        expect(runtimeCoreFactory).not.toHaveBeenCalled();
         expect(resolveExecutablePluginRuntimeRegistryMock).not.toHaveBeenCalled();
     });
 
@@ -1860,43 +2666,22 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
 
         expect(resolution?.runtimeOwner).toEqual({
             backendId,
-            selected: null,
-            candidates: [
-                {
-                    kind: 'legacy_host',
-                    ownerId: backendId,
-                    provenance: 'first_party',
-                },
-                {
-                    kind: 'plugin_engine',
-                    ownerId: pluginId,
-                    provenance: 'first_party',
-                    pluginId,
-                },
-            ],
-            conflictDiagnostic: expect.objectContaining({
-                code: 'engine_runtime_owner_conflict',
-                backendId,
+            selected: {
+                kind: 'plugin_engine',
+                ownerId: pluginId,
+                provenance: 'first_party',
                 pluginId,
-            }),
+            },
+            candidates: [{
+                kind: 'plugin_engine',
+                ownerId: pluginId,
+                provenance: 'first_party',
+                pluginId,
+            }],
         });
-        expect(resolution?.diagnostics).toEqual([
-            expect.objectContaining({
-                code: 'engine_runtime_owner_conflict',
-                backendId,
-                pluginId,
-            }),
-        ]);
-        await expect(resolution?.engineAdapter.runtimeCore.createSessionRuntime({ cwd: '/repo' }))
-            .rejects
-            .toThrow(/bound host runtimeCore/i);
-        expect(() => resolution?.engineAdapter.runtimeCore.createExecutionRunBackend({
-            cwd: '/repo',
-            backendId,
-            permissionMode: 'read_only',
-        })).toThrow(/bound host runtimeCore/i);
+        expect(resolution?.diagnostics).toEqual([]);
         expect(runtimeCoreFactory).not.toHaveBeenCalled();
-        expect(createPluginRuntime).not.toHaveBeenCalled();
+        expect(createPluginRuntime).toHaveBeenCalledOnce();
         expect(hostRuntimeCore.createSessionRuntime).not.toHaveBeenCalled();
         expect(hostRuntimeCore.createExecutionRunBackend).not.toHaveBeenCalled();
     });
@@ -1934,32 +2719,30 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
         const { SessionHostBridge } = await import('@/agent/runtime/bridges/session/SessionHostBridge');
         const bridge = new SessionHostBridge();
 
-        await expect(bridge.createSessionRuntime('codex', { cwd: '/tmp/codex', resume: 'resume-1' })).resolves.toEqual(createdPlan);
+        await expect(
+            bridge.createSessionRuntime(
+                'codex',
+                { cwd: '/tmp/codex', resume: 'resume-1' },
+            ),
+        ).rejects.toThrow(/bound host runtimeCore/i);
 
-        const runtime = (await import('@/agent/runtime/bridges/executionRun/runtime/create')).createExecutionRunRuntime({
-            cwd: '/tmp/codex',
-            backendId: 'codex',
-            permissionMode: 'read_only',
-            accountSettings: {},
-            start: {
-                intent: 'plan',
-                retentionPolicy: 'ephemeral',
-            },
-        });
-        await expect(runtime.provisionSession({ initialPrompt: 'boot' })).resolves.toEqual({ sessionId: 'run-session-1' });
+        const resolution =
+            await resolveBackendEngineAdapterResolution(
+                'codex',
+                { runtimeRegistry },
+            );
+        expect(() =>
+            resolution?.engineAdapter.runtimeCore
+                .createExecutionRunBackend({
+                    cwd: '/tmp/codex',
+                    backendId: 'codex',
+                    permissionMode: 'read_only',
+                }),
+        ).toThrow(/bound host runtimeCore/i);
 
-        expect(runtimeCoreFactory).toHaveBeenCalled();
-        expect(createSessionRuntime).toHaveBeenCalledWith({ cwd: '/tmp/codex', resume: 'resume-1' });
-        expect(createExecutionRunBackend).toHaveBeenCalledWith(expect.objectContaining({
-            cwd: '/tmp/codex',
-            backendId: 'codex',
-            permissionMode: 'read_only',
-            start: expect.objectContaining({
-                intent: 'plan',
-                retentionPolicy: 'ephemeral',
-            }),
-        }));
-        expect(getExecutionRunBackendDescriptorMock).not.toHaveBeenCalled();
+        expect(runtimeCoreFactory).not.toHaveBeenCalled();
+        expect(createSessionRuntime).not.toHaveBeenCalled();
+        expect(createExecutionRunBackend).not.toHaveBeenCalled();
     });
 
     it('preserves a first-class plugin backend runtimeCore factory instead of rebuilding a plugin-only fallback core', async () => {
@@ -2008,40 +2791,17 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
 
         await expect(
             resolution?.engineAdapter.runtimeCore.createSessionRuntime({ cwd: '/tmp/plugin', resume: 'resume-1' }),
-        ).resolves.toEqual(createdPlan);
-        expect(
+        ).rejects.toThrow(/bound host runtimeCore/i);
+        expect(() =>
             resolution?.engineAdapter.runtimeCore.createExecutionRunBackend({
                 cwd: '/tmp/plugin',
                 backendId: 'acme.sample.backend',
                 permissionMode: 'read_only',
             }),
-        ).toBe(executionBackend);
-        expect(runtimeCore.createSessionRuntime).toHaveBeenCalledWith({ cwd: '/tmp/plugin', resume: 'resume-1' });
-        expect(runtimeCore.createExecutionRunBackend).toHaveBeenCalledWith({
-            cwd: '/tmp/plugin',
-            backendId: 'acme.sample.backend',
-            permissionMode: 'read_only',
-        });
-        expect(resolution?.engineAdapter.facets).toEqual({
-            transcriptSource: {
-                supported: true,
-            },
-        });
-        expect(runtimeCoreFactory).toHaveBeenCalledWith(expect.objectContaining({
-            backend: expect.objectContaining({
-                id: 'acme.sample.backend',
-                provenance: 'external',
-                source: { kind: 'path' },
-            }),
-            agent: expect.objectContaining({
-                id: 'acme.sample.provider',
-                provenance: 'external',
-                source: { kind: 'path' },
-            }),
-            executionSurfaces: expect.objectContaining({
-                terminalRuntime: null,
-            }),
-        }));
+        ).toThrow(/bound host runtimeCore/i);
+        expect(runtimeCore.createSessionRuntime).not.toHaveBeenCalled();
+        expect(runtimeCore.createExecutionRunBackend).not.toHaveBeenCalled();
+        expect(runtimeCoreFactory).not.toHaveBeenCalled();
     });
 
     it('resolves plugin backends from the authoritative active runtime registry when merged contributions are stale', async () => {
@@ -2215,7 +2975,8 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
         expect(resolution?.backend.id).toBe('acme.sample.backend');
         await expect(
             resolution?.engineAdapter.runtimeCore.createSessionRuntime({ cwd: '/tmp/plugin', resume: 'resume-1' }),
-        ).resolves.toEqual(createdPlan);
+        ).rejects.toThrow(/bound host runtimeCore/i);
+        expect(runtimeCoreFactory).not.toHaveBeenCalled();
         expect(resolveExecutablePluginRuntimeRegistryMock).not.toHaveBeenCalled();
     });
 });

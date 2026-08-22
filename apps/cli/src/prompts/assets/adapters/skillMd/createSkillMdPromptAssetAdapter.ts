@@ -15,7 +15,7 @@ import {
   validatePromptBundleBodyV1AgainstSchemaId,
 } from '@happier-dev/protocol';
 
-import type { PromptAssetAdapter } from '@/prompts/assets/types';
+import type { PromptAssetAdapter } from '@happier-dev/plugin-sdk/resources';
 import { toPromptAssetMutationError, toPromptAssetReadError } from '@/prompts/assets/shared/promptAssetResponses';
 import {
   buildPromptBundleBodyFromDirectory,

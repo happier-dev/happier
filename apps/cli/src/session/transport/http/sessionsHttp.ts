@@ -1,8 +1,10 @@
 import axios, { type AxiosResponse } from 'axios';
+import { z } from 'zod';
 import {
   agentEventLocalIdAttentionImpact,
   type SessionMessageAttentionImpact,
   type SessionStoredMessageContent,
+  SessionStoredMessageContentSchema,
   type V2SessionByIdResponse,
   type V2SessionListResponse,
   type SessionLookupByTagsResponseV2,
@@ -17,17 +19,25 @@ import {
   SessionMetadataInactiveModelIntentVersionConflictV1Schema,
   SessionMetadataTuplePatchSuccessV1Schema,
   SessionMetadataVersionConflictV1Schema,
+  SessionOrganizationSnapshotResponseSchema,
+  normalizeSessionCreationOrganizationPlacementV1,
   type SessionMetadataInactiveModelIntentExpectationV1,
   type SessionMetadataInactiveModelIntentOwnerPatchV1,
   type SessionMetadataInactiveModelIntentPatchV1,
   type SessionMetadataTuplePatchV1,
+  type SessionOrganizationPlacementV1,
   type SessionTurnsProjectionV1,
+  type AccountEncryptionCurrentnessResponse,
 } from '@happier-dev/protocol';
 
-import type { Credentials } from '@/persistence';
+import type { StoredCredentials } from '@/persistence';
 import { resolveSessionEncryptionContext } from '@/api/client/encryptionKey';
 import { createHttpStatusError, isAuthenticationStatus } from '@/api/client/httpStatusError';
 import { encodeBase64 } from '@/api/encryption';
+import {
+  buildCurrentAccountStoredContentCompatibilityHttpHeaders,
+  readCliClientUpgradeRequired,
+} from '@/api/clientCompatibility/cliClientCompatibility';
 import { resolveSessionCreateEncryptionMode } from '@/api/session/resolveSessionCreateEncryptionMode';
 import {
   resolveSessionSnapshotRequestPurpose,
@@ -50,13 +60,16 @@ export type SessionLookupByTagsHttpResult =
 export async function fetchSessionTurnsProjection(params: Readonly<{
   token: string;
   sessionId: string;
+  projection?: 'externalShareableV1';
 }>): Promise<SessionTurnsProjectionV1 | null> {
   const path = `/v1/sessions/${encodeSessionIdPathSegment(params.sessionId)}/turns`;
   const response = await axios.get(`${resolveServerHttpBaseUrl()}${path}`, {
     headers: {
+      ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
       Authorization: `Bearer ${params.token}`,
       'Content-Type': 'application/json',
     },
+    ...(params.projection ? { params: { projection: params.projection } } : {}),
     timeout: configuration.sessionControlHttpTimeoutMs,
     validateStatus: () => true,
   });
@@ -123,6 +136,7 @@ async function getSessionByIdResponse(params: Readonly<{
   if (params.signal || deadlineRemainingMs !== null) {
     return await axios.get(`${serverUrl}/v2/sessions/${encodedSessionId}`, {
       headers: {
+        ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
         Authorization: `Bearer ${params.token}`,
         'Content-Type': 'application/json',
         'X-Happier-Request-Purpose': requestPurpose,
@@ -144,6 +158,7 @@ async function getSessionByIdResponse(params: Readonly<{
 
   const promise = axios.get(`${serverUrl}/v2/sessions/${encodedSessionId}`, {
     headers: {
+      ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
       Authorization: `Bearer ${params.token}`,
       'Content-Type': 'application/json',
       'X-Happier-Request-Purpose': requestPurpose,
@@ -173,6 +188,23 @@ export async function fetchSessionById(params: Readonly<{
   if (response.status === 404) return null;
   if (isAuthenticationStatus(response.status)) {
     throwAuthenticationStatusError(response.status);
+  }
+  if (response.status === 426) {
+    const upgradeRequired = readCliClientUpgradeRequired(response.data);
+    if (
+      upgradeRequired?.requirement
+      && 'kind' in upgradeRequired.requirement
+      && upgradeRequired.requirement.kind === 'account-stored-content'
+    ) {
+      throw Object.assign(
+        new Error('Session access requires a stored-content-compatible server'),
+        {
+          code: 'client-upgrade-required' as const,
+          retryable: false as const,
+          requirement: upgradeRequired.requirement,
+        },
+      );
+    }
   }
   if (response.status !== 200) {
     throwUnexpectedStatusError(`/v2/sessions/${params.sessionId}`, response.status);
@@ -207,6 +239,7 @@ export async function lookupSessionsByTags(params: Readonly<{
     request,
     {
       headers: {
+        ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
         Authorization: `Bearer ${params.token}`,
         'Content-Type': 'application/json',
       },
@@ -237,6 +270,73 @@ export async function lookupSessionsByTags(params: Readonly<{
     tags: request.tags,
     sessions: parsed.sessions,
   };
+}
+
+/**
+ * Reads the mutable presentation placement for an already-created Session.
+ * Immutable creation correspondence is deliberately not consulted here:
+ * organization edits remain valid after a create-or-rejoin winner is chosen.
+ */
+export async function fetchSessionOrganizationPlacement(params: Readonly<{
+  token: string;
+  sessionId: string;
+  signal?: AbortSignal;
+  deadlineAtMs?: number;
+}>): Promise<SessionOrganizationPlacementV1> {
+  const sessionId = params.sessionId.trim();
+  if (!sessionId) {
+    throw new Error('Session organization placement requires a Session id');
+  }
+  const remainingMs = params.deadlineAtMs === undefined
+    ? configuration.sessionControlHttpTimeoutMs
+    : Math.floor(params.deadlineAtMs - Date.now());
+  if (params.signal?.aborted || remainingMs <= 0) {
+    const error = new Error('Session organization placement lookup was cancelled');
+    error.name = 'AbortError';
+    throw error;
+  }
+
+  const query = new URLSearchParams({
+    includeFolders: 'false',
+    includeTags: 'false',
+    includeLabels: 'false',
+    assignmentSessionIds: sessionId,
+  });
+  const path = `/v2/session-organization?${query.toString()}`;
+  const response = await axios.get(`${resolveServerHttpBaseUrl()}${path}`, {
+    headers: {
+      ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
+      Authorization: `Bearer ${params.token}`,
+      'Content-Type': 'application/json',
+    },
+    ...(params.signal ? { signal: params.signal } : {}),
+    timeout: remainingMs,
+    validateStatus: () => true,
+  });
+  if (isAuthenticationStatus(response.status)) {
+    throwAuthenticationStatusError(response.status);
+  }
+  if (response.status !== 200) {
+    throwUnexpectedStatusError(path, response.status);
+  }
+  const snapshot = parseOrThrow(
+    SessionOrganizationSnapshotResponseSchema,
+    response.data,
+    'Unexpected /v2/session-organization response shape',
+  ).snapshot;
+  const folderAssignments = snapshot.folderAssignments.filter(
+    (assignment) => assignment.sessionId === sessionId,
+  );
+  const tagAssignments = snapshot.tagAssignments.filter(
+    (assignment) => assignment.sessionId === sessionId,
+  );
+  if (folderAssignments.length > 1 || tagAssignments.length > 1) {
+    throw new Error('Unexpected duplicate Session organization placement assignments');
+  }
+  return normalizeSessionCreationOrganizationPlacementV1({
+    folderId: folderAssignments[0]?.folderId ?? null,
+    tagIds: tagAssignments[0]?.tagIds ?? [],
+  });
 }
 
 function looksLikeMissingSessionLookupByTagsRoute404(data: unknown): boolean {
@@ -323,6 +423,7 @@ export async function patchSessionMetadata(params: Readonly<{
     requestBody,
     {
       headers: {
+        ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
         Authorization: `Bearer ${params.token}`,
         'Content-Type': 'application/json',
       },
@@ -433,6 +534,10 @@ export type PatchSessionMetadataEnvelopeTupleResult =
     }>
   | Readonly<{
       success: false;
+      error: 'session_publisher_authority_lost';
+    }>
+  | Readonly<{
+      success: false;
       error: 'session_metadata_version_conflict';
       metadataLayoutVersion: 1;
       sharedMetadata: Readonly<{ version: number }>;
@@ -460,6 +565,7 @@ export async function patchSessionMetadataEnvelopeTuple(params: Readonly<{
     params.patch,
     {
       headers: {
+        ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
         Authorization: `Bearer ${params.token}`,
         'Content-Type': 'application/json',
       },
@@ -511,11 +617,22 @@ export async function patchSessionMetadataEnvelopeTuple(params: Readonly<{
         },
       );
     }
-    throw new Error(
-      `Unexpected /v2/sessions/${params.sessionId} owner-migration refusal response shape`,
-    );
+    if (
+      response.status === 409
+      && body?.code === 'metadata_privacy_upgrade_required'
+    ) {
+      throw new Error(
+        `Unexpected /v2/sessions/${params.sessionId} owner-migration refusal response shape`,
+      );
+    }
   }
   if (response.status === 409) {
+    if (body?.code === 'session_publisher_authority_lost') {
+      return {
+        success: false,
+        error: 'session_publisher_authority_lost',
+      };
+    }
     const activeConflict =
       SessionMetadataActiveConflictV1Schema.safeParse(body);
     if (activeConflict.success) {
@@ -568,17 +685,184 @@ export async function patchSessionMetadataEnvelopeTuple(params: Readonly<{
   };
 }
 
+/**
+ * The sealed target current view committed by the Agent-transition cutover.
+ *
+ * Layout 0 carries the legacy metadata CAS tuple; layout 1 reuses the shipped
+ * `owner_inactive_model_intent` owner patch, which already requires and
+ * re-checks `active = false` inside the server transaction.
+ */
+export type SessionAgentTransitionCurrentViewWriteV1 =
+  | Readonly<{
+      kind: 'legacy_v0';
+      expectedMetadataVersion: number;
+      metadataCiphertext: string;
+      expectedAgentStateVersion: number;
+      agentStateCiphertext: null;
+    }>
+  | Readonly<{
+      kind: 'envelope_tuple_v1';
+      ownerPatch: SessionMetadataInactiveModelIntentOwnerPatchV1;
+    }>;
+
+/**
+ * The partial-effect discriminator is load-bearing: a caller that cannot tell a
+ * no-effect rejection from a committed-but-incomplete cutover will offer an
+ * unsafe recovery action. `effect: 'unknown'` is reserved for transport
+ * ambiguity, where the daemon cannot establish whether the write landed.
+ */
+export type ApplySessionAgentTransitionCutoverHttpResult =
+  | Readonly<{ ok: true; dividerSeq: number; dividerVerificationRequired?: true }>
+  | Readonly<{
+      ok: false;
+      effect: 'none';
+      error:
+        | 'invalid-params'
+        | 'forbidden'
+        | 'session-not-found'
+        | 'archived'
+        | 'session-active'
+        | 'version-mismatch'
+        | 'internal';
+    }>
+  | Readonly<{
+      ok: false;
+      effect: 'current_view_committed';
+      error: 'divider-conflict' | 'divider-rejected' | 'internal';
+    }>
+  | Readonly<{ ok: false; effect: 'unknown'; error: 'transport' }>;
+
+const SessionAgentTransitionCutoverSuccessSchema = z.object({
+  success: z.literal(true),
+  dividerSeq: z.number().int().min(0),
+  /**
+   * The server found an unreadable row already occupying the reserved divider
+   * localId and could not establish that this operation wrote it. Only this
+   * daemon holds the key, so the coordinator must verify the row before acting
+   * on the divider. An older server never sends it, which reads as "verified by
+   * the server" — correct, because an older server only reached this arm after
+   * comparing plaintext itself.
+   */
+  dividerVerificationRequired: z.literal(true).optional(),
+}).passthrough();
+
+const SessionAgentTransitionCutoverNoEffectErrorSchema = z.enum([
+  'invalid-params',
+  'forbidden',
+  'session-not-found',
+  'archived',
+  'session-active',
+  'version-mismatch',
+  'internal',
+]);
+
+const SessionAgentTransitionCutoverCommittedErrorSchema = z.enum([
+  'divider-conflict',
+  'divider-rejected',
+  'internal',
+]);
+
+const SessionAgentTransitionCutoverConflictSchema = z.discriminatedUnion('effect', [
+  z.object({
+    effect: z.literal('none'),
+    error: SessionAgentTransitionCutoverNoEffectErrorSchema,
+  }).passthrough(),
+  z.object({
+    effect: z.literal('current_view_committed'),
+    error: SessionAgentTransitionCutoverCommittedErrorSchema,
+  }).passthrough(),
+]);
+
+/**
+ * The single daemon-facing transport for the ordered current-view-then-divider
+ * cutover. It never retries: an ambiguous transport outcome is reported as
+ * `effect: 'unknown'` so the coordinator returns `outcome_unknown` instead of
+ * fabricating a definite state it cannot establish.
+ */
+export async function applySessionAgentTransitionCutover(params: Readonly<{
+  token: string;
+  sessionId: string;
+  currentView: SessionAgentTransitionCurrentViewWriteV1;
+  /** Sealed or plaintext `SessionStoredMessageContent` divider envelope. */
+  divider: Readonly<{ localId: string; content: unknown }>;
+}>): Promise<ApplySessionAgentTransitionCutoverHttpResult> {
+  const serverUrl = resolveServerHttpBaseUrl();
+  const encodedSessionId = encodeSessionIdPathSegment(params.sessionId);
+  let response: AxiosResponse<unknown>;
+  try {
+    response = await axios.post(
+      `${serverUrl}/v2/sessions/${encodedSessionId}/agent-transition/cutover`,
+      {
+        v: 1,
+        currentView: params.currentView,
+        divider: params.divider,
+      },
+      {
+        headers: {
+          ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
+          Authorization: `Bearer ${params.token}`,
+          'Content-Type': 'application/json',
+        },
+        timeout: configuration.sessionControlHttpTimeoutMs,
+        validateStatus: () => true,
+      },
+    );
+  } catch {
+    return { ok: false, effect: 'unknown', error: 'transport' };
+  }
+
+  if (response.status === 200) {
+    const success = SessionAgentTransitionCutoverSuccessSchema.safeParse(response.data);
+    return success.success
+      ? {
+          ok: true,
+          dividerSeq: success.data.dividerSeq,
+          ...(success.data.dividerVerificationRequired
+            ? { dividerVerificationRequired: true as const }
+            : {}),
+        }
+      : { ok: false, effect: 'unknown', error: 'transport' };
+  }
+  // 409 carries the explicit partial-effect discriminator; a 500 may also carry
+  // it when the failure is attributable to a known depth. An unparseable body
+  // is ambiguous and must not be collapsed into a definite effect.
+  if (response.status === 409 || response.status >= 500) {
+    const conflict = SessionAgentTransitionCutoverConflictSchema.safeParse(response.data);
+    return conflict.success
+      ? conflict.data.effect === 'none'
+        ? { ok: false, effect: 'none', error: conflict.data.error }
+        : { ok: false, effect: 'current_view_committed', error: conflict.data.error }
+      : { ok: false, effect: 'unknown', error: 'transport' };
+  }
+  if (response.status === 400) {
+    return { ok: false, effect: 'none', error: 'invalid-params' };
+  }
+  if (response.status === 401 || response.status === 403) {
+    return { ok: false, effect: 'none', error: 'forbidden' };
+  }
+  if (response.status === 404) {
+    return { ok: false, effect: 'none', error: 'session-not-found' };
+  }
+  return { ok: false, effect: 'unknown', error: 'transport' };
+}
+
 export async function fetchSessionsPage(params: Readonly<{
   token: string;
   cursor?: string;
   limit?: number;
   activeOnly?: boolean;
   archivedOnly?: boolean;
+  signal?: AbortSignal;
 }>): Promise<{
   sessions: RawSessionListRow[];
   nextCursor: string | null;
   hasNext: boolean;
 }> {
+  if (params.signal?.aborted) {
+    const error = new Error('Session list was cancelled');
+    error.name = 'AbortError';
+    throw error;
+  }
   const serverUrl = resolveServerHttpBaseUrl();
   const limit = typeof params.limit === 'number' && Number.isFinite(params.limit) ? params.limit : undefined;
 
@@ -589,12 +873,14 @@ export async function fetchSessionsPage(params: Readonly<{
   const path = params.activeOnly ? '/v2/sessions/active' : params.archivedOnly ? '/v2/sessions/archived' : '/v2/sessions';
   const response = await axios.get(`${serverUrl}${path}`, {
     headers: {
+      ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
       Authorization: `Bearer ${params.token}`,
       'Content-Type': 'application/json',
     },
     params: params.activeOnly
       ? { ...(limit ? { limit } : {}) }
       : { ...(params.cursor ? { cursor: params.cursor } : {}), ...(limit ? { limit } : {}) },
+    ...(params.signal ? { signal: params.signal } : {}),
     timeout: configuration.sessionControlHttpTimeoutMs,
     validateStatus: () => true,
   });
@@ -628,7 +914,7 @@ export async function commitSessionEncryptedMessage(params: Readonly<{
   sessionId: string;
   ciphertext: string;
   localId: string;
-}>): Promise<{ didWrite: boolean; messageId: string; seq: number; createdAt: number }> {
+}>): Promise<{ didWrite: boolean; messageId: string; localId: string | null; seq: number; createdAt: number }> {
   return await commitSessionStoredMessage({
     token: params.token,
     sessionId: params.sessionId,
@@ -644,7 +930,7 @@ export async function commitSessionStoredMessage(params: Readonly<{
   localId: string;
   messageRole?: 'user' | 'agent' | 'event' | 'unknown';
   attentionImpact?: SessionMessageAttentionImpact;
-}>): Promise<{ didWrite: boolean; messageId: string; seq: number; createdAt: number }> {
+}>): Promise<{ didWrite: boolean; messageId: string; localId: string | null; seq: number; createdAt: number }> {
   const serverUrl = resolveServerHttpBaseUrl();
   const encodedSessionId = encodeSessionIdPathSegment(params.sessionId);
   const attentionImpact = params.attentionImpact ?? agentEventLocalIdAttentionImpact(params.localId);
@@ -655,6 +941,7 @@ export async function commitSessionStoredMessage(params: Readonly<{
     ...(attentionImpact ? { attentionImpact } : {}),
   }, {
     headers: {
+      ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
       Authorization: `Bearer ${params.token}`,
       'Content-Type': 'application/json',
       'Idempotency-Key': params.localId,
@@ -667,9 +954,7 @@ export async function commitSessionStoredMessage(params: Readonly<{
     throwAuthenticationStatusError(response.status);
   }
   if (response.status === 404) {
-    const err = new Error('Session not found');
-    (err as any).code = 'session_not_found';
-    throw err;
+    throw createHttpStatusError(404, 'Session not found', 'session_not_found');
   }
   if (response.status !== 200) {
     throw new Error(`Unexpected status from /v2/sessions/${params.sessionId}/messages: ${response.status}`);
@@ -684,43 +969,147 @@ export async function commitSessionStoredMessage(params: Readonly<{
   return {
     didWrite: parsed.didWrite,
     messageId: String(parsed.message?.id ?? ''),
+    localId: parsed.message.localId,
     seq: Number(parsed.message?.seq ?? 0),
     createdAt: Number(parsed.message?.createdAt ?? 0),
   };
 }
 
+const V2HistoricalTranscriptImportResponseSchema = z.object({
+  imported: z.number().int().min(0),
+  cursor: z.number().int().min(0).nullable(),
+}).strict();
+
+/**
+ * Single HTTP adapter for transcript.import. It validates the complete batch before issuing one
+ * request so the server's historical transaction, rather than a client loop, owns atomicity.
+ */
+export async function importHistoricalSessionTranscript(params: Readonly<{
+  token: string;
+  sessionId: string;
+  items: readonly Readonly<{
+    id: string;
+    content?: unknown;
+  }>[];
+}>): Promise<{ imported: number; cursor: string | null }> {
+  const items = params.items.map((item) => {
+    const localId = item.id.trim();
+    const content = SessionStoredMessageContentSchema.safeParse(item.content);
+    if (!localId || !content.success) {
+      throw new Error('Invalid transcript import item');
+    }
+    return { localId, content: content.data };
+  });
+  if (items.length === 0) {
+    return { imported: 0, cursor: null };
+  }
+
+  const serverUrl = resolveServerHttpBaseUrl();
+  const encodedSessionId = encodeSessionIdPathSegment(params.sessionId);
+  const path = `/v2/sessions/${encodedSessionId}/transcript/import`;
+  const response = await axios.post(`${serverUrl}${path}`, {
+    items,
+  }, {
+    headers: {
+      ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
+      Authorization: `Bearer ${params.token}`,
+      'Content-Type': 'application/json',
+    },
+    timeout: 20_000,
+    validateStatus: () => true,
+  });
+
+  if (isAuthenticationStatus(response.status)) {
+    throwAuthenticationStatusError(response.status);
+  }
+  if (response.status === 404) {
+    const currentServerSessionMiss = response.data !== null
+      && typeof response.data === 'object'
+      && !Array.isArray(response.data)
+      && (response.data as { error?: unknown }).error === 'Session not found';
+    if (currentServerSessionMiss) {
+      throw createHttpStatusError(404, 'Session not found', 'session_not_found');
+    }
+    throw createHttpStatusError(
+      404,
+      'Server upgrade required before transcript import.',
+      'upgrade_required',
+    );
+  }
+  if (response.status !== 200) {
+    throw new Error(`Unexpected status from ${path}: ${response.status}`);
+  }
+
+  const parsed = parseOrThrow(
+    V2HistoricalTranscriptImportResponseSchema,
+    response.data,
+    `Unexpected ${path} response shape`,
+  );
+  return {
+    imported: parsed.imported,
+    cursor: parsed.cursor === null ? null : String(parsed.cursor),
+  };
+}
+
 export async function getOrCreateSessionByTag(params: Readonly<{
-  credentials: Credentials;
+  credentials: StoredCredentials;
   tag: string;
   metadata: Record<string, unknown>;
   agentState: Record<string, unknown> | null;
   currentStorageState?: 'machine_only';
+  organizationPlacement?: SessionOrganizationPlacementV1;
   shouldCommit?: () => boolean;
-}>): Promise<{ session: RawSessionRecord; created: boolean }> {
+  accountEncryptionCurrentness?: AccountEncryptionCurrentnessResponse;
+}>): Promise<{
+  session: RawSessionRecord;
+  created: boolean;
+  organizationPlacement?: SessionOrganizationPlacementV1;
+}> {
   const serverUrl = resolveServerHttpBaseUrl();
 
-  const { desiredSessionEncryptionMode, serverSupportsFeatureSnapshot } = await resolveSessionCreateEncryptionMode({
+  const {
+    desiredSessionEncryptionMode,
+    accountEncryptionCurrentness,
+    serverSupportsFeatureSnapshot,
+  } = await resolveSessionCreateEncryptionMode({
     token: params.credentials.token,
     serverBaseUrl: serverUrl,
+    ...(params.accountEncryptionCurrentness
+      ? { accountEncryptionCurrentness: params.accountEncryptionCurrentness }
+      : {}),
   });
 
-  const { encryptionKey, encryptionVariant, dataEncryptionKey } = resolveSessionEncryptionContext(params.credentials);
-
-  const metadataEnvelopeFields = buildSessionMetadataEnvelopeCreateFields({
-    credentials: params.credentials,
-    metadata: params.metadata,
-    agentState: params.agentState,
-    storedContentMode: desiredSessionEncryptionMode,
-    encryptionKey,
-    encryptionVariant,
-  });
-
-  const dataEncryptionKeyPayload =
+  const sessionEncryptionContext =
+    desiredSessionEncryptionMode === 'e2ee'
+      ? resolveSessionEncryptionContext(params.credentials)
+      : null;
+  const metadataEnvelopeFields =
     desiredSessionEncryptionMode === 'plain'
-      ? null
-      : dataEncryptionKey
-        ? encodeBase64(dataEncryptionKey)
-        : null;
+      ? buildSessionMetadataEnvelopeCreateFields({
+          credentials: params.credentials,
+          accountEncryptionMode: accountEncryptionCurrentness.mode,
+          metadata: params.metadata,
+          agentState: params.agentState,
+          storedContentMode: 'plain',
+        })
+      : (() => {
+          if (!sessionEncryptionContext) {
+            throw new Error('Session encryption context is unavailable');
+          }
+          return buildSessionMetadataEnvelopeCreateFields({
+            credentials: params.credentials,
+            accountEncryptionMode: accountEncryptionCurrentness.mode,
+            metadata: params.metadata,
+            agentState: params.agentState,
+            storedContentMode: 'e2ee',
+            encryptionKey: sessionEncryptionContext.encryptionKey,
+            encryptionVariant: sessionEncryptionContext.encryptionVariant,
+          });
+        })();
+  const dataEncryptionKeyPayload =
+    sessionEncryptionContext?.dataEncryptionKey
+      ? encodeBase64(sessionEncryptionContext.dataEncryptionKey)
+      : null;
 
   if (params.shouldCommit && !params.shouldCommit()) {
     throw new Error('Session creation commit precondition failed');
@@ -730,9 +1119,11 @@ export async function getOrCreateSessionByTag(params: Readonly<{
     ...metadataEnvelopeFields,
     dataEncryptionKey: dataEncryptionKeyPayload,
     ...(params.currentStorageState ? { currentStorageState: params.currentStorageState } : {}),
+    ...(params.organizationPlacement ? { organizationPlacement: params.organizationPlacement } : {}),
     ...(serverSupportsFeatureSnapshot ? { encryptionMode: desiredSessionEncryptionMode } : {}),
   }, {
     headers: {
+      ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
       Authorization: `Bearer ${params.credentials.token}`,
       'Content-Type': 'application/json',
     },
@@ -742,6 +1133,23 @@ export async function getOrCreateSessionByTag(params: Readonly<{
 
   if (isAuthenticationStatus(response.status)) {
     throwAuthenticationStatusError(response.status);
+  }
+  if (response.status === 426) {
+    const upgradeRequired = readCliClientUpgradeRequired(response.data);
+    if (
+      upgradeRequired?.requirement
+      && 'kind' in upgradeRequired.requirement
+      && upgradeRequired.requirement.kind === 'account-stored-content'
+    ) {
+      throw Object.assign(
+        new Error('Session creation requires a stored-content-compatible server'),
+        {
+          code: 'client-upgrade-required' as const,
+          retryable: false as const,
+          requirement: upgradeRequired.requirement,
+        },
+      );
+    }
   }
   if (response.status !== 200) {
     throw new Error(`Unexpected status from /v1/sessions: ${response.status}`);
@@ -757,7 +1165,13 @@ export async function getOrCreateSessionByTag(params: Readonly<{
   }
   // Released and predecessor servers omit `created`; preserve their historical
   // create-or-load behavior while current servers report the exact race result.
-  return { session: parsed.session, created: parsed.created !== false };
+  return {
+    session: parsed.session,
+    created: parsed.created !== false,
+    ...(parsed.organizationPlacement
+      ? { organizationPlacement: parsed.organizationPlacement }
+      : {}),
+  };
 }
 
 async function postArchiveMutation(params: Readonly<{
@@ -771,6 +1185,7 @@ async function postArchiveMutation(params: Readonly<{
     {},
     {
       headers: {
+        ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
         Authorization: `Bearer ${params.token}`,
         'Content-Type': 'application/json',
       },

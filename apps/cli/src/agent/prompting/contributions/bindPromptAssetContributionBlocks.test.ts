@@ -26,16 +26,19 @@ async function createFixture(params: Readonly<{ bytes: Buffer; contentType: stri
   await writeFile(join(rootPath, 'resources', 'instructions.txt'), params.bytes);
   const resource: ResolvedResourceContribution = {
     provenance: 'external', source: { kind: 'archive' }, pluginId: resourcePluginId, pluginRootPath: rootPath,
-    manifestPath: join(rootPath, '.happier-plugin', 'plugin.json'), manifestDigest: digest('resource-manifest'),
-    daemonEntryPath: null,
+    manifestPath: join(rootPath, '.happier-plugin', 'plugin.json'), daemonEntryPath: null,
     sourceSpec: { kind: 'archive', locator: 'resources.tgz', trustPolicy: 'prompt', installPolicy: 'copy' },
     definition: {
       kindVersion: 1, id: 'instructions', type: 'prompt', path: 'resources/instructions.txt',
       digest: digest(params.bytes), contentType: params.contentType,
     },
   };
+  const immutableGenerationIdsByPluginId = new Map([
+    [promptPluginId, 'prompts-1'],
+    [resourcePluginId, 'resources-1'],
+  ]);
   const owner = await createStablePluginResourcesOwner({
-    registry: { generationId: 'registry:current', resources: [resource] },
+    registry: { resources: [resource] },
     generations: new Map([
       [promptPluginId, { pluginId: promptPluginId, immutableGenerationId: 'prompts-1', rootPath: '/unused', files: [] }],
       [resourcePluginId, {
@@ -43,12 +46,12 @@ async function createFixture(params: Readonly<{ bytes: Buffer; contentType: stri
         files: [{ relativePath: 'resources/instructions.txt', byteLength: params.bytes.byteLength, digest: digest(params.bytes) }],
       }],
     ]),
+    immutableGenerationIdsByPluginId,
   });
   const promptAsset: ResolvedPromptAssetContribution = {
     provenance: 'external', source: { kind: 'archive' }, pluginId: promptPluginId,
     identity: createPluginContributionIdentity({ pluginId: promptPluginId, localId: 'review' }),
-    manifestPath: '/plugins/acme.prompts/.happier-plugin/plugin.json', manifestDigest: digest('prompt-manifest'),
-    daemonEntryPath: null,
+    manifestPath: '/plugins/acme.prompts/.happier-plugin/plugin.json', daemonEntryPath: null,
     sourceSpec: { kind: 'archive', locator: 'prompts.tgz', trustPolicy: 'prompt', installPolicy: 'copy' },
     definition: {
       id: 'review', kind: 'guidelines',
@@ -57,14 +60,15 @@ async function createFixture(params: Readonly<{ bytes: Buffer; contentType: stri
       availability: { when: { fact: 'plugin.enabled', operator: 'equals', value: true } },
     },
   };
-  return { owner, promptAsset };
+  return { owner, promptAsset, immutableGenerationIdsByPluginId };
 }
 
 describe('prompt asset production binding', () => {
   it('uses structured cross-plugin identity and exact SVC11 text once policy allows it', async () => {
-    const { owner, promptAsset } = await createFixture({ bytes: Buffer.from('\nExact instructions\n'), contentType: 'text/markdown' });
+    const { owner, promptAsset, immutableGenerationIdsByPluginId } = await createFixture({ bytes: Buffer.from('\nExact instructions\n'), contentType: 'text/markdown' });
     await expect(bindPromptAssetContributionBlocks({
-      registry: { generationId: 'registry:current', promptAssets: [promptAsset] },
+      promptAssets: [promptAsset],
+      resolveContributionGeneration: (pluginId) => immutableGenerationIdsByPluginId.get(pluginId) ?? null,
       resources: owner, agent: { pluginId: 'acme.agent', localId: 'worker' },
       signal: new AbortController().signal, isGenerationCurrent: () => true,
       facts: { 'plugin.enabled': true },
@@ -76,14 +80,18 @@ describe('prompt asset production binding', () => {
   it('fails closed for non-text and oversized prompt resources', async () => {
     const binary = await createFixture({ bytes: Buffer.from([0xff]), contentType: 'application/octet-stream' });
     await expect(bindPromptAssetContributionBlocks({
-      registry: { generationId: 'registry:current', promptAssets: [binary.promptAsset] }, resources: binary.owner,
+      promptAssets: [binary.promptAsset],
+      resolveContributionGeneration: (pluginId) => binary.immutableGenerationIdsByPluginId.get(pluginId) ?? null,
+      resources: binary.owner,
       agent: { pluginId: 'acme.agent', localId: 'worker' }, signal: new AbortController().signal,
       isGenerationCurrent: () => true, facts: { 'plugin.enabled': true },
     })).rejects.toMatchObject({ code: 'PLUGIN_PROMPT_ASSET_RESOURCE_INVALID' });
 
     const oversized = await createFixture({ bytes: Buffer.alloc(MAX_PLUGIN_PROMPT_ASSET_BYTES + 1, 'x'), contentType: 'text/plain' });
     await expect(bindPromptAssetContributionBlocks({
-      registry: { generationId: 'registry:current', promptAssets: [oversized.promptAsset] }, resources: oversized.owner,
+      promptAssets: [oversized.promptAsset],
+      resolveContributionGeneration: (pluginId) => oversized.immutableGenerationIdsByPluginId.get(pluginId) ?? null,
+      resources: oversized.owner,
       agent: { pluginId: 'acme.agent', localId: 'worker' }, signal: new AbortController().signal,
       isGenerationCurrent: () => true, facts: { 'plugin.enabled': true },
     })).rejects.toMatchObject({ code: 'plugin_resource_too_large' });

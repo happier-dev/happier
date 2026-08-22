@@ -5,7 +5,7 @@ import { updateAccountSettingsV2WithRetry } from '@/settings/accountSettings/upd
 import { detectProviderMcpServers } from '@/mcp/providerDetection/detectProviderMcpServers';
 import { probeMcpStdioServerTools } from '@/mcp/servers/probeMcpStdioServerTools';
 import { createExternalMcpServer } from '@/mcp/createExternalMcpServer';
-import { readCredentials, type Credentials } from '@/persistence';
+import { readStoredCredentials, type StoredCredentials } from '@/persistence';
 import { ensureMachineIdForCredentials } from '@/ui/auth';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -13,7 +13,7 @@ import { readDaemonPluginCatalog } from '@/daemon/controlClient';
 
 export type McpCommandDeps = Readonly<{
   env?: NodeJS.ProcessEnv;
-  readCredentials: () => Promise<Credentials | null>;
+  readStoredCredentials: () => Promise<StoredCredentials | null>;
   bootstrapAccountSettingsContext: typeof bootstrapAccountSettingsContext;
   updateAccountSettingsV2WithRetry: typeof updateAccountSettingsV2WithRetry;
   ensureMachineIdForCredentials: typeof ensureMachineIdForCredentials;
@@ -29,7 +29,7 @@ export type McpCommandDeps = Readonly<{
 export function resolveMcpCommandDeps(overrides?: Partial<McpCommandDeps>): McpCommandDeps {
   return {
     env: overrides?.env ?? process.env,
-    readCredentials: overrides?.readCredentials ?? readCredentials,
+    readStoredCredentials: overrides?.readStoredCredentials ?? readStoredCredentials,
     bootstrapAccountSettingsContext: overrides?.bootstrapAccountSettingsContext ?? bootstrapAccountSettingsContext,
     updateAccountSettingsV2WithRetry: overrides?.updateAccountSettingsV2WithRetry ?? updateAccountSettingsV2WithRetry,
     ensureMachineIdForCredentials: overrides?.ensureMachineIdForCredentials ?? ensureMachineIdForCredentials,

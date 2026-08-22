@@ -1,3 +1,5 @@
+import { logger } from '@/ui/logger';
+
 export type ReplaySeedV1 = {
   v: 1;
   seedText: string;
@@ -10,6 +12,22 @@ export type ReplaySeedV1 = {
 
 const REPLAY_SEED_CONSUMED_SENTINEL_LOCAL_ID = '__replay_seed_consumed__';
 const REPLAY_SEED_METADATA_REFRESH_TIMEOUT_MS = 3_000;
+
+/**
+ * Was this seed placed for a runtime that has NOT taken custody of it yet?
+ *
+ * Retirement is what records provider acceptance: the seed's text is blanked
+ * and `appliedToLocalId` is stamped the instant the provider accepts the prompt
+ * the seed was prefixed to. So an unretired seed is the durable statement that
+ * the context it carries was handed over and never accepted, and that one fact
+ * has two readers — the prompt owner deciding whether to prefix it again, and
+ * the Agent-transition record deciding whether the departing Agent reached a
+ * new transcript boundary (`REQ-STATE-03`). They share this predicate rather
+ * than each re-deriving "pending" from the same three fields.
+ */
+export function isReplaySeedV1PendingProviderAcceptance(seed: ReplaySeedV1 | null): boolean {
+  return Boolean(seed && seed.seedText && !seed.appliedToLocalId);
+}
 
 export function readReplaySeedV1FromMetadata(metadata: unknown): ReplaySeedV1 | null {
   if (!metadata || typeof metadata !== 'object') return null;
@@ -30,7 +48,7 @@ export function buildProviderPromptWithReplaySeed(params: Readonly<{
   }
 
   const seed = readReplaySeedV1FromMetadata(params.metadata);
-  const shouldApplySeed = Boolean(seed && seed.seedText && !seed.appliedToLocalId);
+  const shouldApplySeed = isReplaySeedV1PendingProviderAcceptance(seed);
   if (!shouldApplySeed) {
     return { providerPrompt: params.userText, shouldConsumeSeed: false, seedText: '' };
   }
@@ -91,6 +109,27 @@ async function waitForReplaySeedMetadataRefreshBestEffort(refresh: Promise<unkno
   }
 }
 
+export type ReplaySeedSettlementOutcome = 'settled' | 'not_applied' | 'failed';
+
+export type ResolvedProviderPromptWithReplaySeed = Readonly<{
+  providerPrompt: string;
+  seedApplied: boolean;
+  seedText: string;
+  /**
+   * Retires the applied replay seed.
+   *
+   * Call this only once the provider has accepted the prompt. Composing a prompt is not
+   * acceptance: several awaited steps separate composition from dispatch, and retiring the
+   * seed early loses the whole replay context if any of them throws. A prompt that never
+   * reaches the provider therefore keeps its seed for the next attempt.
+   *
+   * Settlement is idempotent per resolution and never throws; a failed metadata write is
+   * reported through the returned outcome and logged, because silently swallowing it lets the
+   * same seed be prefixed again on the following turn.
+   */
+  settleOnProviderAcceptance: () => Promise<ReplaySeedSettlementOutcome>;
+}>;
+
 export async function resolveProviderPromptWithReplaySeed(params: Readonly<{
   session: {
     getMetadataSnapshot: () => unknown;
@@ -103,7 +142,7 @@ export async function resolveProviderPromptWithReplaySeed(params: Readonly<{
   localId: string | null;
   nowMs: number;
   refreshMetadataBeforeRead: boolean;
-}>): Promise<{ providerPrompt: string; seedApplied: boolean; seedText: string }> {
+}>): Promise<ResolvedProviderPromptWithReplaySeed> {
   const localMetadata = params.session.getMetadataSnapshot();
   const shouldRefreshBeforeRead = params.refreshMetadataBeforeRead && !hasNonEmptyMetadataSnapshot(localMetadata);
 
@@ -129,17 +168,27 @@ export async function resolveProviderPromptWithReplaySeed(params: Readonly<{
     allowSeed: params.allowSeed,
   });
 
-  if (seedResolution.shouldConsumeSeed) {
+  let settled = false;
+  const settleOnProviderAcceptance = async (): Promise<ReplaySeedSettlementOutcome> => {
+    if (!seedResolution.shouldConsumeSeed) return 'not_applied';
+    if (settled) return 'settled';
     try {
       await params.session.updateMetadata(createReplaySeedV1ConsumeUpdater({ localId: params.localId, nowMs: params.nowMs }));
-    } catch {
-      // Best-effort: avoid blocking the turn if metadata updates are unavailable.
+      settled = true;
+      return 'settled';
+    } catch (error) {
+      logger.warn(
+        '[replaySeedV1] Failed to retire an accepted replay seed; it may be prefixed again on the next turn',
+        error,
+      );
+      return 'failed';
     }
-  }
+  };
 
   return {
     providerPrompt: seedResolution.providerPrompt,
     seedApplied: seedResolution.shouldConsumeSeed,
     seedText: seedResolution.seedText,
+    settleOnProviderAcceptance,
   };
 }

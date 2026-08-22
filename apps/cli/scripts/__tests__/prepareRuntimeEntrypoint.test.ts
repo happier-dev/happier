@@ -31,7 +31,8 @@ describe('maybeRefreshLocalBundledWorkspacePackages', () => {
       const scriptsDir = resolve(projectRoot, 'scripts');
       const workspacesDir = resolve(repoRoot, 'scripts', 'workspaces');
       const eventsPath = resolve(repoRoot, '.project', 'tmp', 'build-events');
-      const lockPath = resolve(repoRoot, '.project', 'tmp', 'cli-dist-build.lock');
+      const sharedDepsLockPath = resolve(repoRoot, '.project', 'tmp', 'cli-shared-deps.lock');
+      const cliDistLockPath = resolve(repoRoot, '.project', 'tmp', 'cli-dist-build.lock');
       const distDir = resolve(projectRoot, 'dist');
 
       mkdirSync(scriptsDir, { recursive: true });
@@ -45,10 +46,11 @@ describe('maybeRefreshLocalBundledWorkspacePackages', () => {
           "import { appendFileSync, existsSync, mkdirSync } from 'node:fs';",
           "import { dirname } from 'node:path';",
           `const eventsPath = ${JSON.stringify(eventsPath)};`,
-          `const lockPath = ${JSON.stringify(lockPath)};`,
+          `const sharedDepsLockPath = ${JSON.stringify(sharedDepsLockPath)};`,
+          `const cliDistLockPath = ${JSON.stringify(cliDistLockPath)};`,
           'export async function main() {',
           '  mkdirSync(dirname(eventsPath), { recursive: true });',
-          "  appendFileSync(eventsPath, `shared:${existsSync(lockPath)}\\n`, 'utf8');",
+          "  appendFileSync(eventsPath, `shared:${existsSync(sharedDepsLockPath)}:${existsSync(cliDistLockPath)}\\n`, 'utf8');",
           '}',
           '',
         ].join('\n'),
@@ -61,14 +63,15 @@ describe('maybeRefreshLocalBundledWorkspacePackages', () => {
           "import { dirname, join } from 'node:path';",
           `import cliDistBuildManifest from ${JSON.stringify(cliDistBuildManifestModuleUrl)};`,
           `const eventsPath = ${JSON.stringify(eventsPath)};`,
-          `const lockPath = ${JSON.stringify(lockPath)};`,
+          `const sharedDepsLockPath = ${JSON.stringify(sharedDepsLockPath)};`,
+          `const cliDistLockPath = ${JSON.stringify(cliDistLockPath)};`,
           `const distDir = ${JSON.stringify(distDir)};`,
           'export async function buildCliDist(options = {}) {',
           '  mkdirSync(dirname(eventsPath), { recursive: true });',
-          "  const owner = existsSync(lockPath) ? JSON.parse(readFileSync(lockPath, 'utf8')) : null;",
+          "  const owner = existsSync(cliDistLockPath) ? JSON.parse(readFileSync(cliDistLockPath, 'utf8')) : null;",
           "  const lease = options.heldLockValue ? JSON.parse(options.heldLockValue) : null;",
           "  const exactLease = owner?.token && lease?.token === owner.token && lease?.v === 1;",
-          "  appendFileSync(eventsPath, `build:${existsSync(lockPath)}:${exactLease}\\n`, 'utf8');",
+          "  appendFileSync(eventsPath, `build:${existsSync(sharedDepsLockPath)}:${existsSync(cliDistLockPath)}:${exactLease}\\n`, 'utf8');",
           '  mkdirSync(distDir, { recursive: true });',
           "  writeFileSync(join(distDir, 'index.mjs'), 'export const ready = true;\\n', 'utf8');",
           "  cliDistBuildManifest.writeCliDistBuildManifest(join(distDir, 'index.mjs'), { outputDir: distDir, builtAt: '2026-07-09T00:00:00.000Z' });",
@@ -80,12 +83,13 @@ describe('maybeRefreshLocalBundledWorkspacePackages', () => {
 
       await expect(prepareRuntimeEntrypoint(projectRoot, 'index.mjs', {
         lockModulePath: workspaceBundleLockModulePath,
-        lockPath,
+        sharedDepsLockPath,
+        cliDistLockPath,
         lockTimeoutMs: 500,
         lockPollIntervalMs: 10,
         lockStaleAfterMs: 1_000,
       })).resolves.toBe(resolve(realpathSync.native(projectRoot), 'dist', 'index.mjs'));
-      expect(readFileSync(eventsPath, 'utf8')).toBe('shared:true\nbuild:true:true\n');
+      expect(readFileSync(eventsPath, 'utf8')).toBe('shared:true:false\nbuild:false:true:true\n');
     } finally {
       rmSync(repoRoot, { recursive: true, force: true });
     }

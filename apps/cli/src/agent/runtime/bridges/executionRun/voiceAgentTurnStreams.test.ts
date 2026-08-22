@@ -171,8 +171,16 @@ describe('voiceAgentTurnStreams', () => {
       return { persisted: true, delivered: true };
     });
     const voiceAgentManager = {
-      startTurnStream: vi.fn(async ({ voiceAgentId }: { voiceAgentId: string; userText: string }) => {
+      startTurnStream: vi.fn(async ({
+        voiceAgentId,
+        onTurnFinal,
+      }: {
+        voiceAgentId: string;
+        userText: string;
+        onTurnFinal?: (assistantText: string) => Promise<void>;
+      }) => {
         expect(voiceAgentId).toBe('voice-agent-1');
+        await onTurnFinal?.('assistant reply');
         return { streamId: 'internal-stream-1' };
       }),
       readTurnStream: vi.fn(async ({ streamId, cursor }: { streamId: string; cursor: number }) => ({
@@ -208,7 +216,7 @@ describe('voiceAgentTurnStreams', () => {
     if (!start.ok) {
       throw new Error(start.error);
     }
-    expect(userTextCommitted).not.toHaveBeenCalled();
+    expect(userTextCommitted).toHaveBeenCalledTimes(1);
 
     const read = await readVoiceAgentTurnStream({
       runId: 'run_1',
@@ -249,6 +257,52 @@ describe('voiceAgentTurnStreams', () => {
         },
       },
     });
+  });
+
+  it('commits the terminal transcript pair when the producer finishes even if no stream reader arrives', async () => {
+    let runtime: ReturnType<typeof createTestExecutionRunHostRuntime>;
+    runtime = createTestExecutionRunHostRuntime({
+      sessionId: 'voice-agent-producer-completion-session',
+      onSendPrompt() {
+        runtime.emitMessage({ type: 'model-output', fullText: 'assistant persisted without a read' });
+        runtime.emitMessage({ type: 'status', status: 'idle' });
+      },
+    });
+    const manager = new VoiceAgentManager({ createRuntime: () => runtime });
+    const startedAgent = await manager.start({
+      agentId: 'claude',
+      chatModelId: 'chat-model',
+      commitModelId: 'chat-model',
+      permissionIntent: 'read-only',
+      idleTtlSeconds: 60,
+      initialContext: 'CTX',
+    });
+    const run = { status: 'running', intent: 'voice_agent', ioMode: 'streaming' } as ExecutionRunState;
+    const ctrl = createVoiceAgentController();
+    ctrl.voiceAgentId = startedAgent.voiceAgentId;
+    const durableCommit = vi.fn(async () => ({ persisted: true, delivered: false }));
+
+    try {
+      const started = await startVoiceAgentTurnStream({
+        runId: 'run_1',
+        params: { message: 'persist this final' },
+        runs: new Map([['run_1', run]]),
+        controllers: new Map([['run_1', ctrl]]),
+        voiceAgentManager: manager,
+        transcriptWriter: { commitVoiceAgentTranscriptTurn: durableCommit },
+      });
+      if (!started.ok) throw new Error(started.error);
+
+      await vi.waitFor(() => expect(durableCommit).toHaveBeenCalledTimes(1));
+      expect(durableCommit).toHaveBeenCalledWith(expect.objectContaining({
+        turnId: started.streamId,
+        user: expect.objectContaining({ text: 'persist this final' }),
+        assistant: expect.objectContaining({ text: 'assistant persisted without a read' }),
+      }));
+      expect(ctrl.internalStreamIdByExternal.has(started.streamId)).toBe(true);
+    } finally {
+      await manager.dispose();
+    }
   });
 
   it('drops the external stream identity after a terminal read so replay and cancel are rejected', async () => {
@@ -369,121 +423,71 @@ describe('voiceAgentTurnStreams', () => {
     expect(ctrl.readInFlightByExternalStreamId.size).toBe(0);
   });
 
-  it('retries transfer of the same complete turn intent when durable persistence initially fails', async () => {
-    let attempts = 0;
-    const commitVoiceAgentTranscriptTurn = vi.fn(async (_turn: Readonly<{
-      turnId: string;
-      user: Readonly<{ text: string; meta: Record<string, unknown> }>;
-      assistant: Readonly<{ text: string; meta: Record<string, unknown> }>;
-    }>) => {
-      attempts += 1;
-      if (attempts === 1) throw new Error('durable persistence unavailable');
-      return { persisted: true, delivered: false };
+  it('fails closed at producer completion when durable transcript custody rejects the final', async () => {
+    let runtime: ReturnType<typeof createTestExecutionRunHostRuntime>;
+    runtime = createTestExecutionRunHostRuntime({
+      sessionId: 'voice-agent-producer-custody-failure-session',
+      onSendPrompt() {
+        runtime.emitMessage({ type: 'model-output', fullText: 'assistant final' });
+        runtime.emitMessage({ type: 'status', status: 'idle' });
+      },
     });
-    const voiceAgentManager = {
-      startTurnStream: vi.fn(async () => ({ streamId: 'internal-user-retry' })),
-      readTurnStream: vi.fn(async () => ({
-        streamId: 'internal-user-retry',
-        events: [{
-          t: 'voice_output',
-          output: { v: 1, kind: 'turn_final', turnId: 'internal-user-retry', seq: 0, text: 'assistant reply' },
-        }],
-        nextCursor: 1,
-        done: true,
-      })),
-    } as unknown as VoiceAgentManager;
-    const run = { status: 'running', intent: 'voice_agent', ioMode: 'streaming' } as ExecutionRunState;
+    const manager = new VoiceAgentManager({ createRuntime: () => runtime });
+    const startedAgent = await manager.start({
+      agentId: 'claude',
+      chatModelId: 'chat-model',
+      commitModelId: 'chat-model',
+      permissionIntent: 'read-only',
+      idleTtlSeconds: 60,
+      initialContext: 'CTX',
+    });
     const ctrl = createVoiceAgentController();
-    const runs = new Map<string, ExecutionRunState>([['run_1', run]]);
+    ctrl.voiceAgentId = startedAgent.voiceAgentId;
+    const runs = new Map<string, ExecutionRunState>([['run_1', {
+      status: 'running',
+      intent: 'voice_agent',
+      ioMode: 'streaming',
+    } as ExecutionRunState]]);
     const controllers = new Map<string, ExecutionRunVoiceAgentController>([['run_1', ctrl]]);
-    const started = await startVoiceAgentTurnStream({
-      runId: 'run_1',
-      params: { message: 'persist me' },
-      runs,
-      controllers,
-      voiceAgentManager,
-      transcriptWriter: { commitVoiceAgentTranscriptTurn },
-    });
-    if (!started.ok) throw new Error(started.error);
-    const args = {
-      runId: 'run_1',
-      params: { streamId: started.streamId, cursor: 0 },
-      runs,
-      controllers,
-      voiceAgentManager,
-      transcriptWriter: { commitVoiceAgentTranscriptTurn },
-      writeActivityMarker: vi.fn(async () => undefined),
-      getNowMs: () => 123,
-    } as const;
+    const durableCommit = vi.fn(async () => ({ persisted: false, delivered: false }));
 
-    await expect(readVoiceAgentTurnStream(args)).resolves.toMatchObject({ ok: false });
-    await expect(readVoiceAgentTurnStream({
-      ...args,
-      params: { ...args.params, cursor: 99 },
-    })).resolves.toMatchObject({
-      ok: false,
-      errorCode: 'execution_run_invalid_action_input',
-    });
-    expect(commitVoiceAgentTranscriptTurn).toHaveBeenCalledTimes(1);
-    await expect(readVoiceAgentTurnStream(args)).resolves.toMatchObject({ ok: true, done: true });
-    expect(commitVoiceAgentTranscriptTurn).toHaveBeenCalledTimes(2);
-    expect(commitVoiceAgentTranscriptTurn.mock.calls[0]?.[0]).toEqual(commitVoiceAgentTranscriptTurn.mock.calls[1]?.[0]);
-    expect(voiceAgentManager.readTurnStream).toHaveBeenCalledTimes(1);
+    try {
+      const started = await startVoiceAgentTurnStream({
+        runId: 'run_1',
+        params: { message: 'persist me' },
+        runs,
+        controllers,
+        voiceAgentManager: manager,
+        transcriptWriter: { commitVoiceAgentTranscriptTurn: durableCommit },
+      });
+      if (!started.ok) throw new Error(started.error);
+
+      await vi.waitFor(() => expect(durableCommit).toHaveBeenCalledTimes(1));
+      await vi.waitFor(async () => {
+        const read = await readVoiceAgentTurnStream({
+          runId: 'run_1',
+          params: { streamId: started.streamId, cursor: 0 },
+          runs,
+          controllers,
+          voiceAgentManager: manager,
+          transcriptWriter: { commitVoiceAgentTranscriptTurn: durableCommit },
+          writeActivityMarker: vi.fn(async () => undefined),
+          getNowMs: () => 123,
+        });
+
+        expect(read).toMatchObject({
+          ok: true,
+          done: true,
+          events: [expect.objectContaining({ t: 'error' })],
+        });
+      });
+      expect(durableCommit).toHaveBeenCalledTimes(1);
+    } finally {
+      await manager.dispose();
+    }
   });
 
-  it('fails closed when the durable turn owner does not confirm persistence', async () => {
-    const commitVoiceAgentTranscriptTurn = vi.fn()
-      .mockResolvedValueOnce({ persisted: false, delivered: false })
-      .mockResolvedValueOnce({ persisted: true, delivered: false });
-    const voiceAgentManager = {
-      startTurnStream: vi.fn(async () => ({ streamId: 'internal-retry' })),
-      readTurnStream: vi.fn(async () => ({
-        streamId: 'internal-retry',
-        events: [{
-          t: 'voice_output',
-          output: { v: 1, kind: 'turn_final', turnId: 'internal-retry', seq: 0, text: 'assistant reply' },
-        }],
-        nextCursor: 1,
-        done: true,
-      })),
-    } as unknown as VoiceAgentManager;
-    const run = { status: 'running', intent: 'voice_agent', ioMode: 'streaming' } as ExecutionRunState;
-    const ctrl = createVoiceAgentController();
-    const runs = new Map<string, ExecutionRunState>([['run_1', run]]);
-    const controllers = new Map<string, ExecutionRunVoiceAgentController>([['run_1', ctrl]]);
-    const started = await startVoiceAgentTurnStream({
-      runId: 'run_1',
-      params: { message: 'persist me' },
-      runs,
-      controllers,
-      voiceAgentManager,
-      transcriptWriter: { commitVoiceAgentTranscriptTurn },
-    });
-    if (!started.ok) throw new Error(started.error);
-
-    const readArgs = {
-      runId: 'run_1',
-      params: { streamId: started.streamId, cursor: 0 },
-      runs,
-      controllers,
-      voiceAgentManager,
-      transcriptWriter: { commitVoiceAgentTranscriptTurn },
-      writeActivityMarker: vi.fn(async () => undefined),
-      getNowMs: () => 123,
-    } as const;
-
-    await expect(readVoiceAgentTurnStream(readArgs)).resolves.toMatchObject({
-      ok: false,
-      errorCode: 'execution_run_failed',
-    });
-    await expect(readVoiceAgentTurnStream(readArgs)).resolves.toMatchObject({ ok: true, done: true });
-
-    expect(commitVoiceAgentTranscriptTurn).toHaveBeenCalledTimes(2);
-    expect(voiceAgentManager.readTurnStream).toHaveBeenCalledTimes(1);
-    expect(commitVoiceAgentTranscriptTurn.mock.calls[0]?.[0]).toEqual(commitVoiceAgentTranscriptTurn.mock.calls[1]?.[0]);
-  });
-
-  it('single-flights concurrent terminal reads and transcript pair persistence', async () => {
+  it('single-flights concurrent terminal reads without giving readers transcript-write authority', async () => {
     const readDeferred: { resolve: () => void } = { resolve: () => {} };
     const readBarrier = new Promise<void>((resolve) => { readDeferred.resolve = resolve; });
     const voiceAgentManager = {
@@ -532,7 +536,7 @@ describe('voiceAgentTurnStreams', () => {
       expect.objectContaining({ ok: true, done: true }),
     ]);
     expect(voiceAgentManager.readTurnStream).toHaveBeenCalledTimes(1);
-    expect(commitVoiceAgentTranscriptTurn).toHaveBeenCalledTimes(1);
+    expect(commitVoiceAgentTranscriptTurn).not.toHaveBeenCalled();
   });
 
   it('integrates the real manager and bridge across invalid cursors, partial reads, durable handoff, and cancellation', async () => {
@@ -585,7 +589,7 @@ describe('voiceAgentTurnStreams', () => {
       transcriptWriter: { commitVoiceAgentTranscriptTurn: durableCommit },
     });
     if (!started.ok) throw new Error(started.error);
-    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    await vi.waitFor(() => expect(durableCommit).toHaveBeenCalledTimes(1));
 
     await expect(readVoiceAgentTurnStream({
       runId: 'run_1',
@@ -598,7 +602,7 @@ describe('voiceAgentTurnStreams', () => {
       getNowMs: () => 123,
     })).resolves.toMatchObject({ ok: false, errorCode: 'execution_run_invalid_action_input' });
     expect(ctrl.internalStreamIdByExternal.has(started.streamId)).toBe(true);
-    expect(durableCommit).not.toHaveBeenCalled();
+    expect(durableCommit).toHaveBeenCalledTimes(1);
 
     let cursor = 0;
     let done = false;
@@ -781,7 +785,7 @@ describe('voiceAgentTurnStreams', () => {
     await manager.dispose();
   });
 
-  it('rejects cancellation while a completed terminal pair is crossing the durable handoff boundary', async () => {
+  it('rejects cancellation while a producer final is crossing the durable handoff boundary', async () => {
     let runtime: ReturnType<typeof createTestExecutionRunHostRuntime>;
     runtime = createTestExecutionRunHostRuntime({
       sessionId: 'voice-agent-durable-handoff-session',
@@ -826,16 +830,6 @@ describe('voiceAgentTurnStreams', () => {
     if (!started.ok) throw new Error(started.error);
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
 
-    const reading = readVoiceAgentTurnStream({
-      runId: 'run_1',
-      params: { streamId: started.streamId, cursor: 0, maxEvents: 128 },
-      runs,
-      controllers,
-      voiceAgentManager: manager,
-      transcriptWriter: { commitVoiceAgentTranscriptTurn: durableCommit },
-      writeActivityMarker: vi.fn(async () => undefined),
-      getNowMs: () => 123,
-    });
     await vi.waitFor(() => expect(durableCommit).toHaveBeenCalledTimes(1));
     await expect(cancelVoiceAgentTurnStream({
       runId: 'run_1',
@@ -846,7 +840,19 @@ describe('voiceAgentTurnStreams', () => {
     })).resolves.toMatchObject({ ok: false });
     expect(ctrl.pendingTranscriptTurnByExternalStreamId.has(started.streamId)).toBe(true);
     persisted.resolve({ persisted: true, delivered: false });
-    await expect(reading).resolves.toMatchObject({ ok: true, done: true });
+    await vi.waitFor(async () => {
+      const read = await readVoiceAgentTurnStream({
+        runId: 'run_1',
+        params: { streamId: started.streamId, cursor: 0, maxEvents: 128 },
+        runs,
+        controllers,
+        voiceAgentManager: manager,
+        transcriptWriter: { commitVoiceAgentTranscriptTurn: durableCommit },
+        writeActivityMarker: vi.fn(async () => undefined),
+        getNowMs: () => 123,
+      });
+      expect(read).toMatchObject({ ok: true, done: true });
+    });
     expect(ctrl.pendingTranscriptTurnByExternalStreamId.has(started.streamId)).toBe(false);
     await manager.dispose();
   });

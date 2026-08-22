@@ -1,11 +1,13 @@
 import type {
     BackendSurfaceAvailabilityV1,
     ExternalSessionsSource,
+    ProviderBoundModelRef,
     RuntimeDescriptorV1,
     SubagentLifecycleDetailV1,
     SubagentStatusV1,
 } from '@happier-dev/protocol';
-import type { SessionScopedServicesV1, SessionStateUpdateV1 } from '@happier-dev/agents';
+import type { SessionStateUpdateV1 } from '@happier-dev/agents';
+import type { SessionHandle } from '@happier-dev/plugin-sdk/sessions';
 
 export type HostTerminalAvailabilityOperation =
     | 'launch'
@@ -18,19 +20,73 @@ export type HostTerminalAvailabilityRequest = Readonly<{
     directory?: string;
 }>;
 
+export type HostTerminalCurrentPublisherPermit = <T>(
+    localEffect: () => Promise<T>,
+) => Promise<
+    | Readonly<{ status: 'completed'; value: T }>
+    | Readonly<{ status: 'blocked' }>
+>;
+
 export type HostTerminalLaunchRequest = Readonly<{
     sessionId: string;
     metadata: Readonly<Record<string, unknown>>;
+    modelSelection: ProviderBoundModelRef | null;
+    runWithCurrentPublisherPermit: HostTerminalCurrentPublisherPermit;
     directory: string;
     isolation?: Readonly<{
         env?: Readonly<Record<string, string>>;
         unsetEnvKeys?: readonly string[];
     }> | null;
     env?: Readonly<Record<string, string>>;
-    services?: SessionScopedServicesV1;
+    services?: SessionHandle;
     signal?: AbortSignal;
     host?: HostTerminalOrchestration;
 }>;
+
+export class HostTerminalModelSelectionBlockedError extends Error {
+    readonly code = 'native_agent_terminal_model_selection_blocked' as const;
+
+    constructor() {
+        super(
+            'Terminal launch is blocked until the current model transition is reconciled.',
+        );
+        this.name = 'HostTerminalModelSelectionBlockedError';
+    }
+}
+
+/**
+ * Typed terminal-follow admission failure for an Agent that declares explicit
+ * terminal follow.
+ *
+ * `ES-PEP-03` requires baseline failure to launch no terminal process and
+ * preserve the existing Session, and `ES-PEP-05` requires that `launch()`
+ * cannot run before the follow binding is ready. Both outcomes surface as this
+ * error so the caller can distinguish a follow admission barrier from a
+ * terminal launch failure, and so an explicit later retry stays available.
+ */
+export class HostTerminalTranscriptFollowAdmissionError extends Error {
+    readonly code =
+        'native_agent_terminal_transcript_follow_admission_failed' as const;
+
+    /** The typed follow code that closed admission. */
+    readonly followCode: string;
+
+    /**
+     * `bind` failed before launch and created no child. `active` is a ready
+     * binding that lost durable following while the terminal ran and won the
+     * race against terminal completion.
+     */
+    readonly phase: 'bind' | 'active';
+
+    constructor(followCode: string, phase: 'bind' | 'active') {
+        super(
+            `Terminal transcript follow admission failed (${phase}): ${followCode}`,
+        );
+        this.name = 'HostTerminalTranscriptFollowAdmissionError';
+        this.followCode = followCode;
+        this.phase = phase;
+    }
+}
 
 export type HostTerminalInputTrigger = Readonly<{
     sequence: number;
@@ -154,6 +210,8 @@ export type HostTerminalProjectionService = Readonly<{
 }>;
 
 export type HostTerminalTranscriptFollowBinding = Readonly<{
+    /** Resolves when durable transcript following fails after binding. */
+    failure: Promise<Error>;
     dispose(): Promise<void>;
 }>;
 
@@ -172,7 +230,6 @@ export type HostTerminalTranscriptFollowService = Readonly<{
     bindProviderSession(request: Readonly<{
         agentId: string;
         providerSessionId: string;
-        cursor?: string;
         signal?: AbortSignal;
     }>): Promise<HostTerminalTranscriptFollowBindResult>;
     releaseActiveBindings(): Promise<void>;

@@ -35,4 +35,19 @@ describe('Happier built-in tool catalog convergence', () => {
     expect(names).toContain('action_execute');
     expect(names).not.toContain('execution_run_start');
   });
+
+  it('does not synthesize plugins_reload as a manual built-in fallback when action specs do not provide it', async () => {
+    const { listBuiltInHappierTools } = await import('./listBuiltInHappierTools');
+
+    const tools = listBuiltInHappierTools({
+      surface: 'agent',
+      registry: createResolvedContributionRegistry({
+        agents: [],
+      }),
+    });
+    const names = tools.map((tool) => tool.name);
+
+    expect(names).toContain('action_execute');
+    expect(names).not.toContain('plugins_reload');
+  });
 });

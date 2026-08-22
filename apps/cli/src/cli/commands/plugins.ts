@@ -1,20 +1,33 @@
 import { randomUUID } from 'node:crypto';
+import { realpath } from 'node:fs/promises';
 import { basename, resolve } from 'node:path';
 
 import { cmd, createOutputBuilder, dim, errorFrame, fail, neutral, ok, renderHelpPage, sectionTitle } from '@happier-dev/cli-common/output';
+import {
+  buildPosixShellCommand,
+  buildPowerShellCommand,
+  buildWindowsCmdCommand,
+} from '@happier-dev/agents/process/shellCommand';
 
 import type { CommandContext } from '@/cli/commandRegistry';
-import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
+import {
+  hasFlagValue,
+  readCommandPositionals,
+  readFlagValue,
+  readRepeatedFlagValues,
+} from '@/cli/commands/shared/argvFlags';
+import { wantsJson, printJsonEnvelope, writeJsonStdout } from '@/cli/output/jsonEnvelope';
 import { configuration } from '@/configuration';
+import { isCanonicalAbsolutePathInsideRoot } from '@/utils/path/expandHomeDirPath';
 import { readInstalledPluginCatalog, readInstalledPluginCatalogEntry, type PluginCatalogEntry } from '@/plugins/projection/catalog/installed';
-import { readActivePluginAccountSettings, updateActivePluginAccountSettings } from '@/plugins/runtime/context/accountSettingsStorage';
 import { preparePluginSecretsDataRemoval } from '@/plugins/runtime/context/secrets';
-import { preparePluginStorageDataRemoval, type PluginSyncedStorageRemovalAdapter } from '@/plugins/runtime/context/storage';
+import { preparePluginStorageDataRemoval } from '@/plugins/runtime/context/storage';
 import { resolvePluginStorePaths } from '@/plugins/store/paths';
 import {
   projectPluginCatalogEntrySnapshot,
+  type PluginCatalogEntryIntrospectionSnapshot,
 } from '@/plugins/projection/introspection/catalogSnapshot';
-import type { MarketplaceCatalogEntry } from '@/plugins/store/marketplace/catalog';
+import { readPluginDiagnosticDisplayMessage } from '@/plugins/projection/introspection/project';
 import {
   COMMUNITY_NPM_MARKETPLACE_SOURCE,
   createMarketplaceIndexService,
@@ -25,15 +38,38 @@ import { createNpmRegistryProfileService } from '@/plugins/distribution/npm/prof
 import { createNpmRegistryProfileProbe } from '@/plugins/distribution/npm/profiles/probe';
 import { resolveArchiveExpectedIntegrity } from '@/plugins/distribution/archive/integrity';
 import { isInteractiveTerminal, promptSecretInput } from '@/terminal/prompts/promptInput';
+import { delay } from '@/utils/time';
 import { handlePluginsRegistryCommand, type PluginsRegistryCommandDeps } from './pluginsRegistry';
-import { readDaemonPluginCatalog } from '@/daemon/controlClient';
-import { packLocalPlugin } from '@/plugins/packaging/pack';
-import { scaffoldLocalPlugin, type PluginScaffoldUiMode } from '@/plugins/scaffold/scaffold';
 import {
+  handlePluginsSettingsCommand,
+  type PluginsSettingsCommandDeps,
+} from './pluginsSettings';
+import { readDaemonPluginCatalog } from '@/daemon/controlClient';
+import type { PluginInvocationLogQuery } from '@/ui/logger';
+import {
+  readPluginInvocationLogsOnMachine,
+  resolvePluginInvocationLogTarget,
+  type MachinePluginInvocationLogReadResult,
+  type PluginInvocationLogMachineTarget,
+  type PluginInvocationLogTargetResolution,
+} from './pluginInvocationLogsMachine';
+import { packLocalPlugin } from '@/plugins/packaging/pack';
+import { scaffoldLocalPlugin } from '@/plugins/scaffold/scaffold';
+import {
+  isPluginAuthorRootMaterialized,
   normalizePluginSdkRegistryOrigin,
   runPluginAuthorToolchain,
   type PluginAuthorToolchainOperation,
 } from '@/plugins/authoring/toolchain';
+import {
+  describePluginAuthoringStageReport,
+  pluginAuthoringStageFailure,
+  pluginAuthoringStageReached,
+  projectPluginAuthoringAdmission,
+  type PluginAuthoringStageReport,
+} from '@/plugins/authoring/lifecycleStage';
+import { formatPluginDiagnosticSourceLocation } from '@/plugins/validation/diagnostics/sourceLocation';
+import { runPluginDevelopmentCycle } from '@/plugins/authoring/developmentCycle';
 import {
   runPackedPluginTest as runPackedPluginTestOwner,
   type PackedPluginTestResult,
@@ -43,51 +79,79 @@ import {
   startPluginDevelopmentSourceObserver,
   type PluginDevelopmentSourceRequest,
 } from '@/plugins/authoring/sourceObserver';
+import { runPluginAuthorDoctor } from '@/plugins/authoring/doctor';
 import type { PluginCompatibilityDiagnostic } from '@/plugins/validation/diagnostics/types';
-import { requestPluginDevelopmentChange } from '@/plugins/daemon/developmentClient';
-import { requestUserPluginChange, type UserPluginChangeResult } from '@/plugins/daemon/changeClient';
-import type { PluginChangeRequest } from '@/plugins/daemon/changeContract';
-import { isReservedHappierPluginId, PluginIdSchema, type MarketplaceIndexItemV1, type MarketplaceSourceRegistryV1, type MarketplaceSourceV1 } from '@happier-dev/protocol';
+import {
+  requestPluginDevelopmentChange,
+  type DevelopmentChangeResult,
+} from '@/plugins/daemon/developmentClient';
+import {
+  decideUserPluginChange,
+  requestUserPluginChange,
+  readUserPluginChangeStatus,
+  resolvePluginChangeRequestClientPaths,
+  resolveUserPluginChangeApproval,
+  type UserPluginChangeDecisionResult,
+  type UserPluginChangeResult,
+  type UserPluginChangeStatusResult,
+} from '@/plugins/daemon/changeClient';
+import type {
+  PluginChangePendingReviewResult,
+  PluginChangeRequest,
+} from '@/plugins/daemon/changeContract';
+import {
+  isReservedHappierPluginId,
+  PluginIdSchema,
+  PluginScaffoldUiModeSchema,
+  type MarketplaceIndexItemV1,
+  type MarketplaceSourceRegistryV1,
+  type MarketplaceSourceV1,
+  type PluginScaffoldUiMode,
+} from '@happier-dev/protocol';
 import {
   marketplaceInstallUnavailableReason,
   queryAllMarketplaceSourceItems,
   requestExactMarketplaceInstall,
 } from '@/plugins/store/marketplace/exactInstall';
 
-function projectMarketplaceIndexItemForLegacyCli(item: MarketplaceIndexItemV1): MarketplaceCatalogEntry {
-  const unavailableReason = marketplaceInstallUnavailableReason(item);
-  return {
-    pluginId: item.pluginId,
-    title: item.display.title,
-    description: item.display.description,
-    version: item.distribution.version,
-    manifest: null,
-    source: null,
-    manifestDigest: item.manifestDigest,
-    contributionIds: {
-      agents: [], agentRuntimes: [], actions: [], tools: [], commands: [], resources: [], settings: [], hooks: [], hostedWeb: [], reactNativeBundles: [], uiArtifacts: [], surfacePlacements: [],
-    },
-    installable: unavailableReason === null,
-    diagnostics: [],
-  };
+function projectMarketplaceIndexItemForCliOutput(
+  item: MarketplaceIndexItemV1,
+): Omit<MarketplaceIndexItemV1, 'manifestDigest'> {
+  const { manifestDigest: _manifestDigest, ...projected } = item;
+  return projected;
 }
 
 type PluginsCommandDeps = Readonly<{
   isInteractiveTerminal?: () => boolean;
   registry?: Omit<PluginsRegistryCommandDeps, 'write'>;
   runPluginAuthorToolchain?: typeof runPluginAuthorToolchain;
-  runPackedPluginTest?: (params: Readonly<{ projectRoot: string }>) => Promise<PackedPluginTestResult>;
+  runPackedPluginTest?: (params: Readonly<{
+    projectRoot: string;
+    sdkRegistryOrigin?: string | null;
+    prerequisiteLocators?: readonly string[];
+  }>) => Promise<PackedPluginTestResult>;
+  runPluginAuthorDoctor?: typeof runPluginAuthorDoctor;
   inspectPluginDevelopmentSource?: typeof inspectPluginDevelopmentSource;
   startPluginDevelopmentSourceObserver?: typeof startPluginDevelopmentSourceObserver;
   requestDevelopmentChange?: (
     request: PluginDevelopmentSourceRequest,
-    options?: Readonly<{ signal?: AbortSignal }>,
-  ) => Promise<Readonly<{
-    ok: boolean;
-    diagnostics?: readonly Readonly<{ code: string; message: string }>[];
-  }>>;
+    options?: Readonly<{
+      signal?: AbortSignal;
+      approval?: 'prompt' | 'none';
+    }>,
+  ) => Promise<DevelopmentChangeResult>;
+  readPluginChangeStatus?: typeof readUserPluginChangeStatus;
+  resolvePluginInvocationLogTarget?: (params: Readonly<{
+    requestedMachineId?: string;
+    signal?: AbortSignal;
+  }>) => Promise<PluginInvocationLogTargetResolution>;
+  readPluginInvocationLogsOnMachine?: (params: Readonly<{
+    target: PluginInvocationLogMachineTarget;
+    request: PluginInvocationLogQuery;
+    signal?: AbortSignal;
+  }>) => Promise<MachinePluginInvocationLogReadResult>;
+  executeSettingsAdministrationAction?: PluginsSettingsCommandDeps['executeSettingsAdministrationAction'];
   pluginDataRemoval?: Readonly<{
-    accountSettings: PluginSyncedStorageRemovalAdapter;
     removeDirectory?: (directoryPath: string) => Promise<void>;
   }>;
   marketplaceIndexService?: Pick<ReturnType<typeof createMarketplaceIndexService>, 'querySources'>;
@@ -101,12 +165,7 @@ const defaultPluginsCommandDeps: PluginsCommandDeps = {
   isInteractiveTerminal,
   requestDevelopmentChange: async (request, options) => await requestPluginDevelopmentChange(request, {}, options),
   runPackedPluginTest: runPackedPluginTestOwner,
-  pluginDataRemoval: {
-    accountSettings: {
-      getSettings: readActivePluginAccountSettings,
-      updateSettings: updateActivePluginAccountSettings,
-    },
-  },
+  pluginDataRemoval: {},
 };
 
 function usage(): string {
@@ -117,18 +176,22 @@ function usage(): string {
       { label: 'happier plugins list [--json]', description: 'List installed plugins and their descriptors' },
       { label: 'happier plugins show <pluginId> [--json]', description: 'Show one installed plugin in detail' },
       { label: 'happier plugins actions <pluginId> [--json]', description: 'List invocable actions and tools declared by one installed plugin' },
-      { label: 'happier plugins install <path|archive|package> [--kind path|archive|npm] [--selector <version>] [--integrity <sha256-SRI>] [--dev] [--dry-run] [--json]', description: 'Review, trust, and install through the active daemon' },
+      { label: 'happier plugins install <path|archive|package> [--kind path|archive|npm] [--selector <version>] [--integrity <sha256-SRI>] [--dev --trust] [--dry-run] [--json]', description: 'Review, trust, and install through the active daemon' },
       { label: 'happier plugins rollback <pluginId> [--json]', description: 'Restore the retained prior plugin version through the active daemon' },
       { label: 'happier plugins enable|disable <pluginId> [--json]', description: 'Change plugin admission through the active daemon' },
       { label: 'happier plugins uninstall <pluginId> [--delete-data --yes] [--json]', description: 'Remove a local installed plugin; preserve its data unless --delete-data --yes is supplied' },
-      { label: 'happier plugins create <name> [--id <plugin.id>] [--sdk-version <exact>] [--json]', description: 'Create a minimal TypeScript plugin ready for the normal development loop' },
-      { label: 'happier plugins dev [path] [--json]', description: 'Install declared dependencies and watch a source plugin through the daemon' },
-      { label: 'happier plugins test [path] [--packed] [--json]', description: 'Run unit tests or pack, install, and exercise the plugin through a disposable daemon' },
-      { label: 'happier plugins scaffold <target-dir> --id <plugin.id> --name <display name> [--sdk-version <exact>] [--ui hostedWeb|reactNative] [--json]', description: 'Create a minimal public SDK plugin template for local authoring' },
-      { label: 'happier plugins author install <path> [--json]', description: 'Materialize an external-author fixture with the managed package toolchain' },
+      { label: 'happier plugins create <name> [--id <plugin.id>] [--name <display name>] [--ui hostedWeb|reactNative] [--json]', description: 'Create a minimal TypeScript plugin, optionally with a wired UI surface, ready for the normal development loop' },
+      { label: 'happier plugins dev [path] [--sdk-registry <origin>] [--json]', description: 'Watch a source plugin and submit captured edit batches to the daemon-owned development cycle' },
+      { label: 'happier plugins test [path] [--packed] [--with-plugin <root-or-archive>]… [--sdk-registry <origin>] [--json]', description: 'Run unit tests or pack, install, and exercise the plugin through a disposable daemon' },
+      { label: 'happier plugins author install <path> [--sdk-registry <origin>] [--json]', description: 'Repair or refresh a stale or wiped author root; dev already materializes it' },
       { label: 'happier plugins author typecheck|build|test <path> [--json]', description: 'Run managed author typecheck, build, or test checks' },
-      { label: 'happier plugins pack <path> [--out <archive.tgz>] [--json]', description: 'Validate and package a local plugin into an installable archive' },
-      { label: 'happier plugins reload <developmentPluginId> [--json]', description: 'Reapply the current development source through the active daemon' },
+      { label: 'happier plugins pack <path> [--out <archive.tgz>] [--sdk-registry <origin>] [--json]', description: 'Validate and package a local plugin into an installable archive' },
+      { label: 'happier plugins doctor [path] [--json]', description: 'Evaluate and diagnose a code-defined plugin author module' },
+      { label: 'happier plugins reload [developmentPluginId] [--json]', description: 'Reapply the development source registered for this directory, or one explicit plugin id' },
+      { label: 'happier plugins change status|approve|reject <pendingChangeId> [--json]', description: 'Rejoin or explicitly decide a daemon-lifetime pending plugin change by its issued id' },
+      { label: 'happier plugins logs <pluginId> [--machine <id>] [--generation <id>] [--correlation <id>] [--cursor <byteOffset>] [--limit <1-500>] [--follow] [--json]', description: 'Read canonical structured logs from one exact current daemon' },
+      { label: 'happier plugins settings list <pluginId> --scope <account|daemon> [--machine <id>] [--json]', description: 'List declared Plugin Settings from one exact Account or daemon scope' },
+      { label: 'happier plugins settings secret status|bind|unbind|delete <pluginId> <localId> [--scope <account|daemon>] [--machine <id>]', description: 'Read or mutate declared Plugin secret custody without accepting raw secret material; daemon custody requires one exact machine' },
       { label: 'happier plugins registry add <origin> [--id <id>] [--name <name>] [--scope <@scope>] [--default] [--allow-private-network] [--json]', description: 'Add a private npm registry profile' },
       { label: 'happier plugins registry login <profileId> [--json]', description: 'Store a registry token through a hidden prompt' },
       { label: 'happier plugins registry test|logout|remove <profileId> [--json]', description: 'Test or change one private registry profile' },
@@ -154,15 +217,6 @@ function usage(): string {
   });
 }
 
-function readSingleValue(argv: readonly string[], flag: string): string | null {
-  const index = argv.indexOf(flag);
-  if (index < 0) return null;
-  const value = argv[index + 1];
-  if (typeof value !== 'string') return null;
-  const trimmed = value.trim();
-  return trimmed ? trimmed : null;
-}
-
 type PluginInstallSourceKind = 'path' | 'archive' | 'npm';
 
 function parseInstallFlags(args: readonly string[]): Readonly<{
@@ -171,19 +225,21 @@ function parseInstallFlags(args: readonly string[]): Readonly<{
   selector: string | null;
   integrity: string | null;
   dev: boolean;
+  trust: boolean;
   sdkRegistryOrigin: string | null;
 }> {
-  const rawKind = readSingleValue(args, '--kind');
+  const rawKind = readFlagValue(args, '--kind');
   if (rawKind !== null && rawKind !== 'path' && rawKind !== 'archive' && rawKind !== 'npm') {
     throw new Error(`Unknown plugin source kind: ${rawKind}`);
   }
   return {
     dryRun: args.includes('--dry-run'),
     sourceKind: rawKind,
-    selector: readSingleValue(args, '--selector'),
-    integrity: readSingleValue(args, '--integrity'),
+    selector: readFlagValue(args, '--selector'),
+    integrity: readFlagValue(args, '--integrity'),
     dev: args.includes('--dev'),
-    sdkRegistryOrigin: normalizePluginSdkRegistryOrigin(readSingleValue(args, '--sdk-registry')),
+    trust: args.includes('--trust'),
+    sdkRegistryOrigin: normalizePluginSdkRegistryOrigin(readFlagValue(args, '--sdk-registry')),
   };
 }
 
@@ -236,25 +292,8 @@ async function createPluginInstallRequest(
   };
 }
 
-function collectPositionalArgs(args: readonly string[], startIndex: number, valueFlags: readonly string[] = []): string[] {
-  const positional: string[] = [];
-  for (let index = startIndex; index < args.length; index += 1) {
-    const raw = String(args[index] ?? '').trim();
-    if (!raw) continue;
-    if (valueFlags.includes(raw)) {
-      index += 1;
-      continue;
-    }
-    if (raw.startsWith('-')) {
-      continue;
-    }
-    positional.push(raw);
-  }
-  return positional;
-}
-
 function readMarketplaceSourceReference(args: readonly string[], startIndex: number): string | null {
-  const positional = collectPositionalArgs(args, startIndex);
+  const positional = readCommandPositionals(args, { startIndex });
   return positional[0] ?? null;
 }
 
@@ -262,7 +301,7 @@ function readMarketplaceSelection(args: readonly string[], startIndex: number): 
   sourceRef: string | null;
   pluginId: string | null;
 }> {
-  const positional = collectPositionalArgs(args, startIndex);
+  const positional = readCommandPositionals(args, { startIndex });
   if (positional.length === 1) {
     return { sourceRef: null, pluginId: positional[0] ?? null };
   }
@@ -280,9 +319,12 @@ function readMarketplaceSourceUpsertInput(args: readonly string[]): Readonly<{
   registryProfileId: string | null | undefined;
   enabled: boolean;
 }> {
-  const positional = collectPositionalArgs(args, 3, ['--title', '--description', '--origin', '--registry-profile']);
-  const origin = readSingleValue(args, '--origin');
-  const registryProfileId = readSingleValue(args, '--registry-profile');
+  const positional = readCommandPositionals(args, {
+    startIndex: 3,
+    valueFlags: ['--title', '--description', '--origin', '--registry-profile'],
+  });
+  const origin = readFlagValue(args, '--origin');
+  const registryProfileId = readFlagValue(args, '--registry-profile');
   if (origin !== null && origin !== 'user') {
     throw new Error(`Unknown marketplace source origin: ${origin}`);
   }
@@ -291,8 +333,8 @@ function readMarketplaceSourceUpsertInput(args: readonly string[]): Readonly<{
   }
   return {
     sourceUrl: positional[0] ?? null,
-    title: readSingleValue(args, '--title'),
-    description: readSingleValue(args, '--description'),
+    title: readFlagValue(args, '--title'),
+    description: readFlagValue(args, '--description'),
     origin: origin as 'user' | null,
     registryProfileId: args.includes('--no-registry-profile') ? null : registryProfileId ?? undefined,
     enabled: args.includes('--disabled') ? false : true,
@@ -322,30 +364,23 @@ async function resolveMarketplaceSourceForCommand(store: Readonly<{
   return await store.resolvePreferredSource();
 }
 
-function formatMarketplaceContributionSummary(entry: Readonly<{ contributionIds: MarketplaceCatalogEntry['contributionIds'] }>): string {
-  const parts = [
-    `${entry.contributionIds.agents.length} agents`,
-    `${entry.contributionIds.agentRuntimes.length} agent runtimes`,
-    `${entry.contributionIds.actions.length} actions`,
-    `${entry.contributionIds.tools.length} tools`,
-    `${entry.contributionIds.commands.length} commands`,
-    `${entry.contributionIds.hooks.length} hooks`,
-    `${entry.contributionIds.reactNativeBundles.length + entry.contributionIds.uiArtifacts.length} UI`,
-  ];
-  return parts.join(', ');
+function formatMarketplaceContributionSummary(entry: Pick<MarketplaceIndexItemV1, 'summary'>): string {
+  return entry.summary.contributions.length > 0
+    ? entry.summary.contributions.join(', ')
+    : 'none';
 }
 
 function readContributionIdentityDisplayValue(
-  contribution: PluginCatalogEntry['contributionIntrospection']['contributions'][number]['contribution'],
+  contribution: PluginCatalogEntryIntrospectionSnapshot['contributions']['contributions'][number]['contribution'],
 ): string {
   if (contribution.kind === 'localId') return contribution.localId;
   if (contribution.kind === 'locale') return contribution.locale;
   return contribution.domainId;
 }
 
-function formatInstalledContributionSummary(entry: PluginCatalogEntry): string {
+function formatInstalledContributionSummary(entry: PluginCatalogEntryIntrospectionSnapshot): string {
   const counts = new Map<string, number>();
-  for (const contribution of entry.contributionIntrospection.contributions) {
+  for (const contribution of entry.contributions.contributions) {
     const family = contribution.contribution.family;
     counts.set(family, (counts.get(family) ?? 0) + 1);
   }
@@ -387,7 +422,7 @@ function readPluginActionCatalog(entry: PluginCatalogEntry): readonly PluginActi
   )));
 }
 
-function printHumanList(entries: readonly PluginCatalogEntry[]): void {
+function printHumanList(entries: readonly PluginCatalogEntryIntrospectionSnapshot[]): void {
   const out = createOutputBuilder();
   if (entries.length === 0) {
     out.line(neutral('(no plugins installed)'));
@@ -403,7 +438,7 @@ function printHumanList(entries: readonly PluginCatalogEntry[]): void {
     out.line(`  ${dim('Manifest:')} ${entry.manifestPath}`);
     out.line(`  ${dim('Contributions:')} ${formatInstalledContributionSummary(entry)}`);
     if (entry.diagnostics.length > 0) {
-      out.line(`  ${fail('Diagnostics:')} ${entry.diagnostics.map((diagnostic) => diagnostic.message).join('; ')}`);
+      out.line(`  ${fail('Diagnostics:')} ${entry.diagnostics.map(readPluginDiagnosticDisplayMessage).join('; ')}`);
     }
   }
   console.log(out.render());
@@ -447,7 +482,7 @@ function findPersistedMarketplaceSource(registry: MarketplaceSourceRegistryV1, r
   return registry.sources.find((entry) => entry.sourceUrl === normalized) ?? null;
 }
 
-function printHumanShow(entry: PluginCatalogEntry): void {
+function printHumanShow(entry: PluginCatalogEntryIntrospectionSnapshot): void {
   const out = createOutputBuilder();
   out.line(sectionTitle(entry.title));
   out.line(`${dim('Plugin ID:')} ${entry.pluginId}`);
@@ -460,7 +495,7 @@ function printHumanShow(entry: PluginCatalogEntry): void {
   out.line(`${dim('Manifest:')} ${entry.manifestPath}`);
   out.line(`${dim('Contributions:')} ${formatInstalledContributionSummary(entry)}`);
   const families = new Map<string, string[]>();
-  for (const contribution of entry.contributionIntrospection.contributions) {
+  for (const contribution of entry.contributions.contributions) {
     const ids = families.get(contribution.contribution.family) ?? [];
     ids.push(readContributionIdentityDisplayValue(contribution.contribution));
     families.set(contribution.contribution.family, ids);
@@ -472,7 +507,7 @@ function printHumanShow(entry: PluginCatalogEntry): void {
     out.blank();
     out.line(sectionTitle('Diagnostics'));
     for (const diagnostic of entry.diagnostics) {
-      out.line(`${fail('•')} ${diagnostic.message}`);
+      out.line(`${fail('•')} ${readPluginDiagnosticDisplayMessage(diagnostic)}`);
     }
   }
   console.log(out.render());
@@ -481,7 +516,7 @@ function printHumanShow(entry: PluginCatalogEntry): void {
 function printHumanMarketplaceList(params: Readonly<{
   title: string;
   sourceUrl: string;
-  entries: readonly MarketplaceCatalogEntry[];
+  entries: readonly MarketplaceIndexItemV1[];
   diagnostics: readonly { message: string }[];
 }>): void {
   const out = createOutputBuilder();
@@ -491,14 +526,10 @@ function printHumanMarketplaceList(params: Readonly<{
     out.line(neutral('(no marketplace entries)'));
   }
   for (const entry of params.entries) {
-    const installable = entry.installable ? ok('installable') : neutral('descriptor-only');
-    const source = entry.source ? dim(`(${entry.source.kind})`) : neutral('(no source)');
-    out.line(`${entry.title} ${dim(entry.pluginId)} ${source} ${installable}`);
-    out.line(`  ${dim('Version:')} ${entry.version}`);
+    const installable = marketplaceInstallUnavailableReason(entry) === null ? ok('installable') : neutral('descriptor-only');
+    out.line(`${entry.display.title} ${dim(entry.pluginId)} ${dim(`(${entry.source.kind})`)} ${installable}`);
+    out.line(`  ${dim('Version:')} ${entry.distribution.version}`);
     out.line(`  ${dim('Contributions:')} ${formatMarketplaceContributionSummary(entry)}`);
-    if (entry.diagnostics.length > 0) {
-      out.line(`  ${fail('Diagnostics:')} ${entry.diagnostics.map((diagnostic) => diagnostic.message).join('; ')}`);
-    }
   }
   for (const diagnostic of params.diagnostics) {
     out.line(`${fail('Diagnostics:')} ${diagnostic.message}`);
@@ -509,36 +540,18 @@ function printHumanMarketplaceList(params: Readonly<{
 function printHumanMarketplaceShow(params: Readonly<{
   title: string;
   sourceUrl: string;
-  entry: MarketplaceCatalogEntry;
+  entry: MarketplaceIndexItemV1;
   diagnostics: readonly { message: string }[];
 }>): void {
   const out = createOutputBuilder();
-  out.line(sectionTitle(params.entry.title));
+  out.line(sectionTitle(params.entry.display.title));
   out.line(`${dim('Marketplace:')} ${params.title}`);
   out.line(`${dim('Source:')} ${params.sourceUrl}`);
   out.line(`${dim('Plugin ID:')} ${params.entry.pluginId}`);
-  out.line(`${dim('Version:')} ${params.entry.version}`);
-  out.line(`${dim('Installable:')} ${params.entry.installable ? 'yes' : 'no'}`);
-  if (params.entry.source) {
-    out.line(`${dim('Entry Source:')} ${params.entry.source.kind} ${params.entry.source.locator}`);
-  }
+  out.line(`${dim('Version:')} ${params.entry.distribution.version}`);
+  out.line(`${dim('Installable:')} ${marketplaceInstallUnavailableReason(params.entry) === null ? 'yes' : 'no'}`);
+  out.line(`${dim('Entry Source:')} ${params.entry.source.kind} ${params.entry.source.sourceUrl}`);
   out.line(`${dim('Contributions:')} ${formatMarketplaceContributionSummary(params.entry)}`);
-  if (params.entry.contributionIds.agents.length > 0) {
-    out.line(`  ${dim('Agents:')} ${params.entry.contributionIds.agents.join(', ')}`);
-  }
-  if (params.entry.contributionIds.agentRuntimes.length > 0) {
-    out.line(`  ${dim('Agent runtimes:')} ${params.entry.contributionIds.agentRuntimes.join(', ')}`);
-  }
-  if (params.entry.contributionIds.hooks.length > 0) {
-    out.line(`  ${dim('Hooks:')} ${params.entry.contributionIds.hooks.join(', ')}`);
-  }
-  if (params.entry.diagnostics.length > 0) {
-    out.blank();
-    out.line(sectionTitle('Diagnostics'));
-    for (const diagnostic of params.entry.diagnostics) {
-      out.line(`${fail('•')} ${diagnostic.message}`);
-    }
-  }
   for (const diagnostic of params.diagnostics) {
     out.line(`${fail('•')} ${diagnostic.message}`);
   }
@@ -548,13 +561,13 @@ function printHumanMarketplaceShow(params: Readonly<{
 async function runPluginsListCommand(args: readonly string[]): Promise<void> {
   const catalog = await readDaemonPluginCatalog();
   if (catalog.kind === 'unavailable') {
-    printPluginCatalogUnavailable(args, 'plugins_list', catalog.code);
+    await printPluginCatalogUnavailable(args, 'plugins_list', catalog.code);
     return;
   }
   const entries = catalog.plugins;
   const json = wantsJson(args);
   if (json) {
-    printJsonEnvelope({
+    await printJsonEnvelope({
       ok: true,
       kind: 'plugins_list',
       data: {
@@ -564,7 +577,7 @@ async function runPluginsListCommand(args: readonly string[]): Promise<void> {
     return;
   }
 
-  printHumanList(entries);
+  printHumanList(entries.map((entry) => projectPluginCatalogEntrySnapshot(entry)));
 }
 
 async function runPluginsShowCommand(args: readonly string[]): Promise<void> {
@@ -576,7 +589,7 @@ async function runPluginsShowCommand(args: readonly string[]): Promise<void> {
 
   const catalog = await readDaemonPluginCatalog();
   if (catalog.kind === 'unavailable') {
-    printPluginCatalogUnavailable(args, 'plugins_show', catalog.code);
+    await printPluginCatalogUnavailable(args, 'plugins_show', catalog.code);
     return;
   }
   const entries = catalog.plugins;
@@ -586,7 +599,7 @@ async function runPluginsShowCommand(args: readonly string[]): Promise<void> {
   }
 
   if (wantsJson(args)) {
-    printJsonEnvelope({
+    await printJsonEnvelope({
       ok: true,
       kind: 'plugins_show',
       data: {
@@ -596,17 +609,17 @@ async function runPluginsShowCommand(args: readonly string[]): Promise<void> {
     return;
   }
 
-  printHumanShow(entry);
+  printHumanShow(projectPluginCatalogEntrySnapshot(entry));
 }
 
-function printPluginCatalogUnavailable(
+async function printPluginCatalogUnavailable(
   args: readonly string[],
   kind: 'plugins_list' | 'plugins_show',
   code: string,
-): void {
+): Promise<void> {
   const message = `The active daemon plugin catalog is unavailable (${code})`;
   if (wantsJson(args)) {
-    printJsonEnvelope({
+    await printJsonEnvelope({
       ok: false,
       kind,
       error: { code, message },
@@ -628,7 +641,7 @@ async function runPluginsActionsCommand(args: readonly string[]): Promise<void> 
   if (!entry) {
     const message = `Unknown plugin id: ${pluginId}`;
     if (wantsJson(args)) {
-      printJsonEnvelope({
+      await printJsonEnvelope({
         ok: false,
         kind: 'plugins_actions',
         error: {
@@ -645,7 +658,7 @@ async function runPluginsActionsCommand(args: readonly string[]): Promise<void> 
 
   const actions = readPluginActionCatalog(entry);
   if (wantsJson(args)) {
-    printJsonEnvelope({
+    await printJsonEnvelope({
       ok: true,
       kind: 'plugins_actions',
       data: {
@@ -676,6 +689,12 @@ function describePluginChangeFailure(result: Exclude<UserPluginChangeResult, { k
   details?: Readonly<Record<string, unknown>>;
 }> {
   switch (result.kind) {
+    case 'sourceRootReviewRequired':
+      return {
+        code: 'source_root_review_required',
+        message: `Source-root review is required for ${result.review.source.locator}.`,
+        details: { pendingChangeId: result.pendingChangeId, review: result.review },
+      };
     case 'reviewRequired':
       return {
         code: 'review_required',
@@ -710,14 +729,33 @@ function describePluginChangeFailure(result: Exclude<UserPluginChangeResult, { k
   }
 }
 
-function reportPluginChangeFailure(
+function pluginChangeReviewRejoinCommands(pendingChangeId: string): readonly string[] {
+  return [
+    `Review status: happier plugins change status ${pendingChangeId}`,
+    `Approve after review: happier plugins change approve ${pendingChangeId}`,
+    `Reject: happier plugins change reject ${pendingChangeId}`,
+  ];
+}
+
+function describePendingPluginReviewForTerminal(
+  pendingReview: PluginChangePendingReviewResult,
+): readonly string[] {
+  return [
+    pendingReview.kind === 'sourceRootReviewRequired'
+      ? `Source-root review remains pending for ${pendingReview.review.source.locator}.`
+      : `Install and trust review remains pending for ${pendingReview.review.displayName}.`,
+    ...pluginChangeReviewRejoinCommands(pendingReview.pendingChangeId),
+  ];
+}
+
+async function reportPluginChangeFailure(
   args: readonly string[],
   outputKind: string,
   result: Exclude<UserPluginChangeResult, { kind: 'committed' }>,
-): void {
+): Promise<void> {
   const failure = describePluginChangeFailure(result);
   if (wantsJson(args)) {
-    printJsonEnvelope({
+    await printJsonEnvelope({
       ok: false,
       kind: outputKind,
       error: {
@@ -728,14 +766,398 @@ function reportPluginChangeFailure(
     }, { exitCode: 1 });
     return;
   }
-  console.error(errorFrame('Error:', [failure.message]));
+  const pendingChangeId = result.kind === 'sourceRootReviewRequired' || result.kind === 'reviewRequired'
+    ? result.pendingChangeId
+    : null;
+  console.error(errorFrame('Error:', [
+    failure.message,
+    ...(pendingChangeId === null
+      ? []
+      : pluginChangeReviewRejoinCommands(pendingChangeId)),
+  ]));
   process.exitCode = 1;
 }
 
-function interactivePluginApproval(deps: PluginsCommandDeps, args: readonly string[]): 'prompt' | 'none' {
-  return wantsJson(args) || !(deps.isInteractiveTerminal ?? isInteractiveTerminal)()
-    ? 'none'
-    : 'prompt';
+async function printPluginChangeStatus(
+  args: readonly string[],
+  pendingChangeId: string,
+  status: UserPluginChangeStatusResult,
+): Promise<void> {
+  if (status.kind === 'daemonUnavailable') {
+    const message = 'The daemon plugin-change service is unavailable; a restarted daemon may no longer retain this pending change.';
+    if (wantsJson(args)) {
+      await printJsonEnvelope({
+        ok: false,
+        kind: 'plugins_change_status',
+        error: { code: 'daemon_unavailable', message },
+      }, { exitCode: 1 });
+      return;
+    }
+    console.error(errorFrame('Error:', [message]));
+    process.exitCode = 1;
+    return;
+  }
+  if (wantsJson(args)) {
+    await printJsonEnvelope({
+      ok: true,
+      kind: 'plugins_change_status',
+      data: status,
+    });
+    return;
+  }
+
+  const out = createOutputBuilder();
+  if (status.kind === 'sourceRootReviewRequired') {
+    out.line(neutral(`Source-root review remains pending for ${status.review.source.locator}.`));
+  } else if (status.kind === 'reviewRequired') {
+    out.line(neutral(`Install and trust review remains pending for ${status.review.displayName}.`));
+  } else if (status.kind === 'applying') {
+    out.line(neutral(`Plugin change ${pendingChangeId} is still applying.`));
+  } else if (status.kind === 'terminal') {
+    out.line(status.result.kind === 'committed'
+      ? ok(`Plugin change ${pendingChangeId} completed.`)
+      : neutral(`Plugin change ${pendingChangeId} reached terminal state: ${status.result.kind}.`));
+  } else {
+    out.line(neutral(`Plugin change ${pendingChangeId} has expired.`));
+  }
+  console.log(out.render());
+}
+
+async function printPluginChangeDecisionResult(
+  args: readonly string[],
+  pendingChangeId: string,
+  decision: 'approve' | 'reject',
+  result: UserPluginChangeDecisionResult,
+): Promise<void> {
+  if (result.kind === 'committed') {
+    if (wantsJson(args)) {
+      await printJsonEnvelope({
+        ok: true,
+        kind: 'plugins_change_decision',
+        data: { outcome: 'applied', pendingChangeId, decision, result },
+      });
+      return;
+    }
+    console.log(ok(`Plugin change ${pendingChangeId} completed.`));
+    return;
+  }
+
+  if (result.kind === 'cancelled') {
+    const outcome = decision === 'reject' ? 'rejected' : 'cancelled';
+    if (wantsJson(args)) {
+      await printJsonEnvelope({
+        ok: true,
+        kind: 'plugins_change_decision',
+        data: { outcome, pendingChangeId, decision, result },
+      });
+      return;
+    }
+    console.log(neutral(`Plugin change ${pendingChangeId} was ${outcome}.`));
+    return;
+  }
+
+  if (result.kind === 'terminal') {
+    await printPluginChangeDecisionResult(args, pendingChangeId, decision, result.result);
+    return;
+  }
+
+  if (result.kind === 'sourceRootReviewRequired' || result.kind === 'reviewRequired') {
+    const failure = describePluginChangeFailure(result);
+    if (wantsJson(args)) {
+      await printJsonEnvelope({
+        ok: false,
+        kind: 'plugins_change_decision',
+        error: {
+          code: failure.code,
+          message: failure.message,
+          outcome: 'reviewRequired',
+          ...(failure.details ?? {}),
+        },
+      }, { exitCode: 1 });
+      return;
+    }
+    console.error(errorFrame('Review required:', [
+      failure.message,
+      ...pluginChangeReviewRejoinCommands(result.pendingChangeId),
+    ]));
+    process.exitCode = 1;
+    return;
+  }
+
+  if (result.kind === 'applying') {
+    const message = `Plugin change ${pendingChangeId} is still applying.`;
+    if (wantsJson(args)) {
+      await printJsonEnvelope({
+        ok: false,
+        kind: 'plugins_change_decision',
+        error: { code: 'applying', message, outcome: 'applying', pendingChangeId },
+      }, { exitCode: 1 });
+      return;
+    }
+    console.error(errorFrame('Pending:', [message, `Review status: happier plugins change status ${pendingChangeId}`]));
+    process.exitCode = 1;
+    return;
+  }
+
+  if (result.kind === 'daemonUnavailable') {
+    const message = 'The daemon plugin-change service is unavailable; a restarted daemon may no longer retain this pending change.';
+    if (wantsJson(args)) {
+      await printJsonEnvelope({
+        ok: false,
+        kind: 'plugins_change_decision',
+        error: { code: 'daemon_unavailable', message, outcome: 'failed', pendingChangeId },
+      }, { exitCode: 1 });
+      return;
+    }
+    console.error(errorFrame('Error:', [message]));
+    process.exitCode = 1;
+    return;
+  }
+
+  await reportPluginChangeFailure(args, 'plugins_change_decision', result);
+}
+
+async function runPluginsChangeCommand(
+  args: readonly string[],
+  deps: PluginsCommandDeps,
+  runtime: PluginsCommandRuntime,
+): Promise<void> {
+  const changeSubcommand = String(args[1] ?? '').trim();
+  if (changeSubcommand !== 'status' && changeSubcommand !== 'approve' && changeSubcommand !== 'reject') {
+    console.log(usage());
+    return;
+  }
+  const pendingChangeId = readCommandPositionals(args, { startIndex: 2 })[0] ?? null;
+  if (!pendingChangeId || pendingChangeId === 'help' || pendingChangeId === '--help' || pendingChangeId === '-h') {
+    console.log(usage());
+    return;
+  }
+  if (changeSubcommand === 'status') {
+    const status = await (deps.readPluginChangeStatus ?? readUserPluginChangeStatus)({
+      pendingChangeId,
+      ...(runtime.signal ? { signal: runtime.signal } : {}),
+    });
+    await printPluginChangeStatus(args, pendingChangeId, status);
+    return;
+  }
+
+  const result = await decideUserPluginChange({
+    pendingChangeId,
+    decision: changeSubcommand,
+    ...(runtime.signal ? { signal: runtime.signal } : {}),
+  });
+  await printPluginChangeDecisionResult(args, pendingChangeId, changeSubcommand, result);
+}
+
+function readPluginLogsRequest(args: readonly string[]): Readonly<{
+  pluginId: string;
+  machineId?: string;
+  generation?: string;
+  correlationId?: string;
+  cursor?: number;
+  limit?: number;
+}> | null {
+  const pluginId = readCommandPositionals(args, {
+    startIndex: 1,
+    valueFlags: ['--machine', '--generation', '--correlation', '--cursor', '--limit'],
+  })[0] ?? null;
+  if (!pluginId || pluginId === 'help' || pluginId === '--help' || pluginId === '-h') return null;
+
+  const readOptionalFlag = (flag: '--generation' | '--correlation'): string | undefined => {
+    if (!hasFlagValue(args, flag)) return undefined;
+    const value = readFlagValue(args, flag);
+    if (!value) throw new Error(`${flag} requires a value`);
+    return value;
+  };
+  const readBoundedIntegerFlag = (
+    flag: '--cursor' | '--limit',
+    minimum: number,
+    maximum: number,
+  ): number | undefined => {
+    const inlineValues = args
+      .filter((argument) => argument.startsWith(`${flag}=`))
+      .map((argument) => argument.slice(flag.length + 1).trim());
+    const separateCount = args.filter((argument) => argument === flag).length;
+    if (inlineValues.length + separateCount > 1) {
+      throw new Error(`${flag} may be specified only once`);
+    }
+    if (inlineValues.length + separateCount === 0) return undefined;
+    const raw = inlineValues.length > 0
+      ? inlineValues[0] ?? ''
+      : readFlagValue(args, flag) ?? '';
+    if (!/^(?:0|[1-9][0-9]*)$/u.test(raw)) {
+      throw new Error(`${flag} must be an integer between ${minimum} and ${maximum}`);
+    }
+    const value = Number(raw);
+    if (!Number.isSafeInteger(value) || value < minimum || value > maximum) {
+      throw new Error(`${flag} must be an integer between ${minimum} and ${maximum}`);
+    }
+    return value;
+  };
+  const inlineMachineValues = args
+    .filter((argument) => argument.startsWith('--machine='))
+    .map((argument) => argument.slice('--machine='.length).trim());
+  const separateMachineCount = args.filter((argument) => argument === '--machine').length;
+  if (inlineMachineValues.length + separateMachineCount > 1) {
+    throw new Error('--machine may be specified only once');
+  }
+  const machineId = inlineMachineValues.length > 0
+    ? inlineMachineValues[0] ?? null
+    : separateMachineCount === 1
+      ? readFlagValue(args, '--machine')
+      : null;
+  if ((inlineMachineValues.length > 0 || separateMachineCount === 1) && !machineId) {
+    throw new Error('--machine requires a value');
+  }
+  const generation = readOptionalFlag('--generation');
+  const correlationId = readOptionalFlag('--correlation');
+  const cursor = readBoundedIntegerFlag('--cursor', 0, Number.MAX_SAFE_INTEGER);
+  const limit = readBoundedIntegerFlag('--limit', 1, 500);
+  return {
+    pluginId,
+    ...(machineId ? { machineId } : {}),
+    ...(generation ? { generation } : {}),
+    ...(correlationId ? { correlationId } : {}),
+    ...(cursor === undefined ? {} : { cursor }),
+    ...(limit === undefined ? {} : { limit }),
+  };
+}
+
+async function printPluginLogsFailure(
+  args: readonly string[],
+  code: string,
+  message: string,
+  candidates?: readonly PluginInvocationLogMachineTarget[],
+): Promise<void> {
+  if (wantsJson(args)) {
+    await printJsonEnvelope({
+      ok: false,
+      kind: 'plugins_logs',
+      error: {
+        code,
+        message,
+        ...(candidates ? { candidates } : {}),
+      },
+    }, { exitCode: 1 });
+    return;
+  }
+  console.error(errorFrame('Error:', [
+    message,
+    ...(candidates?.map((candidate) => `${candidate.machineLabel} (${candidate.machineId}) on ${candidate.serverLabel}`) ?? []),
+  ]));
+  process.exitCode = 1;
+}
+
+function printPluginLogsTarget(target: PluginInvocationLogMachineTarget): void {
+  console.log(neutral(`Server: ${target.serverLabel} (${target.serverIdentityId})`));
+  console.log(neutral(`Machine: ${target.machineLabel} (${target.machineId})`));
+}
+
+async function printPluginLogsResult(
+  args: readonly string[],
+  target: PluginInvocationLogMachineTarget,
+  result: MachinePluginInvocationLogReadResult,
+): Promise<void> {
+  if (result.kind === 'unavailable') {
+    await printPluginLogsFailure(args, result.code, 'The selected daemon could not provide plugin logs.');
+    return;
+  }
+  if (wantsJson(args)) {
+    await printJsonEnvelope({ ok: true, kind: 'plugins_logs', data: { target, ...result } });
+    return;
+  }
+  if (result.records.length === 0) {
+    console.log(neutral('No matching plugin logs.'));
+    return;
+  }
+  for (const record of result.records) {
+    await writeJsonStdout(record);
+  }
+}
+
+async function waitForPluginLogsPoll(signal?: AbortSignal): Promise<boolean> {
+  if (signal?.aborted) return false;
+  if (!signal) {
+    await delay(250);
+    return true;
+  }
+  await new Promise<void>((resolve) => {
+    const complete = (): void => {
+      clearTimeout(timer);
+      signal.removeEventListener('abort', complete);
+      resolve();
+    };
+    const timer = setTimeout(complete, 250);
+    signal.addEventListener('abort', complete, { once: true });
+  });
+  return !signal.aborted;
+}
+
+async function runPluginsLogsCommand(
+  args: readonly string[],
+  deps: PluginsCommandDeps,
+  runtime: PluginsCommandRuntime,
+): Promise<void> {
+  const request = readPluginLogsRequest(args);
+  if (!request) {
+    console.log(usage());
+    return;
+  }
+  if (runtime.signal?.aborted) return;
+  const targetResolution = await (deps.resolvePluginInvocationLogTarget ?? resolvePluginInvocationLogTarget)({
+    ...(request.machineId ? { requestedMachineId: request.machineId } : {}),
+    ...(runtime.signal ? { signal: runtime.signal } : {}),
+  });
+  if (runtime.signal?.aborted) return;
+  if (targetResolution.kind === 'selection_required') {
+    await printPluginLogsFailure(
+      args,
+      'machine_selection_required',
+      'Select one current machine with --machine <id> before reading plugin logs.',
+      targetResolution.candidates,
+    );
+    return;
+  }
+  if (targetResolution.kind === 'unavailable') {
+    await printPluginLogsFailure(args, targetResolution.code, targetResolution.message);
+    return;
+  }
+  const target = targetResolution.target;
+  const readLogs = deps.readPluginInvocationLogsOnMachine ?? readPluginInvocationLogsOnMachine;
+  const { machineId: _machineId, cursor: requestedCursor, ...query } = request;
+  if (!wantsJson(args)) printPluginLogsTarget(target);
+  const follow = args.includes('--follow');
+  let cursor = requestedCursor;
+  let previousEmptyFollowPage: Readonly<{ cursor: number; hasMore: boolean }> | null = null;
+  for (;;) {
+    const result = await readLogs({
+      target,
+      request: {
+        ...query,
+        ...(cursor === undefined ? {} : { cursor }),
+      },
+      ...(runtime.signal ? { signal: runtime.signal } : {}),
+    });
+    const unchangedEmptyFollowPage = follow
+      && result.kind === 'available'
+      && result.records.length === 0
+      && previousEmptyFollowPage !== null
+      && previousEmptyFollowPage.cursor === result.cursor
+      && previousEmptyFollowPage.hasMore === result.hasMore;
+    if (!unchangedEmptyFollowPage) await printPluginLogsResult(args, target, result);
+    previousEmptyFollowPage = result.kind === 'available' && result.records.length === 0
+      ? { cursor: result.cursor, hasMore: result.hasMore }
+      : null;
+    if (result.kind === 'available' && result.hasMore && !follow && !wantsJson(args)) {
+      console.log(neutral(`More log data is available. Continue with --cursor ${result.cursor}.`));
+    }
+    if (result.kind === 'unavailable' || !follow || runtime.signal?.aborted) return;
+
+    const madeProgress = cursor !== result.cursor;
+    cursor = result.cursor;
+    if (result.hasMore && madeProgress) continue;
+    if (!await waitForPluginLogsPoll(runtime.signal)) return;
+  }
 }
 
 async function runPluginsInstallCommand(args: readonly string[], deps: PluginsCommandDeps): Promise<void> {
@@ -746,20 +1168,28 @@ async function runPluginsInstallCommand(args: readonly string[], deps: PluginsCo
   }
 
   const flags = parseInstallFlags(args.slice(2));
-  const request = await createPluginInstallRequest(locator, flags);
+  // Preview the exact request the daemon will receive, including the
+  // client-resolved source path.
+  const request = resolvePluginChangeRequestClientPaths(
+    await createPluginInstallRequest(locator, flags),
+  );
   if (flags.dryRun) {
     if (wantsJson(args)) {
-      printJsonEnvelope({ ok: true, kind: 'plugins_install', data: { dryRun: true, request } });
+      await printJsonEnvelope({ ok: true, kind: 'plugins_install', data: { dryRun: true, request } });
       return;
     }
     console.log(`Dry run: would request ${request.kind} for ${locator}.`);
     return;
   }
-  const approval = interactivePluginApproval(deps, args);
+  const approval = resolveUserPluginChangeApproval({
+    interactive: (deps.isInteractiveTerminal ?? isInteractiveTerminal)(),
+    json: wantsJson(args),
+    explicitTrust: flags.trust,
+  });
   const result = await requestUserPluginChange({ request, approval });
 
   if (result.kind !== 'committed') {
-    reportPluginChangeFailure(args, 'plugins_install', result);
+    await reportPluginChangeFailure(args, 'plugins_install', result);
     return;
   }
   const catalog = await readDaemonPluginCatalog();
@@ -768,7 +1198,7 @@ async function runPluginsInstallCommand(args: readonly string[], deps: PluginsCo
     : null;
 
   if (wantsJson(args)) {
-    printJsonEnvelope({
+    await printJsonEnvelope({
       ok: true,
       kind: 'plugins_install',
       data: {
@@ -787,7 +1217,7 @@ async function runPluginsInstallCommand(args: readonly string[], deps: PluginsCo
   out.line(`  ${dim('Plugin ID:')} ${result.pluginId}`);
   if (entry) {
     out.line(`  ${dim('Manifest:')} ${entry.manifestPath}`);
-    out.line(`  ${dim('Contributions:')} ${formatInstalledContributionSummary(entry)}`);
+    out.line(`  ${dim('Contributions:')} ${formatInstalledContributionSummary(projectPluginCatalogEntrySnapshot(entry))}`);
   }
   if (result.pendingSurfaces.length > 0) {
     out.line(neutral(`  Pending reconciliation: ${result.pendingSurfaces.join(', ')}`));
@@ -799,7 +1229,7 @@ function summarizePluginForCommand(entry: PluginCatalogEntry) {
   return projectPluginCatalogEntrySnapshot(entry);
 }
 
-type PluginDataRemovalStep = 'uninstall' | 'syncedStorage' | 'localStorage' | 'secrets';
+type PluginDataRemovalStep = 'uninstall' | 'daemonStorage' | 'secrets';
 
 function pluginDataRemovalCauseCode(error: unknown): string {
   if (error && typeof error === 'object') {
@@ -822,7 +1252,7 @@ async function runPluginsDestructiveUninstallCommand(
       message: 'Destructive plugin data removal requires explicit --yes confirmation. The plugin remains installed and no data was changed.',
     };
     if (wantsJson(args)) {
-      printJsonEnvelope({ ok: false, kind: 'plugins_uninstall', error }, { exitCode: 1 });
+      await printJsonEnvelope({ ok: false, kind: 'plugins_uninstall', error }, { exitCode: 1 });
       return;
     }
     console.error(errorFrame('Error:', [error.message]));
@@ -837,7 +1267,7 @@ async function runPluginsDestructiveUninstallCommand(
       message: 'Destructive plugin data removal requires a canonical plugin id. No data was changed.',
     };
     if (wantsJson(args)) {
-      printJsonEnvelope({ ok: false, kind: 'plugins_uninstall', error }, { exitCode: 1 });
+      await printJsonEnvelope({ ok: false, kind: 'plugins_uninstall', error }, { exitCode: 1 });
       return;
     }
     console.error(errorFrame('Error:', [error.message]));
@@ -852,7 +1282,7 @@ async function runPluginsDestructiveUninstallCommand(
       message: 'Destructive data removal is unavailable for a bundled or unowned Happier plugin namespace. No data was changed.',
     };
     if (wantsJson(args)) {
-      printJsonEnvelope({ ok: false, kind: 'plugins_uninstall', error }, { exitCode: 1 });
+      await printJsonEnvelope({ ok: false, kind: 'plugins_uninstall', error }, { exitCode: 1 });
       return;
     }
     console.error(errorFrame('Error:', [error.message]));
@@ -869,7 +1299,6 @@ async function runPluginsDestructiveUninstallCommand(
     storageRemoval = await preparePluginStorageDataRemoval({
       pluginId,
       paths,
-      synced: removalDeps.accountSettings,
       ...(removalDeps.removeDirectory ? { removeDirectory: removalDeps.removeDirectory } : {}),
     });
     secretsRemoval = await preparePluginSecretsDataRemoval({
@@ -884,7 +1313,7 @@ async function runPluginsDestructiveUninstallCommand(
       message: 'Plugin data removal could not validate every owned namespace before mutation. No data was changed.',
     };
     if (wantsJson(args)) {
-      printJsonEnvelope({ ok: false, kind: 'plugins_uninstall', error }, { exitCode: 1 });
+      await printJsonEnvelope({ ok: false, kind: 'plugins_uninstall', error }, { exitCode: 1 });
       return;
     }
     console.error(errorFrame('Error:', [error.message]));
@@ -896,13 +1325,12 @@ async function runPluginsDestructiveUninstallCommand(
   const remainingSteps = (): readonly PluginDataRemovalStep[] => {
     const required: PluginDataRemovalStep[] = [
       'uninstall',
-      'syncedStorage',
-      'localStorage',
+      'daemonStorage',
       'secrets',
     ];
     return required.filter((step) => !completed.includes(step));
   };
-  const reportPartial = (failedStep: PluginDataRemovalStep, cause: unknown): void => {
+  const reportPartial = async (failedStep: PluginDataRemovalStep, cause: unknown): Promise<void> => {
     const error = {
       code: 'plugin_data_removal_partial',
       causeCode: pluginDataRemovalCauseCode(cause),
@@ -911,7 +1339,7 @@ async function runPluginsDestructiveUninstallCommand(
       pending: Object.freeze([...remainingSteps()]),
     };
     if (wantsJson(args)) {
-      printJsonEnvelope({ ok: false, kind: 'plugins_uninstall', error }, { exitCode: 1 });
+      await printJsonEnvelope({ ok: false, kind: 'plugins_uninstall', error }, { exitCode: 1 });
       return;
     }
     console.error(errorFrame('Error:', [error.message]));
@@ -923,7 +1351,7 @@ async function runPluginsDestructiveUninstallCommand(
       request: {
         kind: 'uninstall',
         pluginId,
-        clearHealthHistory: true,
+        allowAlreadyAbsent: true,
         actorEvidence: {
           kind: 'authenticatedLocalUser',
           interactionId: randomUUID(),
@@ -933,21 +1361,20 @@ async function runPluginsDestructiveUninstallCommand(
       approval: 'none',
     });
     if (uninstall.kind !== 'committed') {
-      reportPartial('uninstall', { code: describePluginChangeFailure(uninstall).code });
+      await reportPartial('uninstall', { code: describePluginChangeFailure(uninstall).code });
       return;
     }
     completed.push('uninstall');
   } catch (cause) {
-    reportPartial('uninstall', cause);
+    await reportPartial('uninstall', cause);
     return;
   }
 
   const destructiveSteps: ReadonlyArray<Readonly<{
-    id: Extract<PluginDataRemovalStep, 'syncedStorage' | 'localStorage' | 'secrets'>;
+    id: Extract<PluginDataRemovalStep, 'daemonStorage' | 'secrets'>;
     run: () => Promise<void>;
   }>> = [
-    { id: 'syncedStorage', run: storageRemoval.removeSynced },
-    { id: 'localStorage', run: storageRemoval.removeLocal },
+    { id: 'daemonStorage', run: storageRemoval.removeDaemon },
     { id: 'secrets', run: secretsRemoval.remove },
   ];
   for (const step of destructiveSteps) {
@@ -955,7 +1382,7 @@ async function runPluginsDestructiveUninstallCommand(
       await step.run();
       completed.push(step.id);
     } catch (cause) {
-      reportPartial(step.id, cause);
+      await reportPartial(step.id, cause);
       return;
     }
   }
@@ -965,19 +1392,18 @@ async function runPluginsDestructiveUninstallCommand(
     alreadyUninstalled: entry === null,
     ...(entry ? { plugin: summarizePluginForCommand(entry) } : {}),
     removedData: {
-      localStorage: storageRemoval.hadLocalData,
-      syncedStorage: storageRemoval.hadSyncedData,
+      daemonStorage: storageRemoval.hadDaemonData,
       secrets: secretsRemoval.hadSecrets,
     },
   };
   if (wantsJson(args)) {
-    printJsonEnvelope({ ok: true, kind: 'plugins_uninstall', data });
+    await printJsonEnvelope({ ok: true, kind: 'plugins_uninstall', data });
     return;
   }
   const out = createOutputBuilder();
   out.line(ok(`Removed plugin data for ${pluginId}.`));
   out.line(`  ${dim('Uninstall:')} ${entry ? 'completed' : 'already absent'}`);
-  out.line(`  ${dim('Data:')} local, synced, and encrypted plugin-secret namespaces processed`);
+  out.line(`  ${dim('Data:')} daemon-local and encrypted plugin-secret namespaces processed`);
   console.log(out.render());
 }
 
@@ -999,12 +1425,12 @@ async function runPluginsUninstallCommand(args: readonly string[], deps: Plugins
     approval: 'none',
   });
   if (result.kind !== 'committed') {
-    reportPluginChangeFailure(args, 'plugins_uninstall', result);
+    await reportPluginChangeFailure(args, 'plugins_uninstall', result);
     return;
   }
 
   if (wantsJson(args)) {
-    printJsonEnvelope({
+    await printJsonEnvelope({
       ok: true,
       kind: 'plugins_uninstall',
       data: {
@@ -1041,11 +1467,11 @@ async function runPluginsEnabledCommand(
     approval: 'none',
   });
   if (result.kind !== 'committed') {
-    reportPluginChangeFailure(args, outputKind, result);
+    await reportPluginChangeFailure(args, outputKind, result);
     return;
   }
   if (wantsJson(args)) {
-    printJsonEnvelope({
+    await printJsonEnvelope({
       ok: true,
       kind: outputKind,
       data: {
@@ -1077,12 +1503,12 @@ async function runPluginsRollbackCommand(args: readonly string[], deps: PluginsC
     approval: 'none',
   });
   if (result.kind !== 'committed') {
-    reportPluginChangeFailure(args, 'plugins_rollback', result);
+    await reportPluginChangeFailure(args, 'plugins_rollback', result);
     return;
   }
 
   if (wantsJson(args)) {
-    printJsonEnvelope({
+    await printJsonEnvelope({
       ok: true,
       kind: 'plugins_rollback',
       data: {
@@ -1099,78 +1525,6 @@ async function runPluginsRollbackCommand(args: readonly string[], deps: PluginsC
   const out = createOutputBuilder();
   out.line(ok(`Rolled back ${entry?.title ?? result.pluginId}.`));
   if (result.pendingSurfaces.length > 0) out.line(neutral(`  Pending reconciliation: ${result.pendingSurfaces.join(', ')}`));
-  console.log(out.render());
-}
-
-async function runPluginsScaffoldCommand(args: readonly string[]): Promise<void> {
-  const targetDir = collectPositionalArgs(args, 1, ['--id', '--name', '--ui', '--sdk-version'])[0] ?? null;
-  if (!targetDir || targetDir === 'help' || targetDir === '--help' || targetDir === '-h') {
-    console.log(usage());
-    return;
-  }
-
-  const ui = readSingleValue(args, '--ui');
-  const result = await scaffoldLocalPlugin({
-    targetDir,
-    pluginId: readSingleValue(args, '--id') ?? '',
-    displayName: readSingleValue(args, '--name') ?? '',
-    pluginSdkVersion: readSingleValue(args, '--sdk-version') ?? undefined,
-    ...(ui ? { ui: ui as PluginScaffoldUiMode } : {}),
-  });
-
-  if (wantsJson(args)) {
-    if (!result.ok) {
-      printJsonEnvelope(
-        {
-          ok: false,
-          kind: 'plugins_scaffold',
-          error: {
-            code: 'scaffold_failed',
-            diagnostics: result.diagnostics,
-          },
-        },
-        { exitCode: 1 },
-      );
-      return;
-    }
-
-    printJsonEnvelope({
-      ok: true,
-      kind: 'plugins_scaffold',
-      data: {
-        plugin: {
-          pluginId: result.pluginId,
-          title: result.title,
-          version: result.version,
-        },
-        scaffold: {
-          targetDir: result.targetDir,
-          manifestPath: result.manifestPath,
-          manifestSchemaPath: result.manifestSchemaPath,
-          packageJsonPath: result.packageJsonPath,
-          sourceEntryPath: result.sourceEntryPath,
-          ...(result.uiEntryPath ? { uiEntryPath: result.uiEntryPath } : {}),
-        },
-      },
-    });
-    return;
-  }
-
-  if (!result.ok) {
-    console.error(errorFrame('Error:', result.diagnostics.map((diagnostic) => diagnostic.message)));
-    process.exitCode = 1;
-    return;
-  }
-
-  const out = createOutputBuilder();
-  out.line(ok(`Created ${result.title} plugin scaffold.`));
-  out.line(`  ${dim('Plugin ID:')} ${result.pluginId}`);
-  out.line(`  ${dim('Directory:')} ${result.targetDir}`);
-  out.line(`  ${dim('Manifest:')} ${result.manifestPath}`);
-  out.line(`  ${dim('JSON Schema:')} ${result.manifestSchemaPath}`);
-  out.line(`  ${dim('Source entry:')} ${result.sourceEntryPath}`);
-  out.line(`  ${dim('Develop:')} cd ${result.targetDir} && happier plugins dev`);
-  out.line(`  ${dim('Pack:')} happier plugins pack ${result.targetDir}`);
   console.log(out.render());
 }
 
@@ -1193,23 +1547,74 @@ function normalizePluginCreateName(rawName: string): Readonly<{
   return { slug, displayName };
 }
 
+export function formatPluginCreateNextCommands(
+  targetDir: string,
+  platform: NodeJS.Platform = process.platform,
+): readonly string[] {
+  if (platform === 'win32') {
+    const args = ['happier', 'plugins', 'dev', targetDir];
+    return [
+      `PowerShell: ${buildPowerShellCommand(args)}`,
+      `cmd.exe: ${buildWindowsCmdCommand(args)}`,
+    ];
+  }
+  return [`cd ${buildPosixShellCommand([targetDir])} && happier plugins dev`];
+}
+
 async function runPluginsCreateCommand(args: readonly string[]): Promise<void> {
-  const targetDir = collectPositionalArgs(args, 1, ['--id', '--sdk-version'])[0] ?? null;
+  // The public SDK build packet owns the exact SDK/UI/toolchain bindings for a
+  // generated package. Accepting a caller-selected SDK version here would make
+  // `plugins create`, the RPC entry point, and the package metadata disagree.
+  // Reject the retired escape hatch rather than silently dropping it.
+  if (hasFlagValue(args, '--sdk-version')) {
+    const message = '--sdk-version is no longer supported; plugins create uses the published SDK toolchain compatibility packet.';
+    if (wantsJson(args)) {
+      await printJsonEnvelope({
+        ok: false,
+        kind: 'plugins_create',
+        error: { code: 'invalid_option', message },
+      }, { exitCode: 1 });
+      return;
+    }
+    console.error(errorFrame('Error:', [message]));
+    process.exitCode = 1;
+    return;
+  }
+  const targetDir = readCommandPositionals(args, {
+    startIndex: 1,
+    valueFlags: ['--id', '--name', '--ui'],
+  })[0] ?? null;
   if (!targetDir || targetDir === 'help' || targetDir === '--help' || targetDir === '-h') {
     console.log(usage());
     return;
   }
   const { slug, displayName } = normalizePluginCreateName(targetDir);
+  const uiValue = readFlagValue(args, '--ui');
+  const ui = uiValue?.startsWith('--') ? null : uiValue;
+  if (hasFlagValue(args, '--ui') && ui === null) {
+    const message = `--ui requires one of: ${PluginScaffoldUiModeSchema.options.join(', ')}`;
+    if (wantsJson(args)) {
+      await printJsonEnvelope({
+        ok: false,
+        kind: 'plugins_create',
+        error: { code: 'invalid_option', message },
+      }, { exitCode: 1 });
+      return;
+    }
+    console.error(errorFrame('Error:', [message]));
+    process.exitCode = 1;
+    return;
+  }
   const result = await scaffoldLocalPlugin({
     targetDir,
-    pluginId: readSingleValue(args, '--id') ?? `local.${slug}`,
-    displayName,
-    pluginSdkVersion: readSingleValue(args, '--sdk-version') ?? undefined,
+    pluginId: readFlagValue(args, '--id') ?? `local.${slug}`,
+    displayName: readFlagValue(args, '--name') ?? displayName,
+    ...(ui ? { ui: ui as PluginScaffoldUiMode } : {}),
   });
 
   if (!result.ok) {
     if (wantsJson(args)) {
-      printJsonEnvelope({
+      await printJsonEnvelope({
         ok: false,
         kind: 'plugins_create',
         error: { code: 'create_failed', diagnostics: result.diagnostics },
@@ -1222,17 +1627,16 @@ async function runPluginsCreateCommand(args: readonly string[]): Promise<void> {
   }
 
   if (wantsJson(args)) {
-    printJsonEnvelope({
+    await printJsonEnvelope({
       ok: true,
       kind: 'plugins_create',
       data: {
         plugin: { pluginId: result.pluginId, title: result.title, version: result.version },
         scaffold: {
           targetDir: result.targetDir,
-          manifestPath: result.manifestPath,
-          manifestSchemaPath: result.manifestSchemaPath,
           packageJsonPath: result.packageJsonPath,
           sourceEntryPath: result.sourceEntryPath,
+          ...(result.uiEntryPath ? { uiEntryPath: result.uiEntryPath } : {}),
         },
       },
     });
@@ -1243,7 +1647,11 @@ async function runPluginsCreateCommand(args: readonly string[]): Promise<void> {
   out.line(ok(`Created ${result.title}.`));
   out.line(`  ${dim('Directory:')} ${result.targetDir}`);
   out.line(`  ${dim('Plugin ID:')} ${result.pluginId}`);
-  out.line(`  ${dim('Next:')} cd ${result.targetDir} && happier plugins dev`);
+  out.line(`  ${dim('Source entry:')} ${result.sourceEntryPath}`);
+  if (result.uiEntryPath) out.line(`  ${dim('UI entry:')} ${result.uiEntryPath}`);
+  const nextCommands = formatPluginCreateNextCommands(result.targetDir);
+  out.line(`  ${dim('Next:')} ${nextCommands[0]}`);
+  for (const nextCommand of nextCommands.slice(1)) out.line(`        ${nextCommand}`);
   console.log(out.render());
 }
 
@@ -1264,12 +1672,27 @@ async function waitForPluginDevStop(signal?: AbortSignal): Promise<void> {
   });
 }
 
+function projectDaemonDevelopmentFailureStage(
+  diagnostics: readonly Readonly<{ code: string; message: string }>[],
+): PluginAuthoringStageReport['stage'] {
+  if (diagnostics.some((diagnostic) => diagnostic.code === 'plugin_dev_ui_build_failed')) {
+    return 'built';
+  }
+  if (diagnostics.some((diagnostic) => diagnostic.code === 'plugin_dev_dependency_preparation_failed')) {
+    return 'source_validated';
+  }
+  return 'admitted';
+}
+
 async function runPluginsDevCommand(
   args: readonly string[],
   deps: PluginsCommandDeps,
   runtime: PluginsCommandRuntime,
 ): Promise<void> {
-  const requestedPath = collectPositionalArgs(args, 1, ['--sdk-registry'])[0] ?? '.';
+  const requestedPath = readCommandPositionals(args, {
+    startIndex: 1,
+    valueFlags: ['--sdk-registry'],
+  })[0] ?? '.';
   if (requestedPath === 'help' || requestedPath === '--help' || requestedPath === '-h') {
     console.log(usage());
     return;
@@ -1277,7 +1700,7 @@ async function runPluginsDevCommand(
   if (!deps.requestDevelopmentChange) {
     const message = 'Plugin development daemon integration is not available in this build.';
     if (wantsJson(args)) {
-      printJsonEnvelope({
+      await printJsonEnvelope({
         ok: false,
         kind: 'plugins_dev',
         error: { code: 'plugin_dev_daemon_unavailable', message },
@@ -1291,11 +1714,11 @@ async function runPluginsDevCommand(
 
   let sdkRegistryOrigin: string | null;
   try {
-    sdkRegistryOrigin = normalizePluginSdkRegistryOrigin(readSingleValue(args, '--sdk-registry'));
+    sdkRegistryOrigin = normalizePluginSdkRegistryOrigin(readFlagValue(args, '--sdk-registry'));
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Plugin SDK registry is invalid.';
     if (wantsJson(args)) {
-      printJsonEnvelope({
+      await printJsonEnvelope({
         ok: false,
         kind: 'plugins_dev',
         error: { code: 'plugin_dev_dependency_install_failed', diagnostics: [{ code: 'plugin_author_invalid_input', message }] },
@@ -1312,104 +1735,219 @@ async function runPluginsDevCommand(
     ...(sdkRegistryOrigin ? { sdkRegistryOrigin } : {}),
   });
   if (!sourceInspection.ok) {
+    const stage = pluginAuthoringStageFailure({
+      stage: 'source_validated',
+      diagnostics: sourceInspection.diagnostics,
+    });
     if (wantsJson(args)) {
-      printJsonEnvelope({
+      await printJsonEnvelope({
         ok: false,
         kind: 'plugins_dev',
-        error: { code: 'plugin_dev_source_invalid', diagnostics: sourceInspection.diagnostics },
+        error: { code: 'plugin_dev_source_invalid', stage: stage.stage, diagnostics: stage.diagnostics },
       }, { exitCode: 1 });
       return;
     }
-    console.error(errorFrame('Plugin source diagnostics:', sourceInspection.diagnostics.map((entry) => entry.message)));
+    console.error(errorFrame('Plugin source diagnostics:', [
+      ...sourceInspection.diagnostics.map((entry) => entry.message),
+      ...describePluginAuthoringStageReport(stage),
+    ]));
     process.exitCode = 1;
     return;
   }
 
-  const toolchainResult = await (deps.runPluginAuthorToolchain ?? runPluginAuthorToolchain)({
-    operation: 'install',
-    projectRoot: requestedPath,
-    ...(sdkRegistryOrigin ? { sdkRegistryOrigin } : {}),
-    ...(runtime.signal ? { signal: runtime.signal } : {}),
-  });
-  if (runtime.signal?.aborted) return;
-  if (!toolchainResult.ok) {
-    if (wantsJson(args)) {
-      printJsonEnvelope({
-        ok: false,
-        kind: 'plugins_dev',
-        error: { code: 'plugin_dev_dependency_install_failed', diagnostics: toolchainResult.diagnostics },
-      }, { exitCode: 1 });
+  // Cold start prepares the author root exactly once, and only when nothing has
+  // materialized it yet: the author edits this directory, so its editor and
+  // compiler resolution must not depend on a separate command. A root whose
+  // declared SDK already resolves is left alone rather than paying a full
+  // install on every watch start — refreshing a stale one is
+  // `plugins author install` — and a literal one-file source has no package
+  // root to prepare at all.
+  if (
+    sourceInspection.sourceKind === 'packageRoot'
+    && !(await isPluginAuthorRootMaterialized(sourceInspection.sourceRootPath))
+  ) {
+    const dependencyPreparation = await (deps.runPluginAuthorToolchain ?? runPluginAuthorToolchain)({
+      operation: 'install',
+      projectRoot: sourceInspection.sourceRootPath,
+      ...(sdkRegistryOrigin ? { sdkRegistryOrigin } : {}),
+      ...(runtime.signal ? { signal: runtime.signal } : {}),
+    });
+    if (runtime.signal?.aborted) return;
+    if (!dependencyPreparation.ok) {
+      if (wantsJson(args)) {
+        await printJsonEnvelope({
+          ok: false,
+          kind: 'plugins_dev',
+          error: {
+            code: 'plugin_dev_dependency_install_failed',
+            diagnostics: dependencyPreparation.diagnostics,
+          },
+        }, { exitCode: 1 });
+        return;
+      }
+      console.error(errorFrame('Error:', dependencyPreparation.diagnostics.map((entry) => entry.message)));
+      process.exitCode = 1;
       return;
     }
-    console.error(errorFrame('Error:', toolchainResult.diagnostics.map((entry) => entry.message)));
-    process.exitCode = 1;
-    return;
   }
+
+  const observerProjectRoot = sourceInspection.request.projectRoot;
+
+  // The last generation this session is KNOWN to have made current. It is the
+  // only honest basis for a "previous generation retained" claim; before the
+  // first admission the CLI simply does not know whether one exists.
+  let lastProjectedGeneration: string | undefined;
+
+  const reportDevChangeStage = async (
+    stage: PluginAuthoringStageReport,
+    context: Readonly<{
+      projectRoot: string;
+      observedFiles: number;
+      cycle?: Readonly<{
+        id: string;
+        changedPathCount: number | null;
+        dependencyInputChanged: boolean;
+        dependencyInputChangeUnknown: boolean;
+        durations: Readonly<{ submissionMs?: number }>;
+      }>;
+      pendingReview?: PluginChangePendingReviewResult;
+    }>,
+  ): Promise<void> => {
+    if (wantsJson(args)) {
+      if (!stage.ok) {
+        await printJsonEnvelope({
+          ok: false,
+          kind: 'plugins_dev_change',
+          error: {
+            code: stage.diagnostics[0]?.code ?? 'plugin_dev_candidate_rejected',
+            stage: stage.stage,
+            diagnostics: stage.diagnostics,
+            ...(stage.retainedGeneration ? { retainedGeneration: stage.retainedGeneration } : {}),
+            ...(context.cycle ? { cycle: context.cycle } : {}),
+            ...(context.pendingReview ? { pendingReview: context.pendingReview } : {}),
+          },
+        }, { exitCode: 0 });
+        return;
+      }
+      await printJsonEnvelope({
+        ok: true,
+        kind: 'plugins_dev_change',
+        data: {
+          ...context,
+          stage: stage.stage,
+          ...(stage.generation ? { generation: stage.generation } : {}),
+        },
+      });
+      return;
+    }
+    if (!stage.ok) {
+      console.error(errorFrame(
+        stage.stage === 'source_validated'
+          ? 'Plugin source diagnostics:'
+          : stage.stage === 'built'
+            ? 'Plugin UI build diagnostics:'
+            : 'Plugin candidate diagnostics:',
+        [
+          ...describePluginAuthoringStageReport(stage),
+          ...(context.pendingReview ? describePendingPluginReviewForTerminal(context.pendingReview) : []),
+        ],
+      ));
+      return;
+    }
+    const out = createOutputBuilder();
+    out.line(ok(`Development candidate accepted from ${context.projectRoot}.`));
+    for (const line of describePluginAuthoringStageReport(stage)) out.line(`  ${line}`);
+    console.log(out.render());
+  };
+
+  let nextCycleNumber = 0;
+  const developmentApproval = resolveUserPluginChangeApproval({
+    interactive: (deps.isInteractiveTerminal ?? isInteractiveTerminal)(),
+    json: wantsJson(args),
+  });
 
   const observer = await (deps.startPluginDevelopmentSourceObserver ?? startPluginDevelopmentSourceObserver)({
-    projectRoot: toolchainResult.projectRoot,
+    projectRoot: observerProjectRoot,
     ...(sdkRegistryOrigin ? { sdkRegistryOrigin } : {}),
     onObservation: async (observation) => {
       if (!observation.ok) {
-        if (wantsJson(args)) {
-          printJsonEnvelope({
-            ok: false,
-            kind: 'plugins_dev_change',
-            error: { code: 'plugin_dev_source_invalid', diagnostics: observation.diagnostics },
-          }, { exitCode: 0 });
-          return;
-        }
-        console.error(errorFrame('Plugin source diagnostics:', observation.diagnostics.map((entry) => entry.message)));
-        return;
+        await reportDevChangeStage(
+          pluginAuthoringStageFailure({
+            stage: 'source_validated',
+            diagnostics: observation.diagnostics,
+            ...(lastProjectedGeneration ? { retainedGeneration: lastProjectedGeneration } : {}),
+          }),
+          { projectRoot: observerProjectRoot, observedFiles: 0 },
+        );
+        return 'retained';
       }
 
-      let response: Awaited<ReturnType<NonNullable<PluginsCommandDeps['requestDevelopmentChange']>>>;
-      try {
-        response = runtime.signal
-          ? await deps.requestDevelopmentChange!(observation.request, { signal: runtime.signal })
-          : await deps.requestDevelopmentChange!(observation.request);
-      } catch (error) {
-        if (runtime.signal?.aborted) return;
-        response = {
-          ok: false,
-          diagnostics: [{
-            code: 'plugin_dev_candidate_request_failed',
-            message: error instanceof Error
-              ? `Unable to submit the development candidate: ${error.message}`
-              : 'Unable to submit the development candidate.',
-          }],
-        };
+      const cycle = await runPluginDevelopmentCycle<DevelopmentChangeResult>({
+        observation,
+        submit: async (request, options) => await deps.requestDevelopmentChange!(request, {
+          ...(options?.signal ? { signal: options.signal } : {}),
+          ...(developmentApproval === 'none' ? { approval: developmentApproval } : {}),
+        }),
+        ...(runtime.signal ? { signal: runtime.signal } : {}),
+      });
+      if (cycle.kind === 'cancelled') return 'retained';
+
+      const context = {
+        projectRoot: observation.request.projectRoot,
+        observedFiles: observation.observedRelativePaths.length,
+        cycle: {
+          id: `dev-${++nextCycleNumber}`,
+          changedPathCount: cycle.changedPathCount,
+          dependencyInputChanged: cycle.dependencyInputChanged,
+          dependencyInputChangeUnknown: cycle.dependencyInputChangeUnknown,
+          durations: cycle.durations,
+        },
+      };
+      if (cycle.kind === 'submissionFailed') {
+        await reportDevChangeStage(
+          pluginAuthoringStageFailure({
+            stage: 'admitted',
+            diagnostics: cycle.diagnostics,
+            ...(lastProjectedGeneration ? { retainedGeneration: lastProjectedGeneration } : {}),
+          }),
+          context,
+        );
+        return 'retained';
       }
-      if (runtime.signal?.aborted) return;
+
+      const response = cycle.submission;
+
+      if (response.generation) {
+        const stage = projectPluginAuthoringAdmission({
+          desiredGeneration: response.generation.desired,
+          appliedGeneration: response.generation.applied,
+          pendingSurfaces: response.generation.pendingSurfaces,
+        });
+        if (stage.stage === 'projected' && response.generation.applied) {
+          lastProjectedGeneration = response.generation.applied;
+        }
+        await reportDevChangeStage(stage, context);
+        return response.ok ? 'adopted' : 'retained';
+      }
       if (!response.ok) {
         const diagnostics = response.diagnostics ?? [{
           code: 'plugin_dev_candidate_rejected',
           message: 'The daemon rejected the development candidate.',
         }];
-        if (wantsJson(args)) {
-          printJsonEnvelope({
-            ok: false,
-            kind: 'plugins_dev_change',
-            error: { code: diagnostics[0]?.code ?? 'plugin_dev_candidate_rejected', diagnostics },
-          }, { exitCode: 0 });
-          return;
-        }
-        console.error(errorFrame('Plugin candidate diagnostics:', diagnostics.map((entry) => entry.message)));
-        return;
+        await reportDevChangeStage(
+          pluginAuthoringStageFailure({
+            stage: projectDaemonDevelopmentFailureStage(diagnostics),
+            diagnostics,
+            ...(lastProjectedGeneration ? { retainedGeneration: lastProjectedGeneration } : {}),
+          }),
+          { ...context, ...(response.pendingReview ? { pendingReview: response.pendingReview } : {}) },
+        );
+        return 'retained';
       }
-
-      if (wantsJson(args)) {
-        printJsonEnvelope({
-          ok: true,
-          kind: 'plugins_dev_change',
-          data: {
-            projectRoot: observation.request.projectRoot,
-            observedFiles: observation.observedRelativePaths.length,
-          },
-        });
-        return;
-      }
-      console.log(ok(`Development candidate accepted from ${observation.request.projectRoot}.`));
+      // A committed change with no generation identity: the daemon accepted the
+      // candidate but exposed nothing to project beyond admission.
+      await reportDevChangeStage(pluginAuthoringStageReached('admitted'), context);
+      return 'adopted';
     },
   });
 
@@ -1429,7 +1967,10 @@ async function runPluginsAuthorCommand(
   deps: PluginsCommandDeps,
 ): Promise<void> {
   const rawOperation = String(args[1] ?? '').trim();
-  const projectRoot = collectPositionalArgs(args, 2, ['--sdk-registry'])[0] ?? null;
+  const projectRoot = readCommandPositionals(args, {
+    startIndex: 2,
+    valueFlags: ['--sdk-registry'],
+  })[0] ?? null;
   if (!isPluginAuthorOperation(rawOperation) || !projectRoot) {
     console.log(usage());
     return;
@@ -1441,7 +1982,7 @@ async function runPluginsAuthorCommand(
     operation: rawOperation,
     projectRoot,
     kind: `plugins_author_${rawOperation}`,
-    ...(rawOperation === 'install' ? { sdkRegistryOrigin: readSingleValue(args, '--sdk-registry') } : {}),
+    ...(rawOperation === 'install' ? { sdkRegistryOrigin: readFlagValue(args, '--sdk-registry') } : {}),
   });
 }
 
@@ -1462,7 +2003,7 @@ async function runPluginToolchainCommand(params: Readonly<{
 
   if (wantsJson(params.args)) {
     if (!result.ok) {
-      printJsonEnvelope({
+      await printJsonEnvelope({
         ok: false,
         kind: params.kind,
         error: {
@@ -1472,7 +2013,7 @@ async function runPluginToolchainCommand(params: Readonly<{
       }, { exitCode: 1 });
       return;
     }
-    printJsonEnvelope({
+    await printJsonEnvelope({
       ok: true,
       kind: params.kind,
       data: {
@@ -1485,7 +2026,12 @@ async function runPluginToolchainCommand(params: Readonly<{
   }
 
   if (!result.ok) {
-    console.error(errorFrame('Error:', result.diagnostics.map((diagnostic) => diagnostic.message)));
+    console.error(errorFrame('Error:', result.diagnostics.flatMap((diagnostic) => [
+      diagnostic.message,
+      ...(diagnostic.source
+        ? [`  at ${formatPluginDiagnosticSourceLocation(diagnostic.source)}`]
+        : []),
+    ])));
     process.exitCode = 1;
     return;
   }
@@ -1496,33 +2042,95 @@ async function runPluginsTestCommand(
   args: readonly string[],
   deps: PluginsCommandDeps,
 ): Promise<void> {
-  const projectRoot = collectPositionalArgs(args, 1)[0] ?? '.';
+  const projectRoot = readCommandPositionals(args, {
+    startIndex: 1,
+    valueFlags: ['--sdk-registry', '--with-plugin'],
+  })[0] ?? '.';
   if (projectRoot === 'help' || args.includes('--help') || args.includes('-h')) {
     console.log(usage());
     return;
   }
+  if (hasFlagValue(args, '--with-plugin') && !args.includes('--packed')) {
+    const message = '--with-plugin is only valid with --packed';
+    if (wantsJson(args)) {
+      await printJsonEnvelope({
+        ok: false,
+        kind: 'plugins_test',
+        error: {
+          code: 'plugin_test_invalid_input',
+          message,
+        },
+      }, { exitCode: 1 });
+    } else {
+      console.error(errorFrame('Error:', [message]));
+      process.exitCode = 1;
+    }
+    return;
+  }
   if (args.includes('--packed')) {
-    const result = await (deps.runPackedPluginTest ?? runPackedPluginTestOwner)({ projectRoot });
+    const sdkRegistryOrigin = readFlagValue(args, '--sdk-registry');
+    let prerequisiteLocators: readonly string[];
+    try {
+      prerequisiteLocators = readRepeatedFlagValues(args, '--with-plugin', {
+        valueName: '<root-or-archive> value',
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (wantsJson(args)) {
+        await printJsonEnvelope({
+          ok: false,
+          kind: 'plugins_test',
+          error: {
+            code: 'plugin_test_invalid_input',
+            message,
+          },
+        }, { exitCode: 1 });
+      } else {
+        console.error(errorFrame('Error:', [message]));
+        process.exitCode = 1;
+      }
+      return;
+    }
+    const result = await (deps.runPackedPluginTest ?? runPackedPluginTestOwner)({
+      projectRoot,
+      ...(prerequisiteLocators.length > 0 ? { prerequisiteLocators } : {}),
+      ...(sdkRegistryOrigin ? { sdkRegistryOrigin } : {}),
+    });
+    // The packed lane is the only CLI producer of `package_validated`: it proves
+    // the pack/install closure. It stops there — it never claims a loaded or
+    // rendered surface.
+    const stage = result.ok
+      ? pluginAuthoringStageReached('package_validated')
+      : pluginAuthoringStageFailure({ stage: 'package_validated', diagnostics: result.diagnostics });
     if (wantsJson(args)) {
       if (!result.ok) {
-        printJsonEnvelope({
+        await printJsonEnvelope({
           ok: false,
           kind: 'plugins_test',
           error: {
             code: 'plugin_test_packed_failed',
+            stage: stage.stage,
             diagnostics: result.diagnostics,
           },
         }, { exitCode: 1 });
         return;
       }
-      printJsonEnvelope({
+      await printJsonEnvelope({
         ok: true,
         kind: 'plugins_test',
         data: {
           mode: result.mode,
+          stage: stage.stage,
           projectRoot: result.projectRoot,
+          // Compatibility fields are projections of the target. Prerequisites
+          // retain install evidence, while contributors carry only canonical
+          // target-admission evidence from the disposable daemon.
           pluginId: result.pluginId,
           archiveDigest: result.archiveDigest,
+          target: result.target,
+          prerequisites: result.prerequisites,
+          contributors: result.contributors,
+          initialInvocation: result.initialInvocation,
           invocation: result.invocation,
           daemon: result.daemon,
         },
@@ -1534,11 +2142,7 @@ async function runPluginsTestCommand(
       process.exitCode = 1;
       return;
     }
-    console.log(ok(
-      result.invocation
-        ? `Packed plugin ${result.pluginId} installed and invoked ${result.invocation.actionId}.`
-        : `Packed plugin ${result.pluginId} installed and activated through the disposable daemon.`,
-    ));
+    printHumanPackedPluginTestResult(result);
     return;
   }
   await runPluginToolchainCommand({
@@ -1551,21 +2155,70 @@ async function runPluginsTestCommand(
   });
 }
 
+function printHumanPackedPluginTestParticipant(
+  out: ReturnType<typeof createOutputBuilder>,
+  label: 'Target' | 'Prerequisite' | 'Contributor',
+  participant: Extract<PackedPluginTestResult, { ok: true }>['target'],
+): void {
+  out.line(`${dim(`${label}:`)} ${participant.plugin.id}@${participant.plugin.version}`);
+  out.line(`  ${dim('Source:')} ${participant.source.kind} ${participant.source.locator}`);
+  out.line(`  ${dim('Package identity:')} ${(participant.plugin.packageIdentity.name ?? 'unpublished')}@${participant.plugin.packageIdentity.version}`);
+  out.line(`  ${dim('Archive digest:')} ${participant.archive.digest ?? 'unavailable'}`);
+  out.line(`  ${dim('Archive integrity:')} ${participant.archive.integrity ?? 'unavailable'}`);
+  out.line(`  ${dim('Install & trust:')} ${participant.admission.decision}; desired ${participant.admission.desiredGeneration}; applied ${participant.admission.appliedGeneration}`);
+}
+
+function printHumanPackedPluginTestContributor(
+  out: ReturnType<typeof createOutputBuilder>,
+  contributor: Extract<PackedPluginTestResult, { ok: true }>['contributors'][number],
+): void {
+  printHumanPackedPluginTestParticipant(out, 'Contributor', contributor);
+  for (const admission of contributor.targetedAdmissions) {
+    out.line(`  ${dim('Targeted admission:')} ${admission.target.pluginId}@${admission.target.immutableGenerationId}; point ${admission.target.pointId}; protocol ${admission.protocol.id}@${admission.protocol.version}; contributor ${admission.contributor.contributionId}@${admission.contributor.immutableGenerationId}`);
+  }
+}
+
+function printHumanPackedPluginTestResult(
+  result: Extract<PackedPluginTestResult, { ok: true }>,
+): void {
+  const out = createOutputBuilder();
+  out.line(ok(
+    result.invocation
+      ? `Packed test passed; invoked ${result.invocation.actionId}.`
+      : 'Packed test passed; activated through the disposable daemon.',
+  ));
+  printHumanPackedPluginTestParticipant(out, 'Target', result.target);
+  for (const prerequisite of result.prerequisites) {
+    printHumanPackedPluginTestParticipant(out, 'Prerequisite', prerequisite);
+  }
+  for (const contributor of result.contributors) {
+    printHumanPackedPluginTestContributor(out, contributor);
+  }
+  console.log(out.render());
+}
+
 async function runPluginsPackCommand(args: readonly string[]): Promise<void> {
-  const locator = collectPositionalArgs(args, 1, ['--out'])[0] ?? null;
+  const locator = readCommandPositionals(args, {
+    startIndex: 1,
+    valueFlags: ['--out', '--sdk-registry'],
+  })[0] ?? null;
   if (!locator || locator === 'help' || locator === '--help' || locator === '-h') {
     console.log(usage());
     return;
   }
 
+  const sdkRegistryOrigin = readFlagValue(args, '--sdk-registry');
   const result = await packLocalPlugin({
     locator,
-    outPath: readSingleValue(args, '--out'),
+    outPath: readFlagValue(args, '--out'),
+    ...(sdkRegistryOrigin
+      ? { sdkRegistryOrigin }
+      : {}),
   });
 
   if (wantsJson(args)) {
     if (!result.ok) {
-      printJsonEnvelope(
+      await printJsonEnvelope(
         {
           ok: false,
           kind: 'plugins_pack',
@@ -1579,7 +2232,7 @@ async function runPluginsPackCommand(args: readonly string[]): Promise<void> {
       return;
     }
 
-    printJsonEnvelope({
+    await printJsonEnvelope({
       ok: true,
       kind: 'plugins_pack',
       data: {
@@ -1591,7 +2244,6 @@ async function runPluginsPackCommand(args: readonly string[]): Promise<void> {
         package: {
           packageRootPath: result.packageRootPath,
           manifestPath: result.manifestPath,
-          manifestDigest: result.manifestDigest,
           archivePath: result.archivePath,
           archiveDigest: result.archiveDigest,
           digestPath: result.digestPath,
@@ -1614,54 +2266,204 @@ async function runPluginsPackCommand(args: readonly string[]): Promise<void> {
   out.line(`  ${dim('Archive:')} ${result.archivePath}`);
   out.line(`  ${dim('Archive digest:')} ${result.archiveDigest}`);
   out.line(`  ${dim('Digest file:')} ${result.digestPath}`);
-  out.line(`  ${dim('Manifest digest:')} ${result.manifestDigest}`);
   console.log(out.render());
 }
 
-async function runPluginsReloadCommand(args: readonly string[], deps: PluginsCommandDeps): Promise<void> {
-  const pluginId = String(args[1] ?? '').trim();
-  if (!pluginId || pluginId === 'help' || pluginId === '--help' || pluginId === '-h') {
-    if (wantsJson(args) && !pluginId) {
-      printJsonEnvelope({
+async function runPluginsDoctorCommand(
+  args: readonly string[],
+  deps: PluginsCommandDeps,
+): Promise<void> {
+  const locator = readCommandPositionals(args, { startIndex: 1 })[0] ?? process.cwd();
+  const result = await (deps.runPluginAuthorDoctor ?? runPluginAuthorDoctor)({ locator });
+  if (wantsJson(args)) {
+    if (!result.ok) {
+      await printJsonEnvelope({
         ok: false,
-        kind: 'plugins_reload',
-        error: { code: 'plugin_id_required', message: 'Explicit reload requires one development plugin id.' },
+        kind: 'plugins_doctor',
+        error: {
+          code: 'plugin_author_doctor_failed',
+          diagnostics: result.diagnostics,
+        },
       }, { exitCode: 1 });
       return;
     }
+    await printJsonEnvelope({
+      ok: true,
+      kind: 'plugins_doctor',
+      data: {
+        pluginId: result.pluginId,
+        version: result.version,
+        entryPath: result.entryPath,
+        evaluationMs: result.evaluationMs,
+        diagnostics: result.diagnostics,
+      },
+    });
+    return;
+  }
+  if (!result.ok) {
+    console.error(errorFrame('Plugin doctor failed:', result.diagnostics.flatMap((entry) => [
+      entry.message,
+      ...(entry.location
+        ? [`  at ${formatPluginDiagnosticSourceLocation(entry.location)}`]
+        : []),
+    ])));
+    process.exitCode = 1;
+    return;
+  }
+  const out = createOutputBuilder();
+  out.line(ok(`Plugin ${result.pluginId}@${result.version} evaluated in ${result.evaluationMs}ms.`));
+  for (const entry of result.diagnostics) {
+    out.line(neutral(entry.message));
+    if (entry.location) {
+      out.line(neutral(`  at ${formatPluginDiagnosticSourceLocation(entry.location)}`));
+    }
+  }
+  console.log(out.render());
+}
+
+type DevelopmentPluginReloadTarget =
+  | Readonly<{ ok: true; pluginId: string; sourceRootPath: string }>
+  | Readonly<{ ok: false; code: string; message: string }>;
+
+async function resolveDevelopmentPluginReloadTarget(
+  explicitPluginId: string | null,
+): Promise<DevelopmentPluginReloadTarget> {
+  if (explicitPluginId) {
+    const entry = await readInstalledPluginCatalogEntry({ pluginId: explicitPluginId });
+    if (!entry || entry.source.kind !== 'path' || entry.source.devWatch !== true) {
+      return {
+        ok: false,
+        code: entry ? 'development_source_required' : 'plugin_not_found',
+        message: entry
+          ? 'Explicit reload is supported only for development path plugins; use install/update with --dev or use rollback for this plugin.'
+          : `Unknown installed plugin id: ${explicitPluginId}`,
+      };
+    }
+    return { ok: true, pluginId: entry.pluginId, sourceRootPath: entry.source.locator };
+  }
+
+  const currentDirectory = await realpath(process.cwd());
+  const developmentEntries = (await readInstalledPluginCatalog()).filter((entry) => (
+    entry.source.kind === 'path' && entry.source.devWatch === true
+  ));
+  const matches = (await Promise.all(developmentEntries.map(async (entry) => {
+    try {
+      const sourceRootPath = await realpath(entry.source.locator);
+      return isCanonicalAbsolutePathInsideRoot(sourceRootPath, currentDirectory)
+        ? { pluginId: entry.pluginId, sourceRootPath }
+        : null;
+    } catch {
+      return null;
+    }
+  }))).filter((entry): entry is Readonly<{ pluginId: string; sourceRootPath: string }> => entry !== null);
+  if (matches.length === 1) {
+    const match = matches[0]!;
+    return { ok: true, ...match };
+  }
+  if (matches.length === 0) {
+    return {
+      ok: false,
+      code: 'development_plugin_not_found_in_current_directory',
+      message: `No registered development plugin contains ${currentDirectory}. Run happier plugins install . --dev, or reload an explicit development plugin id.`,
+    };
+  }
+  return {
+    ok: false,
+    code: 'development_plugin_ambiguous_in_current_directory',
+    message: `Multiple registered development plugins contain ${currentDirectory}: ${matches.map((entry) => entry.pluginId).sort().join(', ')}. Run happier plugins reload <developmentPluginId>.`,
+  };
+}
+
+async function runPluginsReloadCommand(args: readonly string[], deps: PluginsCommandDeps): Promise<void> {
+  const explicitPluginId = readCommandPositionals(args, { startIndex: 1 })[0] ?? null;
+  if (explicitPluginId === 'help' || explicitPluginId === '--help' || explicitPluginId === '-h') {
     console.log(usage());
     return;
   }
 
-  const entry = await readInstalledPluginCatalogEntry({ pluginId });
-  if (!entry || entry.source.kind !== 'path' || entry.source.devWatch !== true) {
-    const message = entry
-      ? `Explicit reload is supported only for development path plugins; use install/update with --dev or use rollback for this plugin.`
-      : `Unknown installed plugin id: ${pluginId}`;
+  const target = await resolveDevelopmentPluginReloadTarget(explicitPluginId);
+  if (!target.ok) {
     if (wantsJson(args)) {
-      printJsonEnvelope({ ok: false, kind: 'plugins_reload', error: { code: entry ? 'development_source_required' : 'plugin_not_found', message } }, { exitCode: 1 });
+      await printJsonEnvelope({ ok: false, kind: 'plugins_reload', error: { code: target.code, message: target.message } }, { exitCode: 1 });
       return;
     }
-    console.error(errorFrame('Error:', [message]));
+    console.error(errorFrame('Error:', [target.message]));
     process.exitCode = 1;
     return;
   }
 
-  const result = await requestUserPluginChange({
-    request: {
-      kind: 'development',
-      pluginId,
-      sourceRootPath: entry.source.locator,
-    },
-    approval: interactivePluginApproval(deps, args),
+  const sourceInspection = await (deps.inspectPluginDevelopmentSource ?? inspectPluginDevelopmentSource)({
+    projectRoot: target.sourceRootPath,
   });
+  if (!sourceInspection.ok) {
+    const failure = sourceInspection.diagnostics[0] ?? {
+      code: 'plugin_dev_source_invalid',
+      message: 'The development source is no longer valid.',
+    };
+    if (wantsJson(args)) {
+      await printJsonEnvelope({
+        ok: false,
+        kind: 'plugins_reload',
+        error: { code: failure.code, message: failure.message, diagnostics: sourceInspection.diagnostics },
+      }, { exitCode: 1 });
+    } else {
+      console.error(errorFrame('Plugin source diagnostics:', sourceInspection.diagnostics.map((entry) => entry.message)));
+      process.exitCode = 1;
+    }
+    return;
+  }
+
+  const cycle = await runPluginDevelopmentCycle<UserPluginChangeResult>({
+    observation: Object.freeze({
+      ...sourceInspection,
+      request: Object.freeze({
+        ...sourceInspection.request,
+        pluginId: target.pluginId,
+        projectRoot: target.sourceRootPath,
+      }),
+    }),
+    submit: async (request, options) => await requestUserPluginChange({
+      request: {
+        kind: 'development',
+        ...(request.pluginId ? { pluginId: request.pluginId } : {}),
+        sourceRootPath: request.projectRoot,
+        ...(request.changedPaths ? { changedPaths: request.changedPaths } : {}),
+        ...(request.sdkRegistryOrigin ? { sdkRegistryOrigin: request.sdkRegistryOrigin } : {}),
+      },
+      approval: resolveUserPluginChangeApproval({
+        interactive: (deps.isInteractiveTerminal ?? isInteractiveTerminal)(),
+        json: wantsJson(args),
+      }),
+      ...(options?.signal ? { signal: options.signal } : {}),
+    }),
+  });
+  if (cycle.kind !== 'submitted') {
+    if (cycle.kind === 'cancelled') return;
+    const failure = cycle.diagnostics[0] ?? {
+      code: 'plugin_dev_candidate_rejected',
+      message: 'The development candidate was not submitted.',
+    };
+    if (wantsJson(args)) {
+      await printJsonEnvelope({
+        ok: false,
+        kind: 'plugins_reload',
+        error: { code: failure.code, message: failure.message, diagnostics: cycle.diagnostics },
+      }, { exitCode: 1 });
+    } else {
+      console.error(errorFrame('Plugin development diagnostics:', cycle.diagnostics.map((entry) => entry.message)));
+      process.exitCode = 1;
+    }
+    return;
+  }
+
+  const result = cycle.submission;
   if (result.kind !== 'committed') {
-    reportPluginChangeFailure(args, 'plugins_reload', result);
+    await reportPluginChangeFailure(args, 'plugins_reload', result);
     return;
   }
 
   if (wantsJson(args)) {
-    printJsonEnvelope({
+    await printJsonEnvelope({
       ok: true,
       kind: 'plugins_reload',
       data: {
@@ -1680,7 +2482,10 @@ async function runPluginsReloadCommand(args: readonly string[], deps: PluginsCom
   console.log(out.render());
 }
 
-async function runPluginsMarketplaceListCommand(args: readonly string[]): Promise<void> {
+async function runPluginsMarketplaceListCommand(
+  args: readonly string[],
+  deps: PluginsCommandDeps,
+): Promise<void> {
   const sourceRef = readMarketplaceSourceReference(args, 2);
   if (sourceRef === 'help' || sourceRef === '--help' || sourceRef === '-h') {
     console.log(usage());
@@ -1692,7 +2497,7 @@ async function runPluginsMarketplaceListCommand(args: readonly string[]): Promis
   if (!source) {
     const error = 'No enabled marketplace source is configured';
     if (wantsJson(args)) {
-      printJsonEnvelope(
+      await printJsonEnvelope(
         {
           ok: false,
           kind: 'plugins_marketplace_list',
@@ -1710,10 +2515,9 @@ async function runPluginsMarketplaceListCommand(args: readonly string[]): Promis
     return;
   }
 
-  const result = await queryAllMarketplaceSourceItems(source);
-  const projectedEntries = result.items.map(projectMarketplaceIndexItemForLegacyCli);
+  const result = await queryAllMarketplaceSourceItems(source, deps.marketplaceIndexService);
   if (wantsJson(args)) {
-    printJsonEnvelope({
+    await printJsonEnvelope({
       ok: true,
       kind: 'plugins_marketplace_list',
       data: {
@@ -1752,12 +2556,15 @@ async function runPluginsMarketplaceListCommand(args: readonly string[]): Promis
   printHumanMarketplaceList({
     title: source.title,
     sourceUrl: source.sourceUrl,
-    entries: projectedEntries,
+    entries: result.items,
     diagnostics: result.diagnostics,
   });
 }
 
-async function runPluginsMarketplaceShowCommand(args: readonly string[]): Promise<void> {
+async function runPluginsMarketplaceShowCommand(
+  args: readonly string[],
+  deps: PluginsCommandDeps,
+): Promise<void> {
   const { sourceRef, pluginId } = readMarketplaceSelection(args, 2);
   if (!pluginId || pluginId === 'help' || pluginId === '--help' || pluginId === '-h') {
     console.log(usage());
@@ -1769,7 +2576,7 @@ async function runPluginsMarketplaceShowCommand(args: readonly string[]): Promis
   if (!source) {
     const error = 'No enabled marketplace source is configured';
     if (wantsJson(args)) {
-      printJsonEnvelope(
+      await printJsonEnvelope(
         {
           ok: false,
           kind: 'plugins_marketplace_show',
@@ -1787,12 +2594,11 @@ async function runPluginsMarketplaceShowCommand(args: readonly string[]): Promis
     return;
   }
 
-  const result = await queryAllMarketplaceSourceItems(source);
+  const result = await queryAllMarketplaceSourceItems(source, deps.marketplaceIndexService);
   const indexEntry = result.items.find((entry) => entry.pluginId === pluginId) ?? null;
-  const projectedEntry = indexEntry ? projectMarketplaceIndexItemForLegacyCli(indexEntry) : null;
   if (wantsJson(args)) {
     if (!indexEntry) {
-      printJsonEnvelope(
+      await printJsonEnvelope(
         {
           ok: false,
           kind: 'plugins_marketplace_show',
@@ -1806,7 +2612,7 @@ async function runPluginsMarketplaceShowCommand(args: readonly string[]): Promis
       return;
     }
 
-    printJsonEnvelope({
+    await printJsonEnvelope({
       ok: true,
       kind: 'plugins_marketplace_show',
       data: {
@@ -1824,15 +2630,13 @@ async function runPluginsMarketplaceShowCommand(args: readonly string[]): Promis
           sourceUrl: source.sourceUrl,
           cache: result.sources[0]?.freshness ?? null,
         },
-        plugin: {
-          ...indexEntry,
-        },
+        plugin: projectMarketplaceIndexItemForCliOutput(indexEntry),
       },
     });
     return;
   }
 
-  if (!projectedEntry) {
+  if (!indexEntry) {
     console.error(errorFrame('Error:', [`Unknown marketplace plugin id: ${pluginId}`]));
     process.exitCode = 1;
     return;
@@ -1841,14 +2645,14 @@ async function runPluginsMarketplaceShowCommand(args: readonly string[]): Promis
   printHumanMarketplaceShow({
     title: source.title,
     sourceUrl: source.sourceUrl,
-    entry: projectedEntry,
+    entry: indexEntry,
     diagnostics: result.diagnostics,
   });
 }
 
-function reportMarketplaceInstallUnavailable(args: readonly string[], message: string): void {
+async function reportMarketplaceInstallUnavailable(args: readonly string[], message: string): Promise<void> {
   if (wantsJson(args)) {
-    printJsonEnvelope(
+    await printJsonEnvelope(
       {
         ok: false,
         kind: 'plugins_marketplace_install',
@@ -1872,7 +2676,7 @@ async function runPluginsMarketplaceInstallCommand(args: readonly string[], _dep
   const registryStore = createMarketplaceSourceRegistryStore();
   const source = await resolveMarketplaceSourceForCommand(registryStore, sourceRef);
   if (!source || !source.enabled) {
-    reportMarketplaceInstallUnavailable(args, 'No enabled marketplace source is configured for this Install and trust action.');
+    await reportMarketplaceInstallUnavailable(args, 'No enabled marketplace source is configured for this Install and trust action.');
     return;
   }
 
@@ -1880,22 +2684,25 @@ async function runPluginsMarketplaceInstallCommand(args: readonly string[], _dep
     happyHomeDir: configuration.happyHomeDir,
     sourceId: source.id,
     pluginId,
-    approval: interactivePluginApproval(_deps, args),
+    approval: resolveUserPluginChangeApproval({
+      interactive: (_deps.isInteractiveTerminal ?? isInteractiveTerminal)(),
+      json: wantsJson(args),
+    }),
   }, {
     marketplaceIndexService: _deps.marketplaceIndexService,
   });
   if (!exactInstall.ok) {
-    reportMarketplaceInstallUnavailable(args, exactInstall.message);
+    await reportMarketplaceInstallUnavailable(args, exactInstall.message);
     return;
   }
   const { listing, change } = exactInstall;
   if (change.kind !== 'committed') {
-    reportPluginChangeFailure(args, 'plugins_marketplace_install', change);
+    await reportPluginChangeFailure(args, 'plugins_marketplace_install', change);
     return;
   }
 
   if (wantsJson(args)) {
-    printJsonEnvelope({
+    await printJsonEnvelope({
       ok: true,
       kind: 'plugins_marketplace_install',
       data: {
@@ -1921,7 +2728,7 @@ async function runPluginsMarketplaceInstallCommand(args: readonly string[], _dep
 async function runPluginsMarketplaceSourcesListCommand(args: readonly string[]): Promise<void> {
   if (wantsJson(args)) {
     const registry = await createMarketplaceSourceRegistryStore().read();
-    printJsonEnvelope({
+    await printJsonEnvelope({
       ok: true,
       kind: 'plugins_marketplace_sources_list',
       data: {
@@ -1962,7 +2769,7 @@ async function runPluginsMarketplaceSourcesAddCommand(args: readonly string[]): 
   });
 
   if (wantsJson(args)) {
-    printJsonEnvelope({
+    await printJsonEnvelope({
       ok: true,
       kind: 'plugins_marketplace_sources_add',
       data: {
@@ -1996,7 +2803,7 @@ async function runPluginsMarketplaceSourcesSetEnabledCommand(args: readonly stri
   if (!source) {
     const error = `Unknown marketplace source reference: ${sourceRef}`;
     if (wantsJson(args)) {
-      printJsonEnvelope(
+      await printJsonEnvelope(
         {
           ok: false,
           kind: enabled ? 'plugins_marketplace_sources_enable' : 'plugins_marketplace_sources_disable',
@@ -2018,7 +2825,7 @@ async function runPluginsMarketplaceSourcesSetEnabledCommand(args: readonly stri
   if (!nextSource) {
     const error = `Unknown marketplace source reference: ${sourceRef}`;
     if (wantsJson(args)) {
-      printJsonEnvelope(
+      await printJsonEnvelope(
         {
           ok: false,
           kind: enabled ? 'plugins_marketplace_sources_enable' : 'plugins_marketplace_sources_disable',
@@ -2037,7 +2844,7 @@ async function runPluginsMarketplaceSourcesSetEnabledCommand(args: readonly stri
   }
 
   if (wantsJson(args)) {
-    printJsonEnvelope({
+    await printJsonEnvelope({
       ok: true,
       kind: enabled ? 'plugins_marketplace_sources_enable' : 'plugins_marketplace_sources_disable',
       data: {
@@ -2070,7 +2877,7 @@ async function runPluginsMarketplaceSourcesRemoveCommand(args: readonly string[]
   if (!source) {
     const error = `Unknown marketplace source reference: ${sourceRef}`;
     if (wantsJson(args)) {
-      printJsonEnvelope(
+      await printJsonEnvelope(
         {
           ok: false,
           kind: 'plugins_marketplace_sources_remove',
@@ -2090,7 +2897,7 @@ async function runPluginsMarketplaceSourcesRemoveCommand(args: readonly string[]
 
   const removed = await store.removeSource(source.id);
   if (wantsJson(args)) {
-    printJsonEnvelope({
+    await printJsonEnvelope({
       ok: true,
       kind: 'plugins_marketplace_sources_remove',
       data: {
@@ -2163,11 +2970,6 @@ export async function handlePluginsCommand(
     return;
   }
 
-  if (subcommand === 'scaffold') {
-    await runPluginsScaffoldCommand(args);
-    return;
-  }
-
   if (subcommand === 'create') {
     await runPluginsCreateCommand(args);
     return;
@@ -2175,6 +2977,28 @@ export async function handlePluginsCommand(
 
   if (subcommand === 'dev') {
     await runPluginsDevCommand(args, deps, runtime);
+    return;
+  }
+
+  if (subcommand === 'change') {
+    await runPluginsChangeCommand(args, deps, runtime);
+    return;
+  }
+
+  if (subcommand === 'logs') {
+    await runPluginsLogsCommand(args, deps, runtime);
+    return;
+  }
+
+  if (subcommand === 'settings') {
+    await handlePluginsSettingsCommand(args.slice(1), {
+      ...(deps.executeSettingsAdministrationAction
+        ? { executeSettingsAdministrationAction: deps.executeSettingsAdministrationAction }
+        : {}),
+      ...(deps.resolvePluginInvocationLogTarget
+        ? { resolvePluginInvocationLogTarget: deps.resolvePluginInvocationLogTarget }
+        : {}),
+    }, runtime);
     return;
   }
 
@@ -2190,6 +3014,11 @@ export async function handlePluginsCommand(
 
   if (subcommand === 'pack') {
     await runPluginsPackCommand(args);
+    return;
+  }
+
+  if (subcommand === 'doctor') {
+    await runPluginsDoctorCommand(args, deps);
     return;
   }
 
@@ -2209,9 +3038,9 @@ export async function handlePluginsCommand(
     };
     await handlePluginsRegistryCommand(args.slice(1), {
       ...registryDeps,
-      write: (value) => {
+      write: async (value) => {
         if (wantsJson(args)) {
-          printJsonEnvelope({ ok: true, kind: 'plugins_registry', data: value });
+          await printJsonEnvelope({ ok: true, kind: 'plugins_registry', data: value });
           return;
         }
         const out = createOutputBuilder();
@@ -2263,7 +3092,7 @@ export async function handlePluginsCommand(
       }
 
       if (wantsJson(args)) {
-        printJsonEnvelope({ ok: false, kind: `plugins_marketplace_sources_${marketplaceSourcesSubcommand}`, error: { code: 'unknown_subcommand' } }, { exitCode: 1 });
+        await printJsonEnvelope({ ok: false, kind: `plugins_marketplace_sources_${marketplaceSourcesSubcommand}`, error: { code: 'unknown_subcommand' } }, { exitCode: 1 });
         return;
       }
 
@@ -2274,12 +3103,12 @@ export async function handlePluginsCommand(
     }
 
     if (marketplaceSubcommand === 'list') {
-      await runPluginsMarketplaceListCommand(args);
+      await runPluginsMarketplaceListCommand(args, deps);
       return;
     }
 
     if (marketplaceSubcommand === 'show') {
-      await runPluginsMarketplaceShowCommand(args);
+      await runPluginsMarketplaceShowCommand(args, deps);
       return;
     }
 
@@ -2289,7 +3118,7 @@ export async function handlePluginsCommand(
     }
 
     if (wantsJson(args)) {
-      printJsonEnvelope({ ok: false, kind: `plugins_marketplace_${marketplaceSubcommand}`, error: { code: 'unknown_subcommand' } }, { exitCode: 1 });
+      await printJsonEnvelope({ ok: false, kind: `plugins_marketplace_${marketplaceSubcommand}`, error: { code: 'unknown_subcommand' } }, { exitCode: 1 });
       return;
     }
 
@@ -2300,7 +3129,7 @@ export async function handlePluginsCommand(
   }
 
   if (wantsJson(args)) {
-    printJsonEnvelope({ ok: false, kind: `plugins_${subcommand}`, error: { code: 'unknown_subcommand' } }, { exitCode: 1 });
+    await printJsonEnvelope({ ok: false, kind: `plugins_${subcommand}`, error: { code: 'unknown_subcommand' } }, { exitCode: 1 });
     return;
   }
 
@@ -2317,7 +3146,7 @@ export async function handlePluginsCliCommand(context: CommandContext): Promise<
     if (wantsJson(args)) {
       const subcommand = String(args[0] ?? '').trim();
       const kind = subcommand ? `plugins_${subcommand}` : 'plugins_unknown';
-      printJsonEnvelope(
+      await printJsonEnvelope(
         {
           ok: false,
           kind,

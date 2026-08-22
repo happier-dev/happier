@@ -1,7 +1,7 @@
 import { chmodSync, existsSync } from 'node:fs';
 import { delimiter, join } from 'node:path';
 
-import type { AgentSessionRuntimeContext } from '@happier-dev/plugin-sdk/agent-runtime';
+import type { AgentSessionRuntimeContext } from '@happier-dev/plugin-sdk/agents/runtime';
 import { describe, expect, it } from 'vitest';
 
 import { readFileEventually, writeAcpTestAgentScript } from '@/agent/acp/testkit/subprocessHarness';
@@ -13,7 +13,7 @@ import { projectLoadedPluginContributes } from '../../../plugins/projection/regi
 import {
   BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS,
 } from '../../../plugins/projection/registry/sources/generatedBundledPlugins';
-import { createPluginInvocationUi } from '../../../plugins/runtime/invocation/services/ui';
+import { createPluginInvocationPresentation } from '../../../plugins/runtime/invocation/services/interactions';
 import { resolveExecutablePluginRuntimeRegistry } from '../../../plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 
 const PI_AGENT_ID = 'pi';
@@ -64,7 +64,6 @@ function createPiOnlyContributionRegistry() {
         },
       },
       manifestPath: 'fixture:happier.agent.claude',
-      manifestDigest: 'fixture:happier.agent.claude',
       daemonEntryPath: '@happier-dev/plugins-claude',
       sourceSpec: {
         kind: 'bundled' as const,
@@ -102,7 +101,6 @@ function createPiOnlyContributionRegistry() {
         },
       },
       manifestPath: 'fixture:happier.agent.codex',
-      manifestDigest: 'fixture:happier.agent.codex',
       daemonEntryPath: '@happier-dev/plugins-codex',
       sourceSpec: {
         kind: 'bundled' as const,
@@ -191,7 +189,7 @@ describe('engineRegistry (Pi request-auth compatibility)', () => {
           : writeAcpTestAgentScript({
               dir: directory,
               fileName: 'pi',
-              source: `#!/usr/bin/env node\n${agentSource}`,
+              source: `#!${process.execPath}\n${agentSource}`,
             });
         chmodSync(systemToolExecutablePath, 0o755);
 
@@ -218,7 +216,7 @@ describe('engineRegistry (Pi request-auth compatibility)', () => {
             PI_CODING_AGENT_DIR: directory,
             [PI_REQUEST_AUTH_CAPABILITY_PATH_ENV]: join(directory, 'request-auth-capability.json'),
           };
-          const services = runtimeRegistry.createAgentInvocationServices({
+          const services = await runtimeRegistry.createAgentInvocationServices({
             pluginId: PI_PLUGIN_ID,
             pluginVersion: lease.pluginVersion,
             agentId: PI_AGENT_ID,
@@ -244,7 +242,7 @@ describe('engineRegistry (Pi request-auth compatibility)', () => {
             surface: 'agent',
             signal,
             services,
-            ui: createPluginInvocationUi({
+            ui: createPluginInvocationPresentation({
               currentSession: null,
               signal,
               isGenerationCurrent: () => true,

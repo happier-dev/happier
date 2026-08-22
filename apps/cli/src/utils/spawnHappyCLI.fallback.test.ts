@@ -1,12 +1,14 @@
+import { createHash } from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, utimesSync, writeFileSync } from 'node:fs';
 
 import { createSpawnHappyCliEnvScope } from '@/testkit/process/spawnHappyCliHarness';
 import { withTempDir } from '@/testkit/fs/tempDir';
 import cliDistBuildManifest from '@happier-dev/cli-common/cliDistBuildManifest';
 import { CLI_RUNTIME_SIDECAR_ENTRIES } from '@happier-dev/cli-common/componentArtifacts/cliRuntimeSidecars';
+import { readCliNodeWorkspaceRuntimeIdentity } from '@happier-dev/cli-common/componentArtifacts/copyCliNodeRuntimePayload';
 
 const envScope = createSpawnHappyCliEnvScope();
 
@@ -38,7 +40,9 @@ function patchFreshDistEnv(entrypoint: string, runtimeStatePath: string, fingerp
     HAPPIER_CLI_SUBPROCESS_DIST_ENTRYPOINT: entrypoint,
     HAPPIER_CLI_SUBPROCESS_DAEMON_DIST_CLOSURE_FINGERPRINT: fingerprint,
     HAPPIER_CLI_SUBPROCESS_STACK_RUNTIME_STATE_PATH: runtimeStatePath,
+    HAPPIER_HOME_DIR: undefined,
     HAPPIER_STACK_STACK: 'qa-agent-1',
+    HAPPIER_STACK_REPO_DIR: undefined,
     TSX_TSCONFIG_PATH: undefined,
   });
 }
@@ -51,14 +55,49 @@ function writeTinyDist(root: string, chunkSource = 'export const marker = "old";
   return join(distDir, 'index.mjs');
 }
 
-function writeDistBuildManifest(entrypoint: string): string {
-  return cliDistBuildManifest.writeCliDistBuildManifest(entrypoint, {
+function writeDistBuildManifest(
+  entrypoint: string,
+  options: Readonly<{
+    recordRuntimeAsset?: boolean;
+    workspaceRuntimeIdentity?: string;
+    workspaceRuntimePackages?: readonly string[];
+  }> = {},
+): string {
+  const written = cliDistBuildManifest.writeCliDistBuildManifest(entrypoint, {
     outputDir: dirname(entrypoint),
     builtAt: '2026-07-09T00:00:00.000Z',
-  }).manifest.fingerprint;
+    ...(options.workspaceRuntimeIdentity
+      ? { workspaceRuntimeIdentity: options.workspaceRuntimeIdentity }
+      : {}),
+    ...(options.workspaceRuntimePackages
+      ? { workspaceRuntimePackages: options.workspaceRuntimePackages }
+      : {}),
+  });
+  const runtimeRoot = dirname(dirname(entrypoint));
+  if (
+    options.recordRuntimeAsset !== false
+    && existsSync(join(
+      runtimeRoot,
+      'tools',
+      'unpacked',
+      'happier-cliproxyapi-managed',
+    ))
+  ) {
+    recordManagedRuntimeAsset(entrypoint, runtimeRoot);
+  }
+  return written.manifest.fingerprint;
 }
 
-function writeTinyRuntimeAssets(root: string, { includeDevCommandWrapper = true } = {}): void {
+function writeTinyRuntimeAssets(
+  root: string,
+  {
+    includeDevCommandWrapper = true,
+    includeManagedProviderRuntime = true,
+  }: Readonly<{
+    includeDevCommandWrapper?: boolean;
+    includeManagedProviderRuntime?: boolean;
+  }> = {},
+): void {
   const scriptsDir = join(root, 'scripts');
   const toolsDir = join(root, 'tools', 'unpacked');
   mkdirSync(scriptsDir, { recursive: true });
@@ -79,6 +118,13 @@ function writeTinyRuntimeAssets(root: string, { includeDevCommandWrapper = true 
     writeFileSync(join(scriptsDir, 'env-wrapper.cjs'), 'module.exports = "env-wrapper.cjs";\n', 'utf8');
   }
   writeFileSync(join(toolsDir, 'rg'), '#!/bin/sh\nexit 0\n', 'utf8');
+  if (includeManagedProviderRuntime) {
+    writeFileSync(
+      join(toolsDir, 'happier-cliproxyapi-managed'),
+      'managed-runtime-A',
+      'utf8',
+    );
+  }
 }
 
 function writeCanonicalRunnerClosureFixture(root: string): string {
@@ -118,7 +164,28 @@ function writeCanonicalRunnerClosureFixture(root: string): string {
   const toolsDir = join(root, 'tools', 'unpacked');
   mkdirSync(toolsDir, { recursive: true });
   writeFileSync(join(toolsDir, 'rg'), '#!/bin/sh\nexit 0\n', 'utf8');
+  writeFileSync(
+    join(toolsDir, 'happier-cliproxyapi-managed'),
+    'managed-runtime-A',
+    'utf8',
+  );
   return entrypoint;
+}
+
+function recordManagedRuntimeAsset(entrypoint: string, root: string): void {
+  const manifestPath = join(dirname(entrypoint), '.build-manifest.json');
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as Record<
+    string,
+    unknown
+  >;
+  const relativePath = 'tools/unpacked/happier-cliproxyapi-managed';
+  const bytes = readFileSync(join(root, ...relativePath.split('/')));
+  manifest.runtimeAsset = {
+    relativePath,
+    byteLength: bytes.byteLength,
+    sha256: createHash('sha256').update(bytes).digest('hex'),
+  };
+  writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
 }
 
 describe('spawnHappyCLI fallback invocation', () => {
@@ -241,6 +308,7 @@ describe('spawnHappyCLI fallback invocation', () => {
     await withTempDir('happier-canonical-runner-closure-', async (root) => {
       const entrypoint = writeCanonicalRunnerClosureFixture(root);
       const fingerprint = writeDistBuildManifest(entrypoint);
+      recordManagedRuntimeAsset(entrypoint, root);
       const runtimeStatePath = join(root, 'stack.runtime.json');
       writeStackRuntimeFingerprint(runtimeStatePath, fingerprint);
       patchFreshDistEnv(entrypoint, runtimeStatePath, fingerprint);
@@ -250,7 +318,7 @@ describe('spawnHappyCLI fallback invocation', () => {
       const pinnedEntrypoint = inv.argv.find((arg) => arg.endsWith('index.mjs'));
 
       expect(pinnedEntrypoint).toMatch(
-        /[\\/]\.runner-snapshots[\\/][a-f0-9]{16}-package-dist-v1[\\/]package-dist[\\/]index\.mjs$/,
+        /[\\/]\.runner-snapshots[\\/][a-f0-9]{16}-[a-f0-9]{64}-[a-f0-9]{64}-package-dist-v4[\\/]package-dist[\\/]index\.mjs$/,
       );
       const snapshotRoot = dirname(dirname(pinnedEntrypoint!));
       expect(readdirSync(join(snapshotRoot, 'scripts')).sort()).toEqual(
@@ -259,6 +327,15 @@ describe('spawnHappyCLI fallback invocation', () => {
       expect(existsSync(join(snapshotRoot, 'scripts', 'build-only.mjs'))).toBe(false);
       expect(existsSync(join(snapshotRoot, 'scripts', 'env-wrapper.cjs'))).toBe(false);
       expect(existsSync(join(snapshotRoot, 'tools', 'unpacked', 'rg'))).toBe(true);
+      expect(readFileSync(
+        join(
+          snapshotRoot,
+          'tools',
+          'unpacked',
+          'happier-cliproxyapi-managed',
+        ),
+        'utf8',
+      )).toBe('managed-runtime-A');
       expect(existsSync(join(
         snapshotRoot,
         'package-dist',
@@ -271,13 +348,160 @@ describe('spawnHappyCLI fallback invocation', () => {
       expect(cliDistBuildManifest.readCliDistBuildManifest(pinnedEntrypoint!)).toMatchObject({
         ok: true,
         fingerprint,
+        manifest: {
+          runtimeAsset: {
+            relativePath: 'tools/unpacked/happier-cliproxyapi-managed',
+            byteLength: Buffer.byteLength('managed-runtime-A'),
+            sha256: createHash('sha256')
+              .update('managed-runtime-A')
+              .digest('hex'),
+          },
+        },
       });
       expect(cliDistBuildManifest.readCliDistClosure(pinnedEntrypoint!, {
-        outputDir: snapshotRoot,
+        outputDir: dirname(pinnedEntrypoint!),
       })).toMatchObject({
         ok: true,
         missing: [],
       });
+    });
+  });
+
+  it('keeps runtime-backed pinned runners in mutable stack state instead of the shared runtime snapshot', async () => {
+    await withTempDir('happier-runtime-backed-runner-store-', async (root) => {
+      const runtimeRoot = join(root, 'runtime', 'builds', 'snapshot-a', 'cli');
+      const stackCliHome = join(root, 'stack', 'cli');
+      const entrypoint = writeTinyDist(runtimeRoot);
+      writeTinyRuntimeAssets(runtimeRoot);
+      const fingerprint = writeDistBuildManifest(entrypoint);
+      const runtimeStatePath = join(root, 'stack', 'stack.runtime.json');
+      mkdirSync(dirname(runtimeStatePath), { recursive: true });
+      writeStackRuntimeFingerprint(runtimeStatePath, fingerprint);
+      patchFreshDistEnv(entrypoint, runtimeStatePath, fingerprint);
+      envScope.patch({
+        HAPPIER_CLI_SUBPROCESS_RUNTIME_BACKED: '1',
+        HAPPIER_HOME_DIR: stackCliHome,
+      });
+
+      const mod = (await import('@/utils/spawnHappyCLI')) as typeof import('@/utils/spawnHappyCLI');
+      const invocation = mod.buildHappyCliSubprocessInvocation(['codex', '--started-by', 'daemon']);
+      const pinnedEntrypoint = invocation.argv.find((arg) => arg.endsWith('index.mjs'));
+
+      expect(pinnedEntrypoint).toContain(join(stackCliHome, '.runner-snapshots'));
+      expect(existsSync(join(runtimeRoot, '.runner-snapshots'))).toBe(false);
+    });
+  });
+
+  it('keeps a complete pinned dist ready when a runtime dependency has package-local optional imports', async () => {
+    await withTempDir('happier-runner-dependency-closure-', async (root) => {
+      const entrypoint = writeTinyDist(root);
+      writeTinyRuntimeAssets(root);
+      const fingerprint = writeDistBuildManifest(entrypoint);
+      const runtimeStatePath = join(root, 'stack.runtime.json');
+      writeStackRuntimeFingerprint(runtimeStatePath, fingerprint);
+      patchFreshDistEnv(entrypoint, runtimeStatePath, fingerprint);
+
+      const mod = (await import('@/utils/spawnHappyCLI')) as typeof import('@/utils/spawnHappyCLI');
+      const first = mod.buildHappyCliSubprocessInvocation(['claude', '--started-by', 'daemon']);
+      const pinnedEntrypoint = first.argv.find((arg) => arg.endsWith('index.mjs'));
+      expect(pinnedEntrypoint).toBeDefined();
+
+      const dependencyDir = join(dirname(dirname(pinnedEntrypoint!)), 'node_modules', 'optional-runtime-dependency');
+      mkdirSync(dependencyDir, { recursive: true });
+      writeFileSync(join(dependencyDir, 'index.js'), 'import "./platform-optional.js";\n', 'utf8');
+
+      const reused = mod.buildHappyCliSubprocessInvocation(['claude', '--started-by', 'daemon']);
+      expect(reused.argv).toContain(pinnedEntrypoint);
+    });
+  });
+
+  it('does not reuse a pre-integrity snapshot with the same dist fingerprint', async () => {
+    await withTempDir('happier-pre-integrity-runner-closure-', async (root) => {
+      const entrypoint = writeCanonicalRunnerClosureFixture(root);
+      const fingerprint = writeDistBuildManifest(entrypoint);
+      recordManagedRuntimeAsset(entrypoint, root);
+      const runtimeStatePath = join(root, 'stack.runtime.json');
+      writeStackRuntimeFingerprint(runtimeStatePath, fingerprint);
+      patchFreshDistEnv(entrypoint, runtimeStatePath, fingerprint);
+
+      const preIntegrityRoot = join(
+        root,
+        '.runner-snapshots',
+        `${fingerprint}-package-dist-v1`,
+      );
+      const stagedEntrypoint = writeCanonicalRunnerClosureFixture(preIntegrityRoot);
+      renameSync(dirname(stagedEntrypoint), join(preIntegrityRoot, 'package-dist'));
+      const preIntegrityEntrypoint = join(
+        preIntegrityRoot,
+        'package-dist',
+        'index.mjs',
+      );
+      expect(writeDistBuildManifest(preIntegrityEntrypoint, {
+        recordRuntimeAsset: false,
+      })).toBe(fingerprint);
+      writeFileSync(join(preIntegrityRoot, '.fingerprint'), `${fingerprint}\n`, 'utf8');
+
+      const mod = (await import('@/utils/spawnHappyCLI')) as typeof import('@/utils/spawnHappyCLI');
+      const invocation = mod.buildHappyCliSubprocessInvocation([
+        'claude',
+        '--started-by',
+        'daemon',
+      ]);
+      const pinnedEntrypoint = invocation.argv.find((arg) => arg.endsWith('index.mjs'));
+
+      expect(pinnedEntrypoint).toBeDefined();
+      expect(pinnedEntrypoint).not.toBe(preIntegrityEntrypoint);
+      expect(cliDistBuildManifest.readCliRuntimeAssetIntegrity({
+        runtimeRoot: dirname(dirname(pinnedEntrypoint!)),
+        relativePath: 'tools/unpacked/happier-cliproxyapi-managed',
+      })).toMatchObject({ ok: true });
+    });
+  });
+
+  it('selects new wrapper bytes when only the recorded runtime asset changes', async () => {
+    await withTempDir('happier-wrapper-only-runner-advance-', async (root) => {
+      const entrypoint = writeCanonicalRunnerClosureFixture(root);
+      const fingerprint = writeDistBuildManifest(entrypoint);
+      const runtimeStatePath = join(root, 'stack.runtime.json');
+      writeStackRuntimeFingerprint(runtimeStatePath, fingerprint);
+      patchFreshDistEnv(entrypoint, runtimeStatePath, fingerprint);
+
+      const mod = (await import('@/utils/spawnHappyCLI')) as typeof import('@/utils/spawnHappyCLI');
+      const wrapperA = mod.buildHappyCliSubprocessInvocation([
+        'claude',
+        '--started-by',
+        'daemon',
+      ]);
+      const wrapperAEntrypoint = wrapperA.argv.find((arg) => arg.endsWith('index.mjs'));
+      expect(wrapperAEntrypoint).toBeDefined();
+
+      writeFileSync(
+        join(root, 'tools', 'unpacked', 'happier-cliproxyapi-managed'),
+        'managed-runtime-B',
+        'utf8',
+      );
+      recordManagedRuntimeAsset(entrypoint, root);
+
+      const wrapperB = mod.buildHappyCliSubprocessInvocation([
+        'claude',
+        '--started-by',
+        'daemon',
+      ]);
+      const wrapperBEntrypoint = wrapperB.argv.find((arg) => arg.endsWith('index.mjs'));
+      expect(wrapperBEntrypoint).toBeDefined();
+      expect(wrapperBEntrypoint).not.toBe(wrapperAEntrypoint);
+      const wrapperBSnapshotRoot = dirname(dirname(wrapperBEntrypoint!));
+      expect(readFileSync(join(
+        wrapperBSnapshotRoot,
+        'tools',
+        'unpacked',
+        'happier-cliproxyapi-managed',
+      ), 'utf8')).toBe('managed-runtime-B');
+      expect(cliDistBuildManifest.readCliRuntimeAssetIntegrity({
+        runtimeRoot: wrapperBSnapshotRoot,
+        relativePath: 'tools/unpacked/happier-cliproxyapi-managed',
+      })).toMatchObject({ ok: true });
+      expect(existsSync(dirname(dirname(wrapperAEntrypoint!)))).toBe(true);
     });
   });
 
@@ -299,7 +523,7 @@ describe('spawnHappyCLI fallback invocation', () => {
           '--no-warnings',
           '--no-deprecation',
           expect.stringMatching(
-            /[\\/]\.runner-snapshots[\\/][a-f0-9]{16}-package-dist-v1[\\/]package-dist[\\/]index\.mjs$/,
+            /[\\/]\.runner-snapshots[\\/][a-f0-9]{16}-[a-f0-9]{64}-[a-f0-9]{64}-package-dist-v4[\\/]package-dist[\\/]index\.mjs$/,
           ),
           'claude',
           '--started-by',
@@ -346,7 +570,7 @@ describe('spawnHappyCLI fallback invocation', () => {
       expect(startup.runtime).toBe('node');
       expect(startup.argv).toEqual(expect.arrayContaining([
         expect.stringMatching(
-          /[\\/]\.runner-snapshots[\\/][a-f0-9]{16}-package-dist-v1[\\/]package-dist[\\/]index\.mjs$/,
+          /[\\/]\.runner-snapshots[\\/][a-f0-9]{16}-[a-f0-9]{64}-[a-f0-9]{64}-package-dist-v4[\\/]package-dist[\\/]index\.mjs$/,
         ),
         'daemon',
         'start-sync',
@@ -364,6 +588,329 @@ describe('spawnHappyCLI fallback invocation', () => {
         '--started-by',
         'daemon',
       ]));
+    });
+  });
+
+  it('uses an admitted source-development closure without a packaged managed provider runtime', async () => {
+    await withTempDir('happier-source-dev-daemon-startup-', async (root) => {
+      const entrypoint = writeTinyDist(root);
+      writeTinyRuntimeAssets(root, { includeManagedProviderRuntime: false });
+      const fingerprint = writeDistBuildManifest(entrypoint, { recordRuntimeAsset: false });
+      const runtimeStatePath = join(root, 'stack.runtime.json');
+      writeStackRuntimeFingerprint(runtimeStatePath, null);
+      patchFreshDistEnv(entrypoint, runtimeStatePath, fingerprint);
+
+      const mod = (await import('@/utils/spawnHappyCLI')) as typeof import('@/utils/spawnHappyCLI');
+      const startup = mod.buildHappyCliSubprocessInvocation(
+        ['daemon', 'start-sync'],
+        { allowAdmittedDaemonStartupClosure: true },
+      );
+
+      expect(startup.runtime).toBe('node');
+      expect(startup.argv).toEqual(expect.arrayContaining([
+        expect.stringMatching(
+          /[\\/]\.runner-snapshots[\\/][a-f0-9]{16}-[a-f0-9]{64}-[a-f0-9]{64}-package-dist-v4[\\/]package-dist[\\/]index\.mjs$/,
+        ),
+        'daemon',
+        'start-sync',
+      ]));
+      const pinnedEntrypoint = startup.argv.find((arg) => arg.endsWith('index.mjs'));
+      expect(pinnedEntrypoint).toBeDefined();
+      expect(existsSync(join(
+        dirname(dirname(pinnedEntrypoint!)),
+        'tools',
+        'unpacked',
+        'happier-cliproxyapi-managed',
+      ))).toBe(false);
+    });
+  });
+
+  it('pins bundled workspace dependencies with the admitted source-development closure', async () => {
+    await withTempDir('happier-source-dev-workspace-closure-', async (repoRoot) => {
+      writeFileSync(join(repoRoot, 'package.json'), '{}\n', 'utf8');
+      writeFileSync(join(repoRoot, 'yarn.lock'), '', 'utf8');
+
+      const cliRoot = join(repoRoot, 'apps', 'cli');
+      mkdirSync(cliRoot, { recursive: true });
+      writeFileSync(join(cliRoot, 'package.json'), JSON.stringify({
+        name: '@happier-dev/cli',
+        dependencies: {
+          '@happier-dev/protocol': 'workspace:*',
+          'example-runtime': '1.0.0',
+        },
+        bundledDependencies: ['@happier-dev/protocol'],
+      }), 'utf8');
+
+      const externalRuntimeRoot = join(repoRoot, 'node_modules', 'example-runtime');
+      mkdirSync(externalRuntimeRoot, { recursive: true });
+      writeFileSync(join(externalRuntimeRoot, 'package.json'), JSON.stringify({
+        name: 'example-runtime',
+        version: '1.0.0',
+        main: 'index.js',
+      }), 'utf8');
+      writeFileSync(join(externalRuntimeRoot, 'index.js'), 'module.exports = "installed";\n', 'utf8');
+
+      const protocolRoot = join(repoRoot, 'packages', 'protocol');
+      mkdirSync(join(protocolRoot, 'dist'), { recursive: true });
+      writeFileSync(join(protocolRoot, 'package.json'), JSON.stringify({
+        name: '@happier-dev/protocol',
+        type: 'module',
+        exports: { '.': './dist/index.js' },
+      }), 'utf8');
+      writeFileSync(
+        join(protocolRoot, 'dist', 'index.js'),
+        'export const generation = "admitted";\n',
+        'utf8',
+      );
+      const installedProtocolRoot = join(
+        cliRoot,
+        'node_modules',
+        '@happier-dev',
+        'protocol',
+      );
+      mkdirSync(join(installedProtocolRoot, 'dist'), { recursive: true });
+      writeFileSync(
+        join(installedProtocolRoot, 'package.json'),
+        readFileSync(join(protocolRoot, 'package.json'), 'utf8'),
+        'utf8',
+      );
+      writeFileSync(
+        join(installedProtocolRoot, 'dist', 'index.js'),
+        readFileSync(join(protocolRoot, 'dist', 'index.js'), 'utf8'),
+        'utf8',
+      );
+
+      const entrypoint = writeTinyDist(cliRoot);
+      writeFileSync(
+        entrypoint,
+        'import { generation } from "@happier-dev/protocol";\nexport { generation };\n',
+        'utf8',
+      );
+      writeTinyRuntimeAssets(cliRoot, { includeManagedProviderRuntime: false });
+      const workspaceRuntimeIdentity = readCliNodeWorkspaceRuntimeIdentity({
+        repoRoot,
+      }).fingerprint;
+      const fingerprint = writeDistBuildManifest(entrypoint, {
+        recordRuntimeAsset: false,
+        workspaceRuntimeIdentity,
+      });
+      const runtimeStatePath = join(repoRoot, 'stack.runtime.json');
+      writeStackRuntimeFingerprint(runtimeStatePath, null);
+      patchFreshDistEnv(entrypoint, runtimeStatePath, fingerprint);
+      envScope.patch({ HAPPIER_STACK_REPO_DIR: repoRoot });
+
+      const mod = (await import('@/utils/spawnHappyCLI')) as typeof import('@/utils/spawnHappyCLI');
+      const startup = mod.buildHappyCliSubprocessInvocation(
+        ['daemon', 'start-sync'],
+        { allowAdmittedDaemonStartupClosure: true },
+      );
+      const pinnedEntrypoint = startup.argv.find((arg) => arg.endsWith('index.mjs'));
+      expect(pinnedEntrypoint).toBeDefined();
+      const pinnedProtocolEntrypoint = join(
+        dirname(dirname(pinnedEntrypoint!)),
+        'node_modules',
+        '@happier-dev',
+        'protocol',
+        'dist',
+        'index.js',
+      );
+
+      expect(readFileSync(pinnedProtocolEntrypoint, 'utf8')).toContain('"admitted"');
+      expect(existsSync(join(
+        dirname(dirname(pinnedEntrypoint!)),
+        'node_modules',
+        'example-runtime',
+      ))).toBe(false);
+      writeFileSync(
+        join(protocolRoot, 'dist', 'index.js'),
+        'export const generation = "successor";\n',
+        'utf8',
+      );
+      expect(readFileSync(pinnedProtocolEntrypoint, 'utf8')).toContain('"admitted"');
+    });
+  });
+
+  it('pins runtime-backed workspace dependencies from the admitted artifact instead of the live checkout', async () => {
+    await withTempDir('happier-runtime-backed-workspace-closure-', async (repoRoot) => {
+      const workspacePackageName = '@happier-dev/protocol';
+      const workspacePackageJson = `${JSON.stringify({
+        name: workspacePackageName,
+        private: true,
+        type: 'module',
+        exports: { '.': './dist/index.js' },
+      }, null, 2)}\n`;
+      const workspacePackageSource = 'export const generation = "admitted";\n';
+      const sourcePackageRoot = join(repoRoot, 'packages', 'protocol');
+      mkdirSync(join(sourcePackageRoot, 'dist'), { recursive: true });
+      writeFileSync(join(sourcePackageRoot, 'package.json'), workspacePackageJson, 'utf8');
+      writeFileSync(join(sourcePackageRoot, 'dist', 'index.js'), workspacePackageSource, 'utf8');
+
+      const buildHostRoot = join(repoRoot, 'artifact-build-host');
+      mkdirSync(buildHostRoot, { recursive: true });
+      writeFileSync(join(buildHostRoot, 'package.json'), JSON.stringify({
+        name: '@happier-dev/cli',
+        dependencies: { [workspacePackageName]: 'workspace:*' },
+        bundledDependencies: [workspacePackageName],
+      }), 'utf8');
+      const buildHostProtocolRoot = join(
+        buildHostRoot,
+        'node_modules',
+        '@happier-dev',
+        'protocol',
+      );
+      mkdirSync(join(buildHostProtocolRoot, 'dist'), { recursive: true });
+      writeFileSync(join(buildHostProtocolRoot, 'package.json'), workspacePackageJson, 'utf8');
+      writeFileSync(join(buildHostProtocolRoot, 'dist', 'index.js'), workspacePackageSource, 'utf8');
+      const workspaceRuntimeIdentity = readCliNodeWorkspaceRuntimeIdentity({
+        repoRoot,
+        hostPackageDir: buildHostRoot,
+      }).fingerprint;
+
+      const runtimeRoot = join(repoRoot, 'runtime-artifact');
+      const runtimeProtocolRoot = join(
+        runtimeRoot,
+        'node_modules',
+        '@happier-dev',
+        'protocol',
+      );
+      mkdirSync(join(runtimeProtocolRoot, 'dist'), { recursive: true });
+      writeFileSync(join(runtimeProtocolRoot, 'package.json'), workspacePackageJson, 'utf8');
+      writeFileSync(join(runtimeProtocolRoot, 'dist', 'index.js'), workspacePackageSource, 'utf8');
+      const entrypoint = writeTinyDist(runtimeRoot);
+      writeTinyRuntimeAssets(runtimeRoot);
+      const fingerprint = writeDistBuildManifest(entrypoint, {
+        workspaceRuntimeIdentity,
+        workspaceRuntimePackages: [workspacePackageName],
+      });
+
+      const liveRepoRoot = join(repoRoot, 'live-checkout');
+      const liveCliRoot = join(liveRepoRoot, 'apps', 'cli');
+      mkdirSync(liveCliRoot, { recursive: true });
+      writeFileSync(join(liveRepoRoot, 'package.json'), '{}\n', 'utf8');
+      writeFileSync(join(liveRepoRoot, 'yarn.lock'), '', 'utf8');
+      writeFileSync(join(liveCliRoot, 'package.json'), JSON.stringify({
+        name: '@happier-dev/cli',
+        dependencies: { [workspacePackageName]: 'workspace:*' },
+        bundledDependencies: [workspacePackageName],
+      }), 'utf8');
+      const liveProtocolSourceRoot = join(liveRepoRoot, 'packages', 'protocol');
+      mkdirSync(join(liveProtocolSourceRoot, 'dist'), { recursive: true });
+      writeFileSync(join(liveProtocolSourceRoot, 'package.json'), workspacePackageJson, 'utf8');
+      writeFileSync(
+        join(liveProtocolSourceRoot, 'dist', 'index.js'),
+        'export const generation = "successor";\n',
+        'utf8',
+      );
+
+      const runtimeStatePath = join(repoRoot, 'stack.runtime.json');
+      writeStackRuntimeFingerprint(runtimeStatePath, fingerprint);
+      patchFreshDistEnv(entrypoint, runtimeStatePath, fingerprint);
+      envScope.patch({
+        HAPPIER_CLI_SUBPROCESS_RUNTIME_BACKED: '1',
+        HAPPIER_STACK_REPO_DIR: liveRepoRoot,
+      });
+
+      const mod = (await import('@/utils/spawnHappyCLI')) as typeof import('@/utils/spawnHappyCLI');
+      const startup = mod.buildHappyCliSubprocessInvocation(
+        ['daemon', 'start-sync'],
+        { allowAdmittedDaemonStartupClosure: true },
+      );
+      const pinnedEntrypoint = startup.argv.find((arg) => arg.endsWith('index.mjs'));
+      expect(pinnedEntrypoint).toBeDefined();
+      expect(readFileSync(join(
+        dirname(dirname(pinnedEntrypoint!)),
+        'node_modules',
+        '@happier-dev',
+        'protocol',
+        'dist',
+        'index.js',
+      ), 'utf8')).toContain('"admitted"');
+    });
+  }, 60_000);
+
+  it('pins last-green CLI code with the current coherent source workspace runtime', async () => {
+    await withTempDir('happier-source-dev-workspace-mismatch-', async (repoRoot) => {
+      writeFileSync(join(repoRoot, 'package.json'), '{}\n', 'utf8');
+      writeFileSync(join(repoRoot, 'yarn.lock'), '', 'utf8');
+
+      const cliRoot = join(repoRoot, 'apps', 'cli');
+      mkdirSync(cliRoot, { recursive: true });
+      writeFileSync(join(cliRoot, 'package.json'), JSON.stringify({
+        name: '@happier-dev/cli',
+        dependencies: { '@happier-dev/protocol': 'workspace:*' },
+        bundledDependencies: ['@happier-dev/protocol'],
+      }), 'utf8');
+
+      const protocolRoot = join(repoRoot, 'packages', 'protocol');
+      mkdirSync(join(protocolRoot, 'dist'), { recursive: true });
+      writeFileSync(join(protocolRoot, 'package.json'), JSON.stringify({
+        name: '@happier-dev/protocol',
+        type: 'module',
+        exports: { '.': './dist/index.js' },
+      }), 'utf8');
+      writeFileSync(
+        join(protocolRoot, 'dist', 'index.js'),
+        'export const generation = "successor";\n',
+        'utf8',
+      );
+      const installedProtocolRoot = join(
+        cliRoot,
+        'node_modules',
+        '@happier-dev',
+        'protocol',
+      );
+      mkdirSync(join(installedProtocolRoot, 'dist'), { recursive: true });
+      writeFileSync(
+        join(installedProtocolRoot, 'package.json'),
+        readFileSync(join(protocolRoot, 'package.json'), 'utf8'),
+        'utf8',
+      );
+      writeFileSync(
+        join(installedProtocolRoot, 'dist', 'index.js'),
+        readFileSync(join(protocolRoot, 'dist', 'index.js'), 'utf8'),
+        'utf8',
+      );
+      const currentWorkspaceRuntime = readCliNodeWorkspaceRuntimeIdentity({ repoRoot });
+
+      const entrypoint = writeTinyDist(cliRoot);
+      writeTinyRuntimeAssets(cliRoot, { includeManagedProviderRuntime: false });
+      const fingerprint = writeDistBuildManifest(entrypoint, {
+        recordRuntimeAsset: false,
+        workspaceRuntimeIdentity: 'a'.repeat(64),
+        workspaceRuntimePackages: ['@happier-dev/protocol'],
+      });
+      const runtimeStatePath = join(repoRoot, 'stack.runtime.json');
+      writeStackRuntimeFingerprint(runtimeStatePath, null);
+      patchFreshDistEnv(entrypoint, runtimeStatePath, fingerprint);
+      envScope.patch({ HAPPIER_STACK_REPO_DIR: repoRoot });
+
+      const mod = (await import('@/utils/spawnHappyCLI')) as typeof import('@/utils/spawnHappyCLI');
+      const invocation = mod.buildHappyCliSubprocessInvocation(
+        ['daemon', 'start-sync'],
+        { allowAdmittedDaemonStartupClosure: true },
+      );
+      const pinnedEntrypoint = invocation.argv.find((arg) => arg.endsWith('index.mjs'));
+      expect(pinnedEntrypoint).toBeDefined();
+      expect(pinnedEntrypoint).not.toBe(entrypoint);
+      expect(readFileSync(join(
+        dirname(dirname(pinnedEntrypoint!)),
+        'node_modules',
+        '@happier-dev',
+        'protocol',
+        'dist',
+        'index.js',
+      ), 'utf8')).toContain('"successor"');
+      expect(cliDistBuildManifest.readCliDistBuildManifest(pinnedEntrypoint!)).toMatchObject({
+        ok: true,
+        manifest: {
+          workspaceRuntimeIdentity: currentWorkspaceRuntime.fingerprint,
+          workspaceRuntimePackages: currentWorkspaceRuntime.packageNames,
+        },
+      });
+      expect(cliDistBuildManifest.readCliDistBuildManifest(entrypoint)).toMatchObject({
+        ok: true,
+        manifest: { workspaceRuntimeIdentity: 'a'.repeat(64) },
+      });
     });
   });
 
@@ -399,6 +946,85 @@ describe('spawnHappyCLI fallback invocation', () => {
     });
   });
 
+  it('starts the daemon from the newest ready pinned closure when a synced successor cannot be reconstructed', async () => {
+    await withTempDir('happier-daemon-startup-last-green-closure-', async (root) => {
+      const entrypoint = writeTinyDist(root, 'export const marker = "last-green";\n');
+      writeTinyRuntimeAssets(root);
+      const lastGreenFingerprint = writeDistBuildManifest(entrypoint);
+      const runtimeStatePath = join(root, 'stack.runtime.json');
+      writeStackRuntimeFingerprint(runtimeStatePath, null);
+      patchFreshDistEnv(entrypoint, runtimeStatePath, lastGreenFingerprint);
+
+      const mod = (await import('@/utils/spawnHappyCLI')) as typeof import('@/utils/spawnHappyCLI');
+      const lastGreen = mod.buildHappyCliSubprocessInvocation(
+        ['daemon', 'start-sync'],
+        { allowAdmittedDaemonStartupClosure: true },
+      );
+      const lastGreenEntrypoint = lastGreen.argv.find((arg) => arg.endsWith('index.mjs'));
+      expect(lastGreenEntrypoint).toBeDefined();
+
+      writeFileSync(join(dirname(entrypoint), 'chunk.mjs'), 'export const marker = "synced-successor";\n', 'utf8');
+      const successorFingerprint = writeDistBuildManifest(entrypoint, {
+        workspaceRuntimeIdentity: 'a'.repeat(64),
+        workspaceRuntimePackages: ['@happier-dev/protocol'],
+      });
+      expect(successorFingerprint).not.toBe(lastGreenFingerprint);
+      patchFreshDistEnv(entrypoint, runtimeStatePath, successorFingerprint);
+      envScope.patch({ HAPPIER_STACK_REPO_DIR: root });
+
+      const startup = mod.buildHappyCliSubprocessInvocation(
+        ['daemon', 'start-sync'],
+        { allowAdmittedDaemonStartupClosure: true },
+      );
+
+      expect(startup.argv).toContain(lastGreenEntrypoint);
+      expect(startup.argv).not.toContain(entrypoint);
+      expect(startup.env).toMatchObject({
+        HAPPIER_CLI_SUBPROCESS_DAEMON_DIST_CLOSURE_FINGERPRINT: lastGreenFingerprint,
+      });
+    });
+  });
+
+  it('refuses an arbitrary last-green closure while Stack holds the exact publication lease', async () => {
+    await withTempDir('happier-daemon-startup-exact-publication-lease-', async (root) => {
+      const entrypoint = writeTinyDist(root, 'export const marker = "last-green";\n');
+      writeTinyRuntimeAssets(root);
+      const lastGreenFingerprint = writeDistBuildManifest(entrypoint);
+      const runtimeStatePath = join(root, 'stack.runtime.json');
+      writeStackRuntimeFingerprint(runtimeStatePath, null);
+      patchFreshDistEnv(entrypoint, runtimeStatePath, lastGreenFingerprint);
+
+      const mod = (await import('@/utils/spawnHappyCLI')) as typeof import('@/utils/spawnHappyCLI');
+      const lastGreen = mod.buildHappyCliSubprocessInvocation(
+        ['daemon', 'start-sync'],
+        { allowAdmittedDaemonStartupClosure: true },
+      );
+      const lastGreenEntrypoint = lastGreen.argv.find((arg) => arg.endsWith('index.mjs'));
+      expect(lastGreenEntrypoint).toBeDefined();
+
+      writeFileSync(join(dirname(entrypoint), 'chunk.mjs'), 'export const marker = "synced-successor";\n', 'utf8');
+      const successorFingerprint = writeDistBuildManifest(entrypoint, {
+        workspaceRuntimeIdentity: 'a'.repeat(64),
+        workspaceRuntimePackages: ['@happier-dev/protocol'],
+      });
+      expect(successorFingerprint).not.toBe(lastGreenFingerprint);
+      patchFreshDistEnv(entrypoint, runtimeStatePath, successorFingerprint);
+      envScope.patch({
+        HAPPIER_STACK_REPO_DIR: root,
+        HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD: '{"path":"exact-publication-lease","token":"fixture"}',
+      });
+
+      expect(() => mod.buildHappyCliSubprocessInvocation(
+        ['daemon', 'start-sync'],
+        { allowAdmittedDaemonStartupClosure: true },
+      )).toThrow(expect.objectContaining({
+        name: 'HappyCliImmutableRuntimeClosureError',
+        code: 'EIMMUTABLERUNNERCLOSURE',
+      }));
+      expect(existsSync(lastGreenEntrypoint!)).toBe(true);
+    });
+  });
+
   it('accepts the immutable runtime artifact sidecars without the development-only command wrapper', async () => {
     await withTempDir('happier-runtime-artifact-runner-', async (root) => {
       const entrypoint = writeTinyDist(root);
@@ -415,7 +1041,7 @@ describe('spawnHappyCLI fallback invocation', () => {
       expect(inv.runtime).toBe('node');
       expect(inv.argv).toEqual(expect.arrayContaining([
         expect.stringMatching(
-          /[\\/]\.runner-snapshots[\\/][a-f0-9]{16}-package-dist-v1[\\/]package-dist[\\/]index\.mjs$/,
+          /[\\/]\.runner-snapshots[\\/][a-f0-9]{16}-[a-f0-9]{64}-[a-f0-9]{64}-package-dist-v4[\\/]package-dist[\\/]index\.mjs$/,
         ),
         'claude',
         '--started-by',
@@ -443,6 +1069,8 @@ describe('spawnHappyCLI fallback invocation', () => {
           name: 'HappyCliImmutableRuntimeClosureError',
           code: 'EIMMUTABLERUNNERCLOSURE',
         }));
+      expect(readdirSync(join(root, 'cli', '.runner-snapshots'))
+        .filter((name) => !name.startsWith('.'))).toEqual([]);
     });
   });
 
@@ -457,6 +1085,28 @@ describe('spawnHappyCLI fallback invocation', () => {
       const runtimeStatePath = join(root, 'stack.runtime.json');
       writeStackRuntimeFingerprint(runtimeStatePath, admittedFingerprint);
       patchFreshDistEnv(entrypoint, runtimeStatePath, admittedFingerprint);
+      envScope.patch({
+        HAPPIER_CLI_SUBPROCESS_RUNTIME_BACKED: '1',
+        HAPPIER_CLI_SUBPROCESS_ALLOW_TSX_FALLBACK: '1',
+      });
+
+      const mod = (await import('@/utils/spawnHappyCLI')) as typeof import('@/utils/spawnHappyCLI');
+      expect(() => mod.buildHappyCliSubprocessInvocation(['claude', '--started-by', 'daemon']))
+        .toThrow(expect.objectContaining({
+          name: 'HappyCliImmutableRuntimeClosureError',
+          code: 'EIMMUTABLERUNNERCLOSURE',
+        }));
+    });
+  });
+
+  it('fails typed without interpreting a malformed admitted fingerprint as a pattern', async () => {
+    await withTempDir('happier-runtime-backed-runner-malformed-fingerprint-', async (root) => {
+      const entrypoint = writeTinyDist(root);
+      writeTinyRuntimeAssets(root);
+      writeDistBuildManifest(entrypoint);
+      const runtimeStatePath = join(root, 'stack.runtime.json');
+      writeStackRuntimeFingerprint(runtimeStatePath, '(');
+      patchFreshDistEnv(entrypoint, runtimeStatePath, '(');
       envScope.patch({
         HAPPIER_CLI_SUBPROCESS_RUNTIME_BACKED: '1',
         HAPPIER_CLI_SUBPROCESS_ALLOW_TSX_FALLBACK: '1',
@@ -518,7 +1168,7 @@ describe('spawnHappyCLI fallback invocation', () => {
 
         const pinnedEntrypoint = inv.argv.find((arg) => arg.endsWith('index.mjs'));
         expect(pinnedEntrypoint).toMatch(
-          /[\\/]\.runner-snapshots[\\/][a-f0-9]{16}-package-dist-v1[\\/]package-dist[\\/]index\.mjs$/,
+          /[\\/]\.runner-snapshots[\\/][a-f0-9]{16}-[a-f0-9]{64}-[a-f0-9]{64}-package-dist-v4[\\/]package-dist[\\/]index\.mjs$/,
         );
         expect(pinnedEntrypoint).not.toContain(`${join('dist', '.runner-snapshots')}`);
         expect(inv.argv).toEqual([
@@ -540,6 +1190,48 @@ describe('spawnHappyCLI fallback invocation', () => {
     } finally {
       process.execArgv = originalExecArgv;
     }
+  });
+
+  it('prunes dead pinned runner snapshots from authoritative daemon startup liveness', async () => {
+    await withTempDir('happier-pinned-dist-startup-prune-', async (root) => {
+      const entrypoint = writeTinyDist(root);
+      writeTinyRuntimeAssets(root);
+      const fingerprint = writeDistBuildManifest(entrypoint);
+      const runtimeStatePath = join(root, 'stack.runtime.json');
+      writeStackRuntimeFingerprint(runtimeStatePath, fingerprint);
+      patchFreshDistEnv(entrypoint, runtimeStatePath, fingerprint);
+
+      const mod = (await import('@/utils/spawnHappyCLI')) as typeof import('@/utils/spawnHappyCLI');
+      const invocation = mod.buildHappyCliSubprocessInvocation([
+        'daemon',
+        'start-sync',
+      ]);
+      const pinnedEntrypoint = invocation.argv.find((arg) => arg.endsWith('index.mjs'));
+      expect(pinnedEntrypoint).toBeDefined();
+      const snapshotIdentity = basename(dirname(dirname(pinnedEntrypoint!)));
+      const liveIdentity = `1111111111111111-${'1'.repeat(64)}-${'2'.repeat(64)}-package-dist-v4`;
+      const snapshotsDir = join(root, '.runner-snapshots');
+      for (const [index, name] of [
+        snapshotIdentity,
+        liveIdentity,
+        ...Array.from({ length: 10 }, (_, deadIndex) => `dead${String(deadIndex).padStart(12, '0')}`),
+      ].entries()) {
+        const snapshotDir = join(snapshotsDir, name);
+        mkdirSync(snapshotDir, { recursive: true });
+        utimesSync(snapshotDir, index + 1, index + 1);
+      }
+
+      mod.pruneHappyCliRunnerSnapshots({
+        reliable: true,
+        fingerprints: new Set([liveIdentity]),
+      });
+
+      expect(existsSync(join(snapshotsDir, snapshotIdentity))).toBe(true);
+      expect(existsSync(join(snapshotsDir, liveIdentity))).toBe(true);
+      expect(existsSync(join(snapshotsDir, 'dead000000000000'))).toBe(false);
+      expect(existsSync(join(snapshotsDir, 'dead000000000001'))).toBe(false);
+      expect(existsSync(join(snapshotsDir, 'dead000000000009'))).toBe(true);
+    });
   });
 
   it.each(['maybe', '2', 'enabled', 'yup'])('does not treat unknown HAPPIER_CLI_SUBPROCESS_PREFER_TSX=%s as enabled', async (rawValue) => {

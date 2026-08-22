@@ -6,6 +6,11 @@ import {
   patchSessionMetadataEnvelopeTuple,
 } from './sessionsHttp';
 
+const ownerEnvelope = {
+  t: 'plain' as const,
+  v: { v: 1 as const },
+};
+
 const request = {
   token: 'token-1',
   sessionId: 'session/one',
@@ -15,14 +20,12 @@ const request = {
     sessionExpectation: {
       kind: 'inactive_model_intent' as const,
     },
-    expectedOwnerMetadataCiphertext: 'owner-before-ciphertext',
+    expectedOwnerMetadata: ownerEnvelope,
     sharedMetadata: {
       ciphertext: 'shared-ciphertext',
       expectedVersion: 3,
     },
-    ownerMetadata: {
-      ciphertext: 'owner-ciphertext',
-    },
+    ownerMetadata: ownerEnvelope,
     agentState: {
       ciphertext: 'agent-state-ciphertext',
       expectedVersion: 5,
@@ -101,6 +104,22 @@ describe('patchSessionMetadataEnvelopeTuple', () => {
     });
   });
 
+  it('returns typed publisher-authority loss from the strict HTTP 409', async () => {
+    vi.spyOn(axios, 'patch').mockResolvedValueOnce({
+      status: 409,
+      data: {
+        code: 'session_publisher_authority_lost',
+      },
+    } as never);
+
+    await expect(
+      patchSessionMetadataEnvelopeTuple(request),
+    ).resolves.toEqual({
+      success: false,
+      error: 'session_publisher_authority_lost',
+    });
+  });
+
   it('sends the strict owner-migration DTO and surfaces the canonical typed refusal', async () => {
     const patch = vi.spyOn(axios, 'patch').mockResolvedValueOnce({
       status: 409,
@@ -133,7 +152,8 @@ describe('patchSessionMetadataEnvelopeTuple', () => {
           metadataLayoutVersion: 1 as const,
           sharedMetadata: { ciphertext: 'shared-target' },
           ownerMetadata: {
-            ciphertext:
+            t: 'encrypted' as const,
+            c:
               'oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==',
           },
           agentState: { ciphertext: null },
@@ -155,26 +175,6 @@ describe('patchSessionMetadataEnvelopeTuple', () => {
   });
 
   it.each([
-    {
-      name: 'positive success',
-      status: 200,
-      data: {
-        success: true,
-        metadataLayoutVersion: 1,
-        sharedMetadata: { version: 8 },
-        agentState: { version: 10 },
-      },
-    },
-    {
-      name: 'migration conflict',
-      status: 409,
-      data: {
-        code: 'session_metadata_version_conflict',
-        metadataLayoutVersion: 1,
-        sharedMetadata: { version: 8 },
-        agentState: { version: 10 },
-      },
-    },
     {
       name: 'privacy refusal with a private extra',
       status: 409,
@@ -224,7 +224,8 @@ describe('patchSessionMetadataEnvelopeTuple', () => {
           metadataLayoutVersion: 1,
           sharedMetadata: { ciphertext: 'shared-target' },
           ownerMetadata: {
-            ciphertext:
+            t: 'encrypted',
+            c:
               'oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==',
           },
           agentState: { ciphertext: null },
@@ -233,6 +234,67 @@ describe('patchSessionMetadataEnvelopeTuple', () => {
     })).rejects.toThrow(
       'Unexpected /v2/sessions/session/one owner-migration refusal response shape',
     );
+  });
+
+  it.each([
+    {
+      status: 200,
+      data: {
+        success: true,
+        metadataLayoutVersion: 1,
+        sharedMetadata: { version: 8 },
+        agentState: { version: 10 },
+      },
+      expected: {
+        success: true,
+        metadataLayoutVersion: 1,
+        sharedMetadata: { version: 8 },
+        agentState: { version: 10 },
+      },
+    },
+    {
+      status: 409,
+      data: {
+        code: 'session_metadata_version_conflict',
+        metadataLayoutVersion: 1,
+        sharedMetadata: { version: 8 },
+        agentState: { version: 10 },
+      },
+      expected: {
+        success: false,
+        error: 'session_metadata_version_conflict',
+        metadataLayoutVersion: 1,
+        sharedMetadata: { version: 8 },
+        agentState: { version: 10 },
+      },
+    },
+  ])('accepts strict owner-migration response status $status', async ({
+    status,
+    data,
+    expected,
+  }) => {
+    vi.spyOn(axios, 'patch').mockResolvedValueOnce({ status, data } as never);
+    await expect(patchSessionMetadataEnvelopeTuple({
+      token: 'token-1',
+      sessionId: 'session/one',
+      patch: {
+        mode: 'owner_migration',
+        expectedAccountEncryptionMode: 'plain',
+        expectedAccountContentPublicKeyFingerprint: null,
+        source: {
+          metadataLayoutVersion: 0,
+          metadata: { version: 7, ciphertext: 'metadata-source' },
+          ownerMetadata: null,
+          agentState: { version: 9, ciphertext: null },
+        },
+        target: {
+          metadataLayoutVersion: 1,
+          sharedMetadata: { ciphertext: 'shared-target' },
+          ownerMetadata: { t: 'plain', v: { v: 1 } },
+          agentState: { ciphertext: null },
+        },
+      },
+    })).resolves.toEqual(expected);
   });
 
   it('maps the immutable v0.2.1 empty-body 400 to a typed nonretryable upgrade error', async () => {

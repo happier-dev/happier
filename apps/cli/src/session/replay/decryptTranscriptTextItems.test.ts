@@ -45,7 +45,7 @@ describe('decryptTranscriptTextItems', () => {
       ],
     });
 
-    expect(out).toEqual([{ role: 'Assistant', createdAt: 1, text: 'hi' }]);
+    expect(out).toEqual([{ role: 'Assistant', createdAt: 1, seq: 1, text: 'hi' }]);
   });
 
   it('extracts tool-use summaries from Claude output envelopes when no text is present', () => {
@@ -316,7 +316,7 @@ describe('decryptTranscriptTextItems', () => {
       ],
     });
 
-    expect(out).toEqual([{ role: 'User', createdAt: 1, text: 'aaa' }]);
+    expect(out).toEqual([{ role: 'User', createdAt: 1, seq: 1, text: 'aaa' }]);
   });
 
   it('skips memory artifact transcript rows (session_synopsis.v1 + session_summary_shard.v1)', () => {

@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import { readHookEventEnvelopeV1 } from '@happier-dev/protocol';
 
 import { createResolvedContributionRegistry } from '../../../plugins/projection/registry/createResolvedContributionRegistry';
 import type {
@@ -53,14 +52,10 @@ function createRuntimeRegistry(
     activateContributionsOnDemand: async () => [],
     hookHandlersByHookId: new Map(),
     agentRuntimesByAgentId: new Map(),
-    daemonAuthBridgesByServiceId: new Map(),
     scmHostingProvidersById: new Map(),
-    networkAllowedUrlOriginsByPluginId: new Map(),
-    processSpawnAllowedPathsByPluginId: new Map(),
     pluginDiagnosticsByPluginId: Object.freeze({}),
     addRuntimeDisposable: (_pluginId, disposable) => disposable,
-    createAgentInvocationServices: () => createUnavailablePluginServices(),
-    readHookEventEnvelopeV1,
+    createAgentInvocationServices: async () => createUnavailablePluginServices(),
     retireConsumers: () => undefined,
     dispose: async () => undefined,
   };

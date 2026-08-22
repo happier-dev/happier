@@ -6,6 +6,7 @@ import {
 import { decodeBase64, decrypt } from '@/api/encryption';
 import { collectReferencedSessionMediaWorkspacePaths } from '@/session/media/referencedPaths';
 import { decodeTranscriptBody } from '@/session/services/transcript/transcriptBodyDecoder';
+import type { SessionEncryptionContext } from '@/session/transport/encryption/sessionEncryptionContext';
 
 import type { HappierReplayDialogItem } from './types';
 
@@ -56,19 +57,45 @@ function truncateText(text: string, maxChars: number): string {
 export function decryptTranscriptReplayCore(params: Readonly<{
   rows: readonly RawTranscriptRow[];
   encryptionKey?: Uint8Array;
-  encryptionVariant?: 'dataKey';
+  /**
+   * Which scheme opens these rows, as the canonical session-crypto owner
+   * resolves it. Hardcoding `dataKey` here silently made a legacy-secret
+   * Account's e2ee transcript unreadable, which the Agent transition then
+   * reported as `context_unavailable` — after it had stopped the source.
+   */
+  encryptionVariant?: SessionEncryptionContext['encryptionVariant'];
   maxTextChars?: number;
   maxDialogItems?: number;
 }>): Readonly<{
   dialog: HappierReplayDialogItem[];
+  /**
+   * Media paths parallel to `dialog`. This is retrieval-local bookkeeping so
+   * the fork-chain window can carry paths only for items it actually retains.
+   */
+  dialogReferencedSessionMediaWorkspacePaths: readonly (readonly string[])[];
   latestSynopsisText: string | null;
   referencedSessionMediaWorkspacePaths: readonly string[];
+  /**
+   * Examined rows this decoder could not read at all — malformed envelopes,
+   * ciphertext it has no key for, and bodies that failed to decode.
+   *
+   * Every skip below is a `continue`, so without this count the caller cannot
+   * tell "the source carries nothing more" from "part of the conversation is
+   * missing", and the seed ends up presenting a conversation with holes in it as
+   * the whole conversation. Rows that decoded fine but carry nothing replayable
+   * — thinking transcripts, memory artifacts, non-conversation events, empty
+   * turns — are READ, not missing, and are not counted.
+   */
+  unreadableRowCount: number;
 }> {
   const maxTextChars = params.maxTextChars;
   const maxDialogItems = normalizePositiveInt(params.maxDialogItems, 200, { min: 1, max: 10_000 });
-  const out: Array<{ role: 'User' | 'Assistant'; createdAt: number; seq: number | null; text: string }> = [];
+  const out: Array<{
+    dialog: { role: 'User' | 'Assistant'; createdAt: number; seq: number | null; text: string };
+    referencedSessionMediaWorkspacePaths: readonly string[];
+  }> = [];
   let bestSynopsis: { synopsis: string; updatedAtMs: number; seqTo: number } | null = null;
-  const referencedSessionMediaWorkspacePaths = new Set<string>();
+  let unreadableRowCount = 0;
 
   for (const row of params.rows ?? []) {
     try {
@@ -76,21 +103,29 @@ export function decryptTranscriptReplayCore(params: Readonly<{
         typeof (row as any)?.seq === 'number' && Number.isFinite((row as any).seq) ? Number((row as any).seq) : null;
       const createdAt = typeof row?.createdAt === 'number' && Number.isFinite(row.createdAt) ? row.createdAt : 0;
       const content = (row as any)?.content;
-      if (!content || typeof content !== 'object') continue;
+      if (!content || typeof content !== 'object') {
+        unreadableRowCount += 1;
+        continue;
+      }
 
       let decryptedValue: any = null;
       if (content.t === 'plain') {
         decryptedValue = content.v;
       } else {
-        if (content.t !== 'encrypted' || typeof content.c !== 'string') continue;
-        if (!params.encryptionKey || params.encryptionVariant !== 'dataKey') continue;
-        decryptedValue = decrypt(params.encryptionKey, 'dataKey', decodeBase64(content.c));
+        if (content.t !== 'encrypted' || typeof content.c !== 'string') {
+          unreadableRowCount += 1;
+          continue;
+        }
+        if (!params.encryptionKey || !params.encryptionVariant) {
+          unreadableRowCount += 1;
+          continue;
+        }
+        decryptedValue = decrypt(params.encryptionKey, params.encryptionVariant, decodeBase64(content.c));
       }
-      if (!decryptedValue || typeof decryptedValue !== 'object') continue;
-      for (const path of collectReferencedSessionMediaWorkspacePaths([decryptedValue])) {
-        referencedSessionMediaWorkspacePaths.add(path);
+      if (!decryptedValue || typeof decryptedValue !== 'object') {
+        unreadableRowCount += 1;
+        continue;
       }
-
       const synopsisCandidate = tryReadSessionSynopsisText(decryptedValue.meta);
       if (synopsisCandidate) {
         if (
@@ -113,14 +148,26 @@ export function decryptTranscriptReplayCore(params: Readonly<{
       }
 
       const decoded = decodeTranscriptBody(decryptedValue);
-      if (!decoded) continue;
+      if (!decoded) {
+        // Declared a text conversation turn, yet its body did not decode: this
+        // one IS a hole in the replayed conversation, not an ineligible row.
+        unreadableRowCount += 1;
+        continue;
+      }
+      // Media follows only a replayable dialog item. A readable event, synopsis,
+      // thinking row, or a row later excluded by this decoder must not trigger
+      // workspace replication merely because it named an attachment.
+      const rowMediaPaths = collectReferencedSessionMediaWorkspacePaths([decryptedValue]);
       if (decoded.semanticRole === 'user') {
         if (!decoded.text) continue;
         out.push({
-          role: 'User',
-          createdAt,
-          seq,
-          text: typeof maxTextChars === 'number' ? truncateText(decoded.text, maxTextChars) : decoded.text,
+          dialog: {
+            role: 'User',
+            createdAt,
+            seq,
+            text: typeof maxTextChars === 'number' ? truncateText(decoded.text, maxTextChars) : decoded.text,
+          },
+          referencedSessionMediaWorkspacePaths: rowMediaPaths,
         });
         continue;
       }
@@ -129,28 +176,47 @@ export function decryptTranscriptReplayCore(params: Readonly<{
         const text = decoded.text ?? decoded.summary;
         if (!text) continue;
         out.push({
-          role: 'Assistant',
-          createdAt,
-          seq,
-          text: typeof maxTextChars === 'number' ? truncateText(text, maxTextChars) : text,
+          dialog: {
+            role: 'Assistant',
+            createdAt,
+            seq,
+            text: typeof maxTextChars === 'number' ? truncateText(text, maxTextChars) : text,
+          },
+          referencedSessionMediaWorkspacePaths: rowMediaPaths,
         });
       }
     } catch {
-      // Tolerate corrupted transcript rows or unexpected shapes; skip the row.
+      // Tolerate corrupted transcript rows or unexpected shapes; skip the row and
+      // record that the replay cannot claim to be complete.
+      unreadableRowCount += 1;
       continue;
     }
   }
 
   out.sort((a, b) => {
-    if (a.seq !== null && b.seq !== null) return a.seq - b.seq;
-    return a.createdAt - b.createdAt;
+    if (a.dialog.seq !== null && b.dialog.seq !== null) return a.dialog.seq - b.dialog.seq;
+    return a.dialog.createdAt - b.dialog.createdAt;
   });
   // Safety bound: keep the most recent items (oldest dropped first).
   const bounded = out.length > maxDialogItems ? out.slice(out.length - maxDialogItems) : out;
+  const referencedSessionMediaWorkspacePaths = new Set<string>();
+  for (const entry of bounded) {
+    for (const path of entry.referencedSessionMediaWorkspacePaths) {
+      referencedSessionMediaWorkspacePaths.add(path);
+    }
+  }
 
   return {
-    dialog: bounded.map(({ seq: _seq, ...rest }) => rest),
+    // The row seq is carried, not dropped: it is the anchor the replay seed
+    // gives the target Agent to page BACKWARDS from, and it is already resolved
+    // here for ordering. Discarding it forced every consumer above to guess
+    // which slice of the transcript the seed was holding.
+    dialog: bounded.map((entry) => entry.dialog),
+    dialogReferencedSessionMediaWorkspacePaths: bounded.map(
+      (entry) => entry.referencedSessionMediaWorkspacePaths,
+    ),
     latestSynopsisText: bestSynopsis?.synopsis ?? null,
+    unreadableRowCount,
     referencedSessionMediaWorkspacePaths: [...referencedSessionMediaWorkspacePaths].sort((left, right) => left.localeCompare(right)),
   };
 }

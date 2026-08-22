@@ -15,8 +15,13 @@ import {
   resolveWorkspaceFileUploadTarget,
   type WorkspaceFinalizeFileOperationsFactory,
 } from './resolveWorkspaceFileUploadTarget';
-import type { UploadTransferTarget } from './uploadTransferTarget';
-import type { PromptAssetAdapter } from '@/prompts/assets/types';
+import {
+  resolveComposerMediaStageUploadTarget,
+  type ComposerMediaStageUploadInitRequest,
+  type ComposerMediaStageUploadTarget,
+  type ComposerMediaStageUploadTargetDeps,
+} from './resolveComposerMediaStageUploadTarget';
+import type { PromptAssetAdapter } from '@happier-dev/plugin-sdk/resources';
 import type { FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
 import type { TransferLifecycleDiagnosticContext } from '../rpc/transferLifecycleDiagnostics';
 
@@ -30,7 +35,9 @@ type PromptAssetTransferUploadTarget = Extract<
   { success: true }
 >['target'];
 
-type ResolvedTransferUploadTarget = (UploadTransferTarget<unknown> & Readonly<{ destPath: string }>);
+type ResolvedTransferUploadTarget = WorkspaceLikeTransferUploadTarget
+  | PromptAssetTransferUploadTarget
+  | ComposerMediaStageUploadTarget;
 
 export type SessionFileUploadInitRequest = Readonly<{
   t?: 'session_file_upload_v1';
@@ -57,14 +64,18 @@ export type PromptAssetUploadInitRequest = Readonly<{
   sizeBytes: unknown;
 }>;
 
+export type { ComposerMediaStageUploadInitRequest } from './resolveComposerMediaStageUploadTarget';
+
 export type TransferUploadInitRequest =
   | SessionFileUploadInitRequest
   | SessionAttachmentUploadInitRequest
-  | PromptAssetUploadInitRequest;
+  | PromptAssetUploadInitRequest
+  | ComposerMediaStageUploadInitRequest;
 
 export type NonPromptTransferUploadInitRequest =
   | SessionFileUploadInitRequest
-  | SessionAttachmentUploadInitRequest;
+  | SessionAttachmentUploadInitRequest
+  | ComposerMediaStageUploadInitRequest;
 
 export type TransferUploadInitAttachmentDeps = Readonly<{
   pathAllowanceRegistry?: TransferPathAllowanceRegistry;
@@ -106,6 +117,7 @@ export function resolveTransferUploadInitTarget(params: Readonly<{
   additionalAllowedWriteDirs?: readonly string[];
   sessionRpcTransferMaxBytes?: number | null;
   attachmentUpload?: TransferUploadInitAttachmentDeps;
+  composerMediaStage?: ComposerMediaStageUploadTargetDeps;
   promptAssetUpload: TransferUploadInitPromptAssetDeps;
   finalizeFileOperations?: WorkspaceFinalizeFileOperationsFactory;
 }>): Promise<ResolveTransferUploadInitTargetSuccess<PromptAssetTransferUploadTarget> | ResolveTransferUploadInitTargetFailure>;
@@ -118,9 +130,10 @@ export function resolveTransferUploadInitTarget(params: Readonly<{
   additionalAllowedWriteDirs?: readonly string[];
   sessionRpcTransferMaxBytes?: number | null;
   attachmentUpload?: TransferUploadInitAttachmentDeps;
+  composerMediaStage?: ComposerMediaStageUploadTargetDeps;
   promptAssetUpload?: TransferUploadInitPromptAssetDeps;
   finalizeFileOperations?: WorkspaceFinalizeFileOperationsFactory;
-}>): Promise<ResolveTransferUploadInitTargetSuccess<WorkspaceLikeTransferUploadTarget> | ResolveTransferUploadInitTargetFailure>;
+}>): Promise<ResolveTransferUploadInitTargetSuccess<WorkspaceLikeTransferUploadTarget | ComposerMediaStageUploadTarget> | ResolveTransferUploadInitTargetFailure>;
 
 export function resolveTransferUploadInitTarget(params: Readonly<{
   workingDirectory: string;
@@ -130,6 +143,7 @@ export function resolveTransferUploadInitTarget(params: Readonly<{
   additionalAllowedWriteDirs?: readonly string[];
   sessionRpcTransferMaxBytes?: number | null;
   attachmentUpload?: TransferUploadInitAttachmentDeps;
+  composerMediaStage?: ComposerMediaStageUploadTargetDeps;
   promptAssetUpload?: TransferUploadInitPromptAssetDeps;
   finalizeFileOperations?: WorkspaceFinalizeFileOperationsFactory;
 }>): Promise<ResolveTransferUploadInitTargetResult>;
@@ -142,9 +156,32 @@ export async function resolveTransferUploadInitTarget(params: Readonly<{
   additionalAllowedWriteDirs?: readonly string[];
   sessionRpcTransferMaxBytes?: number | null;
   attachmentUpload?: TransferUploadInitAttachmentDeps;
+  composerMediaStage?: ComposerMediaStageUploadTargetDeps;
   promptAssetUpload?: TransferUploadInitPromptAssetDeps;
   finalizeFileOperations?: WorkspaceFinalizeFileOperationsFactory;
-  }>): Promise<ResolveTransferUploadInitTargetResult> {
+}>): Promise<ResolveTransferUploadInitTargetResult> {
+  if (params.request.t === 'composer_media_stage_upload_v1') {
+    if (!params.composerMediaStage) {
+      return { success: false, error: 'Composer media staging is unavailable' };
+    }
+    const target = resolveComposerMediaStageUploadTarget({
+      request: params.request,
+      deps: params.composerMediaStage,
+      sessionRpcTransferMaxBytes: params.sessionRpcTransferMaxBytes ?? null,
+    });
+    if (!target.success) {
+      return target;
+    }
+    return {
+      success: true,
+      target: target.target,
+      sha256Expected: target.sha256Expected,
+      diagnosticContext: {
+        transferKind: 'composer_media_stage',
+      },
+    };
+  }
+
   if (params.request.t === 'prompt_asset_upload_v1') {
     if (!params.promptAssetUpload) {
       return { success: false, error: 'Prompt asset uploads are unavailable' };

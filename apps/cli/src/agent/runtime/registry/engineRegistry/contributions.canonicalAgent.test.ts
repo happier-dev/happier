@@ -5,7 +5,10 @@ import type {
     ResolvedAgentRuntimeContribution,
     ResolvedContributionRegistry,
 } from '@/plugins/projection/registry/types';
-import { resolveEngineRuntimeContribution } from './contributions';
+import {
+    resolveEngineBackendIdForCatalogAgent,
+    resolveEngineRuntimeContribution,
+} from './contributions';
 
 describe('resolveEngineRuntimeContribution', () => {
     it('derives the executable view from the canonical Agent', () => {
@@ -76,5 +79,24 @@ describe('resolveEngineRuntimeContribution', () => {
         };
 
         expect(resolveEngineRuntimeContribution(contributions, staleRuntime.id)).toBeNull();
+    });
+
+    it('uses an external Agent\'s sole declared backend instead of assuming its catalog id is the runtime backend id', () => {
+        const agent: ResolvedAgentContribution = {
+            id: 'acme.handoff',
+            provenance: 'external',
+            source: { kind: 'path' },
+            pluginId: 'acme.plugin',
+            definition: {
+                kindVersion: 1,
+                id: 'acme.handoff',
+                ownedBackendIds: ['acme.handoff.backend'],
+            },
+        };
+        const contributions = {
+            agentDefinitionsById: new Map([[agent.id, agent]]),
+        } satisfies Pick<ResolvedContributionRegistry, 'agentDefinitionsById'>;
+
+        expect(resolveEngineBackendIdForCatalogAgent(contributions, agent.id)).toBe('acme.handoff.backend');
     });
 });

@@ -1,10 +1,15 @@
 import { describe, expect, it } from 'vitest';
 
-import { resolveSessionMessageModel, resolveSessionMessageModelId } from './resolveSessionMessageModel';
+import { resolveSessionMessageModel } from './resolveSessionMessageModel';
 
-describe('resolveSessionMessageModelId', () => {
+/** The prompt model selector, read off the canonical resolution that keeps Provider identity. */
+const modelIdFor = (
+  params: Parameters<typeof resolveSessionMessageModel>[0],
+): string => resolveSessionMessageModel(params).modelId;
+
+describe('resolveSessionMessageModel', () => {
   it('projects a canonical provider-bound session selection to the final prompt model selector', () => {
-    expect(resolveSessionMessageModelId({
+    expect(modelIdFor({
       metadata: {
         flavor: 'codex',
         modelSelectionIntentV1: {
@@ -21,7 +26,7 @@ describe('resolveSessionMessageModelId', () => {
   });
 
   it('constructs provider identity only after resolving the target and preserves literal default', () => {
-    expect(resolveSessionMessageModelId({
+    expect(modelIdFor({
       metadata: {
         flavor: 'codex',
         modelSelectionIntentV1: {
@@ -41,7 +46,7 @@ describe('resolveSessionMessageModelId', () => {
       agentPolicy: 'live',
     })).toBe('default');
 
-    expect(() => resolveSessionMessageModelId({
+    expect(() => modelIdFor({
       metadata: {},
       modelSelectionInput: {
         providerConnectionId: 'pc_work',
@@ -50,7 +55,7 @@ describe('resolveSessionMessageModelId', () => {
       agentPolicy: 'live',
     })).toThrow(/target.*unavailable/i);
 
-    expect(() => resolveSessionMessageModelId({
+    expect(() => modelIdFor({
       metadata: {
         flavor: 'claude',
         modelSelectionIntentV1: {
@@ -221,7 +226,7 @@ describe('resolveSessionMessageModelId', () => {
       providerConnectionId: 'pc_a',
       modelId: 'provider-model',
     });
-    expect(resolveSessionMessageModelId({
+    expect(modelIdFor({
       metadata: providerMetadata,
       modelSelectionInput: { modelId: 'default' },
       agentPolicy: 'live',
@@ -229,7 +234,7 @@ describe('resolveSessionMessageModelId', () => {
   });
 
   it('delegates same-connection policy to the exact prompt-custody coordinator', () => {
-    expect(resolveSessionMessageModelId({
+    expect(modelIdFor({
       metadata: {
         flavor: 'codex',
         modelSelectionIntentV1: {
@@ -248,7 +253,7 @@ describe('resolveSessionMessageModelId', () => {
   });
 
   it('refuses provider identity without a concrete model and preserves native reset semantics', () => {
-    expect(() => resolveSessionMessageModelId({
+    expect(() => modelIdFor({
       metadata: { flavor: 'codex' },
       modelSelectionInput: {
         providerConnectionId: 'pc_work',
@@ -256,12 +261,12 @@ describe('resolveSessionMessageModelId', () => {
       },
       agentPolicy: 'live',
     })).toThrow(/concrete model/i);
-    expect(resolveSessionMessageModelId({
+    expect(modelIdFor({
       metadata: { flavor: 'codex' },
       modelSelectionInput: { providerConnectionId: null, modelId: 'default' },
       agentPolicy: 'unsupported',
     })).toBe('default');
-    expect(resolveSessionMessageModelId({
+    expect(modelIdFor({
       metadata: { flavor: 'codex' },
       modelSelectionInput: { providerConnectionId: null, modelId: null },
       agentPolicy: 'unsupported',
@@ -269,11 +274,11 @@ describe('resolveSessionMessageModelId', () => {
   });
 
   it('keeps the deployed bare override as compatibility-only input', () => {
-    expect(resolveSessionMessageModelId({
+    expect(modelIdFor({
       metadata: { flavor: 'codex' },
       legacyModelOverride: 'legacy-native',
     })).toBe('legacy-native');
-    expect(resolveSessionMessageModelId({
+    expect(modelIdFor({
       metadata: { flavor: 'codex' },
       legacyModelOverride: null,
     })).toBe('');

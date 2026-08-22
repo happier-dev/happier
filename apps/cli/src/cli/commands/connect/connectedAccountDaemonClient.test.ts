@@ -1,18 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { Credentials } from '@/persistence';
+import type { StoredCredentials } from '@/persistence';
 
 import {
   createConnectedAccountDaemonClient,
 } from './connectedAccountDaemonClient';
 
-const credentials: Credentials = {
+const credentials: StoredCredentials = {
   token: 'token-1',
-  encryption: {
-    type: 'dataKey',
-    publicKey: new Uint8Array(32),
-    machineKey: new Uint8Array(32),
-  },
+  encryption: null,
 };
 const service = Object.freeze({ pluginId: 'acme.accounts', localId: 'work' });
 

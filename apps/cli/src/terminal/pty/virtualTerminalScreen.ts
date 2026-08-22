@@ -1,6 +1,6 @@
 export type VirtualTerminalScreen = Readonly<{
   write(data: string): void;
-  capture(): string;
+  capture(): Readonly<{ text: string; cursor: Readonly<{ x: number; y: number }> }>;
   resize(cols: number, rows: number): void;
 }>;
 
@@ -214,12 +214,15 @@ export function createVirtualTerminalScreen(params?: Readonly<{ cols?: number; r
         }
       }
     },
-    capture(): string {
+    capture() {
       const rendered = lines.map((line) => line.join('').replace(/\s+$/u, ''));
       while (rendered.length > 0 && rendered[rendered.length - 1] === '') {
         rendered.pop();
       }
-      return rendered.join('\n');
+      return {
+        text: rendered.join('\n'),
+        cursor: { x: cursorCol, y: cursorRow },
+      };
     },
     resize(nextCols: number, nextRows: number): void {
       const safeCols = Math.max(2, Math.trunc(nextCols));

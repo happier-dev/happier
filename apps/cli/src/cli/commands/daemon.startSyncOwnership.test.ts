@@ -142,6 +142,25 @@ describe('handleDaemonCliCommand: daemon start-sync', () => {
         expect(startDaemonMock).toHaveBeenCalledWith({ takeover: false });
     });
 
+    it('passes explicit plugin recovery to the synchronous daemon owner', async () => {
+        const exitSpy = vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
+            throw new Error(`exit:${code ?? ''}`);
+        }) as never);
+
+        try {
+            await expect(handleDaemonCliCommand({
+                args: ['daemon', 'start-sync', '--plugin-recovery'],
+            } as never)).rejects.toThrow(/exit:0/);
+        } finally {
+            exitSpy.mockRestore();
+        }
+
+        expect(startDaemonMock).toHaveBeenCalledWith({
+            takeover: false,
+            pluginRecovery: true,
+        });
+    });
+
     it('does not short-circuit a self-restart replacement when the current daemon is compatible', async () => {
         envScope.patch({
             HAPPIER_DAEMON_STARTUP_SOURCE: 'self-restart',

@@ -149,11 +149,12 @@ export function isMemoryArtifactDecryptedRow(value: unknown): boolean {
 
 export function tryResolveDecryptedTranscriptPayload(params: Readonly<{
   content: unknown;
-  ctx: Readonly<{ encryptionKey: Uint8Array; encryptionVariant: 'legacy' | 'dataKey' }>;
+  ctx: Readonly<{ encryptionKey: Uint8Array; encryptionVariant: 'legacy' | 'dataKey' }> | null;
 }>): unknown | null {
   const parsed = SessionMessageContentSchema.safeParse(params.content);
   if (!parsed.success) return null;
   if (parsed.data.t === 'plain') return parsed.data.v;
+  if (!params.ctx) return null;
   try {
     return decrypt(params.ctx.encryptionKey, params.ctx.encryptionVariant, decodeBase64(parsed.data.c, 'base64'));
   } catch {

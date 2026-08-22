@@ -1,14 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
     SessionOwnerMetadataV1Schema,
-    sealSessionOwnerMetadataV1,
+  sealSessionOwnerMetadataEnvelopeV1,
 } from '@happier-dev/protocol';
 
 describe('sendSessionMessage', () => {
     beforeEach(() => {
         vi.doMock('@/api/session/pendingQueueV2Transport', async (importOriginal) => ({
             ...await importOriginal<typeof import('@/api/session/pendingQueueV2Transport')>(),
-            enqueuePendingQueueV2MessageViaHttp: vi.fn(async () => undefined),
+            enqueuePendingQueueV2MessageViaHttp: vi.fn(async () => ({
+                didWrite: true,
+                terminal: false,
+                suppressed: false,
+            })),
         }));
     });
     afterEach(() => {
@@ -89,9 +93,6 @@ describe('sendSessionMessage', () => {
         vi.doMock('@/session/transport/rpc/sessionRpc', () => ({
             callSessionRpc,
         }));
-        vi.doMock('@/session/transport/socket/sessionSocketSendMessage', () => ({
-            sendSessionMessageViaSocketCommitted: vi.fn(async () => undefined),
-        }));
         vi.doMock('@/session/transport/socket/sessionSocketAgentState', () => ({
             waitForIdleViaSocket,
         }));
@@ -100,7 +101,8 @@ describe('sendSessionMessage', () => {
                 ok: true,
                 sessionId: 'sess-1',
                 mode: 'plain',
-                ctx: { encryptionKey: new Uint8Array(32).fill(1), encryptionVariant: 'dataKey' },
+                ctx: null,
+                accountEncryptionCurrentness: { mode: 'plain' },
                 rawSession: {
                     id: 'sess-1',
                     active: true,
@@ -202,7 +204,11 @@ describe('sendSessionMessage', () => {
     }
 
     it('omits a pending restart intent from an ordinary active prompt', async () => {
-        const enqueuePendingQueueV2MessageViaHttp = vi.fn(async (_params: unknown) => undefined);
+        const enqueuePendingQueueV2MessageViaHttp = vi.fn(async (_params: unknown) => ({
+            didWrite: true,
+            terminal: false,
+            suppressed: false,
+        }));
         vi.doMock('@/api/session/pendingQueueV2Transport', async (importOriginal) => ({
             ...await importOriginal<typeof import('@/api/session/pendingQueueV2Transport')>(),
             enqueuePendingQueueV2MessageViaHttp,
@@ -212,7 +218,8 @@ describe('sendSessionMessage', () => {
                 ok: true,
                 sessionId: 'sess-1',
                 mode: 'plain',
-                ctx: { encryptionKey: new Uint8Array(32).fill(1), encryptionVariant: 'legacy' },
+                ctx: null,
+                accountEncryptionCurrentness: { mode: 'plain' },
                 rawSession: {
                     id: 'sess-1',
                     active: true,
@@ -276,7 +283,11 @@ describe('sendSessionMessage', () => {
     }, 60_000);
 
     it('emits structured Provider selections through prompt custody without providerless fallback', async () => {
-        const enqueuePendingQueueV2MessageViaHttp = vi.fn(async (_params: unknown) => undefined);
+        const enqueuePendingQueueV2MessageViaHttp = vi.fn(async (_params: unknown) => ({
+            didWrite: true,
+            terminal: false,
+            suppressed: false,
+        }));
         vi.doMock('@/api/session/pendingQueueV2Transport', async (importOriginal) => ({
             ...await importOriginal<typeof import('@/api/session/pendingQueueV2Transport')>(),
             enqueuePendingQueueV2MessageViaHttp,
@@ -311,7 +322,8 @@ describe('sendSessionMessage', () => {
                 ok: true,
                 sessionId: 'sess-1',
                 mode: 'plain',
-                ctx: { encryptionKey: new Uint8Array(32).fill(1), encryptionVariant: 'legacy' },
+                ctx: null,
+                accountEncryptionCurrentness: { mode: 'plain' },
                 rawSession: {
                     id: 'sess-1',
                     active: true,
@@ -432,7 +444,11 @@ describe('sendSessionMessage', () => {
         const waitForIdleViaSocket = vi.fn(async () => ({ idle: true as const, observedAt: 456 }));
 
         vi.doMock('@/api/session/pendingQueueV2Transport', () => ({
-            enqueuePendingQueueV2MessageViaHttp: vi.fn(async () => undefined),
+            enqueuePendingQueueV2MessageViaHttp: vi.fn(async () => ({
+                didWrite: true,
+                terminal: false,
+                suppressed: false,
+            })),
             materializeNextPendingQueueV2MessageViaHttp,
             readBlockedPendingQueueV2DeliveryByLocalIdFromServer,
         }));
@@ -449,9 +465,6 @@ describe('sendSessionMessage', () => {
         vi.doMock('@/session/transport/rpc/sessionRpc', () => ({
             callSessionRpc,
         }));
-        vi.doMock('@/session/transport/socket/sessionSocketSendMessage', () => ({
-            sendSessionMessageViaSocketCommitted: vi.fn(async () => undefined),
-        }));
         vi.doMock('@/session/transport/socket/sessionSocketAgentState', () => ({
             waitForIdleViaSocket,
         }));
@@ -460,7 +473,8 @@ describe('sendSessionMessage', () => {
                 ok: true,
                 sessionId: 'sess-1',
                 mode: 'plain',
-                ctx: { encryptionKey: new Uint8Array(32).fill(1), encryptionVariant: 'dataKey' },
+                ctx: null,
+                accountEncryptionCurrentness: { mode: 'plain' },
                 rawSession: {
                     id: 'sess-1',
                     active: true,
@@ -551,9 +565,6 @@ describe('sendSessionMessage', () => {
         vi.doMock('@/session/transport/rpc/sessionRpc', () => ({
             callSessionRpc,
         }));
-        vi.doMock('@/session/transport/socket/sessionSocketSendMessage', () => ({
-            sendSessionMessageViaSocketCommitted: vi.fn(async () => undefined),
-        }));
         vi.doMock('@/session/transport/socket/sessionSocketAgentState', () => ({
             waitForIdleViaSocket,
         }));
@@ -562,7 +573,8 @@ describe('sendSessionMessage', () => {
                 ok: true,
                 sessionId: 'sess-1',
                 mode: 'plain',
-                ctx: { encryptionKey: new Uint8Array(32).fill(1), encryptionVariant: 'dataKey' },
+                ctx: null,
+                accountEncryptionCurrentness: { mode: 'plain' },
                 rawSession: {
                     id: 'sess-1',
                     active: true,
@@ -686,7 +698,8 @@ describe('sendSessionMessage', () => {
                 ok: true,
                 sessionId: 'sess-1',
                 mode: 'plain',
-                ctx: { encryptionKey: new Uint8Array(32).fill(1), encryptionVariant: 'dataKey' },
+                ctx: null,
+                accountEncryptionCurrentness: { mode: 'plain' },
                 rawSession: {
                     id: 'sess-1',
                     active: true,
@@ -755,9 +768,6 @@ describe('sendSessionMessage', () => {
         vi.doMock('@/session/transport/rpc/sessionRpc', () => ({
             callSessionRpc,
         }));
-        vi.doMock('@/session/transport/socket/sessionSocketSendMessage', () => ({
-            sendSessionMessageViaSocketCommitted: vi.fn(async () => undefined),
-        }));
         vi.doMock('@/session/transport/socket/sessionSocketAgentState', () => ({
             waitForIdleViaSocket,
         }));
@@ -766,7 +776,8 @@ describe('sendSessionMessage', () => {
                 ok: true,
                 sessionId: 'sess-1',
                 mode: 'plain',
-                ctx: { encryptionKey: new Uint8Array(32).fill(1), encryptionVariant: 'dataKey' },
+                ctx: null,
+                accountEncryptionCurrentness: { mode: 'plain' },
                 rawSession: {
                     id: 'sess-1',
                     active: true,
@@ -847,9 +858,6 @@ describe('sendSessionMessage', () => {
         vi.doMock('@/session/transport/rpc/sessionRpc', () => ({
             callSessionRpc,
         }));
-        vi.doMock('@/session/transport/socket/sessionSocketSendMessage', () => ({
-            sendSessionMessageViaSocketCommitted: vi.fn(async () => undefined),
-        }));
         vi.doMock('@/session/transport/socket/sessionSocketAgentState', () => ({
             waitForIdleViaSocket,
         }));
@@ -858,7 +866,8 @@ describe('sendSessionMessage', () => {
                 ok: true,
                 sessionId: 'sess-1',
                 mode: 'plain',
-                ctx: { encryptionKey: new Uint8Array(32).fill(1), encryptionVariant: 'dataKey' },
+                ctx: null,
+                accountEncryptionCurrentness: { mode: 'plain' },
                 rawSession: {
                     id: 'sess-1',
                     active: true,
@@ -1055,9 +1064,6 @@ describe('sendSessionMessage', () => {
         vi.doMock('@/session/transport/rpc/sessionRpc', () => ({
             callSessionRpc,
         }));
-        vi.doMock('@/session/transport/socket/sessionSocketSendMessage', () => ({
-            sendSessionMessageViaSocketCommitted: vi.fn(async () => undefined),
-        }));
         vi.doMock('@/session/transport/socket/sessionSocketAgentState', () => ({
             waitForIdleViaSocket,
         }));
@@ -1066,7 +1072,8 @@ describe('sendSessionMessage', () => {
                 ok: true,
                 sessionId: 'sess-1',
                 mode: 'plain',
-                ctx: { encryptionKey: new Uint8Array(32).fill(1), encryptionVariant: 'dataKey' },
+                ctx: null,
+                accountEncryptionCurrentness: { mode: 'plain' },
                 rawSession: {
                     id: 'sess-1',
                     active: true,
@@ -1172,9 +1179,6 @@ describe('sendSessionMessage', () => {
         vi.doMock('@/session/transport/rpc/sessionRpc', () => ({
             callSessionRpc,
         }));
-        vi.doMock('@/session/transport/socket/sessionSocketSendMessage', () => ({
-            sendSessionMessageViaSocketCommitted: vi.fn(async () => undefined),
-        }));
         vi.doMock('@/session/transport/socket/sessionSocketAgentState', () => ({
             waitForIdleViaSocket,
         }));
@@ -1183,7 +1187,8 @@ describe('sendSessionMessage', () => {
                 ok: true,
                 sessionId: 'sess-1',
                 mode: 'plain',
-                ctx: { encryptionKey: new Uint8Array(32).fill(1), encryptionVariant: 'dataKey' },
+                ctx: null,
+                accountEncryptionCurrentness: { mode: 'plain' },
                 rawSession: {
                     id: 'sess-1',
                     active: true,
@@ -1326,16 +1331,16 @@ describe('sendSessionMessage', () => {
     });
 
     it('durably enqueues an inactive prompt before one user-authorized resume', async () => {
-        const sendSessionMessageViaSocketCommitted = vi.fn(async () => undefined);
-        const enqueuePendingQueueV2MessageViaHttp = vi.fn(async () => undefined);
+        const enqueuePendingQueueV2MessageViaHttp = vi.fn(async () => ({
+            didWrite: true,
+            terminal: false,
+            suppressed: false,
+        }));
         const materializeNextPendingQueueV2MessageViaHttp = vi.fn(async () => ({ didMaterialize: true }));
         const requestInactiveSessionResume = vi.fn(async () => ({ ok: true as const }));
 
         vi.doMock('@/session/transport/rpc/sessionRpc', () => ({
             callSessionRpc: vi.fn(async (_params: unknown) => ({ ok: true })),
-        }));
-        vi.doMock('@/session/transport/socket/sessionSocketSendMessage', () => ({
-            sendSessionMessageViaSocketCommitted,
         }));
         vi.doMock('@/api/session/pendingQueueV2Transport', () => ({
             enqueuePendingQueueV2MessageViaHttp,
@@ -1347,7 +1352,8 @@ describe('sendSessionMessage', () => {
                 ok: true,
                 sessionId: 'sess-1',
                 mode: 'plain',
-                ctx: { encryptionKey: new Uint8Array(32).fill(1), encryptionVariant: 'dataKey' },
+                ctx: null,
+                accountEncryptionCurrentness: { mode: 'plain' },
                 rawSession: {
                     id: 'sess-1',
                     active: false,
@@ -1385,7 +1391,6 @@ describe('sendSessionMessage', () => {
             sessionId: 'sess-1',
             body: expect.objectContaining({ localId: 'connected-service-continuation:test' }),
         }));
-        expect(sendSessionMessageViaSocketCommitted).not.toHaveBeenCalled();
         expect(materializeNextPendingQueueV2MessageViaHttp).not.toHaveBeenCalled();
         expect(enqueuePendingQueueV2MessageViaHttp.mock.invocationCallOrder[0]).toBeLessThan(
             requestInactiveSessionResume.mock.invocationCallOrder[0],
@@ -1440,12 +1445,16 @@ describe('sendSessionMessage', () => {
                 },
             },
         });
-        const ownerMetadataCiphertext = sealSessionOwnerMetadataV1({
+        const ownerMetadataEnvelope = sealSessionOwnerMetadataEnvelopeV1({
             material: { type: 'dataKey', machineKey },
             ownerMetadata,
             randomBytes: (length) => new Uint8Array(length).fill(7),
         });
-        const enqueuePendingQueueV2MessageViaHttp = vi.fn(async () => undefined);
+        const enqueuePendingQueueV2MessageViaHttp = vi.fn(async () => ({
+            didWrite: true,
+            terminal: false,
+            suppressed: false,
+        }));
         const requestInactiveSessionResume = vi.fn(async () => ({ ok: true as const }));
 
         vi.doMock('@/api/session/pendingQueueV2Transport', () => ({
@@ -1457,7 +1466,8 @@ describe('sendSessionMessage', () => {
                 ok: true,
                 sessionId: 'sess-layout1',
                 mode: 'plain',
-                ctx: { encryptionKey: machineKey, encryptionVariant: 'dataKey' },
+                ctx: null,
+                accountEncryptionCurrentness: { mode: 'e2ee' },
                 rawSession: {
                     id: 'sess-layout1',
                     active: false,
@@ -1468,7 +1478,7 @@ describe('sendSessionMessage', () => {
                         summary: { text: 'Layout 1 session', updatedAt: 12 },
                         agentPresentation: { agentId: 'claude' },
                     }),
-                    ownerMetadata: ownerMetadataCiphertext,
+                    ownerMetadata: ownerMetadataEnvelope,
                     machineId: 'machine-layout1',
                     seq: 41,
                     agentState: null,
@@ -1534,7 +1544,11 @@ describe('sendSessionMessage', () => {
     });
 
     it('does not resume an inactive session when enqueue reports a terminal replay', async () => {
-        const enqueuePendingQueueV2MessageViaHttp = vi.fn(async () => ({ didWrite: false, terminal: true as const }));
+        const enqueuePendingQueueV2MessageViaHttp = vi.fn(async () => ({
+            didWrite: false,
+            terminal: true as const,
+            suppressed: false,
+        }));
         const requestInactiveSessionResume = vi.fn(async () => ({ ok: true as const }));
         vi.doMock('@/api/session/pendingQueueV2Transport', () => ({ enqueuePendingQueueV2MessageViaHttp }));
         vi.doMock('./requestInactiveSessionResume', () => ({ requestInactiveSessionResume }));
@@ -1543,7 +1557,8 @@ describe('sendSessionMessage', () => {
                 ok: true,
                 sessionId: 'sess-1',
                 mode: 'plain',
-                ctx: { encryptionKey: new Uint8Array(32).fill(1), encryptionVariant: 'dataKey' },
+                ctx: null,
+                accountEncryptionCurrentness: { mode: 'plain' },
                 rawSession: {
                     id: 'sess-1',
                     active: false,
@@ -1563,28 +1578,40 @@ describe('sendSessionMessage', () => {
             localId: 'already-terminal',
             wait: false,
             timeoutMs: 1,
-        })).resolves.toEqual({ ok: true, sessionId: 'sess-1', localId: 'already-terminal', waited: false });
+        })).resolves.toEqual({
+            ok: true,
+            sessionId: 'sess-1',
+            localId: 'already-terminal',
+            waited: false,
+            terminal: true,
+        });
         expect(requestInactiveSessionResume).not.toHaveBeenCalled();
     });
 
     it('enqueues an active prompt with explicit send-now intent and no direct runtime dispatch', async () => {
-        const enqueuePendingQueueV2MessageViaHttp = vi.fn(async (_input: unknown) => undefined);
+        const enqueuePendingQueueV2MessageViaHttp = vi.fn(async (_input: Readonly<{
+            body: Readonly<{
+                ciphertext?: string;
+                requestEqualityEvidenceV1?: unknown;
+            }>;
+        }>) => ({
+            didWrite: true,
+            terminal: false,
+            suppressed: false,
+        }));
         const callSessionRpc = vi.fn(async (_params: unknown) => ({ ok: true }));
-        const sendSessionMessageViaSocketCommitted = vi.fn(async () => undefined);
 
         vi.doMock('@/api/session/pendingQueueV2Transport', () => ({
             enqueuePendingQueueV2MessageViaHttp,
         }));
         vi.doMock('@/session/transport/rpc/sessionRpc', () => ({ callSessionRpc }));
-        vi.doMock('@/session/transport/socket/sessionSocketSendMessage', () => ({
-            sendSessionMessageViaSocketCommitted,
-        }));
         vi.doMock('./resolveSessionTransportContext', () => ({
             resolveSessionTransportContext: vi.fn(async () => ({
                 ok: true,
                 sessionId: 'sess-1',
                 mode: 'e2ee',
                 ctx: { encryptionKey: new Uint8Array(32).fill(1), encryptionVariant: 'dataKey' },
+                accountEncryptionCurrentness: { mode: 'e2ee' },
                 rawSession: {
                     id: 'sess-1',
                     active: true,
@@ -1606,6 +1633,7 @@ describe('sendSessionMessage', () => {
             message: 'continue',
             localId: 'connected-service-continuation:test',
             pendingAdmissionMode: 'continuation_if_no_queued_user_input',
+            requestedAction: { v: 1, kind: 'send_now' },
             wait: false,
             timeoutMs: 1,
         })).resolves.toEqual({
@@ -1620,6 +1648,7 @@ describe('sendSessionMessage', () => {
             message: 'continue',
             localId: 'connected-service-continuation:test',
             pendingAdmissionMode: 'continuation_if_no_queued_user_input',
+            requestedAction: { v: 1, kind: 'send_now' },
             wait: false,
             timeoutMs: 1,
         });
@@ -1633,14 +1662,15 @@ describe('sendSessionMessage', () => {
                 deliveryMode: 'continuation_if_no_queued_user_input',
             }),
         }));
-        expect(enqueuePendingQueueV2MessageViaHttp.mock.calls[1]?.[0])
-            .toEqual(enqueuePendingQueueV2MessageViaHttp.mock.calls[0]?.[0]);
+        const firstBody = enqueuePendingQueueV2MessageViaHttp.mock.calls[0]?.[0]?.body;
+        const retryBody = enqueuePendingQueueV2MessageViaHttp.mock.calls[1]?.[0]?.body;
+        expect(firstBody?.ciphertext).not.toBe(retryBody?.ciphertext);
+        expect(firstBody).not.toHaveProperty('requestEqualityEvidenceV1');
+        expect(retryBody).not.toHaveProperty('requestEqualityEvidenceV1');
         expect(callSessionRpc).not.toHaveBeenCalled();
-        expect(sendSessionMessageViaSocketCommitted).not.toHaveBeenCalled();
     });
 
     it('fails closed for inactive --wait sends instead of reporting materialization as delivery', async () => {
-        const sendSessionMessageViaSocketCommitted = vi.fn(async () => undefined);
         const materializeNextPendingQueueV2MessageViaHttp = vi.fn(async () => ({ didMaterialize: true }));
         const waitForTranscriptEncryptedMessageByLocalId = vi.fn(async () => ({ seq: 4 }));
         const fetchEncryptedTranscriptPageAfterSeq = vi.fn(async () => [
@@ -1677,14 +1707,15 @@ describe('sendSessionMessage', () => {
         vi.doMock('@/session/transport/rpc/sessionRpc', () => ({
             callSessionRpc,
         }));
-        vi.doMock('@/session/transport/socket/sessionSocketSendMessage', () => ({
-            sendSessionMessageViaSocketCommitted,
-        }));
         vi.doMock('@/session/transport/socket/sessionSocketAgentState', () => ({
             waitForIdleViaSocket,
         }));
         vi.doMock('@/api/session/pendingQueueV2Transport', () => ({
-            enqueuePendingQueueV2MessageViaHttp: vi.fn(async () => undefined),
+            enqueuePendingQueueV2MessageViaHttp: vi.fn(async () => ({
+                didWrite: true,
+                terminal: false,
+                suppressed: false,
+            })),
             materializeNextPendingQueueV2MessageViaHttp,
         }));
         vi.doMock('@/api/session/transcriptMessageLookup', () => ({
@@ -1695,7 +1726,8 @@ describe('sendSessionMessage', () => {
                 ok: true,
                 sessionId: 'sess-1',
                 mode: 'plain',
-                ctx: { encryptionKey: new Uint8Array(32).fill(1), encryptionVariant: 'dataKey' },
+                ctx: null,
+                accountEncryptionCurrentness: { mode: 'plain' },
                 rawSession: {
                     id: 'sess-1',
                     active: false,
@@ -1724,7 +1756,6 @@ describe('sendSessionMessage', () => {
             message: 'Inactive session has no recorded machine target; pending custody was retained',
         });
 
-        expect(sendSessionMessageViaSocketCommitted).not.toHaveBeenCalled();
         expect(materializeNextPendingQueueV2MessageViaHttp).not.toHaveBeenCalled();
         expect(waitForTranscriptEncryptedMessageByLocalId).not.toHaveBeenCalled();
         expect(callSessionRpc).not.toHaveBeenCalled();
@@ -1733,7 +1764,11 @@ describe('sendSessionMessage', () => {
     });
 
     it('rejects an explicit blank Pending localId before enqueue instead of substituting one', async () => {
-        const enqueuePendingQueueV2MessageViaHttp = vi.fn(async () => undefined);
+        const enqueuePendingQueueV2MessageViaHttp = vi.fn(async () => ({
+            didWrite: true,
+            terminal: false,
+            suppressed: false,
+        }));
         vi.doMock('@/api/session/pendingQueueV2Transport', () => ({
             enqueuePendingQueueV2MessageViaHttp,
         }));
@@ -1742,7 +1777,8 @@ describe('sendSessionMessage', () => {
                 ok: true,
                 sessionId: 'sess-1',
                 mode: 'plain',
-                ctx: { encryptionKey: new Uint8Array(32).fill(1), encryptionVariant: 'dataKey' },
+                ctx: null,
+                accountEncryptionCurrentness: { mode: 'plain' },
                 rawSession: {
                     id: 'sess-1',
                     active: true,
@@ -1766,17 +1802,17 @@ describe('sendSessionMessage', () => {
     });
 
     it('does not consult the removed runtime dispatch path for an active send', async () => {
-        const sendSessionMessageViaSocketCommitted = vi.fn(async () => undefined);
         const materializeNextPendingQueueV2MessageViaHttp = vi.fn(async () => ({ didMaterialize: true }));
-        const enqueuePendingQueueV2MessageViaHttp = vi.fn(async () => undefined);
+        const enqueuePendingQueueV2MessageViaHttp = vi.fn(async () => ({
+            didWrite: true,
+            terminal: false,
+            suppressed: false,
+        }));
 
         vi.doMock('@/session/transport/rpc/sessionRpc', () => ({
             callSessionRpc: vi.fn(async () => {
                 throw new Error('Socket connect timeout');
             }),
-        }));
-        vi.doMock('@/session/transport/socket/sessionSocketSendMessage', () => ({
-            sendSessionMessageViaSocketCommitted,
         }));
         vi.doMock('@/api/session/pendingQueueV2Transport', () => ({
             enqueuePendingQueueV2MessageViaHttp,
@@ -1787,7 +1823,8 @@ describe('sendSessionMessage', () => {
                 ok: true,
                 sessionId: 'sess-1',
                 mode: 'plain',
-                ctx: { encryptionKey: new Uint8Array(32).fill(1), encryptionVariant: 'dataKey' },
+                ctx: null,
+                accountEncryptionCurrentness: { mode: 'plain' },
                 rawSession: {
                     id: 'sess-1',
                     active: true,
@@ -1823,10 +1860,9 @@ describe('sendSessionMessage', () => {
             body: expect.objectContaining({
                 localId: ' connected-service-continuation:test ',
                 messageRole: 'user',
-                requestedAction: { v: 1, kind: 'send_now' },
+                requestedAction: { v: 1, kind: 'steer_if_active' },
             }),
         });
-        expect(sendSessionMessageViaSocketCommitted).not.toHaveBeenCalled();
         expect(materializeNextPendingQueueV2MessageViaHttp).not.toHaveBeenCalled();
     });
 });

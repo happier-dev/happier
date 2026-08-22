@@ -1,7 +1,7 @@
 import { ApiClient } from '@/api/api';
 import type { MachineMetadata } from '@/api/types';
 import { ensureMachineRegistered } from '@/api/machine/ensureMachineRegistered';
-import type { Credentials } from '@/persistence';
+import type { StoredCredentials } from '@/persistence';
 import { readDaemonState, readSettings } from '@/persistence';
 
 const DEFAULT_MISSING_MACHINE_ID_MESSAGE =
@@ -26,7 +26,7 @@ async function shouldSkipMachineRegistration(explicitSkip: boolean | undefined):
 }
 
 export async function initializeBackendApiContext(opts: {
-  credentials: Credentials;
+  credentials: StoredCredentials;
   machineMetadata: MachineMetadata;
   missingMachineIdMessage?: string;
   skipMachineRegistration?: boolean;

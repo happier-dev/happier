@@ -24,6 +24,7 @@ export type SessionModel = {
   id: string;
   name: string;
   description?: string;
+  contextWindowTokens?: number;
   modelOptions?: SessionConfigOption[];
 };
 
@@ -140,6 +141,11 @@ function normalizeSessionModel(model: Record<string, unknown>): SessionModel | n
   const name = getString(model, 'name');
   if (!id || !name) return null;
   const description = getString(model, 'description');
+  const contextWindowTokens = typeof model.contextWindowTokens === 'number'
+    && Number.isInteger(model.contextWindowTokens)
+    && model.contextWindowTokens > 0
+    ? model.contextWindowTokens
+    : null;
   const modelOptionsCandidate = model.modelOptions ?? model.model_options;
   const modelOptionsRaw: unknown[] | null = Array.isArray(modelOptionsCandidate) ? modelOptionsCandidate : null;
   const modelOptions = modelOptionsRaw ? normalizeSessionConfigOptions(modelOptionsRaw) : null;
@@ -147,6 +153,7 @@ function normalizeSessionModel(model: Record<string, unknown>): SessionModel | n
     id,
     name,
     ...(description ? { description } : {}),
+    ...(contextWindowTokens !== null ? { contextWindowTokens } : {}),
     ...(modelOptions && modelOptions.length > 0 ? { modelOptions } : {}),
   };
 }

@@ -9,19 +9,20 @@ import type { AgentState, Metadata, UserMessage } from '@/api/types';
 import type { MaterializeNextPendingResult } from '@/api/session/sessionClientPort';
 import type { PendingMaterializationDeliveryTiming } from '@/api/session/pendingQueueV2Transport';
 import type { SessionRuntimeControls } from '@/rpc/handlers/sessionControls';
-import type { ProviderTranscriptDispatchRequest } from '@/api/session/client/transcript/providerDispatch';
 import type { RegisteredSessionStateFieldMutationV1 } from '@/api/session/client/transport/mutations/sessionClientDurableMutationTypes';
 import {
   createEphemeralSendFailure,
   type EphemeralSendResult,
 } from '@/api/session/client/transcript/ephemeralSendOutcome';
+import { DurableRegisteredSessionStateFieldDeliveryUnavailableError } from '../state/registeredFieldDurability';
 
 export type DeferredApiSessionTarget = Readonly<{
   sessionId: string;
   rpcHandlerManager: RpcHandlerManagerLike;
-  sendSessionEvent: (event: unknown, id?: string) => void;
-  sendProviderMessage: (request: ProviderTranscriptDispatchRequest) => void;
-  sendAgentMessage: (provider: unknown, body: unknown, opts?: unknown) => void;
+  enqueueSessionEventCommitted?: (
+    event: unknown,
+    id?: string,
+  ) => Promise<Readonly<{ persisted: boolean; delivered: boolean }>>;
   sendAgentMessageEphemeral?: (provider: unknown, body: unknown, opts: unknown) => EphemeralSendResult;
   sendAgentMessageEphemeralDelta?: (provider: unknown, body: unknown, opts: unknown) => EphemeralSendResult;
   getEphemeralStreamConnectionEpoch?: () => number;
@@ -29,9 +30,11 @@ export type DeferredApiSessionTarget = Readonly<{
     provider: unknown,
     body: unknown,
     opts: unknown,
-  ) => Promise<Readonly<{ persisted: true; delivered: boolean }>>;
-  sendAgentMessageCommitted: (provider: unknown, body: unknown, opts: unknown) => Promise<void>;
-  sendUserTextMessage: (text: string, opts?: { localId?: string; meta?: Record<string, unknown> }) => void;
+  ) => Promise<Readonly<{ persisted: boolean; delivered: boolean }>>;
+  enqueueUserTextMessageCommitted?: (
+    text: string,
+    opts: unknown,
+  ) => Promise<Readonly<{ persisted: boolean; delivered: boolean }>>;
   onUserMessage?: (callback: (data: UserMessage) => boolean | void) => void;
   on?: (eventName: 'metadata-updated', listener: () => void) => unknown;
   off?: (eventName: 'metadata-updated', listener: () => void) => unknown;
@@ -64,6 +67,7 @@ export type DeferredApiSessionTarget = Readonly<{
   discardCommittedMessageLocalIds: (opts: { localIds: string[]; reason: 'switch_to_local' | 'manual' }) => Promise<number>;
   setSessionRuntimeControls: (controls: SessionRuntimeControls | null) => void;
   flush: () => Promise<void>;
+  endSessionAndClose?: () => Promise<void>;
   close: () => Promise<void>;
 }>;
 
@@ -132,43 +136,29 @@ export class DeferredApiSessionClient {
     };
   }
 
-  sendSessionEvent(_event: unknown, _id?: string): void {
+  enqueueSessionEventCommitted(
+    _event: unknown,
+    _id?: string,
+  ): Promise<Readonly<{ persisted: boolean; delivered: boolean }>> {
     const target = this.target;
     if (target && !this.flushInFlight) {
-      target.sendSessionEvent(_event, _id);
-      return;
+      return this.enqueueSessionEventCommittedOnTarget(target, _event, _id);
     }
 
+    const deferred = createDeferredPromise<Readonly<{ persisted: boolean; delivered: boolean }>>();
     if (this.cancelled) {
-      return;
-    }
-    this.pushBufferedCall((t) => t.sendSessionEvent(_event, _id), { hint: 'sendSessionEvent' });
-  }
-
-  sendProviderMessage(_request: ProviderTranscriptDispatchRequest): void {
-    const target = this.target;
-    if (target && !this.flushInFlight) {
-      target.sendProviderMessage(_request);
-      return;
+      deferred.resolve({ persisted: false, delivered: false });
+      return deferred.promise;
     }
 
-    if (this.cancelled) {
-      return;
-    }
-    this.pushBufferedCall((t) => t.sendProviderMessage(_request), { hint: 'sendProviderMessage' });
-  }
-
-  sendAgentMessage(_provider: unknown, _body: unknown, _opts?: unknown): void {
-    const target = this.target;
-    if (target && !this.flushInFlight) {
-      target.sendAgentMessage(_provider, _body, _opts);
-      return;
-    }
-
-    if (this.cancelled) {
-      return;
-    }
-    this.pushBufferedCall((t) => t.sendAgentMessage(_provider, _body, _opts), { hint: 'sendAgentMessage' });
+    this.pushBufferedCall(
+      async (t) => {
+        deferred.resolve(await this.enqueueSessionEventCommittedOnTarget(t, _event, _id));
+      },
+      { hint: 'enqueueSessionEventCommitted' },
+      { onDrop: () => deferred.resolve({ persisted: false, delivered: false }) },
+    );
+    return deferred.promise;
   }
 
   sendAgentMessageEphemeral(_provider: unknown, _body: unknown, _opts: unknown): EphemeralSendResult {
@@ -206,20 +196,18 @@ export class DeferredApiSessionClient {
     _provider: unknown,
     _body: unknown,
     _opts: unknown,
-  ): Promise<Readonly<{ persisted: true; delivered: boolean }>> {
+  ): Promise<Readonly<{ persisted: boolean; delivered: boolean }>> {
     const target = this.target;
     if (target && !this.flushInFlight) {
       if (typeof target.enqueueAgentMessageCommitted === 'function') {
         return target.enqueueAgentMessageCommitted(_provider, _body, _opts);
       }
-      return target
-        .sendAgentMessageCommitted(_provider, _body, _opts)
-        .then(() => ({ persisted: true as const, delivered: true }));
+      return Promise.resolve({ persisted: false, delivered: false });
     }
 
-    const deferred = createDeferredPromise<Readonly<{ persisted: true; delivered: boolean }>>();
+    const deferred = createDeferredPromise<Readonly<{ persisted: boolean; delivered: boolean }>>();
     if (this.cancelled) {
-      deferred.resolve({ persisted: true, delivered: false });
+      deferred.resolve({ persisted: false, delivered: false });
       return deferred.promise;
     }
 
@@ -229,49 +217,43 @@ export class DeferredApiSessionClient {
           deferred.resolve(await t.enqueueAgentMessageCommitted(_provider, _body, _opts));
           return;
         }
-        await t.sendAgentMessageCommitted(_provider, _body, _opts);
-        deferred.resolve({ persisted: true, delivered: true });
+        deferred.resolve({ persisted: false, delivered: false });
       },
       { hint: 'enqueueAgentMessageCommitted' },
-      { onDrop: () => deferred.resolve({ persisted: true, delivered: false }) },
+      { onDrop: () => deferred.resolve({ persisted: false, delivered: false }) },
     );
     return deferred.promise;
   }
 
-  sendAgentMessageCommitted(_provider: unknown, _body: unknown, _opts: unknown): Promise<void> {
+  enqueueUserTextMessageCommitted(
+    _text: string,
+    _opts: unknown,
+  ): Promise<Readonly<{ persisted: boolean; delivered: boolean }>> {
     const target = this.target;
     if (target && !this.flushInFlight) {
-      return target.sendAgentMessageCommitted(_provider, _body, _opts);
+      return typeof target.enqueueUserTextMessageCommitted === 'function'
+        ? target.enqueueUserTextMessageCommitted(_text, _opts)
+        : Promise.resolve({ persisted: false, delivered: false });
     }
 
-    const deferred = createDeferredPromise<void>();
+    const deferred = createDeferredPromise<Readonly<{ persisted: boolean; delivered: boolean }>>();
     if (this.cancelled) {
-      deferred.resolve();
+      deferred.resolve({ persisted: false, delivered: false });
       return deferred.promise;
     }
 
     this.pushBufferedCall(
       async (t) => {
-        await t.sendAgentMessageCommitted(_provider, _body, _opts);
-        deferred.resolve();
+        deferred.resolve(
+          typeof t.enqueueUserTextMessageCommitted === 'function'
+            ? await t.enqueueUserTextMessageCommitted(_text, _opts)
+            : { persisted: false, delivered: false },
+        );
       },
-      { hint: 'sendAgentMessageCommitted' },
-      { onDrop: () => deferred.resolve() },
+      { hint: 'enqueueUserTextMessageCommitted' },
+      { onDrop: () => deferred.resolve({ persisted: false, delivered: false }) },
     );
     return deferred.promise;
-  }
-
-  sendUserTextMessage(_text: string, _opts?: { localId?: string; meta?: Record<string, unknown> }): void {
-    const target = this.target;
-    if (target && !this.flushInFlight) {
-      target.sendUserTextMessage(_text, _opts);
-      return;
-    }
-
-    if (this.cancelled) {
-      return;
-    }
-    this.pushBufferedCall((t) => t.sendUserTextMessage(_text, _opts), { hint: 'sendUserTextMessage' });
   }
 
   onUserMessage(callback: (data: UserMessage) => boolean | void): void {
@@ -340,15 +322,48 @@ export class DeferredApiSessionClient {
   ): Promise<void> {
     const target = this.target;
     if (target && !this.flushInFlight) {
-      await this.enqueueRegisteredSessionStateFieldMutationOnTarget(
-        target,
-        mutation,
-      );
+      try {
+        await this.enqueueRegisteredSessionStateFieldMutationOnTarget(
+          target,
+          mutation,
+        );
+      } catch (error) {
+        if (mutation.deliveryClass === 'durable_required') {
+          throw this.createDurableRegisteredFieldUnavailableError(mutation);
+        }
+        throw error;
+      }
       return;
     }
 
     if (this.cancelled) {
+      if (mutation.deliveryClass === 'durable_required') {
+        throw this.createDurableRegisteredFieldUnavailableError(mutation);
+      }
       return;
+    }
+
+    if (mutation.deliveryClass === 'durable_required') {
+      const deferred = createDeferredPromise<void>();
+      this.pushBufferedCall(
+        async (attachedTarget) => {
+          await this.enqueueRegisteredSessionStateFieldMutationOnTarget(
+            attachedTarget,
+            mutation,
+          );
+          deferred.resolve();
+        },
+        { hint: 'enqueueRegisteredSessionStateFieldMutation' },
+        {
+          onDrop: () => deferred.reject(
+            this.createDurableRegisteredFieldUnavailableError(mutation),
+          ),
+          onError: () => deferred.reject(
+            this.createDurableRegisteredFieldUnavailableError(mutation),
+          ),
+        },
+      );
+      return deferred.promise;
     }
 
     this.pushBufferedCall(
@@ -543,6 +558,36 @@ export class DeferredApiSessionClient {
 
   async flush(): Promise<void> {
     await this.withAttachedTarget((t) => t.flush(), undefined);
+  }
+
+  endSessionAndClose(): Promise<void> {
+    const target = this.target;
+    if (target && !this.flushInFlight) {
+      return typeof target.endSessionAndClose === 'function'
+        ? target.endSessionAndClose()
+        : Promise.reject(new Error('Attached session target does not support semantic termination'));
+    }
+
+    const deferred = createDeferredPromise<void>();
+    if (this.cancelled) {
+      deferred.reject(new Error('Cannot terminate a cancelled deferred session'));
+      return deferred.promise;
+    }
+    this.pushBufferedCall(
+      async (attached) => {
+        if (typeof attached.endSessionAndClose !== 'function') {
+          throw new Error('Attached session target does not support semantic termination');
+        }
+        await attached.endSessionAndClose();
+        deferred.resolve();
+      },
+      { hint: 'endSessionAndClose' },
+      {
+        onDrop: () => deferred.reject(new Error('Deferred semantic session end lost before durable attachment')),
+        onError: (error) => deferred.reject(error),
+      },
+    );
+    return deferred.promise;
   }
 
   async close(): Promise<void> {
@@ -804,7 +849,35 @@ export class DeferredApiSessionClient {
         'Attached session target does not support registered session-state mutations',
       );
     }
-    await target.enqueueRegisteredSessionStateFieldMutation(mutation);
+    await target.enqueueRegisteredSessionStateFieldMutation(
+      mutation.sessionId === this.placeholderSessionId
+        ? { ...mutation, sessionId: target.sessionId }
+        : mutation,
+    );
+  }
+
+  private createDurableRegisteredFieldUnavailableError(
+    mutation: RegisteredSessionStateFieldMutationV1,
+  ): DurableRegisteredSessionStateFieldDeliveryUnavailableError {
+    return new DurableRegisteredSessionStateFieldDeliveryUnavailableError({
+      ok: false,
+      reason: 'durable_delivery_unavailable',
+      fieldId: mutation.fieldId,
+      deliveryClass: 'durable_required',
+    });
+  }
+
+  private enqueueSessionEventCommittedOnTarget(
+    target: DeferredApiSessionTarget,
+    event: unknown,
+    id?: string,
+  ): Promise<Readonly<{ persisted: boolean; delivered: boolean }>> {
+    if (typeof target.enqueueSessionEventCommitted !== 'function') {
+      return Promise.reject(
+        new Error('Attached session target does not support committed session-event admission'),
+      );
+    }
+    return target.enqueueSessionEventCommitted(event, id);
   }
 
   private async drainBufferedCallsUntilEmpty(): Promise<void> {
@@ -815,7 +888,7 @@ export class DeferredApiSessionClient {
       if (this.overflowed && !this.overflowWarningSent) {
         this.overflowWarningSent = true;
         try {
-          target.sendSessionEvent({
+          await this.enqueueSessionEventCommittedOnTarget(target, {
             type: 'message',
             message: '[startup-buffer-overflow] Buffered startup events were dropped due to memory limits.',
           });
@@ -827,7 +900,7 @@ export class DeferredApiSessionClient {
       if (this.flushHadErrors && !this.flushErrorWarningSent) {
         this.flushErrorWarningSent = true;
         try {
-          target.sendSessionEvent({
+          await this.enqueueSessionEventCommittedOnTarget(target, {
             type: 'message',
             message: '[startup-buffer-flush-error] Some buffered startup events failed to flush; continuing in best-effort mode.',
           });

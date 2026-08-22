@@ -1,7 +1,7 @@
 import { SESSION_LOOKUP_BY_TAGS_TAG_MAX_CODE_UNITS_V2 } from '@happier-dev/protocol';
 
-import type { Credentials } from '@/persistence';
-import { tryDecryptSessionOwnerMetadataView } from '@/session/transport/encryption/sessionEncryptionContext';
+import type { StoredCredentials } from '@/persistence';
+import { tryDecryptSessionMetadata } from '@/session/transport/encryption/sessionEncryptionContext';
 import {
   fetchSessionById,
   fetchSessionsPage,
@@ -11,23 +11,36 @@ import {
 
 export type ResolveSessionIdResult =
   | { ok: true; sessionId: string; rawSession?: RawSessionRecord }
-  | { ok: false; code: 'session_not_found' | 'session_id_ambiguous' | 'unsupported'; candidates?: string[] };
+  | { ok: false; code: 'session_not_found' | 'session_id_ambiguous' | 'session_lookup_timeout' | 'unsupported'; candidates?: string[] };
+
+const FULL_SESSION_ID_LOOKUP_TIMEOUT_MS = 25_000;
 
 function normalizeIdOrPrefix(value: string): string {
   return value.trim();
 }
 
-export async function resolveSessionIdOrPrefix(params: Readonly<{
-  credentials: Credentials;
+function isFullSessionId(value: string): boolean {
+  return /^c[a-z0-9]{24}$/.test(value);
+}
+
+async function resolveSessionIdOrPrefixWithSignal(params: Readonly<{
+  credentials: StoredCredentials;
   idOrPrefix: string;
+  signal?: AbortSignal;
+  deadlineAtMs?: number;
 }>): Promise<ResolveSessionIdResult> {
+  params.signal?.throwIfAborted();
   const input = normalizeIdOrPrefix(params.idOrPrefix);
   if (!input) return { ok: false, code: 'session_not_found' };
 
-  // Fast path: if the input is a full session id, prefer exact match over prefix paging.
-  // If the session is not found, fall back to prefix+tag resolution.
+  // Prefer exact matches for long inputs, while retaining fallback tag and prefix resolution.
   if (input.length >= 12) {
-    const exact = await fetchSessionById({ token: params.credentials.token, sessionId: input });
+    const exact = await fetchSessionById({
+      token: params.credentials.token,
+      sessionId: input,
+      ...(params.signal ? { signal: params.signal } : {}),
+      ...(params.deadlineAtMs !== undefined ? { deadlineAtMs: params.deadlineAtMs } : {}),
+    });
     if (exact) {
       return { ok: true, sessionId: input, rawSession: exact };
     }
@@ -37,6 +50,8 @@ export async function resolveSessionIdOrPrefix(params: Readonly<{
     ? await lookupSessionsByTags({
         token: params.credentials.token,
         tags: [input],
+        ...(params.signal ? { signal: params.signal } : {}),
+        ...(params.deadlineAtMs !== undefined ? { deadlineAtMs: params.deadlineAtMs } : {}),
       })
     : null;
   if (indexedTagLookup?.state === 'available') {
@@ -83,7 +98,15 @@ export async function resolveSessionIdOrPrefix(params: Readonly<{
   const scan = async (archivedOnly: boolean): Promise<ResolveSessionIdResult | null> => {
     cursor = undefined;
     for (let pageIndex = 0; pageIndex < maxPages; pageIndex += 1) {
-      const page = await fetchSessionsPage({ token: params.credentials.token, cursor, limit: 200, archivedOnly });
+      params.signal?.throwIfAborted();
+      const page = await fetchSessionsPage({
+        token: params.credentials.token,
+        cursor,
+        limit: 200,
+        archivedOnly,
+        ...(params.signal ? { signal: params.signal } : {}),
+      });
+      params.signal?.throwIfAborted();
       for (const row of page.sessions) {
         const id = row.id;
         if (id.startsWith(input)) {
@@ -92,7 +115,9 @@ export async function resolveSessionIdOrPrefix(params: Readonly<{
         }
 
         if (useOldServerTagFallback) {
-          const metadata = tryDecryptSessionOwnerMetadataView({
+          // Old servers predate the owner envelope, so their tag fallback reads the
+          // Session-scoped metadata field rather than inferring Account ownership.
+          const metadata = tryDecryptSessionMetadata({
             credentials: params.credentials,
             rawSession: row,
           });
@@ -132,4 +157,50 @@ export async function resolveSessionIdOrPrefix(params: Readonly<{
     code: 'session_id_ambiguous',
     candidates: Array.from(prefixMatches).slice(0, 10),
   };
+}
+
+export async function resolveSessionIdOrPrefix(params: Readonly<{
+  credentials: StoredCredentials;
+  idOrPrefix: string;
+  signal?: AbortSignal;
+}>): Promise<ResolveSessionIdResult> {
+  params.signal?.throwIfAborted();
+  const input = normalizeIdOrPrefix(params.idOrPrefix);
+
+  // Built-in tool calls supply server-issued full ids and have a 30s outer budget. Keep
+  // existing prefix/tag lookup behavior unchanged; those interactive searches have no
+  // equivalent owner deadline and may legitimately require the configured page scan.
+  if (!isFullSessionId(input)) return await resolveSessionIdOrPrefixWithSignal(params);
+
+  const controller = new AbortController();
+  const deadlineAtMs = Date.now() + FULL_SESSION_ID_LOOKUP_TIMEOUT_MS;
+  let didLookupTimeout = false;
+  const timeout = setTimeout(() => {
+    didLookupTimeout = true;
+    controller.abort();
+  }, FULL_SESSION_ID_LOOKUP_TIMEOUT_MS);
+  timeout.unref();
+
+  const abortFromCaller = () => {
+    clearTimeout(timeout);
+    controller.abort(params.signal?.reason);
+  };
+  params.signal?.addEventListener('abort', abortFromCaller, { once: true });
+
+  try {
+    return await resolveSessionIdOrPrefixWithSignal({
+      ...params,
+      idOrPrefix: input,
+      signal: controller.signal,
+      deadlineAtMs,
+    });
+  } catch (error) {
+    if (didLookupTimeout || Date.now() >= deadlineAtMs) {
+      return { ok: false, code: 'session_lookup_timeout' };
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+    params.signal?.removeEventListener('abort', abortFromCaller);
+  }
 }

@@ -29,6 +29,23 @@ async function expectPending<T>(promise: Promise<T>): Promise<void> {
 }
 
 describe('createBlockingApprovalCoordinator', () => {
+  it('publishes every canonical approval queue change to subscribed delivery listeners', () => {
+    const coordinator = createBlockingApprovalCoordinator();
+    const changes: string[] = [];
+    const subscription = coordinator.subscribeApprovalChanges(({ artifactId, request }) => {
+      changes.push(`${artifactId}:${request.status}`);
+    });
+
+    coordinator.notifyApprovalUpdated({ artifactId: 'approval_watch', request: createRequest() });
+    subscription.dispose();
+    coordinator.notifyApprovalUpdated({
+      artifactId: 'approval_watch',
+      request: createRequest({ status: 'rejected', decision: { kind: 'reject', decidedAtMs: 2 } }),
+    });
+
+    expect(changes).toEqual(['approval_watch:open']);
+  });
+
   it('resolves duplicate blocking waiters when a live approval decision is claimed', async () => {
     const coordinator = createBlockingApprovalCoordinator();
     const request = createRequest();

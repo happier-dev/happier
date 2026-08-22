@@ -1,4 +1,12 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const { readAgentCatalogSnapshot } = vi.hoisted(() => ({
+  readAgentCatalogSnapshot: vi.fn(),
+}));
+
+vi.mock('@/agent/catalog/snapshot', () => ({
+  readAgentCatalogSnapshot,
+}));
 
 import {
   getSessionNotificationAgentDisplayName,
@@ -6,6 +14,24 @@ import {
 } from './sessionNotificationContext';
 
 describe('sessionNotificationContext', () => {
+  beforeEach(() => {
+    readAgentCatalogSnapshot.mockReturnValue({
+      agentDefinitionsById: new Map([
+        ['claude', {
+          id: 'claude',
+          richDefinition: { definition: { id: 'claude', title: 'Claude' } },
+          runtimeSpec: { id: 'claude', title: 'Claude Code CLI' },
+        }],
+        ['acme.agent', {
+          id: 'acme.agent',
+          richDefinition: { definition: { id: 'acme.agent', title: 'Acme Agent' } },
+          runtimeSpec: null,
+        }],
+      ]),
+      catalogEntriesById: {},
+    });
+  });
+
   it('normalizes session titles from metadata snapshots', () => {
     expect(getSessionNotificationTitle(() => ({
       summary: {
@@ -37,6 +63,26 @@ describe('sessionNotificationContext', () => {
         agentId: 'claude',
         provider: {},
       },
-    }))).toBe('Claude Code CLI');
+    }))).toBe('Claude');
+  });
+
+  it('renders the declared title of an installed external Agent', () => {
+    expect(getSessionNotificationAgentDisplayName(() => ({
+      runtimeDescriptorV1: {
+        v: 1,
+        agentId: 'acme.agent',
+        provider: {},
+      },
+    }))).toBe('Acme Agent');
+  });
+
+  it('reports no display name for an Agent that is not installed', () => {
+    expect(getSessionNotificationAgentDisplayName(() => ({
+      runtimeDescriptorV1: {
+        v: 1,
+        agentId: 'never.installed',
+        provider: {},
+      },
+    }))).toBeNull();
   });
 });

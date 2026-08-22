@@ -7,7 +7,10 @@ import {
     type ExternalSessionRequiredItemFailuresV1,
 } from '@happier-dev/protocol/sessions';
 
-import type { ExternalSessionOperationPrivateStagingStore } from './operationPrivateStaging';
+import type {
+    ExternalSessionOperationOwnedWorkspaceMediaPath,
+    ExternalSessionOperationPrivateStagingStore,
+} from './operationPrivateStaging';
 
 export const EXTERNAL_SESSION_HISTORICAL_IMPORT_DIAGNOSTIC_CAP =
     EXTERNAL_SESSION_REQUIRED_ITEM_DIAGNOSTIC_CAP_V1;
@@ -84,24 +87,31 @@ type PreparedHistoricalImportItemResult =
         ok: true;
         item: ExternalSessionOperationSocketBatchItemV1;
         cleanup?: () => Promise<void>;
+        workspaceMedia?: readonly ExternalSessionOperationOwnedWorkspaceMediaPath[];
     }>
     | Readonly<{
         ok: false;
         category: 'record' | 'media' | 'conversion';
     }>;
 
+export type ExternalSessionHistoricalImportPreparationPhase = Readonly<{
+    prepareStagedItem(
+        value: unknown,
+    ): Promise<PreparedHistoricalImportItemResult>;
+    revalidateBeforeBatchEffect?(): Promise<void>;
+}>;
+
 async function readBatchItems(
     values: readonly unknown[],
     prepareStagedItem?: (
         value: unknown,
-        mode: 'validate' | 'publish',
     ) => Promise<PreparedHistoricalImportItemResult>,
-    mode: 'validate' | 'publish' = 'validate',
 ): Promise<Readonly<{
     items: readonly Readonly<{
         item: ExternalSessionOperationSocketBatchItemV1;
         sourceItemIndex: number;
         cleanup?: () => Promise<void>;
+        workspaceMedia?: readonly ExternalSessionOperationOwnedWorkspaceMediaPath[];
     }>[];
     recordFailureIndexes: readonly number[];
     mediaFailureIndexes: readonly number[];
@@ -111,13 +121,14 @@ async function readBatchItems(
         item: ExternalSessionOperationSocketBatchItemV1;
         sourceItemIndex: number;
         cleanup?: () => Promise<void>;
+        workspaceMedia?: readonly ExternalSessionOperationOwnedWorkspaceMediaPath[];
     }>> = [];
     const recordFailureIndexes: number[] = [];
     const mediaFailureIndexes: number[] = [];
     const conversionFailureIndexes: number[] = [];
     for (const [sourceItemIndex, value] of values.entries()) {
         const prepared = prepareStagedItem
-            ? await prepareStagedItem(value, mode)
+            ? await prepareStagedItem(value)
             : { ok: true as const, item: value as ExternalSessionOperationSocketBatchItemV1 };
         if (!prepared.ok) {
             if (prepared.category === 'media') mediaFailureIndexes.push(sourceItemIndex);
@@ -135,6 +146,7 @@ async function readBatchItems(
             item: parsed.data,
             sourceItemIndex,
             ...(prepared.cleanup ? { cleanup: prepared.cleanup } : {}),
+            ...(prepared.workspaceMedia ? { workspaceMedia: prepared.workspaceMedia } : {}),
         }));
     }
     return Object.freeze({
@@ -145,16 +157,60 @@ async function readBatchItems(
     });
 }
 
+function preparedReplayMatchesCurrentItem(
+    prepared: ExternalSessionOperationSocketBatchItemV1,
+    current: ExternalSessionOperationSocketBatchItemV1,
+): boolean {
+    return prepared.localId === current.localId
+        && prepared.sidechainId === current.sidechainId
+        && prepared.messageRole === current.messageRole
+        && prepared.sourceCreatedAtMs === current.sourceCreatedAtMs
+        && prepared.sourceUpdatedAtMs === current.sourceUpdatedAtMs
+        && prepared.content.t === 'encrypted'
+        && current.content.t === 'encrypted';
+}
+
+async function restorePreparedReplayItems(input: Readonly<{
+    preparedItems: readonly unknown[];
+    current: Awaited<ReturnType<typeof readBatchItems>>;
+}>): Promise<Awaited<ReturnType<typeof readBatchItems>>> {
+    const prepared = await readBatchItems(input.preparedItems);
+    if (
+        prepared.recordFailureIndexes.length > 0
+        || prepared.mediaFailureIndexes.length > 0
+        || prepared.conversionFailureIndexes.length > 0
+        || prepared.items.length !== input.current.items.length
+        || prepared.items.some((entry, index) => !preparedReplayMatchesCurrentItem(
+            entry.item,
+            input.current.items[index]!.item,
+        ))
+    ) {
+        throw new Error('external_session_historical_import_prepared_replay_conflict');
+    }
+    return Object.freeze({
+        ...input.current,
+        items: Object.freeze(input.current.items.map((entry, index) => Object.freeze({
+            ...entry,
+            item: Object.freeze({
+                ...entry.item,
+                content: prepared.items[index]!.item.content,
+            }),
+        }))),
+    });
+}
+
+function shouldPersistPreparedReplay(
+    items: readonly Readonly<{ item: ExternalSessionOperationSocketBatchItemV1 }>[],
+): boolean {
+    return items.length > 0 && items.every((entry) => entry.item.content.t === 'encrypted');
+}
+
 function packBatchItems(input: Readonly<{
     items: readonly Readonly<{
         item: ExternalSessionOperationSocketBatchItemV1;
         sourceItemIndex: number;
     }>[];
     maxBatchItems: number;
-    prepareStagedItem?: (
-        value: unknown,
-        mode: 'validate' | 'publish',
-    ) => Promise<PreparedHistoricalImportItemResult>;
     isBatchWithinSerializedByteLimit(batch: HistoricalImportBatch): boolean;
 }>): Readonly<{
     batches: readonly HistoricalImportBatch[];
@@ -247,10 +303,10 @@ export function createExternalSessionHistoricalImportReplay(input: Readonly<{
     staging: ExternalSessionOperationPrivateStagingStore;
     sourceGeneration: string;
     maxBatchItems: number;
-    prepareStagedItem?: (
-        value: unknown,
+    createPreparationPhase?: (
         mode: 'validate' | 'publish',
-    ) => Promise<PreparedHistoricalImportItemResult>;
+        operationId: string,
+    ) => Promise<ExternalSessionHistoricalImportPreparationPhase>;
     isBatchWithinSerializedByteLimit(batch: HistoricalImportBatch): boolean;
     writeHistoricalBatch(params: Readonly<{
         operationId: string;
@@ -326,11 +382,14 @@ export function createExternalSessionHistoricalImportReplay(input: Readonly<{
             let mediaFailures = 0;
             let conversionFailures = 0;
             const diagnostics: ExternalSessionRequiredItemDiagnosticV1[] = [];
+            let validationPhase: ExternalSessionHistoricalImportPreparationPhase | undefined;
             for await (const group of input.staging.streamReplayGroups(operationId)) {
+                validationPhase ??= input.createPreparationPhase
+                    ? await input.createPreparationPhase('validate', operationId)
+                    : undefined;
                 const parsed = await readBatchItems(
                     group.items,
-                    input.prepareStagedItem,
-                    'validate',
+                    validationPhase?.prepareStagedItem,
                 );
                 recordFailures += parsed.recordFailureIndexes.length;
                 mediaFailures += parsed.mediaFailureIndexes.length;
@@ -397,11 +456,14 @@ export function createExternalSessionHistoricalImportReplay(input: Readonly<{
                 });
             }
 
+            let publishPhase: ExternalSessionHistoricalImportPreparationPhase | undefined;
             for await (const group of input.staging.streamReplayGroups(operationId)) {
-                const parsed = await readBatchItems(
+                publishPhase ??= input.createPreparationPhase
+                    ? await input.createPreparationPhase('publish', operationId)
+                    : undefined;
+                let parsed = await readBatchItems(
                     group.items,
-                    input.prepareStagedItem,
-                    'publish',
+                    publishPhase?.prepareStagedItem,
                 );
                 if (
                     parsed.recordFailureIndexes.length > 0
@@ -424,6 +486,12 @@ export function createExternalSessionHistoricalImportReplay(input: Readonly<{
                             diagnosticsTruncated: false,
                             diagnostics: Object.freeze([]),
                         }),
+                    });
+                }
+                if (group.preparedItems !== undefined) {
+                    parsed = await restorePreparedReplayItems({
+                        preparedItems: group.preparedItems,
+                        current: parsed,
                     });
                 }
                 const packed = packBatchItems({
@@ -458,6 +526,35 @@ export function createExternalSessionHistoricalImportReplay(input: Readonly<{
                         }),
                     });
                 }
+                let preparedReplayStored = group.preparedItems !== undefined;
+                let preparedReplayPersistedThisAttempt = false;
+                const shouldPersistGroupPreparedReplay = !preparedReplayStored
+                    && shouldPersistPreparedReplay(parsed.items);
+                const cleanupBeforeSocketEffectFailure = async (batchIndex: number) => {
+                    const unpublishedItems = new Set(
+                        packed.batches
+                            .slice(batchIndex)
+                            .flatMap((unpublishedBatch) => unpublishedBatch.items),
+                    );
+                    if (preparedReplayPersistedThisAttempt && batchIndex === 0) {
+                        try {
+                            await input.staging.clearPreparedReplayGroup({
+                                operationId,
+                                groupId: group.groupId,
+                            });
+                            preparedReplayStored = false;
+                            preparedReplayPersistedThisAttempt = false;
+                        } finally {
+                            await Promise.all(parsed.items
+                                .filter((entry) => unpublishedItems.has(entry.item))
+                                .map(async (entry) => await entry.cleanup?.()));
+                        }
+                        return;
+                    }
+                    await Promise.all(parsed.items
+                        .filter((entry) => unpublishedItems.has(entry.item))
+                        .map(async (entry) => await entry.cleanup?.()));
+                };
                 if (packed.batches.length === 0) {
                     await Promise.all(parsed.items.map((entry) => entry.cleanup?.()));
                     await input.staging.acknowledgeReplayGroup({
@@ -469,6 +566,44 @@ export function createExternalSessionHistoricalImportReplay(input: Readonly<{
                     continue;
                 }
                 for (const [batchIndex, batch] of packed.batches.entries()) {
+                    if (shouldPersistGroupPreparedReplay && batchIndex === 0) {
+                        const persisted = await input.staging.persistPreparedReplayGroup({
+                            operationId,
+                            groupId: group.groupId,
+                            items: parsed.items.map((entry) => entry.item),
+                        });
+                        if (persisted.status === 'refused') {
+                            await Promise.all(parsed.items.map((entry) => entry.cleanup?.()));
+                            return Object.freeze({
+                                status: 'awaiting_user_resume' as const,
+                                reason: 'historical_import_failed' as const,
+                                acceptedThroughServerSeq,
+                            });
+                        }
+                        preparedReplayStored = true;
+                        preparedReplayPersistedThisAttempt = true;
+                    }
+                    const batchItems = new Set(batch.items);
+                    const batchWorkspaceMedia = parsed.items
+                        .filter((entry) => batchItems.has(entry.item))
+                        .flatMap((entry) => entry.workspaceMedia ?? []);
+                    try {
+                        await publishPhase?.revalidateBeforeBatchEffect?.();
+                    } catch (error) {
+                        await cleanupBeforeSocketEffectFailure(batchIndex);
+                        throw error;
+                    }
+                    if (batchWorkspaceMedia.length > 0) {
+                        try {
+                            await input.staging.transferDiscardedWorkspaceMediaOwnership({
+                                operationId,
+                                media: batchWorkspaceMedia,
+                            });
+                        } catch (error) {
+                            await cleanupBeforeSocketEffectFailure(batchIndex);
+                            throw error;
+                        }
+                    }
                     let acknowledged: HistoricalImportBatchWriteResult;
                     try {
                         acknowledged = await input.writeHistoricalBatch({
@@ -488,6 +623,12 @@ export function createExternalSessionHistoricalImportReplay(input: Readonly<{
                         throw error;
                     }
                     if (!acknowledged.ok) {
+                        if (preparedReplayStored && batchIndex === 0) {
+                            await input.staging.clearPreparedReplayGroup({
+                                operationId,
+                                groupId: group.groupId,
+                            });
+                        }
                         const refusedAndUnsentItems = new Set(
                             packed.batches
                                 .slice(batchIndex)
@@ -524,6 +665,12 @@ export function createExternalSessionHistoricalImportReplay(input: Readonly<{
                     groupId: group.groupId,
                     acceptedThroughServerSeq: acceptedThroughServerSeq ?? 0,
                 });
+                if (preparedReplayStored) {
+                    await input.staging.clearPreparedReplayGroup({
+                        operationId,
+                        groupId: group.groupId,
+                    });
+                }
                 acknowledgedItemCount += packed.batches.reduce(
                     (total, batch) => total + batch.items.length,
                     0,

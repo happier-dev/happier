@@ -1,11 +1,11 @@
 import chalk from 'chalk';
 import { randomUUID } from 'node:crypto';
 
-import type { Credentials } from '@/persistence';
+import type { StoredCredentials } from '@/persistence';
 import { createCliActionExecutor } from '@/session/actions/createCliActionExecutor';
 import { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
-import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
-import { hasFlag, readFlagValue } from '@/cli/commands/shared/argvFlags';
+import { wantsJson, printJsonEnvelope, writeJsonStdout } from '@/cli/output/jsonEnvelope';
+import { hasFlag, readCommandPositionals, readFlagValue } from '@/cli/commands/shared/argvFlags';
 import { SESSION_HELP_LINES } from '@/cli/commands/session/shared/sessionCommandUsage';
 import { actionAcceptsContextualSessionId, type ActionId } from '@happier-dev/protocol';
 import { ensureCliActionPolicySettings } from '@/session/actions/ensureCliActionPolicySettings';
@@ -50,11 +50,13 @@ function withResolvedSessionInput(actionId: string, input: unknown, sessionId: s
 
 export async function cmdSessionActionsExecute(
   argv: string[],
-  deps: Readonly<{ readCredentialsFn: () => Promise<Credentials | null> }>,
+  deps: Readonly<{ readCredentialsFn: () => Promise<StoredCredentials | null> }>,
 ): Promise<void> {
   const json = wantsJson(argv);
-  const idOrPrefix = String(argv[2] ?? '').trim();
-  const actionId = String(argv[3] ?? '').trim();
+  const [idOrPrefix = '', actionId = ''] = readCommandPositionals(argv, {
+    startIndex: 2,
+    valueFlags: ['--input-json', '--action-request-id'],
+  });
   const actionRequestId = (readFlagValue(argv, '--action-request-id') ?? '').trim();
   if (actionRequestId && (actionRequestId.length > 200 || !/^[A-Za-z0-9._:-]+$/.test(actionRequestId))) {
     throw new Error('Invalid --action-request-id.');
@@ -71,7 +73,7 @@ export async function cmdSessionActionsExecute(
   const credentials = await deps.readCredentialsFn();
   if (!credentials) {
     if (json) {
-      printJsonEnvelope({ ok: false, kind: 'session_actions_execute', error: { code: 'not_authenticated' } });
+      await printJsonEnvelope({ ok: false, kind: 'session_actions_execute', error: { code: 'not_authenticated' } });
       return;
     }
     console.error(chalk.red('Error:'), 'Not authenticated. Run "happier auth login" first.');
@@ -83,7 +85,7 @@ export async function cmdSessionActionsExecute(
   const sessionTarget = await resolveSessionTransportContext({ credentials, idOrPrefix });
   if (!sessionTarget.ok) {
     if (json) {
-      printJsonEnvelope({
+      await printJsonEnvelope({
         ok: false,
         kind: 'session_actions_execute',
         error: { code: sessionTarget.code, ...(sessionTarget.candidates ? { candidates: sessionTarget.candidates } : {}) },
@@ -93,14 +95,23 @@ export async function cmdSessionActionsExecute(
     throw new Error(sessionTarget.code);
   }
 
-  const executor = createCliActionExecutor({
-    token: credentials.token,
-    credentials,
-    sessionId: sessionTarget.sessionId,
-    ctx: sessionTarget.ctx,
-    mode: sessionTarget.mode,
-    rawSession: sessionTarget.rawSession,
-  });
+  const executor = sessionTarget.mode === 'plain'
+    ? createCliActionExecutor({
+        token: credentials.token,
+        credentials,
+        sessionId: sessionTarget.sessionId,
+        ctx: sessionTarget.ctx,
+        mode: sessionTarget.mode,
+        rawSession: sessionTarget.rawSession,
+      })
+    : createCliActionExecutor({
+        token: credentials.token,
+        credentials,
+        sessionId: sessionTarget.sessionId,
+        ctx: sessionTarget.ctx,
+        mode: sessionTarget.mode,
+        rawSession: sessionTarget.rawSession,
+      });
   const input = withResolvedSessionInput(
     actionId,
     parseInputJsonOrThrow(readFlagValue(argv, '--input-json')),
@@ -121,7 +132,7 @@ export async function cmdSessionActionsExecute(
   if (!result.ok) {
     const isAmbiguousSpawn = hasSpawnNonce(result.details);
     if (json) {
-      printJsonEnvelope({
+      await printJsonEnvelope({
         ok: false,
         kind: 'session_actions_execute',
         error: {
@@ -147,7 +158,7 @@ export async function cmdSessionActionsExecute(
   const successPayload = unwrapCliActionSuccessPayload(result.data);
 
   if (json) {
-    printJsonEnvelope({
+    await printJsonEnvelope({
       ok: true,
       kind: 'session_actions_execute',
       data: {
@@ -160,5 +171,5 @@ export async function cmdSessionActionsExecute(
   }
 
   console.log(chalk.green('✓'), 'action executed');
-  console.log(JSON.stringify({ sessionId: sessionTarget.sessionId, actionId, result: successPayload }, null, 2));
+  await writeJsonStdout({ sessionId: sessionTarget.sessionId, actionId, result: successPayload }, { pretty: true });
 }

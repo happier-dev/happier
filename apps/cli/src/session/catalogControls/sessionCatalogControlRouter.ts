@@ -1,16 +1,14 @@
-import {
-  inferAgentIdFromSessionMetadata,
-  type AgentId,
-} from '@happier-dev/agents';
+import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
 
 import { resolveInactiveSessionCatalogControls } from '@/agent/catalog/sessionControlAdapters';
-import type { Credentials } from '@/persistence';
-import { resolveMachineControlLocalityProof } from '@/session/machineControlLocality';
-import type {
-  SessionEncryptionContext,
-  SessionStoredContentEncryptionMode,
-} from '@/session/transport/encryption/sessionEncryptionContext';
+import type { CatalogAgentId } from '@/agent/catalog/ids';
+import type { StoredCredentials } from '@/persistence';
+import {
+  resolveMachineControlLocalityProof,
+  resolveSessionMachineWorkspacePath,
+} from '@/session/machineControlLocality';
+import type { SessionStoredContentCryptoContext } from '@/session/transport/encryption/sessionEncryptionContext';
 import type { RawSessionRecord } from '@/session/transport/http/sessionsHttp';
 import type {
   ResolveSessionCatalogControlAdapter,
@@ -20,20 +18,18 @@ import type {
 
 type RouteSessionCatalogControlParams = Readonly<{
   token: string;
-  credentials?: Credentials;
+  credentials?: StoredCredentials;
   sessionId: string;
   rawSession: RawSessionRecord;
   metadata: Record<string, unknown> | null;
   currentMachineId: string | null;
   currentMachineHost?: string | null;
   currentMachineHomeDir?: string | null;
-  ctx: SessionEncryptionContext;
-  mode: SessionStoredContentEncryptionMode;
   operation: SessionCatalogControlOperation;
   cwd?: string;
   callLiveSessionRpc: () => Promise<unknown>;
   resolveAdapter?: ResolveSessionCatalogControlAdapter;
-}>;
+}> & SessionStoredContentCryptoContext;
 
 function unsupported(operation: SessionCatalogControlOperation, diagnostic: string): unknown {
   return operation === 'vendorPlugins'
@@ -65,8 +61,8 @@ function resolveSessionMachineHomeDir(
   return readString(metadata.homeDir) ?? resolveRawSessionString(rawSession, 'homeDir');
 }
 
-function resolveAgentId(metadata: Record<string, unknown>): AgentId | null {
-  return inferAgentIdFromSessionMetadata(metadata);
+function resolveAgentId(metadata: Record<string, unknown>): CatalogAgentId | null {
+  return resolveAgentIdFromSessionMetadata(metadata);
 }
 
 function shouldFallbackFromLiveSessionCatalogRpc(result: unknown): boolean {
@@ -89,7 +85,7 @@ function buildAdapterParams(
   metadata: Record<string, unknown>,
   sessionMachineId: string,
 ): SessionCatalogControlAdapterParams {
-  return {
+  const base = {
     token: params.token,
     ...(params.credentials ? { credentials: params.credentials } : {}),
     sessionId: params.sessionId,
@@ -97,10 +93,17 @@ function buildAdapterParams(
     metadata,
     currentMachineId: params.currentMachineId,
     sessionMachineId,
-    cwd: readString(params.cwd) ?? resolveRawSessionString(params.rawSession, 'path') ?? readString(metadata.path),
-    ctx: params.ctx,
-    mode: params.mode,
-  };
+    cwd: resolveSessionMachineWorkspacePath({
+      metadata,
+      currentMachineId: params.currentMachineId,
+      candidatePath: readString(params.cwd)
+        ?? resolveRawSessionString(params.rawSession, 'path')
+        ?? readString(metadata.path),
+    }),
+  } as const;
+  return params.mode === 'plain'
+    ? { ...base, mode: params.mode, ctx: params.ctx }
+    : { ...base, mode: params.mode, ctx: params.ctx };
 }
 
 export async function routeSessionCatalogControl(params: RouteSessionCatalogControlParams): Promise<unknown> {
@@ -126,14 +129,14 @@ export async function routeSessionCatalogControl(params: RouteSessionCatalogCont
     return unsupported(params.operation, 'session_catalog_control_session_machine_unknown');
   }
   if (
-    sessionMachineId !== currentMachineId
-    && !resolveMachineControlLocalityProof({
+    !await resolveMachineControlLocalityProof({
       sessionMachineId,
       currentMachineId,
       sessionHost: resolveSessionMachineHost(metadata, params.rawSession),
       sessionHomeDir: resolveSessionMachineHomeDir(metadata, params.rawSession),
       currentMachineHost: params.currentMachineHost,
       currentMachineHomeDir: params.currentMachineHomeDir,
+      credentials: { token: params.token },
     })
   ) {
     return unsupported(params.operation, 'session_catalog_control_remote_unavailable');

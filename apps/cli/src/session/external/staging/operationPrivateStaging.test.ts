@@ -1,11 +1,13 @@
+import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { writeJsonAtomic } from '@/utils/fs/writeJsonAtomic';
 import { stageSessionMediaMetadataForHistoricalImport } from '@/session/media/adoption';
+import { garbageCollectUncommittedSessionMedia } from '@/session/media/garbageCollect';
 
 import {
     classifyExternalSessionStagingSourceRead,
@@ -14,7 +16,37 @@ import {
     type ExternalSessionOperationPrivateStagingStore,
 } from './operationPrivateStaging';
 
+const accountCredentials = vi.hoisted(() => ({
+    current: null as Readonly<{ token: string; encryption: null }> | null,
+}));
+
+vi.mock('@/persistence', () => ({
+    readStoredCredentials: async () => accountCredentials.current,
+}));
+
 const temporaryDirectories: string[] = [];
+
+function accountToken(subject: string): string {
+    const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString('base64url');
+    return `${encode({ alg: 'none' })}.${encode({ sub: subject })}.`;
+}
+
+function useAccount(subject: string | null): void {
+    accountCredentials.current = subject === null
+        ? null
+        : { token: accountToken(subject), encryption: null };
+}
+
+function stagingRootFor(activeServerDir: string, subject = 'vitest'): string {
+    const accountKey = createHash('sha256').update(subject, 'utf8').digest('hex').slice(0, 32);
+    return join(
+        activeServerDir,
+        'external-session-operations',
+        'by-account',
+        `sub-${accountKey}`,
+        'staging',
+    );
+}
 
 async function readReplayGroups(
     store: ExternalSessionOperationPrivateStagingStore,
@@ -48,6 +80,7 @@ const sameSourceRead = Object.freeze({
 });
 
 afterEach(async () => {
+    accountCredentials.current = null;
     await Promise.all(temporaryDirectories.splice(0).map(async (path) => {
         await rm(path, { recursive: true, force: true });
     }));
@@ -174,6 +207,173 @@ describe('operation-private External Sessions staging', () => {
         ]);
     });
 
+    it('retains an exact prepared replay receipt through restart without creating another staging owner', async () => {
+        const activeServerDir = await createPrivateRoot('happier-external-staging-prepared-replay-');
+        const limits = {
+            perOperation: { maxItems: 10, maxBytes: 50_000 },
+            aggregate: { maxItems: 20, maxBytes: 100_000 },
+        } as const;
+        const operationId = 'operation-prepared-replay';
+        const groupId = 'prepared-page';
+        const staged = [{ id: 'raw-item' }];
+        const prepared = [{
+            localId: 'history:raw-item',
+            sidechainId: null,
+            messageRole: 'agent',
+            content: { t: 'encrypted', c: 'ciphertext-v1' },
+        }];
+        const store = createExternalSessionOperationPrivateStagingStore({ activeServerDir, limits });
+        await store.beginOperation({ operationId, representation: 'content', capturedSource });
+        await store.appendPageGroup({
+            operationId,
+            captureIndex: 0,
+            groupId,
+            items: staged,
+            sourceRead: { ...sameSourceRead, eof: true },
+        });
+        await store.completeCapture({ operationId });
+
+        await expect(store.persistPreparedReplayGroup({
+            operationId,
+            groupId,
+            items: prepared,
+        })).resolves.toEqual({ status: 'stored' });
+
+        const restarted = createExternalSessionOperationPrivateStagingStore({ activeServerDir, limits });
+        await expect(readReplayGroups(restarted, operationId)).resolves.toEqual([
+            expect.objectContaining({
+                groupId,
+                items: staged,
+                preparedItems: prepared,
+            }),
+        ]);
+        await expect(restarted.persistPreparedReplayGroup({
+            operationId,
+            groupId,
+            items: prepared,
+        })).resolves.toEqual({ status: 'already_stored' });
+        await expect(restarted.persistPreparedReplayGroup({
+            operationId,
+            groupId,
+            items: [{ ...prepared[0], content: { t: 'encrypted', c: 'different' } }],
+        })).rejects.toThrow('conflicts with its existing receipt');
+
+        await restarted.clearPreparedReplayGroup({ operationId, groupId });
+        await expect(readReplayGroups(restarted, operationId)).resolves.toEqual([
+            expect.objectContaining({ groupId, items: staged }),
+        ]);
+    });
+
+    it('refuses prepared replay bytes at the same operation capacity ceiling before a server effect', async () => {
+        const activeServerDir = await createPrivateRoot('happier-external-staging-prepared-capacity-');
+        const operationId = 'operation-prepared-capacity';
+        const groupId = 'prepared-page';
+        const staged = [{ id: 'raw-item' }];
+        const rawBytes = measureExternalSessionStagingPageGroup({
+            captureIndex: 0,
+            groupId,
+            items: staged,
+        }).serializedBytes;
+        const store = createExternalSessionOperationPrivateStagingStore({
+            activeServerDir,
+            limits: {
+                perOperation: { maxItems: 10, maxBytes: rawBytes },
+                aggregate: { maxItems: 20, maxBytes: 100_000 },
+            },
+        });
+        await store.beginOperation({ operationId, representation: 'content', capturedSource });
+        await store.appendPageGroup({
+            operationId,
+            captureIndex: 0,
+            groupId,
+            items: staged,
+            sourceRead: { ...sameSourceRead, eof: true },
+        });
+        await store.completeCapture({ operationId });
+
+        await expect(store.persistPreparedReplayGroup({
+            operationId,
+            groupId,
+            items: [{
+                localId: 'history:raw-item',
+                sidechainId: null,
+                messageRole: 'agent',
+                content: { t: 'encrypted', c: 'ciphertext-v1' },
+            }],
+        })).resolves.toEqual({
+            status: 'refused',
+            reason: 'per_operation_byte_capacity',
+        });
+        await expect(readReplayGroups(store, operationId)).resolves.toEqual([
+            expect.objectContaining({ groupId, items: staged }),
+        ]);
+    });
+
+    it.each([
+        ['missing', 'External session staging prepared replay is unavailable'],
+        ['changed', 'prepared replay does not match its reservation'],
+    ] as const)(
+        'fails closed when a manifest-bound prepared replay receipt is %s',
+        async (corruption, expectedError) => {
+            const activeServerDir = await createPrivateRoot(
+                'happier-external-staging-prepared-integrity-',
+            );
+            const operationId = `operation-prepared-${corruption}`;
+            const groupId = 'prepared-page';
+            const store = createExternalSessionOperationPrivateStagingStore({
+                activeServerDir,
+                limits: {
+                    perOperation: { maxItems: 10, maxBytes: 50_000 },
+                    aggregate: { maxItems: 20, maxBytes: 100_000 },
+                },
+            });
+            await store.beginOperation({ operationId, representation: 'content', capturedSource });
+            await store.appendPageGroup({
+                operationId,
+                captureIndex: 0,
+                groupId,
+                items: [{ id: 'raw-item' }],
+                sourceRead: { ...sameSourceRead, eof: true },
+            });
+            await store.completeCapture({ operationId });
+            await store.persistPreparedReplayGroup({
+                operationId,
+                groupId,
+                items: [{
+                    localId: 'history:raw-item',
+                    sidechainId: null,
+                    messageRole: 'agent',
+                    content: { t: 'encrypted', c: 'ciphertext-v1' },
+                }],
+            });
+
+            const stagingRoot = stagingRootFor(activeServerDir);
+            const operationDirectory = join(
+                stagingRoot,
+                (await readdir(stagingRoot, { withFileTypes: true }))
+                    .find((entry) => entry.isDirectory())!.name,
+            );
+            const preparedPath = join(operationDirectory, 'prepared-000000000000.json');
+            if (corruption === 'missing') {
+                await rm(preparedPath);
+            } else {
+                await writeFile(preparedPath, JSON.stringify({
+                    schemaVersion: 1,
+                    captureIndex: 0,
+                    groupId,
+                    items: [{
+                        localId: 'history:raw-item',
+                        sidechainId: null,
+                        messageRole: 'agent',
+                        content: { t: 'encrypted', c: 'changed-ciphertext' },
+                    }],
+                }));
+            }
+
+            await expect(readReplayGroups(store, operationId)).rejects.toThrow(expectedError);
+        },
+    );
+
     it('streams chronological replay one page file at a time instead of buffering the whole staged transcript', async () => {
         const activeServerDir = await createPrivateRoot('happier-external-staging-stream-');
         const store = createExternalSessionOperationPrivateStagingStore({
@@ -215,9 +415,8 @@ describe('operation-private External Sessions staging', () => {
         });
 
         const operationDirectory = join(
-            activeServerDir,
-            'external-session-operation-staging',
-            (await readdir(join(activeServerDir, 'external-session-operation-staging'), {
+            stagingRootFor(activeServerDir),
+            (await readdir(stagingRootFor(activeServerDir), {
                 withFileTypes: true,
             })).find((entry) => entry.isDirectory())!.name,
         );
@@ -416,6 +615,77 @@ describe('operation-private External Sessions staging', () => {
         });
     });
 
+    it('binds staging and its capacity budget to the same Account scope as operation records', async () => {
+        const activeServerDir = await createPrivateRoot('happier-external-staging-account-');
+        const items = [{ id: 'account-a-page' }];
+        const bytes = measureExternalSessionStagingPageGroup({
+            captureIndex: 0,
+            groupId: 'page-account-a',
+            items,
+        }).serializedBytes;
+        const store = createExternalSessionOperationPrivateStagingStore({
+            activeServerDir,
+            limits: {
+                perOperation: { maxItems: 10, maxBytes: 10_000 },
+                aggregate: { maxItems: 1, maxBytes: bytes },
+            },
+        });
+
+        useAccount('account-a');
+        await store.beginOperation({
+            operationId: 'operation-account-a',
+            representation: 'content',
+            capturedSource,
+        });
+        expect((await store.appendPageGroup({
+            operationId: 'operation-account-a',
+            captureIndex: 0,
+            groupId: 'page-account-a',
+            items,
+            sourceRead: sameSourceRead,
+        })).status).toBe('stored');
+
+        useAccount('account-b');
+        await store.beginOperation({
+            operationId: 'operation-account-b',
+            representation: 'content',
+            capturedSource,
+        });
+        // Account A's retained staging must not consume Account B's budget.
+        expect((await store.appendPageGroup({
+            operationId: 'operation-account-b',
+            captureIndex: 0,
+            groupId: 'page-account-b',
+            items: [{ id: 'account-b-page' }],
+            sourceRead: sameSourceRead,
+        })).status).toBe('stored');
+        expect(
+            (await readdir(stagingRootFor(activeServerDir, 'account-a'))).length,
+        ).toBeGreaterThan(0);
+        // A restarted daemon resolves each partition afresh: Account A's retained
+        // staging is not reachable from Account B even by exact operation id.
+        const restarted = createExternalSessionOperationPrivateStagingStore({
+            activeServerDir,
+            limits: {
+                perOperation: { maxItems: 10, maxBytes: 10_000 },
+                aggregate: { maxItems: 1, maxBytes: bytes },
+            },
+        });
+        expect(await restarted.readCapturedSource({
+            operationId: 'operation-account-a',
+        })).toEqual({ status: 'missing' });
+        useAccount('account-a');
+        expect(await createExternalSessionOperationPrivateStagingStore({
+            activeServerDir,
+            limits: {
+                perOperation: { maxItems: 10, maxBytes: 10_000 },
+                aggregate: { maxItems: 1, maxBytes: bytes },
+            },
+        }).readCapturedSource({
+            operationId: 'operation-account-a',
+        })).toEqual({ status: 'ready', capturedSource });
+    });
+
     it('classifies deletion, recreation, append, rewrite, and unknown independently from EOF', () => {
         expect(classifyExternalSessionStagingSourceRead(capturedSource, {
             availability: 'unreachable',
@@ -603,6 +873,362 @@ describe('operation-private External Sessions staging', () => {
         ]);
     });
 
+    it('persists created-media cleanup ownership across restart until deletion is acknowledged', async () => {
+        const activeServerDir = await createPrivateRoot('happier-external-staging-media-owner-');
+        const limits = {
+            perOperation: { maxItems: 10, maxBytes: 10_000 },
+            aggregate: { maxItems: 10, maxBytes: 10_000 },
+        } as const;
+        const operationId = 'operation-media-owner';
+        const owned = [{
+            workingDirectory: '/workspace',
+            candidateWorkspaceRelativePath: '.happier/uploads/generated/session/message/file.png',
+        }] as const;
+        const store = createExternalSessionOperationPrivateStagingStore({ activeServerDir, limits });
+        await store.beginOperation({ operationId, representation: 'content', capturedSource });
+        await store.recordCreatedWorkspaceMedia({ operationId, media: owned });
+
+        const restarted = createExternalSessionOperationPrivateStagingStore({
+            activeServerDir,
+            limits,
+        });
+        await expect(restarted.readCreatedWorkspaceMediaForCleanup({ operationId }))
+            .resolves.toEqual(owned);
+        // A failed filesystem deletion does not acknowledge the receipt. The next repair
+        // must see the same operation-owned path and may retry the idempotent unlink.
+        await expect(restarted.readCreatedWorkspaceMediaForCleanup({ operationId }))
+            .resolves.toEqual(owned);
+        await restarted.pauseOperation({ operationId, expiresAtMs: 1 });
+        await restarted.markExpiredPausedWorkDiscardRequired({ operationId, nowMs: 1 });
+        await expect(restarted.cleanupTerminalOperation({ operationId }))
+            .resolves.toEqual({ status: 'not_ready' });
+        await restarted.acknowledgeCreatedWorkspaceMediaCleanup({ operationId, media: owned });
+        await expect(restarted.readCreatedWorkspaceMediaForCleanup({ operationId }))
+            .resolves.toEqual([]);
+        await expect(restarted.cleanupTerminalOperation({ operationId }))
+            .resolves.toEqual({ status: 'completed' });
+    });
+
+    it('moves canonical Windows-path cleanup authority from a discarded predecessor to its active successor', async () => {
+        const activeServerDir = await createPrivateRoot('happier-external-staging-media-transfer-');
+        const limits = {
+            perOperation: { maxItems: 10, maxBytes: 10_000 },
+            aggregate: { maxItems: 20, maxBytes: 20_000 },
+        } as const;
+        const predecessorOperationId = 'operation-media-predecessor';
+        const successorOperationId = 'operation-media-successor';
+        const predecessorMedia = [{
+            workingDirectory: 'C:\\Workspace\\Project\\',
+            candidateWorkspaceRelativePath: '.happier\\uploads/generated\\session/message\\shared.png',
+        }] as const;
+        const successorMedia = [{
+            workingDirectory: 'c:/workspace/project',
+            candidateWorkspaceRelativePath: '.happier/uploads/generated/session/message/shared.png',
+        }] as const;
+        const store = createExternalSessionOperationPrivateStagingStore({ activeServerDir, limits });
+        await store.beginOperation({
+            operationId: predecessorOperationId,
+            representation: 'content',
+            capturedSource,
+        });
+        await store.recordCreatedWorkspaceMedia({
+            operationId: predecessorOperationId,
+            media: predecessorMedia,
+        });
+        await store.pauseOperation({ operationId: predecessorOperationId, expiresAtMs: 1 });
+        await store.markExpiredPausedWorkDiscardRequired({
+            operationId: predecessorOperationId,
+            nowMs: 1,
+        });
+        await store.beginOperation({
+            operationId: successorOperationId,
+            representation: 'content',
+            capturedSource,
+        });
+
+        await store.transferDiscardedWorkspaceMediaOwnership({
+            operationId: successorOperationId,
+            media: successorMedia,
+        });
+
+        await expect(store.readCreatedWorkspaceMediaForCleanup({
+            operationId: predecessorOperationId,
+        })).resolves.toEqual([]);
+        await expect(store.readCreatedWorkspaceMediaForCleanup({
+            operationId: successorOperationId,
+        })).resolves.toEqual(successorMedia);
+        await expect(store.cleanupTerminalOperation({
+            operationId: predecessorOperationId,
+        })).resolves.toEqual({ status: 'completed' });
+    });
+
+    it('preserves ambiguous exact-path authority when another non-discarded owner remains', async () => {
+        const activeServerDir = await createPrivateRoot('happier-external-staging-media-ambiguous-');
+        const limits = {
+            perOperation: { maxItems: 10, maxBytes: 10_000 },
+            aggregate: { maxItems: 30, maxBytes: 30_000 },
+        } as const;
+        const discardedOperationId = 'operation-media-discarded';
+        const activeOwnerOperationId = 'operation-media-active-owner';
+        const successorOperationId = 'operation-media-ambiguous-successor';
+        const shared = [{
+            workingDirectory: '/workspace',
+            candidateWorkspaceRelativePath: '.happier/uploads/generated/session/message/shared.png',
+        }] as const;
+        const store = createExternalSessionOperationPrivateStagingStore({ activeServerDir, limits });
+        for (const operationId of [
+            discardedOperationId,
+            activeOwnerOperationId,
+            successorOperationId,
+        ]) {
+            await store.beginOperation({ operationId, representation: 'content', capturedSource });
+        }
+        await store.recordCreatedWorkspaceMedia({ operationId: discardedOperationId, media: shared });
+        await store.recordCreatedWorkspaceMedia({ operationId: activeOwnerOperationId, media: shared });
+        await store.pauseOperation({ operationId: discardedOperationId, expiresAtMs: 1 });
+        await store.markExpiredPausedWorkDiscardRequired({
+            operationId: discardedOperationId,
+            nowMs: 1,
+        });
+
+        await store.transferDiscardedWorkspaceMediaOwnership({
+            operationId: successorOperationId,
+            media: shared,
+        });
+
+        await expect(store.readCreatedWorkspaceMediaForCleanup({
+            operationId: discardedOperationId,
+        })).resolves.toEqual([]);
+        await expect(store.readCreatedWorkspaceMediaForCleanup({
+            operationId: activeOwnerOperationId,
+        })).resolves.toEqual(shared);
+        await expect(store.readCreatedWorkspaceMediaForCleanup({
+            operationId: successorOperationId,
+        })).resolves.toEqual([]);
+    });
+
+    it('keeps malformed persisted media paths raw-distinct instead of granting alias ownership', async () => {
+        const activeServerDir = await createPrivateRoot(
+            'happier-external-staging-media-malformed-',
+        );
+        const limits = {
+            perOperation: { maxItems: 10, maxBytes: 10_000 },
+            aggregate: { maxItems: 20, maxBytes: 20_000 },
+        } as const;
+        const predecessorOperationId = 'operation-media-malformed-predecessor';
+        const successorOperationId = 'operation-media-malformed-successor';
+        const predecessorMedia = [{
+            workingDirectory: '/workspace/',
+            candidateWorkspaceRelativePath: '../shared.png',
+        }] as const;
+        const successorMedia = [{
+            workingDirectory: '/workspace',
+            candidateWorkspaceRelativePath: '../shared.png',
+        }] as const;
+        const store = createExternalSessionOperationPrivateStagingStore({ activeServerDir, limits });
+        await store.beginOperation({
+            operationId: predecessorOperationId,
+            representation: 'content',
+            capturedSource,
+        });
+        await store.recordCreatedWorkspaceMedia({
+            operationId: predecessorOperationId,
+            media: predecessorMedia,
+        });
+        await store.pauseOperation({ operationId: predecessorOperationId, expiresAtMs: 1 });
+        await store.markExpiredPausedWorkDiscardRequired({
+            operationId: predecessorOperationId,
+            nowMs: 1,
+        });
+        await store.beginOperation({
+            operationId: successorOperationId,
+            representation: 'content',
+            capturedSource,
+        });
+
+        await store.transferDiscardedWorkspaceMediaOwnership({
+            operationId: successorOperationId,
+            media: successorMedia,
+        });
+
+        await expect(store.readCreatedWorkspaceMediaForCleanup({
+            operationId: predecessorOperationId,
+        })).resolves.toEqual(predecessorMedia);
+        await expect(store.readCreatedWorkspaceMediaForCleanup({
+            operationId: successorOperationId,
+        })).resolves.toEqual([]);
+    });
+
+    it('keeps POSIX-root media child identity case-sensitive', async () => {
+        const activeServerDir = await createPrivateRoot(
+            'happier-external-staging-media-posix-root-',
+        );
+        const limits = {
+            perOperation: { maxItems: 10, maxBytes: 10_000 },
+            aggregate: { maxItems: 20, maxBytes: 20_000 },
+        } as const;
+        const predecessorOperationId = 'operation-media-posix-root-predecessor';
+        const successorOperationId = 'operation-media-posix-root-successor';
+        const predecessorMedia = [{
+            workingDirectory: '/',
+            candidateWorkspaceRelativePath: '.happier/uploads/generated/session/message/File.png',
+        }] as const;
+        const successorMedia = [{
+            workingDirectory: '/',
+            candidateWorkspaceRelativePath: '.happier/uploads/generated/session/message/file.png',
+        }] as const;
+        const store = createExternalSessionOperationPrivateStagingStore({ activeServerDir, limits });
+        await store.beginOperation({
+            operationId: predecessorOperationId,
+            representation: 'content',
+            capturedSource,
+        });
+        await store.recordCreatedWorkspaceMedia({
+            operationId: predecessorOperationId,
+            media: predecessorMedia,
+        });
+        await store.pauseOperation({ operationId: predecessorOperationId, expiresAtMs: 1 });
+        await store.markExpiredPausedWorkDiscardRequired({
+            operationId: predecessorOperationId,
+            nowMs: 1,
+        });
+        await store.beginOperation({
+            operationId: successorOperationId,
+            representation: 'content',
+            capturedSource,
+        });
+
+        await store.transferDiscardedWorkspaceMediaOwnership({
+            operationId: successorOperationId,
+            media: successorMedia,
+        });
+
+        await expect(store.readCreatedWorkspaceMediaForCleanup({
+            operationId: predecessorOperationId,
+        })).resolves.toEqual(predecessorMedia);
+        await expect(store.readCreatedWorkspaceMediaForCleanup({
+            operationId: successorOperationId,
+        })).resolves.toEqual([]);
+    });
+
+    it('keeps duplicate-safe ownership after a crash between successor publication and predecessor discharge', async () => {
+        const activeServerDir = await createPrivateRoot('happier-external-staging-media-crash-');
+        const workingDirectory = await createPrivateRoot('happier-external-staging-media-workspace-');
+        const limits = {
+            perOperation: { maxItems: 10, maxBytes: 10_000 },
+            aggregate: { maxItems: 20, maxBytes: 20_000 },
+        } as const;
+        const predecessorOperationId = 'operation-media-crash-predecessor';
+        const successorOperationId = 'operation-media-crash-successor';
+        const relativePath = '.happier/uploads/generated/session/message/shared.png';
+        const predecessorMedia = [{
+            workingDirectory: `${workingDirectory}/`,
+            candidateWorkspaceRelativePath: relativePath.replaceAll('/', '\\'),
+        }] as const;
+        const successorMedia = [{
+            workingDirectory,
+            candidateWorkspaceRelativePath: relativePath,
+        }] as const;
+        await mkdir(join(workingDirectory, '.happier/uploads/generated/session/message'), {
+            recursive: true,
+        });
+        await writeFile(join(workingDirectory, relativePath), 'shared');
+
+        const store = createExternalSessionOperationPrivateStagingStore({ activeServerDir, limits });
+        await store.beginOperation({
+            operationId: predecessorOperationId,
+            representation: 'content',
+            capturedSource,
+        });
+        await store.recordCreatedWorkspaceMedia({
+            operationId: predecessorOperationId,
+            media: predecessorMedia,
+        });
+        await store.pauseOperation({ operationId: predecessorOperationId, expiresAtMs: 1 });
+        await store.markExpiredPausedWorkDiscardRequired({
+            operationId: predecessorOperationId,
+            nowMs: 1,
+        });
+        await store.beginOperation({
+            operationId: successorOperationId,
+            representation: 'content',
+            capturedSource,
+        });
+
+        let successorReceiptWritten = false;
+        const crashing = createExternalSessionOperationPrivateStagingStore({
+            activeServerDir,
+            limits,
+            persistence: {
+                writeJsonAtomic: async (path, value) => {
+                    const manifest = value as {
+                        operationId?: string;
+                        createdWorkspaceMedia?: readonly unknown[];
+                    };
+                    if (
+                        manifest.operationId === successorOperationId
+                        && manifest.createdWorkspaceMedia?.length === 1
+                    ) {
+                        await writeJsonAtomic(path, value);
+                        successorReceiptWritten = true;
+                        return;
+                    }
+                    if (
+                        successorReceiptWritten
+                        && manifest.operationId === predecessorOperationId
+                        && manifest.createdWorkspaceMedia?.length === 0
+                    ) {
+                        throw new Error('simulated crash before predecessor receipt discharge');
+                    }
+                    await writeJsonAtomic(path, value);
+                },
+            },
+        });
+        await expect(crashing.transferDiscardedWorkspaceMediaOwnership({
+            operationId: successorOperationId,
+            media: successorMedia,
+        })).rejects.toThrow('simulated crash before predecessor receipt discharge');
+
+        const restarted = createExternalSessionOperationPrivateStagingStore({
+            activeServerDir,
+            limits,
+        });
+        // Either duplicate may be discharged first, but that cleanup pass must preserve the file.
+        await expect(restarted.readCreatedWorkspaceMediaForCleanup({
+            operationId: predecessorOperationId,
+        })).resolves.toEqual([]);
+        await expect(readFile(join(workingDirectory, relativePath)))
+            .resolves.toEqual(Buffer.from('shared'));
+        await expect(restarted.readCreatedWorkspaceMediaForCleanup({
+            operationId: successorOperationId,
+        })).resolves.toEqual(successorMedia);
+
+        await restarted.pauseOperation({ operationId: successorOperationId, expiresAtMs: 1 });
+        await restarted.markExpiredPausedWorkDiscardRequired({
+            operationId: successorOperationId,
+            nowMs: 1,
+        });
+        const cleanup = await restarted.readCreatedWorkspaceMediaForCleanup({
+            operationId: successorOperationId,
+        });
+        await garbageCollectUncommittedSessionMedia({
+            workingDirectory,
+            candidateWorkspaceRelativePaths: cleanup.map(
+                (entry) => entry.candidateWorkspaceRelativePath,
+            ),
+            reason: 'interrupted_ingestion',
+        });
+        await restarted.acknowledgeCreatedWorkspaceMediaCleanup({
+            operationId: successorOperationId,
+            media: cleanup,
+        });
+        await expect(restarted.cleanupTerminalOperation({
+            operationId: successorOperationId,
+        })).resolves.toEqual({ status: 'completed' });
+        await expect(readFile(join(workingDirectory, relativePath)))
+            .rejects.toMatchObject({ code: 'ENOENT' });
+    });
+
     it('rejects reference-only staging until an immutable revision-scoped source is proven', async () => {
         const activeServerDir = await createPrivateRoot('happier-external-staging-reference-');
         const store = createExternalSessionOperationPrivateStagingStore({
@@ -621,7 +1247,7 @@ describe('operation-private External Sessions staging', () => {
             status: 'refused',
             reason: 'reference_only_unavailable',
         });
-        await expect(readdir(join(activeServerDir, 'external-session-operation-staging')))
+        await expect(readdir(stagingRootFor(activeServerDir)))
             .rejects.toMatchObject({ code: 'ENOENT' });
     });
 
@@ -643,7 +1269,7 @@ describe('operation-private External Sessions staging', () => {
             });
         }
 
-        const root = join(activeServerDir, 'external-session-operation-staging');
+        const root = stagingRootFor(activeServerDir);
         const entries = (await readdir(root, { withFileTypes: true }))
             .filter((entry) => entry.isDirectory() && !entry.name.endsWith('.lock'));
         expect(entries).toHaveLength(2);

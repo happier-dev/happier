@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 describe('fetchMemorySystemRecords', () => {
   it('reads summary shard pages through session system records and opens payloads', async () => {
@@ -75,5 +75,19 @@ describe('fetchMemorySystemRecords', () => {
       seqTo: 9,
       synopsis: 'Latest memory synopsis.',
     });
+  });
+
+  it('fails before fetching encrypted records when session key material is unavailable', async () => {
+    const { AccountEncryptionMaterialUnavailableError } = await import('@/api/client/encryptionKey');
+    const { fetchMemorySummaryShardSystemRecords } = await import('./fetchMemorySystemRecords');
+    const fetchSessionSystemRecordsPage = vi.fn();
+
+    await expect(fetchMemorySummaryShardSystemRecords({
+      token: 'token-1',
+      sessionId: 'sess-encrypted',
+      mode: 'e2ee',
+      fetchSessionSystemRecordsPage,
+    })).rejects.toBeInstanceOf(AccountEncryptionMaterialUnavailableError);
+    expect(fetchSessionSystemRecordsPage).not.toHaveBeenCalled();
   });
 });

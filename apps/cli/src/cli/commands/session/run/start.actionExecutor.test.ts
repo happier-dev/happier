@@ -9,14 +9,20 @@ vi.mock('@/session/actions/createCliActionExecutor', () => ({
   createCliActionExecutor,
 }));
 
-const resolveSessionIdOrPrefix = vi.fn(async () => ({ ok: true, sessionId: 'sess-1' }));
-vi.mock('@/session/query/resolveSessionId', () => ({
-  resolveSessionIdOrPrefix,
+const resolveSessionTransportContext = vi.fn(async () => ({
+  ok: true,
+  sessionId: 'sess-1',
+  rawSession: { id: 'sess-1', active: true, metadata: {} },
+  ctx: null,
+  mode: 'plain' as const,
+}));
+vi.mock('@/session/services/resolveSessionTransportContext', () => ({
+  resolveSessionTransportContext,
 }));
 
-const fetchSessionById = vi.fn(async () => ({ encryptionMode: 'plain' }));
-vi.mock('@/session/transport/http/sessionsHttp', () => ({
-  fetchSessionById,
+const ensureCliActionPolicySettings = vi.fn(async () => {});
+vi.mock('@/session/actions/ensureCliActionPolicySettings', () => ({
+  ensureCliActionPolicySettings,
 }));
 
 describe('happier session run start (action executor)', () => {

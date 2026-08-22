@@ -17,6 +17,7 @@ import {
   resolveDaemonServiceCliRuntimeFromEnv,
   resolveDaemonServiceListEntries,
 } from '@/daemon/service/cli';
+import { writeJsonStdout } from '@/cli/output/jsonEnvelope';
 
 import {
   resolveInstalledDefaultFollowingDaemonServiceModes,
@@ -93,7 +94,7 @@ async function cmdReleaseChannelStatus(argv: readonly string[]): Promise<void> {
   };
 
   if (json) {
-    console.log(JSON.stringify(data));
+    await writeJsonStdout(data);
     return;
   }
 
@@ -117,7 +118,7 @@ async function cmdReleaseChannelList(argv: readonly string[]): Promise<void> {
   };
 
   if (json) {
-    console.log(JSON.stringify(data));
+    await writeJsonStdout(data);
     return;
   }
 

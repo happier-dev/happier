@@ -22,7 +22,7 @@ import type {
   AgentAcpRuntimeOptions,
   AgentSessionOpenRequest,
   AgentSessionRuntimeEvent,
-} from '@happier-dev/plugin-sdk/agent-runtime';
+} from '@happier-dev/plugin-sdk/agents/runtime';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import {
   AgentRuntimeJsonValueV1Schema,
@@ -78,7 +78,9 @@ class TestInteractions implements PluginCurrentSessionInteractionsService {
 }
 
 function createApprovalRequestMock() {
+  let nextRequestId = 1;
   return vi.fn<ApprovalRequester>(async () => ({
+    requestId: `test-approval-${nextRequestId++}`,
     kind: 'approval',
     status: 'approved',
   }));
@@ -109,6 +111,8 @@ function writePublicComposerAgent(dir: string): string {
       let selectedModelRequest = null;
       let initialModelSelected = false;
       let historyPromptCount = 0;
+      let permissionAfterSteerPromptCount = 0;
+      let grokInterjectPromptCount = 0;
       let historyForkedOnThisConnection = false;
       let historyLoadedOnThisConnection = false;
       const lifecycleMethods = [];
@@ -378,7 +382,11 @@ function writePublicComposerAgent(dir: string): string {
             ok(request.id, { success: true });
           } else if (request.method === 'session/prompt') {
             const sessionId = request.params.sessionId;
-            if (scenario === 'completed') {
+            if (scenario === 'request-transform') {
+              const text = request.params.prompt?.find((block) => block?.type === 'text')?.text;
+              update(sessionId, typeof text === 'string' ? text : 'missing transformed prompt');
+              ok(request.id, { stopReason: 'end_turn' });
+            } else if (scenario === 'completed') {
               update(sessionId, 'hello from ACP');
               ok(request.id, { stopReason: 'end_turn' });
             } else if (scenario === 'history-prompts') {
@@ -495,6 +503,42 @@ function writePublicComposerAgent(dir: string): string {
                   });
                 }
               }
+            } else if (scenario === 'permission-after-steer') {
+              permissionAfterSteerPromptCount += 1;
+              if (permissionAfterSteerPromptCount === 1) {
+                // Keep the first turn active; the steer will issue the request.
+                continue;
+              }
+              permissionPrompt = request.id;
+              permissionSession = sessionId;
+              send({
+                jsonrpc: '2.0',
+                id: 'permission-1',
+                method: 'session/request_permission',
+                params: {
+                  sessionId,
+                  toolCall: {
+                    toolCallId: 'tool-call-after-steer',
+                    kind: 'execute',
+                    toolName: 'Bash',
+                    rawInput: { command: 'pwd' },
+                  },
+                  options: [
+                    { optionId: 'allow-once', kind: 'allow_once', name: 'Allow once' },
+                    { optionId: 'allow-session', kind: 'allow_always', name: 'Allow for session' },
+                    { optionId: 'reject-once', kind: 'reject_once', name: 'Deny' },
+                  ],
+                },
+              });
+            } else if (scenario === 'grok-interject') {
+              grokInterjectPromptCount += 1;
+              if (grokInterjectPromptCount === 1) {
+                delayedPrompt = request.id;
+                update(sessionId, 'primary active');
+                continue;
+              }
+              update(sessionId, 'wrong concurrent session prompt');
+              ok(request.id, { stopReason: 'end_turn' });
             } else if (scenario === 'permission') {
               permissionPrompt = request.id;
               permissionSession = sessionId;
@@ -629,6 +673,16 @@ function writePublicComposerAgent(dir: string): string {
               ok(request.id, { stopReason: 'end_turn' });
             } else {
               ok(request.id, {});
+            }
+          } else if (request.method === 'x.ai/interject') {
+            update(
+              request.params.sessionId,
+              'interjected=' + request.params.text + ';id=' + request.params.interjectionId,
+            );
+            ok(request.id, { status: 'queued' });
+            if (delayedPrompt !== null) {
+              ok(delayedPrompt, { stopReason: 'end_turn' });
+              delayedPrompt = null;
             }
           } else if (request.method === 'session/cancel') {
             if (delayedPrompt !== null) {
@@ -821,6 +875,81 @@ function createHistoryDefinition(): AgentAcpRuntimeDefinition {
 }
 
 describe('createPublicAcpSession', () => {
+  it('transforms the raw ACP session/prompt request at the provider dispatch boundary', async () => {
+    await withTempDir('happier-public-acp-request-transform-', async (dir) => {
+      const fixture = createFixture(dir, 'request-transform');
+      const transformAgentRequest = vi.fn(async (payload: Readonly<Record<string, unknown>>) => {
+        const request = payload.request as Readonly<Record<string, unknown>>;
+        const prompt = request.prompt as readonly Readonly<Record<string, unknown>>[];
+        const text = prompt.find((block) => block.type === 'text')?.text;
+        return text === 'invalid transform source'
+          ? { ...payload, request: { ...request, prompt: 'invalid' } }
+          : {
+              ...payload,
+              request: {
+                ...request,
+                prompt: [{ type: 'text', text: 'transformed by plugin hook' }],
+              },
+            };
+      });
+      const session = await createPublicAcpSession({
+        kind: 'create',
+        sessionId: 'host-request-transform',
+        cwd: dir,
+      }, fixture.options, {
+        ...fixture.dependencies,
+        transformAgentRequest,
+      } satisfies PublicAcpComposerDependencies);
+      const events: AgentSessionRuntimeEvent[] = [];
+      const subscription = session.watch((event) => { events.push(event); });
+      try {
+        await expect(session.send({
+          inputIds: ['input-request-transform'],
+          input: { text: 'original prompt' },
+          delivery: { kind: 'newTurn', turnId: 'turn-request-transform' },
+        })).resolves.toEqual({ status: 'admitted' });
+        await collectUntil(events, 'turn-complete');
+
+        expect(transformAgentRequest).toHaveBeenCalledWith(expect.objectContaining({
+          sessionId: 'host-request-transform',
+          agentId: 'acme-agent',
+          runtimeFamily: 'acpSession',
+          method: 'session/prompt',
+          request: expect.objectContaining({
+            sessionId: 'provider-created',
+            prompt: [{ type: 'text', text: 'original prompt' }],
+          }),
+          timestampMs: expect.any(Number),
+        }), expect.objectContaining({ signal: expect.any(AbortSignal) }));
+        expect(events).toContainEqual(expect.objectContaining({
+          kind: 'message-delta',
+          turnId: 'turn-request-transform',
+          text: 'transformed by plugin hook',
+        }));
+
+        await expect(session.send({
+          inputIds: ['input-invalid-request-transform'],
+          input: { text: 'invalid transform source' },
+          delivery: { kind: 'newTurn', turnId: 'turn-invalid-request-transform' },
+        })).resolves.toEqual({ status: 'admitted' });
+        await waitForCondition(
+          () => events.filter((event) => event.kind === 'turn-complete').length === 2,
+          { timeoutMs: 5_000, intervalMs: 10, label: 'second public ACP turn completion' },
+        );
+
+        expect(transformAgentRequest).toHaveBeenCalledTimes(2);
+        expect(events).toContainEqual(expect.objectContaining({
+          kind: 'message-delta',
+          turnId: 'turn-invalid-request-transform',
+          text: 'invalid transform source',
+        }));
+      } finally {
+        subscription.dispose();
+        await session.dispose();
+      }
+    });
+  });
+
   it('settles real non-detached ACP disposal when descendant discovery stalls', async () => {
     await withTempDir('happier-public-acp-stalled-process-census-', async (dir) => {
       const fixture = createFixture(dir, 'completed');
@@ -1818,21 +1947,33 @@ describe('createPublicAcpSession', () => {
           inputIds: ['input-permission'],
           input: { text: 'run pwd' },
           delivery: { kind: 'newTurn', turnId: 'turn-permission' },
+          causalPermissionAuthority: {
+            kind: 'admittedSessionInputV1',
+            admittedPermissionCeiling: 'read-only',
+          },
         })).resolves.toEqual({ status: 'admitted' });
         await collectUntil(events, 'turn-complete');
 
         expect(fixture.requestInteraction).toHaveBeenCalledTimes(1);
         expect(fixture.requestInteraction).toHaveBeenCalledWith({
           kind: 'approval',
-          requestId: 'acp:["turn-permission","tool-call-1"]',
           title: 'Allow execute?',
           subject: {
             kind: 'tool',
             name: 'execute',
             input: { command: 'pwd' },
           },
-          allowedPersistenceScopes: ['session'],
-        }, { signal: expect.any(AbortSignal) });
+          allowSessionPersistence: true,
+        }, {
+          signal: expect.any(AbortSignal),
+          permissionContext: {
+            turnId: 'turn-permission',
+            causalPermissionAuthority: {
+              kind: 'admittedSessionInputV1',
+              admittedPermissionCeiling: 'read-only',
+            },
+          },
+        });
         expect(events).toContainEqual(expect.objectContaining({
           kind: 'message-delta',
           turnId: 'turn-permission',
@@ -1848,7 +1989,7 @@ describe('createPublicAcpSession', () => {
     });
   });
 
-  it('scopes reused ACP tool-call ids to their public turns for SVC10 custody', async () => {
+  it('keeps public turns distinct when ACP reuses a tool-call id', async () => {
     await withTempDir('happier-public-acp-permission-correlation-', async (dir) => {
       const fixture = createFixture(dir, 'permission');
       const session = await createPublicAcpSession({
@@ -1863,6 +2004,10 @@ describe('createPublicAcpSession', () => {
           inputIds: ['input-permission-first'],
           input: { text: 'run pwd first' },
           delivery: { kind: 'newTurn', turnId: 'turn-permission-first' },
+          causalPermissionAuthority: {
+            kind: 'admittedSessionInputV1',
+            admittedPermissionCeiling: 'read-only',
+          },
         });
         await collectUntil(events, 'turn-complete');
 
@@ -1870,15 +2015,24 @@ describe('createPublicAcpSession', () => {
           inputIds: ['input-permission-second'],
           input: { text: 'run pwd second' },
           delivery: { kind: 'newTurn', turnId: 'turn-permission-second' },
+          causalPermissionAuthority: {
+            kind: 'admittedSessionInputV1',
+            admittedPermissionCeiling: 'read-only',
+          },
         });
         await waitForCondition(
           () => events.filter((event) => event.kind === 'turn-complete').length === 2,
           { timeoutMs: 5_000, intervalMs: 10, label: 'second correlated ACP permission turn' },
         );
 
-        const requestIds = fixture.requestInteraction.mock.calls.map(([interaction]) => interaction.requestId);
-        expect(requestIds).toHaveLength(2);
-        expect(requestIds[0]).not.toBe(requestIds[1]);
+        const completedTurns = events.flatMap((event) => (
+          event.kind === 'turn-complete' ? [event.turnId] : []
+        ));
+        expect(completedTurns).toEqual([
+          'turn-permission-first',
+          'turn-permission-second',
+        ]);
+        expect(fixture.requestInteraction).toHaveBeenCalledTimes(2);
       } finally {
         subscription.dispose();
         await session.dispose();
@@ -2116,7 +2270,7 @@ describe('createPublicAcpSession', () => {
         await completed.dispose();
       }
 
-      const hangingFixture = createFixture(dir, 'hanging');
+      const hangingFixture = createFixture(dir, 'permission-after-steer');
       const hanging = await createPublicAcpSession({
         kind: 'create', sessionId: 'host-steer', cwd: dir,
       }, hangingFixture.options, hangingFixture.dependencies);
@@ -2127,11 +2281,19 @@ describe('createPublicAcpSession', () => {
           inputIds: ['input-primary'],
           input: { text: 'primary' },
           delivery: { kind: 'newTurn', turnId: 'turn-primary' },
+          causalPermissionAuthority: {
+            kind: 'admittedSessionInputV1',
+            admittedPermissionCeiling: 'safe-yolo',
+          },
         });
         await hanging.send({
           inputIds: ['input-steer'],
           input: { text: 'steer' },
           delivery: { kind: 'steer', turnId: 'turn-primary' },
+          causalPermissionAuthority: {
+            kind: 'admittedSessionInputV1',
+            admittedPermissionCeiling: 'read-only',
+          },
         });
         await waitForCondition(
           () => hangingEvents.some((event) => (
@@ -2144,12 +2306,88 @@ describe('createPublicAcpSession', () => {
           inputIds: ['input-steer'],
           delivery: { kind: 'steer', turnId: 'turn-primary' },
         }));
+        expect(hangingFixture.requestInteraction).toHaveBeenCalledWith(expect.objectContaining({
+          kind: 'approval',
+          allowSessionPersistence: true,
+        }), {
+          signal: expect.any(AbortSignal),
+          permissionContext: {
+            turnId: 'turn-primary',
+            causalPermissionAuthority: {
+              kind: 'admittedSessionInputV1',
+              admittedPermissionCeiling: 'read-only',
+            },
+          },
+        });
         expect(hangingEvents.filter((event) => event.kind === 'turn-start')).toHaveLength(1);
-        await hanging.cancel?.({ turnId: 'turn-primary', reason: 'user' });
-        await collectUntil(hangingEvents, 'turn-cancelled');
+        await collectUntil(hangingEvents, 'turn-complete');
       } finally {
         hangingSubscription.dispose();
         await hanging.dispose();
+      }
+    });
+  });
+
+  it('uses a provider steer extension instead of a concurrent session prompt when configured', async () => {
+    await withTempDir('happier-public-acp-provider-steer-', async (dir) => {
+      const fixture = createFixture(dir, 'grok-interject');
+      const definition: AgentAcpRuntimeDefinition = {
+        mcp: { policy: 'drop' },
+        delivery: {
+          steer: {
+            method: 'x.ai/interject',
+            buildParams: ({ providerSessionId, inputIds, input }) => ({
+              sessionId: providerSessionId,
+              text: input.text,
+              interjectionId: inputIds[0],
+            }),
+            isAccepted: (response) => (
+              typeof response === 'object'
+              && response !== null
+              && Reflect.get(response, 'status') === 'queued'
+            ),
+          },
+        },
+      };
+      const session = await createPublicAcpSession({
+        kind: 'create', sessionId: 'host-grok-steer', cwd: dir,
+      }, {
+        ...fixture.options,
+        definition,
+      } as unknown as AgentAcpRuntimeOptions, fixture.dependencies);
+      const events: AgentSessionRuntimeEvent[] = [];
+      const subscription = session.watch((event) => { events.push(event); });
+      try {
+        await session.send({
+          inputIds: ['input-primary'],
+          input: { text: 'primary' },
+          delivery: { kind: 'newTurn', turnId: 'turn-primary' },
+        });
+        await waitForCondition(
+          () => events.some((event) => event.kind === 'message-delta' && event.text === 'primary active'),
+          { timeoutMs: 5_000, intervalMs: 10, label: 'primary Grok turn active' },
+        );
+
+        await session.send({
+          inputIds: ['input-steer'],
+          input: { text: 'change direction' },
+          delivery: { kind: 'steer', turnId: 'turn-primary' },
+        });
+        await collectUntil(events, 'turn-complete');
+
+        expect(events).toContainEqual(expect.objectContaining({
+          kind: 'message-delta',
+          channel: 'assistant',
+          text: 'interjected=change direction;id=input-steer',
+        }));
+        expect(events).not.toContainEqual(expect.objectContaining({
+          kind: 'message-delta',
+          text: 'wrong concurrent session prompt',
+        }));
+        expect(events.filter((event) => event.kind === 'turn-start')).toHaveLength(1);
+      } finally {
+        subscription.dispose();
+        await session.dispose();
       }
     });
   });
@@ -2523,12 +2761,14 @@ describe('createPublicAcpSession', () => {
         ...fixture.dependencies,
         resumeHistorySession: {
           fetchRecentTranscriptTextItemsForAcpImport: async () => [],
-          sendUserTextMessageCommitted: async (text, options) => {
+          enqueueUserTextMessageCommitted: async (text, options) => {
             imported.push({ role: 'user', text, meta: options.meta });
+            return { persisted: true, delivered: false };
           },
-          sendAgentMessageCommitted: async (_provider, message, options) => {
+          enqueueAgentMessageCommitted: async (_provider, message, options) => {
             if (message.type !== 'message') throw new Error('expected replayed agent message');
             imported.push({ role: 'agent', text: message.message, meta: options?.meta });
+            return { persisted: true, delivered: false };
           },
           updateMetadata: async () => undefined,
         },
@@ -2538,7 +2778,10 @@ describe('createPublicAcpSession', () => {
           {
             role: 'user',
             text: 'replayed user message',
-            meta: { importedFrom: 'acp-history' },
+            meta: {
+              importedFrom: 'acp-history',
+              remoteSessionId: 'provider-resume-replay',
+            },
           },
           {
             role: 'agent',

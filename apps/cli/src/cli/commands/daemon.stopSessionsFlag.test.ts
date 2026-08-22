@@ -82,21 +82,19 @@ describe('handleDaemonCliCommand: daemon stop --kill-sessions', () => {
     expect(stopAllDaemonsBestEffortMock).toHaveBeenCalledWith({ stopSessions: true });
   }, 60_000);
 
-  it('passes managed-service transfer to every daemon without stopping sessions', async () => {
+  it('stops every daemon without stopping sessions by default', async () => {
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
       throw new Error(`exit:${code ?? ''}`);
     }) as any);
 
     await expect(
       handleDaemonCliCommand({
-        args: ['daemon', 'stop', '--all', '--transfer-managed-local-services'],
+        args: ['daemon', 'stop', '--all'],
       } as any),
     ).rejects.toThrow(/exit:0/);
 
     expect(exitSpy).toHaveBeenCalledWith(0);
-    expect(stopAllDaemonsBestEffortMock).toHaveBeenCalledWith({
-      transferManagedLocalServices: true,
-    });
+    expect(stopAllDaemonsBestEffortMock).toHaveBeenCalledWith({ stopSessions: false });
   }, 60_000);
 
   it('fails closed when the current relay owner source is unknown', async () => {

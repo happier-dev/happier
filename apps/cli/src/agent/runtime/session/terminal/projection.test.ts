@@ -28,12 +28,17 @@ function createMetadataFixture(): Metadata {
 function createSessionFixture() {
     let metadata: Metadata = createMetadataFixture();
     let agentState: AgentState = {};
-    const events: unknown[] = [];
+    const directEvents: unknown[] = [];
+    const committedEvents: unknown[] = [];
     return {
         session: {
             sessionId: 'terminal-parent-session',
             sendSessionEvent(event: SessionEventMessage) {
-                events.push(event);
+                directEvents.push(event);
+            },
+            async enqueueSessionEventCommitted(event: SessionEventMessage) {
+                committedEvents.push(event);
+                return { persisted: true, delivered: false };
             },
             updateMetadata(updater: (current: Metadata) => Metadata) {
                 metadata = updater(metadata);
@@ -44,7 +49,8 @@ function createSessionFixture() {
         },
         readMetadata: () => metadata,
         readAgentState: () => agentState,
-        readEvents: () => [...events],
+        readDirectEvents: () => [...directEvents],
+        readCommittedEvents: () => [...committedEvents],
     };
 }
 
@@ -97,9 +103,32 @@ describe('createTerminalRuntimeProjectionHostService', () => {
 
         await service.publishControlState({ target: 'local', reason: 'terminal_started' });
 
-        expect(fixture.readEvents()).toEqual([
+        expect(fixture.readCommittedEvents()).toEqual([
             { type: 'switch', mode: 'local' },
         ]);
+        expect(fixture.readDirectEvents()).toEqual([]);
+    });
+
+    it('surfaces missing committed custody after preserving the Agent control-state projection', async () => {
+        const { createTerminalRuntimeProjectionHostService } = await loadProjectionModule();
+        const fixture = createSessionFixture();
+        const service = createTerminalRuntimeProjectionHostService({
+            session: {
+                ...fixture.session,
+                enqueueSessionEventCommitted: vi.fn(async () => ({
+                    persisted: false,
+                    delivered: false,
+                })),
+            },
+            subagents: createHostSubagentStore(),
+        });
+
+        await expect(service.publishControlState({
+            target: 'local',
+            reason: 'terminal_started',
+        })).rejects.toThrow('Terminal switch transcript event was not durably admitted');
+        expect(fixture.readAgentState()).toMatchObject({ controlledByUser: true });
+        expect(fixture.readDirectEvents()).toEqual([]);
     });
 
     it('updates controlledByUser for control state', async () => {

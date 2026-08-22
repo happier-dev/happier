@@ -13,6 +13,7 @@ import {
   type NonPromptTransferUploadInitRequest,
   type TransferUploadInitRequest,
 } from '../targets/resolveTransferUploadInitTarget';
+import type { ComposerMediaStageUploadTargetDeps } from '../targets/resolveComposerMediaStageUploadTarget';
 import { registerUploadTransferLifecycleHandlers } from './registerUploadTransferLifecycleHandlers';
 
 type TransferUploadInitResponse =
@@ -20,7 +21,7 @@ type TransferUploadInitResponse =
   | Readonly<{ success: false; error: string }>;
 
 type TransferUploadFinalizeResponse =
-  | Readonly<{ success: true; path: string; sizeBytes: number; sha256: string }>
+  | Readonly<{ success: true; path: string; sizeBytes: number; sha256: string; result?: unknown }>
   | Readonly<{ success: false; error: string }>;
 
 export function registerTransferUploadRpcHandlers(
@@ -34,11 +35,12 @@ export function registerTransferUploadRpcHandlers(
     attachmentUpload?: Readonly<{
       pathAllowanceRegistry: TransferPathAllowanceRegistry;
     }>;
+    composerMediaStage?: ComposerMediaStageUploadTargetDeps;
   }>,
 ): void {
   const tempUploadRoot = join(tmpdir(), 'happier', 'uploads', randomUUID());
 
-  registerUploadTransferLifecycleHandlers<TransferUploadInitResponse, TransferUploadFinalizeResponse>({
+  registerUploadTransferLifecycleHandlers<TransferUploadInitResponse, TransferUploadFinalizeResponse, unknown>({
     rpcHandlerManager,
     store: deps.store,
     methods: {
@@ -60,6 +62,9 @@ export function registerTransferUploadRpcHandlers(
       if (requestKind === 'session_attachment_upload_v1' && !deps.attachmentUpload) {
         return { kind: 'rejected', response: { success: false, error: 'Attachment uploads are unavailable' } };
       }
+      if (requestKind === 'composer_media_stage_upload_v1' && !deps.composerMediaStage) {
+        return { kind: 'rejected', response: { success: false, error: 'Composer media staging is unavailable' } };
+      }
 
       const uploadRequest: NonPromptTransferUploadInitRequest = request;
 
@@ -71,6 +76,7 @@ export function registerTransferUploadRpcHandlers(
         additionalAllowedWriteDirs: deps.getAdditionalAllowedWriteDirs?.(),
         sessionRpcTransferMaxBytes: deps.sessionRpcTransferMaxBytes ?? null,
         ...(deps.attachmentUpload ? { attachmentUpload: deps.attachmentUpload } : {}),
+        ...(deps.composerMediaStage ? { composerMediaStage: deps.composerMediaStage } : {}),
       });
       if (!resolved.success) {
         return {
@@ -103,6 +109,7 @@ export function registerTransferUploadRpcHandlers(
       path: finalized.path,
       sizeBytes: finalized.sizeBytes,
       sha256,
+      ...(finalized.result === undefined ? {} : { result: finalized.result }),
     }),
     enableChunkEncryption: true,
   });

@@ -1,14 +1,15 @@
 import { basename } from 'node:path';
 
-import type {
-  TerminalHostAdapter,
-  TerminalHostHandle,
-  TerminalHostLivenessV1,
-  TerminalInjectionDuplicateRisk,
-  TerminalInjectionFailurePhase,
-  TerminalInputInjectionResult,
-  TerminalInputState,
-  TerminalPromptInput,
+import {
+  resolveTerminalPromptWriteTimeoutMs,
+  type TerminalHostAdapter,
+  type TerminalHostHandle,
+  type TerminalHostLivenessV1,
+  type TerminalInjectionDuplicateRisk,
+  type TerminalInjectionFailurePhase,
+  type TerminalInputInjectionResult,
+  type TerminalInputState,
+  type TerminalPromptInput,
 } from '@happier-dev/agents';
 import type { TerminalPromptSubmitVerificationPolicy } from '../terminalHost/promptSubmitVerification';
 
@@ -34,6 +35,7 @@ import {
   type InspectZellijSessionSocketPresence,
 } from './socketPresence';
 import {
+  resolveTerminalPromptSubmissionFailureReason,
   runTerminalPromptSubmission,
 } from '../terminalHost/promptSubmitVerification';
 
@@ -570,7 +572,9 @@ export function createZellijTerminalHostAdapter(params: Readonly<{
         }
       }
 
-      const deadline = createTerminalHostDeadline(input.scheduling.timeoutMs);
+      const deadline = createTerminalHostDeadline(
+        input.scheduling.timeoutMs ?? resolveTerminalPromptWriteTimeoutMs(input.text),
+      );
       const remainingForWrite = remainingTerminalHostDeadlineMs(deadline);
       const textToWrite = input.text;
       if (Buffer.byteLength(textToWrite, 'utf8') > pasteMaxBytes) {
@@ -603,18 +607,24 @@ export function createZellijTerminalHostAdapter(params: Readonly<{
       }
 
       try {
+        const submissionDeadline = createTerminalHostDeadline(
+          input.scheduling.timeoutMs ?? actionTimeoutMs,
+        );
         const submission = await runTerminalPromptSubmission({
           promptText: textToWrite,
-          ...(params.promptSubmitVerification?.shouldVerifyBeforeSubmit(textToWrite)
+          ...(params.promptSubmitVerification?.shouldVerifyAfterSubmit(textToWrite)
             ? {
-              verifyBeforeSubmit: async ({ promptText, remainingTimeoutMs }) => {
+              verifyStagedBeforeSubmit: async ({ promptText, remainingTimeoutMs }) => {
                 const screenText = await actions.dumpScreen({
                   zellijBinary: params.zellijBinary,
                   env: baseEnv(params.socketDir),
                   paneId,
                   timeoutMs: remainingTimeoutMs ?? actionTimeoutMs,
                 });
-                return params.promptSubmitVerification?.verifyBeforeSubmit({
+                return (
+                  params.promptSubmitVerification?.verifyBeforeSubmitStaging
+                  ?? params.promptSubmitVerification?.verifyAfterSubmit
+                )?.({
                   promptText,
                   screenText: normalizeCapturedScreen(screenText),
                 }) ?? false;
@@ -646,13 +656,13 @@ export function createZellijTerminalHostAdapter(params: Readonly<{
               },
             }
             : {}),
-          remainingTimeoutMs: () => remainingTerminalHostDeadlineMs(deadline),
+          remainingTimeoutMs: () => remainingTerminalHostDeadlineMs(submissionDeadline),
           wait: waitFn,
         });
         if (!submission.success) {
           return failedInjectionResult({
             handle,
-            reason: submission.reason === 'timeout' ? 'timeout' : submission.reason === 'submit_failed' ? 'submit_failed' : 'host_unreachable',
+            reason: resolveTerminalPromptSubmissionFailureReason(submission.reason),
             phase: submission.phase,
             duplicateRisk: submission.duplicateRisk,
             recoverable: submission.reason !== 'submit_failed',

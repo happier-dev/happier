@@ -305,6 +305,81 @@ describe('createTmuxTerminalHostAdapter', () => {
     expect(utility.captureCurrentInput).not.toHaveBeenCalled();
   });
 
+  it('does not treat an unavailable post-submit screen capture as successful submission', async () => {
+    const tmux = new TmuxUtilities();
+    tmux.executeTmuxCommand = vi.fn(async (args: readonly string[]): Promise<TmuxCommandResult> => {
+      if (args[0] === 'capture-pane') {
+        return { returncode: 1, stdout: '', stderr: 'capture failed', command: [...args] };
+      }
+      return {
+        returncode: 0,
+        stdout: args[0] === 'display-message' ? '0\t12345\tclaude\n' : '',
+        stderr: '',
+        command: [...args],
+      };
+    }) as TmuxUtilities['executeTmuxCommand'];
+    const adapter = createTmuxTerminalHostAdapter({
+      tmux,
+      now: () => 513,
+      wait: async () => {},
+      promptSubmitVerification: {
+        shouldVerifyAfterSubmit: () => true,
+        verifyAfterSubmit: () => false,
+      },
+    });
+
+    await expect(adapter.injectUserPrompt({
+      kind: 'tmux',
+      sessionName: 'session-a',
+      paneId: 'claude',
+      attachMetadata: {
+        attachStrategy: 'terminal_host',
+        topology: 'exclusive',
+        locality: 'same_machine',
+        maxClients: null,
+        requiresLocalAttachmentInfo: true,
+        liveProbe: 'required',
+      },
+    }, {
+      text: 'queued prompt',
+      multiline: false,
+      origin: { kind: 'ui_pending', nonce: 'nonce-capture-failed' },
+      scheduling: { timeoutMs: 1_000 },
+    })).resolves.toMatchObject({
+      status: 'failed',
+      reason: 'verification_failed',
+      phase: 'after_enter_unknown',
+      duplicateRisk: 'likely',
+    });
+  });
+
+  it('reports unstable input state when tmux screen capture is unavailable', async () => {
+    const utility = createUtility({
+      captureCurrentInput: vi.fn(async () => {
+        throw new Error('capture unavailable');
+      }),
+    });
+    const adapter = createTmuxTerminalHostAdapter({ tmux: utility, now: () => 514, wait: async () => {} });
+
+    await expect(adapter.captureInputState!({
+      kind: 'tmux',
+      sessionName: 'session-a',
+      paneId: 'claude',
+      attachMetadata: {
+        attachStrategy: 'terminal_host',
+        topology: 'exclusive',
+        locality: 'same_machine',
+        maxClients: null,
+        requiresLocalAttachmentInfo: true,
+        liveProbe: 'required',
+      },
+    })).resolves.toMatchObject({
+      stable: false,
+      currentInput: '',
+      observedAt: 514,
+    });
+  });
+
   it('defers instead of failing when tmux liveness is inconclusive', async () => {
     const utility = createUtility({
       executeTmuxCommand: vi.fn(async (args: readonly string[]): Promise<TmuxCommandResult> => ({

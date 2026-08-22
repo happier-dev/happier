@@ -44,7 +44,7 @@ describe('registerHappierMcpBuiltInTools', () => {
         inputHints: {
           fields: [{
             path: 'scope',
-            title: { key: 'review.scope', fallback: 'Scope' },
+            title: 'Scope',
             widget: 'select',
           }],
         },
@@ -94,7 +94,7 @@ describe('registerHappierMcpBuiltInTools', () => {
         inputHints: {
           fields: [{
             path: 'scope',
-            title: { key: 'review.scope', fallback: 'Scope' },
+            title: 'Scope',
             widget: 'select',
           }],
         },
@@ -297,7 +297,7 @@ describe('registerHappierMcpBuiltInTools', () => {
     );
   });
 
-  it('returns valid MCP text content when a direct action succeeds without a result payload', async () => {
+  it('does not register permission approval as an MCP tool', async () => {
     const handlers = new Map<string, (args: unknown, extra?: unknown) => Promise<unknown>>();
 
     registerHappierMcpBuiltInTools({
@@ -313,15 +313,6 @@ describe('registerHappierMcpBuiltInTools', () => {
       },
     });
 
-    const handler = handlers.get('session_permission_respond');
-    if (!handler) throw new Error('Expected session_permission_respond to be registered');
-
-    await expect(handler({
-      requestId: 'workspace-indexing-permission',
-      decision: 'deny',
-    })).resolves.toEqual({
-      content: [{ type: 'text', text: 'null' }],
-      isError: false,
-    });
+    expect(handlers.get('session_permission_respond')).toBeUndefined();
   });
 });

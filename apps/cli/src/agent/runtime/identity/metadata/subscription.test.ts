@@ -2,8 +2,10 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 import type { Metadata } from '@/api/types';
-import type { RuntimeTurnMessageHandler } from '@/agent/runtime/turns/runtimeTurnOperations';
-import type { RuntimeEventV1 } from '@happier-dev/protocol';
+import type {
+  RuntimeTurnMessage,
+  RuntimeTurnMessageHandler,
+} from '@/agent/runtime/turns/runtimeTurnOperations';
 
 import { subscribeSessionRuntimePublicationToMetadata } from './subscription';
 
@@ -54,8 +56,8 @@ function createHarness(options?: Readonly<{ providerSessionId?: string | null }>
     session,
     sessionState,
     runtime,
-    emit(message: unknown) {
-      runtimeHandler?.(message as RuntimeEventV1);
+    emit(message: RuntimeTurnMessage) {
+      runtimeHandler?.(message);
     },
   };
 }
@@ -76,6 +78,40 @@ describe('subscribeSessionRuntimePublicationToMetadata', () => {
       value: {
         metadataKey: 'grokSessionId',
         value: 'grok-provider-session-1',
+        // Explicit: an id published with no log path CLEARS any stale slot.
+        nativeSessionLogPath: null,
+      },
+      reason: 'reconciliation',
+      metadataReason: 'runtime-provider-session-id',
+      mirrorToProvider: false,
+    });
+  });
+
+  it('publishes canonical provider-session-id events through the declared vendor metadata field', () => {
+    const harness = createHarness();
+    subscribeSessionRuntimePublicationToMetadata({
+      session: harness.session,
+      sessionState: harness.sessionState,
+      runtime: harness.runtime as never,
+      providerSessionMetadataKey: 'grokSessionId',
+    });
+
+    harness.emit({
+      kind: 'provider-session-id',
+      sequence: 1,
+      sessionId: 'session-1',
+      emittedAtMs: 1,
+      providerSessionId: 'grok-provider-session-1',
+    });
+
+    expect(harness.sessionState.writeHappierField).toHaveBeenCalledWith({
+      sessionId: 'session-1',
+      fieldId: 'identity.providerSessionId',
+      value: {
+        metadataKey: 'grokSessionId',
+        value: 'grok-provider-session-1',
+        // Explicit: an id published with no proof CLEARS any stale proof slot.
+        nativeSessionLogPath: null,
       },
       reason: 'reconciliation',
       metadataReason: 'runtime-provider-session-id',
@@ -335,5 +371,175 @@ describe('subscribeSessionRuntimePublicationToMetadata', () => {
         },
       }),
     ]);
+  });
+});
+
+describe('subscribeSessionRuntimePublicationToMetadata — matched native resume identity', () => {
+  it('carries a runtime-published continuity proof into the same metadata write as its id', () => {
+    const harness = createHarness();
+    subscribeSessionRuntimePublicationToMetadata({
+      session: harness.session,
+      sessionState: harness.sessionState,
+      runtime: harness.runtime as never,
+      providerSessionMetadataKey: 'claudeSessionId',
+    });
+
+    harness.emit({
+      kind: 'provider-session-id',
+      providerSessionId: 'claude-1',
+      nativeSessionLogPath: '/home/u/.claude/x/claude-1.jsonl',
+    } as never);
+
+    expect(harness.sessionState.writeHappierField).toHaveBeenCalledWith(expect.objectContaining({
+      fieldId: 'identity.providerSessionId',
+      value: {
+        metadataKey: 'claudeSessionId',
+        value: 'claude-1',
+        nativeSessionLogPath: '/home/u/.claude/x/claude-1.jsonl',
+      },
+    }));
+  });
+
+  it('republishes when a later generation learns the log path of an already-published id', () => {
+    // The runtime knows its id before the conversation materializes. An id-keyed
+    // dedupe would swallow the update that carries the path, and the successor
+    // Agent would be offered no log to read.
+    const harness = createHarness();
+    subscribeSessionRuntimePublicationToMetadata({
+      session: harness.session,
+      sessionState: harness.sessionState,
+      runtime: harness.runtime as never,
+      providerSessionMetadataKey: 'claudeSessionId',
+    });
+
+    harness.emit({ kind: 'provider-session-id', providerSessionId: 'claude-1' } as never);
+    harness.emit({
+      kind: 'provider-session-id',
+      providerSessionId: 'claude-1',
+      nativeSessionLogPath: '/home/u/.claude/x/claude-1.jsonl',
+    } as never);
+
+    expect(harness.sessionState.writeHappierField).toHaveBeenCalledTimes(2);
+    expect(harness.sessionState.writeHappierField).toHaveBeenLastCalledWith(expect.objectContaining({
+      value: expect.objectContaining({
+        nativeSessionLogPath: '/home/u/.claude/x/claude-1.jsonl',
+      }),
+    }));
+  });
+
+  it('still dedupes an unchanged id/log-path pair', () => {
+    const harness = createHarness();
+    subscribeSessionRuntimePublicationToMetadata({
+      session: harness.session,
+      sessionState: harness.sessionState,
+      runtime: harness.runtime as never,
+      providerSessionMetadataKey: 'claudeSessionId',
+    });
+
+    harness.emit({ kind: 'provider-session-id', providerSessionId: 'claude-1' } as never);
+    harness.emit({ kind: 'provider-session-id', providerSessionId: 'claude-1' } as never);
+
+    expect(harness.sessionState.writeHappierField).toHaveBeenCalledTimes(1);
+  });
+
+  it('publishes a null log path so a retracted one clears the persisted slot', () => {
+    const harness = createHarness();
+    subscribeSessionRuntimePublicationToMetadata({
+      session: harness.session,
+      sessionState: harness.sessionState,
+      runtime: harness.runtime as never,
+      providerSessionMetadataKey: 'claudeSessionId',
+    });
+
+    harness.emit({
+      kind: 'provider-session-id',
+      providerSessionId: 'claude-1',
+      nativeSessionLogPath: '/home/u/.claude/x/claude-1.jsonl',
+    } as never);
+    harness.emit({ kind: 'provider-session-id', providerSessionId: 'claude-1' } as never);
+
+    expect(harness.sessionState.writeHappierField).toHaveBeenLastCalledWith(expect.objectContaining({
+      value: { metadataKey: 'claudeSessionId', value: 'claude-1', nativeSessionLogPath: null },
+    }));
+  });
+
+  it('ignores a non-string log path rather than trusting it', () => {
+    const harness = createHarness();
+    subscribeSessionRuntimePublicationToMetadata({
+      session: harness.session,
+      sessionState: harness.sessionState,
+      runtime: harness.runtime as never,
+      providerSessionMetadataKey: 'claudeSessionId',
+    });
+
+    harness.emit({
+      kind: 'provider-session-id',
+      providerSessionId: 'claude-1',
+      nativeSessionLogPath: { kind: 'sessionFile', value: '/tmp/x' },
+    } as never);
+
+    expect(harness.sessionState.writeHappierField).toHaveBeenCalledWith(expect.objectContaining({
+      value: { metadataKey: 'claudeSessionId', value: 'claude-1', nativeSessionLogPath: null },
+    }));
+  });
+});
+
+/**
+ * An external (manifest-contributed) Agent has no catalog-declared flat
+ * `<vendor>SessionId` slot, so the host resolves no `providerSessionMetadataKey`
+ * for it. The documented `provider-session-id` channel must still reach session
+ * state — the binding decides where the id lands — or the Agent's native
+ * conversation is never recorded and a later resume silently starts fresh.
+ */
+describe('subscribeSessionRuntimePublicationToMetadata — Agent with no catalog-declared slot', () => {
+  it('publishes the native id with no metadata key instead of dropping the event', () => {
+    const harness = createHarness();
+    subscribeSessionRuntimePublicationToMetadata({
+      session: harness.session,
+      sessionState: harness.sessionState,
+      runtime: harness.runtime as never,
+      providerSessionMetadataKey: null,
+    });
+
+    harness.emit({
+      kind: 'provider-session-id',
+      sequence: 1,
+      sessionId: 'session-1',
+      emittedAtMs: 1,
+      providerSessionId: ' acme-native-1 ',
+    });
+
+    expect(harness.sessionState.writeHappierField).toHaveBeenCalledWith({
+      sessionId: 'session-1',
+      fieldId: 'identity.providerSessionId',
+      value: {
+        metadataKey: null,
+        value: 'acme-native-1',
+        nativeSessionLogPath: null,
+      },
+      reason: 'reconciliation',
+      metadataReason: 'runtime-provider-session-id',
+      mirrorToProvider: false,
+    });
+  });
+
+  it('still refuses to publish an empty native id', () => {
+    const harness = createHarness();
+    subscribeSessionRuntimePublicationToMetadata({
+      session: harness.session,
+      sessionState: harness.sessionState,
+      runtime: harness.runtime as never,
+      providerSessionMetadataKey: null,
+    });
+
+    harness.emit({
+      kind: 'provider-session-id',
+      sequence: 1,
+      sessionId: 'session-1',
+      emittedAtMs: 1,
+      providerSessionId: '   ',
+    });
+
+    expect(harness.sessionState.writeHappierField).not.toHaveBeenCalled();
   });
 });

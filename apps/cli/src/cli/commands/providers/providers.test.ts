@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  AccountSettingsSchema,
   DEFAULT_PROVIDER_SETTINGS_V1,
   ProviderContributionV1Schema,
   ProviderSettingsV1Schema,
@@ -98,7 +99,11 @@ function harness(overrides: Partial<ProviderCliDependencies> = {}, initialSecret
   const connectionService = createProviderConnectionService({
     machineId: 'machine-a',
     featureGate: { isEnabled: () => true },
-    loadSnapshot: async () => ({ accountSettings: raw, registry }),
+    loadSnapshot: async () => ({
+      accountSettings: AccountSettingsSchema.parse(raw),
+      rawAccountSettings: raw,
+      registry,
+    }),
     updateAccountSettings: async (mutate) => { raw = mutate(raw); return raw; },
     collectDnsEvidence: async () => new Map([
       ['https://gateway.example/v1', ['1.1.1.1']],

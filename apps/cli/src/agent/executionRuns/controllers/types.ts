@@ -47,6 +47,7 @@ export type ExecutionRunBackendController = {
   failureSignal?: ExecutionRunControllerFailureSignal;
   pendingHostBarrier?: Promise<void>;
   terminalMarkerWritePromise?: Promise<void>;
+  settlementPromise?: Promise<void>;
   terminalPromise: Promise<void>;
   resolveTerminal: () => void;
 };
@@ -57,6 +58,7 @@ export type ExecutionRunVoiceAgentController = {
   cancelled: boolean;
   lastMarkerWriteAtMs: number;
   terminalMarkerWritePromise?: Promise<void>;
+  settlementPromise?: Promise<void>;
   terminalPromise: Promise<void>;
   resolveTerminal: () => void;
   transcript: Readonly<{ persistenceMode: 'ephemeral' | 'persistent'; epoch: number }>;

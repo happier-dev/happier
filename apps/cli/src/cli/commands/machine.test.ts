@@ -301,7 +301,7 @@ describe('handleMachineCommand', () => {
       data: {
         machineId: 'machine-loopback',
         relayRuntime: {
-          relayUrl: 'http://127.0.0.1:53388',
+          relayUrl: 'http://localhost.:53388',
           mode: 'user',
         },
       },
@@ -346,8 +346,8 @@ describe('handleMachineCommand', () => {
     );
 
     const output = logSpy.mock.calls.flat().join('\n');
-    expect(output).toContain('Remote relay URL: http://127.0.0.1:53388');
-    expect(output).not.toContain('happier relay set http://127.0.0.1:53388 --use');
+    expect(output).toContain('Remote relay URL: http://localhost.:53388');
+    expect(output).not.toContain('happier relay set http://localhost.:53388 --use');
     expect(output.toLowerCase()).toContain('remote machine');
   });
 

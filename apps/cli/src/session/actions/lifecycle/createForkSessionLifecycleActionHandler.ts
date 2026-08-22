@@ -1,16 +1,21 @@
 import type { getSessionHostBridge } from '@/agent/runtime/bridges/session/SessionHostBridge';
 import { isAcpForkEligibleForAgent } from '@/agent/acp/acpForkEligibility';
 import { isAuthenticationError } from '@/api/client/httpStatusError';
-import { readCredentials } from '@/persistence';
+import { readStoredCredentials } from '@/persistence';
 import { SPAWN_SESSION_ERROR_CODES } from '@/session/shared/spawnSessionContract';
 import { resolveForkCutoffSeqInclusive } from '@/session/fork/resolveForkCutoffSeqInclusive';
 import { resolveForkInheritedOverridesFromMetadata } from '@/session/fork/resolveForkInheritedOverridesFromMetadata';
 import { createStableSpawnNonce } from '@/session/shared/spawnNonce';
 import { tryDecryptSessionOwnerMetadataView } from '@/session/transport/encryption/sessionEncryptionContext';
 import { fetchSessionByIdCompat } from '@/session/transport/http/sessionsHttp';
+import { fetchAccountEncryptionCurrentness } from '@/api/client/connectedServiceCredentialApi';
 import { SessionForkRpcParamsSchema } from '@happier-dev/protocol';
-import { evaluateAgentSessionCapabilitySupport } from '@happier-dev/agents';
-import { getResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import {
+    evaluateAgentSessionCapabilitySupport,
+    isBundledAgentId,
+    isProviderBoundSessionMetadata,
+} from '@happier-dev/agents';
+import { readAgentCatalogSnapshot } from '@/agent/catalog/snapshot';
 import { readAgentSessionCapabilities } from '@/plugins/projection/registry/agentContributionDefinition';
 
 import { attemptAcpLatestFork } from './fork/attemptAcpLatestFork';
@@ -59,7 +64,7 @@ export function createForkSessionLifecycleActionHandler(params: Readonly<{
             }
         }
 
-        const credentials = await readCredentials().catch(() => null);
+        const credentials = await readStoredCredentials().catch(() => null);
         if (!credentials) {
             return {
                 ok: false,
@@ -69,8 +74,12 @@ export function createForkSessionLifecycleActionHandler(params: Readonly<{
         }
 
         let parentSession: Awaited<ReturnType<typeof fetchSessionByIdCompat>> | null = null;
+        let accountEncryptionCurrentness: Awaited<ReturnType<typeof fetchAccountEncryptionCurrentness>>;
         try {
-            parentSession = await fetchSessionByIdCompat({ token: credentials.token, sessionId: parentSessionId });
+            [parentSession, accountEncryptionCurrentness] = await Promise.all([
+                fetchSessionByIdCompat({ token: credentials.token, sessionId: parentSessionId }),
+                fetchAccountEncryptionCurrentness({ token: credentials.token }),
+            ]);
         } catch (error) {
             if (isAuthenticationError(error)) throw error;
             return {
@@ -90,6 +99,7 @@ export function createForkSessionLifecycleActionHandler(params: Readonly<{
         const parentMetadata = tryDecryptSessionOwnerMetadataView({
             credentials,
             rawSession: parentSession,
+            accountEncryptionMode: accountEncryptionCurrentness.mode,
         });
         if (!parentMetadata) {
             return {
@@ -126,26 +136,36 @@ export function createForkSessionLifecycleActionHandler(params: Readonly<{
         const forkAgentId = forkBackendResolution.catalogAgentId;
         const nativeForkOpenDeclared = forkAgentId !== null
             && readAgentSessionCapabilities(
-                getResolvedContributionRegistry().agentDefinitionsById
+                readAgentCatalogSnapshot().agentDefinitionsById
                     .get(forkAgentId)
                     ?.richDefinition
                     ?.definition,
             )?.open.includes('fork') === true;
-        const nativeForkCapabilitySupported = forkAgentId !== null
-            && evaluateAgentSessionCapabilitySupport({
-                agentId: forkAgentId,
-                capability: forkPoint.type === 'seq'
-                    ? 'sessionFork.fromMessage'
-                    : 'sessionFork.conversation',
-                metadata: parentMetadata,
-            }) === 'supported';
-        const nativeForkOpenSupported =
-            nativeForkOpenDeclared && nativeForkCapabilitySupported;
+        const nativeForkOpenSupported = forkAgentId !== null
+            && nativeForkOpenDeclared
+            && (
+                // Only a bundled Agent carries a bundled session-capability
+                // policy; a contributed Agent's declaration is the whole fact.
+                !isBundledAgentId(forkAgentId)
+                || evaluateAgentSessionCapabilitySupport({
+                    agentId: forkAgentId,
+                    capability: forkPoint.type === 'seq'
+                        ? 'sessionFork.fromMessage'
+                        : 'sessionFork.conversation',
+                    metadata: parentMetadata,
+                }) === 'supported'
+            );
         const inheritedForkOverrides = resolveForkInheritedOverridesFromMetadata(
             parentMetadata,
             forkBackendResolution.backendTargetV2,
         );
-        const providerBoundFork = inheritedForkOverrides.spawn.modelSelection?.ref.providerConnectionId != null;
+        // One shared fact, read by this gate and by the UI's fork-card
+        // availability owner, so the modal can never offer a Native card this
+        // handler will refuse. Equivalent to the previous local derivation from
+        // the inherited overrides: a Provider-bound canonical intent always wins
+        // the effective-source rule, and a mismatched or absent agent target
+        // already threw above.
+        const providerBoundFork = isProviderBoundSessionMetadata(parentMetadata);
         if (
             providerBoundFork
             && requestedStrategy !== 'auto'
@@ -185,31 +205,42 @@ export function createForkSessionLifecycleActionHandler(params: Readonly<{
                 ? resolvedCutoff.cutoffSeqInclusive
                 : cutoffSeqInclusive;
 
-        const forkSingleFlightKey = JSON.stringify({
-            parentSessionId,
-            forkPointType: forkPoint.type,
-            effectiveCutoffSeqInclusive,
-            requestedStrategy,
-            replayMaxSeedChars: parsed.data.replayMaxSeedChars ?? null,
-            replaySummaryRunner: parsed.data.replaySummaryRunner ?? null,
-        });
-        const existingFork = inFlightForks.get(forkSingleFlightKey);
-        if (existingFork) {
-            return await existingFork;
-        }
-
-        const forkPromise = (async (): Promise<ForkLifecycleResult> => {
-            const spawnNonce = createStableSpawnNonce('session.fork', {
+        // `requestId` is the caller's identity for ONE fork attempt (section 3.5,
+        // ported from the predecessor). When it is present it — not the request
+        // content — decides both coalescing and spawn identity: retries of one
+        // attempt join the in-flight fork and reuse its spawn nonce, while two
+        // deliberate attempts stay distinct even when their payloads are byte
+        // identical. Callers that have no attempt identity (non-UI Action/voice)
+        // keep the content-derived behaviour unchanged.
+        const forkRequestId = typeof parsed.data.requestId === 'string' && parsed.data.requestId.trim().length > 0
+            ? parsed.data.requestId.trim()
+            : null;
+        const forkAttemptIdentity = forkRequestId
+            ? { parentSessionId, requestId: forkRequestId }
+            : {
                 parentSessionId,
                 forkPointType: forkPoint.type,
                 effectiveCutoffSeqInclusive,
                 requestedStrategy,
                 replayMaxSeedChars: parsed.data.replayMaxSeedChars ?? null,
                 replaySummaryRunner: parsed.data.replaySummaryRunner ?? null,
-            });
+            };
+        const forkSingleFlightKey = JSON.stringify(forkAttemptIdentity);
+        const existingFork = inFlightForks.get(forkSingleFlightKey);
+        if (existingFork) {
+            return await existingFork;
+        }
+
+        const forkPromise = (async (): Promise<ForkLifecycleResult> => {
+            const spawnNonce = createStableSpawnNonce('session.fork', forkAttemptIdentity);
+            // `native` is the generic user intent the fork strategy modal sends.
+            // It enables exactly the native attempts `auto` enables, in the same
+            // order; the tail check below is what keeps it from ever falling
+            // through to Replay, which the user did not choose.
+            const genericNativeIntent = requestedStrategy === 'auto' || requestedStrategy === 'native';
             const shouldAttemptAcpForkLatest =
                 !providerBoundFork &&
-                (requestedStrategy === 'auto' || requestedStrategy === 'acp_fork_latest') &&
+                (genericNativeIntent || requestedStrategy === 'acp_fork_latest') &&
                 forkPoint.type === 'latest' &&
                 (
                     forkIsConfiguredAcp ||
@@ -222,7 +253,7 @@ export function createForkSessionLifecycleActionHandler(params: Readonly<{
             if (
                 !providerBoundFork
                 && nativeForkOpenSupported
-                && (requestedStrategy === 'auto' || requestedStrategy === 'provider_native')
+                && (genericNativeIntent || requestedStrategy === 'provider_native')
             ) {
                 const nativeForkOpen = await attemptNativeForkOpen({
                     credentials,
@@ -254,7 +285,7 @@ export function createForkSessionLifecycleActionHandler(params: Readonly<{
             // An agent-owned fork surface can implement both native and ACP
             // modes. Route ACP-backed sessions directly to the ACP lifecycle so
             // one surface invocation has one authoritative persisted strategy.
-            if (!providerBoundFork && !(requestedStrategy === 'auto' && shouldAttemptAcpForkLatest)) {
+            if (!providerBoundFork && !(genericNativeIntent && shouldAttemptAcpForkLatest)) {
                 const providerNativeFork = await attemptProviderNativeFork({
                     requestedStrategy,
                     credentials,

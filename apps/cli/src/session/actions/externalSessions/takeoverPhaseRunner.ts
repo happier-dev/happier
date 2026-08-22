@@ -1,14 +1,16 @@
 import {
   ExternalSessionOperationCancelInputV1Schema,
   ExternalSessionOperationResumeInputV1Schema,
+  isRetryableExternalLinkedAdmissionAcknowledgementReconciliationV1,
   projectExternalSessionOperationProgressV1,
-  readExternalHistoryImportV1FromMetadata,
+  resolveExternalHistoryImportV1FromMetadata,
   readLinkedExternalSessionV1FromMetadata,
-  resolveExternalSessionsSourceKey,
+  resolveLinkedExternalSessionMetadataV1,
   type PluginAgentExternalLinkedTakeoverWriterSafetyV1,
   type ExternalSessionOperationActionResponseV1,
   type ExternalSessionOperationRecordV1,
 } from '@happier-dev/protocol';
+import { randomUUID } from 'node:crypto';
 
 import type {
   createExternalSessionFollowLeaseManager,
@@ -29,8 +31,9 @@ import {
   loadLinkedExternalSession,
   type LoadedLinkedExternalSession,
 } from '@/api/session/external/takeover/loadLinkedExternalSession';
-import { readCredentials } from '@/persistence';
+import { readStoredCredentials } from '@/persistence';
 import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
+import { fetchAccountEncryptionCurrentness } from '@/api/client/connectedServiceCredentialApi';
 import {
   tryDecryptSessionOwnerMetadataView,
 } from '@/session/transport/encryption/sessionEncryptionContext';
@@ -43,6 +46,10 @@ import type {
   SpawnSessionOptions,
   SpawnSessionResult,
 } from '@/session/shared/spawnSessionContract';
+import type {
+  PersistedTakeoverAdmissionWaitRegistration,
+  PersistedTakeoverAdmissionWaiter,
+} from '@/daemon/spawn/persistedTakeoverAdmission';
 import type {
   ExternalSessionMaterializeActionExecutor,
   ExternalSessionPersistedTakeoverImportRecord,
@@ -64,6 +71,9 @@ import {
   mutateExternalSessionOperationRecordAtRevision,
   readExternalSessionOperationRecord,
 } from './operationRecordStore';
+import {
+  resolveExternalSessionSourceKeyOwner,
+} from '@/session/external/resolveExternalSessionSourceKeyOwner';
 
 export {
   assertExternalSessionPersistedTakeoverSourceContinuity,
@@ -86,6 +96,29 @@ type ExternalLinkedTakeoverRecord = ExternalSessionOperationRecordV1 & Readonly<
     { plan: 'takeover' }
   > & Readonly<{ targetStorageMode: 'external-linked' }>;
 }>;
+
+function isExternalLinkedTakeoverRecord(
+  record: ExternalSessionOperationRecordV1 | null,
+): record is ExternalLinkedTakeoverRecord {
+  return record?.request.plan === 'takeover'
+    && record.request.targetStorageMode === 'external-linked';
+}
+
+function isCommittedExternalLinkedRuntimeBindingCandidate(
+  record: ExternalSessionOperationRecordV1 | null,
+  input: Readonly<{
+    sessionId: string;
+    operationId: string;
+    attemptId: string;
+  }>,
+): record is ExternalLinkedTakeoverRecord {
+  return isExternalLinkedTakeoverRecord(record)
+    && record.request.sessionId === input.sessionId
+    && record.operationId === input.operationId
+    && record.status === 'running'
+    && record.phase === 'spawning'
+    && record.bindings.targetRuntimeAttemptId === input.attemptId;
+}
 
 export type ExternalSessionPersistedTakeoverPhaseRunner = Readonly<{
   resume(input: unknown): Promise<ExternalSessionOperationActionResponseV1>;
@@ -127,6 +160,7 @@ type ExternalLinkedTakeoverPhaseRunnerDependencies = Readonly<{
   resolveSpawn(input: Readonly<{
     linked: LoadedLinkedExternalSession;
     sessionId: string;
+    targetDirectory: string;
     signal?: AbortSignal;
   }>): Promise<ExternalTakeoverSpawnResolution>;
   spawnResolvedTakeoverSession(input: Readonly<{
@@ -139,12 +173,23 @@ type ExternalLinkedTakeoverPhaseRunnerDependencies = Readonly<{
     spawnSession(options: SpawnSessionOptions): Promise<SpawnSessionResult>;
   }>): Promise<ExternalTakeoverFencedSpawnResult>;
   spawnSession(options: SpawnSessionOptions): Promise<SpawnSessionResult>;
+  admissionWaiter?: Pick<PersistedTakeoverAdmissionWaiter, 'register'>;
+  reconcileRuntimeBindingFailure(input: Readonly<{
+    mode: 'external_linked';
+    sessionId: string;
+    operationId: string;
+    attemptId: string;
+  }>): Promise<ExternalSessionOperationRecordV1 | null>;
   publishProgress(input: Readonly<{
     sessionId: string;
     progress: ReturnType<typeof projectExternalSessionOperationProgressV1>;
   }>): Promise<ExternalSessionOperationRecordV1 | void>;
   nowMs?: () => number;
+  createAttemptId?: () => string;
 }>;
+
+const EXTERNAL_LINKED_ADMISSION_ACK_AMBIGUOUS =
+  'external_linked_takeover_admission_ack_ambiguous';
 
 export type ExternalSessionExternalLinkedTakeoverPhaseRunner = Readonly<{
   resume(input: unknown): Promise<ExternalSessionOperationActionResponseV1>;
@@ -217,8 +262,7 @@ export async function loadCurrentExternalSessionExternalLinkedTakeoverSource(
         !== record.request.source.remoteSessionId
       || sourceIdentity.linkGeneration
         !== record.request.source.linkGeneration
-      || sourceIdentity.sourceKey
-        !== resolveExternalSessionsSourceKey(linked.source)
+      || sourceIdentity.sourceKey !== linked.canonicalResolvedSourceKey
       || !sameQualifiedIdentity(
         sourceIdentity.qualifiedIdentity,
         record.request.source.qualifiedIdentity,
@@ -256,6 +300,7 @@ export function createExternalSessionExternalLinkedTakeoverPhaseRunner(
   dependencies: ExternalLinkedTakeoverPhaseRunnerDependencies,
 ): ExternalSessionExternalLinkedTakeoverPhaseRunner {
   const nowMs = dependencies.nowMs ?? Date.now;
+  const createAttemptId = dependencies.createAttemptId ?? randomUUID;
 
   const publishBestEffort = async (
     record: ExternalSessionOperationRecordV1,
@@ -328,49 +373,86 @@ export function createExternalSessionExternalLinkedTakeoverPhaseRunner(
       );
   };
 
-  const completeSpawn = async (
+  const reconcileCommittedRuntimeBindingFailure = async (
     record: ExternalLinkedTakeoverRecord,
+    attemptId: string,
+  ): Promise<ExternalSessionOperationActionResponseV1 | null> => {
+    const latest = await readExternalSessionOperationRecord(
+      dependencies.activeServerDir,
+      record.operationId,
+    );
+    if (!isCommittedExternalLinkedRuntimeBindingCandidate(latest, {
+      sessionId: record.request.sessionId,
+      operationId: record.operationId,
+      attemptId,
+    })) {
+      return null;
+    }
+    const reconciled = await dependencies.reconcileRuntimeBindingFailure({
+      mode: 'external_linked',
+      sessionId: record.request.sessionId,
+      operationId: record.operationId,
+      attemptId,
+    });
+    return reconciled ? operationSuccess(reconciled) : null;
+  };
+
+  const phaseForAdmissionFailure = (
+    record: ExternalLinkedTakeoverRecord,
+  ): 'admitting' | 'spawning' =>
+    record.phase === 'spawning' ? 'spawning' : 'admitting';
+
+  const awaitAdmissionReconciliation = async (
+    record: ExternalLinkedTakeoverRecord,
+    attemptId: string,
   ): Promise<ExternalSessionOperationActionResponseV1> => {
-    const completed = await mutate(record, (fresh) => {
+    const latest = await readExternalSessionOperationRecord(
+      dependencies.activeServerDir,
+      record.operationId,
+    );
+    if (
+      !latest
+      || !isExternalLinkedTakeoverRecord(latest)
+      || latest.request.sessionId !== record.request.sessionId
+      || latest.status !== 'running'
+      || latest.phase !== 'admitting'
+      || latest.bindings.targetRuntimeAttemptId !== attemptId
+    ) {
+      return operationFailure(
+        latest ? 'stale_revision' : 'operation_not_found',
+        latest
+          ? 'External-linked takeover operation revision is stale.'
+          : 'External-linked takeover operation was not found.',
+      );
+    }
+    const reconciled = await mutate(latest, (fresh) => {
       const {
-        retryTargetPhase: _retryTargetPhase,
-        error: _error,
-        ...withoutRecovery
+        terminalResult: _terminalResult,
+        cancellation: _cancellation,
+        ...withoutTerminal
       } = fresh;
       return {
-        ...withoutRecovery,
+        ...withoutTerminal,
         revision: fresh.revision + 1,
-        status: 'completed',
-        phase: 'finalizing',
+        status: 'reconciliation_required',
+        phase: 'admitting',
         updatedAtMs: nowMs(),
-        terminalResult: { kind: 'completed' },
+        retryTargetPhase: 'admitting',
+        error: {
+          code: 'reconciliation_required',
+          message:
+            'External-linked takeover admission acknowledgement remains ambiguous after bounded exact-attempt replay.',
+          retryable: true,
+          occurredAtMs: nowMs(),
+        },
       };
     });
-    return completed
-      ? operationSuccess(completed)
+    return reconciled
+      ? operationSuccess(reconciled)
       : operationFailure(
         'stale_revision',
         'External-linked takeover operation revision is stale.',
       );
-  };
-
-  const reconcileSpawnAttempt = async (
-    record: ExternalLinkedTakeoverRecord,
-    spawnSucceeded: boolean,
-  ): Promise<ExternalSessionOperationActionResponseV1> => {
-    if (spawnSucceeded) {
-      return await completeSpawn(record);
-    }
-    const current = await dependencies.loadCurrent(record).catch(() => null);
-    if (current?.hostedOwnerSessionId === record.request.sessionId) {
-      return await completeSpawn(record);
-    }
-    return await failPreSpawn(
-      record,
-      'spawn_failed',
-      'External-linked takeover runtime launch outcome could not be proven.',
-      'spawning',
-    );
   };
 
   const execute = async (
@@ -427,9 +509,26 @@ export function createExternalSessionExternalLinkedTakeoverPhaseRunner(
         record.phase === 'validating'
         || record.phase === 'quiescing'
         || record.phase === 'admitting'
-        || record.phase === 'spawning'
         || record.phase === 'finalizing'
       );
+    const retainedAdmissionAttemptId =
+      typeof record.bindings.targetRuntimeAttemptId === 'string'
+      && record.bindings.targetRuntimeAttemptId.length > 0
+      && (
+        (
+          record.status === 'awaiting_user_resume'
+          && record.phase === 'admitting'
+          && record.retryTargetPhase === 'admitting'
+        )
+        // One rule, owned by the record contract itself, decides whether an
+        // unresolved admission acknowledgement may be replayed under its exact
+        // retained attempt. Restating it here could admit a replay the record
+        // schema and the shared projection both refuse.
+        || isRetryableExternalLinkedAdmissionAcknowledgementReconciliationV1(record)
+      );
+    const reusableAdmissionRecovery = retainedAdmissionAttemptId
+      ? record.bindings.targetRuntimeAttemptId
+      : null;
     const retryableRecovery = record.status === 'failed'
       && record.error?.retryable === true
       && record.retryTargetPhase === record.phase
@@ -466,6 +565,7 @@ export function createExternalSessionExternalLinkedTakeoverPhaseRunner(
       || (
         intent === 'retry'
         && !retryableRecovery
+        && !reusableAdmissionRecovery
       )
     ) {
       return operationFailure(
@@ -496,17 +596,10 @@ export function createExternalSessionExternalLinkedTakeoverPhaseRunner(
         'External-linked takeover source is unavailable.',
       );
     }
-    const canReconcileHostedSpawn = (
-      record.phase === 'spawning'
-      || record.phase === 'finalizing'
-    ) && prepared.hostedOwnerSessionId === record.request.sessionId;
-    if (canReconcileHostedSpawn) {
-      return await completeSpawn(record);
-    }
     if (record.phase === 'finalizing') {
       return operationFailure(
         'not_allowed',
-        'External-linked takeover finalization requires exact hosted runtime ownership.',
+        'External-linked takeover finalization is owned by the admitted child runtime.',
       );
     }
     if (!prepared.permitsAdmission) {
@@ -537,8 +630,9 @@ export function createExternalSessionExternalLinkedTakeoverPhaseRunner(
     });
     let active = record;
     let followSuspended = false;
-    let spawnStarted = false;
-    let spawnSucceeded = false;
+    let retainFollowSuspension = false;
+    let admissionWait: PersistedTakeoverAdmissionWaitRegistration | null = null;
+    let admissionSpawnStarted = false;
     try {
       const fenced = await readExternalSessionOperationRecord(
         dependencies.activeServerDir,
@@ -552,40 +646,40 @@ export function createExternalSessionExternalLinkedTakeoverPhaseRunner(
             : 'External-linked takeover operation was not found.',
         );
       }
-      const retryAtSpawning = intent === 'retry'
-        && record.phase === 'spawning';
-      if (!retryAtSpawning) {
-        const running = await maintenance.race(() => mutate(
-          active,
-          (fresh) => {
-            const {
-              retryTargetPhase: _retryTargetPhase,
-              error: _error,
-              ...withoutRecovery
-            } = fresh;
-            return {
-              ...withoutRecovery,
-              revision: fresh.revision + 1,
-              status: 'running',
-              phase: record.phase === 'validating'
-                ? 'quiescing'
-                : record.phase,
-              updatedAtMs: nowMs(),
-              bindings: {
-                ...fresh.bindings,
-                operationClaimId: acquired.claim.record.claimId,
-              },
-            };
-          },
-        ));
-        if (!running) {
-          return operationFailure(
-            'stale_revision',
-            'External-linked takeover operation revision is stale.',
-          );
-        }
-        active = running;
+      const attemptId = reusableAdmissionRecovery ?? createAttemptId();
+      const running = await maintenance.race(() => mutate(
+        active,
+        (fresh) => {
+          const {
+            retryTargetPhase: _retryTargetPhase,
+            error: _error,
+            terminalResult: _terminalResult,
+            cancellation: _cancellation,
+            ...withoutRecovery
+          } = fresh;
+          return {
+            ...withoutRecovery,
+            revision: fresh.revision + 1,
+            status: 'running',
+            phase: fresh.phase === 'validating'
+              ? 'quiescing'
+              : fresh.phase,
+            updatedAtMs: nowMs(),
+            bindings: {
+              ...fresh.bindings,
+              operationClaimId: acquired.claim.record.claimId,
+              targetRuntimeAttemptId: attemptId,
+            },
+          };
+        },
+      ));
+      if (!running) {
+        return operationFailure(
+          'stale_revision',
+          'External-linked takeover operation revision is stale.',
+        );
       }
+      active = running;
 
       followSuspended = true;
       await maintenance.race(() =>
@@ -612,6 +706,7 @@ export function createExternalSessionExternalLinkedTakeoverPhaseRunner(
         dependencies.resolveSpawn({
           linked: afterSuspension.linked,
           sessionId: active.request.sessionId,
+          targetDirectory: active.request.targetDirectory,
           signal: maintenance.signal,
         }),
       );
@@ -620,7 +715,7 @@ export function createExternalSessionExternalLinkedTakeoverPhaseRunner(
           active,
           'admission_failed',
           `External-linked takeover launch resolution failed: ${resolved.code}.`,
-          'admitting',
+          phaseForAdmissionFailure(active),
         );
       }
       if (
@@ -633,7 +728,7 @@ export function createExternalSessionExternalLinkedTakeoverPhaseRunner(
           active,
           'source_unavailable',
           'External-linked takeover launch generation changed.',
-          'admitting',
+          phaseForAdmissionFailure(active),
         );
       }
       if (active.phase === 'quiescing') {
@@ -654,30 +749,6 @@ export function createExternalSessionExternalLinkedTakeoverPhaseRunner(
         }
         active = admitting;
       }
-      const spawning = await maintenance.race(() => mutate(
-        active,
-        (fresh) => {
-          const {
-            retryTargetPhase: _retryTargetPhase,
-            error: _error,
-            ...withoutRecovery
-          } = fresh;
-          return {
-            ...withoutRecovery,
-            revision: fresh.revision + 1,
-            status: 'running',
-            phase: 'spawning',
-            updatedAtMs: nowMs(),
-          };
-        },
-      ));
-      if (!spawning) {
-        return operationFailure(
-          'stale_revision',
-          'External-linked takeover operation revision is stale.',
-        );
-      }
-      active = spawning;
       const beforeSpawn = await maintenance.race(
         () => dependencies.loadCurrent(active),
       );
@@ -694,7 +765,7 @@ export function createExternalSessionExternalLinkedTakeoverPhaseRunner(
           active,
           'source_unavailable',
           'External-linked takeover source changed before runtime launch.',
-          'spawning',
+          phaseForAdmissionFailure(active),
         );
       }
       const immediatelyCurrent = await readExternalSessionOperationRecord(
@@ -705,7 +776,11 @@ export function createExternalSessionExternalLinkedTakeoverPhaseRunner(
         !immediatelyCurrent
         || immediatelyCurrent.revision !== active.revision
         || immediatelyCurrent.status !== 'running'
-        || immediatelyCurrent.phase !== 'spawning'
+        || (
+          immediatelyCurrent.phase !== 'admitting'
+          && immediatelyCurrent.phase !== 'spawning'
+        )
+        || immediatelyCurrent.bindings.targetRuntimeAttemptId !== attemptId
       ) {
         return operationFailure(
           immediatelyCurrent ? 'stale_revision' : 'operation_not_found',
@@ -714,71 +789,127 @@ export function createExternalSessionExternalLinkedTakeoverPhaseRunner(
             : 'External-linked takeover operation was not found.',
         );
       }
-      spawnStarted = true;
+      if (!dependencies.admissionWaiter) {
+        return await failPreSpawn(
+          active,
+          'admission_failed',
+          'External-linked takeover admission is unavailable.',
+          phaseForAdmissionFailure(active),
+        );
+      }
+      admissionWait = dependencies.admissionWaiter.register({
+        mode: 'external_linked',
+        operationId: active.operationId,
+        attemptId,
+      });
+      admissionSpawnStarted = true;
       const spawned = await maintenance.race(() =>
         dependencies.spawnResolvedTakeoverSession({
           resolved: resolved.value,
           options: {
             transcriptStorage: 'direct',
+            persistedTakeoverAdmission: {
+              mode: 'external_linked',
+              operationId: active.operationId,
+              attemptId,
+            },
           },
           signal: maintenance.signal,
           spawnSession: dependencies.spawnSession,
         }),
       );
-      spawnSucceeded = spawned.ok
-        && spawned.value.type === 'success';
-      if (!spawnSucceeded) {
+      if (!spawned.ok || spawned.value.type !== 'success') {
+        admissionWait.cancel();
+        admissionWait = null;
+        const reconciled = await reconcileCommittedRuntimeBindingFailure(
+          active,
+          attemptId,
+        );
+        if (reconciled) return reconciled;
         return await failPreSpawn(
           active,
           'spawn_failed',
           'External-linked takeover runtime did not start.',
-          'spawning',
+          phaseForAdmissionFailure(active),
         );
       }
-      const finalizing = await maintenance.race(() => mutate(
-        active,
-        (fresh) => ({
-          ...fresh,
-          revision: fresh.revision + 1,
-          phase: 'finalizing',
-          updatedAtMs: nowMs(),
-        }),
-      ));
-      if (!finalizing) {
-        return operationFailure(
-          'stale_revision',
-          'External-linked takeover operation revision is stale.',
-        );
+      const admissionOutcome = await maintenance.race(() => admissionWait!.outcome);
+      admissionWait = null;
+      const admittedRecord = await readExternalSessionOperationRecord(
+        dependencies.activeServerDir,
+        active.operationId,
+      );
+      if (admissionOutcome.status === 'committed' && admittedRecord) {
+        return operationSuccess(admittedRecord);
       }
-      active = finalizing;
-      const completed = await maintenance.race(() => mutate(
+      if (
+        admissionOutcome.status === 'failed'
+        && admissionOutcome.errorCode === EXTERNAL_LINKED_ADMISSION_ACK_AMBIGUOUS
+      ) {
+        const reconciliation = await awaitAdmissionReconciliation(active, attemptId);
+        if (reconciliation.ok) retainFollowSuspension = true;
+        return reconciliation;
+      }
+      const reconciled = await reconcileCommittedRuntimeBindingFailure(
         active,
-        (fresh) => ({
-          ...fresh,
-          revision: fresh.revision + 1,
-          status: 'completed',
-          updatedAtMs: nowMs(),
-          terminalResult: { kind: 'completed' },
-        }),
-      ));
-      return completed
-        ? operationSuccess(completed)
-        : operationFailure(
-          'stale_revision',
-          'External-linked takeover operation revision is stale.',
-        );
+        attemptId,
+      );
+      if (reconciled) return reconciled;
+      if (
+        admittedRecord
+        && admittedRecord.request.targetStorageMode === 'external-linked'
+        && admittedRecord.bindings.targetRuntimeAttemptId === attemptId
+        && admittedRecord.status === 'failed'
+        && admittedRecord.phase === 'spawning'
+        && admittedRecord.error?.code === 'spawn_failed'
+      ) {
+        return operationSuccess(admittedRecord);
+      }
+      return await failPreSpawn(
+        active,
+        'admission_failed',
+        'External-linked takeover admission did not complete.',
+        phaseForAdmissionFailure(active),
+      );
     } catch (error) {
-      if (spawnStarted && active.status === 'running') {
-        try {
-          return await reconcileSpawnAttempt(active, spawnSucceeded);
-        } catch {
-          return operationFailure(
-            'internal_error',
-            'External-linked takeover spawn outcome could not be reconciled.',
-          );
+      if (admissionSpawnStarted && active.status === 'running') {
+        const latest = await readExternalSessionOperationRecord(
+          dependencies.activeServerDir,
+          active.operationId,
+        ).catch(() => null);
+        if (
+          latest
+          && latest.request.targetStorageMode === 'external-linked'
+          && latest.bindings.targetRuntimeAttemptId === active.bindings.targetRuntimeAttemptId
+          && (
+            latest.status === 'completed'
+            || (
+              latest.status === 'failed'
+              && latest.phase === 'spawning'
+              && latest.error?.code === 'spawn_failed'
+            )
+          )
+        ) {
+          return operationSuccess(latest);
         }
+        const attemptId = active.bindings.targetRuntimeAttemptId;
+        if (attemptId) {
+          const reconciled = await reconcileCommittedRuntimeBindingFailure(
+            active,
+            attemptId,
+          );
+          if (reconciled) return reconciled;
+        }
+        return await failPreSpawn(
+          active,
+          'admission_failed',
+          error instanceof Error
+            ? error.message
+            : 'External-linked takeover admission failed.',
+          phaseForAdmissionFailure(active),
+        );
       }
-      if (!spawnStarted && active.status === 'running') {
+      if (!admissionSpawnStarted && active.status === 'running') {
         if (error instanceof ExternalSessionOperationClaimLostError) {
           const awaiting = await mutate(active, (fresh) => {
             const {
@@ -819,7 +950,8 @@ export function createExternalSessionExternalLinkedTakeoverPhaseRunner(
         'External-linked takeover continuation failed.',
       );
     } finally {
-      if (followSuspended) {
+      admissionWait?.cancel();
+      if (followSuspended && !retainFollowSuspension) {
         await dependencies.followLeaseManager.resumeSession({
           sessionId: active.request.sessionId,
           reason: 'takeover',
@@ -890,7 +1022,6 @@ export function createExternalSessionExternalLinkedTakeoverPhaseRunner(
       && (
         record.phase === 'quiescing'
         || record.phase === 'admitting'
-        || record.phase === 'spawning'
       )
     );
     if (!safelyCancellable) {
@@ -968,12 +1099,22 @@ export function createExternalSessionExternalLinkedTakeoverPhaseRunner(
         updatedAtMs: nowMs(),
         terminalResult: { kind: 'cancelled' },
       }));
-      return cancelled
-        ? operationSuccess(cancelled)
-        : operationFailure(
+      if (!cancelled) {
+        return operationFailure(
           'stale_revision',
           'External-linked takeover operation revision is stale.',
         );
+      }
+      if (
+        record.status === 'awaiting_user_resume'
+        && record.phase === 'admitting'
+      ) {
+        await dependencies.followLeaseManager.resumeSession({
+          sessionId: record.request.sessionId,
+          reason: 'takeover',
+        }).catch(() => undefined);
+      }
+      return operationSuccess(cancelled);
     } finally {
       await acquired.claim.release().catch(() => undefined);
     }
@@ -1017,13 +1158,45 @@ function currentSourceMatchesRequest(
   );
 }
 
+async function attachCurrentExternalSessionSourceKey(
+  linked: LoadedLinkedExternalSession,
+): Promise<LoadedLinkedExternalSession> {
+  const sourceKeyOwner = await resolveExternalSessionSourceKeyOwner(
+    linked.agentId,
+    linked.source,
+  ).catch(() => null);
+  let resolvedSourceKey: string | null = null;
+  try {
+    resolvedSourceKey = sourceKeyOwner?.resolveSourceKey(linked.source) ?? null;
+  } catch {
+    resolvedSourceKey = null;
+  }
+  if (
+    !sourceKeyOwner
+    || resolvedSourceKey !== sourceKeyOwner.sourceKey
+    || (
+      linked.canonicalResolvedSourceKey !== undefined
+      && linked.canonicalResolvedSourceKey !== sourceKeyOwner.sourceKey
+    )
+  ) {
+    throw new ExternalSessionPersistedTakeoverPreflightError(
+      'source_unavailable',
+      'Persisted takeover source declaration changed.',
+    );
+  }
+  return {
+    ...linked,
+    canonicalResolvedSourceKey: sourceKeyOwner.sourceKey,
+  };
+}
+
 async function loadCurrentExternalSessionTakeoverTarget(
   record: ExternalSessionOperationRecordV1 & Readonly<{
     request: TakeoverRequest;
   }>,
 ): Promise<LoadedLinkedExternalSession> {
   const request = record.request;
-  const credentials = await readCredentials();
+  const credentials = await readStoredCredentials();
   if (!credentials) {
     throw new ExternalSessionPersistedTakeoverPreflightError(
       'source_unavailable',
@@ -1034,7 +1207,13 @@ async function loadCurrentExternalSessionTakeoverTarget(
     credentials,
     sessionId: request.sessionId,
     machineId: request.source.machineId,
-  });
+  }).catch(() => null);
+  if (!loaded) {
+    throw new ExternalSessionPersistedTakeoverPreflightError(
+      'source_unavailable',
+      'Persisted takeover source authority is unavailable.',
+    );
+  }
   if (!loaded.ok) {
     if (loaded.error === 'linked_session_reconciliation_required') {
       throw new ExternalSessionPersistedTakeoverPreflightError(
@@ -1053,7 +1232,7 @@ async function loadCurrentExternalSessionTakeoverTarget(
       'Persisted takeover target identity changed.',
     );
   }
-  return loaded.session;
+  return await attachCurrentExternalSessionSourceKey(loaded.session);
 }
 
 export async function loadCurrentExternalSessionPersistedTakeoverTarget(
@@ -1065,14 +1244,21 @@ export async function loadCurrentExternalSessionPersistedTakeoverTarget(
   try {
     return await loadCurrentExternalSessionTakeoverTarget(record);
   } catch (liveLinkError) {
-    const credentials = await readCredentials();
+    const credentials = await readStoredCredentials();
     if (!credentials) throw liveLinkError;
-    const rawSession = await fetchSessionById({
-      token: credentials.token,
-      sessionId: record.request.sessionId,
-    }).catch(() => null);
+    const [rawSession, accountEncryptionCurrentness] = await Promise.all([
+      fetchSessionById({
+        token: credentials.token,
+        sessionId: record.request.sessionId,
+      }).catch(() => null),
+      fetchAccountEncryptionCurrentness({ token: credentials.token }),
+    ]);
     const metadata = rawSession
-      ? tryDecryptSessionOwnerMetadataView({ credentials, rawSession })
+      ? tryDecryptSessionOwnerMetadataView({
+          credentials,
+          rawSession,
+          accountEncryptionMode: accountEncryptionCurrentness.mode,
+        })
       : null;
     const reconstructed = rawSession && metadata
       ? reconstructPersistedTakeoverTargetFromRetiredMetadata({
@@ -1082,7 +1268,7 @@ export async function loadCurrentExternalSessionPersistedTakeoverTarget(
         })
       : null;
     if (!reconstructed) throw liveLinkError;
-    return reconstructed;
+    return await attachCurrentExternalSessionSourceKey(reconstructed);
   }
 }
 
@@ -1093,13 +1279,17 @@ export function reconstructPersistedTakeoverTargetFromRetiredMetadata(
     metadata: Record<string, unknown>;
   }>,
 ): LoadedLinkedExternalSession | null {
-  const imported = readExternalHistoryImportV1FromMetadata(input.metadata);
+  const historyImport = resolveExternalHistoryImportV1FromMetadata(
+    input.metadata,
+  );
+  if (historyImport.state !== 'valid') return null;
+  const imported = historyImport.historyImport;
   const source = input.record.request.source;
+  const linkedSession = resolveLinkedExternalSessionMetadataV1(input.metadata);
   if (
     input.rawSession.currentStorageState !== 'hosted'
-    || Object.hasOwn(input.metadata, 'externalSessionV1')
-    || Object.hasOwn(input.metadata, 'directSessionV1')
-    || !imported
+    || linkedSession.ok
+    || linkedSession.error !== 'linked_session_not_found'
     || imported.agentId !== source.qualifiedIdentity.agent.localId
     || imported.remoteSessionId !== source.remoteSessionId
     || imported.source.kind !== source.qualifiedIdentity.source.kind
@@ -1182,8 +1372,7 @@ export async function loadCurrentExternalSessionPersistedTakeoverSource(
     || sourceIdentity.linkedSessionId !== request.sessionId
     || sourceIdentity.remoteSessionId !== request.source.remoteSessionId
     || sourceIdentity.linkGeneration !== request.source.linkGeneration
-    || sourceIdentity.sourceKey
-      !== resolveExternalSessionsSourceKey(linked.source)
+    || sourceIdentity.sourceKey !== linked.canonicalResolvedSourceKey
     || !sameQualifiedIdentity(
       sourceIdentity.qualifiedIdentity,
       request.source.qualifiedIdentity,
@@ -1218,9 +1407,16 @@ export function createExternalSessionPersistedTakeoverPreparation(input: Readonl
   loadCurrent?: (
     record: ExternalSessionPersistedTakeoverImportRecord,
   ) => Promise<PreparedExternalSessionPersistedTakeoverSource>;
+  resolveSpawn?: (input: Readonly<{
+    linked: LoadedLinkedExternalSession;
+    sessionId: string;
+    targetDirectory: string;
+  }>) => Promise<ExternalTakeoverSpawnResolution>;
 }>): ExternalSessionPersistedTakeoverPreparation {
   const loadCurrent = input.loadCurrent
     ?? loadCurrentExternalSessionPersistedTakeoverSource;
+  const resolveSpawn = input.resolveSpawn
+    ?? resolveExternalTakeoverSpawnOptions;
 
   return async (record) => {
     const request = record.request;
@@ -1244,7 +1440,21 @@ export function createExternalSessionPersistedTakeoverPreparation(input: Readonl
           'Persisted takeover source changed during follow suspension.',
         );
       }
+      const spawn = await resolveSpawn({
+        linked: afterSuspension.linked,
+        sessionId: request.sessionId,
+        targetDirectory: request.targetDirectory,
+      });
+      if (!spawn.ok) {
+        throw new ExternalSessionPersistedTakeoverPreflightError(
+          spawn.code === 'invalid_request' || spawn.code === 'unsupported'
+            ? 'not_allowed'
+            : 'source_unavailable',
+          `Persisted takeover launch resolution failed: ${spawn.code}.`,
+        );
+      }
       return {
+        workingDirectory: spawn.value.options.directory,
         resumeFollowOnFailure: async () => {
           if (!suspended) return;
           suspended = false;

@@ -3,6 +3,7 @@ import { PassThrough } from 'node:stream';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+
 const platformRef = vi.hoisted(() => ({ value: 'linux' }));
 // Minimal stdio boundary fixtures: promptInput reads `isTTY` and passes stream identity to readline.
 const stdinRef = vi.hoisted(() => ({ value: { isTTY: true, label: 'stdin' } as unknown as NodeJS.ReadStream }));
@@ -197,6 +198,51 @@ describe('promptInput', () => {
     expect(rl.close).toHaveBeenCalledTimes(1);
   });
 
+  it('releases an aborted prompt before a following prompt can accept a late answer', async () => {
+    stdinRef.value = { isTTY: false, label: 'stdin-pipe' } as unknown as NodeJS.ReadStream;
+    const controller = new AbortController();
+    let firstAnswer: ((value: string) => void) | undefined;
+    let secondAnswer: ((value: string) => void) | undefined;
+    const firstRl = new EventEmitter() as EventEmitter & {
+      question: ReturnType<typeof vi.fn>;
+      close: ReturnType<typeof vi.fn>;
+    };
+    firstRl.question = vi.fn((_prompt: string, resolve: (value: string) => void) => {
+      firstAnswer = resolve;
+    });
+    firstRl.close = vi.fn();
+    const secondRl = new EventEmitter() as EventEmitter & {
+      question: ReturnType<typeof vi.fn>;
+      close: ReturnType<typeof vi.fn>;
+    };
+    secondRl.question = vi.fn((_prompt: string, resolve: (value: string) => void) => {
+      secondAnswer = resolve;
+    });
+    secondRl.close = vi.fn();
+    createInterfaceMock.mockReturnValueOnce(firstRl).mockReturnValueOnce(secondRl);
+
+    const { promptInput } = await import('./promptInput');
+    const first = promptInput('First: ', { signal: controller.signal });
+    controller.abort();
+    await expect(first).rejects.toMatchObject({ name: 'AbortError' });
+    const second = promptInput('Second: ');
+    if (!firstAnswer || !secondAnswer) throw new Error('Expected both readline callbacks');
+
+    firstAnswer('late answer');
+    await Promise.resolve();
+    let secondSettled = false;
+    void second.then(() => {
+      secondSettled = true;
+    });
+    await Promise.resolve();
+    expect(secondSettled).toBe(false);
+
+    secondAnswer('second answer');
+    await expect(second).resolves.toBe('second answer');
+    expect(firstRl.close).toHaveBeenCalledTimes(1);
+    expect(secondRl.close).toHaveBeenCalledTimes(1);
+  });
+
   it('treats readline SIGINT as one aborted process-stdio prompt and ignores a late answer', async () => {
     stdinRef.value = { isTTY: false, label: 'stdin-pipe' } as unknown as NodeJS.ReadStream;
     let answer!: (value: string) => void;
@@ -284,4 +330,69 @@ describe('promptInput', () => {
     expect(inputDestroy).toHaveBeenCalledTimes(1);
     expect(outputDestroy).toHaveBeenCalledTimes(1);
   });
+});
+
+describe('resolveInteractiveTerminal', () => {
+    it('is interactive when stdin and stdout are both TTYs', async () => {
+        const { resolveInteractiveTerminal } = await import('./promptInput');
+        const hasControllingTty = vi.fn(() => false);
+
+        expect(resolveInteractiveTerminal({
+            stdinIsTty: true,
+            stdoutIsTty: true,
+            platform: 'darwin',
+            hasControllingTty,
+        })).toBe(true);
+
+        // The cheap check answers it; no need to probe the device.
+        expect(hasControllingTty).not.toHaveBeenCalled();
+    });
+
+    it('is interactive when stdin is a spent pipe but a controlling terminal is attached', async () => {
+        const { resolveInteractiveTerminal } = await import('./promptInput');
+        // This is the `curl -fsSL … | bash -s -- --run <cmd>` case: the installer
+        // hands the CLI an exhausted pipe on stdin, but the user is still sitting
+        // at a terminal. `promptInput` already prompts through a freshly-opened
+        // /dev/tty here, so refusing to prompt at all is the bug.
+        expect(resolveInteractiveTerminal({
+            stdinIsTty: false,
+            stdoutIsTty: true,
+            platform: 'linux',
+            hasControllingTty: () => true,
+        })).toBe(true);
+    });
+
+    it('is interactive when stdout is redirected but a controlling terminal is attached', async () => {
+        const { resolveInteractiveTerminal } = await import('./promptInput');
+        expect(resolveInteractiveTerminal({
+            stdinIsTty: true,
+            stdoutIsTty: false,
+            platform: 'darwin',
+            hasControllingTty: () => true,
+        })).toBe(true);
+    });
+
+    it('is not interactive when there is no TTY and no controlling terminal', async () => {
+        const { resolveInteractiveTerminal } = await import('./promptInput');
+        // CI: /dev/tty may exist as a device node but cannot be opened.
+        expect(resolveInteractiveTerminal({
+            stdinIsTty: false,
+            stdoutIsTty: false,
+            platform: 'linux',
+            hasControllingTty: () => false,
+        })).toBe(false);
+    });
+
+    it('does not probe for a controlling terminal on Windows', async () => {
+        const { resolveInteractiveTerminal } = await import('./promptInput');
+        const hasControllingTty = vi.fn(() => true);
+
+        expect(resolveInteractiveTerminal({
+            stdinIsTty: false,
+            stdoutIsTty: true,
+            platform: 'win32',
+            hasControllingTty,
+        })).toBe(false);
+        expect(hasControllingTty).not.toHaveBeenCalled();
+    });
 });

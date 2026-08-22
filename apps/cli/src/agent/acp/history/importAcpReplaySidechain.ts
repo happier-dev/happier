@@ -5,6 +5,7 @@ import type { ACPMessageData, ACPProvider } from '@/api/session/sessionMessageTy
 import { logger } from '@/utils/logger';
 import type { AcpReplaySidechainSessionClient } from '@/agent/acp/sessionClient';
 import { extractThinkingTextFromThinkToolInput, isThinkingToolName } from '@/agent/acp/bridge/thinkingToolCall';
+import { enqueueAcpReplayAgentMessage } from './enqueueAcpReplayAgentMessage';
 
 const MAX_REPLAY_EVENTS = 1_000;
 
@@ -144,11 +145,14 @@ export async function importAcpReplaySidechainV1(params: {
         index: i,
         key: `message:${normalizeTextForMatch(text)}`,
       });
-      await params.session.sendAgentMessageCommitted(
-        params.provider,
-        { type: 'message', message: text, sidechainId } satisfies ACPMessageData,
-        { localId, meta: { importedFrom: 'acp-sidechain', remoteSessionId: params.remoteSessionId, sidechainId } },
-      );
+      await enqueueAcpReplayAgentMessage({
+        session: params.session,
+        provider: params.provider,
+        body: { type: 'message', message: text, sidechainId } satisfies ACPMessageData,
+        localId,
+        meta: { importedFrom: 'acp-sidechain', remoteSessionId: params.remoteSessionId, sidechainId },
+        provenanceSource: 'sidechain',
+      });
       continue;
     }
 
@@ -179,11 +183,14 @@ export async function importAcpReplaySidechainV1(params: {
             index: i,
             key: `thinking:${toolCallId}:${safeStringifyForKey(text)}`,
           });
-          await params.session.sendAgentMessageCommitted(
-            params.provider,
-            { type: 'thinking', text, sidechainId } satisfies ACPMessageData,
-            { localId, meta: { importedFrom: 'acp-sidechain', remoteSessionId: params.remoteSessionId, sidechainId } },
-          );
+          await enqueueAcpReplayAgentMessage({
+            session: params.session,
+            provider: params.provider,
+            body: { type: 'thinking', text, sidechainId } satisfies ACPMessageData,
+            localId,
+            meta: { importedFrom: 'acp-sidechain', remoteSessionId: params.remoteSessionId, sidechainId },
+            provenanceSource: 'sidechain',
+          });
         }
         continue;
       }
@@ -194,11 +201,14 @@ export async function importAcpReplaySidechainV1(params: {
         index: i,
         key: `tool_call:${toolCallId}:${name}:${safeStringifyForKey(rawInput)}`,
       });
-      await params.session.sendAgentMessageCommitted(
-        params.provider,
-        { type: 'tool-call', callId, name, input: rawInput, id: `import-${callId}`, sidechainId } satisfies ACPMessageData,
-        { localId, meta: { importedFrom: 'acp-sidechain', remoteSessionId: params.remoteSessionId, sidechainId } },
-      );
+      await enqueueAcpReplayAgentMessage({
+        session: params.session,
+        provider: params.provider,
+        body: { type: 'tool-call', callId, name, input: rawInput, id: `import-${callId}`, sidechainId } satisfies ACPMessageData,
+        localId,
+        meta: { importedFrom: 'acp-sidechain', remoteSessionId: params.remoteSessionId, sidechainId },
+        provenanceSource: 'sidechain',
+      });
       continue;
     }
 
@@ -240,11 +250,14 @@ export async function importAcpReplaySidechainV1(params: {
         index: i,
         key: `tool_result:${toolCallId}:${String(event.status ?? '')}:${safeStringifyForKey(rawOutput)}`,
       });
-      await params.session.sendAgentMessageCommitted(
-        params.provider,
-        { type: 'tool-result', callId, output: rawOutput, id: `import-${callId}-result`, isError, sidechainId } satisfies ACPMessageData,
-        { localId, meta: { importedFrom: 'acp-sidechain', remoteSessionId: params.remoteSessionId, sidechainId } },
-      );
+      await enqueueAcpReplayAgentMessage({
+        session: params.session,
+        provider: params.provider,
+        body: { type: 'tool-result', callId, output: rawOutput, id: `import-${callId}-result`, isError, sidechainId } satisfies ACPMessageData,
+        localId,
+        meta: { importedFrom: 'acp-sidechain', remoteSessionId: params.remoteSessionId, sidechainId },
+        provenanceSource: 'sidechain',
+      });
       continue;
     }
   }

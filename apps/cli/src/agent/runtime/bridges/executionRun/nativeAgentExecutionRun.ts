@@ -11,15 +11,15 @@ import type {
     AgentRuntime,
     AgentRuntimeContext,
     AgentSessionInput,
-} from '@happier-dev/plugin-sdk/agent-runtime';
+} from '@happier-dev/plugin-sdk/agents/runtime';
 import { PluginError } from '@happier-dev/plugin-sdk';
-import { type PluginServices } from '@happier-dev/plugin-sdk/runtime';
+import { type PluginServices } from '@happier-dev/plugin-sdk';
 
 import type { AgentMessage } from '@/agent/core/AgentMessage';
 import type { CreateCliExecutionRunBackendParams } from '@/agent/runtime/registry/engineRegistryTypes';
 import type { AgentRuntimeRegistrationLease } from '@/plugins/runtime/lifecycle/contributions/targetAgents';
 import { createUnavailablePluginServices } from '@/plugins/runtime/invocation/services/unavailable';
-import { createPluginInvocationUi } from '@/plugins/runtime/invocation/services/ui';
+import { createPluginInvocationPresentation } from '@/plugins/runtime/invocation/services/interactions';
 
 import type { ExecutionRunHostRuntime } from './executionRunHostRuntime';
 
@@ -36,8 +36,26 @@ function createUnavailableAcpComposer(): AgentRuntimeContext['protocols'] {
     });
 }
 
-function diagnosticMessage(diagnostic: Readonly<{ code: string; message?: string }> | undefined): string {
-    return diagnostic?.message ?? diagnostic?.code ?? 'Native Agent execution run failed';
+function diagnosticMessage(
+    diagnostic: Readonly<{ code: string; message?: string }> | undefined,
+    sanitize: (value: string) => string,
+): string {
+    return sanitize(diagnostic?.message ?? diagnostic?.code ?? 'Native Agent execution run failed');
+}
+
+function sanitizeThrownError(
+    error: unknown,
+    sanitize: (value: string) => string,
+): Error & { code?: string } {
+    if (!(error instanceof Error)) {
+        return new Error(sanitize(String(error)));
+    }
+    const sanitized = new Error(sanitize(error.message)) as Error & { code?: string };
+    sanitized.name = error.name;
+    if ('code' in error && typeof error.code === 'string') {
+        sanitized.code = error.code;
+    }
+    return sanitized;
 }
 
 function createDisposedError(): Error {
@@ -46,7 +64,10 @@ function createDisposedError(): Error {
     return error;
 }
 
-function toHostMessage(event: AgentExecutionRunEvent): AgentMessage | null {
+function toHostMessage(
+    event: AgentExecutionRunEvent,
+    sanitize: (value: string) => string,
+): AgentMessage | null {
     switch (event.kind) {
         case 'run-start':
         case 'run-progress':
@@ -65,7 +86,11 @@ function toHostMessage(event: AgentExecutionRunEvent): AgentMessage | null {
         case 'run-cancelled':
             return { type: 'status', status: 'stopped' };
         case 'run-failed':
-            return { type: 'status', status: 'error', detail: diagnosticMessage(event.diagnostic) };
+            return {
+                type: 'status',
+                status: 'error',
+                detail: diagnosticMessage(event.diagnostic, sanitize),
+            };
     }
 }
 
@@ -121,7 +146,7 @@ export function createNativeAgentExecutionRunHostRuntime(params: Readonly<{
     options: CreateCliExecutionRunBackendParams;
     supportsResume: boolean;
     generationSignal?: AbortSignal;
-    services?: PluginServices;
+    services?: Promise<PluginServices>;
 }>): ExecutionRunHostRuntime {
     const executionRuns = params.runtime.executionRuns;
     if (!executionRuns) {
@@ -135,27 +160,27 @@ export function createNativeAgentExecutionRunHostRuntime(params: Readonly<{
     );
     const profile = resolveExecutionProfileReference(profileId, params.lease.pluginId);
     const launchEnvironment = buildLaunchEnvironment(params.options);
+    const boundedOpenInputs = Object.freeze({
+        ...(launchEnvironment ? { launchEnvironment } : {}),
+        ...(params.options.modelSelection
+            ? { modelSelection: params.options.modelSelection }
+            : {}),
+        ...(params.options.configuration
+            ? { configuration: params.options.configuration }
+            : {}),
+        ...(params.options.providerBinding
+            ? { providerBinding: params.options.providerBinding }
+            : {}),
+    });
+    const sanitizeProviderDiagnosticText =
+        params.options.sanitizeProviderDiagnosticText ?? ((value: string) => value);
     const ownedAbortController = new AbortController();
     const signal = params.generationSignal
         ? AbortSignal.any([ownedAbortController.signal, params.generationSignal])
         : ownedAbortController.signal;
-    const context: AgentRuntimeContext = Object.freeze({
-        plugin: Object.freeze({ id: params.lease.pluginId, version: params.lease.pluginVersion }),
-        contribution: Object.freeze({
-            id: params.lease.agentId,
-            qualifiedId: `${params.lease.pluginId}/agents/${params.lease.agentId}`,
-        }),
-        surface: 'agent',
-        signal,
-        services: params.services ?? createUnavailablePluginServices(),
-        ui: createPluginInvocationUi({
-            currentSession: null,
-            signal,
-            isGenerationCurrent: params.lease.isCurrent,
-        }),
-        agent: Object.freeze({ id: params.lease.agentId }),
-        protocols: createUnavailableAcpComposer(),
-    });
+    const servicesPromise =
+        params.services
+        ?? Promise.resolve(createUnavailablePluginServices());
     const listeners = new Set<(message: AgentMessage) => void>();
     let provisioned = false;
     let openRequest: AgentExecutionRunOpenRequest | null = null;
@@ -204,31 +229,74 @@ export function createNativeAgentExecutionRunHostRuntime(params: Readonly<{
         }
         if (terminal) return;
         lastSequence = event.sequence;
-        const message = toHostMessage(event);
+        const message = toHostMessage(event, sanitizeProviderDiagnosticText);
         if (message) emit(message);
         if (event.kind === 'run-complete' || event.kind === 'run-cancelled') {
             terminal = true;
             resolveTerminal();
         } else if (event.kind === 'run-failed') {
             terminal = true;
-            rejectTerminal(new Error(diagnosticMessage(event.diagnostic)));
+            rejectTerminal(new Error(diagnosticMessage(
+                event.diagnostic,
+                sanitizeProviderDiagnosticText,
+            )));
         }
     }
 
     async function openNative(request: AgentExecutionRunOpenRequest): Promise<AgentExecutionRunRuntime> {
         assertUsable();
         if (nativeRuntimePromise) return await nativeRuntimePromise;
-        nativeRuntimePromise = Promise.resolve(openExecutionRun(request, context)).then(async (opened) => {
+        nativeRuntimePromise = (async () => {
+            const services = await servicesPromise;
+            assertUsable();
+            const context: AgentRuntimeContext = Object.freeze({
+                plugin: Object.freeze({ id: params.lease.pluginId, version: params.lease.pluginVersion }),
+                contribution: Object.freeze({
+                    id: params.lease.agentId,
+                    qualifiedId: `${params.lease.pluginId}/agents/${params.lease.agentId}`,
+                }),
+                surface: 'agent',
+                signal,
+                services,
+                ui: createPluginInvocationPresentation({
+                    currentSession: null,
+                    signal,
+                    isGenerationCurrent: params.lease.isCurrent,
+                }),
+                agent: Object.freeze({ id: params.lease.agentId }),
+                protocols: createUnavailableAcpComposer(),
+            });
+            let providerCurrent: Awaited<ReturnType<NonNullable<
+                CreateCliExecutionRunBackendParams['revalidateProviderBeforeOpen']
+            >>> | undefined;
+            try {
+                providerCurrent = await params.options.revalidateProviderBeforeOpen?.();
+            } catch (error) {
+                throw sanitizeThrownError(error, sanitizeProviderDiagnosticText);
+            }
+            if (providerCurrent && !providerCurrent.ok) {
+                throw Object.assign(
+                    new Error(providerCurrent.error.code),
+                    { code: providerCurrent.error.code },
+                );
+            }
+            assertUsable();
+            let opened: AgentExecutionRunRuntime;
+            try {
+                opened = await openExecutionRun(request, context);
+            } catch (error) {
+                throw sanitizeThrownError(error, sanitizeProviderDiagnosticText);
+            }
             try {
                 assertUsable();
+                nativeRuntime = opened;
+                watchDisposable = opened.watch(handleEvent);
             } catch (error) {
                 await opened.dispose();
-                throw error;
+                throw sanitizeThrownError(error, sanitizeProviderDiagnosticText);
             }
-            nativeRuntime = opened;
-            watchDisposable = opened.watch(handleEvent);
             return opened;
-        });
+        })();
         return await nativeRuntimePromise;
     }
 
@@ -248,7 +316,7 @@ export function createNativeAgentExecutionRunHostRuntime(params: Readonly<{
                     runId,
                     cwd: params.options.cwd,
                     profile,
-                    ...(launchEnvironment ? { launchEnvironment } : {}),
+                    ...boundedOpenInputs,
                     checkpointId: options.resumeSessionId,
                 });
                 await openNative(openRequest);
@@ -258,7 +326,7 @@ export function createNativeAgentExecutionRunHostRuntime(params: Readonly<{
                     runId,
                     cwd: params.options.cwd,
                     profile,
-                    ...(launchEnvironment ? { launchEnvironment } : {}),
+                    ...boundedOpenInputs,
                     input: buildInput(options.initialPrompt, params.options.start?.intentInput),
                 });
                 await openNative(openRequest);
@@ -278,16 +346,24 @@ export function createNativeAgentExecutionRunHostRuntime(params: Readonly<{
                     runId,
                     cwd: params.options.cwd,
                     profile,
-                    ...(launchEnvironment ? { launchEnvironment } : {}),
+                    ...boundedOpenInputs,
                     input,
                 });
                 await openNative(openRequest);
                 return;
             }
             const opened = await nativeRuntimePromise;
-            const result = await opened.send(input, { signal });
+            let result: Awaited<ReturnType<AgentExecutionRunRuntime['send']>>;
+            try {
+                result = await opened.send(input, { signal });
+            } catch (error) {
+                throw sanitizeThrownError(error, sanitizeProviderDiagnosticText);
+            }
             if (result.status !== 'admitted') {
-                throw new Error(diagnosticMessage(result.diagnostic));
+                throw new Error(diagnosticMessage(
+                    result.diagnostic,
+                    sanitizeProviderDiagnosticText,
+                ));
             }
         },
         async cancel(sessionId) {
@@ -295,7 +371,12 @@ export function createNativeAgentExecutionRunHostRuntime(params: Readonly<{
             if (!provisioned || sessionId !== runId) return;
             const opened = nativeRuntime ?? (nativeRuntimePromise ? await nativeRuntimePromise : null);
             if (!opened) return;
-            const result = await opened.stop({ signal });
+            let result: Awaited<ReturnType<AgentExecutionRunRuntime['stop']>>;
+            try {
+                result = await opened.stop({ signal });
+            } catch (error) {
+                throw sanitizeThrownError(error, sanitizeProviderDiagnosticText);
+            }
             if (result.status === 'unavailable' || result.status === 'unsupported') {
                 throw new Error(`Native Agent execution run stop is ${result.status}`);
             }

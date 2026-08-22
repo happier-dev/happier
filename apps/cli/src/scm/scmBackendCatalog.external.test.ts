@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { readCurrentScmHostingProviderRuntimeServices } from '@happier-dev/plugin-sdk/experimental/scm';
+import { readCurrentHostingProviderRuntimeServices as readCurrentScmHostingProviderRuntimeServices } from '@happier-dev/plugin-sdk/scm/hosting';
 import type { PluginApi } from '@happier-dev/plugin-sdk';
 
 import { ingestCanonicalPluginManifest } from '@/plugins/manifest/ingest';
@@ -68,7 +68,6 @@ describe('external SCM runtime consumer parity', () => {
                 source: { kind: 'path' },
                 pluginId: 'acme.scm.backend',
                 manifestPath: '/virtual/acme-backend/.happier-plugin/plugin.json',
-                manifestDigest: 'sha256:acme-external-scm-backend',
                 daemonEntryPath: '/virtual/acme-backend/daemon.mjs',
                 sourceSpec: {
                     kind: 'path', locator: '/virtual/acme-backend', trustPolicy: 'local_trusted', installPolicy: 'link',
@@ -80,7 +79,6 @@ describe('external SCM runtime consumer parity', () => {
                 source: { kind: 'path' },
                 pluginId: 'acme.scm.hosting',
                 manifestPath: '/virtual/acme-hosting/.happier-plugin/plugin.json',
-                manifestDigest: 'sha256:acme-external-scm-hosting',
                 daemonEntryPath: '/virtual/acme-hosting/daemon.mjs',
                 sourceSpec: {
                     kind: 'path', locator: '/virtual/acme-hosting', trustPolicy: 'local_trusted', installPolicy: 'link',

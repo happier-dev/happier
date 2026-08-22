@@ -6,8 +6,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   deriveExternalSessionsAutoLinkSourcePolicyIdV1,
   ExternalSessionsAgentIdSchema,
+  ExternalSessionTakeoverStartInputV1Schema,
   readLinkedExternalSessionV1FromMetadata,
+  resolveExternalSessionOperationTimelineV1,
 } from '@happier-dev/protocol';
+import type {
+  ExternalSessionOperationReference,
+} from '@happier-dev/plugin-sdk/sessions/external';
 
 import { seedCurrentLocalPathPluginFixture } from '@/plugins/store/registry/currentState.testkit';
 import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
@@ -16,6 +21,7 @@ import { resolveCurrentExternalSessionAgentIdentity } from '@/api/session/extern
 import { resolveLinkedExternalSessionQualifiedIdentity } from '@/api/session/external/linking/qualifiedLinkIdentity';
 import { createConfiguredPluginExternalSessionsAdapter } from '@/session/external/configuredSourceMaterializer';
 import { configuration } from '@/configuration';
+import { logger } from '@/ui/logger';
 import type { LoadedLinkedExternalSession } from '@/api/session/external/takeover/loadLinkedExternalSession';
 import {
   resolveExternalTakeoverSpawnOptionsFromRuntimeRegistry,
@@ -35,15 +41,35 @@ import {
   executeExternalSessionTranscriptPageAction,
   executeExternalSessionTranscriptReadAfterAction,
 } from './transcriptActions';
+import {
+  loadCurrentExternalSessionExternalLinkedTakeoverSource,
+  loadCurrentExternalSessionPersistedTakeoverSource,
+  loadCurrentExternalSessionPersistedTakeoverTarget,
+} from './takeoverPhaseRunner';
+import type {
+  ExternalSessionPersistedTakeoverImportRecord,
+} from './materializeAction';
+import {
+  createExternalSessionSourceGenerationAnchor,
+} from './sourceGenerationAnchor';
+import { createExternalSessionHostOperationOwner } from '@/session/external/hostOperationOwner';
+import { deriveExternalSessionPluginOperationDurableKey } from '@/session/external/pluginOperationDurableKey';
 
 const fetchSessionByIdMock = vi.fn();
 const fetchSessionsPageMock = vi.fn();
 const lookupSessionsByTagsMock = vi.fn();
 const getOrCreateSessionByTagMock = vi.fn();
 const readCredentialsMock = vi.fn();
+const fetchAccountProfileMock = vi.fn();
+const fetchAccountEncryptionCurrentnessMock = vi.fn();
+const listSessionMarkersMock = vi.fn(async () => []);
 
 vi.mock('@/persistence', () => ({
-  readCredentials: (...args: unknown[]) => readCredentialsMock(...args),
+  readStoredCredentials: (...args: unknown[]) => readCredentialsMock(...args),
+}));
+
+vi.mock('@/api/accountProfile', () => ({
+  fetchAccountProfile: (...args: unknown[]) => fetchAccountProfileMock(...args),
 }));
 
 vi.mock('@/session/transport/http/sessionsHttp', () => ({
@@ -53,9 +79,24 @@ vi.mock('@/session/transport/http/sessionsHttp', () => ({
   getOrCreateSessionByTag: (...args: unknown[]) => getOrCreateSessionByTagMock(...args),
 }));
 
+vi.mock('@/api/client/connectedServiceCredentialApi', async (importOriginal) => ({
+  ...await importOriginal<
+    typeof import('@/api/client/connectedServiceCredentialApi')
+  >(),
+  fetchAccountEncryptionCurrentness: (...args: unknown[]) =>
+    fetchAccountEncryptionCurrentnessMock(...args),
+}));
+
+vi.mock('@/daemon/sessionRegistry', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/daemon/sessionRegistry')>(),
+  listSessionMarkers: () => listSessionMarkersMock(),
+}));
+
 const PLUGIN_ID = 'acme.external-sessions-product-route';
 const REPLACEMENT_PLUGIN_ID = 'acme.external-sessions-product-route-replacement';
 const AGENT_ID = 'external-product-route-agent';
+const AUTHOR_PLUGIN_ID = 'acme.external-sessions-author-only';
+const AUTHOR_AGENT_ID = 'external-author-only-agent';
 const SOURCE = Object.freeze({ kind: 'syntheticProductRoute', scope: 'scope-a' });
 const SECOND_SOURCE = Object.freeze({ kind: 'syntheticProductRoute', scope: 'scope-b' });
 const CANONICALIZED_SOURCE_ALIAS = Object.freeze({
@@ -64,6 +105,75 @@ const CANONICALIZED_SOURCE_ALIAS = Object.freeze({
 });
 const MALFORMED_SOURCE = Object.freeze({ kind: 'syntheticProductRoute', scope: 'scope-malformed' });
 const OVERSIZED_SOURCE = Object.freeze({ kind: 'syntheticProductRoute', scope: 'scope-oversized' });
+
+function productionTakeoverRecord(input: Readonly<{
+  contributionGeneration: string;
+  targetStorageMode: 'external-linked' | 'persisted';
+}>): ExternalSessionPersistedTakeoverImportRecord {
+  const sourceCursor = 'source-cursor-product-route';
+  const request = {
+    v: 1 as const,
+    idempotencyKey: 'takeover-product-route-1',
+    sessionId: 'linked-product-route-session',
+    source: {
+      machineId: 'machine-product-route',
+      remoteSessionId: 'remote-product-route',
+      qualifiedIdentity: {
+        v: 1 as const,
+        agent: { pluginId: PLUGIN_ID, localId: AGENT_ID },
+        source: { kind: SOURCE.kind, contractVersion: 1 as const },
+      },
+      linkGeneration: '41',
+      sourceGeneration: createExternalSessionSourceGenerationAnchor(sourceCursor),
+      contributionGeneration: input.contributionGeneration,
+    },
+    plan: 'takeover' as const,
+    targetStorageMode: input.targetStorageMode,
+    targetDirectory: '/local/selected/workspace',
+    targetRuntimeMode: 'terminal' as const,
+  };
+  return {
+    v: 1,
+    operationId: 'external-takeover:product-route-1',
+    revision: 3,
+    request,
+    status: 'awaiting_user_resume',
+    phase: 'admitting',
+    timeline: resolveExternalSessionOperationTimelineV1(request),
+    createdAtMs: 1,
+    updatedAtMs: 2,
+    priorStableStorage: { state: 'machine_only' },
+    currentStorageState: 'snapshot_complete',
+    publication: {
+      materializationPublicationId: 'publication-product-route-1',
+      materializedThroughSourceAt: 10,
+      publishedThroughServerSeq: 3,
+    },
+    checkpoint: {
+      sourcePagesRead: 1,
+      stagedItemCount: 1,
+      importedItemCount: 1,
+      acceptedThroughServerSeq: 3,
+      acknowledgedBatchId: 'historical-import-complete',
+      requiredItemFailures: {
+        total: 0,
+        record: 0,
+        media: 0,
+        conversion: 0,
+        diagnosticsTruncated: false,
+        diagnostics: [],
+      },
+    },
+    bindings: { operationClaimId: 'released-import-claim' },
+    progressProjection: { acknowledgedRevision: null },
+    canonicalOwnerEvidence: {
+      linkedSessionRevision: 4,
+      sourceSnapshotEvidenceRef: sourceCursor,
+    },
+    fence: { kind: 'none' },
+    retryTargetPhase: 'admitting',
+  } as ExternalSessionPersistedTakeoverImportRecord;
+}
 
 async function materializeAuxiliaryOnlyPlugin(
   pluginRoot: string,
@@ -113,8 +223,8 @@ async function materializeAuxiliaryOnlyPlugin(
           externalSession: {
             sources: [{
               sourceKind: SOURCE.kind,
+              terminalFollow: { userRowClassification: 'explicitV1' },
               schema: {
-                passthrough: false,
                 fields: [
                   { name: 'kind', kind: 'literal', value: SOURCE.kind },
                   {
@@ -154,7 +264,10 @@ async function materializeAuxiliaryOnlyPlugin(
       id,
       createdAtMs: 10,
       messageRole: 'agent',
-      raw: { role: 'agent', text: id },
+      raw: {
+        role: 'agent',
+        content: { type: 'output', data: { type: 'message', message: id } },
+      },
     });
 
     export function activate(api) {
@@ -310,6 +423,44 @@ async function materializeAuxiliaryOnlyPlugin(
   `, 'utf8');
 }
 
+async function materializeAuthorOnlyPlugin(pluginRoot: string): Promise<void> {
+  await mkdir(join(pluginRoot, '.happier-plugin'), { recursive: true });
+  await writeFile(join(pluginRoot, '.happier-plugin', 'plugin.json'), JSON.stringify({
+    schemaVersion: 2,
+    id: AUTHOR_PLUGIN_ID,
+    version: '1.0.0',
+    displayName: 'External Sessions author-only fixture',
+    engines: { happier: '^0.2.0' },
+    runtime: { apiVersion: 1 },
+    entrypoints: { daemon: './daemon.mjs' },
+    hostAccess: {
+      required: [{
+        id: 'author-external-sessions',
+        capability: 'sessions',
+        reason: 'Read and control configured External Sessions.',
+        scope: { access: ['read', 'control'] },
+      }],
+      optional: [],
+    },
+    contributes: {
+      agents: [{
+        id: AUTHOR_AGENT_ID,
+        title: 'Author-only Agent',
+        runtime: {
+          kind: 'acp',
+          transport: { kind: 'webSocket', url: 'ws://127.0.0.1:65535/acp' },
+        },
+        primary: 'sessions',
+        capabilities: {
+          surfaces: [],
+          sessions: { open: ['create'], delivery: ['newTurn'], cancel: true },
+        },
+      }],
+    },
+  }), 'utf8');
+  await writeFile(join(pluginRoot, 'daemon.mjs'), 'export function activate() {}', 'utf8');
+}
+
 describe('non-bundled auxiliary-only Agent ordinary External Sessions routes', () => {
   let controllerOwnsRegistry = false;
 
@@ -321,10 +472,188 @@ describe('non-bundled auxiliary-only Agent ordinary External Sessions routes', (
     }
   });
 
+  it('binds an author-only ordinary plugin to the one current-global External Sessions service', async () => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-external-author-global-home-'));
+    const sourceRoot = await mkdtemp(join(tmpdir(), 'happier-external-author-source-'));
+    const authorRoot = await mkdtemp(join(tmpdir(), 'happier-external-author-only-'));
+    const hostOwner = createExternalSessionHostOperationOwner();
+    const followExecute = vi.fn(async () => ({
+      status: 'following' as const,
+      startingCursor: 'tail-product-route',
+      subscription: Object.freeze({ async dispose() {} }),
+    }));
+    const installation = await hostOwner.install({
+      followOperation: { execute: followExecute },
+      followTargetOperation: null,
+    });
+    const takeoverStart = vi.fn(async (raw: unknown) => {
+      const input = ExternalSessionTakeoverStartInputV1Schema.parse(raw);
+      return {
+        ok: true as const,
+        operation: {
+          sessionId: input.request.sessionId,
+          operationId: 'external-takeover:author-only',
+          revision: 0,
+        },
+      };
+    });
+    let runtimeRegistry: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
+    let linkedMetadata: unknown = null;
+    try {
+      await materializeAuxiliaryOnlyPlugin(sourceRoot);
+      await materializeAuthorOnlyPlugin(authorRoot);
+      await seedCurrentLocalPathPluginFixture({
+        happyHomeDir,
+        pluginRoot: sourceRoot,
+        pluginId: PLUGIN_ID,
+        manifestVersion: '1.0.0',
+      });
+      await seedCurrentLocalPathPluginFixture({
+        happyHomeDir,
+        pluginRoot: authorRoot,
+        pluginId: AUTHOR_PLUGIN_ID,
+        manifestVersion: '1.0.0',
+      });
+      readCredentialsMock.mockResolvedValue({
+        token: 'token',
+        encryption: { type: 'legacy', secret: new Uint8Array([1]) },
+      });
+      fetchAccountProfileMock.mockResolvedValue({ connectedServicesV2: [] });
+      fetchAccountEncryptionCurrentnessMock.mockResolvedValue({
+        mode: 'plain', version: 1, signingKeyFingerprint: null,
+        contentKeyFingerprint: null, updatedAt: 1,
+      });
+      fetchSessionsPageMock.mockResolvedValue({
+        sessions: [], hasNext: false, nextCursor: null,
+      });
+      lookupSessionsByTagsMock.mockImplementation(async ({ tags }: { tags: readonly string[] }) => ({
+        state: 'available', tags, sessions: [],
+      }));
+      getOrCreateSessionByTagMock.mockImplementation(async (input: { metadata: unknown }) => {
+        const metadata = {
+          ...(input.metadata as Record<string, unknown>),
+          path: '/local/selected/workspace',
+        };
+        linkedMetadata = metadata;
+        return { session: { id: 'linked-product-route-session', metadata } };
+      });
+      fetchSessionByIdMock.mockImplementation(async () => linkedMetadata
+        ? {
+            id: 'linked-product-route-session',
+            currentStorageState: 'machine_only',
+            encryptionMode: 'plain',
+            metadata: JSON.stringify(linkedMetadata),
+            metadataVersion: 1,
+            active: false,
+            thinking: false,
+          }
+        : null);
+
+      runtimeRegistry = await resolveExecutablePluginRuntimeRegistry({
+        happyHomeDir,
+        externalSessionHostOperationOwner: hostOwner,
+        externalSessionsActiveServerDir: happyHomeDir,
+        resolveExternalSessionCurrentMachineId: () => 'machine-product-route',
+        externalSessionPluginAdmissionOwner: { takeoverStart },
+      });
+      await runtimeRegistry.activateContributionsOnDemand([{
+        pluginId: AUTHOR_PLUGIN_ID, family: 'agents', localId: AUTHOR_AGENT_ID,
+      }]);
+      let authorCallerGenerationCurrent = true;
+      const services = await runtimeRegistry.createAgentInvocationServices({
+        pluginId: AUTHOR_PLUGIN_ID,
+        pluginVersion: '1.0.0',
+        agentId: AUTHOR_AGENT_ID,
+        generation: String(runtimeRegistry.generation),
+        correlationId: 'author-only-current-global',
+        cwd: happyHomeDir,
+        signal: new AbortController().signal,
+        isGenerationCurrent: () => authorCallerGenerationCurrent,
+      });
+      const external = services.sessions.external;
+      expect(Reflect.ownKeys(external).sort()).toEqual([
+        'attach', 'capabilities', 'followTranscript', 'list', 'readTranscript', 'takeover',
+      ]);
+      expect((await external.capabilities()).list).toMatchObject({ status: 'available' });
+      expect(runtimeRegistry.activatedPluginIds.has(PLUGIN_ID)).toBe(true);
+      const listed = await external.list({ agentId: AGENT_ID, limit: 1 });
+      expect(runtimeRegistry.activatedPluginIds.has(PLUGIN_ID)).toBe(true);
+      expect(listed.items[0]?.ref).toMatchObject({
+        agentId: AGENT_ID,
+        remoteSessionId: 'remote-product-route',
+      });
+      const ref = listed.items[0]!.ref;
+      const followed = await external.followTranscript(ref, {}, vi.fn());
+      expect(followed).toMatchObject({ status: 'following' });
+      expect(followExecute).toHaveBeenCalledWith(expect.objectContaining({
+        pluginId: PLUGIN_ID,
+        contributionId: AGENT_ID,
+      }));
+      if (followed.status === 'following') await followed.subscription.dispose();
+      const takeoverResult: ExternalSessionOperationReference = await external.takeover(ref, {
+        targetStorageMode: 'persisted',
+        idempotencyKey: 'same-author-key',
+      });
+      expect(takeoverResult).toMatchObject({ operationId: 'external-takeover:author-only' });
+      const takeoverInput = ExternalSessionTakeoverStartInputV1Schema.parse(
+        takeoverStart.mock.calls[0]?.[0],
+      );
+      expect(takeoverInput.request.idempotencyKey).toBe(
+        deriveExternalSessionPluginOperationDurableKey({
+          pluginId: AUTHOR_PLUGIN_ID,
+          callerKey: 'same-author-key',
+        }),
+      );
+      expect(takeoverInput.request.targetDirectory).toBe('/local/selected/workspace');
+
+      const linkEffectsBeforeRetirement = getOrCreateSessionByTagMock.mock.calls.length;
+      const followEffectsBeforeRetirement = followExecute.mock.calls.length;
+      const takeoverEffectsBeforeRetirement = takeoverStart.mock.calls.length;
+      authorCallerGenerationCurrent = false;
+
+      expect(await external.capabilities()).toEqual({
+        list: { status: 'unavailable', code: 'plugin_generation_retired' },
+        attach: { status: 'unavailable', code: 'plugin_generation_retired' },
+        takeover: { status: 'unavailable', code: 'plugin_generation_retired' },
+        transcript: { status: 'unavailable', code: 'plugin_generation_retired' },
+        follow: { status: 'unavailable', code: 'plugin_generation_retired' },
+      });
+      await expect(external.list({ agentId: AGENT_ID })).rejects.toMatchObject({
+        code: 'plugin_generation_retired',
+      });
+      await expect(external.attach(ref)).rejects.toMatchObject({
+        code: 'plugin_generation_retired',
+      });
+      await expect(external.readTranscript(ref, {
+        mode: 'page',
+        direction: 'older',
+      })).rejects.toMatchObject({ code: 'plugin_generation_retired' });
+      await expect(external.followTranscript(ref, {}, vi.fn())).resolves.toEqual({
+        status: 'unavailable',
+        code: 'plugin_generation_retired',
+      });
+      await expect(external.takeover(ref, {
+        targetStorageMode: 'persisted',
+        idempotencyKey: 'retired-author-key',
+      })).rejects.toMatchObject({ code: 'plugin_generation_retired' });
+      expect(getOrCreateSessionByTagMock).toHaveBeenCalledTimes(linkEffectsBeforeRetirement);
+      expect(followExecute).toHaveBeenCalledTimes(followEffectsBeforeRetirement);
+      expect(takeoverStart).toHaveBeenCalledTimes(takeoverEffectsBeforeRetirement);
+    } finally {
+      await runtimeRegistry?.dispose();
+      await installation.dispose();
+      await hostOwner.retire();
+      await rm(happyHomeDir, { recursive: true, force: true });
+      await rm(sourceRoot, { recursive: true, force: true });
+      await rm(authorRoot, { recursive: true, force: true });
+    }
+  });
+
   it('preserves the optional takeover sibling for a real-loader auxiliary-only Agent', async () => {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-external-takeover-home-'));
     const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-external-takeover-plugin-'));
     let runtimeRegistry: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
+    const custodyWarning = vi.spyOn(logger, 'warn');
     try {
       await materializeAuxiliaryOnlyPlugin(pluginRoot, '1.0.0', PLUGIN_ID, true);
       await seedCurrentLocalPathPluginFixture({
@@ -338,6 +667,10 @@ describe('non-bundled auxiliary-only Agent ordinary External Sessions routes', (
         happyHomeDir,
         pluginIds: [PLUGIN_ID],
       });
+      expect(custodyWarning).not.toHaveBeenCalledWith(
+        '[PLUGIN RUNTIME] Obsolete generation custody reconciliation failed',
+        expect.anything(),
+      );
 
       expect(
         runtimeRegistry.activatedPluginIds.has(PLUGIN_ID),
@@ -351,8 +684,193 @@ describe('non-bundled auxiliary-only Agent ordinary External Sessions routes', (
         externalSessionTakeover: expect.any(Object),
       });
     } finally {
+      custodyWarning.mockRestore();
       await runtimeRegistry?.dispose();
       await rm(happyHomeDir, { recursive: true, force: true });
+      await rm(pluginRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('carries declaration-owned source keys through the real takeover loaders and fails closed before quiescence when authority changes', async () => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-external-source-key-home-'));
+    const unavailableHappyHomeDir = await mkdtemp(
+      join(tmpdir(), 'happier-external-source-key-unavailable-home-'),
+    );
+    const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-external-source-key-plugin-'));
+    let unownedRegistry: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
+    try {
+      await materializeAuxiliaryOnlyPlugin(pluginRoot, '1.0.0', PLUGIN_ID, true);
+      await seedCurrentLocalPathPluginFixture({
+        happyHomeDir,
+        pluginRoot,
+        pluginId: PLUGIN_ID,
+        manifestVersion: '1.0.0',
+      });
+      unownedRegistry = await resolveExecutablePluginRuntimeRegistry({
+        happyHomeDir,
+        pluginIds: [PLUGIN_ID],
+      });
+      await pluginReloadController.adoptPreparedRuntimeRegistry({
+        registry: unownedRegistry,
+        changedPluginIds: [PLUGIN_ID],
+        durableRevision: 1,
+        runningSessionDisposition: 'retainRunningSessions',
+      });
+      controllerOwnsRegistry = true;
+      const runtimeRegistry = unownedRegistry;
+      unownedRegistry = null;
+      const contributionGeneration =
+        runtimeRegistry.agentRuntimesByAgentId.get(AGENT_ID)?.generation;
+      if (!contributionGeneration) {
+        throw new Error('Expected the synthetic Agent contribution generation');
+      }
+      const sourceKeyOwner = await resolveExternalSessionSourceKeyOwner(
+        ExternalSessionsAgentIdSchema.parse(AGENT_ID),
+        SOURCE,
+      );
+      if (!sourceKeyOwner) {
+        throw new Error('Expected the synthetic declaration-owned source key');
+      }
+
+      const linkedMetadata = {
+        path: '/tmp/synthetic-product-route',
+        externalSessionV1: {
+          v: 1,
+          agentId: AGENT_ID,
+          machineId: 'machine-product-route',
+          remoteSessionId: 'remote-product-route',
+          linkedAtMs: 41,
+          source: SOURCE,
+          qualifiedIdentity: {
+            v: 1,
+            agent: { pluginId: PLUGIN_ID, localId: AGENT_ID },
+            source: { kind: SOURCE.kind, contractVersion: 1 },
+          },
+        },
+      };
+      let currentRawSession = {
+        id: 'linked-product-route-session',
+        currentStorageState: 'machine_only',
+        encryptionMode: 'plain',
+        metadata: JSON.stringify(linkedMetadata),
+        metadataVersion: 4,
+        active: false,
+        thinking: false,
+      };
+      readCredentialsMock.mockResolvedValue({
+        token: 'token',
+        encryption: { type: 'legacy', secret: new Uint8Array([1]) },
+      });
+      fetchAccountEncryptionCurrentnessMock.mockResolvedValue({
+        mode: 'plain',
+        version: 1,
+        signingKeyFingerprint: null,
+        contentKeyFingerprint: null,
+        updatedAt: 1,
+      });
+      fetchSessionByIdMock.mockImplementation(async () => currentRawSession);
+      listSessionMarkersMock.mockResolvedValue([]);
+
+      const persistedRecord = productionTakeoverRecord({
+        contributionGeneration,
+        targetStorageMode: 'persisted',
+      });
+      const externalLinkedRecord = productionTakeoverRecord({
+        contributionGeneration,
+        targetStorageMode: 'external-linked',
+      }) as unknown as Parameters<
+        typeof loadCurrentExternalSessionExternalLinkedTakeoverSource
+      >[0];
+
+      const externalLinked =
+        await loadCurrentExternalSessionExternalLinkedTakeoverSource(
+          externalLinkedRecord,
+        );
+      expect(externalLinked.linked.canonicalResolvedSourceKey).toBe(
+        sourceKeyOwner.sourceKey,
+      );
+      expect(externalLinked.permitsAdmission).toBe(false);
+      expect(listSessionMarkersMock).toHaveBeenCalled();
+      listSessionMarkersMock.mockClear();
+
+      await expect(loadCurrentExternalSessionPersistedTakeoverSource(
+        persistedRecord,
+      )).rejects.toMatchObject({ actionCode: 'not_allowed' });
+      expect(listSessionMarkersMock).toHaveBeenCalled();
+      listSessionMarkersMock.mockClear();
+
+      await expect(loadCurrentExternalSessionPersistedTakeoverTarget(
+        persistedRecord,
+      )).resolves.toMatchObject({
+        canonicalResolvedSourceKey: sourceKeyOwner.sourceKey,
+      });
+      expect(listSessionMarkersMock).not.toHaveBeenCalled();
+
+      const staleGenerationRecord = productionTakeoverRecord({
+        contributionGeneration: `${contributionGeneration}:retired`,
+        targetStorageMode: 'external-linked',
+      }) as unknown as Parameters<
+        typeof loadCurrentExternalSessionExternalLinkedTakeoverSource
+      >[0];
+      await expect(
+        loadCurrentExternalSessionExternalLinkedTakeoverSource(
+          staleGenerationRecord,
+        ),
+      ).rejects.toMatchObject({ actionCode: 'source_unavailable' });
+      expect(listSessionMarkersMock).not.toHaveBeenCalled();
+
+      currentRawSession = {
+        ...currentRawSession,
+        currentStorageState: 'hosted',
+        metadata: JSON.stringify({
+          path: '/tmp/synthetic-product-route',
+          externalHistoryImportV1: {
+            v: 1,
+            agentId: AGENT_ID,
+            remoteSessionId: 'remote-product-route',
+            importedAtMs: 100,
+            source: SOURCE,
+          },
+        }),
+      };
+      await expect(loadCurrentExternalSessionPersistedTakeoverTarget(
+        persistedRecord,
+      )).resolves.toMatchObject({
+        source: SOURCE,
+        canonicalResolvedSourceKey: sourceKeyOwner.sourceKey,
+      });
+      expect(listSessionMarkersMock).not.toHaveBeenCalled();
+
+      unownedRegistry = await resolveExecutablePluginRuntimeRegistry({
+        happyHomeDir: unavailableHappyHomeDir,
+        pluginIds: [],
+      });
+      await pluginReloadController.adoptPreparedRuntimeRegistry({
+        registry: unownedRegistry,
+        changedPluginIds: [PLUGIN_ID],
+        durableRevision: 2,
+        runningSessionDisposition: 'retainRunningSessions',
+      });
+      unownedRegistry = null;
+      // The singleton is shared by this integration file. Leave the live,
+      // empty replacement for the next test to replace; the file's terminal
+      // test owns shutdown.
+      controllerOwnsRegistry = false;
+      currentRawSession = {
+        ...currentRawSession,
+        currentStorageState: 'machine_only',
+        metadata: JSON.stringify(linkedMetadata),
+      };
+      await expect(
+        loadCurrentExternalSessionExternalLinkedTakeoverSource(
+          externalLinkedRecord,
+        ),
+      ).rejects.toMatchObject({ actionCode: 'source_unavailable' });
+      expect(listSessionMarkersMock).not.toHaveBeenCalled();
+    } finally {
+      await unownedRegistry?.dispose();
+      await rm(happyHomeDir, { recursive: true, force: true });
+      await rm(unavailableHappyHomeDir, { recursive: true, force: true });
       await rm(pluginRoot, { recursive: true, force: true });
     }
   });
@@ -418,6 +936,7 @@ describe('non-bundled auxiliary-only Agent ordinary External Sessions routes', (
             registry: runtimeRegistry,
             linked,
             sessionId: linked.rawSession.id,
+            targetDirectory: linked.sessionPath,
             signal: new AbortController().signal,
           });
         expect(resolved).toMatchObject({
@@ -441,6 +960,7 @@ describe('non-bundled auxiliary-only Agent ordinary External Sessions routes', (
               ...(transcriptStorage === 'persisted'
                 ? {
                     persistedTakeoverAdmission: {
+                      mode: 'persisted',
                       operationId: 'operation-synthetic',
                       attemptId: 'attempt-synthetic',
                     },
@@ -499,7 +1019,8 @@ describe('non-bundled auxiliary-only Agent ordinary External Sessions routes', (
       await pluginReloadController.adoptPreparedRuntimeRegistry({
         registry: unownedRegistry,
         changedPluginIds: [PLUGIN_ID],
-        durableRevision: 1,
+        durableRevision: 3,
+        runningSessionDisposition: 'retainRunningSessions',
       });
       controllerOwnsRegistry = true;
       const runtimeRegistry = unownedRegistry;
@@ -508,6 +1029,10 @@ describe('non-bundled auxiliary-only Agent ordinary External Sessions routes', (
       readCredentialsMock.mockResolvedValue({
         token: 'token',
         encryption: { type: 'legacy', secret: new Uint8Array([1]) },
+      });
+      fetchAccountEncryptionCurrentnessMock.mockResolvedValue({
+        mode: 'plain', version: 1, signingKeyFingerprint: null,
+        contentKeyFingerprint: null, updatedAt: 1,
       });
       fetchSessionByIdMock.mockResolvedValue(null);
       fetchSessionsPageMock.mockResolvedValue({
@@ -752,6 +1277,7 @@ describe('non-bundled auxiliary-only Agent ordinary External Sessions routes', (
         ok: false,
         errorCode: 'agent_unavailable',
         error: 'agent_unavailable',
+        retryable: false,
       });
       expect(malformedList).not.toHaveProperty('autoLinkPolicyScopeV1');
       expect(JSON.stringify(malformedList)).not.toContain('agent_error');
@@ -765,6 +1291,7 @@ describe('non-bundled auxiliary-only Agent ordinary External Sessions routes', (
         ok: false,
         errorCode: 'agent_unavailable',
         error: 'agent_unavailable',
+        retryable: false,
       });
       expect(oversizedList).not.toHaveProperty('autoLinkPolicyScopeV1');
       expect(JSON.stringify(oversizedList)).not.toContain('agent_error');
@@ -783,10 +1310,10 @@ describe('non-bundled auxiliary-only Agent ordinary External Sessions routes', (
 
       const contribution = runtimeRegistry.contributes.agentDefinitionsById.get(AGENT_ID);
       expect(contribution).toBeDefined();
-      const contributionGenerationId = runtimeRegistry.contributes.generationId;
+      const contributionGenerationId = runtimeLease.generation;
       expect(contributionGenerationId).toEqual(expect.any(String));
       if (!contributionGenerationId) {
-        throw new Error('Expected the authoritative contribution catalog to expose its generation');
+        throw new Error('Expected the current Agent runtime lease to expose its generation');
       }
       const basis = Object.freeze({
         contributionGenerationId,
@@ -816,13 +1343,13 @@ describe('non-bundled auxiliary-only Agent ordinary External Sessions routes', (
           };
         },
       });
-      const configuredList = await configured.list({ limit: 1 });
+      const configuredList = await configured.authorService.list({ limit: 1 });
       expect(configuredList.items).toHaveLength(1);
       expect(configuredList.items[0]?.ref).toMatchObject({
         agentId: AGENT_ID,
         remoteSessionId: 'remote-product-route',
       });
-      const configuredLargeFirst = await configured.list({
+      const configuredLargeFirst = await configured.authorService.list({
         limit: 10_000,
         maxBytes: 10 * 1024 * 1024,
       });
@@ -835,7 +1362,10 @@ describe('non-bundled auxiliary-only Agent ordinary External Sessions routes', (
         ),
       ]);
       expect(configuredLargeFirst.nextCursor).toMatch(/^plugin_external_sessions_v1_/);
-      const configuredLargeSecond = await configured.list({
+      if (!configuredLargeFirst.nextCursor) {
+        throw new Error('Expected a configured-source list cursor');
+      }
+      const configuredLargeSecond = await configured.authorService.list({
         cursor: configuredLargeFirst.nextCursor,
         limit: 10_000,
         maxBytes: 10 * 1024 * 1024,
@@ -849,13 +1379,14 @@ describe('non-bundled auxiliary-only Agent ordinary External Sessions routes', (
       );
       const cancelledList = new AbortController();
       cancelledList.abort();
-      await expect(configured.list({
-        signal: cancelledList.signal,
-      })).rejects.toMatchObject({
+      await expect(configured.authorService.list(
+        {},
+        { signal: cancelledList.signal },
+      )).rejects.toMatchObject({
         name: 'PluginError',
         code: 'plugin_operation_aborted',
       });
-      expect(configured.capabilities()).toMatchObject({
+      expect(await configured.authorService.capabilities()).toMatchObject({
         list: { status: 'available' },
         transcript: { status: 'available' },
         follow: {
@@ -864,21 +1395,26 @@ describe('non-bundled auxiliary-only Agent ordinary External Sessions routes', (
         },
         takeover: {
           status: 'unavailable',
-          code: 'plugin_external_takeover_unavailable',
+          code: 'plugin_external_takeover_contextual_admission_unavailable',
         },
       });
       const configuredRef = configuredList.items[0]!.ref;
-      await expect(configured.followTranscript(
-        { ref: configuredRef, source: SOURCE },
-        { cursor: 'tail-product-route' },
+      // The public author service accepts only a host-qualified refresh cursor.
+      // A raw contribution tail cursor is a malformed public input and would be
+      // refused before the follow-availability decision this case asserts.
+      await expect(configured.authorService.followTranscript(
+        configuredRef,
+        {},
         vi.fn(),
       )).resolves.toEqual({
         status: 'unavailable',
         code: 'plugin_external_follow_unavailable',
       });
-      await expect(configured.takeover(configuredRef)).rejects.toMatchObject({
-        name: 'PluginError',
-        code: 'plugin_external_takeover_unavailable',
+      await expect(configured.authorService.takeover(configuredRef, {
+        targetStorageMode: 'persisted',
+        idempotencyKey: 'product-route-key',
+      })).rejects.toMatchObject({
+        code: 'plugin_external_takeover_contextual_admission_unavailable',
       });
 
       const pageScanCountBeforeLink = fetchSessionsPageMock.mock.calls.length;
@@ -956,6 +1492,7 @@ describe('non-bundled auxiliary-only Agent ordinary External Sessions routes', (
         ok: false,
         errorCode: 'agent_unavailable',
         error: 'agent_unavailable',
+        retryable: false,
       });
       expect(JSON.stringify(oversizedTranscript)).not.toContain('agent_error');
 
@@ -974,7 +1511,7 @@ describe('non-bundled auxiliary-only Agent ordinary External Sessions routes', (
         nextCursor: expect.stringMatching(/^happier_external_cursor_v1:/),
         truncated: false,
       });
-      await expect(configured.readTranscript(configuredRef, {
+      await expect(configured.authorService.readTranscript(configuredRef, {
         mode: 'readAfter',
         cursor: pageTailCursor,
         limit: 1,
@@ -1007,14 +1544,15 @@ describe('non-bundled auxiliary-only Agent ordinary External Sessions routes', (
       await pluginReloadController.adoptPreparedRuntimeRegistry({
         registry: unownedRegistry,
         changedPluginIds: [PLUGIN_ID, REPLACEMENT_PLUGIN_ID],
-        durableRevision: 2,
+        durableRevision: 4,
+        runningSessionDisposition: 'retainRunningSessions',
       });
       controllerOwnsRegistry = true;
       const replacementRegistry = unownedRegistry;
       unownedRegistry = null;
 
       expect(runtimeLease.retirementSignal.aborted).toBe(true);
-      await expect(configured.list()).rejects.toMatchObject({
+      await expect(configured.authorService.list()).rejects.toMatchObject({
         name: 'PluginError',
         code: 'plugin_generation_retired',
       });
@@ -1075,7 +1613,8 @@ describe('non-bundled auxiliary-only Agent ordinary External Sessions routes', (
       await pluginReloadController.adoptPreparedRuntimeRegistry({
         registry: unownedRegistry,
         changedPluginIds: [REPLACEMENT_PLUGIN_ID],
-        durableRevision: 3,
+        durableRevision: 5,
+        runningSessionDisposition: 'retainRunningSessions',
       });
       expect(unownedRegistry.contributes.agentDefinitionsById.has(AGENT_ID)).toBe(false);
       unownedRegistry = null;

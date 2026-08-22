@@ -13,6 +13,7 @@ const {
   resolveNpmPackageNameOverrideMock,
   installConsoleWriteErrorGuardsMock,
   shouldInstallConsoleWriteErrorGuardsMock,
+  loggerFatalMock,
 } = vi.hoisted(() => ({
   dispatchCliMock: vi.fn(async () => undefined),
   ensureWindowsUtf8CodePageMock: vi.fn(),
@@ -25,6 +26,7 @@ const {
   resolveNpmPackageNameOverrideMock: vi.fn(({ fallback }: { fallback: string }) => fallback),
   installConsoleWriteErrorGuardsMock: vi.fn(),
   shouldInstallConsoleWriteErrorGuardsMock: vi.fn(() => true),
+  loggerFatalMock: vi.fn(),
 }));
 
 vi.mock('@/cli/dispatch', () => ({
@@ -73,6 +75,12 @@ vi.mock('@/utils/writeConsoleBestEffort', () => ({
   shouldInstallConsoleWriteErrorGuards: shouldInstallConsoleWriteErrorGuardsMock,
 }));
 
+vi.mock('@/ui/logger', () => ({
+  logger: {
+    fatal: loggerFatalMock,
+  },
+}));
+
 function createDeferred() {
   let resolve!: () => void;
   const promise = new Promise<undefined>((resolvePromise) => {
@@ -113,27 +121,40 @@ describe('CLI startup runtime reexec', () => {
     installConsoleWriteErrorGuardsMock.mockReset();
     shouldInstallConsoleWriteErrorGuardsMock.mockReset();
     shouldInstallConsoleWriteErrorGuardsMock.mockReturnValue(true);
+    loggerFatalMock.mockReset();
     vi.resetModules();
   });
 
-  it('waits for runtime reexec resolution before continuing startup', async () => {
+  it('keeps the process alive until runtime reexec and command dispatch settle', async () => {
     const reexecDeferred = createDeferred();
     maybeReexecToRuntimeMock.mockReturnValue(reexecDeferred.promise);
     process.argv = ['node', '/repo/apps/cli/dist/index.mjs', 'self', 'check'];
+    const setIntervalSpy = vi.spyOn(globalThis, 'setInterval');
+    const clearIntervalSpy = vi.spyOn(globalThis, 'clearInterval');
 
-    await import('./index');
-    await Promise.resolve();
+    try {
+      await import('./index');
+      await vi.waitFor(() => {
+        expect(maybeReexecToRuntimeMock).toHaveBeenCalledOnce();
+      });
 
-    expect(maybeReexecToRuntimeMock).toHaveBeenCalledOnce();
-    expect(maybeAutoUpdateNoticeMock).not.toHaveBeenCalled();
-    expect(dispatchCliMock).not.toHaveBeenCalled();
+      expect(maybeAutoUpdateNoticeMock).not.toHaveBeenCalled();
+      expect(dispatchCliMock).not.toHaveBeenCalled();
+      expect(setIntervalSpy).toHaveBeenCalledOnce();
+      const keepAliveHandle = setIntervalSpy.mock.results[0]?.value;
+      expect(clearIntervalSpy).not.toHaveBeenCalledWith(keepAliveHandle);
 
-    reexecDeferred.resolve();
+      reexecDeferred.resolve();
 
-    await vi.waitFor(() => {
-      expect(maybeAutoUpdateNoticeMock).toHaveBeenCalledOnce();
-      expect(dispatchCliMock).toHaveBeenCalledOnce();
-    });
+      await vi.waitFor(() => {
+        expect(maybeAutoUpdateNoticeMock).toHaveBeenCalledOnce();
+        expect(dispatchCliMock).toHaveBeenCalledOnce();
+        expect(clearIntervalSpy).toHaveBeenCalledWith(keepAliveHandle);
+      });
+    } finally {
+      setIntervalSpy.mockRestore();
+      clearIntervalSpy.mockRestore();
+    }
   });
 
   it('does not dispatch the CLI when imported by the dist integrity probe', async () => {
@@ -159,6 +180,7 @@ describe('CLI startup runtime reexec', () => {
 
       await vi.waitFor(() => {
         expect(output.lines).toContain('Error: startup blew up');
+        expect(loggerFatalMock).toHaveBeenCalledWith(startupError);
         expect(process.exitCode).toBe(1);
       });
     } finally {

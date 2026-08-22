@@ -81,12 +81,12 @@ export function createSessionClientWithMetadata(opts?: {
     const session: AcpRuntimeSessionClient = {
         sessionId: 'test-session-id',
         keepAlive: () => {},
-        sendAgentMessage: () => {},
-        sendAgentMessageCommitted: async (_provider, body, _opts) => {
+        enqueueAgentMessageCommitted: async (_provider, body, _opts) => {
             committed.push(body);
             opts?.onSendAgentMessageCommitted?.(body);
+            return { persisted: true, delivered: false };
         },
-        sendUserTextMessageCommitted: async (_text, _opts) => {},
+        enqueueUserTextMessageCommitted: async (_text, _opts) => ({ persisted: true, delivered: false }),
         fetchRecentTranscriptTextItemsForAcpImport: async () => [],
         updateMetadata: (handler) => {
             metadata = handler(metadata);
@@ -106,9 +106,8 @@ export function createBasicSessionClientWithOverrides(
     return {
         sessionId: 'test-session-id',
         keepAlive: () => {},
-        sendAgentMessage: () => {},
-        sendAgentMessageCommitted: async (_provider, _body, _opts) => {},
-        sendUserTextMessageCommitted: async (_text, _opts) => {},
+        enqueueAgentMessageCommitted: async (_provider, _body, _opts) => ({ persisted: true, delivered: false }),
+        enqueueUserTextMessageCommitted: async (_text, _opts) => ({ persisted: true, delivered: false }),
         fetchRecentTranscriptTextItemsForAcpImport: async () => [],
         updateMetadata: (_handler) => {},
         ...overrides,
@@ -126,9 +125,12 @@ export function createApiSessionClientFixture(options?: {
 
     return {
         keepAlive() {},
-        sendAgentMessage() {},
-        async sendAgentMessageCommitted() {},
-        async sendUserTextMessageCommitted() {},
+        async enqueueAgentMessageCommitted() {
+            return { persisted: true, delivered: false };
+        },
+        async enqueueUserTextMessageCommitted() {
+            return { persisted: true, delivered: false };
+        },
         updateMetadata() {},
         async fetchRecentTranscriptTextItemsForAcpImport() {
             return [];
@@ -165,9 +167,12 @@ export function createMutableApiSessionClientFixture<TMetadata extends Record<st
         sessionId,
         rpcHandlerManager,
         keepAlive() {},
-        sendAgentMessage() {},
-        async sendAgentMessageCommitted() {},
-        async sendUserTextMessageCommitted() {},
+        async enqueueAgentMessageCommitted() {
+            return { persisted: true, delivered: false };
+        },
+        async enqueueUserTextMessageCommitted() {
+            return { persisted: true, delivered: false };
+        },
         updateMetadata(updater: (current: TMetadata | null) => TMetadata | null) {
             metadata = updater(metadata);
             events.emit('metadata-updated');

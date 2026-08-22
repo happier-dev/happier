@@ -1,19 +1,29 @@
-import type { CatalogAgentId as AgentId } from '@/agent/catalog/ids';
-import { requireCatalogEntry } from '@/agent/catalog/registry';
-import { resolveCatalogAgentId } from '@/agent/catalog/resolution';
-import { CATALOG_AGENT_IDS, DEFAULT_CATALOG_AGENT_ID } from '@/agent/catalog/ids';
+import type { CatalogAgentId } from '@/agent/catalog/ids';
+import { CatalogAgentNotInstalledError, requireCatalogEntry } from '@/agent/catalog/registry';
+import {
+  resolveCatalogAgentId,
+  resolveCatalogAgentIdForCliSubcommand,
+} from '@/agent/catalog/resolution';
+import { DEFAULT_CATALOG_AGENT_ID } from '@/agent/catalog/ids';
 
 type HeadlessTmuxAgentLaunchConfig = Readonly<{
-  agent: AgentId;
+  agent: CatalogAgentId;
   childArgs: string[];
 }>;
 
-function inferAgent(argv: string[]): AgentId {
-  const first = argv[0];
-  if (typeof first === 'string' && (CATALOG_AGENT_IDS as readonly string[]).includes(first)) {
-    return resolveCatalogAgentId(first as AgentId);
+function inferAgent(argv: string[]): CatalogAgentId {
+  const first = typeof argv[0] === 'string' ? argv[0].trim() : '';
+  if (!first || first.startsWith('-')) {
+    return DEFAULT_CATALOG_AGENT_ID;
   }
-  return DEFAULT_CATALOG_AGENT_ID;
+
+  // A subcommand names the installed catalog entry; it is not limited to the
+  // generated bundled census. An unknown non-option command is a CLI invocation
+  // error: refuse it here rather than launching the default Agent.
+  const requestedAgentId = resolveCatalogAgentIdForCliSubcommand(first) ?? first;
+  const catalogAgentId = resolveCatalogAgentId(requestedAgentId);
+  if (!catalogAgentId) throw new CatalogAgentNotInstalledError(requestedAgentId);
+  return catalogAgentId;
 }
 
 export async function resolveHeadlessTmuxAgentLaunchConfig(argv: string[]): Promise<HeadlessTmuxAgentLaunchConfig> {

@@ -5,6 +5,7 @@ import {
     readRuntimeDescriptorV1FromMetadata,
     SessionTurnProviderCheckpointV1Schema,
 } from '@happier-dev/protocol';
+import type { AgentSessionOpenRequest } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { isAuthenticationError } from '@/api/client/httpStatusError';
 import { readCanonicalSpawnRuntimeSelection } from '@/rpc/handlers/spawnRuntimeSelection';
@@ -38,7 +39,7 @@ import type { SessionLifecycleMachineDeps } from '../sessionLifecycleTypes';
 
 function areNativeForkTargetsEquivalent(
     attested: Extract<
-        import('@happier-dev/plugin-sdk/agent-runtime').AgentSessionOpenRequest,
+        AgentSessionOpenRequest,
         { kind: 'fork' }
     >['source']['target'],
     expected: NativeForkSource['target'],
@@ -57,15 +58,10 @@ function areNativeForkTargetsEquivalent(
 }
 
 function describeNativeForkOpenMismatch(
-    attestation:
-        | Readonly<{ status: 'opened'; request: import('@happier-dev/plugin-sdk/agent-runtime').AgentSessionOpenRequest }>
-        | Readonly<{ status: 'timeout' }>,
+    attestation: Readonly<{ status: 'opened'; request: AgentSessionOpenRequest }>,
     childSessionId: string,
     source: NativeForkSource,
 ): string | null {
-    if (attestation.status === 'timeout') {
-        return 'Timed out waiting for the native fork runtime to open';
-    }
     if (attestation.request.kind !== 'fork') {
         return 'Child runtime did not open a native fork request';
     }
@@ -204,6 +200,13 @@ export async function attemptNativeForkOpen(params: Readonly<{
         const openAttestation = await params.awaitAgentSessionOpen({
             sessionId: childSessionId,
         });
+        if (openAttestation.status === 'timeout') {
+            return {
+                ok: false,
+                errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
+                errorMessage: 'Native fork outcome is unknown. Check the existing child session before retrying.',
+            };
+        }
         const openMismatch = describeNativeForkOpenMismatch(
             openAttestation,
             childSessionId,

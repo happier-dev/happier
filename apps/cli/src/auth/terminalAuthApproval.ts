@@ -1,10 +1,23 @@
+import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import { randomBytes } from 'node:crypto';
 import axios from 'axios';
 import tweetnacl from 'tweetnacl';
 import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol';
 
 import { configuration } from '@/configuration';
-import { readCredentials } from '@/persistence';
+import { readStoredCredentials, type Credentials } from '@/persistence';
+
+export class TokenOnlyTerminalApprovalUpgradeRequiredError extends Error {
+  readonly code = 'TOKEN_ONLY_TERMINAL_APPROVAL_UPGRADE_REQUIRED' as const;
+
+  constructor() {
+    super(
+      'Token-only CLI-to-remote pairing requires a newer terminal approval protocol. '
+      + 'Upgrade both CLIs when support is available, or approve from a device with Account encryption material.',
+    );
+    this.name = 'TokenOnlyTerminalApprovalUpgradeRequiredError';
+  }
+}
 
 function decodePublicKey(value: string): Uint8Array {
   const raw = String(value ?? '').trim();
@@ -35,7 +48,7 @@ function encryptForTerminal(recipientPublicKey: Uint8Array, plaintext: Uint8Arra
   return bundle.toString('base64');
 }
 
-function buildApprovalPayload(creds: NonNullable<Awaited<ReturnType<typeof readCredentials>>>): Uint8Array {
+function buildApprovalPayload(creds: Credentials): Uint8Array {
   const machineKey =
     creds.encryption.type === 'legacy'
       ? deriveAccountMachineKeyFromRecoverySecret(creds.encryption.secret)
@@ -49,15 +62,18 @@ function buildApprovalPayload(creds: NonNullable<Awaited<ReturnType<typeof readC
 
 export async function approveTerminalAuthRequest(params: Readonly<{ publicKey: string }>): Promise<void> {
   const recipientPk = decodePublicKey(params.publicKey);
-  const creds = await readCredentials();
+  const creds = await readStoredCredentials();
   if (!creds) {
     throw new Error('Not authenticated. Run `happier auth login` first.');
+  }
+  if (!creds.encryption) {
+    throw new TokenOnlyTerminalApprovalUpgradeRequiredError();
   }
   const response = encryptForTerminal(recipientPk, buildApprovalPayload(creds));
 
   await axios.post(
     `${configuration.apiServerUrl}/v1/auth/response`,
     { publicKey: encodePublicKeyBase64(recipientPk), response },
-    { headers: { Authorization: `Bearer ${creds.token}` } },
+    { headers: { ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(), Authorization: `Bearer ${creds.token}` } },
   );
 }

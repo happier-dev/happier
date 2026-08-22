@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, realpath, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import type { AgentExternalSessionsResolvedIdentity } from '@happier-dev/plugin-sdk/experimental/sessions';
+import type { AgentExternalSessionsResolvedIdentity } from '@happier-dev/plugin-sdk/sessions/external';
 import { describe, expect, it } from 'vitest';
 
 import { validateExternalSessionObservationWatchFileChanges } from './observationFileSetPathValidation';

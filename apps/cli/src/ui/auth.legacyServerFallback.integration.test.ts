@@ -138,6 +138,9 @@ describe('authAndSetupMachineIfNeeded (legacy server fallback) (integration)', (
     try {
       const result = await authAndSetupMachineIfNeeded();
       expect(result.credentials.token).toBe('token-legacy');
+      if (!result.credentials.encryption) {
+        throw new Error('Expected legacy encryption credentials');
+      }
       expect(result.credentials.encryption.type).toBe('legacy');
     } finally {
       output.restore();
@@ -167,6 +170,9 @@ describe('authAndSetupMachineIfNeeded (legacy server fallback) (integration)', (
     try {
       const result = await authAndSetupMachineIfNeeded();
       expect(result.credentials.token).toBe('token-legacy-2');
+      if (!result.credentials.encryption) {
+        throw new Error('Expected legacy encryption credentials');
+      }
       expect(result.credentials.encryption.type).toBe('legacy');
     } finally {
       output.restore();
@@ -197,6 +203,9 @@ describe('authAndSetupMachineIfNeeded (legacy server fallback) (integration)', (
     try {
       const result = await authAndSetupMachineIfNeeded();
       expect(result.credentials.token).toBe('token-legacy-strict');
+      if (!result.credentials.encryption) {
+        throw new Error('Expected legacy encryption credentials');
+      }
       expect(result.credentials.encryption.type).toBe('legacy');
     } finally {
       output.restore();

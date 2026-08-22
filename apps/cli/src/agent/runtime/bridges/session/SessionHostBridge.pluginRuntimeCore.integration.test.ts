@@ -48,7 +48,6 @@ async function installSample(params: Readonly<{
         install: {
           mode: 'link',
           manifestVersion: '1.0.0',
-          manifestDigest: null,
           installedPath: null,
         },
         state: { enabled: true },

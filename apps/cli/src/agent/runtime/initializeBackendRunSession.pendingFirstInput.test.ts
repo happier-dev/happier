@@ -53,7 +53,6 @@ describe('initializeBackendRunSession pending first input', () => {
         },
       },
       {
-        setupOfflineReconnectionFn: () => ({ session, reconnectionHandle: null, isOffline: false }),
         primeAgentStateForUiFn: () => {},
         reportSessionToDaemonIfRunningFn: async () => {
           events.push('daemon-report');
@@ -67,6 +66,15 @@ describe('initializeBackendRunSession pending first input', () => {
       text: 'Commit me through Pending.',
       localId: 'spawn-first-turn:stable-nonce',
       meta: { source: 'ui', sentFrom: 'cli' },
+      inputAdmission: {
+        provenance: { v: 1, kind: 'host', producer: 'agentRuntimeFirstInput' },
+        request: {
+          v: 1,
+          producer: 'agentRuntimeFirstInput',
+          caller: { kind: 'host' },
+          permission: {},
+        },
+      },
     });
     expect(events).toEqual(['pending-committed', 'daemon-report']);
     expect(process.env.HAPPIER_DAEMON_PENDING_FIRST_INPUT).toBeUndefined();
@@ -109,11 +117,6 @@ describe('initializeBackendRunSession pending first input', () => {
         },
       },
       {
-        setupOfflineReconnectionFn: () => ({
-          session,
-          reconnectionHandle: null,
-          isOffline: false,
-        }),
         primeAgentStateForUiFn: () => {
           events.push('ui-ready');
         },
@@ -170,11 +173,6 @@ describe('initializeBackendRunSession pending first input', () => {
         },
       },
       {
-        setupOfflineReconnectionFn: () => ({
-          session,
-          reconnectionHandle: null,
-          isOffline: false,
-        }),
         primeAgentStateForUiFn: () => {},
         reportSessionToDaemonIfRunningFn: async () => {},
         persistTerminalAttachmentInfoIfNeededFn: async () => {},
@@ -223,11 +221,6 @@ describe('initializeBackendRunSession pending first input', () => {
         },
       },
       {
-        setupOfflineReconnectionFn: () => ({
-          session,
-          reconnectionHandle: null,
-          isOffline: false,
-        }),
         primeAgentStateForUiFn: () => {},
         reportSessionToDaemonIfRunningFn: async () => {},
         persistTerminalAttachmentInfoIfNeededFn: async () => {},
@@ -244,6 +237,15 @@ describe('initializeBackendRunSession pending first input', () => {
       text: 'Commit once after runtime readiness.',
       localId: 'spawn-first-turn:daemon-runtime-ready-once',
       meta: { source: 'ui', sentFrom: 'cli' },
+      inputAdmission: {
+        provenance: { v: 1, kind: 'host', producer: 'agentRuntimeFirstInput' },
+        request: {
+          v: 1,
+          producer: 'agentRuntimeFirstInput',
+          caller: { kind: 'host' },
+          permission: {},
+        },
+      },
     });
     expect(process.env.HAPPIER_DAEMON_PENDING_FIRST_INPUT).toBeUndefined();
   });
@@ -280,11 +282,6 @@ describe('initializeBackendRunSession pending first input', () => {
         },
       },
       {
-        setupOfflineReconnectionFn: () => ({
-          session,
-          reconnectionHandle: null,
-          isOffline: false,
-        }),
         primeAgentStateForUiFn,
         reportSessionToDaemonIfRunningFn: async () => {
           throw new Error('daemon readiness failed');
@@ -329,7 +326,6 @@ describe('initializeBackendRunSession pending first input', () => {
         },
       },
       {
-        setupOfflineReconnectionFn: () => ({ session, reconnectionHandle: null, isOffline: false }),
         primeAgentStateForUiFn: () => {},
         reportSessionToDaemonIfRunningFn,
         persistTerminalAttachmentInfoIfNeededFn: async () => {},

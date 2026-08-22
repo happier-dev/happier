@@ -39,8 +39,9 @@ function createMessageCapturingSession(sessionId: string): Readonly<{
     const session = createMutableApiSessionClientFixture({
         overrides: {
             sessionId,
-            sendAgentMessage(_provider, body) {
+            async enqueueAgentMessageCommitted(_provider, body) {
                 messages.push(body);
+                return { persisted: true, delivered: false };
             },
         },
     });

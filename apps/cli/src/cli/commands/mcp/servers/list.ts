@@ -28,10 +28,10 @@ export async function cmdMcpServersList(
   deps: McpCommandDeps,
   opts: Readonly<{ json: boolean }>,
 ): Promise<void> {
-  const credentials = await deps.readCredentials();
+  const credentials = await deps.readStoredCredentials();
   if (!credentials) {
     if (opts.json) {
-      printJsonEnvelope({ ok: false, kind: 'mcp_servers_list', error: { code: 'not_authenticated' } }, { exitCode: 1 });
+      await printJsonEnvelope({ ok: false, kind: 'mcp_servers_list', error: { code: 'not_authenticated' } }, { exitCode: 1 });
       return;
     }
     console.error(chalk.red('Error:'), 'Not authenticated. Run "happier auth login" first.');
@@ -43,7 +43,7 @@ export async function cmdMcpServersList(
   const mcpSettings = readMcpServersSettingsFromAccountSettings(ctx.settings);
 
   if (opts.json) {
-    printJsonEnvelope({ ok: true, kind: 'mcp_servers_list', data: summarizeMcpServersForJson(mcpSettings) });
+    await printJsonEnvelope({ ok: true, kind: 'mcp_servers_list', data: summarizeMcpServersForJson(mcpSettings) });
     return;
   }
 

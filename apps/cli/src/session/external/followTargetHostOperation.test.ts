@@ -3,7 +3,10 @@ import { describe, expect, it, vi } from 'vitest';
 import type { PluginAgentContributionV2 } from '@happier-dev/protocol';
 
 import { createExternalSessionFollowTargetHostOperation } from './followTargetHostOperation';
-import type { PluginExternalSessionsProviderOps } from './pluginExternalSessionsAdapter';
+import type {
+    ExternalSessionFollowProviderOps,
+    ExternalSessionProviderOps,
+} from './providerOps';
 
 const contribution = {
     id: 'codex',
@@ -17,6 +20,7 @@ const contribution = {
         externalSession: {
             sources: [{
                 sourceKind: 'codexHome',
+                terminalFollow: { userRowClassification: 'explicitV1' },
                 schema: {
                     fields: [
                         { name: 'kind', kind: 'literal', value: 'codexHome' },
@@ -66,10 +70,27 @@ function request(overrides: Readonly<Record<string, unknown>> = {}) {
     };
 }
 
+function deferred<T>() {
+    let resolve!: (value: T) => void;
+    let reject!: (error: unknown) => void;
+    const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+        resolve = resolvePromise;
+        reject = rejectPromise;
+    });
+    return { promise, resolve, reject };
+}
+
+function isAbortedSignal(signal: AbortSignal | null): boolean {
+    return signal?.aborted === true;
+}
+
 describe('external-session provider-session follow target host operation', () => {
     it('resolves one exact target from the bound daemon generation without listing candidates', async () => {
         const listCandidates = vi.fn();
-        const providerOps: PluginExternalSessionsProviderOps = {
+        const providerOps: ExternalSessionFollowProviderOps & Pick<
+            ExternalSessionProviderOps,
+            'listCandidates'
+        > = {
             validateSource: async ({ source }) => ({ ok: true, source }),
             resolveLinkIdentity: async ({ source, remoteSessionId }) => ({
                 source: {
@@ -108,6 +129,8 @@ describe('external-session provider-session follow target host operation', () =>
                 }),
                 readAccount: async () => ({ connectedServicesV2: [] }),
                 readAccountRevision: () => accountRevision,
+                readAgentSettings: () => ({}),
+                readActiveServerId: () => 'cloud',
             },
         });
 
@@ -133,5 +156,158 @@ describe('external-session provider-session follow target host operation', () =>
             code: 'plugin_generation_retired',
         });
         expect(listCandidates).not.toHaveBeenCalled();
+    });
+
+    it('bounds the account read within the inherited terminal admission deadline', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date(10_000));
+        const pendingAccount = deferred<{
+            connectedServicesV2: [];
+        }>();
+        const release = vi.fn(async () => undefined);
+        let accountSignal: AbortSignal | null = null;
+        const resolveLinkIdentity = vi.fn(async ({ source, remoteSessionId }) => ({
+            source,
+            remoteSessionId,
+            linkData: {},
+        }));
+        const providerOps: ExternalSessionFollowProviderOps = {
+            validateSource: async ({ source }) => ({ ok: true, source }),
+            resolveLinkIdentity,
+            pageTranscript: async () => ({
+                items: [],
+                nextCursor: null,
+                tailCursor: null,
+                hasMore: false,
+                truncated: false,
+            }),
+            readAfterTranscript: async () => ({ outcome: 'already_current' }),
+        };
+        const operation = createExternalSessionFollowTargetHostOperation({
+            machineId: 'machine-1',
+            dependencies: {
+                acquireRuntimeContext: async () => ({
+                    pluginId: 'happier.codex',
+                    agentId: 'codex',
+                    generationId: 'generation-1',
+                    agent,
+                    providerOps,
+                    retirementSignal: new AbortController().signal,
+                    isCurrent: () => true,
+                    release,
+                }),
+                readAccount: async (_agent, signal) => {
+                    accountSignal = signal;
+                    return await pendingAccount.promise;
+                },
+                readAccountRevision: () => 'account-1',
+                readAgentSettings: () => ({}),
+                readActiveServerId: () => 'cloud',
+            },
+        });
+        let outcome: Awaited<ReturnType<typeof operation.execute>> | null = null;
+        const execution = operation.execute(request({
+            admissionDeadlineAtMs: 10_001,
+        })).then((value) => {
+            outcome = value;
+            return value;
+        });
+
+        try {
+            await vi.advanceTimersByTimeAsync(0);
+            expect(accountSignal).toBeInstanceOf(AbortSignal);
+
+            await vi.advanceTimersByTimeAsync(1);
+
+            expect(outcome).toEqual({
+                status: 'unavailable',
+                code: 'plugin_operation_deadline_exceeded',
+            });
+            expect(isAbortedSignal(accountSignal)).toBe(true);
+            expect(resolveLinkIdentity).not.toHaveBeenCalled();
+        } finally {
+            pendingAccount.resolve({ connectedServicesV2: [] });
+            await vi.advanceTimersByTimeAsync(0);
+            await execution;
+            vi.useRealTimers();
+        }
+
+        expect(release).toHaveBeenCalledOnce();
+    });
+
+    it('releases a runtime context that arrives after the terminal admission deadline', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date(10_000));
+        const pendingContext = deferred<{
+            pluginId: string;
+            agentId: string;
+            generationId: string;
+            agent: typeof agent;
+            providerOps: ExternalSessionFollowProviderOps;
+            retirementSignal: AbortSignal;
+            isCurrent(): boolean;
+            release(): Promise<void>;
+        } | null>();
+        const release = vi.fn(async () => undefined);
+        const providerOps: ExternalSessionFollowProviderOps = {
+            validateSource: async ({ source }) => ({ ok: true, source }),
+            resolveLinkIdentity: async ({ source, remoteSessionId }) => ({
+                source,
+                remoteSessionId,
+                linkData: {},
+            }),
+            pageTranscript: async () => ({
+                items: [],
+                nextCursor: null,
+                tailCursor: null,
+                hasMore: false,
+                truncated: false,
+            }),
+            readAfterTranscript: async () => ({ outcome: 'already_current' }),
+        };
+        const operation = createExternalSessionFollowTargetHostOperation({
+            machineId: 'machine-1',
+            dependencies: {
+                acquireRuntimeContext: async () => await pendingContext.promise,
+                readAccount: async () => ({ connectedServicesV2: [] }),
+                readAccountRevision: () => 'account-1',
+                readAgentSettings: () => ({}),
+                readActiveServerId: () => 'cloud',
+            },
+        });
+        let outcome: Awaited<ReturnType<typeof operation.execute>> | null = null;
+        const execution = operation.execute(request({
+            admissionDeadlineAtMs: 10_001,
+        })).then((value) => {
+            outcome = value;
+            return value;
+        });
+
+        try {
+            await vi.advanceTimersByTimeAsync(0);
+            await vi.advanceTimersByTimeAsync(1);
+
+            expect(outcome).toEqual({
+                status: 'unavailable',
+                code: 'plugin_operation_deadline_exceeded',
+            });
+
+            pendingContext.resolve({
+                pluginId: 'happier.codex',
+                agentId: 'codex',
+                generationId: 'generation-1',
+                agent,
+                providerOps,
+                retirementSignal: new AbortController().signal,
+                isCurrent: () => true,
+                release,
+            });
+            await vi.advanceTimersByTimeAsync(0);
+            await execution;
+        } finally {
+            vi.useRealTimers();
+        }
+
+        expect(release).toHaveBeenCalledOnce();
     });
 });

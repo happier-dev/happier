@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import type { JsonValue, SessionTurnV1 } from '@happier-dev/protocol';
 
 import { resolveProviderCheckpointForFork } from './resolveProviderCheckpointForFork';
 
@@ -6,7 +7,7 @@ function turn(
   turnId: string,
   startSeqInclusive: number,
   endSeqInclusive: number,
-  providerCheckpoint?: unknown,
+  providerCheckpoint?: JsonValue,
 ) {
   return {
     turnId,
@@ -25,7 +26,7 @@ function turn(
       ...(providerCheckpoint === undefined ? {} : { providerCheckpoint }),
       updatedAt: endSeqInclusive,
     },
-  };
+  } satisfies SessionTurnV1;
 }
 
 describe('resolveProviderCheckpointForFork', () => {

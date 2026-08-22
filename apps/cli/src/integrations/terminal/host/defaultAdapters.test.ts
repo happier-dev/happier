@@ -51,11 +51,17 @@ describe('default terminal host adapter inventory', () => {
   it('uses the Windows console adapter and skips unrequested zellij discovery on Windows', async () => {
     const windowsConsole = adapter('windows_console');
     const resolveZellijRuntimeBinary = vi.fn(async () => '/managed/zellij.exe');
+    const createPtyTerminalHostAdapter = vi.fn(() => windowsConsole);
+    const promptSubmitVerification = {
+      shouldVerifyAfterSubmit: vi.fn(() => true),
+      verifyAfterSubmit: vi.fn(() => false),
+    };
 
     const result = await createDefaultTerminalHostAdapterInventory({
       happyHomeDir: 'C:\\happier',
       platform: 'win32',
       preference: 'auto',
+      promptSubmitVerification,
       dependencies: {
         isTmuxAvailable: vi.fn(async () => true),
         resolveZellijRuntimeBinary,
@@ -63,7 +69,7 @@ describe('default terminal host adapter inventory', () => {
         resolveZellijSocketDir: vi.fn(() => 'C:\\happier\\zellij'),
         createTmuxTerminalHostAdapter: vi.fn(() => adapter('tmux')),
         createZellijTerminalHostAdapter: vi.fn(() => adapter('zellij')),
-        createPtyTerminalHostAdapter: vi.fn(() => windowsConsole),
+        createPtyTerminalHostAdapter,
       },
     });
 
@@ -72,6 +78,7 @@ describe('default terminal host adapter inventory', () => {
       tmuxAvailable: false,
       zellijAvailable: false,
     });
+    expect(createPtyTerminalHostAdapter).toHaveBeenCalledWith({ promptSubmitVerification });
     expect(resolveZellijRuntimeBinary).not.toHaveBeenCalled();
   });
 });

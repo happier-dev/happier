@@ -6,11 +6,16 @@
  */
 
 import chalk from 'chalk'
+import { redactBugReportSensitiveText } from '@happier-dev/protocol'
 import { configuration } from '../configuration'
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
+import { closeSync, existsSync, openSync, readFileSync, readSync, readdirSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, join } from 'node:path'
 import { inspect } from 'node:util'
+import {
+  isPluginInvocationLogRecord,
+  type PluginInvocationLogRecord,
+} from '@/plugins/runtime/invocation/services/logger'
 import { writeConsoleErrorBestEffort, writeConsoleLogBestEffort } from '../utils/writeConsoleBestEffort'
 import { BufferedFileAppender } from './logFileAppender'
 import { isFileLogLevelEnabled, resolveFileLogLevel, type FileLogLevel } from './logFileLevel'
@@ -24,6 +29,141 @@ import {
 } from '@/utils/logs/logRetention'
 // Note: readDaemonState is imported lazily inside listDaemonLogFiles() to avoid
 // circular dependency: logger.ts ↔ persistence.ts
+
+const DEFAULT_PLUGIN_INVOCATION_LOG_READ_LIMIT = 100
+const MAX_PLUGIN_INVOCATION_LOG_READ_LIMIT = 500
+const MAX_PLUGIN_INVOCATION_LOG_READ_BYTES = 1024 * 1024
+const MAX_FATAL_ERROR_LOG_CHARS = 50_000
+
+function readStringPropertyBestEffort(value: object, key: 'message' | 'name' | 'stack'): string | null {
+  try {
+    const candidate = (value as Record<string, unknown>)[key]
+    return typeof candidate === 'string' && candidate.trim() ? candidate : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * An Error carries no enumerable own properties, so `JSON.stringify` renders it
+ * as `{}`. A top-level Error argument was already unwrapped by hand at each
+ * serialization site, but the shape these are actually logged in — an Error
+ * CARRIED by an object, `{ pid, error }` — reached the log file as
+ * `{"pid":95632,"error":{}}`, which is a failure report with the failure removed.
+ * Errors are therefore described here, at the boundary, once, at any depth.
+ */
+function isErrorLikeForLog(value: unknown): value is object {
+  if (value instanceof Error) return true
+  if (!value || typeof value !== 'object') return false
+  try {
+    // Cross-realm Errors fail `instanceof`, so shape is the only usable test.
+    return 'stack' in value && 'message' in value
+  } catch {
+    return false
+  }
+}
+
+function readUnknownPropertyBestEffort(value: object, key: 'code' | 'cause'): unknown {
+  try {
+    return (value as Record<string, unknown>)[key]
+  } catch {
+    return undefined
+  }
+}
+
+function describeErrorForLog(error: object): Record<string, unknown> {
+  const name = readStringPropertyBestEffort(error, 'name')
+  const message = readStringPropertyBestEffort(error, 'message')
+  // `stack` normally opens with `name: message`, but a cross-realm or trimmed
+  // Error may carry only one of the three, so each is emitted on its own.
+  const stack = readStringPropertyBestEffort(error, 'stack')
+  const code = readUnknownPropertyBestEffort(error, 'code')
+  const cause = readUnknownPropertyBestEffort(error, 'cause')
+  return {
+    ...(name ? { name } : {}),
+    ...(message ? { message } : {}),
+    ...(stack ? { stack } : {}),
+    ...(typeof code === 'string' || typeof code === 'number' ? { code } : {}),
+    ...(cause === undefined ? {} : { cause }),
+  }
+}
+
+/**
+ * One replacer per `JSON.stringify` call: the seen-set has to be scoped to the
+ * call, or a cause chain that loops back would be dropped from later logs.
+ */
+function createErrorAwareLogReplacer(): (key: string, value: unknown) => unknown {
+  const seen = new WeakSet<object>()
+  return (_key, value) => {
+    if (!isErrorLikeForLog(value)) return value
+    if (seen.has(value)) return '[Circular error]'
+    seen.add(value)
+    return describeErrorForLog(value)
+  }
+}
+
+function formatFatalErrorForLog(error: unknown): string {
+  try {
+    let detail: string
+    if (error && typeof error === 'object') {
+      const stack = readStringPropertyBestEffort(error, 'stack')
+      const message = readStringPropertyBestEffort(error, 'message')
+      const name = readStringPropertyBestEffort(error, 'name')
+      detail = stack ?? (message ? `${name ?? 'Error'}: ${message}` : 'Unknown error')
+    } else if (typeof error === 'string') {
+      detail = error
+    } else {
+      try {
+        detail = String(error ?? 'Unknown error')
+      } catch {
+        detail = 'Unknown error'
+      }
+    }
+
+    const redacted = redactBugReportSensitiveText(detail)
+    return redacted.length > MAX_FATAL_ERROR_LOG_CHARS
+      ? `${redacted.slice(0, MAX_FATAL_ERROR_LOG_CHARS)}\n…[truncated]`
+      : redacted
+  } catch {
+    return 'Unknown error'
+  }
+}
+
+export type PluginInvocationLogQuery = Readonly<{
+  pluginId: string
+  generation?: string
+  correlationId?: string
+  cursor?: number
+  limit?: number
+}>
+
+export type PluginInvocationLogReadResult = Readonly<{
+  kind: 'available'
+  records: readonly PluginInvocationLogRecord[]
+  cursor: number
+  hasMore: boolean
+}> | Readonly<{
+  kind: 'unavailable'
+}>
+
+function normalizePluginInvocationLogReadLimit(value: number | undefined): number {
+  if (value === undefined || !Number.isSafeInteger(value)) return DEFAULT_PLUGIN_INVOCATION_LOG_READ_LIMIT
+  return Math.min(MAX_PLUGIN_INVOCATION_LOG_READ_LIMIT, Math.max(1, value))
+}
+
+function normalizePluginInvocationLogReadCursor(value: number | undefined): number {
+  if (value === undefined || !Number.isSafeInteger(value) || value < 0) return 0
+  return value
+}
+
+function recordMatchesPluginInvocationLogQuery(
+  record: PluginInvocationLogRecord,
+  query: PluginInvocationLogQuery,
+): boolean {
+  if (record.context.plugin.id !== query.pluginId) return false
+  if (query.generation !== undefined && record.context.generation !== query.generation) return false
+  return query.correlationId === undefined || record.context.correlationId === query.correlationId
+}
 
 /**
  * Consistent date/time formatting functions
@@ -80,13 +220,17 @@ async function pruneCurrentProcessLogsBestEffort(currentLogPath: string): Promis
     return
   }
 
+  const keepCount = resolveSessionLogKeepCount()
   await pruneLogsByCount({
     dir: logsDir,
     suffix: LOG_FILE_SUFFIX,
     excludeSuffix: DAEMON_LOG_SUFFIX,
-    keepCount: resolveSessionLogKeepCount(),
+    keepCount,
     keepPath: currentLogPath,
-    keepPaths: resolveCrashedSessionLogKeepPaths(logsDir),
+    keepPaths: [
+      ...resolveCrashedSessionLogKeepPaths(logsDir),
+      ...resolveLiveSessionLogKeepPaths(logsDir, keepCount),
+    ],
   })
 }
 
@@ -142,6 +286,44 @@ function resolveCrashedSessionLogKeepPaths(logsDir: string): string[] {
         const match = /-pid-(\d+)\.log$/.exec(file)
         if (!match) return false
         return crashedPids.has(Number(match[1]))
+      })
+      .map((file) => join(logsDir, file))
+  } catch {
+    return []
+  }
+}
+
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (error) {
+    return Boolean(
+      error
+      && typeof error === 'object'
+      && 'code' in error
+      && error.code === 'EPERM',
+    )
+  }
+}
+
+function resolveLiveSessionLogKeepPaths(logsDir: string, keepCount: number): string[] {
+  try {
+    const livenessByPid = new Map<number, boolean>()
+    return readdirSync(logsDir)
+      .filter((file) => file.endsWith(LOG_FILE_SUFFIX) && !file.endsWith(DAEMON_LOG_SUFFIX))
+      .sort((a, b) => a < b ? 1 : a > b ? -1 : 0)
+      .slice(Math.max(0, keepCount))
+      .filter((file) => {
+        const match = /-pid-(\d+)\.log$/.exec(file)
+        if (!match) return false
+        const pid = Number(match[1])
+        if (!Number.isSafeInteger(pid) || pid <= 0) return false
+        const cached = livenessByPid.get(pid)
+        if (cached !== undefined) return cached
+        const alive = isProcessAlive(pid)
+        livenessByPid.set(pid, alive)
+        return alive
       })
       .map((file) => join(logsDir, file))
   } catch {
@@ -234,6 +416,16 @@ export class Logger {
         return truncatedArray
       }
       
+      if (isErrorLikeForLog(obj)) {
+        if (visited.has(obj)) return '[Circular]'
+        visited.add(obj)
+        const described: Record<string, unknown> = {}
+        for (const [key, value] of Object.entries(describeErrorForLog(obj))) {
+          described[key] = truncateStrings(value)
+        }
+        return described
+      }
+
       if (obj && typeof obj === 'object') {
         if (visited.has(obj)) return '[Circular]'
         visited.add(obj)
@@ -266,6 +458,11 @@ export class Logger {
     if (!this.infoFileEnabled) return
     this.logToFile(`[${this.localTimezoneTimestamp()}]`, message, ...args)
   }
+
+  infoFile(message: string, ...args: unknown[]): void {
+    if (!this.infoFileEnabled) return
+    this.logToFile(`[${this.localTimezoneTimestamp()}]`, message, ...args)
+  }
   
   infoDeveloper(message: string, ...args: unknown[]): void {
     // Always write to debug
@@ -281,6 +478,32 @@ export class Logger {
     this.logToConsole('warn', '', message, ...args)
     if (!this.warnFileEnabled) return
     this.logToFile(`[${this.localTimezoneTimestamp()}]`, `[WARN] ${message}`, ...args)
+  }
+
+  /**
+   * Persist an unhandled CLI failure before a detached runner exits. This deliberately
+   * records only sanitized Error text: enumerable fields can contain argv or environment
+   * snapshots and are never serialized. The write and synchronous drain are best-effort.
+   */
+  fatal(error: unknown): void {
+    try {
+      const detail = formatFatalErrorForLog(error)
+      this.fileAppender.append(
+        `[${this.localTimezoneTimestamp()}] [FATAL] Unhandled CLI error ${detail}\n`,
+      )
+    } catch {
+      try {
+        this.fileAppender.append('[FATAL] Unhandled CLI error Unknown error\n')
+      } catch {
+        // Fatal reporting must never replace or mask the originating failure.
+      }
+    } finally {
+      try {
+        this.flushSync()
+      } catch {
+        // Keep fatal reporting best-effort even if the logger implementation evolves.
+      }
+    }
   }
   
   getLogPath(): string {
@@ -298,6 +521,85 @@ export class Logger {
       this.pluginInvocationFileAppender.append(`${JSON.stringify(record)}\n`)
     } catch {
       // Structured plugin diagnostics must never interfere with plugin work.
+    }
+  }
+
+  /**
+   * Reads the active daemon's structured plugin records from the canonical log
+   * file. The byte cursor advances across complete newline-delimited records.
+   * If a line exceeds the bounded read window, the cursor advances through its
+   * fragments and discards that line until its delimiter, so a caller can poll
+   * this projection without a second store, file watcher, or retry spin.
+   */
+  readPluginInvocationLogRecords(query: PluginInvocationLogQuery): PluginInvocationLogReadResult {
+    const limit = normalizePluginInvocationLogReadLimit(query.limit)
+    const requestedCursor = normalizePluginInvocationLogReadCursor(query.cursor)
+    try {
+      this.pluginInvocationFileAppender.flushSync()
+      const stats = statSync(this.logFilePath)
+      if (!stats.isFile()) return { kind: 'unavailable' }
+      const fileSize = Math.max(0, Math.trunc(stats.size))
+      const startOffset = requestedCursor > fileSize ? 0 : requestedCursor
+      if (startOffset === fileSize) {
+        return {
+          kind: 'available',
+          records: Object.freeze([]),
+          cursor: startOffset,
+          hasMore: false,
+        }
+      }
+
+      const readLength = Math.min(MAX_PLUGIN_INVOCATION_LOG_READ_BYTES, fileSize - startOffset)
+      const buffer = Buffer.allocUnsafe(readLength)
+      const descriptor = openSync(this.logFilePath, 'r')
+      try {
+        const bytesRead = readSync(descriptor, buffer, 0, buffer.length, startOffset)
+        const records: PluginInvocationLogRecord[] = []
+        let index = 0
+        let cursor = startOffset
+        const precedingByte = Buffer.allocUnsafe(1)
+        let discardLeadingFragment = startOffset > 0
+          && (readSync(descriptor, precedingByte, 0, 1, startOffset - 1) !== 1 || precedingByte[0] !== 0x0A)
+        while (index < bytesRead) {
+          const newlineIndex = buffer.indexOf(0x0A, index)
+          if (newlineIndex < 0 || newlineIndex >= bytesRead) {
+            // A full bounded window without a newline is an oversized generic
+            // line. Advance now; the next page recognizes its mid-line cursor
+            // and discards the remaining fragment before parsing another line.
+            if (discardLeadingFragment || bytesRead === MAX_PLUGIN_INVOCATION_LOG_READ_BYTES) {
+              cursor = startOffset + bytesRead
+            }
+            break
+          }
+          const line = buffer.subarray(index, newlineIndex)
+          index = newlineIndex + 1
+          cursor = startOffset + index
+          if (discardLeadingFragment) {
+            discardLeadingFragment = false
+            continue
+          }
+          if (line.length === 0) continue
+          try {
+            const parsed: unknown = JSON.parse(line.toString('utf8'))
+            if (isPluginInvocationLogRecord(parsed) && recordMatchesPluginInvocationLogQuery(parsed, query)) {
+              records.push(parsed)
+              if (records.length >= limit) break
+            }
+          } catch {
+            // Generic daemon log lines and interrupted writes are not records.
+          }
+        }
+        return {
+          kind: 'available',
+          records: Object.freeze(records),
+          cursor,
+          hasMore: cursor < fileSize,
+        }
+      } finally {
+        closeSync(descriptor)
+      }
+    } catch {
+      return { kind: 'unavailable' }
     }
   }
   
@@ -346,7 +648,7 @@ export class Logger {
             if (typeof a === 'object') {
               // Check for Error-like objects (cross-realm Errors where instanceof fails)
               if (a && 'stack' in (a as object)) return (a as Error).stack || String(a)
-              try { return JSON.stringify(a, null, 2) } catch { return String(a) }
+              try { return JSON.stringify(a, createErrorAwareLogReplacer(), 2) } catch { return String(a) }
             }
             return String(a)
           }).join(' ')}`,
@@ -364,9 +666,9 @@ export class Logger {
       if (typeof arg === 'string') return arg
       if (arg instanceof Error) return arg.stack || arg.message
       try {
-        return JSON.stringify(arg)
+        return JSON.stringify(arg, createErrorAwareLogReplacer())
       } catch {
-        // Circular references, cross-realm Error objects, BigInt, etc.
+        // Circular references, BigInt, exotic getters, etc.
         if (arg && typeof arg === 'object' && 'stack' in arg) return (arg as Error).stack || String(arg)
         return String(arg)
       }

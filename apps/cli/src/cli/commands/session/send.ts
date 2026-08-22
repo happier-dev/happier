@@ -3,9 +3,9 @@ import chalk from 'chalk';
 import { parsePermissionIntentAlias } from '@happier-dev/agents';
 import type { PermissionIntent } from '@happier-dev/agents';
 
-import type { Credentials } from '@/persistence';
-import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
-import { hasFlag, readIntFlagValue, readFlagValue, readFlagValueUnlessFlagToken } from '@/cli/commands/shared/argvFlags';
+import type { StoredCredentials } from '@/persistence';
+import { wantsJson, printJsonEnvelope, writeJsonStdout } from '@/cli/output/jsonEnvelope';
+import { hasFlag, readCommandPositionals, readIntFlagValue, readFlagValue, readFlagValueUnlessFlagToken } from '@/cli/commands/shared/argvFlags';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 import {
   normalizeActionExecuteResult,
@@ -43,13 +43,13 @@ function readSessionSendSuccessResult(value: unknown): Readonly<{
 
 export async function cmdSessionSend(
   argv: string[],
-  deps: Readonly<{ readCredentialsFn: () => Promise<Credentials | null> }>,
+  deps: Readonly<{ readCredentialsFn: () => Promise<StoredCredentials | null> }>,
 ): Promise<void> {
   const json = wantsJson(argv);
-  const idOrPrefixRaw = String(argv[1] ?? '').trim();
-  const idOrPrefix = idOrPrefixRaw && !idOrPrefixRaw.startsWith('-') ? idOrPrefixRaw : '';
-  const positionalMessageRaw = String(argv[2] ?? '').trim();
-  const positionalMessage = positionalMessageRaw && !positionalMessageRaw.startsWith('-') ? positionalMessageRaw : '';
+  const [idOrPrefix = '', positionalMessage = ''] = readCommandPositionals(argv, {
+    startIndex: 1,
+    valueFlags: ['--message', '--prompt', '--permission-mode', '--model', '--timeout'],
+  });
   const hasMessageFlag = hasFlag(argv, '--message');
   const hasPromptFlag = hasFlag(argv, '--prompt');
   const messageFlag = readFlagValueUnlessFlagToken(argv, '--message');
@@ -66,7 +66,7 @@ export async function cmdSessionSend(
   }
   const message = positionalMessage || messageFlag || promptFlag || '';
   const wait = hasFlag(argv, '--wait');
-  const timeoutSecondsRaw = readIntFlagValue(argv, '--timeout');
+  const timeoutSecondsRaw = readIntFlagValue(argv, '--timeout', { min: 1 });
   const permissionModeFlag = (readFlagValue(argv, '--permission-mode') ?? '').trim();
   const modelFlagRaw = readFlagValue(argv, '--model');
   const hasModelFlag = modelFlagRaw !== null;
@@ -85,7 +85,7 @@ export async function cmdSessionSend(
   const credentials = await deps.readCredentialsFn();
   if (!credentials) {
     if (json) {
-      printJsonEnvelope({ ok: false, kind: 'session_send', error: { code: 'not_authenticated' } });
+      await printJsonEnvelope({ ok: false, kind: 'session_send', error: { code: 'not_authenticated' } });
       return;
     }
     console.error(chalk.red('Error:'), 'Not authenticated. Run "happier auth login" first.');
@@ -121,7 +121,7 @@ export async function cmdSessionSend(
   const normalized = normalizeActionExecuteResult(actionRes as any);
   if (!normalized.ok) {
     if (json) {
-      printJsonEnvelope({
+      await printJsonEnvelope({
         ok: false,
         kind: 'session_send',
         error: {
@@ -136,13 +136,13 @@ export async function cmdSessionSend(
   }
 
   const result = unwrapCliActionSuccessPayload(normalized.data);
-  if (tryHandleApprovalRequestCreated({ envelopeKind: 'session_send', json, result })) {
+  if (await tryHandleApprovalRequestCreated({ envelopeKind: 'session_send', json, result })) {
     return;
   }
   const sendResult = readSessionSendSuccessResult(result);
 
   if (json) {
-    printJsonEnvelope({
+    await printJsonEnvelope({
       ok: true,
       kind: 'session_send',
       data: {
@@ -155,5 +155,5 @@ export async function cmdSessionSend(
   }
 
   console.log(chalk.green('✓'), 'message sent');
-  console.log(JSON.stringify({ sessionId: sendResult.sessionId, localId: sendResult.localId }, null, 2));
+  await writeJsonStdout({ sessionId: sendResult.sessionId, localId: sendResult.localId }, { pretty: true });
 }

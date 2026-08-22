@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -73,6 +73,38 @@ describe('resolveWorkspaceFileDownloadSource', () => {
             expect(result.source.filePath.endsWith('/hello.txt')).toBe(true);
             expect(result.source.filePath).toContain('happier-transfer-download-source-');
         }
+    });
+
+    it('permits an exact transient media file outside restricted roots without permitting its sibling', async () => {
+        const workspace = createWorkspace();
+        const providerDirectory = createWorkspace();
+        const grantedPath = join(providerDirectory, 'provider-owned.png');
+        const siblingPath = join(providerDirectory, 'sibling-secret.png');
+        writeFileSync(grantedPath, 'media', 'utf8');
+        writeFileSync(siblingPath, 'secret', 'utf8');
+        const grantedRealPath = realpathSync(grantedPath);
+
+        await expect(
+            resolveWorkspaceFileDownloadSource({
+                workingDirectory: workspace,
+                path: grantedPath,
+                asZip: false,
+                accessPolicy: { kind: 'restrictedRoots', roots: [workspace] },
+                additionalAllowedReadFiles: [{ path: grantedPath, realPath: grantedRealPath }],
+            }),
+        ).resolves.toMatchObject({
+            success: true,
+            source: { filePath: grantedPath },
+        });
+        await expect(
+            resolveWorkspaceFileDownloadSource({
+                workingDirectory: workspace,
+                path: siblingPath,
+                asZip: false,
+                accessPolicy: { kind: 'restrictedRoots', roots: [workspace] },
+                additionalAllowedReadFiles: [{ path: grantedPath, realPath: grantedRealPath }],
+            }),
+        ).resolves.toMatchObject({ success: false });
     });
 
     it('rejects directory downloads unless zip mode is requested', async () => {

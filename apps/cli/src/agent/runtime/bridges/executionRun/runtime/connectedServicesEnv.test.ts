@@ -14,6 +14,7 @@ vi.mock('@/ui/logger', () => ({
 
 import {
     ExecutionRunConnectedServicesError,
+    resolveExecutionRunConnectedServicesSelection,
     resolveExecutionRunConnectedServicesEnv,
 } from './connectedServicesEnv';
 
@@ -73,6 +74,44 @@ describe('resolveExecutionRunConnectedServicesEnv', () => {
         loggerInfoMock.mockClear();
         loggerWarnMock.mockClear();
         loggerDebugMock.mockClear();
+    });
+
+    it('resolves a session default before materialization so Provider authorization can suppress competing native auth', async () => {
+        const deps = createDeps({
+            resolveSessionSpawnDefaults: vi.fn(async () => ({
+                connectedServices: {
+                    v: 1,
+                    bindingsByServiceId: {
+                        'openai-codex': {
+                            source: 'connected',
+                            selection: 'profile',
+                            profileId: 'default_profile',
+                        },
+                    },
+                },
+                connectedServicesUpdatedAt: 123,
+            })),
+        });
+
+        await expect(resolveExecutionRunConnectedServicesSelection({
+            backendId: 'codex',
+            backendSourceKind: 'built_in',
+            deps,
+        })).resolves.toEqual({
+            bindings: {
+                v: 1,
+                bindingsByServiceId: {
+                    'openai-codex': {
+                        source: 'connected',
+                        selection: 'profile',
+                        profileId: 'default_profile',
+                    },
+                },
+            },
+            source: 'session_default',
+            hadCredentials: true,
+        });
+        expect(deps.requestMaterialization).not.toHaveBeenCalled();
     });
 
     it('materializes an explicit connected selection through the daemon bridge', async () => {
@@ -143,7 +182,7 @@ describe('resolveExecutionRunConnectedServicesEnv', () => {
                 connectedServices: {
                     v: 1,
                     bindingsByServiceId: {
-                        anthropic: { source: 'connected', selection: 'group', groupId: 'team' },
+                        openai: { source: 'connected', selection: 'group', groupId: 'team' },
                     },
                 },
                 connectedServicesUpdatedAt: 1,
@@ -160,7 +199,7 @@ describe('resolveExecutionRunConnectedServicesEnv', () => {
                     'openai-codex': { source: 'connected', selection: 'profile', profileId: 'explicit_pin' },
                 },
             },
-            connectedServicesDefaultServiceIds: ['anthropic'],
+            connectedServicesDefaultServiceIds: ['openai'],
             cwd: '/tmp/project',
             deps,
         });
@@ -174,7 +213,7 @@ describe('resolveExecutionRunConnectedServicesEnv', () => {
             selection: 'profile',
             profileId: 'explicit_pin',
         });
-        expect(requested.connectedServices.bindingsByServiceId.anthropic).toEqual({
+        expect(requested.connectedServices.bindingsByServiceId.openai).toEqual({
             source: 'connected',
             selection: 'group',
             groupId: 'team',

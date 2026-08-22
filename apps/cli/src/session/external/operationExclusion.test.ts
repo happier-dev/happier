@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { renameSync, rmSync } from 'node:fs';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { getEventListeners } from 'node:events';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -502,6 +502,233 @@ describe('external session operation exclusion', () => {
             expect(inspectOwnerProcess).toHaveBeenCalledWith(predecessorProcess);
         },
     );
+
+    it('inspects the exact live repair claim and fails closed for a different or malformed claim', async () => {
+        let nowMs = 5_000;
+        const { activeServerDir, owner } = await createOwner(
+            'daemon:repair-inspection',
+            () => nowMs,
+        );
+        const acquired = await owner.acquire(materializeRequest());
+        if (acquired.status !== 'acquired') throw new Error('expected acquisition');
+        const repairEffect = vi.fn(async () => 'repaired' as const);
+
+        await expect(owner.inspectPassiveRepairClaim({
+            sessionId: acquired.claim.record.request.sessionId,
+            operationClaimId: acquired.claim.record.claimId,
+        })).resolves.toBe('active');
+        await expect(owner.withPassiveRepairClaimBarrier({
+            sessionId: acquired.claim.record.request.sessionId,
+            operationClaimId: acquired.claim.record.claimId,
+        }, repairEffect)).resolves.toEqual({ status: 'active' });
+        expect(repairEffect).not.toHaveBeenCalled();
+        await expect(owner.inspectPassiveRepairClaim({
+            sessionId: acquired.claim.record.request.sessionId,
+            operationClaimId: 'different-live-claim',
+        })).rejects.toThrow(
+            'external_session_operation_repair_claim_conflict',
+        );
+
+        nowMs = acquired.claim.record.expiresAtMs + 1;
+        await expect(owner.inspectPassiveRepairClaim({
+            sessionId: acquired.claim.record.request.sessionId,
+            operationClaimId: acquired.claim.record.claimId,
+        })).resolves.toBe('inactive');
+        await expect(owner.withPassiveRepairClaimBarrier({
+            sessionId: acquired.claim.record.request.sessionId,
+            operationClaimId: acquired.claim.record.claimId,
+        }, repairEffect)).resolves.toEqual({
+            status: 'executed',
+            value: 'repaired',
+        });
+        expect(repairEffect).toHaveBeenCalledOnce();
+        await acquired.claim.release();
+
+        const sessionKey = createHash('sha256')
+            .update(acquired.claim.record.request.sessionId, 'utf8')
+            .digest('hex');
+        const claimDirectory = join(
+            activeServerDir,
+            'external-session-operations',
+            sessionKey,
+        );
+        await mkdir(claimDirectory, { recursive: true });
+        await writeFile(join(claimDirectory, 'claim.json'), '{malformed', 'utf8');
+        await expect(owner.inspectPassiveRepairClaim({
+            sessionId: acquired.claim.record.request.sessionId,
+            operationClaimId: acquired.claim.record.claimId,
+        })).rejects.toThrow(
+            'external_session_operation_repair_claim_unreadable',
+        );
+        const malformedEffect = vi.fn(async () => undefined);
+        await expect(owner.withPassiveRepairClaimBarrier({
+            sessionId: acquired.claim.record.request.sessionId,
+            operationClaimId: acquired.claim.record.claimId,
+        }, malformedEffect)).rejects.toThrow(
+            'external_session_operation_repair_claim_unreadable',
+        );
+        expect(malformedEffect).not.toHaveBeenCalled();
+    });
+
+    it('bounds acquisition while a live passive repair keeps the claim barrier', async () => {
+        const activeServerDir = await mkdtemp(join(
+            tmpdir(),
+            'happier-operation-repair-barrier-deadline-',
+        ));
+        createdDirectories.push(activeServerDir);
+        const owner = createExternalSessionOperationExclusion({
+            activeServerDir,
+            ownerId: 'daemon:repair-barrier-deadline',
+            claimMutationLockAcquisitionTimeoutMs: 25,
+        });
+        let signalRepairStarted!: () => void;
+        const repairStarted = new Promise<void>((resolve) => {
+            signalRepairStarted = resolve;
+        });
+        let releaseRepair!: () => void;
+        const repairRelease = new Promise<void>((resolve) => {
+            releaseRepair = resolve;
+        });
+        const repair = owner.withPassiveRepairClaimBarrier({
+            sessionId: materializeRequest().sessionId,
+            operationClaimId: 'claim-repair-barrier-deadline',
+        }, async () => {
+            signalRepairStarted();
+            await repairRelease;
+        });
+        await repairStarted;
+
+        let acquisitionSettled = false;
+        const acquisition = owner.acquire(materializeRequest()).then(
+            (result) => {
+                acquisitionSettled = true;
+                return { status: 'resolved' as const, result };
+            },
+            (error: unknown) => {
+                acquisitionSettled = true;
+                return { status: 'rejected' as const, error };
+            },
+        );
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        const settledBeforeRepairRelease = acquisitionSettled;
+        releaseRepair();
+        await repair;
+        const acquisitionOutcome = await acquisition;
+        if (
+            acquisitionOutcome.status === 'resolved'
+            && acquisitionOutcome.result.status === 'acquired'
+        ) {
+            await acquisitionOutcome.result.claim.release();
+        }
+
+        expect(settledBeforeRepairRelease).toBe(true);
+        expect(acquisitionOutcome).toMatchObject({
+            status: 'rejected',
+            error: new Error(
+                'external_session_operation_claim_lock_timeout',
+            ),
+        });
+    });
+
+    it('does not retry a barrier effect that throws the contention error code', async () => {
+        const { owner } = await createOwner(
+            'daemon:repair-effect-error',
+            Date.now,
+        );
+        const effect = vi.fn(async () => {
+            throw new Error(
+                'external_session_operation_claim_lock_timeout',
+            );
+        });
+
+        await expect(owner.withPassiveRepairClaimBarrier({
+            sessionId: materializeRequest().sessionId,
+            operationClaimId: 'claim-repair-effect-error',
+        }, effect)).rejects.toThrow(
+            'external_session_operation_claim_lock_timeout',
+        );
+        expect(effect).toHaveBeenCalledOnce();
+    });
+
+    it('cancels a pending claim acquisition without releasing the live repair barrier', async () => {
+        const activeServerDir = await mkdtemp(join(
+            tmpdir(),
+            'happier-operation-repair-barrier-cancellation-',
+        ));
+        createdDirectories.push(activeServerDir);
+        const owner = createExternalSessionOperationExclusion({
+            activeServerDir,
+            ownerId: 'daemon:repair-barrier-cancellation',
+            claimMutationLockAcquisitionTimeoutMs: 10_000,
+        });
+        let signalRepairStarted!: () => void;
+        const repairStarted = new Promise<void>((resolve) => {
+            signalRepairStarted = resolve;
+        });
+        let releaseRepair!: () => void;
+        const repairRelease = new Promise<void>((resolve) => {
+            releaseRepair = resolve;
+        });
+        const repair = owner.withPassiveRepairClaimBarrier({
+            sessionId: materializeRequest().sessionId,
+            operationClaimId: 'claim-repair-barrier-cancellation',
+        }, async () => {
+            signalRepairStarted();
+            await repairRelease;
+        });
+        await repairStarted;
+
+        const controller = new AbortController();
+        let acquisitionSettled = false;
+        const acquisition = owner.acquire(materializeRequest(), {
+            signal: controller.signal,
+        }).then(
+            (result) => {
+                acquisitionSettled = true;
+                return { status: 'resolved' as const, result };
+            },
+            (error: unknown) => {
+                acquisitionSettled = true;
+                return { status: 'rejected' as const, error };
+            },
+        );
+        await new Promise((resolve) => setTimeout(resolve, 150));
+        const remainedPendingThroughContention = !acquisitionSettled;
+        controller.abort();
+        const acquisitionOutcome = await acquisition;
+        const abortErrorSettledBeforeRepairRelease =
+            acquisitionOutcome.status === 'rejected'
+            && acquisitionOutcome.error instanceof Error
+            && acquisitionOutcome.error.name === 'AbortError';
+        releaseRepair();
+        await repair;
+        if (
+            acquisitionOutcome.status === 'resolved'
+            && acquisitionOutcome.result.status === 'acquired'
+        ) {
+            await acquisitionOutcome.result.claim.release();
+        }
+
+        expect(remainedPendingThroughContention).toBe(true);
+        expect(abortErrorSettledBeforeRepairRelease).toBe(true);
+        expect(acquisitionOutcome).toMatchObject({
+            status: 'rejected',
+            error: { name: 'AbortError' },
+        });
+
+        const probe = await owner.acquire(materializeRequest());
+        expect(probe.status).toBe('acquired');
+        if (probe.status !== 'acquired') throw new Error('expected probe acquisition');
+        await expect(owner.inspectPassiveRepairClaim({
+            sessionId: probe.claim.record.request.sessionId,
+            operationClaimId: probe.claim.record.claimId,
+        })).resolves.toBe('active');
+        await probe.claim.release();
+        await expect(owner.inspectPassiveRepairClaim({
+            sessionId: probe.claim.record.request.sessionId,
+            operationClaimId: probe.claim.record.claimId,
+        })).resolves.toBe('inactive');
+    });
 
     it('survives restart, rejects stale-owner release, and permits takeover after expiry', async () => {
         let nowMs = 5_000;

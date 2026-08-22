@@ -6,6 +6,8 @@ import type {
   ExecutionRunIntent,
   ExecutionRunResumeHandle,
   ExecutionRunConnectedServicesLaunchV1,
+  ProviderBoundModelRef,
+  SessionInputCausalPermissionAuthorityV1,
 } from '@happier-dev/protocol';
 import type { PermissionIntent } from '@happier-dev/agents';
 
@@ -15,7 +17,8 @@ import type {
 } from '@/agent/executionRuns/profiles/ExecutionRunIntentProfile';
 
 export type ExecutionRunManagerStartParams = Readonly<{
-  sessionId: string;
+  /** Session association is explicit; `null` is a daemon-owned detached run. */
+  sessionId: string | null;
   intent: ExecutionRunIntent;
   backendTarget: BackendTargetRefV1;
   accountSettings?: Readonly<Record<string, unknown>> | null;
@@ -45,12 +48,20 @@ export type ExecutionRunManagerStartParams = Readonly<{
    * the plugin backend spawn through the unified runtime; per-provider application is plugin-owned.
    */
   modelId?: string;
+  /** Exact re-resolvable Agent/Provider/model tuple for this run. */
+  modelSelection?: ProviderBoundModelRef;
   /**
    * Optional canonical agent config-option overrides (e.g. reasoning effort) for the run backend,
    * reusing the SAME `AcpConfigOptionOverridesV1` shape as session spawn. The `configOptions`
    * shorthand is merged into this at the action boundary before the run request is built.
    */
   sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1;
+  /**
+   * Host-only active-turn authority for this initial launch. It is purposely
+   * absent from persisted run state, so a later resume cannot inherit a stale
+   * turn's admission ceiling.
+   */
+  causalPermissionAuthority?: SessionInputCausalPermissionAuthorityV1;
   permissionMode: string;
   retentionPolicy: 'ephemeral' | 'resumable';
   runClass: 'bounded' | 'long_lived';
@@ -91,7 +102,7 @@ export type ExecutionRunState = Readonly<{
   runId: string;
   callId: string;
   sidechainId: string;
-  sessionId: string;
+  sessionId: string | null;
   depth: number;
   intent: ExecutionRunManagerStartParams['intent'];
   profileId?: string | null;
@@ -119,6 +130,7 @@ export type ExecutionRunState = Readonly<{
    */
   launch?: Readonly<{
     modelId?: string;
+    modelSelection?: ProviderBoundModelRef;
     sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1;
     connectedServicesSelection?: ConnectedServiceBindingsV1 | null;
     connectedServicesRegistration?: ExecutionRunConnectedServicesLaunchV1;
@@ -135,6 +147,8 @@ export type ExecutionRunState = Readonly<{
     profileId?: string | null;
     chatModelId: string;
     commitModelId: string;
+    chatModelSelection?: ProviderBoundModelRef;
+    commitModelSelection?: ProviderBoundModelRef;
     commitIsolation: boolean;
     permissionIntent: PermissionIntent;
     idleTtlSeconds: number;

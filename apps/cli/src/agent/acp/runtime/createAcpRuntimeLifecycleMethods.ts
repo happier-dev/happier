@@ -14,8 +14,9 @@ import type { AcpRuntimeBackend } from './acpRuntimeBackendContract';
 import type { AcpRuntimeSessionClient } from '@/agent/acp/sessionClient';
 import { surfacePrimarySessionRuntimeIssue } from '@/agent/runtime/session/errors/surfacePrimarySessionRuntimeIssue';
 import { isAbortLikeError } from '@/agent/runtime/lifecycle/classifyAbortLikeError';
-import type { RuntimeEventV1 } from '@happier-dev/protocol';
+import type { AcpRuntimeEventDraft } from './createAcpRuntime';
 import type { AcpRuntimeTurnOutcome } from './acpRuntimeBackendContract';
+import type { AcpSendFn } from '@/agent/acp/bridge/acpSessionForwarding';
 
 type AcpRuntimeLifecycleState = {
   backend: AcpRuntimeBackend | null;
@@ -135,6 +136,41 @@ function rethrowPromptError(error: unknown, state: AcpRuntimeLifecycleState, pro
   throw error;
 }
 
+/**
+ * A turn failure observed after the provider unambiguously accepted the prompt is not a
+ * delivery failure: the prompt is already in provider context and the caller's prompt
+ * custody must settle. Record the failure as this turn's outcome so `flushTurn` surfaces
+ * it exactly once, instead of re-reporting it by rejecting the send.
+ */
+function recordPostDeliveryTurnFailure(params: Readonly<{
+  state: AcpRuntimeLifecycleState;
+  error: unknown;
+  provider: string;
+  onThinkingChange: (thinking: boolean) => void;
+  session: AcpRuntimeSessionClient;
+}>): void {
+  if (isAbortLikeError(params.error) || params.state.turnAborted) {
+    // `cancel()` and the status:error message handler already surfaced this turn's
+    // cancellation/failure. Marking the turn aborted keeps `flushTurn` from publishing
+    // a `task_complete` over it without emitting a second notice for the same event.
+    params.state.turnAborted = true;
+    params.onThinkingChange(false);
+    params.session.keepAlive(false, 'remote');
+    return;
+  }
+  applyTerminalTurnOutcome({
+    state: params.state,
+    outcome: {
+      kind: 'failed',
+      error: params.error instanceof Error
+        ? params.error
+        : new Error(`${params.provider} turn failed: ${String(params.error)}`),
+    },
+    onThinkingChange: params.onThinkingChange,
+    session: params.session,
+  });
+}
+
 async function abortPendingPermissionRequests(
   handler: AcpPermissionHandler,
   reason: string,
@@ -162,7 +198,9 @@ export function createAcpRuntimeLifecycleMethods(params: Readonly<{
   acpTraceMarkersEnabled: boolean;
   streamedTranscriptWriter: ReturnType<typeof createStreamedTranscriptWriter>;
   onThinkingChange: (thinking: boolean) => void;
-  publishRuntimeEvent?: (event: Omit<RuntimeEventV1, 'sessionId' | 'emittedAtMs'>) => void;
+  publishRuntimeEvent?: (event: AcpRuntimeEventDraft) => void;
+  publishTranscriptAgentMessageCommitted: AcpSendFn;
+  drainRequiredPublications: () => Promise<void>;
 }>): Readonly<{
   beginTurn: () => void;
   cancel: () => Promise<void>;
@@ -205,25 +243,25 @@ export function createAcpRuntimeLifecycleMethods(params: Readonly<{
       if (!params.state.sessionId) return;
       await params.streamedTranscriptWriter.flushAll({ reason: 'abort', interruptedReason: 'cancelled' });
       const backend = await params.ensureBackend();
+      let publicationFailure: unknown = null;
       try {
         await backend.cancel(params.state.sessionId);
       } finally {
+        try {
+          await params.drainRequiredPublications();
+        } catch (error) {
+          publicationFailure = error;
+        }
         await abortPendingPermissionRequests(params.permissionHandler, 'ACP runtime cancelled', params.provider);
         await surfacePrimarySessionRuntimeIssue({
           provider: params.transcriptProvider,
           agentTurnId: ensureCurrentTurnId(params.state),
+          sessionTurnId: params.state.currentRuntimeTurnId,
           cause: 'cancelled',
           session: params.session,
-          emitAcpLifecycleMarker: true,
+          publishTranscriptAgentMessageCommitted: params.publishTranscriptAgentMessageCommitted,
+          publishRuntimeEvent: params.publishRuntimeEvent,
         });
-        if (params.state.currentRuntimeTurnId) {
-          params.publishRuntimeEvent?.({
-            kind: 'turn-cancelled',
-            turnId: params.state.currentRuntimeTurnId,
-            agentTurnId: ensureCurrentTurnId(params.state),
-            reason: 'cancelled',
-          });
-        }
         params.state.turnInFlight = false;
         params.state.currentRuntimeTurnId = null;
         params.state.currentTurnId = null;
@@ -231,9 +269,16 @@ export function createAcpRuntimeLifecycleMethods(params: Readonly<{
         params.session.keepAlive(false, 'remote');
         params.clearToolCallCache();
       }
+      if (publicationFailure !== null) throw publicationFailure;
     },
 
     async reset(): Promise<void> {
+      let publicationFailure: unknown = null;
+      try {
+        await params.drainRequiredPublications();
+      } catch (error) {
+        publicationFailure = error;
+      }
       params.state.sessionId = null;
       params.state.turnInFlight = false;
       resetTurnState(params.state);
@@ -251,6 +296,7 @@ export function createAcpRuntimeLifecycleMethods(params: Readonly<{
         }
         params.state.backend = null;
       }
+      if (publicationFailure !== null) throw publicationFailure;
     },
 
     async openSession(opts: { resumeId?: string | null; importHistory?: boolean; currentPromptText?: string | null } = {}): Promise<string> {
@@ -373,6 +419,13 @@ export function createAcpRuntimeLifecycleMethods(params: Readonly<{
       }
 
       const backend = await params.ensureBackend();
+      // Confirmed delivery, not turn completion, settles this prompt's custody: the caller
+      // retires the replay activation seed the moment this call resolves. Once the provider
+      // has unambiguously accepted the prompt its content is in provider context whether the
+      // turn then completes, is cancelled, fails, or the backend is disposed — so nothing
+      // after this point may reject the send. Ambiguous delivery stays unconfirmed on
+      // purpose: the caller must keep custody and re-deliver rather than lose the content.
+      let deliveryConfirmed = false;
       try {
         const submissionResult = await backend.sendPrompt(params.state.sessionId, prompt);
         if (
@@ -381,6 +434,7 @@ export function createAcpRuntimeLifecycleMethods(params: Readonly<{
         ) {
           throw submissionResult.error;
         }
+        deliveryConfirmed = true;
         if (backend.waitForResponseComplete) {
           applyTerminalTurnOutcome({
             state: params.state,
@@ -389,8 +443,30 @@ export function createAcpRuntimeLifecycleMethods(params: Readonly<{
             session: params.session,
           });
         }
+        // Deliberately INSIDE the post-delivery guard, unlike `steerPrompt`/`cancel`/`reset`
+        // where a required-publication failure still rejects. Do not "restore" that here: this
+        // call is the one the prompt loop reads as provider custody, so rejecting it after
+        // confirmed delivery would tell the loop the prompt never landed — the seed would stay
+        // live and the whole carry-over context would be re-sent on the next message, which is
+        // the defect this delivery/completion split exists to prevent. Nothing is swallowed:
+        // the drain is one-shot, so recording the failure as this turn's outcome makes
+        // `flushTurn` surface it exactly once through `status_error` instead of twice.
+        // Known narrowing: when the turn had ALREADY aborted or failed, the branch below stays
+        // quiet and this publication failure is not separately named — that turn is already
+        // being reported to the user as cancelled/failed, so the signal survives and only the
+        // detail is lost.
+        await params.drainRequiredPublications();
       } catch (error) {
-        rethrowPromptError(error, params.state, params.provider);
+        if (!deliveryConfirmed) {
+          rethrowPromptError(error, params.state, params.provider);
+        }
+        recordPostDeliveryTurnFailure({
+          state: params.state,
+          error,
+          provider: params.provider,
+          onThinkingChange: params.onThinkingChange,
+          session: params.session,
+        });
       }
       params.publishSessionId();
     },
@@ -415,6 +491,7 @@ export function createAcpRuntimeLifecycleMethods(params: Readonly<{
             session: params.session,
           });
         }
+        await params.drainRequiredPublications();
       } catch (error) {
         rethrowPromptError(error, params.state, params.provider);
       }
@@ -427,6 +504,7 @@ export function createAcpRuntimeLifecycleMethods(params: Readonly<{
           ? { reason: 'abort', interruptedReason: 'turn-aborted' }
           : { reason: 'turn-end' },
       );
+      await params.drainRequiredPublications();
       await abortPendingPermissionRequests(params.permissionHandler, 'ACP runtime turn ended', params.provider);
       params.state.turnInFlight = false;
       params.onThinkingChange(false);
@@ -442,7 +520,7 @@ export function createAcpRuntimeLifecycleMethods(params: Readonly<{
           params.hooks?.onBeforeFlushTurn?.({
             sendToolCall: ({ toolName, input, callId }) => {
               const resolvedCallId = typeof callId === 'string' && callId.length > 0 ? callId : randomUUID();
-              params.session.sendAgentMessage(params.transcriptProvider, {
+              params.publishTranscriptAgentMessageCommitted(params.transcriptProvider, {
                 type: 'tool-call',
                 callId: resolvedCallId,
                 name: toolName,
@@ -452,7 +530,7 @@ export function createAcpRuntimeLifecycleMethods(params: Readonly<{
               return resolvedCallId;
             },
             sendToolResult: ({ callId, output }) => {
-              params.session.sendAgentMessage(params.transcriptProvider, {
+              params.publishTranscriptAgentMessageCommitted(params.transcriptProvider, {
                 type: 'tool-result',
                 callId,
                 output,
@@ -467,7 +545,10 @@ export function createAcpRuntimeLifecycleMethods(params: Readonly<{
 
       const agentTurnId = ensureCurrentTurnId(params.state);
       if (shouldCompleteTurn) {
-        params.session.sendAgentMessage(params.transcriptProvider, { type: 'task_complete', id: agentTurnId });
+        params.publishTranscriptAgentMessageCommitted(
+          params.transcriptProvider,
+          { type: 'task_complete', id: agentTurnId },
+        );
         if (params.state.currentRuntimeTurnId) {
           params.publishRuntimeEvent?.({
             kind: 'turn-complete',
@@ -482,7 +563,7 @@ export function createAcpRuntimeLifecycleMethods(params: Readonly<{
           sessionTurnId: params.state.currentRuntimeTurnId,
           session: params.session,
           cause: 'cancelled',
-          emitAcpLifecycleMarker: true,
+          publishTranscriptAgentMessageCommitted: params.publishTranscriptAgentMessageCommitted,
           publishRuntimeEvent: params.publishRuntimeEvent,
         });
       } else if (!params.state.turnAborted || outcome) {
@@ -493,7 +574,7 @@ export function createAcpRuntimeLifecycleMethods(params: Readonly<{
           session: params.session,
           cause: 'status_error',
           error: buildAcpRuntimeTurnOutcomeError(outcome, params.provider),
-          emitAcpLifecycleMarker: true,
+          publishTranscriptAgentMessageCommitted: params.publishTranscriptAgentMessageCommitted,
           publishRuntimeEvent: params.publishRuntimeEvent,
         });
       }

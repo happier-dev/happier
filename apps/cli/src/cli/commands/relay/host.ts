@@ -7,11 +7,10 @@ import chalk from 'chalk';
 import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
 import { configuration, reloadConfiguration } from '@/configuration';
 import { isInteractiveTerminal, promptInput } from '@/terminal/prompts/promptInput';
-import {
-  collectCurrentMachineReachableServerUrlCandidates,
-  listCurrentMachineNetworkAddressCandidates,
-} from '@/server/reachability/currentMachineReachableServerUrlCandidates';
-import { getActiveServerProfile, upsertServerProfileByUrl } from '@/server/serverProfiles';
+import { listCurrentMachineNetworkAddressCandidates } from '@/server/reachability/currentMachineReachableServerUrlCandidates';
+import { buildServerUrlReachabilityHintLines } from '@/server/reachability/serverUrlReachabilityHint';
+import { getActiveServerProfile, upsertServerProfileByUrl, type ServerProfile } from '@/server/serverProfiles';
+import { runServerSelectionBackgroundServiceFollowUp } from '../backgroundServiceFollowUp';
 
 import {
   prepareFirstPartyComponentPayloadFromGitHubRelease,
@@ -30,6 +29,7 @@ import { readKnownHostsTextSync, writeKnownHostsTextSync } from '@happier-dev/cl
 import { renderHelpPage } from '@happier-dev/cli-common/output';
 import { getReleaseRingPublicLabel, normalizePublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
 import { defaultNameFromUrl, defaultWebappUrlFromServerUrl } from '../server/commandUtilities';
+import { resolveRelayHostReachableServerUrl } from './hostReachability';
 import { buildScpCommand, buildSshCommand, type SshAuth } from '@/capabilities/systemTasks/ssh/sshTransport';
 
 type RelayHostStatusJson = Readonly<{
@@ -66,6 +66,8 @@ export function showRelayHostHelp(subcommand?: string): void {
       '--lan binds to an auto-detected LAN or Tailscale address.',
       '--expose binds to all interfaces; --host binds to one explicit address.',
       '--preserve-active-server keeps the current CLI relay profile after installation.',
+      'A local install asks which address other devices should reach the relay at, and stores it in the relay profile.',
+      'Without a terminal, or with --yes, it keeps an already-reachable bind address, otherwise takes the first reachable one, and prints what it chose.',
     ],
   }));
 }
@@ -80,6 +82,20 @@ function normalizeRelayUrlForComparison(raw: string): string {
   }
 }
 
+/**
+ * What a running daemon would actually connect to for a profile. Re-installing
+ * the same relay must not ask to restart a background service that is already
+ * following it.
+ */
+function relayProfileConnectionIdentity(profile: ServerProfile | null): string {
+  if (!profile) return '';
+  return [
+    profile.id,
+    normalizeRelayUrlForComparison(profile.serverUrl),
+    normalizeRelayUrlForComparison(profile.localServerUrl ?? ''),
+  ].join('|');
+}
+
 function relayUrlsMatch(left: string, right: string): boolean {
   const normalizedLeft = normalizeRelayUrlForComparison(left);
   const normalizedRight = normalizeRelayUrlForComparison(right);
@@ -89,6 +105,12 @@ function relayUrlsMatch(left: string, right: string): boolean {
 function resolveInstalledRelayProfileTarget(params: Readonly<{
   relayUrl: string;
   activeProfileBeforeInstall: Awaited<ReturnType<typeof getActiveServerProfile>> | null;
+  /**
+   * The address other devices should use, when it differs from the bind URL.
+   * Only consulted once the existing configuration has failed to supply a
+   * canonical URL of its own, so an already-configured relay keeps its answer.
+   */
+  reachableServerUrl?: string | null;
 }>): Readonly<{
   name: string;
   serverUrl: string;
@@ -125,6 +147,16 @@ function resolveInstalledRelayProfileTarget(params: Readonly<{
       serverUrl: active.serverUrl,
       localServerUrl: relayUrl,
       webappUrl: active.webappUrl,
+    };
+  }
+
+  const reachableServerUrl = String(params.reachableServerUrl ?? '').trim();
+  if (reachableServerUrl && !relayUrlsMatch(reachableServerUrl, relayUrl)) {
+    return {
+      name: active && active.id !== 'cloud' ? active.name : defaultNameFromUrl(reachableServerUrl),
+      serverUrl: reachableServerUrl,
+      localServerUrl: relayUrl,
+      webappUrl: defaultWebappUrlFromServerUrl(reachableServerUrl),
     };
   }
 
@@ -611,7 +643,7 @@ export async function runRelayHostSubcommand(args: string[]): Promise<void> {
     const status = await payload;
 
     if (json) {
-      printJsonEnvelope({
+      await printJsonEnvelope({
         ok: true,
         kind: 'relay_host_status',
         data: status,
@@ -776,18 +808,64 @@ export async function runRelayHostSubcommand(args: string[]): Promise<void> {
 
     const activeProfileBeforeInstall = await getActiveServerProfile().catch(() => null);
     const payload: RelayHostInstallJson = await result;
-    const installedProfile = resolveInstalledRelayProfileTarget({
+
+    if (!json) {
+      console.log(chalk.green('✓ Relay host installed'));
+      console.log(chalk.gray(`  ${payload.relayUrl}`));
+    }
+
+    // The bind URL is what the relay listens on, not what a phone can reach.
+    // Settle that here, before the profile is written, so `happier auth login`
+    // binds the account to an address the user's other devices can actually
+    // use. `--json` callers (including the SSH installer, which drives a remote
+    // `relay host install --json`) are left exactly as they were: probing this
+    // machine's interfaces would be answering the wrong question for them.
+    const configuredProfile = resolveInstalledRelayProfileTarget({
       relayUrl: payload.relayUrl,
       activeProfileBeforeInstall,
     });
-    await upsertServerProfileByUrl({
+    const shouldResolveReachableUrl =
+      !json && !ssh && relayUrlsMatch(configuredProfile.serverUrl, payload.relayUrl);
+    const reachable = shouldResolveReachableUrl
+      ? await resolveRelayHostReachableServerUrl({
+          relayUrl: payload.relayUrl,
+          interactive: isInteractiveTerminal() && !yesFlag.present,
+        })
+      : null;
+
+    if (reachable?.kind === 'localOnly') {
+      for (const line of buildServerUrlReachabilityHintLines(payload.relayUrl)) {
+        console.log(chalk.gray(`  ${line}`));
+      }
+    } else if (reachable?.kind === 'selected') {
+      if (reachable.chosenBy === 'default') {
+        console.log(chalk.gray('  Reachable from other devices at:'));
+        for (const candidate of reachable.candidates) {
+          console.log(chalk.gray(`    ${candidate.url} (${candidate.label})`));
+        }
+        if (reachable.rejectedAnswer) {
+          console.log(chalk.yellow(`  Not a usable relay URL: ${reachable.rejectedAnswer}`));
+        }
+      }
+      console.log(chalk.gray(`  Using ${reachable.url} as this relay's address.`));
+      if (reachable.chosenBy === 'default') {
+        console.log(chalk.gray('  Run `happier server add` to use a different address.'));
+      }
+    }
+
+    const installedProfile = resolveInstalledRelayProfileTarget({
+      relayUrl: payload.relayUrl,
+      activeProfileBeforeInstall,
+      reachableServerUrl: reachable?.kind === 'selected' ? reachable.url : null,
+    });
+    const activeProfileAfterInstall = await upsertServerProfileByUrl({
       ...installedProfile,
       use: !preserveActiveServer,
     });
     reloadConfiguration();
 
     if (json) {
-      printJsonEnvelope({
+      await printJsonEnvelope({
         ok: true,
         kind: 'relay_host_install',
         data: payload,
@@ -795,19 +873,20 @@ export async function runRelayHostSubcommand(args: string[]): Promise<void> {
       return;
     }
 
-    console.log(chalk.green('✓ Relay host installed'));
-    console.log(chalk.gray(`  ${payload.relayUrl}`));
-    if (bindHost === '0.0.0.0') {
-      const reachableCandidates = await collectCurrentMachineReachableServerUrlCandidates({
-        localServerUrl: payload.relayUrl,
+    // The background service resolved its relay when it started, which was
+    // before this install pointed the machine somewhere else. Without this it
+    // keeps talking to the previous relay while the install reports success.
+    if (
+      !preserveActiveServer
+      && relayProfileConnectionIdentity(activeProfileBeforeInstall)
+        !== relayProfileConnectionIdentity(activeProfileAfterInstall)
+    ) {
+      await runServerSelectionBackgroundServiceFollowUp({
+        interactive: isInteractiveTerminal(),
+        targetServerUrl: activeProfileAfterInstall.serverUrl,
       });
-      if (reachableCandidates.length > 0) {
-        console.log(chalk.gray('  Exposed on all interfaces - other machines can connect via:'));
-        for (const candidate of reachableCandidates) {
-          console.log(chalk.gray(`    ${candidate.url} (${candidate.label})`));
-        }
-      }
     }
+
     return;
   }
 
@@ -831,7 +910,7 @@ export async function runRelayHostSubcommand(args: string[]): Promise<void> {
     await engine.control({ ...taskParams, action: op });
 
     if (json) {
-      printJsonEnvelope({
+      await printJsonEnvelope({
         ok: true,
         kind: `relay_host_${op}`,
         data: { ok: true },

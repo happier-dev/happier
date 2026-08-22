@@ -1,11 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { PluginError } from '@happier-dev/plugin-sdk';
-
-import {
-    createExternalSessionTakeoverHostOperation,
-    type ExternalSessionTakeoverHostOperation,
-} from './takeoverHostOperation';
 import type { ExternalSessionFollowHostOperation } from './followHostOperation';
 import {
     createExternalSessionHostOperationOwner,
@@ -43,14 +37,6 @@ function createBindingInput(overrides: Partial<Readonly<{
     };
 }
 
-function takeoverRequest(signal?: AbortSignal) {
-    return {
-        ref,
-        source,
-        ...(signal ? { signal } : {}),
-    };
-}
-
 function followRequest(signal?: AbortSignal) {
     return {
         ref,
@@ -62,11 +48,17 @@ function followRequest(signal?: AbortSignal) {
     };
 }
 
-function providerSessionFollowRequest(signal?: AbortSignal) {
+function providerSessionFollowRequest(
+    signal?: AbortSignal,
+    admissionDeadlineAtMs?: number,
+) {
     return {
         agentId: 'codex',
         providerSessionId: 'remote-1',
         options: {
+            ...(admissionDeadlineAtMs === undefined
+                ? {}
+                : { admissionDeadlineAtMs }),
             ...(signal ? { signal } : {}),
         },
         listener: vi.fn(),
@@ -80,16 +72,6 @@ function unavailableFollowOperation(
             code: 'test_unavailable',
         })),
 ): ExternalSessionFollowHostOperation {
-    return Object.freeze({ execute });
-}
-
-function unavailableTakeoverOperation(
-    execute: ExternalSessionTakeoverHostOperation['execute'] =
-        vi.fn(async () => Object.freeze({
-            sessionId: 'linked-1',
-            status: 'takenOver' as const,
-        })),
-): ExternalSessionTakeoverHostOperation {
     return Object.freeze({ execute });
 }
 
@@ -116,14 +98,13 @@ describe('external-session daemon host-operation owner', () => {
         }));
         const owner = createExternalSessionHostOperationOwner();
         await installOperations(owner, {
-            takeoverOperation: null,
             followTargetOperation: Object.freeze({ execute: resolveTarget }),
             followOperation: unavailableFollowOperation(followExecute),
         });
         const binding = owner.bind(createBindingInput());
 
         const result = await binding.executeProviderSessionFollow(
-            providerSessionFollowRequest(),
+            providerSessionFollowRequest(undefined, 25_000),
         );
 
         expect(result).toMatchObject({
@@ -138,6 +119,7 @@ describe('external-session daemon host-operation owner', () => {
             machineId: 'machine-1',
             accountRevision: 'account-1',
             remoteSessionId: 'remote-1',
+            admissionDeadlineAtMs: 25_000,
             signal: expect.any(AbortSignal),
             isCurrent: expect.any(Function),
         }));
@@ -158,6 +140,42 @@ describe('external-session daemon host-operation owner', () => {
         expect(followExecute).toHaveBeenCalledOnce();
     });
 
+    it('distinguishes a never-installed owner from a retired generation', async () => {
+        // The owner is constructed unconditionally at daemon startup; a generation is
+        // installed into it only during machine-RPC registration. A binding taken in
+        // between has no generation, which is NOT the same as having had one retired.
+        const owner = createExternalSessionHostOperationOwner();
+        const binding = owner.bind(createBindingInput());
+
+        expect(owner.canFollowNow()).toBe(false);
+        await expect(binding.executeFollow(followRequest())).resolves.toEqual({
+            status: 'unavailable',
+            code: 'plugin_external_follow_host_operations_uninstalled',
+        });
+        await expect(
+            binding.executeProviderSessionFollow(providerSessionFollowRequest()),
+        ).resolves.toEqual({
+            status: 'unavailable',
+            code: 'plugin_external_follow_host_operations_uninstalled',
+        });
+
+        // Once installed, the same owner reports follow as runnable.
+        const installation = await installOperations(owner, {
+            followOperation: unavailableFollowOperation(),
+        });
+        expect(owner.canFollowNow()).toBe(true);
+
+        // ...and a generation that WAS installed and then went away is genuinely retired,
+        // so that code must not be replaced by the uninstalled one.
+        await installation.dispose();
+        expect(owner.canFollowNow()).toBe(false);
+        await expect(binding.executeFollow(followRequest())).resolves.toEqual({
+            status: 'unavailable',
+            code: 'plugin_external_follow_host_operations_uninstalled',
+        });
+        await owner.retire();
+    });
+
     it('fails closed before exact follow for unavailable or malformed provider-session targets', async () => {
         const resolveTarget = vi.fn(async () => Object.freeze({
             status: 'unavailable' as const,
@@ -166,7 +184,6 @@ describe('external-session daemon host-operation owner', () => {
         const followExecute = vi.fn();
         const owner = createExternalSessionHostOperationOwner();
         await installOperations(owner, {
-            takeoverOperation: null,
             followTargetOperation: Object.freeze({ execute: resolveTarget }),
             followOperation: unavailableFollowOperation(followExecute),
         });
@@ -196,6 +213,40 @@ describe('external-session daemon host-operation owner', () => {
         expect(followExecute).not.toHaveBeenCalled();
     });
 
+    it('rejects a resolved target whose ref exceeds the singular Agent bound or carries private fields', async () => {
+        const overlongAgentId = 'a'.repeat(129);
+        const resolveTarget = vi.fn(async () => Object.freeze({
+            status: 'resolved' as const,
+            ref: Object.freeze({
+                agentId: overlongAgentId,
+                sourceId: 'codexHome:user:::',
+                remoteSessionId: 'remote-1',
+                source: { kind: 'codexHome', home: 'private' },
+            }),
+            source,
+        }));
+        const followExecute = vi.fn(async () => Object.freeze({
+            status: 'unavailable' as const,
+            code: 'invalid-ref-reached-follow',
+        }));
+        const owner = createExternalSessionHostOperationOwner();
+        await installOperations(owner, {
+            followTargetOperation: Object.freeze({ execute: resolveTarget as never }),
+            followOperation: unavailableFollowOperation(followExecute),
+        });
+        const binding = owner.bind(createBindingInput({ agentId: overlongAgentId }));
+
+        await expect(binding.executeProviderSessionFollow({
+            ...providerSessionFollowRequest(),
+            agentId: overlongAgentId,
+        })).resolves.toEqual({
+            status: 'unavailable',
+            code: 'plugin_external_follow_identity_unavailable',
+        });
+        expect(resolveTarget).toHaveBeenCalledOnce();
+        expect(followExecute).not.toHaveBeenCalled();
+    });
+
     it('does not start exact follow when account or generation currentness changes during target resolution', async () => {
         let releaseTarget!: (
             value: Readonly<{
@@ -216,7 +267,6 @@ describe('external-session daemon host-operation owner', () => {
         let accountRevision = 'account-1';
         const owner = createExternalSessionHostOperationOwner();
         await installOperations(owner, {
-            takeoverOperation: null,
             followTargetOperation: Object.freeze({ execute: resolveTarget }),
             followOperation: unavailableFollowOperation(followExecute),
         });
@@ -238,34 +288,19 @@ describe('external-session daemon host-operation owner', () => {
     });
 
     it('binds authoritative daemon machine/account plus plugin, Agent, generation, and session identity', async () => {
-        const takeoverExecute = vi.fn(async () => Object.freeze({
-            sessionId: 'linked-1',
-            status: 'takenOver' as const,
-        }));
         const followExecute = vi.fn(async () => Object.freeze({
             status: 'unavailable' as const,
             code: 'test_unavailable',
         }));
         const owner = createExternalSessionHostOperationOwner();
         await installOperations(owner, {
-            takeoverOperation: unavailableTakeoverOperation(takeoverExecute),
             followOperation: unavailableFollowOperation(followExecute),
         });
         let accountRevision: string | null = 'account-1';
         const binding = owner.bind(createBindingInput());
 
-        await binding.executeTakeover(takeoverRequest());
         await binding.executeFollow(followRequest());
 
-        expect(takeoverExecute).toHaveBeenCalledWith(expect.objectContaining({
-            pluginId: 'acme.plugin',
-            contributionId: 'codex',
-            generationId: 'generation-1',
-            sessionId: 'session-1',
-            machineId: 'machine-1',
-            accountRevision: 'account-1',
-            isCurrent: expect.any(Function),
-        }));
         expect(followExecute).toHaveBeenCalledWith(expect.objectContaining({
             pluginId: 'acme.plugin',
             contributionId: 'codex',
@@ -275,12 +310,6 @@ describe('external-session daemon host-operation owner', () => {
         }));
 
         const foreignRef = { ...ref, agentId: 'claude' };
-        await expect(binding.executeTakeover({
-            ...takeoverRequest(),
-            ref: foreignRef,
-        })).rejects.toMatchObject({
-            code: 'plugin_external_takeover_identity_mismatch',
-        });
         await expect(binding.executeFollow({
             ...followRequest(),
             ref: foreignRef,
@@ -288,7 +317,6 @@ describe('external-session daemon host-operation owner', () => {
             status: 'unavailable',
             code: 'plugin_external_follow_identity_mismatch',
         });
-        expect(takeoverExecute).toHaveBeenCalledTimes(1);
         expect(followExecute).toHaveBeenCalledTimes(1);
 
         const accountScopedBinding = owner.bind(createBindingInput({
@@ -296,63 +324,43 @@ describe('external-session daemon host-operation owner', () => {
         }));
         accountRevision = 'account-2';
         await expect(
-            accountScopedBinding.executeTakeover(takeoverRequest()),
-        ).rejects.toMatchObject({
-            code: 'plugin_generation_retired',
-        });
-        await expect(
             accountScopedBinding.executeFollow(followRequest()),
         ).resolves.toEqual({
             status: 'unavailable',
             code: 'plugin_generation_retired',
         });
-        expect(takeoverExecute).toHaveBeenCalledTimes(1);
         expect(followExecute).toHaveBeenCalledTimes(1);
     });
 
     it('invalidates every old binding on replacement and a stale install dispose cannot retire the replacement', async () => {
-        const firstTakeover = vi.fn();
         const firstFollow = vi.fn();
-        const replacementTakeover = vi.fn(async () => Object.freeze({
-            sessionId: 'replacement-linked',
-            status: 'takenOver' as const,
-        }));
         const replacementFollow = vi.fn(async () => Object.freeze({
             status: 'unavailable' as const,
             code: 'replacement',
         }));
         const owner = createExternalSessionHostOperationOwner();
         const firstInstallation = await installOperations(owner, {
-            takeoverOperation: unavailableTakeoverOperation(firstTakeover),
             followOperation: unavailableFollowOperation(firstFollow),
         });
         const oldBinding = owner.bind(createBindingInput());
 
         await installOperations(owner, {
-            takeoverOperation: unavailableTakeoverOperation(replacementTakeover),
             followOperation: unavailableFollowOperation(replacementFollow),
         });
         await firstInstallation.dispose();
 
-        await expect(oldBinding.executeTakeover(takeoverRequest())).rejects.toMatchObject({
-            code: 'plugin_generation_retired',
-        });
         await expect(oldBinding.executeFollow(followRequest())).resolves.toEqual({
             status: 'unavailable',
             code: 'plugin_generation_retired',
         });
-        expect(firstTakeover).not.toHaveBeenCalled();
         expect(firstFollow).not.toHaveBeenCalled();
-        expect(replacementTakeover).not.toHaveBeenCalled();
         expect(replacementFollow).not.toHaveBeenCalled();
 
         const replacementBinding = owner.bind(createBindingInput({
             generationId: 'generation-2',
             sessionId: 'session-2',
         }));
-        await replacementBinding.executeTakeover(takeoverRequest());
         await replacementBinding.executeFollow(followRequest());
-        expect(replacementTakeover).toHaveBeenCalledOnce();
         expect(replacementFollow).toHaveBeenCalledOnce();
     });
 
@@ -375,7 +383,6 @@ describe('external-session daemon host-operation owner', () => {
             })));
             const owner = createExternalSessionHostOperationOwner();
             await installOperations(owner, {
-                takeoverOperation: null,
                 followOperation,
             });
             const binding = owner.bind(createBindingInput({
@@ -410,7 +417,6 @@ describe('external-session daemon host-operation owner', () => {
             );
             const owner = createExternalSessionHostOperationOwner();
             await installOperations(owner, {
-                takeoverOperation: null,
                 followOperation: unavailableFollowOperation(
                     vi.fn(async () => Object.freeze({
                         status: 'following' as const,
@@ -428,7 +434,6 @@ describe('external-session daemon host-operation owner', () => {
 
             let replacementSettled = false;
             const replacement = installOperations(owner, {
-                takeoverOperation: null,
                 followOperation: null,
             }).then((installation) => {
                 replacementSettled = true;
@@ -446,7 +451,6 @@ describe('external-session daemon host-operation owner', () => {
                 async () => await new Promise<void>(() => undefined),
             );
             await installOperations(owner, {
-                takeoverOperation: null,
                 followOperation: unavailableFollowOperation(
                     vi.fn(async () => Object.freeze({
                         status: 'following' as const,
@@ -481,154 +485,6 @@ describe('external-session daemon host-operation owner', () => {
         }
     });
 
-    it('rejects retirement before takeover commit but does not relabel a committed success', async () => {
-        let resolveLink!: (value: Readonly<{ ok: true; sessionId: string }>) => void;
-        const linkPending = new Promise<Readonly<{ ok: true; sessionId: string }>>((resolve) => {
-            resolveLink = resolve;
-        });
-        const takeover = vi.fn(async () => ({
-            ok: true as const,
-            sessionId: 'linked-before',
-            takeoverStatus: 'takenOver' as const,
-        }));
-        const operation = createExternalSessionTakeoverHostOperation({
-            ensureLink: async () => await linkPending,
-            takeover,
-        });
-        const owner = createExternalSessionHostOperationOwner();
-        await installOperations(owner, {
-            takeoverOperation: operation,
-            followOperation: null,
-        });
-        const beforeCommit = owner.bind(createBindingInput());
-        const pendingBeforeCommit = beforeCommit.executeTakeover(takeoverRequest());
-        await installOperations(owner, {
-            takeoverOperation: unavailableTakeoverOperation(),
-            followOperation: null,
-        });
-        resolveLink({ ok: true, sessionId: 'linked-before' });
-        await expect(pendingBeforeCommit).rejects.toBeInstanceOf(PluginError);
-        expect(takeover).not.toHaveBeenCalled();
-
-        let resolveTakeover!: (value: Readonly<{
-            ok: true;
-            sessionId: string;
-            takeoverStatus: 'attached';
-        }>) => void;
-        const takeoverPending = new Promise<Readonly<{
-            ok: true;
-            sessionId: string;
-            takeoverStatus: 'attached';
-        }>>((resolve) => {
-            resolveTakeover = resolve;
-        });
-        const committedTakeover = vi.fn(async () => await takeoverPending);
-        const committedOperation = createExternalSessionTakeoverHostOperation({
-            ensureLink: async () => ({ ok: true, sessionId: 'linked-committed' }),
-            takeover: committedTakeover,
-        });
-        await installOperations(owner, {
-            takeoverOperation: committedOperation,
-            followOperation: null,
-        });
-        const afterCommit = owner.bind(createBindingInput({
-            generationId: 'generation-3',
-            sessionId: 'session-3',
-        }));
-        const pendingAfterCommit = afterCommit.executeTakeover(takeoverRequest());
-        await vi.waitFor(() => expect(committedTakeover).toHaveBeenCalledOnce());
-        await installOperations(owner, {
-            takeoverOperation: unavailableTakeoverOperation(),
-            followOperation: null,
-        });
-        resolveTakeover({
-            ok: true,
-            sessionId: 'linked-committed',
-            takeoverStatus: 'attached',
-        });
-        await expect(pendingAfterCommit).resolves.toEqual({
-            sessionId: 'linked-committed',
-            status: 'attached',
-        });
-    });
-
-    it('rejects caller cancellation before takeover commit but awaits and preserves a post-commit success', async () => {
-        let resolveLink!: (value: Readonly<{ ok: true; sessionId: string }>) => void;
-        const linkPending = new Promise<Readonly<{
-            ok: true;
-            sessionId: string;
-        }>>((resolve) => {
-            resolveLink = resolve;
-        });
-        const takeover = vi.fn(async () => ({
-            ok: true as const,
-            sessionId: 'linked-before',
-            takeoverStatus: 'takenOver' as const,
-        }));
-        const owner = createExternalSessionHostOperationOwner();
-        await installOperations(owner, {
-            takeoverOperation: createExternalSessionTakeoverHostOperation({
-                ensureLink: async () => await linkPending,
-                takeover,
-            }),
-            followOperation: null,
-        });
-        const beforeCommit = owner.bind(createBindingInput());
-        const preCommitCaller = new AbortController();
-        const pendingBeforeCommit = beforeCommit.executeTakeover(
-            takeoverRequest(preCommitCaller.signal),
-        );
-        preCommitCaller.abort();
-        resolveLink({ ok: true, sessionId: 'linked-before' });
-        await expect(pendingBeforeCommit).rejects.toMatchObject({
-            code: 'plugin_operation_aborted',
-        });
-        expect(takeover).not.toHaveBeenCalled();
-
-        let resolveTakeover!: (value: Readonly<{
-            ok: true;
-            sessionId: string;
-            takeoverStatus: 'attached';
-        }>) => void;
-        const takeoverPending = new Promise<Readonly<{
-            ok: true;
-            sessionId: string;
-            takeoverStatus: 'attached';
-        }>>((resolve) => {
-            resolveTakeover = resolve;
-        });
-        const committedTakeover = vi.fn(async () => await takeoverPending);
-        await installOperations(owner, {
-            takeoverOperation: createExternalSessionTakeoverHostOperation({
-                ensureLink: async () => ({
-                    ok: true,
-                    sessionId: 'linked-committed',
-                }),
-                takeover: committedTakeover,
-            }),
-            followOperation: null,
-        });
-        const afterCommit = owner.bind(createBindingInput({
-            generationId: 'generation-2',
-            sessionId: 'session-2',
-        }));
-        const postCommitCaller = new AbortController();
-        const pendingAfterCommit = afterCommit.executeTakeover(
-            takeoverRequest(postCommitCaller.signal),
-        );
-        await vi.waitFor(() => expect(committedTakeover).toHaveBeenCalledOnce());
-        postCommitCaller.abort();
-        resolveTakeover({
-            ok: true,
-            sessionId: 'linked-committed',
-            takeoverStatus: 'attached',
-        });
-        await expect(pendingAfterCommit).resolves.toEqual({
-            sessionId: 'linked-committed',
-            status: 'attached',
-        });
-    });
-
     it('disposes a listener-failed provisional follow without retiring sibling follows', async () => {
         const firstDispose = vi.fn(async () => undefined);
         const secondDispose = vi.fn(async () => undefined);
@@ -650,7 +506,6 @@ describe('external-session daemon host-operation owner', () => {
         });
         const owner = createExternalSessionHostOperationOwner();
         await installOperations(owner, {
-            takeoverOperation: null,
             followOperation: unavailableFollowOperation(followExecute),
         });
         const binding = owner.bind(createBindingInput());
@@ -707,7 +562,6 @@ describe('external-session daemon host-operation owner', () => {
             });
         const owner = createExternalSessionHostOperationOwner();
         await installOperations(owner, {
-            takeoverOperation: null,
             followOperation: unavailableFollowOperation(followExecute),
         });
         const binding = owner.bind(createBindingInput());
@@ -743,28 +597,88 @@ describe('external-session daemon host-operation owner', () => {
             .toBe(true);
     });
 
+    it('owns abort-triggered retirement failure and never publishes a replacement without a cleanup handle', async () => {
+        // `followHostOperation` proves a follow subscription disposer may reject once
+        // and succeed on retry. When that happens during generation replacement the
+        // owner must not (a) leak the abort callback's rejection to the process, where
+        // the daemon converts it into `requestShutdown('exception')`, or (b) leave the
+        // replacement generation callable after `install` rejected without returning a
+        // cleanup handle for it.
+        const cleanupFailure = new Error('follow cleanup failed');
+        const dispose = vi.fn<() => Promise<void>>()
+            .mockRejectedValueOnce(cleanupFailure)
+            .mockResolvedValue(undefined);
+        const owner = createExternalSessionHostOperationOwner();
+        await installOperations(owner, {
+            followOperation: unavailableFollowOperation(vi.fn(async () => Object.freeze({
+                status: 'following' as const,
+                startingCursor: 'cursor-1',
+                subscription: Object.freeze({ dispose }),
+            }))),
+        });
+        const binding = owner.bind(createBindingInput());
+        await expect(binding.executeFollow(followRequest()))
+            .resolves.toMatchObject({ status: 'following' });
+
+        const replacementFollow = vi.fn(async () => Object.freeze({
+            status: 'unavailable' as const,
+            code: 'replacement',
+        }));
+        const unhandled: unknown[] = [];
+        const onUnhandledRejection = (reason: unknown): void => {
+            unhandled.push(reason);
+        };
+        process.on('unhandledRejection', onUnhandledRejection);
+        try {
+            await expect(installOperations(owner, {
+                followOperation: unavailableFollowOperation(replacementFollow),
+            })).rejects.toBe(cleanupFailure);
+            // Let Node run its unhandled-rejection detection for this turn.
+            await new Promise<void>((resolve) => { setTimeout(resolve, 0); });
+            expect(unhandled).toEqual([]);
+        } finally {
+            process.off('unhandledRejection', onUnhandledRejection);
+        }
+        expect(dispose).toHaveBeenCalledTimes(1);
+        // The failed installation returned no handle, so nothing may be callable.
+        expect(owner.canFollowNow()).toBe(false);
+        await expect(binding.executeFollow(followRequest())).resolves.toEqual({
+            status: 'unavailable',
+            code: 'plugin_generation_retired',
+        });
+        expect(replacementFollow).not.toHaveBeenCalled();
+
+        // Installing again retries the exact same cleanup and then succeeds atomically.
+        const installation = await installOperations(owner, {
+            followOperation: unavailableFollowOperation(replacementFollow),
+        });
+        expect(dispose).toHaveBeenCalledTimes(2);
+        expect(owner.canFollowNow()).toBe(true);
+        const replacementBinding = owner.bind(createBindingInput({
+            generationId: 'generation-2',
+            sessionId: 'session-2',
+        }));
+        await expect(replacementBinding.executeFollow(followRequest()))
+            .resolves.toEqual({ status: 'unavailable', code: 'replacement' });
+        await installation.dispose();
+        await owner.retire();
+    });
+
     it('admits no new work after daemon-owner retirement', async () => {
-        const takeoverExecute = vi.fn();
         const followExecute = vi.fn();
         const owner = createExternalSessionHostOperationOwner();
         await installOperations(owner, {
-            takeoverOperation: unavailableTakeoverOperation(takeoverExecute),
             followOperation: unavailableFollowOperation(followExecute),
         });
         await owner.retire();
         const binding = owner.bind(createBindingInput());
 
-        await expect(binding.executeTakeover(takeoverRequest())).rejects.toMatchObject({
-            code: 'plugin_generation_retired',
-        });
         await expect(binding.executeFollow(followRequest())).resolves.toEqual({
             status: 'unavailable',
             code: 'plugin_generation_retired',
         });
-        expect(takeoverExecute).not.toHaveBeenCalled();
         expect(followExecute).not.toHaveBeenCalled();
         await expect(owner.install({
-            takeoverOperation: unavailableTakeoverOperation(),
             followOperation: unavailableFollowOperation(),
         })).rejects.toThrow('External Session host-operation owner is retired');
     });

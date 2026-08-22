@@ -4,14 +4,16 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  sealSessionOwnerMetadataV1,
+  createPlainSessionOwnerMetadataEnvelopeV1,
   SessionOwnerMetadataV1Schema,
 } from '@happier-dev/protocol';
 
 import type { BackendExecutionSurfaces } from '@/agent/runtime/registry/engineRegistryTypes';
 import type { AnyTerminalRuntimeOps } from '@/agent/terminalRuntime/providers/types';
-import type { ProviderAttachOps } from '@/agent/catalog/types';
+import type { AttachSurfaceV1 } from '@happier-dev/agents';
 import type { Credentials, Settings } from '@/persistence';
+import { AccountSettingsEncryptionMaterialUnavailableError } from '@/settings/accountSettings/accountSettingsEncryptionMaterial';
+import { AccountSettingsStaleError } from '@/settings/accountSettings/accountSettingsRefreshError';
 import { tryDecryptSessionOwnerMetadataView } from '@/session/transport/encryption/sessionEncryptionContext';
 import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 
@@ -21,20 +23,13 @@ const {
   resolveBackendExecutionSurfaces,
   createMockBackendExecutionSurfaces,
   bootstrapAccountSettingsContext,
+  fetchAccountEncryptionCurrentness,
 } = vi.hoisted(() => {
   const createMockBackendExecutionSurfaces = (backendId: string | null | undefined): BackendExecutionSurfaces => {
     if (backendId === 'opencode') {
-      const attach: ProviderAttachOps = {
-        evaluateAvailability: async ({ currentMachineId, sessionMachineId, hasLocalAttachmentInfo, metadata }) => ({
-          eligible: true,
-          scope:
-            (currentMachineId && sessionMachineId && currentMachineId === sessionMachineId) || hasLocalAttachmentInfo
-              ? 'local'
-              : 'remote',
-          metadata,
-        }),
-        probeReachability: async () => ({ reachable: true }),
-        attach: async () => 0,
+      const attach: AttachSurfaceV1 = {
+        evaluateAvailability: async () => ({ available: true }),
+        attach: async () => ({ ok: true, value: { exitCode: 0 } }),
       };
       return {
         terminalRuntime: null,
@@ -76,6 +71,7 @@ const {
     resolveBackendExecutionSurfaces,
     createMockBackendExecutionSurfaces,
     bootstrapAccountSettingsContext: vi.fn(),
+    fetchAccountEncryptionCurrentness: vi.fn(),
   };
 });
 
@@ -85,6 +81,9 @@ vi.mock('@/agent/runtime/registry/engineRegistry', () => ({
 
 vi.mock('@/settings/accountSettings/bootstrapAccountSettingsContext', () => ({
   bootstrapAccountSettingsContext,
+}));
+vi.mock('@/api/client/connectedServiceCredentialApi', () => ({
+  fetchAccountEncryptionCurrentness,
 }));
 
 describe('happier attach', () => {
@@ -97,6 +96,13 @@ describe('happier attach', () => {
   beforeEach(() => {
     exitSpy.mockClear();
     bootstrapAccountSettingsContext.mockResolvedValue({ settings: {} });
+    fetchAccountEncryptionCurrentness.mockReset().mockResolvedValue({
+      mode: 'plain',
+      version: 1,
+      signingKeyFingerprint: null,
+      contentKeyFingerprint: null,
+      updatedAt: 1,
+    });
   });
 
   afterEach(() => {
@@ -145,6 +151,82 @@ describe('happier attach', () => {
 
     expect(errorSpy).toHaveBeenCalledWith(expect.anything(), 'Session belongs to another machine and cannot be attached from this computer.');
     errorSpy.mockRestore();
+  });
+
+  it.each([
+    [
+      'retained encrypted settings without account encryption material',
+      new AccountSettingsEncryptionMaterialUnavailableError(),
+    ],
+    [
+      'corrupt encrypted settings',
+      Object.assign(new Error('The account settings payload could not be decrypted.'), {
+        code: 'ACCOUNT_SETTINGS_DECRYPT_FAILED' as const,
+      }),
+    ],
+    [
+      'unavailable current settings',
+      new AccountSettingsStaleError(),
+    ],
+  ])('does not build an interactive attach selection with empty defaults when %s', async (
+    _caseName,
+    settingsError,
+  ) => {
+    const fetchSessionsPageFn = vi.fn(async () => ({
+      sessions: [],
+      nextCursor: null,
+      hasNext: false,
+    }));
+    const selectAttachableSessionIdFn = vi.fn(async () => ({
+      type: 'cancelled' as const,
+    }));
+    bootstrapAccountSettingsContext.mockRejectedValueOnce(settingsError);
+
+    await expect(handleAttachCommand([], {
+      readCredentialsFn: async () => ({
+        token: 'token-only',
+        encryption: null,
+      }),
+      readSettingsFn: async () => localSettings,
+      fetchSessionsPageFn,
+      canUseInkSelectorFn: () => true,
+      selectAttachableSessionIdFn,
+      readTerminalAttachmentInfoFn: async () => null,
+    })).rejects.toBe(settingsError);
+
+    expect(fetchSessionsPageFn).not.toHaveBeenCalled();
+    expect(selectAttachableSessionIdFn).not.toHaveBeenCalled();
+  });
+
+  it('awaits a provisional empty Settings refresh before interactive selection', async () => {
+    const settingsError = new AccountSettingsEncryptionMaterialUnavailableError();
+    const fetchSessionsPageFn = vi.fn(async () => ({
+      sessions: [],
+      nextCursor: null,
+      hasNext: false,
+    }));
+    bootstrapAccountSettingsContext.mockResolvedValueOnce({
+      source: 'none',
+      settings: {},
+      settingsVersion: 0,
+      loadedAtMs: Date.now(),
+      settingsSecretsReadKeys: [],
+      whenRefreshed: Promise.reject(settingsError),
+    });
+
+    await expect(handleAttachCommand([], {
+      readCredentialsFn: async () => ({
+        token: 'token-only',
+        encryption: null,
+      }),
+      readSettingsFn: async () => localSettings,
+      fetchSessionsPageFn,
+      canUseInkSelectorFn: () => true,
+      selectAttachableSessionIdFn: async () => ({ type: 'cancelled' }),
+      readTerminalAttachmentInfoFn: async () => null,
+    })).rejects.toBe(settingsError);
+
+    expect(fetchSessionsPageFn).not.toHaveBeenCalled();
   });
 
   it('allows explicit remote provider attach when machine ownership is missing', async () => {
@@ -248,13 +330,8 @@ describe('happier attach', () => {
           terminalRuntime: null,
           externalSession: null,
           attach: {
-            evaluateAvailability: async ({ metadata }) => ({
-              eligible: true,
-              scope: 'remote',
-              metadata,
-            }),
-            probeReachability: async () => ({ reachable: true }),
-            attach: async () => 0,
+            evaluateAvailability: async () => ({ available: true }),
+            attach: async () => ({ ok: true, value: { exitCode: 0 } }),
           },
           handoff: null,
           fork: null,
@@ -487,6 +564,7 @@ describe('happier attach', () => {
 
     expect(runTmuxAttachFn).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 'sid_attachable_1' }));
     expect(resolveBackendExecutionSurfaces).toHaveBeenCalled();
+    expect(fetchAccountEncryptionCurrentness).toHaveBeenCalledOnce();
   });
 
   it('uses host comparison to show likely local sessions when the current machine id is unavailable', async () => {
@@ -692,11 +770,7 @@ describe('happier attach', () => {
       encryptionMode: 'plain',
       metadataLayoutVersion: 1,
       metadata: JSON.stringify({ v: 1 }),
-      ownerMetadata: sealSessionOwnerMetadataV1({
-        material: { type: 'legacy', secret },
-        ownerMetadata,
-        randomBytes: (length) => new Uint8Array(length).fill(5),
-      }),
+      ownerMetadata: createPlainSessionOwnerMetadataEnvelopeV1(ownerMetadata),
     });
     const decryptOwnerMetadataView = vi.fn(tryDecryptSessionOwnerMetadataView);
     const runProviderAttachFn = vi.fn(async () => 0);
@@ -711,17 +785,21 @@ describe('happier attach', () => {
       isTmuxAvailableFn: async () => true,
     });
 
-    expect(decryptOwnerMetadataView).toHaveBeenCalledWith({ credentials, rawSession });
+    expect(decryptOwnerMetadataView).toHaveBeenCalledWith({
+      credentials,
+      rawSession,
+      accountEncryptionMode: 'plain',
+    });
     expect(runProviderAttachFn).toHaveBeenCalledWith({
       agentId: 'opencode',
       backendId: 'opencode',
       sessionId: 'sid_layout1_owner_opencode_1',
       metadata: expect.objectContaining({
-        machineId: 'machine-local',
         path: '/private/opencode-workspace',
-        flavor: 'opencode',
         opencodeSessionId: 'opencode-owner-session-1',
         opencodeBackendMode: 'server',
+        opencodeServerBaseUrl: 'http://127.0.0.1:4096/',
+        opencodeServerBaseUrlExplicit: true,
       }),
     });
   });

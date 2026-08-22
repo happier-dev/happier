@@ -9,8 +9,8 @@ export async function detectLatestSessionTurnActivity(params: Readonly<{
     token: string;
     sessionId: string;
     encryptionMode: 'e2ee' | 'plain';
-    encryptionKey: Uint8Array;
-    encryptionVariant: 'legacy' | 'dataKey';
+    encryptionKey: Uint8Array | null;
+    encryptionVariant: 'legacy' | 'dataKey' | null;
     afterSeqExclusive?: number;
     transcriptFetchTimeoutMs?: number;
 }>): Promise<SessionTurnActivity> {

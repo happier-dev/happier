@@ -1,7 +1,12 @@
 import { spawn } from 'node:child_process';
 
 import { resolveWindowsCommandInvocation, type CommandInvocation } from '@happier-dev/cli-common/process';
-import type { CatalogAgentLookupId, ProviderAttachOps, ProviderAttachScope } from '@/agent/catalog/types';
+import type { CatalogAgentLookupId } from '@/agent/catalog/types';
+import type {
+    AttachAvailabilityRequestV1,
+    AttachSessionMetadataV1,
+} from '@happier-dev/agents';
+import type { AttachSurface } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { AgentCliLaunchSpec } from '@/packagedRuntime/managedTools/requireAgentCliLaunchSpec';
 import { requireAgentCliLaunchSpec } from '@/packagedRuntime/managedTools/requireAgentCliLaunchSpec';
 
@@ -17,24 +22,20 @@ export type ProviderCliAttachTargetResult<TTarget extends object> =
     | Readonly<{ ok: false; reason: string }>;
 
 export type ProviderCliAttachTargetResolver<TTarget extends object> = (params: Readonly<{
-    metadata: Record<string, unknown>;
+    metadata: AttachSessionMetadataV1;
     fallbackServerBaseUrl?: string | null;
 }>) => ProviderCliAttachTargetResult<TTarget>;
 
-function resolveAttachScope(params: Readonly<{
-    currentMachineId: string | null;
-    sessionMachineId: string | null;
-    hasLocalAttachmentInfo: boolean;
-}>): ProviderAttachScope {
-    if (params.hasLocalAttachmentInfo) return 'local';
+function isLocalAttachRequest(request: AttachAvailabilityRequestV1): boolean {
+    if (request.hasLocalAttachmentInfo === true) return true;
     if (
-        params.currentMachineId
-        && params.sessionMachineId
-        && params.currentMachineId === params.sessionMachineId
+        request.currentMachineId
+        && request.sessionMachineId
+        && request.currentMachineId === request.sessionMachineId
     ) {
-        return 'local';
+        return true;
     }
-    return 'remote';
+    return false;
 }
 
 async function readFallbackServerBaseUrl(params: Readonly<{
@@ -50,7 +51,7 @@ async function readFallbackServerBaseUrl(params: Readonly<{
 }
 
 async function resolveTargetWithFallback<TTarget extends object>(params: Readonly<{
-    metadata: Record<string, unknown>;
+    metadata: AttachSessionMetadataV1;
     resolver: ProviderCliAttachTargetResolver<TTarget>;
     readFallbackServerBaseUrl?: () => Promise<string | null>;
 }>): Promise<ProviderCliAttachTargetResult<TTarget>> {
@@ -63,7 +64,7 @@ async function resolveTargetWithFallback<TTarget extends object>(params: Readonl
     });
 }
 
-export function createProviderCliAttachOps<TTarget extends object>(params: Readonly<{
+export function createProviderCliAttachSurface<TTarget extends object>(params: Readonly<{
     agentId: CatalogAgentLookupId;
     resolveTarget: ProviderCliAttachTargetResolver<TTarget>;
     createArgs: (target: TTarget) => readonly string[];
@@ -79,54 +80,39 @@ export function createProviderCliAttachOps<TTarget extends object>(params: Reado
     fetchFn?: typeof fetch;
     env?: NodeJS.ProcessEnv;
     reachabilityTimeoutMs?: number;
-}>): ProviderAttachOps {
+}>): AttachSurface {
     const buildHealthUrl = params.buildHealthUrl;
     const resolveInvocation = params.resolveCommandInvocation ?? resolveWindowsCommandInvocation;
     return {
         evaluateAvailability: async (request) => {
-            const scope = resolveAttachScope({
-                currentMachineId: request.currentMachineId,
-                sessionMachineId: request.sessionMachineId,
-                hasLocalAttachmentInfo: request.hasLocalAttachmentInfo,
-            });
             const target = await resolveTargetWithFallback({
                 metadata: request.metadata,
                 resolver: params.resolveTarget,
-                readFallbackServerBaseUrl: scope === 'local'
+                readFallbackServerBaseUrl: isLocalAttachRequest(request)
                     ? params.readFallbackServerBaseUrl
                     : undefined,
             });
             if (!target.ok) {
                 return {
-                    eligible: false,
-                    reason: target.reason,
+                    available: false,
+                    reasonCode: 'missing_metadata',
+                    safeMessage: target.reason,
                 };
             }
-            return {
-                eligible: true,
-                scope,
-                metadata: request.metadata,
-            };
-        },
-        probeReachability: buildHealthUrl
-            ? async ({ metadata }) => {
-                const target = await resolveTargetWithFallback({
-                    metadata,
-                    resolver: params.resolveTarget,
-                    readFallbackServerBaseUrl: params.readFallbackServerBaseUrl,
-                });
-                if (!target.ok) {
+            if (request.depth === 'live') {
+                if (!buildHealthUrl) {
                     return {
-                        reachable: false,
-                        reason: target.reason,
+                        available: false,
+                        reasonCode: 'unsupported',
+                        safeMessage: 'Provider attach reachability is unavailable.',
                     };
                 }
-
                 const healthUrl = buildHealthUrl(target.value);
                 if (!healthUrl) {
                     return {
-                        reachable: false,
-                        reason: 'Provider attach health URL is invalid.',
+                        available: false,
+                        reasonCode: 'missing_metadata',
+                        safeMessage: 'Provider attach health URL is invalid.',
                     };
                 }
 
@@ -138,21 +124,33 @@ export function createProviderCliAttachOps<TTarget extends object>(params: Reado
                         method: 'GET',
                         signal: controller.signal,
                     }).catch(() => null);
-                    return response?.ok
-                        ? { reachable: true }
-                        : { reachable: false, reason: 'Provider attach target is unreachable.' };
+                    if (!response?.ok) {
+                        return {
+                            available: false,
+                            reasonCode: 'agent_unavailable',
+                            retryable: true,
+                            safeMessage: 'Provider attach target is unreachable.',
+                        };
+                    }
                 } finally {
                     clearTimeout(timeout);
                 }
             }
-            : undefined,
+            return { available: true };
+        },
         attach: async ({ metadata }) => {
             const target = await resolveTargetWithFallback({
                 metadata,
                 resolver: params.resolveTarget,
                 readFallbackServerBaseUrl: params.readFallbackServerBaseUrl,
             });
-            if (!target.ok) return 1;
+            if (!target.ok) {
+                return {
+                    ok: false,
+                    code: 'attach_failed',
+                    message: target.reason,
+                };
+            }
 
             const env = params.env ?? process.env;
             const launch = (params.resolveLaunchSpec ?? ((processEnv) =>
@@ -176,10 +174,11 @@ export function createProviderCliAttachOps<TTarget extends object>(params: Reado
                 },
             ) as unknown as SpawnedAttachProcess;
 
-            return await new Promise<number>((resolve) => {
+            const exitCode = await new Promise<number>((resolve) => {
                 child.once('error', () => resolve(1));
                 child.once('exit', (code) => resolve(typeof code === 'number' ? code : 1));
             });
+            return { ok: true, value: { exitCode } };
         },
     };
 }

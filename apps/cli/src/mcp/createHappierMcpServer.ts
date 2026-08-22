@@ -9,7 +9,7 @@ import { createActionToolExecutorBridge } from '@/agent/tools/happierTools/creat
 import { createChangeTitleToolHandler } from '@/agent/tools/happierTools/createChangeTitleToolHandler';
 import { normalizeExecutionRunRpcPayload } from '@/session/services/executionRuns';
 import { registerHappierMcpBuiltInTools } from '@/mcp/server/registerHappierMcpBuiltInTools';
-import type { Credentials } from '@/persistence';
+import type { StoredCredentials } from '@/persistence';
 import { createCliActionExecutorHarness } from '@/session/actions/createCliActionExecutorHarness';
 import { createDaemonPluginActionExecutor } from '@/session/actions/createDaemonPluginActionExecutor';
 import { resolveSessionEncryptionContextFromCredentials } from '@/session/transport/encryption/sessionEncryptionContext';
@@ -19,6 +19,7 @@ import {
   PromptRegistryInstallResponseV1Schema,
   type ActionId,
   type AccountSettings,
+  type ActionExecutorDeps,
   type BackendTargetRefV2,
   getActionSpec,
   isActionSpecSurfacedOn,
@@ -46,6 +47,19 @@ const MCP_SESSION_STATE_CAPABILITIES: SessionStateCapabilitiesV1 = {
 function resolveLiveClientPermissionMode(client: HappyMcpSessionClient): string | null {
   const mode = client.getPermissionMode?.();
   return typeof mode === 'string' && mode.trim().length > 0 ? mode.trim() : null;
+}
+
+/**
+ * The active-turn witness is host-owned. Preserve its raw value through the
+ * host-only Action context so the canonical strict parser can reject malformed
+ * authority rather than treating it as absent and broadening a call.
+ */
+function resolveLiveClientCausalPermissionAuthority(client: HappyMcpSessionClient): unknown {
+  try {
+    return client.getActiveTurnCausalPermissionAuthority?.() ?? null;
+  } catch {
+    return null;
+  }
 }
 
 function resolveLiveClientBackendTarget(client: HappyMcpSessionClient): BackendTargetRefV2 | null {
@@ -92,7 +106,7 @@ async function writeMcpSessionTitleMetadata(params: Readonly<{
 export function createHappierMcpServer(
   client: HappyMcpSessionClient,
   opts?: Readonly<{
-    credentials?: Credentials | null;
+    credentials?: StoredCredentials | null;
     accountSettings?: AccountSettings | null;
     getAccountSettings?: (() => AccountSettings | null) | null;
     pluginToolCatalog?: readonly ProjectedPluginToolCatalogEntry[];
@@ -120,15 +134,31 @@ export function createHappierMcpServer(
   });
   const ctx = credentials
     ? resolveSessionEncryptionContextFromCredentials(credentials)
-    : { encryptionKey: new Uint8Array(0), encryptionVariant: 'legacy' as const };
+    : null;
+  const cryptoContext = ctx
+    ? { mode: 'e2ee' as const, ctx }
+    : { mode: 'plain' as const, ctx: null };
 
   const mcp = new McpServer({
     name: 'Happier MCP',
     version: '1.0.0',
   });
 
-  const sessionScopedRpc = async (method: string, params: unknown) =>
-    await client.rpcHandlerManager.invokeLocal(method, params);
+  // Only the host-only Action-context arm supplies options; every other method
+  // keeps the plain two-argument local invocation it has always used rather than
+  // widening the call with an absent third argument.
+  const sessionScopedRpc = async (
+    method: string,
+    params: unknown,
+    options?: Parameters<HappyMcpSessionClient['rpcHandlerManager']['invokeLocal']>[2],
+  ) => await (options === undefined
+    ? client.rpcHandlerManager.invokeLocal(method, params)
+    : client.rpcHandlerManager.invokeLocal(method, params, options));
+  const resolveAgentCallerPermissionMode = () => resolveLiveClientPermissionMode(client)
+    ?? resolvePermissionIntentFromMetadataSnapshot({
+      metadata: client.getMetadataSnapshot?.() ?? null,
+    })?.intent
+    ?? null;
   const sessionMetadataSnapshot = client.getMetadataSnapshot?.() ?? null;
   const sessionLocation = resolveLiveClientLocation(client);
   const rawSession = sessionMetadataSnapshot || sessionLocation
@@ -140,9 +170,18 @@ export function createHappierMcpServer(
       }
     : null;
   const executionRuns = {
-    start: async (request: unknown) =>
+    start: async (
+      request: unknown,
+      localActionContext?: Readonly<{
+        surface: 'agent';
+        callerPermissionMode: string | null;
+        causalPermissionAuthority: unknown;
+      }>,
+    ) =>
       normalizeExecutionRunRpcPayload(
-        await (client.executionRuns?.start?.(request) ?? sessionScopedRpc('execution.run.start', request)),
+        await (localActionContext
+          ? sessionScopedRpc('execution.run.start', request, { localActionContext })
+          : client.executionRuns?.start?.(request) ?? sessionScopedRpc('execution.run.start', request)),
       ),
     list: async (request: unknown) =>
       normalizeExecutionRunRpcPayload(
@@ -169,14 +208,33 @@ export function createHappierMcpServer(
         await (client.executionRuns?.wait?.(request) ?? sessionScopedRpc('execution.run.wait', request)),
       ),
   };
-  const executionRunStartRpc = async (_sessionId: string, request: unknown) => await executionRuns.start(request);
+  const executionRunStartRpc = async (
+    _sessionId: string | null,
+    request: unknown,
+    actionOptions?: Parameters<ActionExecutorDeps['executionRunStart']>[2],
+  ) => {
+    const hasCausalPermissionAuthority = Boolean(
+      actionOptions
+      && Object.prototype.hasOwnProperty.call(actionOptions, 'causalPermissionAuthority'),
+    );
+    return await executionRuns.start(
+      request,
+      hasCausalPermissionAuthority
+        ? {
+            surface: toolSurface,
+            callerPermissionMode: resolveAgentCallerPermissionMode(),
+            causalPermissionAuthority: actionOptions?.causalPermissionAuthority ?? null,
+          }
+        : undefined,
+    );
+  };
 
   const harness = createCliActionExecutorHarness(
     {
       token: credentials?.token ?? '',
       ...(credentials ? { credentials } : {}),
       sessionId: client.sessionId,
-      ctx,
+      ...cryptoContext,
       rawSession,
       getCallerPermissionMode: () => resolveLiveClientPermissionMode(client),
       getCurrentSessionBackendTarget: () => resolveLiveClientBackendTarget(client),
@@ -275,11 +333,8 @@ export function createHappierMcpServer(
     surface: toolSurface,
     actionsSettings: readActionsSettings(),
     getActionsSettings: readActionsSettings,
-    resolveCallerPermissionMode: () => resolveLiveClientPermissionMode(client)
-      ?? resolvePermissionIntentFromMetadataSnapshot({
-        metadata: client.getMetadataSnapshot?.() ?? null,
-      })?.intent
-      ?? null,
+    resolveCallerPermissionMode: resolveAgentCallerPermissionMode,
+    resolveCausalPermissionAuthority: () => resolveLiveClientCausalPermissionAuthority(client),
     sessionAgentSpawnPolicyV1: readSessionAgentSpawnPolicyV1(),
     getSessionAgentSpawnPolicyV1: readSessionAgentSpawnPolicyV1,
     pluginToolCatalog: opts?.pluginToolCatalog,

@@ -1,21 +1,20 @@
 import chalk from 'chalk';
 
-import type { Credentials } from '@/persistence';
+import type { StoredCredentials } from '@/persistence';
 import { ExecutionRunTurnStreamCancelRequestSchema } from '@happier-dev/protocol';
 
 import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
+import { readCommandPositionals } from '@/cli/commands/shared/argvFlags';
 import { SESSION_HELP_LINES } from '@/cli/commands/session/shared/sessionCommandUsage';
 import { cancelExecutionRunStream } from '@/session/services/executionRuns';
 import { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
 
 export async function cmdSessionRunStreamCancel(
   argv: string[],
-  deps: Readonly<{ readCredentialsFn: () => Promise<Credentials | null> }>,
+  deps: Readonly<{ readCredentialsFn: () => Promise<StoredCredentials | null> }>,
 ): Promise<void> {
   const json = wantsJson(argv);
-  const idOrPrefix = String(argv[2] ?? '').trim();
-  const runId = String(argv[3] ?? '').trim();
-  const streamId = String(argv[4] ?? '').trim();
+  const [idOrPrefix = '', runId = '', streamId = ''] = readCommandPositionals(argv, { startIndex: 2 });
 
   if (!idOrPrefix || !runId || !streamId) {
     throw new Error(`Usage: ${SESSION_HELP_LINES.runStreamCancel}`);
@@ -24,7 +23,7 @@ export async function cmdSessionRunStreamCancel(
   const credentials = await deps.readCredentialsFn();
   if (!credentials) {
     if (json) {
-      printJsonEnvelope({ ok: false, kind: 'session_run_stream_cancel', error: { code: 'not_authenticated' } });
+      await printJsonEnvelope({ ok: false, kind: 'session_run_stream_cancel', error: { code: 'not_authenticated' } });
       return;
     }
     console.error(chalk.red('Error:'), 'Not authenticated. Run "happier auth login" first.');
@@ -34,7 +33,7 @@ export async function cmdSessionRunStreamCancel(
   const sessionTarget = await resolveSessionTransportContext({ credentials, idOrPrefix });
   if (!sessionTarget.ok) {
     if (json) {
-      printJsonEnvelope({
+      await printJsonEnvelope({
         ok: false,
         kind: 'session_run_stream_cancel',
         error: { code: sessionTarget.code, ...(sessionTarget.candidates ? { candidates: sessionTarget.candidates } : {}) },
@@ -43,13 +42,27 @@ export async function cmdSessionRunStreamCancel(
     }
     throw new Error(sessionTarget.code);
   }
-  const { sessionId, ctx, mode } = sessionTarget;
+  const { sessionId } = sessionTarget;
   const request = ExecutionRunTurnStreamCancelRequestSchema.parse({ runId, streamId });
-  const result = await cancelExecutionRunStream({ token: credentials.token, sessionId, mode, ctx, request });
+  const result = sessionTarget.mode === 'plain'
+    ? await cancelExecutionRunStream({
+        token: credentials.token,
+        sessionId,
+        mode: sessionTarget.mode,
+        ctx: sessionTarget.ctx,
+        request,
+      })
+    : await cancelExecutionRunStream({
+        token: credentials.token,
+        sessionId,
+        mode: sessionTarget.mode,
+        ctx: sessionTarget.ctx,
+        request,
+      });
 
   if (!result.ok) {
     if (json) {
-      printJsonEnvelope({
+      await printJsonEnvelope({
         ok: false,
         kind: 'session_run_stream_cancel',
         error: { code: result.code, ...(result.message ? { message: result.message } : {}) },
@@ -60,7 +73,7 @@ export async function cmdSessionRunStreamCancel(
   }
 
   if (json) {
-    printJsonEnvelope({ ok: true, kind: 'session_run_stream_cancel', data: { sessionId, runId, streamId, cancelled: true } });
+    await printJsonEnvelope({ ok: true, kind: 'session_run_stream_cancel', data: { sessionId, runId, streamId, cancelled: true } });
     return;
   }
 

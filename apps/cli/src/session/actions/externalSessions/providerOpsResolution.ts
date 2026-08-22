@@ -4,16 +4,22 @@ import type {
 } from '@happier-dev/protocol';
 import { activateAgentRuntimeContributionOnDemand } from '@/agent/runtime/registry/activationDemand';
 import { createAgentExternalSessionsExecutionSurface } from '@/agent/runtime/registry/agentExternalSessionsExecutionSurface';
+import { readCurrentExternalSessionAgentIdentity } from '@/api/session/external/linking/qualifiedLinkIdentityRegistry';
 import type { ExternalSessionFollowResource } from '@/api/session/external/leases/createExternalSessionFollowLeaseManager';
 import { acquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
 import {
     createExternalSessionSourceKeyOwnerFromAgentProjection,
     resolveExternalSessionSourceFromAgentProjection,
-    type ExternalSessionSourceKeyOwner,
     type ResolvedExternalSessionSourceProjection,
 } from '@/plugins/projection/registry/externalSessionSources';
+import {
+    ExternalSessionFollowFailureError,
+} from '@/session/external/externalSessionFollowFailure';
 import type { ExternalSessionExecutionSurface } from '@/session/external/providerOps';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
+export {
+    resolveExternalSessionSourceKeyOwner,
+} from '@/session/external/resolveExternalSessionSourceKeyOwner';
 
 async function resolveExternalSessionSurfaceOpsAfterDemand(
     agentId: ExternalSessionsAgentId,
@@ -27,7 +33,10 @@ async function resolveExternalSessionSurfaceOpsAfterDemand(
         || !runtimeLease.isCurrent()
         || retirementSignal.aborted
     ) {
-        throw new Error(`Missing current external-session Agent operations for ${agentId}`);
+        throw new ExternalSessionFollowFailureError(
+            'agent_unavailable',
+            `Missing current external-session Agent operations for ${agentId}`,
+        );
     }
     return createAgentExternalSessionsExecutionSurface(
         runtimeLease.externalSessions,
@@ -52,7 +61,10 @@ export async function resolveExternalSessionSourceSurface(
     | Readonly<{
         ok: true;
         source: ExternalSessionsSource;
+        declaration: Extract<ResolvedExternalSessionSourceProjection, { ok: true }>['declaration'];
         providerOps: ExternalSessionExecutionSurface;
+        currentAgent: NonNullable<ReturnType<typeof readCurrentExternalSessionAgentIdentity>>;
+        sourceKeyOwner: NonNullable<ReturnType<typeof createExternalSessionSourceKeyOwnerFromAgentProjection>>;
     }>
     | Extract<ResolvedExternalSessionSourceProjection, { ok: false }>
 > {
@@ -64,6 +76,17 @@ export async function resolveExternalSessionSourceSurface(
             source,
         );
         if (!projected.ok) return projected;
+        const currentAgent = readCurrentExternalSessionAgentIdentity(
+            runtimeRegistryLease.registry.contributes.agentDefinitionsById.get(agentId),
+        );
+        const sourceKeyOwner = createExternalSessionSourceKeyOwnerFromAgentProjection(
+            runtimeRegistryLease.registry.contributes,
+            agentId,
+            projected.source,
+        );
+        if (!currentAgent || !sourceKeyOwner) {
+            return { ok: false, code: 'agent_unavailable' };
+        }
         await activateAgentRuntimeContributionOnDemand(runtimeRegistryLease.registry, agentId);
         let providerOps: ExternalSessionExecutionSurface;
         try {
@@ -77,24 +100,11 @@ export async function resolveExternalSessionSourceSurface(
         return Object.freeze({
             ok: true,
             source: projected.source,
+            declaration: projected.declaration,
             providerOps,
+            currentAgent,
+            sourceKeyOwner,
         });
-    } finally {
-        await runtimeRegistryLease.release();
-    }
-}
-
-export async function resolveExternalSessionSourceKeyOwner(
-    agentId: ExternalSessionsAgentId,
-    source: ExternalSessionsSource,
-): Promise<ExternalSessionSourceKeyOwner | null> {
-    const runtimeRegistryLease = await acquireAuthoritativePluginRuntimeRegistryLease();
-    try {
-        return createExternalSessionSourceKeyOwnerFromAgentProjection(
-            runtimeRegistryLease.registry.contributes,
-            agentId,
-            source,
-        );
     } finally {
         await runtimeRegistryLease.release();
     }
@@ -106,6 +116,7 @@ export async function resolveGenerationBoundExternalSessionFollowSurface(
 ): Promise<Readonly<{
     providerOps: ExternalSessionExecutionSurface;
     resource: ExternalSessionFollowResource;
+    immutablePluginGenerationId: string | null;
 }>> {
     const runtimeRegistryLease = await acquireAuthoritativePluginRuntimeRegistryLease();
     try {
@@ -113,17 +124,25 @@ export async function resolveGenerationBoundExternalSessionFollowSurface(
         const runtimeLease = runtimeRegistryLease.registry.agentRuntimesByAgentId.get(agentId);
         const retirementSignal = runtimeLease?.retirementSignal;
         if (!runtimeLease || !retirementSignal || !runtimeLease.isCurrent() || retirementSignal.aborted) {
-            throw new Error(`Missing current external-session Agent generation for ${agentId}`);
+            throw new ExternalSessionFollowFailureError(
+                'agent_unavailable',
+                `Missing current external-session Agent generation for ${agentId}`,
+            );
         }
         const providerOps = await resolveExternalSessionSurfaceOpsAfterDemand(
             agentId,
             runtimeRegistryLease.registry,
         );
         if (!runtimeLease.isCurrent() || retirementSignal.aborted) {
-            throw new Error(`External-session Agent generation retired while resolving ${agentId}`);
+            throw new ExternalSessionFollowFailureError(
+                'source_changed',
+                `External-session Agent generation retired while resolving ${agentId}`,
+            );
         }
         return {
             providerOps,
+            immutablePluginGenerationId:
+                runtimeLease.immutableGenerationId ?? null,
             resource: {
                 linkGeneration,
                 pluginGeneration: runtimeLease.generation,

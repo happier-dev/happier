@@ -3,10 +3,17 @@ import { describe, expect, it } from 'vitest';
 import { mapRuntimeMessageToTerminalLifecycleObservation } from './runtimeMessageObservationAdapter';
 
 describe('mapRuntimeMessageToTerminalLifecycleObservation', () => {
-  it('maps task_started to a normalized prompt-submitted observation', () => {
+  it('maps canonical turn-start events to a normalized prompt-submitted observation', () => {
     expect(mapRuntimeMessageToTerminalLifecycleObservation({
       agentId: 'codex',
-      message: { type: 'task_started', id: 'turn-1' },
+      message: {
+        sequence: 1,
+        sessionId: 'session-1',
+        emittedAtMs: 1,
+        kind: 'turn-start',
+        turnId: 'turn-1',
+        startedBy: 'host',
+      },
     })).toEqual({
       type: 'prompt_submitted',
       agentId: 'codex',
@@ -15,10 +22,16 @@ describe('mapRuntimeMessageToTerminalLifecycleObservation', () => {
     });
   });
 
-  it('maps task_complete to a normalized completed observation', () => {
+  it('maps canonical turn-complete events to a normalized completed observation', () => {
     expect(mapRuntimeMessageToTerminalLifecycleObservation({
       agentId: 'claude',
-      message: { type: 'task_complete', id: 'turn-2' },
+      message: {
+        sequence: 2,
+        sessionId: 'session-1',
+        emittedAtMs: 2,
+        kind: 'turn-complete',
+        turnId: 'turn-2',
+      },
     })).toEqual({
       type: 'turn_completed',
       agentId: 'claude',
@@ -27,24 +40,44 @@ describe('mapRuntimeMessageToTerminalLifecycleObservation', () => {
     });
   });
 
-  it('maps interrupted turn_aborted messages to user interrupts', () => {
+  it('maps canonical user cancellations to user interrupts', () => {
     expect(mapRuntimeMessageToTerminalLifecycleObservation({
       agentId: 'codex',
-      message: { type: 'turn_aborted', id: 'turn-3', reason: 'interrupted' },
+      message: {
+        sequence: 3,
+        sessionId: 'session-1',
+        emittedAtMs: 3,
+        kind: 'turn-cancelled',
+        turnId: 'turn-3',
+        cause: 'user',
+        diagnostic: {
+          code: 'user_interrupted',
+          severity: 'warning',
+          message: 'Interrupted by user',
+        },
+      },
     })).toEqual({
       type: 'turn_aborted',
       agentId: 'codex',
       turnId: 'turn-3',
       reason: 'user_interrupt',
-      detail: 'interrupted',
+      detail: 'Interrupted by user',
       source: 'lifecycle_event',
     });
   });
 
-  it('ignores non-lifecycle runtime messages', () => {
+  it('ignores non-lifecycle canonical runtime messages', () => {
     expect(mapRuntimeMessageToTerminalLifecycleObservation({
       agentId: 'codex',
-      message: { type: 'agent_message', message: 'hello' },
+      message: {
+        sequence: 4,
+        sessionId: 'session-1',
+        emittedAtMs: 4,
+        kind: 'message-delta',
+        turnId: 'turn-4',
+        channel: 'assistant',
+        text: 'hello',
+      },
     })).toBeNull();
   });
 });

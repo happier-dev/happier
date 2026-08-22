@@ -38,6 +38,11 @@
   },
   "exclude": [
     "node_modules",
+    // Self-declared temporary measurement scratch. Files named `*.tmp.test.ts` are written
+    // to record a number and deleted afterwards, and while they exist they may import
+    // directly across package boundaries, which pulls foreign sources into this program and
+    // fails `rootDir`. Transient scratch must not be able to break the package build.
+    "src/**/*.tmp.test.ts",
   ],
   "include": [
     "src/**/*.ts",

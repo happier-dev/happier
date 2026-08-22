@@ -7,7 +7,11 @@ import type { Metadata } from '@/api/types';
 import { createMutableApiSessionClientFixture } from '@/testkit/backends/sessionFixtures';
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
-import { runPermissionModePromptLoop } from './runPermissionModePromptLoop';
+import {
+  runPermissionModePromptLoop,
+  type RuntimePromptWithAcceptanceMeta,
+} from './runPermissionModePromptLoop';
+import type { HostSessionRuntimeHookRuntime } from '@/agent/runtime/session/loop/runHostSessionRuntime';
 import {
   combinePermissionModeQueuedPrompts,
   type PermissionModeQueuedPrompt,
@@ -17,14 +21,20 @@ import { createRuntimeOverrideSynchronizers } from './createRuntimeOverrideSynch
 import { formatProviderPromptErrorMessage } from './formatProviderPromptErrorMessage';
 import {
   createRuntimeTurnFailureAlreadySurfacedError,
-  type RuntimeTurnPromptMeta,
   type RuntimeTurnOperations,
 } from '@/agent/runtime/turns/runtimeTurnOperations';
+import type { StructuredInputComposerReferenceResolver } from '@/agent/runtime/turns/resolveStructuredInputProviderContext';
 import { createFakeAcpRuntimeBackend } from '@/testkit/backends/acpRuntimeBackend';
 import { createApprovedPermissionHandler } from '@/testkit/backends/permissionHandler';
 import { createDeferred } from '@/testkit/async/deferred';
 import { applyAcpConfigOptionIntentSessionMetadata } from '@happier-dev/agents/session/state/metadataWriters';
-import { ProviderConnectionIdSchema } from '@happier-dev/protocol';
+import {
+  MENTION_KIND_V1,
+  ProviderConnectionIdSchema,
+  AgentSessionRuntimeEventV1Schema,
+  buildComposerReferenceMentionPayloadV1,
+  buildMentionRefForKindV1,
+} from '@happier-dev/protocol';
 
 type PromptLoopMetadata = Metadata & {
   replaySeedV1?: any;
@@ -32,7 +42,13 @@ type PromptLoopMetadata = Metadata & {
 };
 
 function createPromptLoopSession() {
-  return createMutableApiSessionClientFixture<PromptLoopMetadata>();
+  return createMutableApiSessionClientFixture<PromptLoopMetadata>({
+    overrides: {
+      async enqueueAgentMessageCommitted() {
+        return { persisted: true, delivered: false };
+      },
+    },
+  });
 }
 
 function createPromptLoopMetadata(overrides: Partial<PromptLoopMetadata> = {}): PromptLoopMetadata {
@@ -54,7 +70,7 @@ function createModeQueue() {
 function createRuntime() {
   const operations = {
     beginTurnLifecycle: vi.fn(),
-    sendTurnPrompt: vi.fn(async () => {}),
+    sendTurnPrompt: vi.fn<RuntimeTurnOperations['sendTurnPrompt']>(async () => {}),
     steerInFlightTurn: vi.fn(async () => {}),
     waitForTurnCompletion: vi.fn(async () => {}),
     subscribeRuntimeEvents: vi.fn(() => () => {}),
@@ -64,15 +80,9 @@ function createRuntime() {
     updateSessionRuntimeConfig: vi.fn<RuntimeTurnOperations['updateSessionRuntimeConfig']>(async () => {}),
     resetOrDisposeRuntime: vi.fn(async () => {}),
     compactContext: undefined as undefined | ((command: string) => Promise<void>),
-    sendPromptWithMeta: undefined as undefined | ((params: {
-      text: string;
-      localId?: string | null;
-      localIds?: readonly string[];
-      structuredInput?: RuntimeTurnPromptMeta['structuredInput'];
-      modelId?: string | null;
-      userMessageSeq?: number | null;
-      userMessageSeqs?: readonly number[];
-    }) => Promise<void>),
+    // Same one declaration the host and the loop use, so this fake cannot drift into a
+    // third copy that hides the acceptance callback.
+    sendPromptWithMeta: undefined as undefined | ((params: RuntimePromptWithAcceptanceMeta) => Promise<void>),
     shouldResumeAfterPermissionModeChange: vi.fn(() => true),
   };
   return operations;
@@ -146,6 +156,314 @@ describe('runPermissionModePromptLoop', () => {
     const finalMetadata = session.__getMetadata();
     expect(finalMetadata?.replaySeedV1?.appliedToLocalId).toBe('local-1');
     expect(finalMetadata?.replaySeedV1?.seedText).toBe('');
+  });
+
+  it.each([
+    {
+      title: 'retires the replay seed on confirmed delivery even when the turn then fails',
+      failFirstSendBeforeAcceptance: false,
+      expectedSecondPrompt: 'second',
+      expectedSeedTextAfter: '',
+    },
+    {
+      title: 'keeps the replay seed live when the first prompt never reached the provider',
+      failFirstSendBeforeAcceptance: true,
+      expectedSecondPrompt: 'SEED\n\nsecond',
+      expectedSeedTextAfter: 'SEED',
+    },
+  ])('$title', async ({ failFirstSendBeforeAcceptance, expectedSecondPrompt, expectedSeedTextAfter }) => {
+    const session = createPromptLoopSession();
+    session.__setMetadata({
+      ...createPromptLoopMetadata({
+        permissionMode: 'default',
+        permissionModeUpdatedAt: 0,
+      }),
+      replaySeedV1: {
+        v: 1,
+        seedText: 'SEED',
+        sourceSessionId: 'parent',
+        sourceCutoffSeqInclusive: 3,
+        createdAtMs: 123,
+      },
+    });
+    const queue = createModeQueue();
+    const runtime = createRuntime();
+    let sendCount = 0;
+    const seedTextAtEachSend: unknown[] = [];
+    runtime.sendTurnPrompt = vi.fn<RuntimeTurnOperations['sendTurnPrompt']>(async () => {
+      sendCount += 1;
+      seedTextAtEachSend.push(session.__getMetadata()?.replaySeedV1?.seedText);
+      // A prompt the provider never took custody of keeps its seed; anything the
+      // provider accepted has already delivered it.
+      if (sendCount === 1 && failFirstSendBeforeAcceptance) {
+        throw new Error('provider rejected the prompt before acceptance');
+      }
+    });
+    // The provider accepted the prompt and the turn then died — the shape of the
+    // observed incident. A genuinely abort-like failure tears the loop down (see the
+    // abort case below), so the surviving-loop observable uses a plain turn failure.
+    runtime.waitForTurnCompletion = vi.fn(async () => {
+      if (sendCount === 1 && !failFirstSendBeforeAcceptance) {
+        throw new Error('provider turn died after acceptance');
+      }
+    });
+    const permissionHandler = {
+      setPermissionMode: vi.fn(),
+      reset: vi.fn(),
+    } as any;
+
+    queue.push({ text: 'hello', localId: 'local-1' }, { permissionMode: 'default' });
+
+    let shouldExit = false;
+    let readyCount = 0;
+
+    await runPermissionModePromptLoop({
+      providerName: 'Test Provider',
+      agentMessageType: 'qwen',
+      explicitPermissionMode: undefined,
+      session,
+      messageQueue: queue,
+      permissionHandler,
+      runtime: runtime as unknown as Parameters<typeof runPermissionModePromptLoop>[0]['runtime'],
+      createOverrideSynchronizer: () => ({ syncFromMetadata: () => {}, flushPendingAfterStart: async () => {} }),
+      messageBuffer: new MessageBuffer(),
+      shouldExit: () => shouldExit,
+      getAbortSignal: () => new AbortController().signal,
+      keepAlive: () => {},
+      setThinking: () => {},
+      sendReady: () => {
+        readyCount += 1;
+        if (readyCount === 1) {
+          queue.push({ text: 'second', localId: 'local-2' }, { permissionMode: 'default' });
+          return;
+        }
+        shouldExit = true;
+      },
+      currentPermissionModeUpdatedAt: 0,
+      setCurrentPermissionMode: () => {},
+      setCurrentPermissionModeUpdatedAt: () => {},
+      formatPromptErrorMessage: (error) => `Error: ${String(error)}`,
+    });
+
+    expect(runtime.sendTurnPrompt).toHaveBeenNthCalledWith(1, 'SEED\n\nhello', localIdentityMeta('local-1'));
+    expect(runtime.sendTurnPrompt).toHaveBeenNthCalledWith(2, expectedSecondPrompt, localIdentityMeta('local-2'));
+    expect(seedTextAtEachSend[1]).toBe(expectedSeedTextAfter);
+  });
+
+  it('has already retired the replay seed when a user abort tears the loop down', async () => {
+    const session = createPromptLoopSession();
+    session.__setMetadata({
+      ...createPromptLoopMetadata({
+        permissionMode: 'default',
+        permissionModeUpdatedAt: 0,
+      }),
+      replaySeedV1: {
+        v: 1,
+        seedText: 'SEED',
+        sourceSessionId: 'parent',
+        sourceCutoffSeqInclusive: 3,
+        createdAtMs: 123,
+      },
+    });
+    const queue = createModeQueue();
+    const runtime = createRuntime();
+    runtime.waitForTurnCompletion = vi.fn(async () => {
+      throw new Error('Cancelled by user');
+    });
+
+    queue.push({ text: 'hello', localId: 'local-1' }, { permissionMode: 'default' });
+
+    await expect(runPermissionModePromptLoop({
+      providerName: 'Test Provider',
+      agentMessageType: 'qwen',
+      explicitPermissionMode: undefined,
+      session,
+      messageQueue: queue,
+      permissionHandler: { setPermissionMode: vi.fn(), reset: vi.fn() } as any,
+      runtime: runtime as unknown as Parameters<typeof runPermissionModePromptLoop>[0]['runtime'],
+      createOverrideSynchronizer: () => ({ syncFromMetadata: () => {}, flushPendingAfterStart: async () => {} }),
+      messageBuffer: new MessageBuffer(),
+      shouldExit: () => false,
+      getAbortSignal: () => new AbortController().signal,
+      keepAlive: () => {},
+      setThinking: () => {},
+      sendReady: () => {},
+      currentPermissionModeUpdatedAt: 0,
+      setCurrentPermissionMode: () => {},
+      setCurrentPermissionModeUpdatedAt: () => {},
+      formatPromptErrorMessage: (error) => `Error: ${String(error)}`,
+    })).rejects.toThrow('Cancelled by user');
+
+    expect(runtime.sendTurnPrompt).toHaveBeenCalledExactlyOnceWith('SEED\n\nhello', localIdentityMeta('local-1'));
+    // Retirement is scoped to provider acceptance, which already happened when the
+    // send resolved — so the abort cannot leave the seed live for the next prompt.
+    expect(session.__getMetadata()?.replaySeedV1?.appliedToLocalId).toBe('local-1');
+    expect(session.__getMetadata()?.replaySeedV1?.seedText).toBe('');
+  });
+
+  // A runtime whose send stays pending for the whole turn (the ACP seam awaits the
+  // provider's response after acceptance) surfaces a user abort as a rejected send. The
+  // provider already has the seed in its context, so the abort must not leave the seed
+  // live — that is exactly how one session received the same seed twice.
+  it.each([
+    {
+      title: 'retires the replay seed when a turn-spanning send confirms acceptance and is then aborted',
+      confirmAcceptanceBeforeAbort: true,
+      expectedSecondPrompt: 'second',
+      expectedSeedTextAtSecondSend: '',
+    },
+    {
+      title: 'keeps the replay seed live when a turn-spanning send is aborted without confirming acceptance',
+      confirmAcceptanceBeforeAbort: false,
+      expectedSecondPrompt: 'SEED\n\nsecond',
+      expectedSeedTextAtSecondSend: 'SEED',
+    },
+  ])('$title', async ({ confirmAcceptanceBeforeAbort, expectedSecondPrompt, expectedSeedTextAtSecondSend }) => {
+    const session = createPromptLoopSession();
+    session.__setMetadata({
+      ...createPromptLoopMetadata({
+        permissionMode: 'default',
+        permissionModeUpdatedAt: 0,
+      }),
+      replaySeedV1: {
+        v: 1,
+        seedText: 'SEED',
+        sourceSessionId: 'parent',
+        sourceCutoffSeqInclusive: 3,
+        createdAtMs: 123,
+      },
+    });
+    const queue = createModeQueue();
+    const runtime = createRuntime();
+    const sentTexts: string[] = [];
+    const seedTextAtEachSend: unknown[] = [];
+    runtime.sendPromptWithMeta = vi.fn(async (
+      params: { text: string } & { onProviderPromptAccepted?: () => void },
+    ) => {
+      sentTexts.push(params.text);
+      seedTextAtEachSend.push(session.__getMetadata()?.replaySeedV1?.seedText);
+      if (sentTexts.length > 1) return;
+      if (confirmAcceptanceBeforeAbort) {
+        params.onProviderPromptAccepted?.();
+      }
+      // The send only settles when the turn does, so the abort arrives here rather than
+      // through waitForTurnCompletion.
+      throw new Error('Cancelled by user');
+    }) as typeof runtime.sendPromptWithMeta;
+
+    queue.push({ text: 'hello', localId: 'local-1' }, { permissionMode: 'default' });
+
+    let shouldExit = false;
+    let readyCount = 0;
+
+    await runPermissionModePromptLoop({
+      providerName: 'Test Provider',
+      agentMessageType: 'qwen',
+      explicitPermissionMode: undefined,
+      session,
+      messageQueue: queue,
+      permissionHandler: { setPermissionMode: vi.fn(), reset: vi.fn() } as any,
+      runtime: runtime as unknown as Parameters<typeof runPermissionModePromptLoop>[0]['runtime'],
+      createOverrideSynchronizer: () => ({ syncFromMetadata: () => {}, flushPendingAfterStart: async () => {} }),
+      messageBuffer: new MessageBuffer(),
+      shouldExit: () => shouldExit,
+      getAbortSignal: () => new AbortController().signal,
+      keepAlive: () => {},
+      setThinking: () => {},
+      sendReady: () => {
+        readyCount += 1;
+        if (readyCount === 1) {
+          queue.push({ text: 'second', localId: 'local-2' }, { permissionMode: 'default' });
+          return;
+        }
+        shouldExit = true;
+      },
+      currentPermissionModeUpdatedAt: 0,
+      setCurrentPermissionMode: () => {},
+      setCurrentPermissionModeUpdatedAt: () => {},
+      formatPromptErrorMessage: (error) => `Error: ${String(error)}`,
+    });
+
+    expect(sentTexts[0]).toBe('SEED\n\nhello');
+    expect(sentTexts[1]).toBe(expectedSecondPrompt);
+    expect(seedTextAtEachSend[1]).toBe(expectedSeedTextAtSecondSend);
+  });
+
+  // OWNERSHIP PIN. Provider ACCEPTANCE of the dispatched prompt is the only seam that may
+  // retire the replay seed, and the host surfaces it through exactly one contract: the
+  // prompt-dispatch envelope. `HostSessionRuntimeHookRuntime` is the type a runtime is
+  // actually implemented against, so this fake is typed at THAT boundary rather than the
+  // loop's. A second, divergent declaration of the same method — one that drops
+  // `onProviderPromptAccepted` — compiles fine and then silently never retires, re-sending
+  // the entire carry-over context on the next prompt. If this stops compiling, the two
+  // declarations have drifted apart again.
+  it('retires the replay seed from a runtime implemented against the host runtime hook contract', async () => {
+    const session = createPromptLoopSession();
+    session.__setMetadata({
+      ...createPromptLoopMetadata({
+        permissionMode: 'default',
+        permissionModeUpdatedAt: 0,
+      }),
+      replaySeedV1: {
+        v: 1,
+        seedText: 'SEED',
+        sourceSessionId: 'parent',
+        sourceCutoffSeqInclusive: 3,
+        createdAtMs: 123,
+      },
+    });
+    const queue = createModeQueue();
+    const runtime = createRuntime();
+    const sentTexts: string[] = [];
+    const seedTextAtEachSend: unknown[] = [];
+    const sendPromptWithMeta: NonNullable<HostSessionRuntimeHookRuntime['sendPromptWithMeta']> =
+      async (params) => {
+        sentTexts.push(params.text);
+        seedTextAtEachSend.push(session.__getMetadata()?.replaySeedV1?.seedText);
+        if (sentTexts.length > 1) return;
+        // Custody is confirmed here; the turn then dies. Retirement must already be in
+        // flight so the `finally` drain settles it before the next prompt is composed.
+        params.onProviderPromptAccepted?.();
+        throw new Error('Cancelled by user');
+      };
+    runtime.sendPromptWithMeta = vi.fn(sendPromptWithMeta) as typeof runtime.sendPromptWithMeta;
+
+    queue.push({ text: 'hello', localId: 'local-1' }, { permissionMode: 'default' });
+
+    let shouldExit = false;
+    let readyCount = 0;
+
+    await runPermissionModePromptLoop({
+      providerName: 'Test Provider',
+      agentMessageType: 'qwen',
+      explicitPermissionMode: undefined,
+      session,
+      messageQueue: queue,
+      permissionHandler: { setPermissionMode: vi.fn(), reset: vi.fn() } as any,
+      runtime: runtime as unknown as Parameters<typeof runPermissionModePromptLoop>[0]['runtime'],
+      createOverrideSynchronizer: () => ({ syncFromMetadata: () => {}, flushPendingAfterStart: async () => {} }),
+      messageBuffer: new MessageBuffer(),
+      shouldExit: () => shouldExit,
+      getAbortSignal: () => new AbortController().signal,
+      keepAlive: () => {},
+      setThinking: () => {},
+      sendReady: () => {
+        readyCount += 1;
+        if (readyCount === 1) {
+          queue.push({ text: 'second', localId: 'local-2' }, { permissionMode: 'default' });
+          return;
+        }
+        shouldExit = true;
+      },
+      currentPermissionModeUpdatedAt: 0,
+      setCurrentPermissionMode: () => {},
+      setCurrentPermissionModeUpdatedAt: () => {},
+      formatPromptErrorMessage: (error) => `Error: ${String(error)}`,
+    });
+
+    expect(sentTexts[0]).toBe('SEED\n\nhello');
+    expect(sentTexts[1]).toBe('second');
+    expect(seedTextAtEachSend[1]).toBe('');
   });
 
   it('replays already-resolved provider prompts literally with their transcript anchor and without echo or command parsing', async () => {
@@ -271,7 +589,7 @@ describe('runPermissionModePromptLoop', () => {
     const messageBuffer = new MessageBuffer();
     const permissionHandler = { setPermissionMode: vi.fn(), reset: vi.fn() } as any;
 
-    const sendAgentMessage = vi.spyOn(session, 'sendAgentMessage');
+    const enqueueAgentMessageCommitted = vi.spyOn(session, 'enqueueAgentMessageCommitted');
 
     let completionCalls = 0;
     runtime.waitForTurnCompletion = vi.fn(async () => {
@@ -317,10 +635,14 @@ describe('runPermissionModePromptLoop', () => {
     })).resolves.toBeUndefined();
 
     // The failure was surfaced to the transcript and the loop continued to the second prompt.
-    expect(sendAgentMessage).toHaveBeenCalledWith('qwen', expect.objectContaining({
-      type: 'message',
-      message: expect.stringContaining('awaiting provider acceptance'),
-    }));
+    expect(enqueueAgentMessageCommitted).toHaveBeenCalledWith(
+      'qwen',
+      expect.objectContaining({
+        type: 'message',
+        message: expect.stringContaining('awaiting provider acceptance'),
+      }),
+      expect.objectContaining({ provenance: { kind: 'non_dependent', source: 'external' } }),
+    );
     expect(runtime.sendTurnPrompt).toHaveBeenNthCalledWith(2, 'second', localIdentityMeta('local-2'));
   });
 
@@ -331,25 +653,26 @@ describe('runPermissionModePromptLoop', () => {
     const messageBuffer = new MessageBuffer();
     const permissionHandler = { setPermissionMode: vi.fn(), reset: vi.fn() } as any;
 
-    const sendAgentMessage = vi.spyOn(session, 'sendAgentMessage');
+    const enqueueAgentMessageCommitted = vi.spyOn(session, 'enqueueAgentMessageCommitted');
 
     runtime.waitForTurnCompletion = vi.fn(async () => {
       throw createRuntimeTurnFailureAlreadySurfacedError({
         message: 'Plugin session runtime turn failed: OpenCode permission request was denied.',
         event: {
           kind: 'turn-failed',
+          sequence: 1,
           sessionId: session.sessionId,
           emittedAtMs: 2,
           turnId: 'turn-1',
-          issue: {
-            v: 1,
-            scope: 'primary_session',
-            status: 'failed',
+          diagnostic: {
             code: 'opencode_permission_denied',
-            source: 'permission_blocked',
-            agentId: 'opencode',
-            occurredAt: 2,
-            sanitizedPreview: 'OpenCode permission request was denied.',
+            severity: 'error',
+            message: 'OpenCode permission request was denied.',
+            details: {
+              source: 'permission_blocked',
+              occurredAt: 2,
+              agentId: 'opencode',
+            },
           },
         },
       });
@@ -383,10 +706,10 @@ describe('runPermissionModePromptLoop', () => {
       formatPromptErrorMessage: (error) => `Error: ${String(error)}`,
     })).resolves.toBeUndefined();
 
-    expect(sendAgentMessage).not.toHaveBeenCalledWith('qwen', expect.objectContaining({
+    expect(enqueueAgentMessageCommitted).not.toHaveBeenCalledWith('qwen', expect.objectContaining({
       type: 'message',
       message: expect.stringContaining('OpenCode permission request was denied'),
-    }));
+    }), expect.anything());
     expect(runtime.sendTurnPrompt).toHaveBeenCalledTimes(1);
     expect(readySpy).toHaveBeenCalledTimes(1);
   });
@@ -403,7 +726,7 @@ describe('runPermissionModePromptLoop', () => {
     const messageBuffer = new MessageBuffer();
     const permissionHandler = { setPermissionMode: vi.fn(), reset: vi.fn() } as any;
 
-    const sendAgentMessage = vi.spyOn(session, 'sendAgentMessage');
+    const enqueueAgentMessageCommitted = vi.spyOn(session, 'enqueueAgentMessageCommitted');
 
     class ClassifiedInjectionFailureError extends Error {
       readonly code = 'claude_unified_terminal_injection_failed';
@@ -462,10 +785,14 @@ describe('runPermissionModePromptLoop', () => {
 
     // Surfaced (not silent, not fatal), parked (1 dispatch when the next message arrived),
     // and the next message relaunched the turn in the SAME loop.
-    expect(sendAgentMessage).toHaveBeenCalledWith('qwen', expect.objectContaining({
-      type: 'message',
-      message: expect.stringContaining('awaiting provider acceptance'),
-    }));
+    expect(enqueueAgentMessageCommitted).toHaveBeenCalledWith(
+      'qwen',
+      expect.objectContaining({
+        type: 'message',
+        message: expect.stringContaining('awaiting provider acceptance'),
+      }),
+      expect.objectContaining({ provenance: { kind: 'non_dependent', source: 'external' } }),
+    );
     expect(dispatchCountAtRelaunchWake).toBe(1);
     expect(runtime.sendTurnPrompt).toHaveBeenNthCalledWith(2, 'next message after the park', localIdentityMeta('local-2'));
   });
@@ -492,7 +819,7 @@ describe('runPermissionModePromptLoop', () => {
 
     // Abort-like errors are the shutdown signal and must not be swallowed into a surfaced message;
     // the loop simply does not surface them as a turn failure.
-    const sendAgentMessage = vi.spyOn(session, 'sendAgentMessage');
+    const enqueueAgentMessageCommitted = vi.spyOn(session, 'enqueueAgentMessageCommitted');
     await runPermissionModePromptLoop({
       providerName: 'Test Provider',
       agentMessageType: 'qwen',
@@ -514,9 +841,9 @@ describe('runPermissionModePromptLoop', () => {
       formatPromptErrorMessage: (error) => `Error: ${String(error)}`,
     }).catch(() => undefined);
 
-    expect(sendAgentMessage).not.toHaveBeenCalledWith('qwen', expect.objectContaining({
+    expect(enqueueAgentMessageCommitted).not.toHaveBeenCalledWith('qwen', expect.objectContaining({
       message: expect.stringContaining('aborted'),
-    }));
+    }), expect.anything());
   });
 
   it('sends already-echoed queued prompts without duplicating the user transcript row', async () => {
@@ -583,8 +910,21 @@ describe('runPermissionModePromptLoop', () => {
       };
     });
     runtime.sendTurnPrompt = vi.fn(async () => {
-      runtimeMessageHandler?.({ type: 'task_started', id: 'turn-checkpoint-1' });
-      runtimeMessageHandler?.({ type: 'task_complete', id: 'turn-checkpoint-1' });
+      runtimeMessageHandler?.({
+        kind: 'turn-start',
+        sequence: 1,
+        sessionId: 'session-1',
+        emittedAtMs: 1,
+        turnId: 'turn-checkpoint-1',
+        startedBy: 'host',
+      });
+      runtimeMessageHandler?.({
+        kind: 'turn-complete',
+        sequence: 2,
+        sessionId: 'session-1',
+        emittedAtMs: 2,
+        turnId: 'turn-checkpoint-1',
+      });
     });
     const messageBuffer = new MessageBuffer();
     const permissionHandler = {
@@ -653,13 +993,15 @@ describe('runPermissionModePromptLoop', () => {
     runtime.sendTurnPrompt = vi.fn(async () => {
       runtimeMessageHandler?.({
         kind: 'turn-start',
+        sequence: 1,
         sessionId: 'session-1',
         emittedAtMs: 1,
         turnId: 'codex-turn-1',
-        startedBy: 'user',
+        startedBy: 'host',
       });
       runtimeMessageHandler?.({
         kind: 'turn-complete',
+        sequence: 2,
         sessionId: 'session-1',
         emittedAtMs: 2,
         turnId: 'codex-turn-1',
@@ -843,7 +1185,7 @@ describe('runPermissionModePromptLoop', () => {
       setPermissionMode: vi.fn(),
       reset: vi.fn(),
     } as any;
-    const sendAgentMessageSpy = vi.spyOn(session, 'sendAgentMessage');
+    const enqueueAgentMessageCommittedSpy = vi.spyOn(session, 'enqueueAgentMessageCommitted');
     session.materializeNextPendingMessageSafely = vi.fn(async () => ({
       type: 'deferred' as const,
       reason: 'supervisor_auth_failed' as const,
@@ -882,10 +1224,17 @@ describe('runPermissionModePromptLoop', () => {
       type: 'status',
       content: 'Pending prompts could not be restored after startup because session authentication failed; reconnect and retry.',
     }));
-    expect(sendAgentMessageSpy).toHaveBeenCalledWith('qwen', {
-      type: 'message',
-      message: 'Pending prompts could not be restored after startup because session authentication failed; reconnect and retry.',
-    });
+    expect(enqueueAgentMessageCommittedSpy).toHaveBeenCalledWith(
+      'qwen',
+      {
+        type: 'message',
+        message: 'Pending prompts could not be restored after startup because session authentication failed; reconnect and retry.',
+      },
+      expect.objectContaining({
+        localId: expect.any(String),
+        provenance: { kind: 'non_dependent', source: 'external' },
+      }),
+    );
   });
 
   it('parks after an idle pending materialization auth failure and continues with later input', async () => {
@@ -1121,7 +1470,11 @@ describe('runPermissionModePromptLoop', () => {
       formatPromptErrorMessage: (error) => `Error: ${String(error)}`,
     });
 
-    expect(runtime.sendPromptWithMeta).toHaveBeenCalledWith({ text: 'hello', ...localIdentityMeta('local-1') });
+    expect(runtime.sendPromptWithMeta).toHaveBeenCalledWith({
+      text: 'hello',
+      ...localIdentityMeta('local-1'),
+      onProviderPromptAccepted: expect.any(Function),
+    });
     expect(runtime.sendTurnPrompt).not.toHaveBeenCalled();
   });
 
@@ -1142,10 +1495,23 @@ describe('runPermissionModePromptLoop', () => {
         provenance: { kind: 'sessionAttachmentUpload' as const },
       }],
     };
+    const causalPermissionAuthority = {
+      kind: 'admittedSessionInputV1' as const,
+      admittedPermissionCeiling: 'read-only' as const,
+      sourceAuthority: {
+        kind: 'mediatedExternal' as const,
+        mediatorPluginId: 'acme.plugin',
+        sourceRef: 'message-1',
+        sourceRevisionOrEpoch: 'revision-1',
+        admittedPermissionCeiling: 'read-only' as const,
+        remoteApprovalMaxScope: 'request' as const,
+      },
+    };
     queue.push({
       text: 'inspect this image',
       localId: 'local-image-1',
       structuredInput,
+      causalPermissionAuthority,
     } as PermissionModeQueuedPrompt, { permissionMode: 'default' });
 
     let shouldExit = false;
@@ -1174,6 +1540,8 @@ describe('runPermissionModePromptLoop', () => {
       text: 'inspect this image',
       ...localIdentityMeta('local-image-1'),
       structuredInput,
+      causalPermissionAuthority,
+      onProviderPromptAccepted: expect.any(Function),
     });
   });
 
@@ -1294,6 +1662,7 @@ describe('runPermissionModePromptLoop', () => {
     expect(runtime.sendPromptWithMeta).toHaveBeenCalledWith({
       text: 'hello with selected model',
       ...localIdentityMeta('local-model-1'),
+      onProviderPromptAccepted: expect.any(Function),
     });
   });
 
@@ -1415,6 +1784,190 @@ describe('runPermissionModePromptLoop', () => {
     });
   });
 
+  it('resolves selected attachments immediately before dispatch and settles a failed resolution without retiring durable custody', async () => {
+    const session = createPromptLoopSession();
+    const observeProviderInputSettlement = vi.spyOn(session, 'observeProviderInputSettlement').mockImplementation(
+      (() => Promise.resolve(false)) as typeof session.observeProviderInputSettlement,
+    );
+    session.__setMetadata(createPromptLoopMetadata({
+      permissionMode: 'default',
+      permissionModeUpdatedAt: 0,
+    }));
+    const queue = createModeQueue();
+    const runtime = createRuntime();
+    runtime.sendPromptWithMeta = vi.fn(async () => {});
+    const resolveComposerAttachmentForDispatch = vi.fn(async () => ({
+      attachments: [{
+        instanceId: 'review-comment-1',
+        status: 'failed',
+        retryable: false,
+        message: 'The selected review comment no longer exists.',
+      }],
+    }));
+    queue.push({
+      text: 'Review this selected comment.',
+      localId: 'local-attachment-preparation-unavailable',
+      userMessageSeq: 42,
+      userMessageSeqs: [42],
+      structuredInput: {
+        v: 1,
+        composerAttachments: [{
+          v: 1,
+          instanceId: 'review-comment-1',
+          attachment: { pluginId: 'acme.review-comments', localId: 'review-comment' },
+          key: 'comment-1',
+          value: { reviewId: 'review-1' },
+          presentation: { label: 'Review comment', typeLabel: 'Review comment' },
+        }],
+      },
+    }, { permissionMode: 'default' });
+
+    let shouldExit = false;
+    await runPermissionModePromptLoop({
+      providerName: 'Test Provider',
+      agentMessageType: 'qwen',
+      explicitPermissionMode: undefined,
+      session,
+      messageQueue: queue,
+      permissionHandler: {
+        setPermissionMode: vi.fn(),
+        reset: vi.fn(),
+      } as any,
+      runtime: runtime as unknown as Parameters<typeof runPermissionModePromptLoop>[0]['runtime'],
+      createOverrideSynchronizer: () => ({
+        syncFromMetadata: () => {},
+        flushPendingAfterStart: async () => {},
+      }),
+      messageBuffer: new MessageBuffer(),
+      shouldExit: () => shouldExit,
+      getAbortSignal: () => new AbortController().signal,
+      keepAlive: () => {},
+      setThinking: () => {},
+      sendReady: () => {
+        shouldExit = true;
+      },
+      currentPermissionModeUpdatedAt: 0,
+      setCurrentPermissionMode: () => {},
+      setCurrentPermissionModeUpdatedAt: () => {},
+      resolveComposerAttachmentForDispatch,
+      formatPromptErrorMessage: (error) => `Error: ${String(error)}`,
+    } as Parameters<typeof runPermissionModePromptLoop>[0]);
+
+    expect(runtime.beginTurnLifecycle).not.toHaveBeenCalled();
+    expect(runtime.sendPromptWithMeta).not.toHaveBeenCalled();
+    expect(runtime.sendTurnPrompt).not.toHaveBeenCalled();
+    expect(resolveComposerAttachmentForDispatch).toHaveBeenCalledWith({
+      sessionId: session.sessionId,
+      attachment: { pluginId: 'acme.review-comments', localId: 'review-comment' },
+      request: {
+        sessionId: session.sessionId,
+        localId: 'local-attachment-preparation-unavailable',
+        attachments: [{
+          instanceId: 'review-comment-1',
+          key: 'comment-1',
+          value: { reviewId: 'review-1' },
+        }],
+      },
+      signal: expect.any(AbortSignal),
+    });
+    expect(observeProviderInputSettlement).toHaveBeenCalledWith({
+      kind: 'rejected_before_effect',
+      localId: 'local-attachment-preparation-unavailable',
+      userMessageSeq: 42,
+      reason: 'provider_rejected_before_acceptance',
+      diagnostic: {
+        code: 'composer_attachment_resolution_failed',
+        severity: 'error',
+        message: 'The selected review comment no longer exists.',
+      },
+      retryable: false,
+    });
+  });
+
+  it('settles selected SessionMedia video as typed unsupported without a provider effect', async () => {
+    const session = createPromptLoopSession();
+    const observeProviderInputSettlement = vi.spyOn(session, 'observeProviderInputSettlement').mockImplementation(
+      (() => Promise.resolve(false)) as typeof session.observeProviderInputSettlement,
+    );
+    session.__setMetadata(createPromptLoopMetadata({
+      permissionMode: 'default',
+      permissionModeUpdatedAt: 0,
+    }));
+    const queue = createModeQueue();
+    const runtime = createRuntime();
+    runtime.sendPromptWithMeta = vi.fn(async () => {});
+    const media = {
+      id: 'media-review-video',
+      role: 'input' as const,
+      category: 'attachment' as const,
+      mediaKind: 'video' as const,
+      mimeType: 'video/webm' as const,
+      name: 'review.webm',
+      path: '.happier/uploads/messages/session-1/local-review-video/review.webm',
+      sizeBytes: 67,
+      sha256: 'b'.repeat(64),
+      origin: { source: 'user-upload' as const },
+    };
+    queue.push({
+      text: 'Review this recording.',
+      localId: 'local-review-video',
+      structuredInput: {
+        v: 1,
+        composerAttachments: [{
+          v: 1,
+          instanceId: 'review-video-1',
+          attachment: { pluginId: 'acme.review', localId: 'review-media' },
+          key: 'review-video',
+          value: { reviewId: 'review-1' },
+          presentation: { label: 'Review recording', typeLabel: 'Review media' },
+          content: { kind: 'sessionMedia', mediaId: media.id },
+        }],
+      },
+      sessionMedia: [media],
+    }, { permissionMode: 'default' });
+
+    let shouldExit = false;
+    await runPermissionModePromptLoop({
+      providerName: 'Test Provider',
+      agentMessageType: 'qwen',
+      explicitPermissionMode: undefined,
+      session,
+      messageQueue: queue,
+      permissionHandler: { setPermissionMode: vi.fn(), reset: vi.fn() } as any,
+      runtime: runtime as unknown as Parameters<typeof runPermissionModePromptLoop>[0]['runtime'],
+      createOverrideSynchronizer: () => ({
+        syncFromMetadata: () => {},
+        flushPendingAfterStart: async () => {},
+      }),
+      messageBuffer: new MessageBuffer(),
+      shouldExit: () => shouldExit,
+      getAbortSignal: () => new AbortController().signal,
+      keepAlive: () => {},
+      setThinking: () => {},
+      sendReady: () => { shouldExit = true; },
+      currentPermissionModeUpdatedAt: 0,
+      setCurrentPermissionMode: () => {},
+      setCurrentPermissionModeUpdatedAt: () => {},
+      formatPromptErrorMessage: (error) => `Error: ${String(error)}`,
+    } as Parameters<typeof runPermissionModePromptLoop>[0]);
+
+    expect(runtime.beginTurnLifecycle).not.toHaveBeenCalled();
+    expect(runtime.sendPromptWithMeta).not.toHaveBeenCalled();
+    expect(runtime.sendTurnPrompt).not.toHaveBeenCalled();
+    expect(observeProviderInputSettlement).toHaveBeenCalledWith({
+      kind: 'rejected_before_effect',
+      localId: 'local-review-video',
+      userMessageSeq: null,
+      reason: 'provider_rejected_before_acceptance',
+      diagnostic: {
+        code: 'session_media_video_unsupported',
+        severity: 'error',
+        message: 'The current Agent runtime does not declare video input support',
+      },
+      retryable: false,
+    });
+  });
+
   it('applies a queued permission mode override before dispatching the prompt', async () => {
     const session = createPromptLoopSession();
     session.__setMetadata(createPromptLoopMetadata({
@@ -1483,12 +2036,13 @@ describe('runPermissionModePromptLoop', () => {
     expect(runtime.sendPromptWithMeta).toHaveBeenCalledWith({
       text: 'hello read-only',
       ...localIdentityMeta('local-permission-1'),
+      onProviderPromptAccepted: expect.any(Function),
     });
   });
 
   it('formats object-shaped prompt errors without leaking [object Object] into the transcript', async () => {
     const session = createPromptLoopSession();
-    const sendAgentMessageSpy = vi.spyOn(session, 'sendAgentMessage');
+    const enqueueAgentMessageCommittedSpy = vi.spyOn(session, 'enqueueAgentMessageCommitted');
     const queue = createModeQueue();
     const runtime = createRuntime();
     runtime.sendTurnPrompt = vi.fn(async () => {
@@ -1530,15 +2084,15 @@ describe('runPermissionModePromptLoop', () => {
       formatPromptErrorMessage: formatProviderPromptErrorMessage,
     });
 
-    expect(sendAgentMessageSpy).toHaveBeenCalledWith('qwen', {
+    expect(enqueueAgentMessageCommittedSpy).toHaveBeenCalledWith('qwen', {
       type: 'message',
       message: expect.stringContaining('"message": "Internal error"'),
-    });
-    expect(sendAgentMessageSpy).toHaveBeenCalledWith('qwen', {
+    }, expect.objectContaining({ provenance: { kind: 'non_dependent', source: 'external' } }));
+    expect(enqueueAgentMessageCommittedSpy).toHaveBeenCalledWith('qwen', {
       type: 'turn_failed',
       id: 'local-object-error',
-    });
-    const sentMessages = sendAgentMessageSpy.mock.calls.map((call) =>
+    }, expect.objectContaining({ provenance: { kind: 'non_dependent', source: 'external' } }));
+    const sentMessages = enqueueAgentMessageCommittedSpy.mock.calls.map((call) =>
       'message' in call[1] ? call[1].message ?? '' : '',
     );
     expect(sentMessages.join('\n')).not.toContain('[object Object]');
@@ -1546,7 +2100,7 @@ describe('runPermissionModePromptLoop', () => {
 
   it('marks the queued turn failed when runtime startup fails before prompt dispatch', async () => {
     const session = createPromptLoopSession();
-    const sendAgentMessageSpy = vi.spyOn(session, 'sendAgentMessage');
+    const enqueueAgentMessageCommittedSpy = vi.spyOn(session, 'enqueueAgentMessageCommitted');
     const queue = createModeQueue();
     const runtime = createRuntime();
     runtime.sendTurnPrompt = vi.fn(async () => {
@@ -1584,19 +2138,19 @@ describe('runPermissionModePromptLoop', () => {
       formatPromptErrorMessage: formatProviderPromptErrorMessage,
     });
 
-    expect(sendAgentMessageSpy).toHaveBeenCalledWith('qwen', {
+    expect(enqueueAgentMessageCommittedSpy).toHaveBeenCalledWith('qwen', {
       type: 'message',
       message: expect.stringContaining('Qwen CLI (qwen) is not available'),
-    });
-    expect(sendAgentMessageSpy).toHaveBeenCalledWith('qwen', {
+    }, expect.objectContaining({ provenance: { kind: 'non_dependent', source: 'external' } }));
+    expect(enqueueAgentMessageCommittedSpy).toHaveBeenCalledWith('qwen', {
       type: 'turn_failed',
       id: 'local-start-error',
-    });
+    }, expect.objectContaining({ provenance: { kind: 'non_dependent', source: 'external' } }));
   });
 
   it('does not surface abort-like prompt failures as agent messages', async () => {
     const session = createPromptLoopSession();
-    const sendAgentMessageSpy = vi.spyOn(session, 'sendAgentMessage');
+    const enqueueAgentMessageCommittedSpy = vi.spyOn(session, 'enqueueAgentMessageCommitted');
     const queue = createModeQueue();
     const runtime = createRuntime();
     runtime.sendPromptWithMeta = vi.fn(async () => {
@@ -1634,17 +2188,14 @@ describe('runPermissionModePromptLoop', () => {
       formatPromptErrorMessage: formatProviderPromptErrorMessage,
     });
 
-    expect(sendAgentMessageSpy).not.toHaveBeenCalledWith('opencode', expect.objectContaining({
+    expect(enqueueAgentMessageCommittedSpy).not.toHaveBeenCalledWith('opencode', expect.objectContaining({
       type: 'message',
-    }));
+    }), expect.anything());
   });
 
   it('does not turn runtime-handled provider status errors into assistant transcript messages', async () => {
     const session = createPromptLoopSession();
-    const sentMessages: unknown[] = [];
-    vi.spyOn(session, 'sendAgentMessage').mockImplementation((_provider, body) => {
-      sentMessages.push(body);
-    });
+    const runtimeEvents: ReturnType<typeof AgentSessionRuntimeEventV1Schema.parse>[] = [];
 
     let backend!: ReturnType<typeof createFakeAcpRuntimeBackend>;
     backend = createFakeAcpRuntimeBackend({
@@ -1667,6 +2218,10 @@ describe('runPermissionModePromptLoop', () => {
       permissionHandler: createApprovedPermissionHandler(),
       onThinkingChange: () => {},
       ensureBackend: async () => backend,
+    });
+    runtime.subscribeRuntimeEvents((message) => {
+      const event = AgentSessionRuntimeEventV1Schema.parse(message);
+      runtimeEvents.push(event);
     });
     // This prompt-loop slice exercises only permission-mode synchronization hooks.
     const permissionHandler = {
@@ -1700,19 +2255,13 @@ describe('runPermissionModePromptLoop', () => {
       formatPromptErrorMessage: formatProviderPromptErrorMessage,
     });
 
-    const assistantText = sentMessages
-      .filter((message): message is { type: 'message'; message: string } => {
-        if (!message || typeof message !== 'object') return false;
-        const record = message as { type?: unknown; message?: unknown };
-        return record.type === 'message' && typeof record.message === 'string';
-      })
-      .map((message) => message.message)
-      .join('\n');
+    const assistantText = runtimeEvents.flatMap((event) => (
+      event.kind === 'transcript-message-committed' && event.role === 'assistant'
+        ? [event.text]
+        : []
+    )).join('\n');
     expect(assistantText).not.toContain('Model not found');
-    await expect.poll(() => sentMessages.some((message) => {
-      if (!message || typeof message !== 'object') return false;
-      return (message as { type?: unknown }).type === 'turn_failed';
-    })).toBe(true);
+    await expect.poll(() => runtimeEvents.some((event) => event.kind === 'turn-failed')).toBe(true);
   });
 
   it('refreshes the session snapshot and re-syncs metadata overrides before sending the next queued prompt when queue delivery wins the race', async () => {
@@ -2345,8 +2894,7 @@ describe('runPermissionModePromptLoop', () => {
 
   it('does not leak unsupported /compact commands as normal prompts', async () => {
     const session = createPromptLoopSession();
-    const sendAgentMessage = vi.fn();
-    Object.assign(session, { sendAgentMessage });
+    const enqueueAgentMessageCommitted = vi.spyOn(session, 'enqueueAgentMessageCommitted');
     const queue = createModeQueue();
     const runtime = createRuntime();
     const messageBuffer = new MessageBuffer();
@@ -2386,10 +2934,14 @@ describe('runPermissionModePromptLoop', () => {
     expect(runtime.compactContext).toBeUndefined();
     expect(runtime.sendTurnPrompt).not.toHaveBeenCalled();
     expect(runtime.sendPromptWithMeta).toBeUndefined();
-    expect(sendAgentMessage).toHaveBeenCalledWith('qwen', expect.objectContaining({
-      type: 'message',
-      message: expect.stringContaining('/compact'),
-    }));
+    expect(enqueueAgentMessageCommitted).toHaveBeenCalledWith(
+      'qwen',
+      expect.objectContaining({
+        type: 'message',
+        message: expect.stringContaining('/compact'),
+      }),
+      expect.objectContaining({ provenance: { kind: 'non_dependent', source: 'external' } }),
+    );
     expect(readySpy).toHaveBeenCalledTimes(1);
   });
 
@@ -2607,4 +3159,127 @@ describe('runPermissionModePromptLoop', () => {
     expect(((error as Error & { cause?: Error }).cause as Error).message).toBe('resume failed');
     expect(runtime.sendTurnPrompt).toHaveBeenCalledWith('hello', localIdentityMeta('local-6'));
   });
+  it('resolves composer references into provider context at the dispatch choke point (EU-5, R-10)', async () => {
+    // The wiring gate. The resolver being correct in isolation proves nothing if dispatch
+    // never calls it, and a `structuredInput` pass-through is exactly the shape that looks
+    // right while carrying identity-only references no provider can use.
+    const session = createPromptLoopSession();
+    session.__setMetadata(createPromptLoopMetadata({
+      permissionMode: 'default',
+      permissionModeUpdatedAt: 0,
+    }));
+    const queue = createModeQueue();
+    const runtime = createRuntime() as ReturnType<typeof createRuntime> & {
+      listSkills?: () => Promise<unknown>;
+      listVendorPlugins?: () => Promise<unknown>;
+      resolveComposerReference?: StructuredInputComposerReferenceResolver['resolve'];
+    };
+    runtime.listSkills = vi.fn(async () => ({
+      skills: [{
+        name: 'review',
+        displayName: 'Review',
+        path: '/w/.codex/skills/review/SKILL.md',
+        enabled: true,
+        origin: 'codex_native',
+      }],
+    }));
+    runtime.listVendorPlugins = vi.fn(async () => ({
+      vendorPlugins: [{
+        vendorPluginRef: 'plugin://linear@happier',
+        name: 'linear',
+        displayName: 'Linear',
+        installed: true,
+        enabled: true,
+      }],
+    }));
+    runtime.resolveComposerReference = vi.fn(async () => ({
+      id: 'issue:42',
+      label: 'Issue 42 (current)',
+      description: 'Fresh issue summary',
+      context: 'The issue is ready for review.',
+    }));
+    const messageBuffer = new MessageBuffer();
+    const permissionHandler = { setPermissionMode: vi.fn(), reset: vi.fn() } as any;
+
+    queue.push({
+      text: 'run $review with @linear on @issue',
+      localId: 'local-1',
+      structuredInput: {
+        v: 1,
+        mentions: [
+          {
+            kind: MENTION_KIND_V1.skill,
+            ref: buildMentionRefForKindV1(MENTION_KIND_V1.skill, 'vendor:codex:review'),
+            token: '$review',
+            start: 4,
+            end: 11,
+          },
+          {
+            kind: MENTION_KIND_V1.vendorPlugin,
+            ref: buildMentionRefForKindV1(MENTION_KIND_V1.vendorPlugin, 'plugin://linear@happier'),
+            token: '@linear',
+            start: 17,
+            end: 24,
+          },
+          {
+            ...buildComposerReferenceMentionPayloadV1({
+              reference: { pluginId: 'acme.issues', localId: 'issues' },
+              candidate: { id: 'issue:42', label: 'Issue 42' },
+            }),
+            token: '@issue',
+            start: 28,
+            end: 34,
+          },
+        ],
+      },
+    }, { permissionMode: 'default' });
+
+    let shouldExit = false;
+    await runPermissionModePromptLoop({
+      providerName: 'Test Provider',
+      agentMessageType: 'qwen',
+      explicitPermissionMode: undefined,
+      session,
+      messageQueue: queue,
+      permissionHandler,
+      runtime: runtime as unknown as Parameters<typeof runPermissionModePromptLoop>[0]['runtime'],
+      createOverrideSynchronizer: () => ({ syncFromMetadata: () => {}, flushPendingAfterStart: async () => {} }),
+      messageBuffer,
+      shouldExit: () => shouldExit,
+      getAbortSignal: () => new AbortController().signal,
+      keepAlive: () => {},
+      setThinking: () => {},
+      sendReady: () => {
+        shouldExit = true;
+      },
+      currentPermissionModeUpdatedAt: 0,
+      setCurrentPermissionMode: () => {},
+      setCurrentPermissionModeUpdatedAt: () => {},
+      formatPromptErrorMessage: (error) => `Error: ${String(error)}`,
+    });
+
+    expect(runtime.resolveComposerReference).toHaveBeenCalledWith({
+      reference: { pluginId: 'acme.issues', localId: 'issues' },
+      candidateId: 'issue:42',
+      signal: expect.any(AbortSignal),
+    });
+    expect(runtime.sendTurnPrompt).toHaveBeenCalledTimes(1);
+    expect(runtime.sendTurnPrompt).toHaveBeenCalledWith(expect.stringContaining('run $review with @linear on @issue'), {
+      ...localIdentityMeta('local-1'),
+      structuredInput: {
+        v: 1,
+        skillMentions: [{
+          name: 'review',
+          path: '/w/.codex/skills/review/SKILL.md',
+          displayName: 'Review',
+          origin: 'vendor',
+          backendId: 'codex',
+        }],
+        vendorPluginMentions: [{ vendorPluginRef: 'plugin://linear@happier', label: 'Linear' }],
+      },
+    });
+    expect(runtime.sendTurnPrompt).toHaveBeenCalledWith(expect.stringContaining('<happier_composer_reference_context v="1">'), expect.anything());
+    expect(JSON.stringify(runtime.sendTurnPrompt.mock.calls[0]?.[1])).not.toContain('The issue is ready for review.');
+  });
+
 });

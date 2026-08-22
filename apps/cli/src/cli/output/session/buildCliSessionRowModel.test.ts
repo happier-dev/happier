@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  sealSessionOwnerMetadataV1,
+  createPlainSessionOwnerMetadataEnvelopeV1,
   SessionOwnerMetadataV1Schema,
 } from '@happier-dev/protocol';
 import type { Credentials } from '@/persistence';
 import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
-import { buildCliSessionRowModel } from './buildCliSessionRowModel';
+import { buildCliSessionRowModel as buildCliSessionRowModelOwner } from './buildCliSessionRowModel';
 
 const credentials: Credentials = {
   token: 'token',
@@ -15,6 +15,21 @@ const credentials: Credentials = {
     secret: new Uint8Array([1, 2, 3]),
   },
 };
+
+function buildCliSessionRowModel(
+  params: Omit<
+    Parameters<typeof buildCliSessionRowModelOwner>[0],
+    'accountEncryptionMode'
+  > & Partial<Pick<
+    Parameters<typeof buildCliSessionRowModelOwner>[0],
+    'accountEncryptionMode'
+  >>,
+) {
+  return buildCliSessionRowModelOwner({
+    ...params,
+    accountEncryptionMode: params.accountEncryptionMode ?? 'plain',
+  });
+}
 
 function createContributionRegistry(): Pick<ResolvedContributionRegistry, 'agentDefinitionsById'> {
     return {
@@ -28,15 +43,14 @@ function createContributionRegistry(): Pick<ResolvedContributionRegistry, 'agent
         provenance: 'external',
         source: { kind: 'path' },
         definition: {},
+        // The real projection: a contributed Agent's native-resume support is a
+        // catalog-entry fact. `PluginAgentContributionV2` is strict and has no
+        // `session` block, so a definition-local resume declaration is a shape
+        // no manifest can produce.
+        catalogEntry: { vendorResumeSupport: 'supported' },
         richDefinition: {
           provenance: 'external',
           definition: {
-            session: {
-              resume: {
-                supportLevel: 'supported',
-                vendorResumeIdField: 'pluginSessionId',
-              },
-            },
             capabilities: { surfaces: ['terminal', 'externalSessions'] },
             surfaces: {
               externalSession: {
@@ -81,6 +95,45 @@ function createAntigravityContributionRegistry(): Pick<ResolvedContributionRegis
 }
 
 describe('buildCliSessionRowModel', () => {
+  it('keeps shared presentation fields while withholding owner-only fields from a layout-v1 recipient', () => {
+    const rowModel = buildCliSessionRowModel({
+      credentials: {
+        token: 'recipient-token',
+        encryption: null,
+      },
+      rawSession: {
+        id: 'sess_layout_v1_recipient',
+        createdAt: 1,
+        updatedAt: 2,
+        active: false,
+        activeAt: 0,
+        archivedAt: null,
+        encryptionMode: 'plain',
+        metadataLayoutVersion: 1,
+        metadata: JSON.stringify({
+          v: 1,
+          summary: { text: 'Recipient-safe title', updatedAt: 2 },
+          agentPresentation: { agentId: 'acme.presentation-agent' },
+        }),
+        ownerMetadata: null,
+        share: {
+          accessLevel: 'admin',
+          canApprovePermissions: true,
+        },
+      } as any,
+      contributionRegistry: createContributionRegistry(),
+    });
+
+    expect(rowModel).toMatchObject({
+      agentId: 'acme.presentation-agent',
+      title: 'Recipient-safe title',
+      path: null,
+      isSystem: false,
+      systemPurpose: null,
+      vendorResume: { eligible: false },
+    });
+  });
+
   it('reads private path and native resume identity from a layout-v1 owner envelope', () => {
     const ownerCredentials = {
       token: 'owner-token',
@@ -118,14 +171,7 @@ describe('buildCliSessionRowModel', () => {
         v: 1,
         summary: { text: 'Recipient-safe title', updatedAt: 2 },
       }),
-      ownerMetadata: sealSessionOwnerMetadataV1({
-        material: {
-          type: 'legacy',
-          secret: ownerCredentials.encryption.secret,
-        },
-        ownerMetadata,
-        randomBytes: (length) => new Uint8Array(length).fill(9),
-      }),
+      ownerMetadata: createPlainSessionOwnerMetadataEnvelopeV1(ownerMetadata),
     } as any;
     const rowModel = buildCliSessionRowModel({
       credentials: ownerCredentials,
@@ -146,11 +192,15 @@ describe('buildCliSessionRowModel', () => {
       credentials: ownerCredentials,
       rawSession: {
         ...rawSession,
-        ownerMetadata: 'not-owner-ciphertext',
+        ownerMetadata: {
+          t: 'encrypted',
+          c: 'not-owner-ciphertext',
+        },
       },
       contributionRegistry: createContributionRegistry(),
     });
     expect(unreadableRowModel).toMatchObject({
+      title: 'Recipient-safe title',
       path: null,
       vendorResume: { eligible: false },
     });
@@ -195,8 +245,16 @@ describe('buildCliSessionRowModel', () => {
     });
   });
 
-  it('uses provider-declared resume metadata fields for configured ACP plugin sessions', () => {
-    const rowModel = buildCliSessionRowModel({
+  /**
+   * A contributed Agent has no generated `<vendor>SessionId` slot and
+   * `PluginAgentContributionV2` is strict — it declares no definition-local
+   * resume block — so its native conversation id can only live in the
+   * agent-agnostic runtime-descriptor slot. The listing must resolve it from
+   * there through the shared owner, or it reports a Session as resumable that
+   * the daemon will respawn fresh.
+   */
+  it('resolves a contributed Agent resume id from the runtime descriptor slot', () => {
+    const buildRow = (agentPayload: Record<string, unknown>) => buildCliSessionRowModel({
       credentials,
       rawSession: {
         id: 'sess_configured_plugin_1',
@@ -207,19 +265,11 @@ describe('buildCliSessionRowModel', () => {
         archivedAt: null,
         encryptionMode: 'plain',
         metadata: JSON.stringify({
-          flavor: 'acp:acme.resume.backend',
-          acpConfiguredBackendV1: {
-            v: 1,
-            updatedAt: 1,
-            backendId: 'acme.resume.backend',
-            title: 'Acme Resume Backend',
-          },
           runtimeDescriptorV1: {
             v: 1,
-            agentId: 'acp:acme.resume.backend',
-            provider: {},
+            agentId: 'acme.resume.backend',
+            agent: agentPayload,
           },
-          acmeResumeSessionId: 'plugin-vendor-session-1',
         }),
       } as any,
       contributionRegistry: {
@@ -229,26 +279,52 @@ describe('buildCliSessionRowModel', () => {
             provenance: 'external',
             source: { kind: 'path' },
             definition: {},
-            richDefinition: {
-              provenance: 'external',
-              definition: {
-                session: {
-                  resume: {
-                    supportLevel: 'supported',
-                    vendorResumeIdField: 'acmeResumeSessionId',
-                  },
-                },
-              },
-            },
+            catalogEntry: { vendorResumeSupport: 'supported' },
           }],
         ]) as unknown as ResolvedContributionRegistry['agentDefinitionsById'],
       },
     });
 
-    expect(rowModel.vendorResume).toEqual({
-      eligible: true,
-      vendorResumeId: 'plugin-vendor-session-1',
+    expect(buildRow({ backendMode: 'acp', providerSessionId: 'plugin-vendor-session-1' }).vendorResume)
+      .toEqual({ eligible: true, vendorResumeId: 'plugin-vendor-session-1' });
+    // Nothing else in metadata may stand in for the recorded conversation.
+    expect(buildRow({ backendMode: 'acp' }).vendorResume)
+      .toEqual({ eligible: false, reasonCode: 'vendor_resume_id_missing' });
+  });
+
+  it('refuses a contributed Agent whose catalog declares no native resume support', () => {
+    const rowModel = buildCliSessionRowModel({
+      credentials,
+      rawSession: {
+        id: 'sess_configured_plugin_2',
+        createdAt: 1,
+        updatedAt: 2,
+        active: false,
+        activeAt: 0,
+        archivedAt: null,
+        encryptionMode: 'plain',
+        metadata: JSON.stringify({
+          runtimeDescriptorV1: {
+            v: 1,
+            agentId: 'acme.resume.backend',
+            agent: { backendMode: 'acp', providerSessionId: 'plugin-vendor-session-1' },
+          },
+        }),
+      } as any,
+      contributionRegistry: {
+        agentDefinitionsById: new Map([
+          ['acme.resume.backend', {
+            id: 'acme.resume.backend',
+            provenance: 'external',
+            source: { kind: 'path' },
+            definition: {},
+            catalogEntry: { vendorResumeSupport: 'unsupported' },
+          }],
+        ]) as unknown as ResolvedContributionRegistry['agentDefinitionsById'],
+      },
     });
+
+    expect(rowModel.vendorResume).toEqual({ eligible: false, reasonCode: 'agent_unsupported' });
   });
 
   it('fails closed before CLI dispatch when linked resume identity is stale', () => {

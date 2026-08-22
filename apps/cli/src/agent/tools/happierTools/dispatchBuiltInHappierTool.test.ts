@@ -1,4 +1,35 @@
-import { describe, expect, it, vi } from 'vitest';
+const { activeRuntimeRegistryState } = vi.hoisted(() => ({
+  activeRuntimeRegistryState: {
+    registry: null as ReturnType<typeof createResolvedContributionRegistry> | null,
+    catalogPolicyOutcome: 'visible' as 'visible' | 'denied',
+  },
+}));
+
+vi.mock('@/plugins/runtime/reload/singleton', () => ({
+  pluginReloadController: {
+    getState: () => ({
+      generation: 1,
+      activeRegistry: activeRuntimeRegistryState.registry
+        ? {
+            contributes: activeRuntimeRegistryState.registry,
+            targetActionInvocations: {
+              evaluateCatalogPolicy: () => ({
+                outcome: activeRuntimeRegistryState.catalogPolicyOutcome,
+                code: activeRuntimeRegistryState.catalogPolicyOutcome === 'visible'
+                  ? 'plugin_action_available'
+                  : 'plugin_action_package_untrusted',
+                requiresCurrentIntent: false,
+              }),
+            },
+          }
+        : null,
+      lastResult: null,
+    }),
+    isRuntimeRegistryCurrent: () => true,
+  },
+}));
+
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol';
 
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
@@ -23,7 +54,22 @@ function expectActionDisabled(result: HappierBuiltInToolDispatchResult): void {
   });
 }
 
+function useActiveResolvedContributionRegistry(
+  input: Parameters<typeof createResolvedContributionRegistry>[0],
+  catalogPolicyOutcome: 'visible' | 'denied' = 'visible',
+) {
+  const registry = createResolvedContributionRegistry(input);
+  activeRuntimeRegistryState.registry = registry;
+  activeRuntimeRegistryState.catalogPolicyOutcome = catalogPolicyOutcome;
+  return registry;
+}
+
 describe('built-in Happier tools', () => {
+  beforeEach(() => {
+    activeRuntimeRegistryState.registry = null;
+    activeRuntimeRegistryState.catalogPolicyOutcome = 'visible';
+  });
+
   it('lists the default session-agent direct bootstrap tools from the shared catalog', () => {
     const names = listBuiltInHappierTools().map((tool) => tool.name);
 
@@ -112,7 +158,7 @@ describe('built-in Happier tools', () => {
 
     const getResult = await dispatchBuiltInHappierTool({
       toolName: 'action_spec_get',
-      args: { id: 'review.start' },
+      args: { id: 'subagents.plan.start' },
       sessionId: 'sess-1',
       deps: {
         changeTitle: async () => ({ success: true }),
@@ -123,7 +169,65 @@ describe('built-in Happier tools', () => {
     expect(getResult).toEqual(expect.objectContaining({
       ok: true,
       result: expect.objectContaining({
-        actionSpec: expect.objectContaining({ id: 'review.start' }),
+        actionSpec: expect.objectContaining({
+          id: 'subagents.plan.start',
+          kindVersion: 1,
+          inputSchema: expect.objectContaining({
+            properties: expect.objectContaining({
+              backendTargetKeys: expect.objectContaining({
+                type: 'array',
+                minItems: 1,
+                items: expect.objectContaining({
+                  anyOf: expect.arrayContaining([
+                    expect.objectContaining({
+                      type: 'string',
+                      pattern: '^(agent|acpBackend):.+$',
+                    }),
+                  ]),
+                }),
+              }),
+              permissionMode: expect.objectContaining({ description: expect.any(String) }),
+            }),
+          }),
+        }),
+      }),
+    }));
+
+    const spawnGetResult = await dispatchBuiltInHappierTool({
+      toolName: 'action_spec_get',
+      args: { id: 'session.spawn_new' },
+      sessionId: 'sess-1',
+      deps: {
+        changeTitle: async () => ({ success: true }),
+        executeActionByToolName: async () => unsupported(),
+      },
+    });
+
+    expect(spawnGetResult).toEqual(expect.objectContaining({
+      ok: true,
+      result: expect.objectContaining({
+        actionSpec: expect.objectContaining({
+          kindVersion: 1,
+          inputSchema: expect.objectContaining({
+            properties: expect.objectContaining({
+              executionTarget: expect.objectContaining({
+                properties: expect.objectContaining({
+                  serverId: expect.objectContaining({ minLength: 1, maxLength: 191 }),
+                }),
+              }),
+              organizationPlacement: expect.objectContaining({
+                properties: expect.objectContaining({
+                  tagIds: expect.objectContaining({ type: 'array', maxItems: 500 }),
+                }),
+              }),
+              agentSessionStartupInstructionsV1: expect.objectContaining({
+                properties: expect.objectContaining({
+                  revision: expect.objectContaining({ exclusiveMinimum: 0, maximum: 2_147_483_647 }),
+                }),
+              }),
+            }),
+          }),
+        }),
       }),
     }));
   });
@@ -156,6 +260,65 @@ describe('built-in Happier tools', () => {
         optionsSourceId: 'execution.backends.enabled',
         options: [{ value: 'agent:codex', label: 'Codex' }],
       },
+    });
+  });
+
+  it('preserves V2 session spawn option context through the agent/MCP discovery tool', async () => {
+    const resolveActionOptions = vi.fn(async (args: Record<string, unknown>) => ({
+      ok: true as const,
+      result: {
+        actionId: args.actionId as 'session.spawn_new',
+        fieldPath: args.fieldPath as string,
+        optionsSourceId: args.optionsSourceId as string,
+        options: [],
+      },
+    }));
+    const sessionSpawnOptionContext = {
+      executionTarget: { serverId: 'local', machineId: 'm1' },
+      directory: '/repo',
+      agentTarget: {
+        kind: 'agent',
+        identity: { pluginId: 'happier.agent.claude', localId: 'claude' },
+      },
+      modelSelection: {
+        v: 1,
+        updatedAt: 1,
+        ref: { agentTargetKey: 'backend:claude', modelId: 'claude-opus-4-8' },
+      },
+    } as const;
+
+    const result = await dispatchBuiltInHappierTool({
+      toolName: 'action_options_resolve',
+      args: {
+        actionId: 'session.spawn_new',
+        fieldPath: 'modelSelection',
+        ...sessionSpawnOptionContext,
+      },
+      sessionId: 'sess-1',
+      deps: {
+        changeTitle: async () => ({ success: true }),
+        executeActionByToolName: async () => unsupported(),
+        resolveActionOptions,
+      },
+    });
+
+    expect(result).toEqual({
+      ok: true,
+      result: {
+        actionId: 'session.spawn_new',
+        fieldPath: 'modelSelection',
+        optionsSourceId: 'agents.models.available',
+        options: [],
+      },
+    });
+    expect(resolveActionOptions).toHaveBeenCalledWith({
+      actionId: 'session.spawn_new',
+      fieldPath: 'modelSelection',
+      optionsSourceId: 'agents.models.available',
+      sessionId: null,
+      limit: null,
+      query: null,
+      ...sessionSpawnOptionContext,
     });
   });
 
@@ -418,14 +581,17 @@ describe('built-in Happier tools', () => {
     });
   });
 
-  it('dispatches plugins_reload through the shared reload hook', async () => {
-    const reloadPlugin = vi.fn(async (pluginId: string): Promise<HappierBuiltInToolDispatchResult> => ok({
-      pluginId,
-      activeGenerationId: 'reload:1',
-      changedPluginIds: [pluginId],
-      registryStatus: 'active',
-      diagnostics: [],
-    }));
+  it('dispatches plugins_reload through the generated canonical Action tool', async () => {
+    const canonicalPendingReview = {
+      ok: false,
+      kind: 'plugins_reload',
+      outcome: 'reviewRequired',
+      pendingReview: {
+        kind: 'reviewRequired',
+        pendingChangeId: 'pending-1',
+      },
+    } as const;
+    const executeActionByToolName = vi.fn(async (): Promise<HappierBuiltInToolDispatchResult> => ok(canonicalPendingReview));
 
     const result = await dispatchBuiltInHappierTool({
       toolName: 'plugins_reload',
@@ -434,21 +600,18 @@ describe('built-in Happier tools', () => {
       surface: 'cli',
       deps: {
         changeTitle: async () => ({ success: true }),
-        executeActionByToolName: async () => unsupported(),
-        reloadPlugin,
+        executeActionByToolName,
       },
     });
 
-    expect(reloadPlugin).toHaveBeenCalledWith('acme.dev.plugin');
+    expect(executeActionByToolName).toHaveBeenCalledWith(
+      'plugins_reload',
+      { pluginId: 'acme.dev.plugin' },
+      'sess-1',
+    );
     expect(result).toEqual({
       ok: true,
-      result: {
-        pluginId: 'acme.dev.plugin',
-        activeGenerationId: 'reload:1',
-        changedPluginIds: ['acme.dev.plugin'],
-        registryStatus: 'active',
-        diagnostics: [],
-      },
+      result: canonicalPendingReview,
     });
   });
 
@@ -772,11 +935,11 @@ describe('built-in Happier tools', () => {
     const result = await dispatchBuiltInHappierTool({
       toolName: 'action_execute',
       args: {
-        actionId: 'acme.review.start',
+        actionId: 'acme.review.plugin/review-start',
         input: { scope: 'diff' },
       },
       sessionId: 'sess-1',
-      registry: createResolvedContributionRegistry({
+      registry: useActiveResolvedContributionRegistry({
         agents: [],
                 actions: [
           {
@@ -784,7 +947,6 @@ describe('built-in Happier tools', () => {
             source: { kind: 'path' },
             pluginId: 'acme.review.plugin',
             manifestPath: '/plugins/acme/review/.happier-plugin/plugin.json',
-            manifestDigest: 'sha256:acme-review',
             daemonEntryPath: '/plugins/acme/review/daemon.mjs',
             sourceSpec: {
               kind: 'path',
@@ -794,7 +956,7 @@ describe('built-in Happier tools', () => {
             },
             definition: {
               kindVersion: 1,
-              id: 'acme.review.start',
+              id: 'review-start',
               title: 'Acme Review Start',
               description: 'Start a plugin-defined review workflow',
               safety: 'safe',
@@ -813,6 +975,7 @@ describe('built-in Happier tools', () => {
                 cli: true,
                 rpc: false,
                 sdk: false,
+                plugin: false,
               },
               inputHints: null,
               inputSchema: {
@@ -842,7 +1005,7 @@ describe('built-in Happier tools', () => {
       result: {
         toolName: 'action_execute',
         args: {
-          actionId: 'acme.review.start',
+          actionId: 'acme.review.plugin/review-start',
           input: { scope: 'diff' },
         },
         defaultSessionId: 'sess-1',
@@ -851,7 +1014,7 @@ describe('built-in Happier tools', () => {
     expect(executeActionByToolName).toHaveBeenCalledWith(
       'action_execute',
       {
-        actionId: 'acme.review.start',
+        actionId: 'acme.review.plugin/review-start',
         input: { scope: 'diff' },
       },
       'sess-1',
@@ -867,12 +1030,12 @@ describe('built-in Happier tools', () => {
     const result = await dispatchBuiltInHappierTool({
       toolName: 'action_execute',
       args: {
-        actionId: 'acme.cli.review.start',
+        actionId: 'acme.review.plugin/cli-review-start',
         input: { scope: 'diff' },
       },
       sessionId: 'sess-1',
       surface: 'cli',
-      registry: createResolvedContributionRegistry({
+      registry: useActiveResolvedContributionRegistry({
         agents: [],
                 actions: [
           {
@@ -880,7 +1043,6 @@ describe('built-in Happier tools', () => {
             source: { kind: 'path' },
             pluginId: 'acme.review.plugin',
             manifestPath: '/plugins/acme/review/.happier-plugin/plugin.json',
-            manifestDigest: 'sha256:acme-review',
             daemonEntryPath: '/plugins/acme/review/daemon.mjs',
             sourceSpec: {
               kind: 'path',
@@ -890,7 +1052,7 @@ describe('built-in Happier tools', () => {
             },
             definition: {
               kindVersion: 1,
-              id: 'acme.cli.review.start',
+              id: 'cli-review-start',
               title: 'Acme CLI Review Start',
               description: 'Start a CLI-only plugin-defined review workflow',
               safety: 'safe',
@@ -907,6 +1069,7 @@ describe('built-in Happier tools', () => {
                 cli: true,
                 rpc: false,
                 sdk: false,
+                plugin: false,
               },
               inputHints: null,
               inputSchema: {
@@ -936,7 +1099,7 @@ describe('built-in Happier tools', () => {
       result: {
         toolName: 'action_execute',
         args: {
-          actionId: 'acme.cli.review.start',
+          actionId: 'acme.review.plugin/cli-review-start',
           input: { scope: 'diff' },
         },
         defaultSessionId: 'sess-1',
@@ -945,7 +1108,7 @@ describe('built-in Happier tools', () => {
     expect(executeActionByToolName).toHaveBeenCalledWith(
       'action_execute',
       {
-        actionId: 'acme.cli.review.start',
+        actionId: 'acme.review.plugin/cli-review-start',
         input: { scope: 'diff' },
       },
       'sess-1',
@@ -958,12 +1121,12 @@ describe('built-in Happier tools', () => {
     const result = await dispatchBuiltInHappierTool({
       toolName: 'action_execute',
       args: {
-        actionId: 'acme.review.start',
+        actionId: 'acme.review.plugin/review-start',
         input: { scope: 'diff' },
       },
       sessionId: 'sess-1',
       surface: 'cli',
-      registry: createResolvedContributionRegistry({
+      registry: useActiveResolvedContributionRegistry({
         agents: [],
                 actions: [
           {
@@ -971,7 +1134,6 @@ describe('built-in Happier tools', () => {
             source: { kind: 'path' },
             pluginId: 'acme.review.plugin',
             manifestPath: '/plugins/acme/review/.happier-plugin/plugin.json',
-            manifestDigest: 'sha256:acme-review',
             daemonEntryPath: '/plugins/acme/review/daemon.mjs',
             sourceSpec: {
               kind: 'path',
@@ -981,7 +1143,7 @@ describe('built-in Happier tools', () => {
             },
             definition: {
               kindVersion: 1,
-              id: 'acme.review.start',
+              id: 'review-start',
               title: 'Acme Review Start',
               description: 'Start a plugin-defined review workflow',
               safety: 'safe',
@@ -1000,6 +1162,7 @@ describe('built-in Happier tools', () => {
                 cli: true,
                 rpc: false,
                 sdk: false,
+                plugin: false,
               },
               inputHints: null,
               inputSchema: {
@@ -1017,7 +1180,7 @@ describe('built-in Happier tools', () => {
             },
           },
         ],
-      }),
+      }, 'denied'),
       deps: {
         changeTitle: async () => ({ success: true }),
         executeActionByToolName,
@@ -1034,12 +1197,12 @@ describe('built-in Happier tools', () => {
     const result = await dispatchBuiltInHappierTool({
       toolName: 'action_execute',
       args: {
-        actionId: 'acme.review.start',
+        actionId: 'acme.review.plugin/review-start',
         input: { scope: 'diff' },
       },
       sessionId: 'sess-1',
       surface: 'cli',
-      registry: createResolvedContributionRegistry({
+      registry: useActiveResolvedContributionRegistry({
         agents: [],
                 actions: [
           {
@@ -1047,7 +1210,6 @@ describe('built-in Happier tools', () => {
             source: { kind: 'path' },
             pluginId: 'acme.review.plugin',
             manifestPath: '/plugins/acme/review/.happier-plugin/plugin.json',
-            manifestDigest: 'sha256:acme-review',
             daemonEntryPath: '/plugins/acme/review/daemon.mjs',
             sourceSpec: {
               kind: 'path',
@@ -1057,7 +1219,7 @@ describe('built-in Happier tools', () => {
             },
             definition: {
               kindVersion: 1,
-              id: 'acme.review.start',
+              id: 'review-start',
               title: 'Acme Review Start',
               description: 'Start a plugin-defined review workflow',
               safety: 'safe',
@@ -1076,6 +1238,7 @@ describe('built-in Happier tools', () => {
                 cli: false,
                 rpc: false,
                 sdk: false,
+                plugin: false,
               },
               inputHints: null,
               inputSchema: {

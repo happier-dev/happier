@@ -43,6 +43,16 @@ function readExternalSessionAgentId(externalSessionRecord: Record<string, unknow
   return normalizeString(externalSessionRecord.agentId);
 }
 
+function readExternalSessionRuntimeDescriptor(
+  externalSessionRecord: Record<string, unknown> | null,
+): RuntimeDescriptorV1 | null {
+  if (!externalSessionRecord) return null;
+  const linkData = asRecord(externalSessionRecord.linkData);
+  return readRuntimeDescriptorV1FromMetadata({
+    runtimeDescriptorV1: linkData?.runtimeDescriptorV1,
+  }) ?? readRuntimeDescriptorV1FromMetadata(externalSessionRecord);
+}
+
 export type SessionRuntimeIdentitySourceTier =
   | 'canonical_runtime_descriptor'
   | 'legacy_session_metadata'
@@ -70,19 +80,24 @@ export function resolveSessionRuntimeIdentityFallback(params: Readonly<{
 }>): SessionRuntimeIdentityFallbackResult {
   const metadataRecord = asRecord(params.metadata) ?? {};
   const externalSessionRecord = readExternalSessionRecord(metadataRecord);
-  const descriptorFromExternalSession = readRuntimeDescriptorV1FromMetadata(externalSessionRecord);
+  const descriptorFromExternalSession = readExternalSessionRuntimeDescriptor(
+    externalSessionRecord,
+  );
   const descriptorFromMetadata = readRuntimeDescriptorV1FromMetadata(metadataRecord);
   const normalizedRuntimeDescriptor =
-    readNormalizedRuntimeDescriptor(metadataRecord)
-    ?? (descriptorFromExternalSession
+    (descriptorFromExternalSession
       ? readNormalizedRuntimeDescriptor({ runtimeDescriptorV1: descriptorFromExternalSession })
-      : null);
+      : null)
+    ?? readNormalizedRuntimeDescriptor(metadataRecord);
   const runtimeDescriptorV1 = descriptorFromExternalSession
     ?? descriptorFromMetadata
     ?? params.providerDefaults?.runtimeDescriptorV1
     ?? null;
 
   const providerIdFromLegacy = resolveAgentIdFromSessionMetadata(metadataRecord);
+  // Flat vendor-resume fields are generated only for bundled Agents. A
+  // declared external identity remains valid runtime identity evidence, but
+  // must not be routed through that closed generated table.
   const providerSessionIdFromLegacy = providerIdFromLegacy
     ? resolveVendorResumeIdFromSessionMetadata(providerIdFromLegacy, metadataRecord)
     : null;

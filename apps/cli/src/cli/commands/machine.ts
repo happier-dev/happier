@@ -1,6 +1,6 @@
 import type { CommandContext } from '@/cli/commandRegistry';
 import { mapUnknownErrorToControlError } from '@/cli/control/controlErrorMapping';
-import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
+import { wantsJson, printJsonEnvelope, writeJsonStdout } from '@/cli/output/jsonEnvelope';
 import { cmd, createOutputBuilder, errorFrame, ok, warn } from '@happier-dev/cli-common/output';
 import { buildSshTarget, parseSshTarget } from '@happier-dev/cli-common/systemTasks';
 import { describeBackgroundServiceTargetMode } from '@happier-dev/cli-common/happierRuntime';
@@ -8,6 +8,7 @@ import { resolveManagedCliReleaseChannelSync } from '@happier-dev/cli-common/fir
 import { getLiveSystemTasksRunnerAdapter } from '@/capabilities/systemTasks/liveSystemTasksRunner';
 import { configuration } from '@/configuration';
 import { applyServerSelectionFromArgs } from '@/server/serverSelection';
+import { isLoopbackServerHost } from '@/server/serverUrlClassification';
 import { isInteractiveTerminal, promptInput } from '@/terminal/prompts/promptInput';
 import { promptSecret } from '@/terminal/prompts/promptSecret';
 import {
@@ -131,24 +132,6 @@ function normalizeSshAuth(raw: string | null): 'agent' | 'keyfile' | 'password' 
     return text;
   }
   throw new Error(`Unsupported SSH auth mode: ${raw}`);
-}
-
-function isLoopbackHostname(hostname: string): boolean {
-  const normalized = String(hostname ?? '').trim().toLowerCase();
-  if (!normalized) return false;
-  return normalized === 'localhost'
-    || normalized === '127.0.0.1'
-    || normalized === '0.0.0.0'
-    || normalized === '::1';
-}
-
-function isLoopbackUrl(url: string): boolean {
-  try {
-    const parsed = new URL(url);
-    return isLoopbackHostname(parsed.hostname);
-  } catch {
-    return false;
-  }
 }
 
 function normalizeTaskChannel(args: readonly string[]): 'stable' | 'preview' | 'dev' {
@@ -443,13 +426,13 @@ async function runSetupSubcommand(argsRaw: string[], deps: MachineCommandDeps): 
           }
         }
         if (json) {
-          console.log(JSON.stringify(event));
+          await writeJsonStdout(event);
         }
         continue;
       }
 
       if (json) {
-        console.log(JSON.stringify(event));
+        await writeJsonStdout(event);
         continue;
       }
       printHumanEvent(event);
@@ -476,7 +459,7 @@ async function runSetupSubcommand(argsRaw: string[], deps: MachineCommandDeps): 
 
     if (snapshot.result) {
       if (json) {
-        console.log(JSON.stringify(snapshot.result));
+        await writeJsonStdout(snapshot.result);
         if (!snapshot.result.ok) {
           process.exitCode = typeof process.exitCode === 'number' && process.exitCode > 1 ? process.exitCode : 1;
         }
@@ -503,7 +486,7 @@ async function runSetupSubcommand(argsRaw: string[], deps: MachineCommandDeps): 
       if (relayRuntimeUrl) {
         details.push({ label: 'Remote relay URL', value: relayRuntimeUrl });
       }
-      const relayRuntimeIsLoopback = relayRuntimeUrl ? isLoopbackUrl(relayRuntimeUrl) : false;
+      const relayRuntimeIsLoopback = relayRuntimeUrl ? isLoopbackServerHost(relayRuntimeUrl) : false;
       const out = createOutputBuilder();
       out.line(ok('Remote machine ready.'));
       if (details.length > 0) {
@@ -548,7 +531,7 @@ export async function handleMachineCommand(args: string[], deps: Partial<Machine
   } catch (error) {
     if (json) {
       const mapped = mapUnknownErrorToControlError(error);
-      printJsonEnvelope(
+      await printJsonEnvelope(
         {
           ok: false,
           kind: 'machine_setup',

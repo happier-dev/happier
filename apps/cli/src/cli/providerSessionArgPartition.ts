@@ -3,8 +3,11 @@ import chalk from 'chalk';
 import type { AgentId } from '@happier-dev/agents';
 import { PERMISSION_INTENTS, parsePermissionIntentAlias } from '@happier-dev/agents';
 import {
+  deserializeSessionCreationCorrespondenceV1,
   deserializeSessionModelSelectionV1,
   ProviderConnectionIdSchema,
+  SessionCreationTagV1Schema,
+  type SessionCreationCorrespondenceV1,
   type SessionModelSelectionV1,
 } from '@happier-dev/protocol';
 
@@ -37,6 +40,12 @@ export interface ProviderSessionArgPartitionResult {
   readonly existingSessionId: string | undefined;
   readonly resume: string | undefined;
   readonly nativeForkSource: NativeForkSource | undefined;
+  /** Daemon-to-runner carrier; never forwarded to a provider CLI. */
+  readonly sessionCreationTag: string | undefined;
+  /** Daemon-to-runner immutable create-or-rejoin recipe; never provider passthrough. */
+  readonly sessionCreationCorrespondence: SessionCreationCorrespondenceV1 | undefined;
+  /** Daemon-to-runner mutable title for a fresh canonical Session create. */
+  readonly initialTitle: string | undefined;
   readonly startingMode: string | undefined;
   readonly directory: string | undefined;
   readonly providerArgs: string[];
@@ -138,6 +147,9 @@ export function partitionProviderSessionArgs(
   let existingSessionId: string | undefined;
   let resume: string | undefined;
   let nativeForkSource: NativeForkSource | undefined;
+  let sessionCreationTag: string | undefined;
+  let sessionCreationCorrespondence: SessionCreationCorrespondenceV1 | undefined;
+  let initialTitle: string | undefined;
   let startingMode: string | undefined;
   let directory: string | undefined;
   let helpRequested = false;
@@ -351,6 +363,64 @@ export function partitionProviderSessionArgs(
       continue;
     }
 
+    if (flag === '--session-creation-tag-v1') {
+      if (sessionCreationTag !== undefined) {
+        console.error(chalk.red('--session-creation-tag-v1 may only be provided once'));
+        process.exit(1);
+      }
+      const raw = equalsValue ?? readRequiredNext(
+        input,
+        i,
+        '--session-creation-tag-v1',
+        'canonical Session creation tag',
+      );
+      if (!equalsValue) i += 1;
+      const parsed = SessionCreationTagV1Schema.safeParse(raw);
+      if (!parsed.success) {
+        console.error(chalk.red('Invalid --session-creation-tag-v1 value'));
+        process.exit(1);
+      }
+      sessionCreationTag = parsed.data;
+      continue;
+    }
+
+    if (flag === '--session-creation-correspondence-v1') {
+      if (sessionCreationCorrespondence !== undefined) {
+        console.error(chalk.red('--session-creation-correspondence-v1 may only be provided once'));
+        process.exit(1);
+      }
+      const raw = equalsValue ?? readRequiredNext(
+        input,
+        i,
+        '--session-creation-correspondence-v1',
+        'canonical Session creation correspondence',
+      );
+      if (!equalsValue) i += 1;
+      try {
+        sessionCreationCorrespondence = deserializeSessionCreationCorrespondenceV1(raw);
+      } catch {
+        console.error(chalk.red('Invalid --session-creation-correspondence-v1 value'));
+        process.exit(1);
+      }
+      continue;
+    }
+
+    if (flag === '--session-initial-title-v1') {
+      if (initialTitle !== undefined) {
+        console.error(chalk.red('--session-initial-title-v1 may only be provided once'));
+        process.exit(1);
+      }
+      const raw = equalsValue ?? input[i + 1];
+      if (!equalsValue) i += 1;
+      const normalized = normalizeOptionalValue(raw);
+      if (!normalized) {
+        console.error(chalk.red('Invalid --session-initial-title-v1 value'));
+        process.exit(1);
+      }
+      initialTitle = normalized;
+      continue;
+    }
+
     if (flag === '--happy-starting-mode') {
       const raw = equalsValue ?? input[i + 1];
       if (!equalsValue && typeof raw === 'string' && !raw.startsWith('-')) i += 1;
@@ -390,7 +460,25 @@ export function partitionProviderSessionArgs(
     console.error(chalk.red('--native-fork-source-v1 cannot be combined with --resume'));
     process.exit(1);
   }
-
+  if (sessionCreationTag && startedBy !== 'daemon') {
+    console.error(chalk.red('--session-creation-tag-v1 is only valid for daemon-started runners'));
+    process.exit(1);
+  }
+  if (sessionCreationCorrespondence && startedBy !== 'daemon') {
+    console.error(chalk.red('--session-creation-correspondence-v1 is only valid for daemon-started runners'));
+    process.exit(1);
+  }
+  if (initialTitle && startedBy !== 'daemon') {
+    console.error(chalk.red('--session-initial-title-v1 is only valid for daemon-started runners'));
+    process.exit(1);
+  }
+  if (
+    sessionCreationCorrespondence
+    && sessionCreationCorrespondence.sessionCreationTag !== sessionCreationTag
+  ) {
+    console.error(chalk.red('--session-creation-correspondence-v1 requires its matching --session-creation-tag-v1'));
+    process.exit(1);
+  }
   return {
     startedBy,
     refreshSettings,
@@ -408,6 +496,9 @@ export function partitionProviderSessionArgs(
     existingSessionId,
     resume,
     nativeForkSource,
+    sessionCreationTag,
+    sessionCreationCorrespondence,
+    initialTitle,
     startingMode,
     directory,
     providerArgs,

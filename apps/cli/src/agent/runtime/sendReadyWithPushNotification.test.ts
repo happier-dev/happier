@@ -8,7 +8,7 @@ import { setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/act
 function createSessionStub(sessionId = 'session-1') {
   return {
     sessionId,
-    sendSessionEvent: vi.fn(),
+    enqueueSessionEventCommitted: vi.fn(async () => ({ persisted: true, delivered: false })),
   }
 }
 
@@ -24,18 +24,18 @@ describe('sendReadyWithPushNotification', () => {
     vi.unstubAllGlobals()
   })
 
-  it('emits ready event and sends push notification', () => {
+  it('emits ready event and sends push notification', async () => {
     const sendToAllDevices = vi.fn()
     const session = createSessionStub('session-123')
 
-    sendReadyWithPushNotification({
+    await sendReadyWithPushNotification({
       session: session as any,
       pushSender: { sendToAllDevices },
       waitingForCommandLabel: 'Qwen Code',
       logPrefix: '[Qwen]',
     })
 
-    expect(session.sendSessionEvent).toHaveBeenCalledWith({ type: 'ready' })
+    expect(session.enqueueSessionEventCommitted).toHaveBeenCalledWith({ type: 'ready' })
     expect(sendToAllDevices).toHaveBeenCalledWith(
       'Qwen Code',
       'Qwen Code is waiting for your command',
@@ -43,11 +43,11 @@ describe('sendReadyWithPushNotification', () => {
     )
   })
 
-  it('uses the latest assistant preview text when enabled', () => {
+  it('uses the latest assistant preview text when enabled', async () => {
     const sendToAllDevices = vi.fn()
     const session = createSessionStub('session-123')
 
-    sendReadyWithPushNotification({
+    await sendReadyWithPushNotification({
       session: session as any,
       pushSender: { sendToAllDevices },
       waitingForCommandLabel: 'Qwen Code',
@@ -64,11 +64,11 @@ describe('sendReadyWithPushNotification', () => {
     )
   })
 
-  it('falls back to waiting text when assistant preview text is disabled', () => {
+  it('falls back to waiting text when assistant preview text is disabled', async () => {
     const sendToAllDevices = vi.fn()
     const session = createSessionStub('session-123')
 
-    sendReadyWithPushNotification({
+    await sendReadyWithPushNotification({
       session: session as any,
       pushSender: { sendToAllDevices },
       waitingForCommandLabel: 'Qwen Code',
@@ -85,11 +85,11 @@ describe('sendReadyWithPushNotification', () => {
     )
   })
 
-  it('can suppress push notifications while still emitting ready event', () => {
+  it('can suppress push notifications while still emitting ready event', async () => {
     const sendToAllDevices = vi.fn()
     const session = createSessionStub('session-999')
 
-    sendReadyWithPushNotification({
+    await sendReadyWithPushNotification({
       session: session as any,
       pushSender: { sendToAllDevices },
       waitingForCommandLabel: 'Codex',
@@ -97,7 +97,7 @@ describe('sendReadyWithPushNotification', () => {
       shouldSendPush: () => false,
     })
 
-    expect(session.sendSessionEvent).toHaveBeenCalledWith({ type: 'ready' })
+    expect(session.enqueueSessionEventCommitted).toHaveBeenCalledWith({ type: 'ready' })
     expect(sendToAllDevices).not.toHaveBeenCalled()
   })
 
@@ -124,7 +124,7 @@ describe('sendReadyWithPushNotification', () => {
       settingsSecretsReadKeys: [],
     })
 
-    sendReadyWithPushNotification({
+    await sendReadyWithPushNotification({
       session: session as any,
       pushSender: { sendToAllDevicesAsync },
       waitingForCommandLabel: 'Codex',
@@ -137,7 +137,7 @@ describe('sendReadyWithPushNotification', () => {
     await Promise.resolve()
     await Promise.resolve()
 
-    expect(session.sendSessionEvent).toHaveBeenCalledWith({ type: 'ready' })
+    expect(session.enqueueSessionEventCommitted).toHaveBeenCalledWith({ type: 'ready' })
     expect(sendToAllDevicesAsync).not.toHaveBeenCalled()
   })
 
@@ -165,7 +165,7 @@ describe('sendReadyWithPushNotification', () => {
       settingsSecretsReadKeys: [],
     })
 
-    sendReadyWithPushNotification({
+    await sendReadyWithPushNotification({
       session: session as any,
       pushSender: {
         serverId: 'server-a',
@@ -194,7 +194,7 @@ describe('sendReadyWithPushNotification', () => {
     })
   })
 
-  it('redacts non-Axios push errors before logging', () => {
+  it('redacts non-Axios push errors before logging', async () => {
     const session = createSessionStub('session-456')
     const pushError = new Error(
       'push unavailable for https://alice:SUPER_SECRET_PASSWORD@push.example.test/v1/send?token=secret Authorization: Bearer PUSH_SECRET',
@@ -204,7 +204,7 @@ describe('sendReadyWithPushNotification', () => {
     })
     const loggerDebug = vi.fn()
 
-    sendReadyWithPushNotification({
+    await sendReadyWithPushNotification({
       session: session as any,
       pushSender: { sendToAllDevices },
       waitingForCommandLabel: 'OpenCode',
@@ -212,7 +212,7 @@ describe('sendReadyWithPushNotification', () => {
       loggerDebug,
     })
 
-    expect(session.sendSessionEvent).toHaveBeenCalledWith({ type: 'ready' })
+    expect(session.enqueueSessionEventCommitted).toHaveBeenCalledWith({ type: 'ready' })
     expect(sendToAllDevices).toHaveBeenCalledTimes(1)
     const [, logged] = loggerDebug.mock.calls[0] ?? []
     expect(logged).toEqual(expect.objectContaining({
@@ -224,7 +224,7 @@ describe('sendReadyWithPushNotification', () => {
     expect(JSON.stringify(logged)).not.toContain('PUSH_SECRET')
   })
 
-  it('sanitizes axios-shaped errors before logging', () => {
+  it('sanitizes axios-shaped errors before logging', async () => {
     const session = createSessionStub('session-789')
     const pushError = {
       isAxiosError: true,
@@ -242,7 +242,7 @@ describe('sendReadyWithPushNotification', () => {
     })
     const loggerDebug = vi.fn()
 
-    sendReadyWithPushNotification({
+    await sendReadyWithPushNotification({
       session: session as any,
       pushSender: { sendToAllDevices },
       waitingForCommandLabel: 'Codex',
@@ -294,7 +294,7 @@ describe('sendReadyWithPushNotification', () => {
       settingsSecretsReadKeys: [],
     })
 
-    sendReadyWithPushNotification({
+    await sendReadyWithPushNotification({
       session: session as any,
       pushSender: { sendToAllDevicesAsync: vi.fn(async () => {}) },
       waitingForCommandLabel: 'Codex',

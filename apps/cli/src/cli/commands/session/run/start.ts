@@ -1,10 +1,17 @@
 import chalk from 'chalk';
 
-import type { Credentials } from '@/persistence';
-import { type ExecutionRunIntent, ExecutionRunStartRequestSchema } from '@happier-dev/protocol';
+import type { StoredCredentials } from '@/persistence';
+import {
+  ExecutionRunClassSchema,
+  ExecutionRunIntentSchema,
+  ExecutionRunIoModeSchema,
+  ExecutionRunRetentionPolicySchema,
+  ExecutionRunStartRequestSchema,
+} from '@happier-dev/protocol';
 
-import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
-import { readFlagValue } from '@/cli/commands/shared/argvFlags';
+import { wantsJson, printJsonEnvelope, writeJsonStdout } from '@/cli/output/jsonEnvelope';
+import { hasFlag, readCommandPositionals, readFlagValue } from '@/cli/commands/shared/argvFlags';
+import { parseProtocolEnumFlag } from '@/cli/commands/shared/parseProtocolEnumFlag';
 import { SESSION_HELP_LINES } from '@/cli/commands/session/shared/sessionCommandUsage';
 import {
   defaultIoModeForExecutionRunIntent,
@@ -19,31 +26,35 @@ import {
   normalizeActionExecuteResult,
   unwrapCliActionSuccessPayload,
 } from '@/cli/commands/session/shared/normalizeActionExecuteResult';
-import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
-import {
-  resolveSessionEncryptionContextFromCredentials,
-  resolveSessionStoredContentEncryptionMode,
-} from '@/session/transport/encryption/sessionEncryptionContext';
-import { resolveSessionIdOrPrefix } from '@/session/query/resolveSessionId';
+import { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
 import { ensureCliActionPolicySettings } from '@/session/actions/ensureCliActionPolicySettings';
 
 export async function cmdSessionRunStart(
   argv: string[],
-  deps: Readonly<{ readCredentialsFn: () => Promise<Credentials | null> }>,
+  deps: Readonly<{ readCredentialsFn: () => Promise<StoredCredentials | null> }>,
 ): Promise<void> {
   const json = wantsJson(argv);
-  const idOrPrefix = String(argv[2] ?? '').trim();
+  const [idOrPrefix = ''] = readCommandPositionals(argv, {
+    startIndex: 2,
+    valueFlags: ['--intent', '--backend', '--instructions', '--permission-mode', '--retention', '--run-class', '--io-mode'],
+  });
   if (!idOrPrefix) {
     throw new Error(`Usage: ${SESSION_HELP_LINES.runStart}`);
   }
 
-  const intent = (readFlagValue(argv, '--intent') ?? '').trim() as ExecutionRunIntent;
+  const intentRaw = (readFlagValue(argv, '--intent') ?? '').trim();
   const backendTargetRaw = (readFlagValue(argv, '--backend') ?? '').trim();
   const instructions = readFlagValue(argv, '--instructions') ?? undefined;
 
-  if (!intent || !backendTargetRaw) {
+  if (!intentRaw || !backendTargetRaw) {
     throw new Error(`Usage: ${SESSION_HELP_LINES.runStart}`);
   }
+
+  const intent = parseProtocolEnumFlag({
+    flag: '--intent',
+    rawValue: intentRaw,
+    schema: ExecutionRunIntentSchema,
+  });
 
   const backendTarget = parseSingleBackendTargetFromFlag(backendTargetRaw);
   if (!backendTarget) {
@@ -54,10 +65,32 @@ export async function cmdSessionRunStart(
     throw new Error(`Usage: ${SESSION_HELP_LINES.runStart}`);
   }
 
+  const retentionRaw = readFlagValue(argv, '--retention');
+  const retentionPolicy = parseProtocolEnumFlag({
+    flag: '--retention',
+    rawValue: retentionRaw
+      ?? (hasFlag(argv, '--retention') ? '' : defaultRetentionPolicyForExecutionRunIntent(intent)),
+    schema: ExecutionRunRetentionPolicySchema,
+  });
+  const runClassRaw = readFlagValue(argv, '--run-class');
+  const runClass = parseProtocolEnumFlag({
+    flag: '--run-class',
+    rawValue: runClassRaw
+      ?? (hasFlag(argv, '--run-class') ? '' : defaultRunClassForExecutionRunIntent(intent)),
+    schema: ExecutionRunClassSchema,
+  });
+  const ioModeRaw = readFlagValue(argv, '--io-mode');
+  const ioMode = parseProtocolEnumFlag({
+    flag: '--io-mode',
+    rawValue: ioModeRaw
+      ?? (hasFlag(argv, '--io-mode') ? '' : defaultIoModeForExecutionRunIntent(intent)),
+    schema: ExecutionRunIoModeSchema,
+  });
+
   const credentials = await deps.readCredentialsFn();
   if (!credentials) {
     if (json) {
-      printJsonEnvelope({ ok: false, kind: 'session_run_start', error: { code: 'not_authenticated' } });
+      await printJsonEnvelope({ ok: false, kind: 'session_run_start', error: { code: 'not_authenticated' } });
       return;
     }
     console.error(chalk.red('Error:'), 'Not authenticated. Run "happier auth login" first.');
@@ -66,34 +99,21 @@ export async function cmdSessionRunStart(
 
   await ensureCliActionPolicySettings(credentials);
 
-  const resolved = await resolveSessionIdOrPrefix({ credentials, idOrPrefix });
-  if (!resolved.ok) {
+  const sessionTarget = await resolveSessionTransportContext({ credentials, idOrPrefix });
+  if (!sessionTarget.ok) {
     if (json) {
-      printJsonEnvelope({
+      await printJsonEnvelope({
         ok: false,
         kind: 'session_run_start',
-        error: { code: resolved.code, ...(resolved.candidates ? { candidates: resolved.candidates } : {}) },
+        error: { code: sessionTarget.code, ...(sessionTarget.candidates ? { candidates: sessionTarget.candidates } : {}) },
       });
       return;
     }
-    throw new Error(resolved.code);
+    throw new Error(sessionTarget.code);
   }
-  const sessionId = resolved.sessionId;
-
-  const rawSession = await fetchSessionById({ token: credentials.token, sessionId });
-  if (!rawSession) {
-    if (json) {
-      printJsonEnvelope({ ok: false, kind: 'session_run_start', error: { code: 'session_not_found', sessionId } });
-      return;
-    }
-    console.error(chalk.red('Error:'), `Session not found: ${sessionId}`);
-    process.exit(1);
-  }
+  const { sessionId } = sessionTarget;
 
   const permissionMode = (readFlagValue(argv, '--permission-mode') ?? '').trim() || defaultPermissionModeForExecutionRunIntent(intent);
-  const retentionPolicy = (readFlagValue(argv, '--retention') ?? '').trim() || defaultRetentionPolicyForExecutionRunIntent(intent);
-  const runClass = ((readFlagValue(argv, '--run-class') ?? '').trim() as any) || defaultRunClassForExecutionRunIntent(intent);
-  const ioMode = ((readFlagValue(argv, '--io-mode') ?? '').trim() as any) || defaultIoModeForExecutionRunIntent(intent);
 
   const request = ExecutionRunStartRequestSchema.parse({
     intent,
@@ -105,9 +125,21 @@ export async function cmdSessionRunStart(
     ioMode,
   });
 
-  const ctx = resolveSessionEncryptionContextFromCredentials(credentials, rawSession);
-  const mode = resolveSessionStoredContentEncryptionMode(rawSession);
-  const executor = createCliActionExecutor({ token: credentials.token, credentials, sessionId, ctx, mode });
+  const executor = sessionTarget.mode === 'plain'
+    ? createCliActionExecutor({
+        token: credentials.token,
+        credentials,
+        sessionId,
+        ctx: sessionTarget.ctx,
+        mode: sessionTarget.mode,
+      })
+    : createCliActionExecutor({
+        token: credentials.token,
+        credentials,
+        sessionId,
+        ctx: sessionTarget.ctx,
+        mode: sessionTarget.mode,
+      });
   const actionRes = await executor.execute(
     'execution.run.start',
     { sessionId, ...request },
@@ -116,7 +148,7 @@ export async function cmdSessionRunStart(
   const normalized = normalizeActionExecuteResult(actionRes);
   if (!normalized.ok) {
     if (json) {
-      printJsonEnvelope({
+      await printJsonEnvelope({
         ok: false,
         kind: 'session_run_start',
         error: { code: normalized.errorCode, ...(normalized.errorMessage ? { message: normalized.errorMessage } : {}) },
@@ -130,7 +162,7 @@ export async function cmdSessionRunStart(
 
   if (json) {
     const backendId = request.backendTarget.backendId;
-    printJsonEnvelope({
+    await printJsonEnvelope({
       ok: true,
       kind: 'session_run_start',
       data: { sessionId, ...(runPayload as any), intent, backendId, backendTarget: request.backendTarget },
@@ -139,5 +171,5 @@ export async function cmdSessionRunStart(
   }
 
   console.log(chalk.green('✓'), 'execution run started');
-  console.log(JSON.stringify(runPayload, null, 2));
+  await writeJsonStdout(runPayload, { pretty: true });
 }

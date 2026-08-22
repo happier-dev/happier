@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
+import { ScmHostingProviderContributionSchema } from '@happier-dev/protocol';
 import type { PluginApi } from '@happier-dev/plugin-sdk';
-import type { ScmHostingProviderRuntimeRegistration } from '@happier-dev/plugin-sdk/experimental/scm';
+import type { HostingProviderRuntimeRegistration as ScmHostingProviderRuntimeRegistration } from '@happier-dev/plugin-sdk/scm/hosting';
 import {
     PLUGIN_MANIFEST as GITHUB_PLUGIN_MANIFEST,
     activate as activateGithub,
@@ -17,16 +18,24 @@ type PluginScmHostingProviderRuntime = Parameters<
     PluginApi['scm']['registerHostingProvider']
 >[1];
 
-function createBundledRegistry(input: Readonly<{
+async function createBundledRegistry(input: Readonly<{
     manifest: typeof GITHUB_PLUGIN_MANIFEST | typeof GITLAB_PLUGIN_MANIFEST;
     activate: typeof activateGithub | typeof activateGitlab;
 }>) {
     const registrations: ScmHostingProviderRuntimeRegistration[] = [];
-    input.activate({
+    await input.activate({
         connectedAccounts: {
             register() {
                 return { dispose() {} };
             },
+        },
+        // A bundled forge plugin may register Actions and background services
+        // during activation; this fixture only observes the hosting-provider surface.
+        actions: {
+            register() {},
+        },
+        backgroundServices: {
+            register() {},
         },
         scm: {
             registerHostingProvider(id: string, registration: PluginScmHostingProviderRuntime) {
@@ -37,11 +46,16 @@ function createBundledRegistry(input: Readonly<{
     } as unknown as Parameters<typeof input.activate>[0]);
 
     return createScmHostingProviderRegistry({
-        providers: input.manifest.contributes.scmHostingProviders.map((provider) => ({
-            ...provider,
-            pluginId: input.manifest.id,
-            displayName: provider.title,
-        })),
+        providers: (input.manifest.contributes.scmHostingProviders ?? []).map((provider) => {
+            const definition = ScmHostingProviderContributionSchema.parse(provider);
+            return {
+                ...definition,
+                pluginId: input.manifest.id,
+                displayName: typeof definition.title === 'string'
+                    ? definition.title
+                    : definition.title.fallback,
+            };
+        }),
         runtimeRegistrations: registrations.map((registration) => ({
             pluginId: input.manifest.id,
             generation: 'test-generation',
@@ -66,18 +80,18 @@ describe('bundled SCM hosting-provider identity', () => {
             remoteUrl: 'https://gitlab.com/happier-dev/happier.git',
             expectedUrl: 'https://gitlab.com/happier-dev/happier/-/compare/main...feature',
         },
-    ])('keeps the qualified $name identity usable from detection through compare URL creation', ({
+    ])('keeps the qualified $name identity usable from detection through compare URL creation', async ({
         manifest,
         activate,
         remoteUrl,
         expectedUrl,
     }) => {
-        const registry = createBundledRegistry({ manifest, activate });
+        const registry = await createBundledRegistry({ manifest, activate });
         const detected = registry.detectRemote({ remoteName: 'origin', remoteUrl });
 
         expect(detected.kind).toBe('resolved');
         if (detected.kind !== 'resolved') return;
-        expect(detected.provider.id).toBe(`${manifest.id}/${manifest.contributes.scmHostingProviders[0].id}`);
+        expect(detected.provider.id).toBe(`${manifest.id}/${(manifest.contributes.scmHostingProviders ?? [])[0].id}`);
         expect(registry.buildCompareUrl({
             provider: detected.provider,
             base: 'main',

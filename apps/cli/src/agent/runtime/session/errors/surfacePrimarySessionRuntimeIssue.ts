@@ -1,10 +1,10 @@
 import { randomUUID } from 'node:crypto';
 
-import type { ACPMessageData, ACPProvider } from '@/api/session/sessionMessageTypes';
+import type { AcpSendFn } from '@/agent/acp/bridge/acpSessionForwarding';
 import { logger } from '@/ui/logger';
 import type {
+  AgentSessionRuntimeEvent,
   PrimaryTurnStatusV1,
-  RuntimeEventV1,
   SessionRuntimeIssueV1,
 } from '@happier-dev/protocol';
 
@@ -20,19 +20,23 @@ type PrimarySessionRuntimeIssueRecord = Readonly<{
   agentTurnId?: string | null;
 }>;
 
-type RuntimeIssueTurnEvent = Extract<RuntimeEventV1, { kind: 'turn-failed' | 'turn-cancelled' }>;
+type RuntimeIssueTurnEvent = Extract<AgentSessionRuntimeEvent, { kind: 'turn-failed' | 'turn-cancelled' }>;
+type RuntimeIssueTurnEventDraft = RuntimeIssueTurnEvent extends infer Event
+  ? Event extends RuntimeIssueTurnEvent
+    ? Omit<Event, 'sequence' | 'sessionId' | 'emittedAtMs'>
+    : never
+  : never;
 
 type RuntimeIssueSession = Readonly<{
   sessionId?: string;
-  sendAgentMessage?: (provider: ACPProvider, body: ACPMessageData) => void;
 }>;
 
 export type SurfacePrimarySessionRuntimeIssueInput = Omit<ClassifyPrimarySessionRuntimeIssueInput, 'cause'> & Readonly<{
   cause?: ClassifyPrimarySessionRuntimeIssueInput['cause'] | 'cancelled' | null;
   session?: RuntimeIssueSession | null;
   sessionTurnId?: string | null;
-  emitAcpLifecycleMarker?: boolean;
-  publishRuntimeEvent?: (event: RuntimeIssueTurnEvent) => void | Promise<void>;
+  publishTranscriptAgentMessageCommitted?: AcpSendFn;
+  publishRuntimeEvent?: (event: RuntimeIssueTurnEventDraft) => void | Promise<void>;
   recordIssue?: (record: PrimarySessionRuntimeIssueRecord) => void | Promise<void>;
 }>;
 
@@ -62,20 +66,14 @@ function normalizeNonNegativeTimestamp(value: number | null | undefined): number
 
 function buildRuntimeEventBase(
   input: SurfacePrimarySessionRuntimeIssueInput,
-): Pick<RuntimeEventV1, 'sessionId' | 'emittedAtMs'> & Readonly<{ turnId: string }> | null {
-  const sessionId = normalizeProviderFact(input.session?.sessionId);
+): Readonly<{ turnId: string }> | null {
   const turnId = normalizeProviderFact(input.sessionTurnId);
-  if (!sessionId || !turnId) return null;
-  return {
-    sessionId,
-    emittedAtMs: normalizeNonNegativeTimestamp(input.occurredAt),
-    turnId,
-  };
+  return turnId ? { turnId } : null;
 }
 
 async function publishRuntimeTurnEventBestEffort(
   input: SurfacePrimarySessionRuntimeIssueInput,
-  event: RuntimeIssueTurnEvent | null,
+  event: RuntimeIssueTurnEventDraft | null,
 ): Promise<void> {
   if (!event || !input.publishRuntimeEvent) return;
   try {
@@ -88,18 +86,15 @@ async function publishRuntimeTurnEventBestEffort(
   }
 }
 
-function sendTurnLifecycleMessage(
-  session: RuntimeIssueSession | null | undefined,
+function publishTurnLifecycleMessage(
+  publish: AcpSendFn | null | undefined,
   provider: string | null | undefined,
   type: 'turn_failed' | 'turn_cancelled',
   agentTurnId: string | null | undefined,
 ): void {
   const normalizedProvider = normalizeProviderFact(provider) ?? 'agent';
   const id = normalizeProviderFact(agentTurnId) ?? randomUUID();
-  session?.sendAgentMessage?.(
-    normalizedProvider as ACPProvider,
-    { type, id } as unknown as ACPMessageData,
-  );
+  publish?.(normalizedProvider, { type, id }, { localId: `${id}:${type}` });
 }
 
 export { classifyPrimarySessionRuntimeIssue };
@@ -108,9 +103,12 @@ export async function surfacePrimarySessionRuntimeIssue(
   input: SurfacePrimarySessionRuntimeIssueInput,
 ): Promise<SessionRuntimeIssueV1 | null> {
   if (input.cause === 'cancelled') {
-    if (input.emitAcpLifecycleMarker === true) {
-      sendTurnLifecycleMessage(input.session, input.provider, 'turn_cancelled', input.agentTurnId);
-    }
+    publishTurnLifecycleMessage(
+      input.publishTranscriptAgentMessageCommitted,
+      input.provider,
+      'turn_cancelled',
+      input.agentTurnId,
+    );
     const record = {
       ...buildProviderRuntimeFacts(input),
       latestTurnStatus: 'cancelled',
@@ -122,16 +120,19 @@ export async function surfacePrimarySessionRuntimeIssue(
           ...runtimeEventBase,
           kind: 'turn-cancelled',
           ...(record.agentTurnId ? { agentTurnId: record.agentTurnId } : {}),
-          reason: 'cancelled',
-        } satisfies RuntimeIssueTurnEvent
+          cause: 'providerCancelled',
+        } satisfies RuntimeIssueTurnEventDraft
       : null);
     return null;
   }
 
   const issue = classifyPrimarySessionRuntimeIssue(input as ClassifyPrimarySessionRuntimeIssueInput);
-  if (input.emitAcpLifecycleMarker === true) {
-    sendTurnLifecycleMessage(input.session, input.provider, 'turn_failed', issue.agentTurnId ?? input.agentTurnId);
-  }
+  publishTurnLifecycleMessage(
+    input.publishTranscriptAgentMessageCommitted,
+    input.provider,
+    'turn_failed',
+    issue.agentTurnId ?? input.agentTurnId,
+  );
   const record = {
     ...buildProviderRuntimeFacts({
       provider: issue.agentId ?? input.provider,
@@ -146,8 +147,19 @@ export async function surfacePrimarySessionRuntimeIssue(
         ...runtimeEventBase,
         kind: 'turn-failed',
         ...(record.agentTurnId ? { agentTurnId: record.agentTurnId } : {}),
-        issue,
-      } satisfies RuntimeIssueTurnEvent
+        diagnostic: {
+          code: issue.code,
+          severity: 'error',
+          ...(issue.sanitizedPreview ? { message: issue.sanitizedPreview } : {}),
+          details: {
+            v: 1,
+            source: issue.source,
+            occurredAt: normalizeNonNegativeTimestamp(issue.occurredAt),
+            ...(issue.agentId ? { agentId: issue.agentId } : {}),
+            ...(issue.agentTurnId ? { agentTurnId: issue.agentTurnId } : {}),
+          },
+        },
+      } satisfies RuntimeIssueTurnEventDraft
     : null);
   await input.recordIssue?.(record);
   return issue;

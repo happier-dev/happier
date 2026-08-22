@@ -14,6 +14,7 @@ import {
   buildLinkedExternalSessionMetadataV1,
   buildLinkedExternalSessionQualifiedIdentityV1,
   PluginAgentExternalSessionLinkDataSchema,
+  TranscriptRawRecordV1Schema,
 } from '@happier-dev/protocol';
 import { describe, expect, it } from 'vitest';
 
@@ -243,7 +244,7 @@ describe('engineRegistry (Pi current local External Sessions resume)', () => {
             maxItems: 100,
           });
           expect(page.tailCursor).toMatch(/^happier_external_cursor_v1:/);
-          expect(page.items.every((item) => item.raw.format === 'pi-session-v3'))
+          expect(page.items.every((item) => TranscriptRawRecordV1Schema.safeParse(item.raw).success))
             .toBe(true);
 
           const definition = contributions.agentDefinitionsById.get(PI_AGENT_ID);

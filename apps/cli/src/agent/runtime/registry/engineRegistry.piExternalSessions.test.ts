@@ -8,6 +8,7 @@ import {
 import { join } from 'node:path';
 
 import { resolveVendorResumeIdFromSessionMetadata } from '@happier-dev/agents';
+import { createSessionOwnerMetadataV1 } from '@happier-dev/protocol';
 import { buildPiRpcArgs } from '@happier-dev/plugins-pi/agent/runtime/rpc/args';
 import { describe, expect, it } from 'vitest';
 
@@ -79,7 +80,6 @@ describe('engineRegistry (Pi External Sessions)', () => {
               expect.objectContaining({
                 family: 'agents',
                 localId: PI_AGENT_ID,
-                requiredFields: ['factory', 'externalSessions'],
               }),
             ]),
             bound: expect.arrayContaining([
@@ -183,7 +183,6 @@ describe('engineRegistry (Pi External Sessions)', () => {
           },
           externalSessionMetadata: {
             linkData: {
-              sessionFile: canonicalSessionFile,
               runtimeDescriptorV1: {
                 v: 1,
                 agentId: PI_AGENT_ID,
@@ -196,6 +195,20 @@ describe('engineRegistry (Pi External Sessions)', () => {
             },
           },
         });
+        // The host projects only Agent-owned native-session facts out of a link
+        // identity into TOP-LEVEL session owner metadata, whose strict allow-list
+        // rejects unknown keys with a typed-error-less failure.
+        expect(createSessionOwnerMetadataV1({
+          metadata: {
+            tag: 'pi-external-registry',
+            path: '/workspace',
+            host: 'host',
+            machineId: 'machine',
+            flavor: PI_AGENT_ID,
+            ...linked.vendorMetadata,
+          },
+        })).toMatchObject({ ok: true });
+
         const resumeSessionId = resolveVendorResumeIdFromSessionMetadata(PI_AGENT_ID, {
           piSessionId: linked.remoteSessionId,
           runtimeDescriptorV1: linked.runtimeDescriptor,
@@ -213,8 +226,15 @@ describe('engineRegistry (Pi External Sessions)', () => {
           maxBytes: 64 * 1024,
           maxItems: 10,
         });
-        expect(page.items.map((item) => item.raw.record)).toEqual([
-          expect.objectContaining({ id: 'pi-registry-user' }),
+        expect(page.items).toEqual([
+          expect.objectContaining({
+            id: 'pi:pi-external-registry:pi-registry-user',
+            messageRole: 'user',
+            raw: {
+              role: 'user',
+              content: { type: 'text', text: 'registered prompt' },
+            },
+          }),
         ]);
         expect(page.tailCursor).toMatch(/^happier_external_cursor_v1:/);
 
@@ -235,8 +255,15 @@ describe('engineRegistry (Pi External Sessions)', () => {
         expect(advanced).toMatchObject({
           outcome: 'advanced',
           items: [{
+            id: 'pi:pi-external-registry:pi-registry-assistant:text:0',
+            messageRole: 'agent',
             raw: {
-              record: expect.objectContaining({ id: 'pi-registry-assistant' }),
+              role: 'agent',
+              content: {
+                type: 'acp',
+                agentId: PI_AGENT_ID,
+                data: { type: 'message', message: 'registered answer' },
+              },
             },
           }],
           nextCursor: expect.stringMatching(/^happier_external_cursor_v1:/),

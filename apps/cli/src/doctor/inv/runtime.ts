@@ -1,5 +1,5 @@
 import { readDaemonStatusSnapshot } from '@/daemon/statusSnapshot';
-import { readCredentials, readSettings } from '@/persistence';
+import { readSettings, readStoredCredentials } from '@/persistence';
 
 import { readDoctorInstallations } from './installs';
 import { readDoctorRelays } from './relays';
@@ -8,7 +8,7 @@ import { readDoctorWarnings } from './warnings';
 
 export type DoctorRuntimeInventory = Readonly<{
   settings: Awaited<ReturnType<typeof readSettings>>;
-  credentials: Awaited<ReturnType<typeof readCredentials>>;
+  credentials: Awaited<ReturnType<typeof readStoredCredentials>>;
   daemonStatus: Awaited<ReturnType<typeof readDaemonStatusSnapshot>> | undefined;
   installations: Awaited<ReturnType<typeof readDoctorInstallations>>;
   services: Awaited<ReturnType<typeof readDoctorServices>>;
@@ -19,7 +19,7 @@ export type DoctorRuntimeInventory = Readonly<{
 export async function readDoctorRuntimeInventory(): Promise<DoctorRuntimeInventory> {
   const [settings, credentials, daemonStatus, installations, services, localRelays] = await Promise.all([
     readSettings(),
-    readCredentials(),
+    readStoredCredentials(),
     readDaemonStatusSnapshot().catch(() => undefined),
     readDoctorInstallations(),
     readDoctorServices(),

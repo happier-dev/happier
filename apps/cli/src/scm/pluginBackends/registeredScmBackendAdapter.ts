@@ -9,13 +9,14 @@ import type {
     ScmRepoMode,
 } from '@happier-dev/protocol';
 import type {
-    ScmBackendRuntimeRegistration,
-    ScmBackendRuntimeServices,
-    ScmHostingProviderRuntimeServices,
-    ScmWorkspaceIntegrationPortableWorkspacePathClassification as PluginPortableWorkspacePathClassification,
-} from '@happier-dev/plugin-sdk/experimental/scm';
-import { runWithScmHostingProviderRuntimeServices } from '@happier-dev/plugin-sdk/experimental/scm';
-import { runWithScmBackendRuntimeServices } from '@happier-dev/plugin-sdk/experimental/scm/backend';
+    BackendRuntimeRegistration as ScmBackendRuntimeRegistration,
+    BackendRuntimeServices as ScmBackendRuntimeServices,
+    PortableWorkspacePathClassification as PluginPortableWorkspacePathClassification,
+} from '@happier-dev/plugin-sdk/scm/backend';
+import type {
+    HostingProviderRuntimeServices as ScmHostingProviderRuntimeServices } from '@happier-dev/plugin-sdk/scm/hosting';
+import { runWithHostingProviderRuntimeServices as runWithScmHostingProviderRuntimeServices } from '@happier-dev/plugin-sdk/scm/hosting';
+import { runWithBackendRuntimeServices as runWithScmBackendRuntimeServices } from '@happier-dev/plugin-sdk/scm/backend';
 
 import type { ScmBackend } from '../types';
 import { resolveScmBackendCapabilities } from '../capabilities/resolveScmBackendCapabilities';

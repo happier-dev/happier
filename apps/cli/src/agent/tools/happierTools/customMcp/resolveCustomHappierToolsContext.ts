@@ -1,4 +1,4 @@
-import type { Credentials } from '@/persistence';
+import type { StoredCredentials } from '@/persistence';
 import { readMcpServersSettingsFromAccountSettings } from '@/mcp/servers/readMcpServersSettingsFromAccountSettings';
 import { resolveEffectiveMcpServersForDirectory } from '@/mcp/servers/resolveEffectiveMcpServersForDirectory';
 import {
@@ -9,7 +9,7 @@ import {
 import { materializeMcpServerConfigRecord } from '@/mcp/servers/materializeMcpServerConfigRecord';
 
 export async function resolveCustomHappierToolsContext(params: Readonly<{
-  credentials: Credentials;
+  credentials: StoredCredentials;
   accountSettings: Readonly<Record<string, unknown>>;
   machineId: string;
   directory: string;
@@ -25,7 +25,9 @@ export async function resolveCustomHappierToolsContext(params: Readonly<{
   return await materializeMcpServerConfigRecord({
     resolved,
     savedSecretsById,
-    settingsSecretsKey: deriveSettingsSecretsKeyForCredentials(params.credentials),
+    settingsSecretsKey: params.credentials.encryption
+      ? deriveSettingsSecretsKeyForCredentials(params.credentials)
+      : null,
     settingsSecretsReadKeys: deriveSettingsSecretsReadKeysForCredentials(params.credentials),
     processEnv: params.processEnv ?? process.env,
     tmpDir: null,

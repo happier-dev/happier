@@ -1,4 +1,4 @@
-import type { ScmBackendCommandRunResult } from '@happier-dev/plugin-sdk/experimental/scm/backend';
+import type { BackendCommandRunResult as ScmBackendCommandRunResult } from '@happier-dev/plugin-sdk/scm/backend';
 
 type ScmBackendContributionToolCommand = Readonly<{
     installableKey: string;

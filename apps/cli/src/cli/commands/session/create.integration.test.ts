@@ -12,7 +12,7 @@ import { deriveBoxPublicKeyFromSeed, sealEncryptedDataKeyEnvelopeV1 } from '@hap
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 import { captureConsoleJsonOutput } from '@/testkit/logger/captureOutput';
-import { clearDaemonState, writeDaemonState } from '@/persistence';
+import { clearDaemonStateForTestTeardown, writeDaemonState } from '@/persistence';
 import { SESSION_HELP_LINES } from './shared/sessionCommandUsage';
 
 const { mockIo } = vi.hoisted(() => ({
@@ -207,7 +207,7 @@ describe('happier session create (integration)', () => {
   });
 
   afterEach(async () => {
-    await clearDaemonState();
+    await clearDaemonStateForTestTeardown();
     if (server) {
       await new Promise<void>((resolve, reject) => {
         server!.close((error) => (error ? reject(error) : resolve()));

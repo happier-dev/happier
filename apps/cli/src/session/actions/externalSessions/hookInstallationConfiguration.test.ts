@@ -883,10 +883,12 @@ describe('External Sessions hook installation configuration', () => {
         const installedConfiguration = await readFile(targetPath);
         const path = recordPath(input);
         const validRecord = await readFile(path);
-        const targetPathOffset = validRecord.indexOf(Buffer.from(targetPath, 'utf8'));
+        const encodedTargetPath = JSON.stringify(targetPath).slice(1, -1);
+        const encodedTargetPathBytes = Buffer.from(encodedTargetPath, 'utf8');
+        const targetPathOffset = validRecord.indexOf(encodedTargetPathBytes);
         expect(targetPathOffset).toBeGreaterThanOrEqual(0);
         const invalidRecord = Buffer.from(validRecord);
-        invalidRecord[targetPathOffset + Buffer.byteLength(targetPath) - 1] = 0xff;
+        invalidRecord[targetPathOffset + encodedTargetPathBytes.byteLength - 1] = 0xff;
         await writeFile(path, invalidRecord);
 
         await expect(readExternalSessionHookInstallationInventoryPage({
@@ -1082,7 +1084,6 @@ describe('External Sessions hook installation configuration', () => {
 
         const path = recordPath(input);
         const raw = await readFile(path, 'utf8');
-        expect(raw).toContain(targetPath);
         expect(raw).not.toContain(foreignSecret);
         expect(raw).not.toContain('nativePayload');
         expect(raw).not.toContain('sessionId');
@@ -1090,6 +1091,7 @@ describe('External Sessions hook installation configuration', () => {
             schemaVersion: 1,
             machineId: 'machine-1',
             variantId: 'fixture-lifecycle-v1',
+            targets: [{ absolutePath: targetPath }],
             state: 'disabled',
             revision: 1,
         });

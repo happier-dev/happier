@@ -16,3 +16,5 @@ export {
     resolveBackendExecutionSurfaces,
     resolveCliEngineRegistry,
 } from './engineRegistry/registry';
+
+export { resolveEngineBackendIdForCatalogAgent } from './engineRegistry/contributions';

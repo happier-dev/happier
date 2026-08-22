@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import type { ConnectedServiceBindingsV1 } from '@happier-dev/protocol';
+import {
+  ProviderBoundModelRefSchema,
+  type ConnectedServiceBindingsV1,
+} from '@happier-dev/protocol';
 
 import type { ExecutionRunState } from './executionRunTypes';
 import { resolveExecutionRunResumeBackendOptions } from './resolveExecutionRunResumeBackendOptions';
@@ -17,6 +20,12 @@ const OVERRIDES = {
   updatedAt: 1,
   overrides: { reasoning_effort: { updatedAt: 1, value: 'high' } },
 };
+
+const MODEL_SELECTION = ProviderBoundModelRefSchema.parse({
+  agentTargetKey: 'backend:codex',
+  providerConnectionId: 'pc_openai',
+  modelId: 'gpt-5.5',
+});
 
 function baseRun(launch: ExecutionRunState['launch']): ExecutionRunState {
   return {
@@ -40,15 +49,17 @@ function baseRun(launch: ExecutionRunState['launch']): ExecutionRunState {
 }
 
 describe('resolveExecutionRunResumeBackendOptions', () => {
-  it('rehydrates model, config overrides, and the SAME persisted CS selection from the launch record', () => {
+  it('rehydrates the exact model selection, config overrides, and SAME persisted CS selection', () => {
     const options = resolveExecutionRunResumeBackendOptions({
       run: baseRun({
         modelId: 'gpt-5.5',
+        modelSelection: MODEL_SELECTION,
         sessionConfigOptionOverrides: OVERRIDES,
         connectedServicesSelection: CONNECTED_SELECTION,
       }),
     });
     expect(options.modelId).toBe('gpt-5.5');
+    expect(options.modelSelection).toEqual(MODEL_SELECTION);
     expect(options.sessionConfigOptionOverrides).toEqual(OVERRIDES);
     // The persisted selection is authoritative on resume — the daemon re-materializes it verbatim.
     expect(options.connectedServices).toEqual(CONNECTED_SELECTION);

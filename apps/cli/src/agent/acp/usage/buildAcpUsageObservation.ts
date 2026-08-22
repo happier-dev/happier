@@ -77,17 +77,26 @@ export function buildAcpSessionUpdateUsageObservation(params: Readonly<{
 export function buildAcpPromptUsageObservation(params: Readonly<{
     provider: string;
     promptResponse: unknown;
+    projectUsage?: (input: Readonly<{
+        usage: unknown;
+        promptResponse: unknown;
+    }>) => unknown;
 }>): UsageObservation | null {
     const promptResponse = asRecord(params.promptResponse);
     if (!promptResponse) return null;
-    const usage = asRecord(promptResponse.usage);
+    const metadata = asRecord(promptResponse._meta);
+    const usage = asRecord(promptResponse.usage) ?? asRecord(metadata?.usage);
     if (!usage) return null;
+    const projectedUsage = params.projectUsage
+        ? asRecord(params.projectUsage({ usage, promptResponse }))
+        : usage;
+    if (!projectedUsage) return null;
     return extractUsageObservationFromTokenCountMessage({
         provider: params.provider,
         defaultSource: 'acp-prompt-usage',
         defaultScope: 'turn_delta',
         body: {
-            ...usage,
+            ...projectedUsage,
             key: 'acp-prompt-usage',
             modelId: promptResponse.modelId ?? promptResponse.model,
             source: 'acp-prompt-usage',

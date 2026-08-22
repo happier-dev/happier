@@ -14,7 +14,11 @@ export function createProviderEnforcedPermissionHandler(params: {
   onAbortRequested?: (() => void | Promise<void>) | null;
   toolTrace?: { protocol: ToolTraceProtocol; provider: string } | null;
   alwaysAutoApproveToolNameIncludes?: ReadonlyArray<string>;
-  alwaysAutoApproveToolCallIdIncludes?: ReadonlyArray<string>;
+  isMediatorPluginCurrent?: ((pluginId: string) => boolean) | null;
+  isMediatorContributionCurrent?: ((mediator: Readonly<{
+    pluginId: string;
+    contributionLocalId: string;
+  }>) => boolean) | null;
 }): ProviderEnforcedPermissionHandler {
   return new ProviderEnforcedPermissionHandler(params.session, {
     logPrefix: params.logPrefix,
@@ -24,6 +28,7 @@ export function createProviderEnforcedPermissionHandler(params: {
     onAbortRequested: params.onAbortRequested ?? null,
     toolTrace: params.toolTrace ?? null,
     alwaysAutoApproveToolNameIncludes: params.alwaysAutoApproveToolNameIncludes,
-    alwaysAutoApproveToolCallIdIncludes: params.alwaysAutoApproveToolCallIdIncludes,
+    isMediatorPluginCurrent: params.isMediatorPluginCurrent ?? null,
+    isMediatorContributionCurrent: params.isMediatorContributionCurrent ?? null,
   });
 }

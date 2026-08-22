@@ -2,11 +2,13 @@ import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
 import { projectPath } from '@/projectPath';
+import { writeSecureMcpRuntimeConfigFile } from '@/mcp/runtime/writeSecureMcpRuntimeConfigFile';
 import { resolveCliTsxTsconfigPath, resolveTsxImportHookPath } from '@/utils/spawnHappyCLI';
 
 function resolveEnvRecord(): Record<string, string> {
@@ -17,9 +19,9 @@ function resolveEnvRecord(): Record<string, string> {
   return out;
 }
 
-function resolveLauncherInvocation(): { command: string; args: string[]; env?: Record<string, string> } {
+function resolveLauncherInvocation(options: Readonly<{ forceSource?: boolean }> = {}): { command: string; args: string[]; env?: Record<string, string> } {
   const distEntrypoint = join(projectPath(), 'dist', 'mcp', 'launchers', 'stdioMcpServerLauncher.mjs');
-  if (existsSync(distEntrypoint)) {
+  if (!options.forceSource && existsSync(distEntrypoint)) {
     return {
       command: process.execPath,
       args: [distEntrypoint],
@@ -34,7 +36,7 @@ function resolveLauncherInvocation(): { command: string; args: string[]; env?: R
 
   return {
     command: process.execPath,
-    args: ['--no-warnings', '--no-deprecation', '--import', tsxHook, sourceEntrypoint],
+    args: ['--no-warnings', '--no-deprecation', '--import', pathToFileURL(tsxHook).href, sourceEntrypoint],
     env: {
       TSX_TSCONFIG_PATH: resolveCliTsxTsconfigPath(),
     },
@@ -42,6 +44,43 @@ function resolveLauncherInvocation(): { command: string; args: string[]; env?: R
 }
 
 describe('stdioMcpServerLauncher', () => {
+  it('removes the writer-owned default runtime directory after consuming its config', async () => {
+    const prefix = 'happier-mcp-stdio-launcher';
+    const configPath = await writeSecureMcpRuntimeConfigFile({
+      prefix,
+      tmpDir: null,
+      payload: { env: { API_KEY: 'SHOULD_NOT_PERSIST' } },
+    });
+    const ownedDirectory = dirname(configPath);
+
+    try {
+      const launcherInvocation = resolveLauncherInvocation({ forceSource: true });
+      const child = spawn(launcherInvocation.command, launcherInvocation.args, {
+        env: {
+          ...resolveEnvRecord(),
+          ...(launcherInvocation.env ?? {}),
+          HAPPIER_MCP_STDIO_LAUNCHER_CONFIG_FILE: configPath,
+        },
+        stdio: ['ignore', 'ignore', 'pipe'],
+      });
+      let stderr = '';
+      child.stderr?.on('data', (chunk) => { stderr += String(chunk); });
+
+      const exitCode = await new Promise<number>((resolve, reject) => {
+        child.once('error', reject);
+        child.once('exit', (code) => resolve(code ?? -1));
+      });
+
+      expect(exitCode).not.toBe(0);
+      if (existsSync(configPath)) {
+        throw new Error(`Launcher did not consume its runtime config: ${stderr}`);
+      }
+      expect(existsSync(ownedDirectory)).toBe(false);
+    } finally {
+      await rm(ownedDirectory, { recursive: true, force: true });
+    }
+  });
+
   it('removes the config file when startup fails before config parsing succeeds', async () => {
     const tmp = await mkdtemp(join(tmpdir(), 'happier-mcp-stdio-launcher-test-'));
     try {
@@ -65,6 +104,7 @@ describe('stdioMcpServerLauncher', () => {
 
       expect(exitCode).not.toBe(0);
       expect(existsSync(configPath)).toBe(false);
+      expect(existsSync(tmp)).toBe(true);
     } finally {
       await rm(tmp, { recursive: true, force: true });
     }

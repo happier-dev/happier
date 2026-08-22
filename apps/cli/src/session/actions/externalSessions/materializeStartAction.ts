@@ -1,7 +1,10 @@
 import {
   ExternalSessionMaterializeStartInputV1Schema,
+  projectExternalSessionOperationProgressV1,
   readLinkedExternalSessionV1FromMetadata,
   type ExternalSessionOperationActionResponseV1,
+  type ExternalSessionOperationAuthorIntentV1,
+  type ExternalSessionOperationRecordV1,
   type ExternalSessionOperationSemanticRequestV1,
 } from '@happier-dev/protocol';
 
@@ -12,15 +15,18 @@ import {
 import {
   resolveCurrentExternalSessionAgentIdentity,
 } from '@/api/session/external/linking/qualifiedLinkIdentityRegistry';
-import { readCredentials } from '@/persistence';
+import { readStoredCredentials } from '@/persistence';
 
 import type {
   ExternalSessionMaterializeActionExecutor,
 } from './materializeAction';
 import {
-  externalSessionOperationIdForRequest,
-  readExternalSessionOperationRecord,
+  ExternalSessionOperationRecordReadError,
+  resolveExternalSessionOperationStartAdmission,
 } from './operationRecordStore';
+import {
+  readExternalSessionOperationSharedPresentation,
+} from './operationProgressPublisher';
 import {
   resolveGenerationBoundExternalSessionFollowSurface,
 } from './providerOpsResolution';
@@ -41,15 +47,43 @@ type MaterializeSemanticRequest = Extract<
   { plan: 'materialize' }
 >;
 
+export type ExternalSessionPluginMaterializeStart = (
+  input: Readonly<{
+    sessionId: string;
+    durableIdempotencyKey: string;
+    authorIntent: Extract<
+      ExternalSessionOperationAuthorIntentV1,
+      { kind: 'materialize' }
+    >;
+    signal?: AbortSignal;
+  }>,
+) => Promise<ExternalSessionOperationActionResponseV1>;
+
 type MaterializeStartDependencies = Readonly<{
-  readExistingRequest(operationId: string): Promise<MaterializeSemanticRequest | null>;
+  resolveAdmission(
+    intent: MaterializeStartIntent,
+    authorIntent?: Extract<
+      ExternalSessionOperationAuthorIntentV1,
+      { kind: 'materialize' }
+    >,
+  ): ReturnType<typeof resolveExternalSessionOperationStartAdmission>;
   describeSession(intent: MaterializeStartIntent): Promise<MaterializeSemanticRequest>;
   startSemanticRequest:
     ExternalSessionMaterializeActionExecutor['start'];
 }>;
 
 export type ExternalSessionMaterializeStartActionExecutor = Readonly<{
-  start(input: unknown): Promise<ExternalSessionOperationActionResponseV1>;
+  start(
+    input: unknown,
+    context?: Readonly<{
+      signal?: AbortSignal;
+      authorIntent?: Extract<
+        ExternalSessionOperationAuthorIntentV1,
+        { kind: 'materialize' }
+      >;
+    }>,
+  ): Promise<ExternalSessionOperationActionResponseV1>;
+  startPluginMaterialize: ExternalSessionPluginMaterializeStart;
 }>;
 
 function failure(
@@ -57,6 +91,15 @@ function failure(
   message: string,
 ): ExternalSessionOperationActionResponseV1 {
   return { ok: false, error: { code, message } };
+}
+
+function success(
+  record: ExternalSessionOperationRecordV1,
+): ExternalSessionOperationActionResponseV1 {
+  return {
+    ok: true,
+    progress: projectExternalSessionOperationProgressV1(record),
+  };
 }
 
 function publicIntentForSemanticRequest(
@@ -73,35 +116,49 @@ function sameValue(left: unknown, right: unknown): boolean {
 export function createExternalSessionMaterializeStartActionExecutor(
   dependencies: MaterializeStartDependencies,
 ): ExternalSessionMaterializeStartActionExecutor {
-  return Object.freeze({
-    async start(raw) {
+  /**
+   * Admits the durable materialization operation and answers with its public
+   * operation reference. The durable operation owns the historical import and
+   * outlives this call, so the caller follows it through the operation status
+   * and progress owners instead of waiting for the import to finish.
+   */
+  const admitDurableOperation = async (
+    request: MaterializeSemanticRequest,
+    context?: Readonly<{
+      signal?: AbortSignal;
+      authorIntent?: Extract<
+        ExternalSessionOperationAuthorIntentV1,
+        { kind: 'materialize' }
+      >;
+    }>,
+  ): Promise<ExternalSessionOperationActionResponseV1> => {
+    let admit!: (record: ExternalSessionOperationRecordV1) => void;
+    const admitted = new Promise<ExternalSessionOperationRecordV1>((resolve) => {
+      admit = resolve;
+    });
+    const operation = dependencies.startSemanticRequest({ request }, {
+      ...(context?.signal ? { signal: context.signal } : {}),
+      ...(context?.authorIntent ? { authorIntent: context.authorIntent } : {}),
+      onAdmitted: admit,
+    });
+    return await Promise.race([
+      admitted.then((record) => success(record)),
+      operation,
+    ]);
+  };
+
+  const start: ExternalSessionMaterializeStartActionExecutor['start'] =
+    async (raw, context) => {
       const parsed = ExternalSessionMaterializeStartInputV1Schema.safeParse(raw);
       if (!parsed.success) {
         return failure('invalid_state', 'Invalid materialization request.');
       }
       const intent = parsed.data.request as unknown as MaterializeStartIntent;
-      const operationId = externalSessionOperationIdForRequest(intent);
-      let existing: MaterializeSemanticRequest | null;
-      try {
-        existing = await dependencies.readExistingRequest(operationId);
-      } catch {
-        return failure(
-          'internal_error',
-          'Materialization operation record could not be read.',
-        );
-      }
-      if (existing) {
-        if (!sameValue(publicIntentForSemanticRequest(existing), intent)) {
-          return failure(
-            'operation_conflict',
-            'Materialization idempotency request changed.',
-          );
-        }
-        return await dependencies.startSemanticRequest({ request: existing });
-      }
-
       let request: MaterializeSemanticRequest;
       try {
+        // Source authorization intentionally precedes receipt/conflict lookup:
+        // receipt identity is Account-private and must not be observable to a
+        // caller that cannot currently read this linked Session.
         request = await dependencies.describeSession(intent);
       } catch (error) {
         if (
@@ -124,7 +181,83 @@ export function createExternalSessionMaterializeStartActionExecutor(
           'Linked external session identity changed.',
         );
       }
-      return await dependencies.startSemanticRequest({ request });
+      let admission: Awaited<ReturnType<
+        MaterializeStartDependencies['resolveAdmission']
+      >>;
+      try {
+        admission = await dependencies.resolveAdmission(
+          intent,
+          context?.authorIntent,
+        );
+      } catch (error) {
+        if (
+          error instanceof ExternalSessionOperationRecordReadError
+          && (
+            error.reason === 'account_scope_unavailable'
+            || error.reason === 'legacy_unscoped'
+          )
+        ) {
+          return failure(
+            'source_unavailable',
+            'Materialization operation identity is unavailable.',
+          );
+        }
+        return failure(
+          'internal_error',
+          'Materialization operation record could not be read.',
+        );
+      }
+      if (admission.kind === 'conflict') {
+        return failure(
+          'operation_conflict',
+          'Materialization idempotency request changed.',
+        );
+      }
+      if (admission.kind === 'legacy_unavailable') {
+        return failure(
+          'source_unavailable',
+          'A legacy materialization operation cannot be safely resumed.',
+        );
+      }
+      if (admission.kind === 'completion_receipt') {
+        return failure(
+          'invalid_state',
+          'The completed materialization no longer has private recovery state.',
+        );
+      }
+      if (admission.kind === 'existing_record') {
+        const existing = admission.record.request;
+        if (
+          existing.plan !== 'materialize'
+          || !sameValue(publicIntentForSemanticRequest(existing), intent)
+        ) {
+          return failure(
+            'operation_conflict',
+            'Materialization idempotency request changed.',
+          );
+        }
+        return await admitDurableOperation(existing, context);
+      }
+
+      return await admitDurableOperation(request, context);
+    };
+
+  return Object.freeze({
+    start,
+    async startPluginMaterialize(input) {
+      return await start({
+        request: {
+          v: 1,
+          idempotencyKey: input.durableIdempotencyKey,
+          sessionId: input.sessionId,
+          plan: 'materialize',
+          targetStorageMode: 'external-linked',
+          targetRuntimeMode: null,
+        },
+      }, {
+        authorIntent: input.authorIntent,
+        ...(input.signal ? { signal: input.signal } : {}),
+      });
     },
   });
 }
@@ -134,22 +267,23 @@ export function createDefaultExternalSessionMaterializeStartActionExecutor(
     activeServerDir: string;
     machineId?: string;
     materialize: ExternalSessionMaterializeActionExecutor;
+    nowMs?: () => number;
   }>,
 ): ExternalSessionMaterializeStartActionExecutor {
+  const nowMs = input.nowMs ?? Date.now;
   return createExternalSessionMaterializeStartActionExecutor({
-    readExistingRequest: async (operationId) => {
-      const existing = await readExternalSessionOperationRecord(
-        // The materializer and operation-store owner share the configured daemon
-        // directory; the semantic start remains private to that owner.
-        input.activeServerDir,
-        operationId,
-      );
-      return existing?.request.plan === 'materialize'
-        ? existing.request
-        : null;
-    },
+    resolveAdmission: async (intent, authorIntent) =>
+      await resolveExternalSessionOperationStartAdmission({
+        activeServerDir: input.activeServerDir,
+        durableIdempotencyKey: intent.idempotencyKey,
+        intent,
+        ...(authorIntent ? { authorIntent } : {}),
+        nowMs: nowMs(),
+        readSelectedPresentation:
+          readExternalSessionOperationSharedPresentation,
+      }),
     describeSession: async (intent) => {
-      const credentials = await readCredentials();
+      const credentials = await readStoredCredentials();
       if (!credentials) {
         throw new Error('external_session_materialize_start_unauthenticated');
       }

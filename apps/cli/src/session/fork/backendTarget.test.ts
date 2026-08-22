@@ -4,11 +4,13 @@ import type { Credentials } from '@/persistence';
 import { buildConfiguredAcpBackendSessionMetadata } from '@/agent/acp/catalog/configured/sessionMetadata';
 
 const {
-  inferAgentIdFromSessionMetadataMock,
+  resolveAgentIdFromSessionMetadataMock,
+  readAgentCatalogSnapshotMock,
   resolveAvailableAccountSettingsMock,
   resolveConfiguredAcpBackendFromAccountSettingsOrPluginsMock,
 } = vi.hoisted(() => ({
-  inferAgentIdFromSessionMetadataMock: vi.fn(),
+  resolveAgentIdFromSessionMetadataMock: vi.fn(),
+  readAgentCatalogSnapshotMock: vi.fn(),
   resolveAvailableAccountSettingsMock: vi.fn(),
   resolveConfiguredAcpBackendFromAccountSettingsOrPluginsMock: vi.fn(),
 }));
@@ -16,7 +18,7 @@ const {
 vi.mock('@happier-dev/agents', () => ({
   AGENT_IDS: ['claude', 'codex', 'opencode', 'customAcp'],
   DEFAULT_AGENT_ID: 'claude',
-  inferAgentIdFromSessionMetadata: inferAgentIdFromSessionMetadataMock,
+  resolveAgentIdFromSessionMetadata: resolveAgentIdFromSessionMetadataMock,
 }));
 
 vi.mock('@/settings/accountSettings/resolveAvailableAccountSettings', () => ({
@@ -27,6 +29,10 @@ vi.mock('@/configuration', () => ({
   configuration: {
     happyHomeDir: '/tmp/happy-home',
   },
+}));
+
+vi.mock('@/agent/catalog/snapshot', () => ({
+  readAgentCatalogSnapshot: readAgentCatalogSnapshotMock,
 }));
 
 vi.mock('@/agent/acp/catalog/configured/resolveBackend', () => ({
@@ -43,9 +49,15 @@ describe('resolveSessionForkBackendTarget', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    readAgentCatalogSnapshotMock.mockReturnValue({
+      agentDefinitionsById: new Map(),
+      catalogEntriesById: {
+        claude: { id: 'claude', cliSubcommand: 'claude' },
+      },
+    });
     resolveAvailableAccountSettingsMock.mockResolvedValue(null);
     resolveConfiguredAcpBackendFromAccountSettingsOrPluginsMock.mockResolvedValue(null);
-    inferAgentIdFromSessionMetadataMock.mockReturnValue('claude');
+    resolveAgentIdFromSessionMetadataMock.mockReturnValue('claude');
   });
 
   it('resolves configured ACP fork targets from embedded metadata and preserves vendor session ids', async () => {
@@ -206,7 +218,7 @@ describe('resolveSessionForkBackendTarget', () => {
   });
 
   it('resolves built-in fork targets from session metadata when no configured ACP backend is present', async () => {
-    inferAgentIdFromSessionMetadataMock.mockReturnValueOnce('claude');
+    resolveAgentIdFromSessionMetadataMock.mockReturnValueOnce('claude');
 
     const result = await resolveSessionForkBackendTarget({
       credentials,
@@ -231,8 +243,67 @@ describe('resolveSessionForkBackendTarget', () => {
     });
   });
 
+  it('resolves an installed external Agent from session metadata through the active catalog', async () => {
+    resolveAgentIdFromSessionMetadataMock.mockReturnValueOnce('acme.agent');
+    readAgentCatalogSnapshotMock.mockReturnValueOnce({
+      agentDefinitionsById: new Map(),
+      catalogEntriesById: {
+        'acme.agent': { id: 'acme.agent', cliSubcommand: 'acme-agent' },
+      },
+    });
+
+    await expect(resolveSessionForkBackendTarget({
+      credentials,
+      parentMetadata: {},
+    })).resolves.toMatchObject({
+      ok: true,
+      catalogAgentId: 'acme.agent',
+      agentHintAgentId: 'acme.agent',
+      backendTargetV2: {
+        kind: 'backend',
+        backendId: 'acme.agent',
+        sourceKind: 'built_in',
+      },
+      backendTarget: { kind: 'builtInAgent', agentId: 'acme.agent' },
+      replayFlavor: 'acme.agent',
+    });
+  });
+
+  it('rejects a parent whose canonical and rollback links require reconciliation before backend resolution', async () => {
+    const result = await resolveSessionForkBackendTarget({
+      credentials,
+      parentMetadata: {
+        flavor: 'opencode',
+        externalSessionV1: {
+          v: 1,
+          agentId: 'opencode',
+          machineId: 'machine_source',
+          remoteSessionId: 'opencode_conflict',
+          source: { kind: 'opencodeServer', directory: '/repo/current' },
+          linkedAtMs: 1,
+        },
+        directSessionV1: {
+          v: 1,
+          providerId: 'opencode',
+          machineId: 'machine_source',
+          remoteSessionId: 'opencode_conflict',
+          source: { kind: 'opencodeServer', directory: '/repo/stale' },
+          linkedAtMs: 1,
+        },
+      },
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      errorMessage: 'linked_session_reconciliation_required',
+    });
+    expect(resolveAvailableAccountSettingsMock).not.toHaveBeenCalled();
+    expect(resolveConfiguredAcpBackendFromAccountSettingsOrPluginsMock).not.toHaveBeenCalled();
+    expect(resolveAgentIdFromSessionMetadataMock).not.toHaveBeenCalled();
+  });
+
   it('fails closed when session metadata does not expose a known agent flavor', async () => {
-    inferAgentIdFromSessionMetadataMock.mockReturnValueOnce('__unknown__');
+    resolveAgentIdFromSessionMetadataMock.mockReturnValueOnce(null);
 
     const result = await resolveSessionForkBackendTarget({
       credentials,

@@ -13,6 +13,8 @@ import { resolveBackendEngineAdapterResolution } from './engineRegistry';
 
 const PLUGIN_ID = 'acme.external-sessions-only';
 const AGENT_ID = 'external-only-agent';
+const HANDOFF_PLUGIN_ID = 'acme.external-handoff';
+const HANDOFF_AGENT_ID = 'external-handoff-agent';
 
 const source = Object.freeze({
     sourceKind: 'synthetic',
@@ -340,6 +342,87 @@ async function materializeAuxiliaryOnlyPlugin(pluginRoot: string): Promise<void>
     `, 'utf8');
 }
 
+async function materializeExternalHandoffPlugin(pluginRoot: string): Promise<void> {
+    await mkdir(join(pluginRoot, '.happier-plugin'), { recursive: true });
+    await writeFile(join(pluginRoot, '.happier-plugin', 'plugin.json'), JSON.stringify({
+        schemaVersion: 2,
+        id: HANDOFF_PLUGIN_ID,
+        version: '1.0.0',
+        displayName: 'External handoff fixture',
+        engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 },
+        entrypoints: { daemon: './daemon.mjs' },
+        hostAccess: { required: [], optional: [] },
+        contributes: {
+            agents: [{
+                id: HANDOFF_AGENT_ID,
+                title: 'External handoff Agent',
+                runtime: { kind: 'custom' },
+                primary: 'sessions',
+                capabilities: {
+                    sessions: {
+                        open: ['create'],
+                        delivery: ['newTurn'],
+                        cancel: true,
+                    },
+                },
+            }],
+        },
+    }), 'utf8');
+    await writeFile(join(pluginRoot, 'agent-runtime.mjs'), `
+        export async function externalHandoffRuntimeFactory(factoryContext) {
+            return {
+                sessions: {
+                    open: async () => ({
+                        send: async () => ({ status: 'admitted' }),
+                        stop: async () => ({ status: 'requested' }),
+                        watch: () => ({ dispose: () => undefined }),
+                        dispose: async () => undefined,
+                    }),
+                },
+                surfaces: {
+                    handoff: {
+                        exportBundle: async (request, context) => ({
+                            ok: true,
+                            value: {
+                                bundle: {
+                                    vendorSessionId: request.sessionId,
+                                    contextSessionId: context.session?.id ?? null,
+                                    hasOperationServices: typeof context.services === 'object',
+                                    hasOperationAbortSignal: typeof context.signal?.addEventListener === 'function',
+                                    factoryReceivedServices: Object.prototype.hasOwnProperty.call(factoryContext, 'services'),
+                                },
+                            },
+                        }),
+                        importBundle: async (request) => ({
+                            ok: true,
+                            value: {
+                                providerSessionId: String(request.bundle.vendorSessionId ?? 'imported-session'),
+                                launch: {
+                                    directory: request.targetDirectory,
+                                    environmentVariables: {},
+                                },
+                            },
+                        }),
+                    },
+                },
+            };
+        }
+    `, 'utf8');
+    await writeFile(join(pluginRoot, 'daemon.mjs'), `
+        import { externalHandoffRuntimeFactory } from './agent-runtime.mjs';
+
+        export function activate(api) {
+            api.agents.register('${HANDOFF_AGENT_ID}', externalHandoffRuntimeFactory, {
+                sessionRunnerFactory: {
+                    module: './agent-runtime.mjs',
+                    export: 'externalHandoffRuntimeFactory',
+                    runtimeApiVersion: 1,
+                },
+            });
+        }
+    `, 'utf8');
+}
+
 describe('non-bundled auxiliary-only Agent contribution', () => {
     it('activates, catalogs, and resolves External Sessions without a primary runtime factory', async () => {
         const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-external-aux-home-'));
@@ -378,7 +461,6 @@ describe('non-bundled auxiliary-only Agent contribution', () => {
                         expect.objectContaining({
                             family: 'agents',
                             localId: AGENT_ID,
-                            requiredFields: ['externalSessions'],
                         }),
                     ]),
                     bound: expect.arrayContaining([
@@ -618,7 +700,6 @@ describe('non-bundled auxiliary-only Agent contribution', () => {
                 code: 'invalid_request',
                 operation: 'resolveLinkedIdentity',
             });
-
             const maximumCursor = await externalSession!.listCandidates!({
                 source: runtimeSource,
                 limit: 1,
@@ -667,9 +748,10 @@ describe('non-bundled auxiliary-only Agent contribution', () => {
 
             await expect(externalSession!.validateSource!({
                 source: { kind: 'synthetic', mode: 'malformed-outcome' } as never,
-            })).resolves.toMatchObject({
-                ok: false,
-                error: expect.stringContaining('agent_error'),
+            })).rejects.toMatchObject({
+                name: 'ExternalSessionProviderFailureError',
+                code: 'agent_error',
+                operation: 'resolveSource',
             });
             for (const searchTerm of ['malformed-outcome', 'malformed-failure']) {
                 await expect(externalSession!.listCandidates!({
@@ -839,21 +921,19 @@ describe('non-bundled auxiliary-only Agent contribution', () => {
                     maxItems: 1,
                 }),
             };
+            const retiringExpectations = Object.entries(retiringCalls).map(([operation, call]) => (
+                expect(call).rejects.toMatchObject({
+                    name: 'ExternalSessionProviderFailureError',
+                    code: 'unavailable',
+                    operation,
+                    retryable: true,
+                })
+            ));
             await Promise.resolve();
             const retiringRegistry = runtimeRegistry;
             runtimeRegistry = null;
             await retiringRegistry.dispose();
-            await expect(retiringCalls.resolveSource).resolves.toMatchObject({
-                ok: false,
-                error: expect.stringContaining('unavailable'),
-            });
-            for (const [operation, call] of Object.entries(retiringCalls).slice(1)) {
-                await expect(call).rejects.toMatchObject({
-                    name: 'ExternalSessionProviderFailureError',
-                    code: 'unavailable',
-                    operation,
-                });
-            }
+            await Promise.all(retiringExpectations);
             await new Promise((resolve) => setTimeout(resolve, 120));
             await expect(retiredSurface.listCandidates!({
                 source: runtimeSource,
@@ -863,6 +943,67 @@ describe('non-bundled auxiliary-only Agent contribution', () => {
                 code: 'unavailable',
                 operation: 'listCandidates',
             });
+        } finally {
+            await runtimeRegistry?.dispose();
+            await rm(happyHomeDir, { recursive: true, force: true });
+            await rm(pluginRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('keeps one external Agent handoff callback bound to its current generation context', async () => {
+        const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-external-handoff-home-'));
+        const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-external-handoff-plugin-'));
+        let runtimeRegistry: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
+        try {
+            await materializeExternalHandoffPlugin(pluginRoot);
+            await seedCurrentLocalPathPluginFixture({
+                happyHomeDir,
+                pluginRoot,
+                pluginId: HANDOFF_PLUGIN_ID,
+                manifestVersion: '1.0.0',
+            });
+
+            runtimeRegistry = await resolveExecutablePluginRuntimeRegistry({
+                happyHomeDir,
+                pluginIds: [HANDOFF_PLUGIN_ID],
+            });
+            const lease = runtimeRegistry.agentRuntimesByAgentId.get(HANDOFF_AGENT_ID);
+            expect(lease).toMatchObject({
+                pluginId: HANDOFF_PLUGIN_ID,
+                agentId: HANDOFF_AGENT_ID,
+                hasPrimaryRuntime: true,
+            });
+            expect(lease?.isCurrent()).toBe(true);
+
+            const resolution = await resolveBackendEngineAdapterResolution(HANDOFF_AGENT_ID, {
+                runtimeRegistry,
+            });
+            const handoff = resolution?.executionSurfaces.handoff;
+            expect(handoff).not.toBeNull();
+            await expect(handoff!.exportBundle({
+                sessionId: 'vendor-session-1',
+                metadata: {},
+                directory: '/repo',
+            })).resolves.toEqual({
+                ok: true,
+                value: {
+                    bundle: {
+                        vendorSessionId: 'vendor-session-1',
+                        contextSessionId: null,
+                        hasOperationServices: true,
+                        hasOperationAbortSignal: true,
+                        factoryReceivedServices: false,
+                    },
+                },
+            });
+
+            runtimeRegistry.retirePluginConsumers?.([HANDOFF_PLUGIN_ID]);
+            expect(lease?.isCurrent()).toBe(false);
+            await expect(handoff!.exportBundle({
+                sessionId: 'vendor-session-2',
+                metadata: {},
+                directory: '/repo',
+            })).rejects.toThrow(/retired runtime generation/i);
         } finally {
             await runtimeRegistry?.dispose();
             await rm(happyHomeDir, { recursive: true, force: true });

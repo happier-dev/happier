@@ -58,16 +58,14 @@ function twoProposalCandidate(): ReviewCommentHostActionCandidate {
 
 const currentPluginAuthority: ReviewCommentHostPluginAuthority = Object.freeze({
   immutableGenerationId: 'generation-1',
-  packageDigest: `sha256:${'a'.repeat(64)}`,
-  manifestDigest: `sha256:${'b'.repeat(64)}`,
 });
 
 describe('createReviewCommentHostActionMaterializer', () => {
   it('admits review-comment host effects only through an applied final-policy generation', () => {
     const current = {
       immutableGenerationId: 'generation-1',
-      packageDigest: `sha256:${'a'.repeat(64)}`,
-      manifestDigest: `sha256:${'b'.repeat(64)}`,
+      desiredImmutableGenerationId: 'generation-1',
+      appliedImmutableGenerationId: 'generation-1',
       distribution: { kind: 'path', locator: '/plugins/acme.review' },
       applied: true,
       selectedAccess: [],
@@ -79,7 +77,11 @@ describe('createReviewCommentHostActionMaterializer', () => {
     })).toEqual(currentPluginAuthority);
     expect(resolveReviewCommentHostPluginAuthority({
       pluginId: 'acme.review',
-      current: { ...current, applied: false },
+      current: {
+        ...current,
+        applied: false,
+        appliedImmutableGenerationId: null,
+      },
     })).toBeNull();
     expect(resolveReviewCommentHostPluginAuthority({
       pluginId: 'acme.review',
@@ -122,16 +124,21 @@ describe('createReviewCommentHostActionMaterializer', () => {
       surface: 'rpc', defaultSessionId: 'session-1', serverId: 'server-1', bypassApprovals: true,
       reviewCommentPrincipal: { actor: { kind: 'agent', agentId: 'claude', sessionId: 'session-1' } },
     });
-    expect(dispatches[0]?.context.reviewCommentPrincipal?.currentIntent).toMatchObject({
+    expect(dispatches[0]?.context.reviewCommentPrincipal?.currentIntent).toEqual({
+      v: 1,
+      kind: 'execution_run_host_action',
       actionId: 'reviews.comments.create',
+      subjectFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/),
+      effectBodySha256Base64Url: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/),
+      sessionId: 'session-1',
+      runId: 'run-1',
+      callId: 'call-1',
+      profileId: 'acme.review/review',
       pluginId: 'acme.review',
       agentId: 'claude',
       projectId: 'project-1',
       workspaceId: 'workspace-1',
       immutableGenerationId: 'generation-1',
-      packageDigest: currentPluginAuthority.packageDigest,
-      manifestDigest: currentPluginAuthority.manifestDigest,
-      effectBodySha256Base64Url: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/),
     });
     current = null;
   });
@@ -257,6 +264,7 @@ describe('createReviewCommentHostActionMaterializer', () => {
       pluginId: 'acme.review',
       capability: 'reviews.comments.write.direct',
       targetScope: { kind: 'project', projectId: 'project-1' },
+      subject: { kind: 'general' },
       requester: {
         kind: 'plugin',
         pluginId: 'acme.review',

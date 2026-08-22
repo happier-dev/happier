@@ -1,8 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import fastify from 'fastify';
 import { createHash } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 
-import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol';
+import {
+  deriveAccountMachineKeyFromRecoverySecret,
+  sealTerminalProvisioningV3TokenOnlyPayload,
+} from '@happier-dev/protocol';
 
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
@@ -26,6 +30,7 @@ describe('auth pairing commands (request/approve/wait) (json)', () => {
     'HAPPIER_NO_BROWSER_OPEN',
     'HAPPIER_AUTH_METHOD',
     'HAPPIER_AUTH_POLL_INTERVAL_MS',
+    'HAPPIER_TERMINAL_PAIRING_REQUIRE',
     'HAPPIER_SERVER_URL',
     'HAPPIER_PUBLIC_SERVER_URL',
     'HAPPIER_WEBAPP_URL',
@@ -53,6 +58,54 @@ describe('auth pairing commands (request/approve/wait) (json)', () => {
     vi.unstubAllGlobals();
     await removeTempDir(remoteHomeDir);
     await removeTempDir(localHomeDir);
+  });
+
+  it('persists an opt-in v3 requirement with split request/wait state', async () => {
+    const app = fastify({ logger: false });
+    app.post('/v1/auth/request', async (_req, reply) => reply.send({ state: 'requested' }));
+    await app.ready();
+    const restoreAxios = installAxiosFastifyAdapter({ app, origin: 'http://happier-auth.test' });
+
+    try {
+      envScope.patch({
+        HAPPIER_HOME_DIR: remoteHomeDir,
+        HAPPIER_SERVER_URL: 'http://happier-auth.test',
+        HAPPIER_PUBLIC_SERVER_URL: 'http://happier-auth.test',
+        HAPPIER_WEBAPP_URL: 'http://webapp.test',
+        HAPPIER_TERMINAL_PAIRING_REQUIRE: 'v3',
+      });
+      vi.resetModules();
+
+      const { handleAuthRequest } = await import('./auth/request');
+      const output = captureConsoleLogAndMuteStdout();
+      try {
+        await handleAuthRequest(['--json']);
+        const request = JSON.parse(output.logs[0] ?? '') as {
+          pairingRequirement?: string;
+          stateFile?: string;
+          supportsTokenOnly?: boolean;
+          links?: {
+            webUrl?: string;
+            mobileUrl?: string;
+          };
+        };
+        expect(request.pairingRequirement).toBe('v3');
+        expect(request.supportsTokenOnly).toBe(true);
+        expect(request.links?.webUrl).toContain('supportsTokenOnly=1');
+        expect(request.links?.mobileUrl).toContain('supportsTokenOnly=1');
+        const state = JSON.parse(await readFile(String(request.stateFile), 'utf8')) as {
+          pairingRequirement?: string;
+          supportsTokenOnly?: boolean;
+        };
+        expect(state.pairingRequirement).toBe('v3');
+        expect(state.supportsTokenOnly).toBe(true);
+      } finally {
+        output.restore();
+      }
+    } finally {
+      restoreAxios();
+      await app.close().catch(() => {});
+    }
   });
 
   it('pairs a remote machine by creating a claim-gated request, approving it with an authenticated local CLI, then waiting and writing dataKey credentials on the remote', async () => {
@@ -193,6 +246,7 @@ describe('auth pairing commands (request/approve/wait) (json)', () => {
         expect(parsed.success).toBe(true);
         expect(parsed.token).toBe('issued-token');
         expect(parsed.encryptionType).toBe('dataKey');
+        expect(parsed.pairingAuthentication).toBe('legacy');
       } finally {
         waitOut.restore();
       }
@@ -210,7 +264,92 @@ describe('auth pairing commands (request/approve/wait) (json)', () => {
     }
   }, 20_000);
 
-  it('ensures a local machine id when auth wait runs on an already authenticated machine', async () => {
+  it('writes exact token-only credentials from an authenticated token-only pairing response', async () => {
+    const app = fastify({ logger: false });
+    let response = '';
+
+    app.post('/v1/auth/request', async (_req, reply) => reply.send({ state: 'requested' }));
+    app.get('/v1/auth/request/status', async (_req, reply) => {
+      return reply.send({ status: response ? 'authorized' : 'pending', supportsV2: true });
+    });
+    app.post('/v1/auth/request/claim', async (_req, reply) => {
+      return reply.send({
+        state: 'authorized',
+        token: 'plain-issued-token',
+        response,
+      });
+    });
+
+    await app.ready();
+    const restoreAxios = installAxiosFastifyAdapter({ app, origin: 'http://happier-auth.test' });
+
+    try {
+      envScope.patch({
+        HAPPIER_HOME_DIR: remoteHomeDir,
+        HAPPIER_SERVER_URL: 'http://happier-auth.test',
+        HAPPIER_PUBLIC_SERVER_URL: 'http://happier-auth.test',
+        HAPPIER_WEBAPP_URL: 'http://webapp.test',
+        HAPPIER_NO_BROWSER_OPEN: '1',
+        HAPPIER_AUTH_METHOD: 'web',
+        HAPPIER_AUTH_POLL_INTERVAL_MS: '1',
+        HAPPIER_VARIANT: 'stable',
+      });
+      vi.resetModules();
+
+      const { handleAuthRequest } = await import('./auth/request');
+      const requestOut = captureConsoleLogAndMuteStdout();
+      let requestJson: {
+        publicKey: string;
+        pairing: {
+          secretB64Url: string;
+          createdAtMs: number;
+          expiresAtMs: number;
+        };
+      };
+      try {
+        await handleAuthRequest(['--json']);
+        requestJson = JSON.parse(requestOut.logs[0] ?? '') as typeof requestJson;
+      } finally {
+        requestOut.restore();
+      }
+
+      const terminalPublicKey = new Uint8Array(Buffer.from(requestJson.publicKey, 'base64'));
+      response = Buffer.from(sealTerminalProvisioningV3TokenOnlyPayload({
+        terminalEphemeralPublicKey: terminalPublicKey,
+        pairingSecret: new Uint8Array(Buffer.from(requestJson.pairing.secretB64Url, 'base64url')),
+        createdAtMs: requestJson.pairing.createdAtMs,
+        expiresAtMs: requestJson.pairing.expiresAtMs,
+        randomBytes: (length) => new Uint8Array(length).fill(17),
+      })).toString('base64');
+
+      vi.resetModules();
+      const { handleAuthWait } = await import('./auth/wait');
+      const waitOut = captureConsoleLogAndMuteStdout();
+      try {
+        await handleAuthWait(['--public-key', requestJson.publicKey, '--json']);
+        expect(JSON.parse(waitOut.logs[0] ?? '')).toMatchObject({
+          success: true,
+          token: 'plain-issued-token',
+          encryptionType: 'tokenOnly',
+          pairingAuthentication: 'v3',
+        });
+      } finally {
+        waitOut.restore();
+      }
+
+      const { readStoredCredentials, readCredentials } = await import('@/persistence');
+      await expect(readStoredCredentials()).resolves.toEqual({
+        token: 'plain-issued-token',
+        encryption: null,
+      });
+      await expect(readCredentials()).resolves.toBeNull();
+    } finally {
+      restoreAxios();
+      await app.close().catch(() => {});
+    }
+  }, 20_000);
+
+  it('recognizes stored token-only credentials idempotently without polling or fabricating a key', async () => {
     const requests = new Map<string, RequestRow>();
     const app = fastify({ logger: false });
 
@@ -250,10 +389,9 @@ describe('auth pairing commands (request/approve/wait) (json)', () => {
       }
 
       vi.resetModules();
-      const { writeCredentialsLegacy, readSettings } = await import('@/persistence');
-      const legacySecret = new Uint8Array(32).fill(4);
+      const { writeCredentialsTokenOnly, readSettings } = await import('@/persistence');
       const tokenPayload = Buffer.from(JSON.stringify({ sub: 'acct_local' })).toString('base64url');
-      await writeCredentialsLegacy({ secret: legacySecret, token: `header.${tokenPayload}.sig` });
+      await writeCredentialsTokenOnly({ token: `header.${tokenPayload}.sig` });
 
       vi.resetModules();
       const { handleAuthWait } = await import('./auth/wait');
@@ -267,7 +405,7 @@ describe('auth pairing commands (request/approve/wait) (json)', () => {
           encryptionType?: string;
         };
         expect(parsed.success).toBe(true);
-        expect(parsed.encryptionType).toBe('legacy');
+        expect(parsed.encryptionType).toBe('tokenOnly');
         expect(typeof parsed.machineId).toBe('string');
         expect(parsed.machineId?.length).toBeGreaterThan(0);
       } finally {
@@ -276,6 +414,11 @@ describe('auth pairing commands (request/approve/wait) (json)', () => {
 
       const settings = await readSettings();
       expect(settings.machineId).toMatch(/^[-a-z0-9]+$/i);
+      const { readStoredCredentials } = await import('@/persistence');
+      await expect(readStoredCredentials()).resolves.toEqual({
+        token: `header.${tokenPayload}.sig`,
+        encryption: null,
+      });
     } finally {
       restoreAxios();
       await app.close().catch(() => {});

@@ -1,5 +1,6 @@
 import type { TranscriptSessionPort } from '@/api/session/transcriptPort';
 import type { Metadata } from '@/api/types';
+import type { SessionTranscriptObservationProvenanceV1 } from '@happier-dev/protocol';
 
 /**
  * Minimal session client surface required by ACP runtimes + replay importers.
@@ -8,13 +9,15 @@ import type { Metadata } from '@/api/types';
  * instead of the full `ApiSessionClient` concrete class to keep tests and adapters
  * lightweight and deterministic.
  */
-export type AcpReplaySidechainSessionClient = Pick<TranscriptSessionPort, 'sendAgentMessageCommitted'>;
+export type AcpReplaySidechainSessionClient = Readonly<{
+  enqueueAgentMessageCommitted: NonNullable<TranscriptSessionPort['enqueueAgentMessageCommitted']>;
+}>;
 
 export type AcpReplayHistorySessionClient = AcpReplaySidechainSessionClient & Readonly<{
-  sendUserTextMessageCommitted: (
+  enqueueUserTextMessageCommitted: (
     text: string,
-    opts: { localId: string; meta?: Record<string, unknown> },
-  ) => Promise<void>;
+    opts: { localId: string; meta?: Record<string, unknown>; provenance: SessionTranscriptObservationProvenanceV1 },
+  ) => Promise<Readonly<{ persisted: boolean; delivered: boolean }>>;
   updateMetadata: (handler: (metadata: Metadata) => Metadata) => Promise<void> | void;
   fetchRecentTranscriptTextItemsForAcpImport: (
     opts?: { take?: number },
@@ -24,7 +27,6 @@ export type AcpReplayHistorySessionClient = AcpReplaySidechainSessionClient & Re
 export type AcpRuntimeSessionClient = AcpReplayHistorySessionClient & Readonly<{
   sessionId?: string;
   keepAlive: (thinking: boolean, mode: 'local' | 'remote') => void;
-  sendAgentMessage: NonNullable<TranscriptSessionPort['sendAgentMessage']>;
   sendAgentMessageEphemeral?: TranscriptSessionPort['sendAgentMessageEphemeral'];
   sendAgentMessageEphemeralDelta?: TranscriptSessionPort['sendAgentMessageEphemeralDelta'];
   getEphemeralStreamConnectionEpoch?: TranscriptSessionPort['getEphemeralStreamConnectionEpoch'];

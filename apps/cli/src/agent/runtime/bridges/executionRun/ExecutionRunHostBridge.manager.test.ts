@@ -6,6 +6,8 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 
 import type { AgentMessage } from '@/agent/core/AgentMessage';
 import type { ACPMessageData } from '@/api/session/sessionMessageTypes';
+import type { Credentials, StoredCredentials } from '@/persistence';
+import type { AgentStateResponseTargetDispatch } from '@/agent/permissions/agentStateRequestStore';
 import type { ExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';
 import {
   createTestExecutionRunHostRuntime,
@@ -57,6 +59,7 @@ const {
   createExecutionRunRuntimeMock,
   dispatchBridgeLifecycleHookEvent,
   readCredentials,
+  readStoredCredentials,
   runtimeFactoryRef,
   resolveReplaySeedDraft,
 } = vi.hoisted(() => {
@@ -70,7 +73,8 @@ const {
       return factory(opts);
     }),
     dispatchBridgeLifecycleHookEvent: vi.fn().mockResolvedValue(undefined),
-    readCredentials: vi.fn(),
+    readCredentials: vi.fn<() => Promise<Credentials | null>>(),
+    readStoredCredentials: vi.fn<() => Promise<StoredCredentials | null>>(async () => null),
     runtimeFactoryRef,
     resolveReplaySeedDraft: vi.fn(),
   };
@@ -84,8 +88,10 @@ vi.mock('../../../plugins/runtime/hooks/execution/dispatchBridgeLifecycleHookEve
   dispatchBridgeLifecycleHookEvent,
 }));
 
-vi.mock('@/persistence', () => ({
+vi.mock('@/persistence', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/persistence')>(),
   readCredentials,
+  readStoredCredentials,
 }));
 
 vi.mock('@/session/replay/resolveReplaySeedDraft', () => ({
@@ -115,6 +121,7 @@ beforeAll(async () => {
     registry,
     changedPluginIds: [],
     durableRevision: 1,
+    runningSessionDisposition: 'retainRunningSessions',
   });
   if (!adoption.ok) {
     throw new Error('Failed to publish the execution-run manager test plugin runtime');
@@ -352,7 +359,7 @@ describe('ExecutionRunManager (review intent)', () => {
             }),
           });
         }),
-      sendAcp: (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
+      sendAcp: async (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
         sent.push({ provider, body, meta: opts?.meta });
       },
       getNowMs: () => 1_700_000_000_000,
@@ -409,7 +416,7 @@ describe('ExecutionRunManager (review intent)', () => {
       parentProvider: TEST_PRIMARY_BACKEND_ID,
       cwd: process.cwd(),
       createRuntime: () => createDelayedJsonRuntime(JSON.stringify({ findings: [], summary: 'late' }), 30),
-      sendAcp: () => {},
+      sendAcp: async () => {},
       getNowMs: () => 1_700_000_000_000,
       boundedTimeoutMs: 10,
     });
@@ -464,7 +471,7 @@ describe('ExecutionRunManager (review intent)', () => {
       parentProvider: TEST_PRIMARY_BACKEND_ID,
       cwd: process.cwd(),
       createRuntime: () => runtime,
-      sendAcp: (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
+      sendAcp: async (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
         sent.push({ provider, body, meta: opts?.meta });
       },
       getNowMs: () => 1_700_000_000_000,
@@ -522,7 +529,7 @@ describe('ExecutionRunManager (review intent)', () => {
       parentProvider: TEST_PRIMARY_BACKEND_ID,
       cwd: process.cwd(),
       createRuntime: () => runtime,
-      sendAcp: (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
+      sendAcp: async (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
         sent.push({ provider, body, meta: opts?.meta });
       },
       getNowMs: () => 1_700_000_000_000,
@@ -583,7 +590,7 @@ describe('ExecutionRunManager (review intent)', () => {
       parentProvider: TEST_PRIMARY_BACKEND_ID,
       cwd: process.cwd(),
       createRuntime: () => runtime,
-      sendAcp: (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
+      sendAcp: async (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
         sent.push({ provider, body, meta: opts?.meta });
       },
       getNowMs: () => 1_700_000_000_000,
@@ -611,6 +618,7 @@ describe('ExecutionRunManager (review intent)', () => {
 
   it('can apply review triage and re-emit review_findings.v2 meta updates', async () => {
     const sent: Array<{ provider: string; body: unknown; meta?: Record<string, unknown> }> = [];
+    const commits: Array<{ provider: string; body: unknown; localId: string; meta?: Record<string, unknown> }> = [];
     const manager = createExecutionRunManager({
       parentProvider: TEST_PRIMARY_BACKEND_ID,
       cwd: process.cwd(),
@@ -629,8 +637,14 @@ describe('ExecutionRunManager (review intent)', () => {
             summary: 'Summary.',
           }),
         ),
-      sendAcp: (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
+      sendAcp: async (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
         sent.push({ provider, body, meta: opts?.meta });
+      },
+      streamedTranscriptSession: {
+        enqueueAgentMessageCommitted: async (provider, body, opts) => {
+          commits.push({ provider, body, localId: opts.localId, meta: opts.meta });
+          return { persisted: true, delivered: false };
+        },
       },
       getNowMs: () => 1_700_000_000_000,
     });
@@ -655,7 +669,7 @@ describe('ExecutionRunManager (review intent)', () => {
     });
     expect(result.ok).toBe(true);
 
-    const toolResult = [...sent].reverse().find((m) => (m.body as any)?.type === 'tool-result' && m.meta);
+    const toolResult = [...commits].reverse().find((m) => (m.body as any)?.type === 'tool-result' && m.meta);
     expect(toolResult).toBeTruthy();
     const meta = toolResult?.meta as any;
     expect(meta?.happier?.kind).toBe('review_findings.v2');
@@ -683,12 +697,13 @@ describe('ExecutionRunManager (review intent)', () => {
             summary: 'Summary.',
           }),
         ),
-      sendAcp: (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
+      sendAcp: async (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
         sent.push({ provider, body, meta: opts?.meta });
       },
       streamedTranscriptSession: {
-        sendAgentMessageCommitted: async (provider, body, opts) => {
+        enqueueAgentMessageCommitted: async (provider, body, opts) => {
           commits.push({ provider, body, localId: opts.localId, meta: opts.meta });
+          return { persisted: true, delivered: false };
         },
       },
       getNowMs: () => 1_700_000_000_000,
@@ -732,7 +747,7 @@ describe('ExecutionRunManager (review intent)', () => {
     expect(bestEffortMetaToolResult).toBeUndefined();
   });
 
-  it('falls back to best-effort review triage meta updates when the durable transcript commit fails', async () => {
+  it('fails closed without a best-effort review triage fallback when durable transcript admission fails', async () => {
     const sent: Array<{ provider: string; body: unknown; meta?: Record<string, unknown> }> = [];
     const commits: Array<{ provider: string; body: unknown; localId: string; meta?: Record<string, unknown> }> = [];
     const manager = createExecutionRunManager({
@@ -753,13 +768,13 @@ describe('ExecutionRunManager (review intent)', () => {
             summary: 'Summary.',
           }),
         ),
-      sendAcp: (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
+      sendAcp: async (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
         sent.push({ provider, body, meta: opts?.meta });
       },
       streamedTranscriptSession: {
-        sendAgentMessageCommitted: async (provider, body, opts) => {
+        enqueueAgentMessageCommitted: async (provider, body, opts) => {
           commits.push({ provider, body, localId: opts.localId, meta: opts.meta });
-          throw new Error('commit failed');
+          return { persisted: false, delivered: false };
         },
       },
       getNowMs: () => 1_700_000_000_000,
@@ -785,17 +800,17 @@ describe('ExecutionRunManager (review intent)', () => {
         findings: [{ id: 'f1', status: 'needs_refinement', comment: 'Need more evidence.' }],
       },
     });
-    expect(result.ok).toBe(true);
+    expect(result).toEqual(expect.objectContaining({
+      ok: false,
+      errorCode: 'execution_run_transcript_custody_unavailable',
+    }));
     expect(commits.slice(commitsBeforeAction)).toHaveLength(1);
 
     const fallbackToolResult = sent
       .slice(sentBeforeAction)
       .reverse()
       .find((m) => (m.body as any)?.type === 'tool-result' && m.meta);
-    expect(fallbackToolResult).toBeTruthy();
-    const fallbackMeta = fallbackToolResult?.meta as any;
-    expect(fallbackMeta?.happier?.kind).toBe('review_findings.v2');
-    expect(fallbackMeta?.happier?.payload?.triage?.findings?.[0]?.status).toBe('needs_refinement');
+    expect(fallbackToolResult).toBeUndefined();
   });
 
   it('starts a resumable review follow-up child run that reuses the original vendor session', async () => {
@@ -805,7 +820,7 @@ describe('ExecutionRunManager (review intent)', () => {
       parentProvider: TEST_PRIMARY_BACKEND_ID,
       cwd: process.cwd(),
       createRuntime: () => runtime,
-      sendAcp: (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
+      sendAcp: async (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
         sent.push({ provider, body, meta: opts?.meta });
       },
       getNowMs: () => 1_700_000_000_000,
@@ -886,7 +901,7 @@ describe('ExecutionRunManager (review intent)', () => {
           },
           { sessionId: `child_session_${prompts.length + 1}` },
         ),
-      sendAcp: () => {},
+      sendAcp: async () => {},
       getNowMs: () => 1_700_000_000_000,
     });
 
@@ -962,7 +977,7 @@ describe('ExecutionRunManager (review intent)', () => {
           },
           { sessionId: `child_session_${prompts.length + 1}` },
         ),
-      sendAcp: () => {},
+      sendAcp: async () => {},
       getNowMs: () => 1_700_000_000_000,
     });
 
@@ -997,7 +1012,7 @@ describe('ExecutionRunManager (review intent)', () => {
       cwd: process.cwd(),
       createRuntime: (_opts: { backendId: string; permissionMode: string }) =>
         createDelayedJsonRuntime(JSON.stringify({ summary: 'late', findings: [] }), 50_000),
-      sendAcp: (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
+      sendAcp: async (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
         sent.push({ provider, body, meta: opts?.meta });
       },
       getNowMs: () => 1_700_000_000_000,
@@ -1023,6 +1038,47 @@ describe('ExecutionRunManager (review intent)', () => {
     expect((toolResult?.body as any)?.output?.status).toBe('cancelled');
   });
 
+  it('settles the terminal waiter and disposes once when stopped-run transcript custody fails', async () => {
+    const dispose = vi.fn(async () => {});
+    const runtime = createTestExecutionRunHostRuntime({ onDispose: dispose });
+    const manager = createExecutionRunManager({
+      parentProvider: TEST_PRIMARY_BACKEND_ID,
+      cwd: process.cwd(),
+      createRuntime: () => runtime,
+      sendAcp: async (_provider: string, body: ACPMessageData) => {
+        if (body.type === 'tool-result') {
+          throw new Error('transcript unavailable');
+        }
+      },
+      getNowMs: () => 1_700_000_000_000,
+    });
+
+    const started = await manager.start({
+      sessionId: 'parent_session_1',
+      intent: 'delegate',
+      backendTarget: { kind: 'builtInAgent', agentId: TEST_PRIMARY_BACKEND_ID },
+      instructions: '',
+      permissionMode: 'read_only',
+      retentionPolicy: 'ephemeral',
+      runClass: 'long_lived',
+      ioMode: 'request_response',
+    });
+    const terminalWaiter = manager.waitForTerminal(started.runId);
+
+    await expect(manager.stop(started.runId)).rejects.toMatchObject({
+      code: 'execution_run_transcript_custody_unavailable',
+    });
+    await expect(terminalWaiter).resolves.toBeUndefined();
+    expect(manager.get(started.runId)).toMatchObject({
+      status: 'failed',
+      error: { code: 'execution_run_transcript_custody_unavailable' },
+    });
+    expect(dispose).toHaveBeenCalledTimes(1);
+
+    await manager.dispose();
+    expect(dispose).toHaveBeenCalledTimes(1);
+  });
+
   it('does not synthesize a resumable resumeHandle from provider_session_id events when the backend cannot resume', async () => {
     const providerSessionId = '1433467f-ff14-4292-b5b2-2aac77a808f0';
     const runtime = createPromptRuntime((promptRuntime) => {
@@ -1034,7 +1090,7 @@ describe('ExecutionRunManager (review intent)', () => {
       parentProvider: TEST_PRIMARY_BACKEND_ID,
       cwd: process.cwd(),
       createRuntime: () => runtime,
-      sendAcp: () => {},
+      sendAcp: async () => {},
       getNowMs: () => 1_700_000_000_000,
     });
 
@@ -1064,7 +1120,7 @@ describe('ExecutionRunManager (memory_hints intent)', () => {
       parentProvider: TEST_PRIMARY_BACKEND_ID,
       cwd: process.cwd(),
       createRuntime: () => createStaticJsonRuntime('{"ok":true}'),
-      sendAcp: (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
+      sendAcp: async (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
         sent.push({ provider, body, meta: opts?.meta });
       },
       getNowMs: () => 1_700_000_000_000,
@@ -1117,12 +1173,13 @@ describe('ExecutionRunManager (streaming sidechain)', () => {
       parentProvider: TEST_PRIMARY_BACKEND_ID,
       cwd: process.cwd(),
       createRuntime: () => runtime,
-      sendAcp: (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
+      sendAcp: async (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
         sent.push({ provider, body, meta: opts?.meta });
       },
       streamedTranscriptSession: {
-        sendAgentMessageCommitted: async (provider, body, opts) => {
+        enqueueAgentMessageCommitted: async (provider, body, opts) => {
           commits.push({ provider, body, localId: opts.localId, meta: opts.meta });
+          return { persisted: true, delivered: false };
         },
       },
       getNowMs: () => 1_700_000_000_000,
@@ -1187,12 +1244,13 @@ describe('ExecutionRunManager (streaming sidechain)', () => {
       parentProvider: TEST_PRIMARY_BACKEND_ID,
       cwd: process.cwd(),
       createRuntime: () => runtime,
-      sendAcp: (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
+      sendAcp: async (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
         sent.push({ provider, body, meta: opts?.meta });
       },
       streamedTranscriptSession: {
-        sendAgentMessageCommitted: async (provider, body, opts) => {
+        enqueueAgentMessageCommitted: async (provider, body, opts) => {
           commits.push({ provider, body, localId: opts.localId, meta: opts.meta });
+          return { persisted: true, delivered: false };
         },
       },
       getNowMs: () => 1_700_000_000_000,
@@ -1237,6 +1295,288 @@ describe('ExecutionRunManager (long-lived runs)', () => {
     });
   }
 
+  it('publishes and disposes once when stop races detached completion', async () => {
+    let releaseCompletion!: () => void;
+    const completion = new Promise<void>((resolve) => {
+      releaseCompletion = resolve;
+    });
+    let releasePublication!: () => void;
+    const publication = new Promise<void>((resolve) => {
+      releasePublication = resolve;
+    });
+    let releaseCancel!: () => void;
+    const cancel = new Promise<void>((resolve) => {
+      releaseCancel = resolve;
+    });
+    const dispose = vi.fn(async () => {});
+    let terminalFactsAdmitted = 0;
+    let resolveFirstTerminalFact!: () => void;
+    const firstTerminalFact = new Promise<void>((resolve) => {
+      resolveFirstTerminalFact = resolve;
+    });
+    const runtime = createTestExecutionRunHostRuntime({
+      onWaitForTurnCompletion: async () => {
+        await completion;
+        throw new Error('provider completion failed');
+      },
+      onCancel: async () => {
+        await cancel;
+      },
+      onDispose: dispose,
+    });
+    const manager = createExecutionRunManager({
+      parentProvider: TEST_PRIMARY_BACKEND_ID,
+      cwd: process.cwd(),
+      createRuntime: () => runtime,
+      sendAcp: async (_provider: string, body: ACPMessageData) => {
+        if (body.type !== 'tool-result') return;
+        terminalFactsAdmitted += 1;
+        resolveFirstTerminalFact();
+        await publication;
+      },
+      getNowMs: () => 1_700_000_000_000,
+    });
+    const started = await manager.start({
+      sessionId: 'parent_session_1',
+      intent: 'delegate',
+      backendTarget: { kind: 'builtInAgent', agentId: TEST_PRIMARY_BACKEND_ID },
+      instructions: '',
+      permissionMode: 'read_only',
+      retentionPolicy: 'ephemeral',
+      runClass: 'long_lived',
+      ioMode: 'request_response',
+    });
+
+    await expect(manager.send(started.runId, { message: 'hello' })).resolves.toEqual({ ok: true });
+    const stop = manager.stop(started.runId);
+    await Promise.resolve();
+    releaseCompletion();
+    await firstTerminalFact;
+    releaseCancel();
+    await Promise.resolve();
+    releasePublication();
+
+    await expect(stop).resolves.toMatchObject({ ok: true });
+    await expect(manager.waitForTerminal(started.runId)).resolves.toBeUndefined();
+    expect(terminalFactsAdmitted).toBe(1);
+    expect(dispose).toHaveBeenCalledTimes(1);
+    expect(manager.get(started.runId)?.status).not.toBe('running');
+  });
+
+  it('settles an arbitrary detached finish failure without orphaning the running run', async () => {
+    const baseCatalog = buildExecutionRunProfileCatalog();
+    class FailingProfileMap<K, V> extends Map<K, V> {
+      failReads = false;
+
+      override get(key: K): V | undefined {
+        if (this.failReads) throw new Error('profile stale');
+        return super.get(key);
+      }
+    }
+    const profiles = new FailingProfileMap(baseCatalog.builtInProfilesByIntent.entries());
+    const catalog = Object.freeze({
+      ...baseCatalog,
+      builtInProfilesByIntent: profiles,
+    });
+    let releaseCompletion!: () => void;
+    const completion = new Promise<void>((resolve) => {
+      releaseCompletion = resolve;
+    });
+    const dispose = vi.fn(async () => {});
+    const runtime = createTestExecutionRunHostRuntime({
+      onWaitForTurnCompletion: async () => {
+        await completion;
+        throw new Error('provider completion failed');
+      },
+      onDispose: dispose,
+    });
+    const unhandled: unknown[] = [];
+    const onUnhandled = (error: unknown) => {
+      unhandled.push(error);
+    };
+    process.on('unhandledRejection', onUnhandled);
+    const manager = createExecutionRunManager({
+      parentProvider: TEST_PRIMARY_BACKEND_ID,
+      cwd: process.cwd(),
+      createRuntime: () => runtime,
+      executionRunProfileCatalog: catalog,
+      sendAcp: async () => {},
+      getNowMs: () => 1_700_000_000_000,
+    });
+
+    try {
+      const started = await manager.start({
+        sessionId: 'parent_session_1',
+        intent: 'delegate',
+        backendTarget: { kind: 'builtInAgent', agentId: TEST_PRIMARY_BACKEND_ID },
+        instructions: '',
+        permissionMode: 'read_only',
+        retentionPolicy: 'ephemeral',
+        runClass: 'long_lived',
+        ioMode: 'request_response',
+      });
+
+      await expect(manager.send(started.runId, { message: 'hello' })).resolves.toEqual({ ok: true });
+      profiles.failReads = true;
+      releaseCompletion();
+      await expect(manager.waitForTerminal(started.runId)).resolves.toBeUndefined();
+      await new Promise<void>((resolve) => setImmediate(resolve));
+
+      expect(unhandled).toEqual([]);
+      expect(manager.get(started.runId)).toMatchObject({
+        status: 'failed',
+        error: { code: 'execution_run_failed', message: 'provider completion failed' },
+      });
+      expect(dispose).toHaveBeenCalledTimes(1);
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+      await manager.dispose();
+    }
+  });
+
+  it('settles after synchronous send recovery cannot publish its terminal transcript fact', async () => {
+    const dispose = vi.fn(async () => {});
+    const runtime = createTestExecutionRunHostRuntime({
+      onSendPrompt: async () => {
+        throw new Error('provider send failed');
+      },
+      onDispose: dispose,
+    });
+    const manager = createExecutionRunManager({
+      parentProvider: TEST_PRIMARY_BACKEND_ID,
+      cwd: process.cwd(),
+      createRuntime: () => runtime,
+      sendAcp: async (_provider: string, body: ACPMessageData) => {
+        if (body.type === 'tool-result') throw new Error('transcript unavailable');
+      },
+      getNowMs: () => 1_700_000_000_000,
+    });
+    const started = await manager.start({
+      sessionId: 'parent_session_1',
+      intent: 'delegate',
+      backendTarget: { kind: 'builtInAgent', agentId: TEST_PRIMARY_BACKEND_ID },
+      instructions: '',
+      permissionMode: 'read_only',
+      retentionPolicy: 'ephemeral',
+      runClass: 'long_lived',
+      ioMode: 'request_response',
+    });
+    const terminalWaiter = manager.waitForTerminal(started.runId);
+
+    await expect(manager.send(started.runId, { message: 'hello' })).rejects.toMatchObject({
+      code: 'execution_run_transcript_custody_unavailable',
+    });
+    await expect(terminalWaiter).resolves.toBeUndefined();
+    expect(manager.get(started.runId)).toMatchObject({
+      status: 'failed',
+      error: { code: 'execution_run_transcript_custody_unavailable' },
+    });
+    expect(dispose).toHaveBeenCalledTimes(1);
+    await manager.dispose();
+    expect(dispose).toHaveBeenCalledTimes(1);
+  });
+
+  it('settles detached completion recovery while retaining the typed custody failure', async () => {
+    const dispose = vi.fn(async () => {});
+    const runtime = createTestExecutionRunHostRuntime({
+      onWaitForTurnCompletion: async () => {
+        throw new Error('provider completion failed');
+      },
+      onDispose: dispose,
+    });
+    const manager = createExecutionRunManager({
+      parentProvider: TEST_PRIMARY_BACKEND_ID,
+      cwd: process.cwd(),
+      createRuntime: () => runtime,
+      sendAcp: async (_provider: string, body: ACPMessageData) => {
+        if (body.type === 'tool-result') throw new Error('transcript unavailable');
+      },
+      getNowMs: () => 1_700_000_000_000,
+    });
+    const started = await manager.start({
+      sessionId: 'parent_session_1',
+      intent: 'delegate',
+      backendTarget: { kind: 'builtInAgent', agentId: TEST_PRIMARY_BACKEND_ID },
+      instructions: '',
+      permissionMode: 'read_only',
+      retentionPolicy: 'ephemeral',
+      runClass: 'long_lived',
+      ioMode: 'request_response',
+    });
+    const terminalWaiter = manager.waitForTerminal(started.runId);
+
+    await expect(manager.send(started.runId, { message: 'hello' })).resolves.toEqual({ ok: true });
+    await expect(terminalWaiter).resolves.toBeUndefined();
+    expect(manager.get(started.runId)).toMatchObject({
+      status: 'failed',
+      error: { code: 'execution_run_transcript_custody_unavailable' },
+    });
+    expect(dispose).toHaveBeenCalledTimes(1);
+    await manager.dispose();
+    expect(dispose).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports an undelivered execution-run response target back to the AgentState store', async () => {
+    let responseTargetHandler: ((dispatch: AgentStateResponseTargetDispatch) => unknown) | null = null;
+    const unregisterPermissionHandler = vi.fn();
+    const permissionStore = {
+      registerResponseTargetHandler: vi.fn((_kind: string, handler: (dispatch: AgentStateResponseTargetDispatch) => unknown) => {
+        responseTargetHandler = handler;
+        return unregisterPermissionHandler;
+      }),
+    };
+    const manager = createExecutionRunManager({
+      parentProvider: TEST_PRIMARY_BACKEND_ID,
+      cwd: process.cwd(),
+      createRuntime: () => createPromptRuntime(() => {}),
+      sendAcp: async () => {},
+      getPermissionRequestStore: () => permissionStore as never,
+      getNowMs: () => 1_700_000_000_000,
+    });
+
+    try {
+      await manager.start({
+        sessionId: 'parent_session_1',
+        intent: 'delegate',
+        backendTarget: { kind: 'builtInAgent', agentId: TEST_PRIMARY_BACKEND_ID },
+        instructions: 'first',
+        permissionMode: 'read_only',
+        retentionPolicy: 'ephemeral',
+        runClass: 'long_lived',
+        ioMode: 'request_response',
+      });
+      const respond = vi.spyOn(manager, 'respondToPermissionRequest').mockResolvedValue({
+        ok: false,
+        errorCode: 'execution_run_permission_not_delivered',
+        error: 'Permission response was not delivered',
+      });
+      expect(responseTargetHandler).not.toBeNull();
+
+      const delivery = await responseTargetHandler!({
+        requestId: 'agent-state-request-1',
+        responseTarget: {
+          kind: 'execution_run_host_bridge',
+          sessionId: 'parent_session_1',
+          runId: 'run-1',
+          callId: 'call-1',
+          sidechainId: 'sidechain-1',
+          backendId: 'backend-1',
+          runtimeKind: 'acp',
+          providerRequestId: 'provider-request-1',
+        },
+        completedRequest: { status: 'approved', decision: 'approved' },
+      });
+
+      expect(respond).toHaveBeenCalledWith('run-1', expect.objectContaining({
+        requestId: 'provider-request-1',
+        approved: true,
+      }));
+      expect(delivery).toBe(false);
+    } finally {
+      await manager.dispose();
+    }
+  });
+
   it('disposes running backend resources and unregisters permission response handling idempotently', async () => {
     const unregisterPermissionHandler = vi.fn();
     const permissionStore = {
@@ -1262,7 +1602,7 @@ describe('ExecutionRunManager (long-lived runs)', () => {
           },
         );
       },
-      sendAcp: () => {},
+      sendAcp: async () => {},
       getPermissionRequestStore: () => permissionStore as never,
       getNowMs: () => 1_700_000_000_000,
     });
@@ -1336,7 +1676,7 @@ describe('ExecutionRunManager (long-lived runs)', () => {
         seen.push(opts);
         return createPromptEchoRuntime();
       },
-      sendAcp: () => {},
+      sendAcp: async () => {},
       getNowMs: () => 1_700_000_000_000,
     });
 
@@ -1385,7 +1725,7 @@ describe('ExecutionRunManager (long-lived runs)', () => {
       parentProvider: TEST_PRIMARY_BACKEND_ID,
       cwd: process.cwd(),
       createRuntime: () => runtime,
-      sendAcp: (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
+      sendAcp: async (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
         sent.push({ provider, body, meta: opts?.meta });
       },
       getNowMs: () => 1_700_000_000_000,
@@ -1423,7 +1763,7 @@ describe('ExecutionRunManager (long-lived runs)', () => {
       parentProvider: TEST_PRIMARY_BACKEND_ID,
       cwd: process.cwd(),
       createRuntime: () => createPromptEchoRuntime(),
-      sendAcp: (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
+      sendAcp: async (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
         sent.push({ provider, body, meta: opts?.meta });
       },
       getNowMs: () => 1_700_000_000_000,
@@ -1468,7 +1808,7 @@ describe('ExecutionRunManager (long-lived runs)', () => {
       parentProvider: TEST_PRIMARY_BACKEND_ID,
       cwd: process.cwd(),
       createRuntime: () => createPromptEchoRuntime(),
-      sendAcp: () => {},
+      sendAcp: async () => {},
       getNowMs: () => 1_700_000_000_000,
     });
 
@@ -1492,10 +1832,12 @@ describe('ExecutionRunManager (long-lived runs)', () => {
   });
 
   it('applies voice_agent prepareStartParams before starting replay-backed runs', async () => {
-    vi.mocked(readCredentials).mockResolvedValue({
+    vi.mocked(readStoredCredentials).mockResolvedValue({
       token: 'credential-token',
-    } as never);
+      encryption: null,
+    });
     vi.mocked(resolveReplaySeedDraft).mockResolvedValue({
+      status: 'seeded',
       seedDraft: 'Replay seed summary',
     } as never);
 
@@ -1503,7 +1845,7 @@ describe('ExecutionRunManager (long-lived runs)', () => {
       parentProvider: TEST_PRIMARY_BACKEND_ID,
       cwd: '/tmp/voice-agent-manager',
       createRuntime: () => createReadyHandshakePromptEchoRuntime(),
-      sendAcp: () => {},
+      sendAcp: async () => {},
       getNowMs: () => 1_700_000_000_000,
     });
 
@@ -1544,7 +1886,7 @@ describe('ExecutionRunManager (long-lived runs)', () => {
       parentProvider: TEST_PRIMARY_BACKEND_ID,
       cwd: process.cwd(),
       createRuntime: () => createPromptEchoResumeRuntime(),
-      sendAcp: () => {},
+      sendAcp: async () => {},
       onPublicStateUpdated: (run) => {
         publicStates.push(run as Record<string, unknown>);
       },
@@ -1577,6 +1919,52 @@ describe('ExecutionRunManager (long-lived runs)', () => {
     });
   });
 
+  it('terminalizes and resumes a public voice_agent run after its nested runtime idles out', async () => {
+    let nowMs = 0;
+    vi.useFakeTimers();
+    const manager = createExecutionRunManager({
+      parentProvider: TEST_PRIMARY_BACKEND_ID,
+      cwd: process.cwd(),
+      createRuntime: () => createPromptEchoRuntime(),
+      sendAcp: async () => {},
+      getNowMs: () => nowMs,
+    });
+
+    try {
+      const started = await manager.start({
+        sessionId: 'parent_session_1',
+        intent: 'voice_agent',
+        backendTarget: { kind: 'builtInAgent', agentId: TEST_PRIMARY_BACKEND_ID },
+        permissionMode: 'read_only',
+        retentionPolicy: 'resumable',
+        runClass: 'long_lived',
+        ioMode: 'streaming',
+        chatModelId: 'chat',
+        commitModelId: 'commit',
+        idleTtlSeconds: 60,
+      });
+
+      expect(manager.get(started.runId)?.status).toBe('running');
+
+      nowMs = 60_001;
+      await vi.advanceTimersByTimeAsync(30_000);
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(manager.get(started.runId)?.status).toBe('cancelled');
+      expect(manager.getPublic(started.runId)).toMatchObject({
+        runId: started.runId,
+        status: 'cancelled',
+      });
+
+      await expect(manager.ensure(started.runId, { resume: true })).resolves.toEqual({ ok: true });
+      expect(manager.get(started.runId)?.status).toBe('running');
+    } finally {
+      await manager.dispose();
+      vi.useRealTimers();
+    }
+  });
+
   it('builds voice-agent prompts from resolved account settings instead of local CLI settings', async () => {
     const sent: Array<{ provider: string; body: unknown; meta?: Record<string, unknown> }> = [];
     const seenCalls: Array<{ settings?: unknown; profileId?: string | null; sessionId?: string | null; workingDirectory?: string | null }> = [];
@@ -1600,10 +1988,9 @@ describe('ExecutionRunManager (long-lived runs)', () => {
             io: 'streaming',
           },
         }],
-        { generationId: 'generation-work' },
       ),
       createRuntime: () => createPromptEchoRuntime(),
-      sendAcp: (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
+      sendAcp: async (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
         sent.push({ provider, body, meta: opts?.meta });
       },
       resolveAccountSettings: async () => ({ promptStacksSource: 'account-settings' }),
@@ -1624,7 +2011,6 @@ describe('ExecutionRunManager (long-lived runs)', () => {
       runClass: 'long_lived',
       ioMode: 'streaming',
       profileId: 'work',
-      profileGenerationId: 'generation-work',
     });
 
     const streamStart = await manager.startTurnStream(started.runId, { message: 'hello' });
@@ -1653,7 +2039,7 @@ describe('ExecutionRunManager (long-lived runs)', () => {
       parentProvider: TEST_PRIMARY_BACKEND_ID,
       cwd: process.cwd(),
       createRuntime: () => createDelayedJsonRuntime('{"ok":true}', 50_000),
-      sendAcp: () => {},
+      sendAcp: async () => {},
       getNowMs: () => 1_700_000_000_000,
     });
 
@@ -1684,7 +2070,7 @@ describe('ExecutionRunManager (long-lived runs)', () => {
         seen.push(opts as Record<string, unknown>);
         return createPromptEchoRuntime();
       },
-      sendAcp: () => {},
+      sendAcp: async () => {},
       getNowMs: () => 1_700_000_000_000,
     });
 
@@ -1719,7 +2105,7 @@ describe('ExecutionRunManager (long-lived runs)', () => {
         seen.push(opts as Record<string, unknown>);
         return createPromptEchoRuntime();
       },
-      sendAcp: () => {},
+      sendAcp: async () => {},
       getNowMs: () => 1_700_000_000_000,
     });
 
@@ -1760,12 +2146,13 @@ describe('ExecutionRunManager (long-lived runs)', () => {
       parentProvider: TEST_PRIMARY_BACKEND_ID,
       cwd: process.cwd(),
       createRuntime: () => runtime,
-      sendAcp: (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
+      sendAcp: async (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
         sent.push({ provider, body, meta: opts?.meta });
       },
       streamedTranscriptSession: {
-        sendAgentMessageCommitted: async (provider, body, opts) => {
+        enqueueAgentMessageCommitted: async (provider, body, opts) => {
           commits.push({ provider, body, localId: opts.localId, meta: opts.meta });
+          return { persisted: true, delivered: false };
         },
       },
       getNowMs: () => 1_700_000_000_000,
@@ -1837,7 +2224,7 @@ describe('ExecutionRunManager (bounded external send)', () => {
       parentProvider: TEST_PRIMARY_BACKEND_ID,
       cwd: process.cwd(),
       createRuntime: () => runtime,
-      sendAcp: () => {},
+      sendAcp: async () => {},
       getNowMs: () => 1_700_000_000_000,
     });
 
@@ -1905,7 +2292,7 @@ describe('ExecutionRunManager connected-services exact currentness', () => {
           opts.onConnectedServicesRegistration ?? null;
         return runtime;
       },
-      sendAcp: () => {},
+      sendAcp: async () => {},
       getNowMs: () => 1_700_000_000_000,
       ...(params.checkConnectedServicesGenerationCurrent
         ? {
@@ -1938,6 +2325,23 @@ describe('ExecutionRunManager connected-services exact currentness', () => {
       onConnectedServicesRegistration,
     };
   }
+
+  it('persists the resolved connected-services binding as the immutable resume selection', async () => {
+    const harness = await createRunningHarness();
+    const registration = {
+      ...CONNECTED_SERVICES_REGISTRATION,
+      runKey: harness.runId,
+      materializationKey: harness.runId,
+    };
+
+    await harness.onConnectedServicesRegistration(registration);
+
+    expect(harness.manager.get(harness.runId)?.launch).toMatchObject({
+      connectedServicesSelection: registration.connectedServicesBindings,
+      connectedServicesRegistration: registration,
+    });
+    await harness.manager.dispose();
+  });
 
   it.each(['replacement', 'exit'] as const)(
     'fails connected-services authorization when the exact run has a deferred %s',

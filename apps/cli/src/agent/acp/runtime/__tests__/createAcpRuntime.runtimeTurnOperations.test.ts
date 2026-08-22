@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { RuntimeEventV1Schema } from '@happier-dev/protocol';
+import { AgentSessionRuntimeEventSchema } from '@happier-dev/protocol';
 
 import { createAcpRuntime } from '../createAcpRuntime';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
@@ -197,7 +197,7 @@ describe('createAcpRuntime (native lower-operation surface)', () => {
     await runtime.sendTurnPrompt('hello');
     await runtime.waitForTurnCompletion();
 
-    const runtimeEvents = messages.map((message) => RuntimeEventV1Schema.parse(message));
+    const runtimeEvents = messages.map((message) => AgentSessionRuntimeEventSchema.parse(message));
     const turnStart = runtimeEvents.find((event) => event.kind === 'turn-start');
     const turnComplete = runtimeEvents.find((event) => event.kind === 'turn-complete');
     expect(turnStart).toEqual(expect.objectContaining({
@@ -211,17 +211,13 @@ describe('createAcpRuntime (native lower-operation surface)', () => {
       agentTurnId: turnStart?.agentTurnId,
     }));
     expect(turnStart?.turnId).not.toBe(turnStart?.agentTurnId);
-    expect(sendAgentMessage).toHaveBeenCalledWith('gemini', {
-      type: 'task_started',
-      id: turnStart?.agentTurnId,
-    });
-    expect(sendAgentMessage).toHaveBeenCalledWith('gemini', {
-      type: 'task_complete',
-      id: turnStart?.agentTurnId,
-    });
+    expect(runtimeEvents.map((event) => event.sequence)).toEqual(
+      runtimeEvents.map((_, index) => index + 1),
+    );
+    expect(sendAgentMessage).not.toHaveBeenCalled();
   });
 
-  it('uses the transcript provider for session-visible ACP messages when it differs from the runtime owner', async () => {
+  it('does not smuggle transcript-provider identity into canonical Agent runtime events', async () => {
     const backend = createFakeAcpRuntimeBackend({
       sessionId: 'acp-session-1',
       waitForResponseComplete: vi.fn(async () => ({ kind: 'completed', stopReason: 'end_turn' } as const)),
@@ -242,6 +238,10 @@ describe('createAcpRuntime (native lower-operation surface)', () => {
       onThinkingChange: () => {},
       ensureBackend: async () => backend,
     });
+    const messages: unknown[] = [];
+    runtime.subscribeRuntimeEvents((message) => {
+      messages.push(message);
+    });
 
     await runtime.sendTurnPrompt('session setup');
     runtime.beginTurnLifecycle();
@@ -250,14 +250,9 @@ describe('createAcpRuntime (native lower-operation surface)', () => {
     await runtime.sendTurnPrompt('hello');
     await runtime.waitForTurnCompletion();
 
-    expect(sendAgentMessage).toHaveBeenCalledWith('acp:acme.plugin-backed-acp.backend', {
-      type: 'task_started',
-      id: expect.any(String),
-    });
-    expect(sendAgentMessage).toHaveBeenCalledWith('acp:acme.plugin-backed-acp.backend', {
-      type: 'task_complete',
-      id: expect.any(String),
-    });
-    expect(sendAgentMessage).not.toHaveBeenCalledWith('acme.plugin-backed-acp.backend', expect.anything());
+    const runtimeEvents = messages.map((message) => AgentSessionRuntimeEventSchema.parse(message));
+    expect(runtimeEvents.some((event) => JSON.stringify(event).includes('acp:acme.plugin-backed-acp.backend')))
+      .toBe(false);
+    expect(sendAgentMessage).not.toHaveBeenCalled();
   });
 });

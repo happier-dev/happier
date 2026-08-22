@@ -10,10 +10,7 @@ import {
   type SessionModelSelectionV1,
 } from '@happier-dev/protocol';
 
-import {
-  resolveBackendTargetFromSessionMetadata,
-  resolveExplicitBackendTargetFromSessionMetadata,
-} from '@/session/backendTargets/resolveBackendTargetFromSessionMetadata';
+import { resolveBackendTargetFromSessionMetadata } from '@/session/backendTargets/resolveBackendTargetFromSessionMetadata';
 
 function asRecord(value: unknown): Readonly<Record<string, unknown>> | null {
   return value && typeof value === 'object' && !Array.isArray(value)
@@ -56,9 +53,7 @@ export function resolveSessionMessageModel(params: Readonly<{
   ) {
     return { modelId: '', selection: null };
   }
-  const backendTarget = params.modelSelectionInput !== undefined
-    ? resolveExplicitBackendTargetFromSessionMetadata(metadata)
-    : resolveBackendTargetFromSessionMetadata(metadata);
+  const backendTarget = resolveBackendTargetFromSessionMetadata(metadata);
   const agentTargetKey = backendTarget ? buildBackendTargetKeyV2(backendTarget) : null;
 
   if (params.modelSelectionInput !== undefined) {
@@ -120,10 +115,4 @@ export function resolveSessionMessageModel(params: Readonly<{
         })
       : null,
   };
-}
-
-export function resolveSessionMessageModelId(
-  params: Parameters<typeof resolveSessionMessageModel>[0],
-): string {
-  return resolveSessionMessageModel(params).modelId;
 }

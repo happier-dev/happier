@@ -7,6 +7,14 @@ import { buildCodexAgentRuntimeDescriptorV1 as buildCodexAgentRuntimeDescriptor 
 
 const stageUsageLimitRecoveryMutation = vi.fn(async () => undefined);
 
+const mocks = vi.hoisted(() => ({
+  fetchAccountMachineReplacements: vi.fn(),
+}));
+
+vi.mock('@/api/machine/fetchAccountMachineReplacements', () => ({
+  fetchAccountMachineReplacements: mocks.fetchAccountMachineReplacements,
+}));
+
 import {
   routeSessionUsageLimitRecoveryCheckNow,
   routeSessionUsageLimitRecoveryWaitResumeCancel,
@@ -89,14 +97,17 @@ function createTemporaryThrottleIssue() {
   } as const;
 }
 
-const ctx = {
-  encryptionKey: new Uint8Array(32).fill(1),
-  encryptionVariant: 'legacy' as const,
-};
-
 describe('sessionUsageLimitRecoveryControlRouter', () => {
   beforeEach(() => {
     stageUsageLimitRecoveryMutation.mockClear();
+    mocks.fetchAccountMachineReplacements.mockReset();
+    // The Account genuinely knows both machines and neither replaced the other,
+    // so a refusal below is the guard deciding, not an empty chain.
+    mocks.fetchAccountMachineReplacements.mockResolvedValue([
+      { id: 'machine-local' },
+      { id: 'machine-before-restart' },
+      { id: 'machine-after-restart' },
+    ]);
   });
 
   it('arms inactive local wait-resume from the latest usage-limit issue without live session RPC', async () => {
@@ -112,7 +123,7 @@ describe('sessionUsageLimitRecoveryControlRouter', () => {
       }),
       metadata: createMetadata(),
       currentMachineId: 'machine-local',
-      ctx,
+      ctx: null,
       mode: 'plain',
       stageUsageLimitRecoveryMutation,
       request: { sessionId: 'sess_1', remember: true, resumePromptMode: 'off' },
@@ -166,7 +177,7 @@ describe('sessionUsageLimitRecoveryControlRouter', () => {
       }),
       metadata: createMetadata({ sessionUsageLimitRecoveryV1: cancelled }),
       currentMachineId: 'machine-local',
-      ctx,
+      ctx: null,
       mode: 'plain',
       stageUsageLimitRecoveryMutation,
       request: { sessionId: 'sess_1', remember: true },
@@ -200,7 +211,7 @@ describe('sessionUsageLimitRecoveryControlRouter', () => {
       }),
       metadata: createMetadata(),
       currentMachineId: 'machine-local',
-      ctx,
+      ctx: null,
       mode: 'plain',
       stageUsageLimitRecoveryMutation,
       request: { sessionId: 'sess_1', agentId: 'codex' },
@@ -229,12 +240,22 @@ describe('sessionUsageLimitRecoveryControlRouter', () => {
       sessionId: 'sess_1',
       rawSession: createRawSession({
         active: true,
+        path: '/home/coder/project',
         latestTurnStatus: 'failed',
         lastRuntimeIssue: createUsageLimitIssue(),
       }),
-      metadata: createMetadata({ agentRuntimeDescriptorV1: { v: 1, providerId: 'codex' } }),
+      metadata: createMetadata({
+        path: '/home/coder/project',
+        agentRuntimeDescriptorV1: { v: 1, providerId: 'codex' },
+        sessionWorkspaceLocationV1: {
+          v: 1,
+          machineId: 'machine-local',
+          agentPath: '/home/coder/project',
+          machinePath: '/Users/alice/project',
+        },
+      }),
       currentMachineId: 'machine-local',
-      ctx,
+      ctx: null,
       mode: 'plain',
       stageUsageLimitRecoveryMutation,
       request: {
@@ -255,8 +276,9 @@ describe('sessionUsageLimitRecoveryControlRouter', () => {
     expect(callLiveSessionRpc).not.toHaveBeenCalled();
     expect(consumeResetCredit).toHaveBeenCalledTimes(1);
     const consumeCall = consumeResetCredit.mock.calls[0] as unknown as [
-      { metadata: Record<string, unknown> },
+      { cwd: string; metadata: Record<string, unknown> },
     ];
+    expect(consumeCall[0].cwd).toBe('/Users/alice/project');
     expect(consumeCall[0].metadata[SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY]).toMatchObject({
       issueFingerprint: 'usage-limit:codex:turn-1:1700000000000:no-reset',
     });
@@ -278,7 +300,7 @@ describe('sessionUsageLimitRecoveryControlRouter', () => {
       }),
       metadata: createMetadata(),
       currentMachineId: 'machine-local',
-      ctx,
+      ctx: null,
       mode: 'plain',
       stageUsageLimitRecoveryMutation,
       request: { sessionId: 'sess_1', remember: true },
@@ -315,7 +337,7 @@ describe('sessionUsageLimitRecoveryControlRouter', () => {
       rawSession: createRawSession({ latestTurnStatus: 'failed', lastRuntimeIssue: createUsageLimitIssue() }),
       metadata: createMetadata(),
       currentMachineId: 'machine-local',
-      ctx,
+      ctx: null,
       mode: 'plain',
       stageUsageLimitRecoveryMutation,
       request: { sessionId: 'sess_1', remember: true },
@@ -353,7 +375,7 @@ describe('sessionUsageLimitRecoveryControlRouter', () => {
       }),
       metadata: createMetadata(),
       currentMachineId: 'machine-local',
-      ctx,
+      ctx: null,
       mode: 'plain',
       stageUsageLimitRecoveryMutation,
       request: { sessionId: 'sess_1', remember: true },
@@ -399,7 +421,7 @@ describe('sessionUsageLimitRecoveryControlRouter', () => {
       rawSession: createRawSession(),
       metadata: createMetadata({ sessionUsageLimitRecoveryV1: recovery }),
       currentMachineId: 'machine-local',
-      ctx,
+      ctx: null,
       mode: 'plain',
       stageUsageLimitRecoveryMutation,
       request: {
@@ -452,7 +474,7 @@ describe('sessionUsageLimitRecoveryControlRouter', () => {
       rawSession: createRawSession(),
       metadata: createMetadata({ sessionUsageLimitRecoveryV1: recovery }),
       currentMachineId: 'machine-local',
-      ctx,
+      ctx: null,
       mode: 'plain',
       stageUsageLimitRecoveryMutation,
       request: { sessionId: 'sess_1', issueFingerprint: recovery.issueFingerprint },
@@ -490,7 +512,7 @@ describe('sessionUsageLimitRecoveryControlRouter', () => {
       rawSession: createRawSession(),
       metadata: createMetadata({ sessionUsageLimitRecoveryV1: attemptA }),
       currentMachineId: 'machine-local',
-      ctx,
+      ctx: null,
       mode: 'plain',
       stageUsageLimitRecoveryMutation,
       request: {
@@ -532,7 +554,7 @@ describe('sessionUsageLimitRecoveryControlRouter', () => {
       rawSession: createRawSession(),
       metadata: createMetadata({ sessionUsageLimitRecoveryV1: attemptA }),
       currentMachineId: 'machine-local',
-      ctx,
+      ctx: null,
       mode: 'plain',
       stageUsageLimitRecoveryMutation,
       request: {
@@ -562,7 +584,7 @@ describe('sessionUsageLimitRecoveryControlRouter', () => {
       rawSession: createRawSession(),
       metadata: createMetadata({ agentRuntimeDescriptorV1: { v: 1, providerId: 'claude' } }),
       currentMachineId: 'machine-local',
-      ctx,
+      ctx: null,
       mode: 'plain',
       stageUsageLimitRecoveryMutation,
       callLiveSessionRpc: vi.fn(),
@@ -589,7 +611,7 @@ describe('sessionUsageLimitRecoveryControlRouter', () => {
       rawSession: createRawSession(),
       metadata: createMetadata({ agentRuntimeDescriptorV1: { v: 1, providerId: 'claude' } }),
       currentMachineId: 'machine-local',
-      ctx,
+      ctx: null,
       mode: 'plain',
       stageUsageLimitRecoveryMutation,
       request: { sessionId: 'sess_1', agentId: 'codex', resumePromptMode: 'off' },
@@ -628,7 +650,7 @@ describe('sessionUsageLimitRecoveryControlRouter', () => {
       currentMachineId: 'machine-after-restart',
       currentMachineHost: 'leeroy-mbp',
       currentMachineHomeDir: '/Users/leeroy/',
-      ctx,
+      ctx: null,
       mode: 'plain',
       stageUsageLimitRecoveryMutation,
       request: { sessionId: 'sess_stale_same_machine', agentId: 'codex' },
@@ -655,7 +677,7 @@ describe('sessionUsageLimitRecoveryControlRouter', () => {
       currentMachineId: 'machine-after-restart',
       currentMachineHost: 'leeroy-mbp',
       currentMachineHomeDir: '/Users/other',
-      ctx,
+      ctx: null,
       mode: 'plain',
       stageUsageLimitRecoveryMutation,
       request: { sessionId: 'sess_stale_home_mismatch', agentId: 'codex' },
@@ -687,7 +709,7 @@ describe('sessionUsageLimitRecoveryControlRouter', () => {
       currentMachineId: 'machine-after-restart',
       currentMachineHost: 'new-host',
       currentMachineHomeDir: '/Users/leeroy',
-      ctx,
+      ctx: null,
       mode: 'plain',
       stageUsageLimitRecoveryMutation,
       request: { sessionId: 'sess_stale_host_mismatch', agentId: 'codex' },
@@ -701,6 +723,157 @@ describe('sessionUsageLimitRecoveryControlRouter', () => {
     });
 
     expect(checkNow).not.toHaveBeenCalled();
+  });
+
+  it('discards a probe that completed after the recovery attempt was cancelled', async () => {
+    const armed = {
+      v: 1,
+      status: 'waiting',
+      resumePromptMode: 'standard',
+      issueFingerprint: 'usage-limit:codex:turn-1:1700000000000:1700000060000',
+      armedAtMs: 1_700_000_000_000,
+      resetAtMs: 1_700_000_060_000,
+      nextCheckAtMs: 1_700_000_060_000,
+      attemptCount: 1,
+      maxAttempts: 3,
+      lastProbeError: null,
+      selectedAuth: { kind: 'native', serviceId: 'openai-codex' },
+    } as const;
+    const resumeInactiveSessionWhenReady = vi.fn(async () => true);
+    const checkNow = vi.fn(async () => ({
+      ok: true,
+      status: 'ready',
+      metadata: {
+        machineId: 'machine-local',
+        sessionUsageLimitRecoveryV1: { ...armed, status: 'waiting', attemptCount: 2 },
+      },
+    }));
+
+    const result = await routeSessionUsageLimitRecoveryCheckNow({
+      token: 'token',
+      credentials: createCredentials(),
+      sessionId: 'sess_cancel_race',
+      rawSession: createRawSession({ id: 'sess_cancel_race' }),
+      metadata: createMetadata({ sessionUsageLimitRecoveryV1: armed }),
+      currentMachineId: 'machine-local',
+      ctx: null,
+      mode: 'plain',
+      stageUsageLimitRecoveryMutation,
+      callLiveSessionRpc: vi.fn(),
+      resolveAdapter: vi.fn(async () => ({ checkNow })),
+      resumeInactiveSessionWhenReady,
+      // The user cancelled while the probe was still in flight.
+      readCurrentUsageLimitRecovery: vi.fn(() => ({ ...armed, status: 'cancelled' as const, nextCheckAtMs: null })),
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      status: 'cancelled',
+      sessionId: 'sess_cancel_race',
+      errorCode: 'session_usage_limit_recovery_control_inactive',
+    });
+    expect(checkNow).toHaveBeenCalledTimes(1);
+    expect(stageUsageLimitRecoveryMutation).not.toHaveBeenCalled();
+    expect(resumeInactiveSessionWhenReady).not.toHaveBeenCalled();
+  });
+
+  it('discards a probe whose recovery attempt was superseded by a newer armed attempt', async () => {
+    const armed = {
+      v: 1,
+      status: 'waiting',
+      resumePromptMode: 'standard',
+      issueFingerprint: 'usage-limit:codex:turn-1:1700000000000:1700000060000',
+      armedAtMs: 1_700_000_000_000,
+      resetAtMs: 1_700_000_060_000,
+      nextCheckAtMs: 1_700_000_060_000,
+      attemptCount: 1,
+      maxAttempts: 3,
+      lastProbeError: null,
+      selectedAuth: { kind: 'native', serviceId: 'openai-codex' },
+    } as const;
+    const resumeInactiveSessionWhenReady = vi.fn(async () => true);
+    const checkNow = vi.fn(async () => ({
+      ok: true,
+      status: 'ready',
+      metadata: {
+        machineId: 'machine-local',
+        sessionUsageLimitRecoveryV1: { ...armed, attemptCount: 2 },
+      },
+    }));
+
+    const result = await routeSessionUsageLimitRecoveryCheckNow({
+      token: 'token',
+      credentials: createCredentials(),
+      sessionId: 'sess_superseded',
+      rawSession: createRawSession({ id: 'sess_superseded' }),
+      metadata: createMetadata({ sessionUsageLimitRecoveryV1: armed }),
+      currentMachineId: 'machine-local',
+      ctx: null,
+      mode: 'plain',
+      stageUsageLimitRecoveryMutation,
+      callLiveSessionRpc: vi.fn(),
+      resolveAdapter: vi.fn(async () => ({ checkNow })),
+      resumeInactiveSessionWhenReady,
+      readCurrentUsageLimitRecovery: vi.fn(() => ({
+        ...armed,
+        armedAtMs: armed.armedAtMs + 5_000,
+        attemptCount: 0,
+      })),
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      status: 'inactive',
+      sessionId: 'sess_superseded',
+      errorCode: 'session_usage_limit_recovery_control_issue_mismatch',
+    });
+    expect(stageUsageLimitRecoveryMutation).not.toHaveBeenCalled();
+    expect(resumeInactiveSessionWhenReady).not.toHaveBeenCalled();
+  });
+
+  it('persists and resumes a probe result while the recovery attempt is still current', async () => {
+    const armed = {
+      v: 1,
+      status: 'waiting',
+      resumePromptMode: 'standard',
+      issueFingerprint: 'usage-limit:codex:turn-1:1700000000000:1700000060000',
+      armedAtMs: 1_700_000_000_000,
+      resetAtMs: 1_700_000_060_000,
+      nextCheckAtMs: 1_700_000_060_000,
+      attemptCount: 1,
+      maxAttempts: 3,
+      lastProbeError: null,
+      selectedAuth: { kind: 'native', serviceId: 'openai-codex' },
+    } as const;
+    const resumeInactiveSessionWhenReady = vi.fn(async () => true);
+    const checkNow = vi.fn(async () => ({
+      ok: true,
+      status: 'ready',
+      metadata: {
+        machineId: 'machine-local',
+        sessionUsageLimitRecoveryV1: { ...armed, status: 'cancelled', nextCheckAtMs: null },
+      },
+    }));
+
+    const result = await routeSessionUsageLimitRecoveryCheckNow({
+      token: 'token',
+      credentials: createCredentials(),
+      sessionId: 'sess_current',
+      rawSession: createRawSession({ id: 'sess_current' }),
+      metadata: createMetadata({ sessionUsageLimitRecoveryV1: armed }),
+      currentMachineId: 'machine-local',
+      ctx: null,
+      mode: 'plain',
+      stageUsageLimitRecoveryMutation,
+      callLiveSessionRpc: vi.fn(),
+      resolveAdapter: vi.fn(async () => ({ checkNow })),
+      resumeInactiveSessionWhenReady,
+      readCurrentUsageLimitRecovery: vi.fn(() => armed),
+    });
+
+    expect(result).toMatchObject({ ok: true, status: 'resumed', sessionId: 'sess_current' });
+    expect(stageUsageLimitRecoveryMutation).toHaveBeenCalledTimes(1);
+    expect(resumeInactiveSessionWhenReady).toHaveBeenCalledTimes(1);
   });
 
   it('does not auto-resume inactive check-now when persisted recovery disables resume prompts', async () => {
@@ -727,7 +900,7 @@ describe('sessionUsageLimitRecoveryControlRouter', () => {
       rawSession: createRawSession({ id: 'sess_off' }),
       metadata: createMetadata({ sessionUsageLimitRecoveryV1: recovery }),
       currentMachineId: 'machine-local',
-      ctx,
+      ctx: null,
       mode: 'plain',
       stageUsageLimitRecoveryMutation,
       callLiveSessionRpc: vi.fn(),
@@ -769,7 +942,7 @@ describe('sessionUsageLimitRecoveryControlRouter', () => {
       rawSession: createRawSession(),
       metadata: createMetadata({ agentRuntimeDescriptorV1: { v: 1, providerId: 'claude' } }),
       currentMachineId: 'machine-local',
-      ctx,
+      ctx: null,
       mode: 'plain',
       stageUsageLimitRecoveryMutation,
       callLiveSessionRpc: vi.fn(),
@@ -800,7 +973,7 @@ describe('sessionUsageLimitRecoveryControlRouter', () => {
       rawSession: createRawSession({ id: 'sess_rate_limited' }),
       metadata: createMetadata(),
       currentMachineId: 'machine-local',
-      ctx,
+      ctx: null,
       mode: 'plain' as const,
       stageUsageLimitRecoveryMutation,
       request: { sessionId: 'sess_rate_limited', provider: 'codex' },
@@ -834,7 +1007,7 @@ describe('sessionUsageLimitRecoveryControlRouter', () => {
       rawSession: createRawSession({ active: true }),
       metadata: createMetadata(),
       currentMachineId: 'machine-local',
-      ctx,
+      ctx: null,
       mode: 'plain',
       stageUsageLimitRecoveryMutation,
       request: { sessionId: 'sess_1' },
@@ -844,5 +1017,64 @@ describe('sessionUsageLimitRecoveryControlRouter', () => {
 
     expect(callLiveSessionRpc).toHaveBeenCalledTimes(1);
     expect(stageUsageLimitRecoveryMutation).not.toHaveBeenCalled();
+  });
+  /**
+   * The user's ruling: replacing a machine must not strand the Sessions the
+   * previous one hosted. Nothing re-homes a Session row, so its recorded host
+   * stays the PREDECESSOR forever, and a replacement is a genuinely new host
+   * that cannot earn the same-host-home proof.
+   */
+  it('runs inactive check-now for a session whose recorded machine this one replaced', async () => {
+    mocks.fetchAccountMachineReplacements.mockResolvedValue([
+      { id: 'machine-old', replacedByMachineId: 'machine-new' },
+      { id: 'machine-new' },
+    ]);
+    const checkNow = vi.fn(async () => ({ ok: true, status: 'ready' }));
+
+    await expect(routeSessionUsageLimitRecoveryCheckNow({
+      token: 'token',
+      credentials: createCredentials(),
+      sessionId: 'sess_replaced',
+      rawSession: createRawSession({ id: 'sess_replaced', machineId: 'machine-old' }),
+      metadata: createMetadata({ machineId: 'machine-old', host: 'old-laptop', homeDir: '/Users/leeroy' }),
+      currentMachineId: 'machine-new',
+      currentMachineHost: 'new-laptop',
+      currentMachineHomeDir: '/Users/leeroy',
+      ctx: null,
+      mode: 'plain',
+      stageUsageLimitRecoveryMutation,
+      request: { sessionId: 'sess_replaced', agentId: 'codex' },
+      callLiveSessionRpc: vi.fn(),
+      resolveAdapter: vi.fn(async () => ({ checkNow })),
+    })).resolves.toEqual({ ok: true, status: 'ready', sessionId: 'sess_replaced' });
+
+    expect(checkNow).toHaveBeenCalledTimes(1);
+  });
+
+  it('still refuses inactive check-now when the replacement chain is unreadable', async () => {
+    mocks.fetchAccountMachineReplacements.mockResolvedValue(null);
+    const checkNow = vi.fn(async () => ({ ok: true, status: 'ready' }));
+
+    await expect(routeSessionUsageLimitRecoveryCheckNow({
+      token: 'token',
+      credentials: createCredentials(),
+      sessionId: 'sess_chain_unreadable',
+      rawSession: createRawSession({ id: 'sess_chain_unreadable', machineId: 'machine-old' }),
+      metadata: createMetadata({ machineId: 'machine-old' }),
+      currentMachineId: 'machine-new',
+      ctx: null,
+      mode: 'plain',
+      stageUsageLimitRecoveryMutation,
+      request: { sessionId: 'sess_chain_unreadable', agentId: 'codex' },
+      callLiveSessionRpc: vi.fn(),
+      resolveAdapter: vi.fn(async () => ({ checkNow })),
+    })).resolves.toEqual({
+      ok: false,
+      status: 'session_unreachable',
+      sessionId: 'sess_chain_unreadable',
+      errorCode: 'session_usage_limit_recovery_control_remote_unavailable',
+    });
+
+    expect(checkNow).not.toHaveBeenCalled();
   });
 });

@@ -29,6 +29,7 @@ type DownloadSession = {
   downloadId: string;
   filePath: string;
   deleteFileOnClose: boolean;
+  sourceOffsetBytes: number;
   sizeBytes: number;
   offset: number;
   nextIndex: number;
@@ -248,16 +249,34 @@ export class TransferSessionStore {
     deleteFileOnClose: boolean;
     chunkSizeBytes: number;
     recipientPublicKeyBase64?: string;
+    sourceOffsetBytes?: number;
+    sizeBytes?: number;
   }>): Promise<DownloadSession> {
     this.assertOpen();
     const stats = await stat(input.filePath);
+    const sourceOffsetBytes = Number.isSafeInteger(input.sourceOffsetBytes)
+      && (input.sourceOffsetBytes ?? 0) >= 0
+      ? input.sourceOffsetBytes ?? 0
+      : 0;
+    const sizeBytes = Number.isSafeInteger(input.sizeBytes)
+      && (input.sizeBytes ?? 0) >= 0
+      ? input.sizeBytes ?? 0
+      : stats.size - sourceOffsetBytes;
+    if (
+      !Number.isSafeInteger(stats.size)
+      || sourceOffsetBytes > stats.size
+      || sizeBytes > stats.size - sourceOffsetBytes
+    ) {
+      throw new Error('Download source range exceeds file size');
+    }
     const downloadId = randomUUID();
     const file = await open(input.filePath, 'r');
     const session: DownloadSession = {
       downloadId,
       filePath: input.filePath,
       deleteFileOnClose: input.deleteFileOnClose,
-      sizeBytes: stats.size,
+      sourceOffsetBytes,
+      sizeBytes,
       offset: 0,
       nextIndex: 0,
       chunkSizeBytes: input.chunkSizeBytes,

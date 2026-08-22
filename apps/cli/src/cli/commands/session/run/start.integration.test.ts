@@ -6,11 +6,18 @@ import {
   deriveBoxPublicKeyFromSeed,
   sealEncryptedDataKeyEnvelopeV1,
 } from '@happier-dev/protocol';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
-import { bindApiSessionSocketMock, createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
+import {
+  bindApiSessionSocketMock,
+  bindApiSessionSocketSequenceMock,
+  createApiSessionSocketStub,
+  type ApiSessionSocketStub,
+} from '@/testkit/backends/apiSessionSocketHarness';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 import { captureConsoleJsonOutput } from '@/testkit/logger/captureOutput';
+import { SESSION_HELP_LINES } from '@/cli/commands/session/shared/sessionCommandUsage';
 
 const { mockIo } = vi.hoisted(() => ({
   mockIo: vi.fn(),
@@ -25,9 +32,12 @@ describe('happier session run start (integration)', () => {
   let envScope = createEnvKeyScope(envKeys);
   let server: Server | null = null;
   let happyHomeDir = '';
+  let sessionActive = true;
+  let startRpcSocket: ApiSessionSocketStub;
 
   beforeEach(async () => {
     happyHomeDir = await createTempDir('happier-cli-session-run-start-');
+    sessionActive = true;
 
     const sessionId = 'sess_integration_run_start_123';
     const dek = new Uint8Array(32).fill(3);
@@ -41,13 +51,34 @@ describe('happier session run start (integration)', () => {
 
     const { encodeBase64: encodeBase64Session, encryptWithDataKey } = await import('@/api/encryption');
     const metadataCiphertext = encodeBase64Session(
-      encryptWithDataKey({ path: '/tmp', flavor: 'claude' }, dek),
+      encryptWithDataKey({ path: '/tmp', flavor: 'claude', machineId: 'machine-integration-1' }, dek),
       'base64',
     );
     const dataEncryptionKeyBase64 = encodeBase64Session(envelope, 'base64');
 
     server = createServer((req, res) => {
       const url = new URL(req.url ?? '/', `http://${req.headers.host ?? '127.0.0.1'}`);
+      if (req.method === 'GET' && url.pathname === '/v2/account/settings') {
+        res.statusCode = 200;
+        res.setHeader('content-type', 'application/json');
+        res.end(JSON.stringify({
+          version: 1,
+          content: { t: 'plain', v: { schemaVersion: 2, actionsSettingsV1: { v: 1, actions: {} } } },
+        }));
+        return;
+      }
+      if (req.method === 'GET' && url.pathname === '/v1/account/encryption/currentness') {
+        res.statusCode = 200;
+        res.setHeader('content-type', 'application/json');
+        res.end(JSON.stringify({
+          mode: 'e2ee',
+          version: 1,
+          signingKeyFingerprint: null,
+          contentKeyFingerprint: null,
+          updatedAt: 1,
+        }));
+        return;
+      }
       if (req.method === 'GET' && url.pathname === `/v2/sessions`) {
         res.statusCode = 200;
         res.setHeader('content-type', 'application/json');
@@ -59,7 +90,7 @@ describe('happier session run start (integration)', () => {
                 seq: 1,
                 createdAt: 1,
                 updatedAt: 2,
-                active: false,
+                active: sessionActive,
                 activeAt: 0,
                 metadata: metadataCiphertext,
                 metadataVersion: 0,
@@ -68,6 +99,7 @@ describe('happier session run start (integration)', () => {
                 pendingCount: 0,
                 pendingVersion: 0,
                 dataEncryptionKey: dataEncryptionKeyBase64,
+                machineId: 'machine-integration-1',
                 share: null,
               },
             ],
@@ -93,7 +125,7 @@ describe('happier session run start (integration)', () => {
               seq: 1,
               createdAt: 1,
               updatedAt: 2,
-              active: false,
+              active: sessionActive,
               activeAt: 0,
               metadata: metadataCiphertext,
               metadataVersion: 0,
@@ -102,6 +134,7 @@ describe('happier session run start (integration)', () => {
               pendingCount: 0,
               pendingVersion: 0,
               dataEncryptionKey: dataEncryptionKeyBase64,
+              machineId: 'machine-integration-1',
               share: null,
             },
           }),
@@ -127,7 +160,7 @@ describe('happier session run start (integration)', () => {
 
     const { decodeBase64, decrypt, encodeBase64: encodeBase64Rpc, encrypt } = await import('@/api/encryption');
 
-    const socket = createApiSessionSocketStub({
+    startRpcSocket = createApiSessionSocketStub({
       emit: (event: string, args: unknown[]) => {
         const [data, cb] = args as [any, ((value: unknown) => void) | undefined];
         if (event !== SOCKET_RPC_EVENTS.CALL) return;
@@ -145,7 +178,7 @@ describe('happier session run start (integration)', () => {
         });
       },
     });
-    bindApiSessionSocketMock(mockIo, socket);
+    bindApiSessionSocketMock(mockIo, startRpcSocket);
   });
 
   afterEach(async () => {
@@ -199,6 +232,157 @@ describe('happier session run start (integration)', () => {
     }
   });
 
+  it('resumes an inactive resumable parent before starting its execution run', async () => {
+    const { handleSessionCommand } = await import('../index');
+    const { decodeBase64, decrypt, encodeBase64, encrypt } = await import('@/api/encryption');
+    const output = captureConsoleJsonOutput();
+    const machineKeySeed = new Uint8Array(32).fill(8);
+    const rpcOrder: string[] = [];
+    let spawnNonce = '';
+    sessionActive = false;
+
+    const userSocket = createApiSessionSocketStub({
+      emit: (event: string, args: unknown[]) => {
+        const [data, cb] = args as [any, ((value: unknown) => void) | undefined];
+        if (event !== SOCKET_RPC_EVENTS.CALL) return;
+        rpcOrder.push(String(data.method ?? ''));
+        expect(data.method).toBe(`machine-integration-1:${RPC_METHODS.SPAWN_HAPPY_SESSION}`);
+        const request = decrypt(
+          machineKeySeed,
+          'dataKey',
+          decodeBase64(String(data.params ?? ''), 'base64'),
+        ) as any;
+        expect(request).toMatchObject({
+          type: 'resume-session',
+          sessionId: 'sess_integration_run_start_123',
+          directory: '/tmp',
+          spawnNonce: expect.stringMatching(/^inactive-session\.resume:/u),
+        });
+        spawnNonce = String(request.spawnNonce);
+        cb?.({
+          ok: true,
+          result: encodeBase64(
+            encrypt(machineKeySeed, 'dataKey', {
+              type: 'success',
+            }),
+            'base64',
+          ),
+        });
+      },
+    });
+    const readinessSocket = createApiSessionSocketStub({
+      emit: (event: string, args: unknown[]) => {
+        const [data, cb] = args as [any, ((value: unknown) => void) | undefined];
+        if (event !== SOCKET_RPC_EVENTS.CALL) return;
+        rpcOrder.push(String(data.method ?? ''));
+        expect(data.method).toBe(
+          `machine-integration-1:${RPC_METHODS.DAEMON_SPAWN_SESSION_RESOLVE}`,
+        );
+        const request = decrypt(
+          machineKeySeed,
+          'dataKey',
+          decodeBase64(String(data.params ?? ''), 'base64'),
+        ) as any;
+        expect(request).toEqual({ spawnNonce });
+        cb?.({
+          ok: true,
+          result: encodeBase64(
+            encrypt(machineKeySeed, 'dataKey', {
+              status: 'success',
+              sessionId: 'sess_integration_run_start_123',
+            }),
+            'base64',
+          ),
+        });
+      },
+    });
+    const orderedStartSocket = createApiSessionSocketStub({
+      emit: (event: string, args: unknown[]) => {
+        const [data, cb] = args as [any, ((value: unknown) => void) | undefined];
+        if (event !== SOCKET_RPC_EVENTS.CALL) return;
+        rpcOrder.push(String(data.method ?? ''));
+        return startRpcSocket.emit(event, data, cb);
+      },
+    });
+    bindApiSessionSocketSequenceMock(mockIo, [
+      userSocket,
+      readinessSocket,
+      orderedStartSocket,
+    ]);
+
+    try {
+      await handleSessionCommand(
+        ['run', 'start', 'sess_integration_run_start_123', '--intent', 'review', '--backend', 'claude', '--json'],
+        {
+          readCredentialsFn: async () => ({
+            token: 'token_test',
+            encryption: {
+              type: 'dataKey',
+              publicKey: deriveBoxPublicKeyFromSeed(machineKeySeed),
+              machineKey: machineKeySeed,
+            },
+          }),
+        },
+      );
+
+      expect(output.json().ok).toBe(true);
+      expect(rpcOrder).toEqual([
+        `machine-integration-1:${RPC_METHODS.SPAWN_HAPPY_SESSION}`,
+        `machine-integration-1:${RPC_METHODS.DAEMON_SPAWN_SESSION_RESOLVE}`,
+        'sess_integration_run_start_123:execution.run.start',
+      ]);
+    } finally {
+      output.restore();
+    }
+  });
+
+  it('fails an active unsupported runtime immediately without attempting a resume', async () => {
+    const { handleSessionCommand } = await import('../index');
+    const { encodeBase64, encrypt } = await import('@/api/encryption');
+    const output = captureConsoleJsonOutput();
+    const rpcOrder: string[] = [];
+    const socket = createApiSessionSocketStub({
+      emit: (event: string, args: unknown[]) => {
+        const [data, cb] = args as [any, ((value: unknown) => void) | undefined];
+        if (event !== SOCKET_RPC_EVENTS.CALL) return;
+        rpcOrder.push(String(data.method ?? ''));
+        cb?.({
+          ok: true,
+          result: encodeBase64(
+            encrypt(new Uint8Array(32).fill(3), 'dataKey', {
+              ok: false,
+              errorCode: 'execution_run_protocol_unsupported',
+              error: 'execution_run_protocol_unsupported',
+            }),
+            'base64',
+          ),
+        });
+      },
+    });
+    bindApiSessionSocketMock(mockIo, socket);
+
+    try {
+      await handleSessionCommand(
+        ['run', 'start', 'sess_integration_run_start_123', '--intent', 'review', '--backend', 'claude', '--json'],
+        {
+          readCredentialsFn: async () => ({
+            token: 'token_test',
+            encryption: {
+              type: 'dataKey',
+              publicKey: deriveBoxPublicKeyFromSeed(new Uint8Array(32).fill(8)),
+              machineKey: new Uint8Array(32).fill(8),
+            },
+          }),
+        },
+      );
+
+      expect(output.json().error?.code).toBe('execution_run_protocol_unsupported');
+      expect(rpcOrder).toEqual(['sess_integration_run_start_123:execution.run.start']);
+    } finally {
+      output.restore();
+    }
+  });
+
   it('rejects multi-backend csv input for the single-target run start wrapper', async () => {
     const { handleSessionCommand } = await import('../index');
     const output = captureConsoleJsonOutput();
@@ -222,9 +406,31 @@ describe('happier session run start (integration)', () => {
       expect(parsed.ok).toBe(false);
       expect(parsed.kind).toBe('session_run_start');
       expect(parsed.error?.code).toBe('invalid_arguments');
-      expect(parsed.error?.message).toBe(
-        'Usage: happier session run start <session-id-or-prefix> --intent <intent> --backend <backend-target> [--instructions <text>] [--permission-mode <mode>] [--retention <policy>] [--run-class <class>] [--io-mode <mode>] [--json]',
+      expect(parsed.error?.message).toBe(`Usage: ${SESSION_HELP_LINES.runStart}`);
+    } finally {
+      output.restore();
+    }
+  });
+
+  it('returns a stable invalid_arguments error for an unsupported intent', async () => {
+    const { handleSessionCommand } = await import('../index');
+    const output = captureConsoleJsonOutput();
+    const readCredentialsFn = vi.fn(async () => null);
+
+    try {
+      await handleSessionCommand(
+        ['run', 'start', 'sess_integration_run_start_123', '--intent', 'qa_cli_run', '--backend', 'codex', '--json'],
+        { readCredentialsFn },
       );
+
+      const parsed = output.json();
+      expect(parsed.ok).toBe(false);
+      expect(parsed.kind).toBe('session_run_start');
+      expect(parsed.error).toEqual({
+        code: 'invalid_arguments',
+        message: 'Invalid --intent "qa_cli_run". Expected one of: review, plan, delegate, task, voice_agent, memory_hints, scm_commit_message, scm_diff_summary.',
+      });
+      expect(readCredentialsFn).not.toHaveBeenCalled();
     } finally {
       output.restore();
     }

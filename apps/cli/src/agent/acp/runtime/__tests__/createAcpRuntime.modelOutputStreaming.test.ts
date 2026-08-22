@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
 import type { ACPMessageData } from '@/api/session/sessionMessageTypes';
@@ -10,6 +10,10 @@ import { createApprovedPermissionHandler } from '@/testkit/backends/permissionHa
 import { createBasicSessionClientWithOverrides } from '@/testkit/backends/sessionFixtures';
 
 describe('createAcpRuntime (transcript streaming vNext)', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it('writes durable streaming checkpoints with a stable segment localId reused by the final commit', async () => {
     const previousInitialCheckpointMs = process.env.HAPPIER_STREAM_INITIAL_CHECKPOINT_MS;
     process.env.HAPPIER_STREAM_INITIAL_CHECKPOINT_MS = '0';
@@ -17,8 +21,9 @@ describe('createAcpRuntime (transcript streaming vNext)', () => {
     const backend = createFakeAcpRuntimeBackend({ sessionId: 'sess_main' });
     const durableCalls: Array<{ localId: string; body: ACPMessageData; meta?: Record<string, unknown> }> = [];
     const session = createBasicSessionClientWithOverrides({
-      sendAgentMessageCommitted: async (_provider, body, opts) => {
+      enqueueAgentMessageCommitted: async (_provider, body, opts) => {
         durableCalls.push({ localId: opts.localId, body, meta: opts.meta });
+        return { persisted: true, delivered: false };
       },
     });
 
@@ -68,8 +73,9 @@ describe('createAcpRuntime (transcript streaming vNext)', () => {
     const backend = createFakeAcpRuntimeBackend({ sessionId: 'sess_main' });
     const durableCalls: Array<{ localId: string; body: ACPMessageData; meta?: Record<string, unknown> }> = [];
     const session = createBasicSessionClientWithOverrides({
-      sendAgentMessageCommitted: async (_provider, body, opts) => {
+      enqueueAgentMessageCommitted: async (_provider, body, opts) => {
         durableCalls.push({ localId: opts.localId, body, meta: opts.meta });
+        return { persisted: true, delivered: false };
       },
     });
 
@@ -128,13 +134,13 @@ describe('createAcpRuntime (transcript streaming vNext)', () => {
     const backend = createFakeAcpRuntimeBackend({ sessionId: 'sess_main' });
     const liveCalls: Array<{ body: ACPMessageData; meta?: Record<string, unknown> }> = [];
     const session = createBasicSessionClientWithOverrides({
-      sendAgentMessageCommitted: async () => undefined,
+      enqueueAgentMessageCommitted: async () => ({ persisted: true, delivered: false }),
     });
     const transcriptSession = {
       sendAgentMessageEphemeral: vi.fn((_provider: string, body: ACPMessageData, opts: { meta?: Record<string, unknown> }) => {
         liveCalls.push({ body, meta: opts.meta });
       }),
-      sendAgentMessageCommitted: vi.fn(async () => undefined),
+      enqueueAgentMessageCommitted: vi.fn(async () => ({ persisted: true, delivered: false })),
     };
 
     const runtime = createAcpRuntime({
@@ -178,8 +184,9 @@ describe('createAcpRuntime (transcript streaming vNext)', () => {
     const backend = createFakeAcpRuntimeBackend({ sessionId: 'sess_main' });
     const durableCalls: Array<{ body: ACPMessageData; meta?: Record<string, unknown> }> = [];
     const session = createBasicSessionClientWithOverrides({
-      sendAgentMessageCommitted: async (_provider, body, opts) => {
+      enqueueAgentMessageCommitted: async (_provider, body, opts) => {
         durableCalls.push({ body, meta: opts.meta });
+        return { persisted: true, delivered: false };
       },
     });
 
@@ -240,13 +247,14 @@ describe('createAcpRuntime (transcript streaming vNext)', () => {
     let resolveInitialCommit: (() => void) | undefined;
     let durableCommitCount = 0;
     const session = createBasicSessionClientWithOverrides({
-      sendAgentMessageCommitted: async () => {
+      enqueueAgentMessageCommitted: async () => {
         durableCommitCount += 1;
         if (durableCommitCount === 1) {
           await new Promise<void>((resolve) => {
             resolveInitialCommit = resolve;
           });
         }
+        return { persisted: true, delivered: false };
       },
     });
 
@@ -288,8 +296,9 @@ describe('createAcpRuntime (transcript streaming vNext)', () => {
     const backend = createFakeAcpRuntimeBackend({ sessionId: 'sess_main' });
     const durableCalls: Array<{ body: ACPMessageData; meta?: Record<string, unknown> }> = [];
     const session = createBasicSessionClientWithOverrides({
-      sendAgentMessageCommitted: async (_provider, body, opts) => {
+      enqueueAgentMessageCommitted: async (_provider, body, opts) => {
         durableCalls.push({ body, meta: opts.meta });
+        return { persisted: true, delivered: false };
       },
     });
 
@@ -336,12 +345,18 @@ describe('createAcpRuntime (transcript streaming vNext)', () => {
     const backend = createFakeAcpRuntimeBackend({ sessionId: 'sess_main' });
     const durableCalls: Array<{ body: ACPMessageData; meta?: Record<string, unknown> }> = [];
     const sessionMediaCalls: unknown[] = [];
+    let resolveMediaAdmission!: () => void;
+    const mediaAdmission = new Promise<void>((resolve) => {
+      resolveMediaAdmission = resolve;
+    });
     const session = createBasicSessionClientWithOverrides({
-      sendAgentMessageCommitted: async (_provider, body, opts) => {
+      enqueueAgentMessageCommitted: async (_provider, body, opts) => {
         durableCalls.push({ body, meta: opts.meta });
+        return { persisted: true, delivered: false };
       },
       sendAgentSessionMediaCommitted: async (_provider, request) => {
         sessionMediaCalls.push(request);
+        await mediaAdmission;
       },
     });
 
@@ -377,6 +392,16 @@ describe('createAcpRuntime (transcript streaming vNext)', () => {
     await vi.waitFor(() => {
       expect(sessionMediaCalls).toHaveLength(1);
     });
+    const flush = runtime.flushTurn();
+    let flushSettled = false;
+    void flush.then(() => {
+      flushSettled = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(flushSettled).toBe(false);
+
+    resolveMediaAdmission();
+    await flush;
     expect(sessionMediaCalls[0]).toMatchObject({
       localId: 'media-row-1',
       role: 'output',
@@ -393,10 +418,15 @@ describe('createAcpRuntime (transcript streaming vNext)', () => {
   it('deduplicates repeated ACP session media events before persistence', async () => {
     const backend = createFakeAcpRuntimeBackend({ sessionId: 'sess_main' });
     const sessionMediaCalls: unknown[] = [];
+    let mediaAttempt = 0;
     const session = createBasicSessionClientWithOverrides({
-      sendAgentMessageCommitted: async () => undefined,
+      enqueueAgentMessageCommitted: async () => ({ persisted: true, delivered: false }),
       sendAgentSessionMediaCommitted: async (_provider, request) => {
         sessionMediaCalls.push(request);
+        mediaAttempt += 1;
+        if (mediaAttempt === 1) {
+          throw new Error('durable custody closed before admission');
+        }
       },
     });
 
@@ -429,6 +459,11 @@ describe('createAcpRuntime (transcript streaming vNext)', () => {
         media,
       },
     } satisfies AgentMessage);
+
+    await vi.waitFor(() => {
+      expect(sessionMediaCalls).toHaveLength(1);
+    });
+
     backend.emit({
       type: 'event',
       name: 'session_media',
@@ -441,11 +476,24 @@ describe('createAcpRuntime (transcript streaming vNext)', () => {
     } satisfies AgentMessage);
 
     await vi.waitFor(() => {
-      expect(sessionMediaCalls).toHaveLength(1);
+      expect(sessionMediaCalls).toHaveLength(2);
     });
-    expect(sessionMediaCalls[0]).toMatchObject({
-      localId: 'media-row-chunk',
+    expect(sessionMediaCalls[1]).toMatchObject({
+      localId: 'media-row-final',
       media,
     });
+
+    backend.emit({
+      type: 'event',
+      name: 'session_media',
+      payload: {
+        localId: 'media-row-duplicate-after-success',
+        role: 'output',
+        category: 'generated',
+        media,
+      },
+    } satisfies AgentMessage);
+    await Promise.resolve();
+    expect(sessionMediaCalls).toHaveLength(2);
   });
 });

@@ -111,4 +111,42 @@ describe('handleAcpSessionNotification transport hooks', () => {
       'handled:second',
     ]);
   });
+
+  it('does not pass a provider-suppressed tool update into canonical handling', async () => {
+    const handled: string[] = [];
+    const transport: TransportHandler = {
+      agentName: 'provider-with-pressure-policy',
+      getInitTimeout: () => 1_000,
+      getToolPatterns: () => [],
+      logTerminalToolUpdate: (update) => handled.push(String(Reflect.get(update, 'toolCallId'))),
+    };
+
+    await handleAcpSessionNotification({
+      notification: {
+        update: {
+          sessionUpdate: 'tool_call_update',
+          toolCallId: 'suppressed',
+          status: 'completed',
+        },
+      } as unknown as SessionNotification,
+      agentName: transport.agentName,
+      transport,
+      replayCapture: null,
+      waitingForResponse: false,
+      onResponseTrafficObserved: () => {},
+      onAssistantMessageObserved: () => {},
+      prepareToolUpdate: async () => null,
+      createHandlerContext: () => createHandlerContext(transport),
+      setToolCallCountSincePrompt: () => {},
+      emit: () => {},
+      sessionModeState: null,
+      setSessionModeState: () => {},
+      sessionModelState: null,
+      setSessionModelState: () => {},
+      sessionConfigOptionsState: null,
+      setSessionConfigOptionsState: () => {},
+    });
+
+    expect(handled).toEqual([]);
+  });
 });

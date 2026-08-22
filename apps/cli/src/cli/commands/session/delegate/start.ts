@@ -1,13 +1,11 @@
 import chalk from 'chalk';
 
-import type { Credentials } from '@/persistence';
+import type { StoredCredentials } from '@/persistence';
 import { createCliActionExecutor } from '@/session/actions/createCliActionExecutor';
 
-import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
-import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
-import { resolveSessionEncryptionContextFromCredentials, resolveSessionStoredContentEncryptionMode } from '@/session/transport/encryption/sessionEncryptionContext';
-import { readFlagValue } from '@/cli/commands/shared/argvFlags';
-import { resolveSessionIdOrPrefix } from '@/session/query/resolveSessionId';
+import { wantsJson, printJsonEnvelope, writeJsonStdout } from '@/cli/output/jsonEnvelope';
+import { readCommandPositionals, readFlagValue } from '@/cli/commands/shared/argvFlags';
+import { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
 import { normalizeBackendTargetKeysFromCsv } from '../shared/normalizeBackendTargetKeys';
 import { ensureCliActionPolicySettings } from '@/session/actions/ensureCliActionPolicySettings';
 import { SESSION_HELP_LINES } from '../shared/sessionCommandUsage';
@@ -15,10 +13,13 @@ import { normalizeSessionStartActionResults } from '../shared/sessionStartAction
 
 export async function cmdSessionDelegateStart(
   argv: string[],
-  deps: Readonly<{ readCredentialsFn: () => Promise<Credentials | null> }>,
+  deps: Readonly<{ readCredentialsFn: () => Promise<StoredCredentials | null> }>,
 ): Promise<void> {
   const json = wantsJson(argv);
-  const idOrPrefix = String(argv[2] ?? '').trim();
+  const [idOrPrefix = ''] = readCommandPositionals(argv, {
+    startIndex: 2,
+    valueFlags: ['--backends', '--backend', '--instructions', '--permission-mode', '--retention', '--run-class', '--io-mode'],
+  });
   if (!idOrPrefix) {
     throw new Error(`Usage: ${SESSION_HELP_LINES.delegateStart}`);
   }
@@ -48,7 +49,7 @@ export async function cmdSessionDelegateStart(
   const credentials = await deps.readCredentialsFn();
   if (!credentials) {
     if (json) {
-      printJsonEnvelope({ ok: false, kind: 'session_delegate_start', error: { code: 'not_authenticated' } });
+      await printJsonEnvelope({ ok: false, kind: 'session_delegate_start', error: { code: 'not_authenticated' } });
       return;
     }
     console.error(chalk.red('Error:'), 'Not authenticated. Run "happier auth login" first.');
@@ -57,40 +58,41 @@ export async function cmdSessionDelegateStart(
 
   await ensureCliActionPolicySettings(credentials);
 
-  const resolved = await resolveSessionIdOrPrefix({ credentials, idOrPrefix });
-  if (!resolved.ok) {
+  const sessionTarget = await resolveSessionTransportContext({ credentials, idOrPrefix });
+  if (!sessionTarget.ok) {
     if (json) {
-      printJsonEnvelope({
+      await printJsonEnvelope({
         ok: false,
-          kind: 'session_delegate_start',
-        error: { code: resolved.code, ...(resolved.candidates ? { candidates: resolved.candidates } : {}) },
+        kind: 'session_delegate_start',
+        error: { code: sessionTarget.code, ...(sessionTarget.candidates ? { candidates: sessionTarget.candidates } : {}) },
       });
       return;
     }
-    throw new Error(resolved.code);
+    throw new Error(sessionTarget.code);
   }
-  const sessionId = resolved.sessionId;
+  const { sessionId } = sessionTarget;
 
-  const rawSession = await fetchSessionById({ token: credentials.token, sessionId });
-  if (!rawSession) {
-    if (json) {
-      printJsonEnvelope({ ok: false, kind: 'session_delegate_start', error: { code: 'session_not_found', sessionId } });
-      return;
-    }
-    console.error(chalk.red('Error:'), `Session not found: ${sessionId}`);
-    process.exit(1);
-  }
-
-  const ctx = resolveSessionEncryptionContextFromCredentials(credentials, rawSession);
-  const mode = resolveSessionStoredContentEncryptionMode(rawSession);
-
-  const executor = createCliActionExecutor({ token: credentials.token, credentials, sessionId, mode, ctx });
+  const executor = sessionTarget.mode === 'plain'
+    ? createCliActionExecutor({
+        token: credentials.token,
+        credentials,
+        sessionId,
+        mode: sessionTarget.mode,
+        ctx: sessionTarget.ctx,
+      })
+    : createCliActionExecutor({
+        token: credentials.token,
+        credentials,
+        sessionId,
+        mode: sessionTarget.mode,
+        ctx: sessionTarget.ctx,
+      });
   const started = await executor.execute('subagents.delegate.start', input, { defaultSessionId: sessionId });
   const normalized = normalizeSessionStartActionResults(started);
 
   if (!normalized.ok) {
     if (json) {
-      printJsonEnvelope({
+      await printJsonEnvelope({
         ok: false,
         kind: 'session_delegate_start',
         error: {
@@ -108,7 +110,7 @@ export async function cmdSessionDelegateStart(
   const results = normalized.results;
 
   if (json) {
-    printJsonEnvelope({
+    await printJsonEnvelope({
       ok: true,
       kind: 'session_delegate_start',
       data: { sessionId, results },
@@ -117,5 +119,5 @@ export async function cmdSessionDelegateStart(
   }
 
   console.log(chalk.green('✓'), 'delegate started');
-  console.log(JSON.stringify({ sessionId, results }, null, 2));
+  await writeJsonStdout({ sessionId, results }, { pretty: true });
 }

@@ -1,7 +1,6 @@
 import os from 'node:os';
 
-import { validateStoredAuthTokenAgainstActiveServer } from '@/auth/validateStoredAuthTokenAgainstActiveServer';
-import { readCredentials, readSettings } from '@/persistence';
+import { resolveActiveServerAuthReadiness } from '@/auth/resolveActiveServerAuthReadiness';
 import { configuration } from '@/configuration';
 import { checkIfDaemonRunningAndCleanupStaleState } from '@/daemon/controlClient';
 import { printJsonEnvelope, wantsJson } from '@/cli/output/jsonEnvelope';
@@ -11,11 +10,11 @@ import { definitionList, fail, ok, sectionTitle, warn } from '@happier-dev/cli-c
 export async function handleAuthStatus(argv: string[] = []): Promise<void> {
   const resolvedArgv = await applyServerSelectionFromArgs(argv);
   const json = wantsJson(resolvedArgv);
-  const credentials = await readCredentials();
-  const settings = await readSettings();
+  const readiness = await resolveActiveServerAuthReadiness();
+  const credentials = readiness.credentials;
 
   if (json && !credentials) {
-    printJsonEnvelope({ ok: false, kind: 'auth_status', error: { code: 'not_authenticated' } });
+    await printJsonEnvelope({ ok: false, kind: 'auth_status', error: { code: 'not_authenticated' } });
     return;
   }
 
@@ -29,10 +28,9 @@ export async function handleAuthStatus(argv: string[] = []): Promise<void> {
     return;
   }
 
-  const authValidation = await validateStoredAuthTokenAgainstActiveServer(credentials.token);
-  if (authValidation.state === 'invalid') {
+  if (!readiness.authenticated) {
     if (json) {
-      printJsonEnvelope({ ok: false, kind: 'auth_status', error: { code: 'not_authenticated' } });
+      await printJsonEnvelope({ ok: false, kind: 'auth_status', error: { code: 'not_authenticated' } });
       return;
     }
 
@@ -42,8 +40,8 @@ export async function handleAuthStatus(argv: string[] = []): Promise<void> {
     return;
   }
 
-  const machineId = settings?.machineId;
-  const machineRegistered = typeof machineId === 'string' && machineId.trim().length > 0;
+  const machineId = readiness.machineId;
+  const machineRegistered = readiness.machineRegistered;
 
   let daemonRunning = false;
   try {
@@ -53,14 +51,14 @@ export async function handleAuthStatus(argv: string[] = []): Promise<void> {
   }
 
   if (json) {
-    printJsonEnvelope({
+    await printJsonEnvelope({
       ok: true,
       kind: 'auth_status',
       data: {
         authenticated: true,
-        encryption: { type: credentials.encryption.type },
+        encryption: { type: credentials.encryption?.type ?? 'none' },
         machineRegistered,
-        ...(machineRegistered ? { machineId: machineId!.trim() } : {}),
+        ...(machineRegistered ? { machineId: machineId ?? '' } : {}),
         host: os.hostname(),
         happyHomeDir: configuration.happyHomeDir,
         daemonRunning,
@@ -74,7 +72,7 @@ export async function handleAuthStatus(argv: string[] = []): Promise<void> {
   if (machineRegistered) {
     console.log(ok('Machine registered'));
     console.log(definitionList([
-      { label: 'Machine ID', value: machineId!.trim() },
+      { label: 'Machine ID', value: machineId ?? '' },
       { label: 'Host', value: os.hostname() },
     ], { indent: '  ' }));
   } else {

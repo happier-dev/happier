@@ -8,6 +8,23 @@ export const SHARED_PERMISSION_SAFE_TOOL_NAME_TOKENS = [
   'think',
 ] as const;
 
+const SHARED_PERMISSION_SAFE_TOOL_NAMES = new Set([
+  'think',
+  'save_memory',
+  'mcp__happier__think',
+  'mcp__happier__save_memory',
+  'mcp__happy__think',
+  'mcp__happy__save_memory',
+  'happier__think',
+  'happier__save_memory',
+  'happy__think',
+  'happy__save_memory',
+  'happier_think',
+  'happier_save_memory',
+  'happy_think',
+  'happy_save_memory',
+]);
+
 export const SHARED_PERMISSION_GUARD_TOOL_NAMES = [
   'external_directory',
   'doom_loop',
@@ -15,19 +32,6 @@ export const SHARED_PERMISSION_GUARD_TOOL_NAMES = [
 
 function normalizePermissionToolName(toolName: string): string {
   return String(toolName ?? '').trim().toLowerCase();
-}
-
-function matchesSharedPermissionToolToken(toolName: string, token: string): boolean {
-  if (toolName === token) return true;
-  return [
-    '_',
-    '__',
-    '-',
-    '/',
-    '.',
-    ':',
-    ' ',
-  ].some((boundary) => toolName.endsWith(`${boundary}${token}`));
 }
 
 export const SHARED_PROVIDER_ENFORCED_SAFE_TOOL_NAME_SEGMENTS = [
@@ -45,16 +49,11 @@ export const SHARED_PROVIDER_ENFORCED_SAFE_TOOL_NAME_SEGMENTS = [
   'write_text_file',
 ] as const;
 
-export const SHARED_PROVIDER_ENFORCED_SAFE_TOOL_CALL_ID_SEGMENTS = [
-  'change_title',
-  ...SHARED_PERMISSION_SAFE_TOOL_NAME_TOKENS,
-] as const;
-
 export function isSharedPermissionSafeToolName(toolName: string): boolean {
   const normalized = normalizePermissionToolName(toolName);
   if (!normalized) return false;
   if (isChangeTitleToolLikeName(normalized)) return true;
-  return SHARED_PERMISSION_SAFE_TOOL_NAME_TOKENS.some((token) => matchesSharedPermissionToolToken(normalized, token));
+  return SHARED_PERMISSION_SAFE_TOOL_NAMES.has(normalized);
 }
 
 export function isSharedHappierShellBridgeToolName(toolName: string): boolean {

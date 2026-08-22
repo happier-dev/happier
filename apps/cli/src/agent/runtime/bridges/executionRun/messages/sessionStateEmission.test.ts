@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import { AGENT_SESSION_RUNTIME_LIMITS_CANDIDATE_V1 } from '@happier-dev/protocol';
 import type { ExecutionRunBackendController } from '@/agent/executionRuns/controllers/types';
 import { failureSignal } from '@/agent/executionRuns/controllers/failureSignal';
 import type { ExecutionRunState } from '../executionRunTypes';
@@ -79,6 +80,86 @@ function createRunningRun(): ExecutionRunState {
 }
 
 describe('createExecutionRunControllerMessageHandler', () => {
+  it('fails generic task output before retaining an oversized delta or cumulative transcript', () => {
+    const deltaLimit = AGENT_SESSION_RUNTIME_LIMITS_CANDIDATE_V1.deltaTextMaxCodeUnits;
+    const transcriptLimit = AGENT_SESSION_RUNTIME_LIMITS_CANDIDATE_V1.p0MeasuredCandidates.transcriptTextMaxCodeUnits;
+    const cancelOversizedDelta = vi.fn(async () => {});
+    const oversizedDeltaCtrl = createController({ backend: { cancel: cancelOversizedDelta }, withFailureSignal: true });
+    const oversizedDeltaRuns = new Map([['run_1', { ...createRunningRun(), intent: 'task' as const }]]);
+    const oversizedDeltaHandler = createExecutionRunControllerMessageHandler({
+      ctrl: oversizedDeltaCtrl,
+      runId: 'run_1',
+      sidechainId: 'sidechain_1',
+      ioMode: 'request_response',
+      computeSidechainStreamText: () => null,
+      sendAcp: async () => {},
+      parentProvider: 'codex',
+      runs: oversizedDeltaRuns,
+      backendSupportsResume: true,
+      writeActivityMarker: async () => {},
+      getNowMs: () => 123,
+    });
+
+    oversizedDeltaHandler({ type: 'model-output', textDelta: 'x'.repeat(deltaLimit + 1) });
+
+    expect(oversizedDeltaCtrl.buffer).toBe('');
+    expect(cancelOversizedDelta).toHaveBeenCalledWith('child_session_1');
+    expect((oversizedDeltaCtrl.failureSignal?.readError() as Error & { executionRunErrorCode?: unknown })?.executionRunErrorCode)
+      .toBe('execution_run_output_limit_exceeded');
+
+    const cancelOversizedFullText = vi.fn(async () => {});
+    const oversizedFullTextCtrl = createController({
+      backend: { cancel: cancelOversizedFullText },
+      withFailureSignal: true,
+    });
+    const oversizedFullTextRuns = new Map([['run_1', { ...createRunningRun(), intent: 'task' as const }]]);
+    const oversizedFullTextHandler = createExecutionRunControllerMessageHandler({
+      ctrl: oversizedFullTextCtrl,
+      runId: 'run_1',
+      sidechainId: 'sidechain_1',
+      ioMode: 'request_response',
+      computeSidechainStreamText: () => null,
+      sendAcp: async () => {},
+      parentProvider: 'codex',
+      runs: oversizedFullTextRuns,
+      backendSupportsResume: true,
+      writeActivityMarker: async () => {},
+      getNowMs: () => 123,
+    });
+
+    oversizedFullTextHandler({ type: 'model-output', fullText: 'x'.repeat(transcriptLimit + 1) });
+
+    expect(oversizedFullTextCtrl.buffer).toBe('');
+    expect(cancelOversizedFullText).toHaveBeenCalledWith('child_session_1');
+    expect((oversizedFullTextCtrl.failureSignal?.readError() as Error & { executionRunErrorCode?: unknown })?.executionRunErrorCode)
+      .toBe('execution_run_output_limit_exceeded');
+
+    const cancelCumulative = vi.fn(async () => {});
+    const cumulativeCtrl = createController({ backend: { cancel: cancelCumulative }, withFailureSignal: true });
+    const cumulativeRuns = new Map([['run_1', { ...createRunningRun(), intent: 'task' as const }]]);
+    const cumulativeHandler = createExecutionRunControllerMessageHandler({
+      ctrl: cumulativeCtrl,
+      runId: 'run_1',
+      sidechainId: 'sidechain_1',
+      ioMode: 'request_response',
+      computeSidechainStreamText: () => null,
+      sendAcp: async () => {},
+      parentProvider: 'codex',
+      runs: cumulativeRuns,
+      backendSupportsResume: true,
+      writeActivityMarker: async () => {},
+      getNowMs: () => 123,
+    });
+
+    cumulativeHandler({ type: 'model-output', fullText: 'x'.repeat(transcriptLimit) });
+    cumulativeHandler({ type: 'model-output', textDelta: 'y' });
+
+    expect(cumulativeCtrl.buffer).toHaveLength(transcriptLimit);
+    expect(cancelCumulative).toHaveBeenCalledWith('child_session_1');
+    expect((cumulativeCtrl.failureSignal?.readError() as Error & { executionRunErrorCode?: unknown })?.executionRunErrorCode)
+      .toBe('execution_run_output_limit_exceeded');
+  });
+
   it('writes activity markers for meaningful runtime activity but not vendor session bookkeeping', async () => {
     const ctrl = createController();
     const runs = new Map([['run_1', createRunningRun()]]);
@@ -89,7 +170,7 @@ describe('createExecutionRunControllerMessageHandler', () => {
       sidechainId: 'sidechain_1',
       ioMode: 'request_response',
       computeSidechainStreamText: () => null,
-      sendAcp: () => {},
+      sendAcp: async () => {},
       parentProvider: 'codex',
       runs,
       backendSupportsResume: true,
@@ -119,7 +200,7 @@ describe('createExecutionRunControllerMessageHandler', () => {
       sidechainId: 'sidechain_1',
       ioMode: 'request_response',
       computeSidechainStreamText: () => null,
-      sendAcp: () => {},
+      sendAcp: async () => {},
       parentProvider: 'codex',
       runs,
       backendSupportsResume: true,
@@ -149,7 +230,7 @@ describe('createExecutionRunControllerMessageHandler', () => {
       sidechainId: 'sidechain_1',
       ioMode: 'request_response',
       computeSidechainStreamText: () => null,
-      sendAcp: () => {},
+      sendAcp: async () => {},
       parentProvider: 'codex',
       runs,
       backendSupportsResume: true,
@@ -182,7 +263,7 @@ describe('createExecutionRunControllerMessageHandler', () => {
       sidechainId: 'sidechain_1',
       ioMode: 'request_response',
       computeSidechainStreamText: () => null,
-      sendAcp: () => {},
+      sendAcp: async () => {},
       parentProvider: 'codex',
       runs,
       backendSupportsResume: true,
@@ -227,7 +308,7 @@ describe('createExecutionRunControllerMessageHandler', () => {
       sidechainId: 'sidechain_1',
       ioMode: 'request_response',
       computeSidechainStreamText: () => null,
-      sendAcp: () => {},
+      sendAcp: async () => {},
       parentProvider: 'codex',
       runs,
       backendSupportsResume: true,
@@ -280,7 +361,7 @@ describe('createExecutionRunControllerMessageHandler', () => {
       sidechainId: 'sidechain_1',
       ioMode: 'streaming',
       computeSidechainStreamText: () => null,
-      sendAcp: () => {},
+      sendAcp: async () => {},
       parentProvider: 'codex',
       runs,
       backendSupportsResume: true,

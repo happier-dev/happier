@@ -103,6 +103,7 @@ describe('configuration env url fallback', () => {
 
     process.env.HAPPIER_HOME_DIR = homeDir;
     process.env.HAPPIER_SERVER_URL = 'https://selfhost.example.test/api/';
+    delete process.env.HAPPIER_ACTIVE_SERVER_ID;
     delete process.env.HAPPIER_WEBAPP_URL;
 
     const output = captureConsoleText();
@@ -142,6 +143,7 @@ describe('configuration env url fallback', () => {
 
     process.env.HAPPIER_HOME_DIR = homeDir;
     process.env.HAPPIER_SERVER_URL = 'https://api.selfhost.example.test/v1/';
+    delete process.env.HAPPIER_ACTIVE_SERVER_ID;
     delete process.env.HAPPIER_WEBAPP_URL;
 
     const output = captureConsoleText();
@@ -338,6 +340,36 @@ describe('configuration env url fallback', () => {
     expect(configMod.configuration.privateKeyFile).toBe(join(homeDir, 'servers', endpointProfileId, 'access.key'));
     expect(configMod.configuration.daemonStateFile).toBe(join(homeDir, 'servers', lifecycleScopeId, 'daemon.state.json'));
     expect(configMod.configuration.daemonLockFile).toBe(join(homeDir, 'servers', lifecycleScopeId, 'daemon.state.json.lock'));
+  });
+
+  it('keeps an explicit stack runtime identity when only a different persisted profile matches the endpoint', async () => {
+    const homeDir = createTempDirSync('happier-cli-config-stable-stack-identity-');
+    tempDirs.push(homeDir);
+    const stableScopeId = 'stack_repo-dev__id_default';
+    const matchingAliasId = 'localhost-52753';
+    writeFileSync(join(homeDir, 'settings.json'), JSON.stringify({
+      schemaVersion: 6,
+      activeServerId: matchingAliasId,
+      servers: {
+        [matchingAliasId]: {
+          id: matchingAliasId,
+          serverUrl: 'http://127.0.0.1:52753',
+          webappUrl: 'http://localhost:52753',
+        },
+      },
+    }), 'utf-8');
+
+    process.env.HAPPIER_HOME_DIR = homeDir;
+    process.env.HAPPIER_ACTIVE_SERVER_ID = stableScopeId;
+    process.env.HAPPIER_SERVER_URL = 'http://127.0.0.1:52753';
+    process.env.HAPPIER_WEBAPP_URL = 'http://localhost:52753';
+
+    const configMod = await import('./configuration');
+    configMod.reloadConfiguration();
+
+    expect(configMod.configuration.activeServerId).toBe(stableScopeId);
+    expect(configMod.configuration.activeServerDir).toBe(join(homeDir, 'servers', stableScopeId));
+    expect(configMod.configuration.serverUrl).toBe('http://127.0.0.1:52753');
   });
 
   it('lets explicit persisted active server metadata override a contradictory inherited server URL', async () => {

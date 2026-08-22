@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 
 import { describe, expect, it } from 'vitest';
 
@@ -33,6 +34,16 @@ describe('session handoff provider bundle file ABI', () => {
       if (source.kind !== 'file') {
         throw new Error('Expected file-backed provider bundle payload');
       }
+      expect(JSON.parse(await readFile(source.filePath, 'utf8'))).toEqual({
+        providerId: 'acme.sample.backend',
+        remoteSessionId: 'remote-session-1',
+        providerPayloadV1: {
+          nested: true,
+          records: [
+            { id: 'record-1' },
+          ],
+        },
+      });
       await expect(readSessionHandoffAgentBundleFile(source.filePath)).resolves.toEqual(bundle);
     } finally {
       await source.dispose?.();

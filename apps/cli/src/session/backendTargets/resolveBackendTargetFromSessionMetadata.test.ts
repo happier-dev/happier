@@ -1,9 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import {
-  resolveBackendTargetFromSessionMetadata,
-  resolveExplicitBackendTargetFromSessionMetadata,
-} from './resolveBackendTargetFromSessionMetadata';
+import { resolveBackendTargetFromSessionMetadata } from './resolveBackendTargetFromSessionMetadata';
 
 describe('resolveBackendTargetFromSessionMetadata', () => {
   it('prefers configured ACP backend metadata over runtime descriptor metadata', () => {
@@ -64,9 +61,9 @@ describe('resolveBackendTargetFromSessionMetadata', () => {
     });
   });
 
-  it('does not invent a default target when explicit metadata is absent', () => {
-    expect(resolveExplicitBackendTargetFromSessionMetadata({})).toBeNull();
-    expect(resolveExplicitBackendTargetFromSessionMetadata({ flavor: 'claude' })).toEqual({
+  it('does not invent a default target when metadata declares no Agent', () => {
+    expect(resolveBackendTargetFromSessionMetadata({})).toBeNull();
+    expect(resolveBackendTargetFromSessionMetadata({ flavor: 'claude' })).toEqual({
       kind: 'backend',
       backendId: 'claude',
       sourceKind: 'built_in',

@@ -99,9 +99,30 @@ describe('callBuiltInHappierTool', () => {
         id: 'sess-1',
         metadata: { summary: { text: 'Old title' } },
       },
-      ctx: { type: 'plain' as const },
+      ctx: null,
       mode: 'plain' as const,
     });
+  });
+
+  it('creates the shared action executor for a token-only plain Session', async () => {
+    execute.mockResolvedValueOnce({ ok: true, result: { started: true } });
+
+    const { callBuiltInHappierTool } = await import('./callBuiltInHappierTool');
+    await callBuiltInHappierTool({
+      credentials: { token: 'token', encryption: null },
+      sessionId: 'sess-1',
+      toolName: 'action_execute',
+      args: {
+        actionId: 'subagents.plan.start',
+        input: { backendTargetKeys: ['agent:codex'], instructions: 'Plan this change.' },
+      },
+    });
+
+    expect(createCliActionExecutor).toHaveBeenCalledWith(expect.objectContaining({
+      credentials: { token: 'token', encryption: null },
+      mode: 'plain',
+      ctx: null,
+    }));
   });
 
   it('executes action_execute through the shared action executor on the CLI surface', async () => {
@@ -208,6 +229,27 @@ describe('callBuiltInHappierTool', () => {
       errorCode: 'session_id_ambiguous',
       error: 'Session id is ambiguous',
       candidates: ['sess-1', 'sess-2'],
+    });
+  });
+
+  it('reports session lookup timeouts without relabeling them as not-found', async () => {
+    resolveSessionTransportContext.mockResolvedValueOnce({
+      ok: false,
+      code: 'session_lookup_timeout',
+    });
+
+    const { callBuiltInHappierTool } = await import('./callBuiltInHappierTool');
+    const result = await callBuiltInHappierTool({
+      credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) } },
+      sessionId: 'c000000000000000000000000',
+      toolName: 'change_title',
+      args: { title: 'Renamed' },
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      errorCode: 'session_lookup_timeout',
+      error: 'Session lookup timed out; try again',
     });
   });
 

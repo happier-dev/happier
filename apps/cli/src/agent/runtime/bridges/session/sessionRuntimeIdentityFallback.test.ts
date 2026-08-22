@@ -4,6 +4,70 @@ import { buildCodexAgentRuntimeDescriptorV1 as buildCodexRuntimeIdentityDescript
 import { resolveSessionRuntimeIdentityFallback } from '@/agent/runtime/identity';
 
 describe('resolveSessionRuntimeIdentityFallback', () => {
+  it('prefers the canonical linked-session descriptor over stale metadata identity', () => {
+    const runtimeDescriptorV1 = buildCodexRuntimeIdentityDescriptorV1({
+      backendMode: 'appServer',
+      providerSessionId: 'runtime-session',
+      home: 'connectedService',
+      connectedServiceId: 'svc_1',
+    });
+    const result = resolveSessionRuntimeIdentityFallback({
+      metadata: {
+        flavor: 'codex',
+        codexSessionId: 'legacy-session',
+        agentRuntimeDescriptorV1: buildCodexRuntimeIdentityDescriptorV1({
+          backendMode: 'appServer',
+          providerSessionId: 'stale-runtime-session',
+          home: 'user',
+        }),
+        externalSessionV1: {
+          v: 1,
+          agentId: 'codex',
+          machineId: 'machine_1',
+          remoteSessionId: 'legacy-session',
+          source: { kind: 'codexHome', home: 'user' },
+          linkedAtMs: 1,
+          linkData: { runtimeDescriptorV1 },
+        },
+      },
+    });
+
+    expect(result).toMatchObject({
+      providerId: 'codex',
+      providerSessionId: 'runtime-session',
+      runtimeDescriptorV1,
+      sourceTier: 'canonical_runtime_descriptor',
+    });
+  });
+
+  it('retains the flat runtime descriptor projected by the layout-1 owner view', () => {
+    const runtimeDescriptorV1 = buildCodexRuntimeIdentityDescriptorV1({
+      backendMode: 'appServer',
+      providerSessionId: 'owner-view-session',
+      home: 'user',
+    });
+    const result = resolveSessionRuntimeIdentityFallback({
+      metadata: {
+        externalSessionV1: {
+          v: 1,
+          agentId: 'codex',
+          machineId: 'machine_1',
+          remoteSessionId: 'legacy-session',
+          source: { kind: 'codexHome', home: 'user' },
+          linkedAtMs: 1,
+          runtimeDescriptorV1,
+        },
+      },
+    });
+
+    expect(result).toMatchObject({
+      providerId: 'codex',
+      providerSessionId: 'owner-view-session',
+      runtimeDescriptorV1,
+      sourceTier: 'canonical_runtime_descriptor',
+    });
+  });
+
   it('prefers canonical runtime descriptor identity over legacy metadata fields', () => {
     const result = resolveSessionRuntimeIdentityFallback({
       metadata: {
@@ -67,6 +131,25 @@ describe('resolveSessionRuntimeIdentityFallback', () => {
     expect(result.providerId).toBe('opencode');
     expect(result.providerSessionId).toBe('default-runtime-session');
     expect(result.sourceTier).toBe('provider_defaults');
+  });
+
+  it('preserves an external runtime descriptor without consulting built-in resume-key policy', () => {
+    const result = resolveSessionRuntimeIdentityFallback({
+      metadata: {
+        flavor: 'claude',
+        runtimeDescriptorV1: {
+          v: 1,
+          agentId: 'acme.agent',
+          agent: {},
+        },
+      },
+    });
+
+    expect(result).toMatchObject({
+      providerId: 'acme.agent',
+      providerSessionId: null,
+      sourceTier: 'canonical_runtime_descriptor',
+    });
   });
 
   it('reads provider identity from direct-session metadata when legacy flavor fields are absent', () => {

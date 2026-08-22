@@ -1,8 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  createActionExecutor,
+  type ApprovalRequestV1,
   ProviderConnectionIdSchema,
+  PluginContributionLocalIdSchema,
+  PluginIdSchema,
+  SessionCreationKeyV1Schema,
+  deriveSessionCreationTagV1,
 } from '@happier-dev/protocol';
+import { configuration } from '@/configuration';
+import { createAuthenticationHttpStatusError } from '@/api/client/httpStatusError';
 import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { SPAWN_SESSION_ERROR_CODES } from '@/session/shared/spawnSessionContract';
 
 const {
   createSpawnedSession,
@@ -24,7 +33,18 @@ const {
   readSettings,
   getPreferredHostName,
   setSessionModel,
+  createPluginPermissionGrantActionExecutor,
+  createCliReviewCommentActionExecutorFromCredentials,
+  readAgentCatalogSnapshot,
+  readMachineOperationProtocolCapabilitiesV1,
+  bootstrapAccountSettingsContext,
+  updateAccountSettingsV2WithRetry,
+  writePromptAsset,
+  resolveReplaySeedDraft,
+  fetchSessionByIdCompat,
 } = vi.hoisted(() => ({
+  resolveReplaySeedDraft: vi.fn(),
+  fetchSessionByIdCompat: vi.fn(),
   createSpawnedSession: vi.fn(),
   sendSessionMessage: vi.fn(),
   createCliApprovalsArtifactStore: vi.fn(() => ({})),
@@ -43,6 +63,13 @@ const {
   readSettings: vi.fn(),
   getPreferredHostName: vi.fn(),
   setSessionModel: vi.fn(),
+  createPluginPermissionGrantActionExecutor: vi.fn(),
+  createCliReviewCommentActionExecutorFromCredentials: vi.fn(),
+  readAgentCatalogSnapshot: vi.fn(),
+  readMachineOperationProtocolCapabilitiesV1: vi.fn(),
+  bootstrapAccountSettingsContext: vi.fn(),
+  updateAccountSettingsV2WithRetry: vi.fn(),
+  writePromptAsset: vi.fn(),
   hostSubagentStore: {
     list: vi.fn(),
     get: vi.fn(),
@@ -56,6 +83,21 @@ const {
 vi.mock('@/session/services/createSpawnedSession', () => ({
   createSpawnedSession,
 }));
+
+// The transcript read/decrypt behind the Replay seed is a genuine boundary; the
+// real recipe builder stays in the path so a delegation test still proves the
+// composed lineage the creator receives.
+vi.mock('@/session/replay/resolveReplaySeedDraft', () => ({
+  resolveReplaySeedDraft,
+}));
+
+vi.mock('@/session/transport/http/sessionsHttp', async () => {
+  const actual = await vi.importActual<any>('@/session/transport/http/sessionsHttp');
+  return {
+    ...actual,
+    fetchSessionByIdCompat,
+  };
+});
 
 vi.mock('@/session/services/sendSessionMessage', () => ({
   sendSessionMessage,
@@ -134,7 +176,45 @@ vi.mock('@/agent/runtime/bridges/session/SessionHostBridge', () => ({
   }),
 }));
 
+vi.mock('@/plugins/runtime/lifecycle/permissions/pluginPermissionGrantActionExecutor', () => ({
+  createPluginPermissionGrantActionExecutor,
+}));
+
+vi.mock('@/agent/reviews/comments/executor', () => ({
+  createCliReviewCommentActionExecutorFromCredentials,
+}));
+
+vi.mock('@/agent/catalog/snapshot', () => ({
+  readAgentCatalogSnapshot,
+}));
+
+vi.mock('@/api/machine/machineOperationProtocolCapabilities', () => ({
+  readMachineOperationProtocolCapabilitiesV1,
+}));
+
+vi.mock('@/settings/accountSettings/bootstrapAccountSettingsContext', () => ({
+  bootstrapAccountSettingsContext,
+}));
+
+vi.mock('@/settings/accountSettings/updateAccountSettingsV2WithRetry', () => ({
+  updateAccountSettingsV2WithRetry,
+}));
+
+vi.mock('@/prompts/assets/actions', async () => {
+  const actual = await vi.importActual<any>('@/prompts/assets/actions');
+  return { ...actual, writePromptAsset };
+});
+
 import { createCliActionDeps } from './createCliActionDeps';
+import {
+  registerCurrentSessionUiBinding,
+  type CurrentSessionCapabilityBinding,
+} from '@/session/presentation/currentSessionUiBindings';
+import { createHostSubagentStore } from '@/session/subagents/hostSubagentStore';
+
+type MediatedPermissionResponse = Awaited<ReturnType<
+  NonNullable<CurrentSessionCapabilityBinding['permissionHandler']>['respondToMediatedPendingPermission']
+>>;
 
 describe('createCliActionDeps hook dispatch', () => {
   beforeEach(() => {
@@ -147,6 +227,22 @@ describe('createCliActionDeps hook dispatch', () => {
     executeExecutionRunAction.mockReset();
     callSessionRpc.mockReset();
     callMachineRpc.mockReset();
+    readAgentCatalogSnapshot.mockReset();
+    readAgentCatalogSnapshot.mockReturnValue({
+      agentDefinitionsById: new Map([['codex', {
+        id: 'codex',
+        identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
+        provenance: 'first_party',
+        source: { kind: 'bundled' },
+        definition: {},
+      }]]),
+      catalogEntriesById: {},
+    });
+    readMachineOperationProtocolCapabilitiesV1.mockReset();
+    readMachineOperationProtocolCapabilitiesV1.mockResolvedValue({
+      capabilities: { sessionSpawn: { protocolVersions: [1] } },
+      revision: 1,
+    });
     routeSessionGoalControl.mockReset();
     routeSessionCatalogControl.mockReset();
     routeSessionUsageLimitRecoveryCheckNow.mockReset();
@@ -156,6 +252,12 @@ describe('createCliActionDeps hook dispatch', () => {
     readSettings.mockReset();
     getPreferredHostName.mockReset();
     setSessionModel.mockReset();
+    createPluginPermissionGrantActionExecutor.mockReset();
+    createCliReviewCommentActionExecutorFromCredentials.mockReset();
+    bootstrapAccountSettingsContext.mockReset();
+    updateAccountSettingsV2WithRetry.mockReset();
+    writePromptAsset.mockReset();
+    fetchSessionByIdCompat.mockReset();
     readSettings.mockResolvedValue({ machineId: 'local-machine' });
     getPreferredHostName.mockResolvedValue('local-machine.local');
     hostSubagentStore.list.mockReset();
@@ -164,6 +266,274 @@ describe('createCliActionDeps hook dispatch', () => {
     hostSubagentStore.upsert.mockReset();
     hostSubagentStore.updateStatus.mockReset();
     hostSubagentStore.complete.mockReset();
+  });
+
+  it('keeps a successful prompt export successful when external-link persistence conflicts', async () => {
+    const credentials = {
+      token: 'token',
+      encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(1) },
+    };
+    createCliApprovalsArtifactStore.mockReturnValue({
+      promptLibraryStore: {
+        read: vi.fn(async () => ({
+          id: 'prompt-1',
+          header: { title: 'Review prompt' },
+          body: JSON.stringify({ v: 1, markdown: '# Review', createdAtMs: 1, updatedAtMs: 1 }),
+        })),
+        update: vi.fn(async () => {}),
+      },
+    });
+    bootstrapAccountSettingsContext.mockResolvedValue({ settings: {} });
+    writePromptAsset.mockResolvedValue({
+      ok: true,
+      externalRef: { path: 'review.md' },
+      digest: 'external-digest',
+    });
+    updateAccountSettingsV2WithRetry.mockResolvedValue({
+      status: 'conflict',
+      currentVersion: 17,
+    });
+
+    const deps = createCliActionDeps({
+      token: credentials.token,
+      credentials,
+      sessionId: 'plugin-global',
+      mode: 'plain',
+      ctx: null,
+    });
+
+    await expect(deps.promptAssetExport?.({
+      artifactId: 'prompt-1',
+      machineId: 'local-machine',
+      assetTypeId: 'external.prompt',
+      scope: 'user',
+      targetPath: 'review.md',
+    })).resolves.toMatchObject({
+      ok: true,
+      artifactId: 'prompt-1',
+      exported: true,
+      externalLinkPersistence: {
+        status: 'conflict',
+        currentVersion: 17,
+      },
+    });
+  });
+
+  it('keeps a successful prompt export successful when external-link persistence throws', async () => {
+    const credentials = {
+      token: 'token',
+      encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(1) },
+    };
+    createCliApprovalsArtifactStore.mockReturnValue({
+      promptLibraryStore: {
+        read: vi.fn(async () => ({
+          id: 'prompt-1',
+          header: { title: 'Review prompt' },
+          body: JSON.stringify({ v: 1, markdown: '# Review', createdAtMs: 1, updatedAtMs: 1 }),
+        })),
+        update: vi.fn(async () => {}),
+      },
+    });
+    bootstrapAccountSettingsContext.mockResolvedValue({ settings: {} });
+    writePromptAsset.mockResolvedValue({
+      ok: true,
+      externalRef: { path: 'review.md' },
+      digest: 'external-digest',
+    });
+    updateAccountSettingsV2WithRetry.mockRejectedValue(new Error('settings unavailable'));
+
+    const deps = createCliActionDeps({
+      token: credentials.token,
+      credentials,
+      sessionId: 'plugin-global',
+      mode: 'plain',
+      ctx: null,
+    });
+
+    await expect(deps.promptAssetExport?.({
+      artifactId: 'prompt-1',
+      machineId: 'local-machine',
+      assetTypeId: 'external.prompt',
+      scope: 'user',
+      targetPath: 'review.md',
+    })).resolves.toMatchObject({
+      ok: true,
+      artifactId: 'prompt-1',
+      exported: true,
+      externalLinkPersistence: {
+        status: 'unavailable',
+        retryable: false,
+      },
+    });
+  });
+
+  it('redacts Account Settings from a successful prompt export external-link settlement', async () => {
+    const credentials = {
+      token: 'token',
+      encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(1) },
+    };
+    createCliApprovalsArtifactStore.mockReturnValue({
+      promptLibraryStore: {
+        read: vi.fn(async () => ({
+          id: 'prompt-1',
+          header: { title: 'Review prompt' },
+          body: JSON.stringify({ v: 1, markdown: '# Review', createdAtMs: 1, updatedAtMs: 1 }),
+        })),
+        update: vi.fn(async () => {}),
+      },
+    });
+    bootstrapAccountSettingsContext.mockResolvedValue({ settings: {} });
+    writePromptAsset.mockResolvedValue({
+      ok: true,
+      externalRef: { path: 'review.md' },
+      digest: 'external-digest',
+    });
+    updateAccountSettingsV2WithRetry.mockResolvedValue({
+      status: 'applied',
+      version: 18,
+      settings: { secretValue: 'must-not-appear-in-action-result' },
+    });
+
+    const deps = createCliActionDeps({
+      token: credentials.token,
+      credentials,
+      sessionId: 'plugin-global',
+      mode: 'plain',
+      ctx: null,
+    });
+
+    const result = await deps.promptAssetExport?.({
+      artifactId: 'prompt-1',
+      machineId: 'local-machine',
+      assetTypeId: 'external.prompt',
+      scope: 'user',
+      targetPath: 'review.md',
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      externalLinkPersistence: { status: 'applied', version: 18 },
+    });
+    expect(JSON.stringify(result)).not.toContain('must-not-appear-in-action-result');
+  });
+
+  it('preserves a malformed present prompt-external-links root and reports typed invalid persistence', async () => {
+    const credentials = {
+      token: 'token',
+      encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(1) },
+    };
+    createCliApprovalsArtifactStore.mockReturnValue({
+      promptLibraryStore: {
+        read: vi.fn(async () => ({
+          id: 'prompt-1',
+          header: { title: 'Review prompt' },
+          body: JSON.stringify({ v: 1, markdown: '# Review', createdAtMs: 1, updatedAtMs: 1 }),
+        })),
+        update: vi.fn(async () => {}),
+      },
+    });
+    bootstrapAccountSettingsContext.mockResolvedValue({
+      settings: { promptExternalLinksV1: 'malformed-present-root' },
+    });
+    writePromptAsset.mockResolvedValue({
+      ok: true,
+      externalRef: { path: 'review.md' },
+      digest: 'external-digest',
+    });
+    updateAccountSettingsV2WithRetry.mockResolvedValue({
+      status: 'applied',
+      version: 18,
+      settings: {},
+    });
+
+    const deps = createCliActionDeps({
+      token: credentials.token,
+      credentials,
+      sessionId: 'plugin-global',
+      mode: 'plain',
+      ctx: null,
+    });
+
+    await expect(deps.promptAssetExport?.({
+      artifactId: 'prompt-1',
+      machineId: 'local-machine',
+      assetTypeId: 'external.prompt',
+      scope: 'user',
+      targetPath: 'review.md',
+    })).resolves.toMatchObject({
+      ok: true,
+      exported: true,
+      externalLinkPersistence: {
+        status: 'invalid',
+        reason: 'invalidValue',
+      },
+    });
+    expect(updateAccountSettingsV2WithRetry).not.toHaveBeenCalled();
+  });
+
+  it('binds the authenticated plugin-permission operation owner into ActionExecutor deps', async () => {
+    const executePermissionAction = vi.fn(async () => ({ grants: [], pendingRequests: [] }));
+    createPluginPermissionGrantActionExecutor.mockReturnValue(executePermissionAction);
+    const credentials = {
+      token: 'token',
+      encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(1) },
+    };
+    const deps = createCliActionDeps({
+      token: credentials.token,
+      credentials,
+      sessionId: 'sess-current',
+      mode: 'plain',
+      ctx: null,
+    });
+    const request = {
+      actionId: 'plugins.permissions.grants.list' as const,
+      input: {
+        pluginId: 'acme.voice',
+        includeRevoked: false,
+        includeResolvedRequests: false,
+        limit: 50,
+      },
+      caller: { kind: 'plugin' as const, pluginId: 'acme.voice' },
+    };
+
+    await expect(deps.pluginPermissionGrantAction?.(request))
+      .resolves.toEqual({ grants: [], pendingRequests: [] });
+    expect(createPluginPermissionGrantActionExecutor).toHaveBeenCalledWith({ credentials });
+    expect(executePermissionAction).toHaveBeenCalledWith(request);
+  });
+
+  it('binds the credentialed review-comment transport without defaulting a plugin principal to the user', async () => {
+    const executeReviewCommentAction = vi.fn(async () => ({ items: [], cursor: null }));
+    createCliReviewCommentActionExecutorFromCredentials.mockReturnValue(executeReviewCommentAction);
+    const credentials = {
+      token: 'token',
+      encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(1) },
+    };
+    const deps = createCliActionDeps({
+      token: credentials.token,
+      credentials,
+      sessionId: 'sess-current',
+      mode: 'plain',
+      ctx: null,
+    });
+    const reviewCommentPrincipal = {
+      actor: { kind: 'plugin' as const, pluginId: 'acme.review' },
+    };
+    const signal = new AbortController().signal;
+
+    await expect(deps.reviewCommentAction?.({
+      actionId: 'reviews.comments.list',
+      input: { projectId: 'project-1' },
+      reviewCommentPrincipal,
+      signal,
+    })).resolves.toEqual({ items: [], cursor: null });
+
+    expect(createCliReviewCommentActionExecutorFromCredentials).toHaveBeenCalledWith({ credentials });
+    expect(executeReviewCommentAction).toHaveBeenCalledWith(
+      'reviews.comments.list',
+      { projectId: 'project-1' },
+      { principal: reviewCommentPrincipal, signal },
+    );
   });
 
   it('preserves the active transition owner result when setting a session model', async () => {
@@ -186,10 +556,7 @@ describe('createCliActionDeps hook dispatch', () => {
       },
       sessionId: 'sess-current',
       mode: 'plain',
-      ctx: {
-        encryptionKey: new Uint8Array([1, 2, 3, 4]),
-        encryptionVariant: 'legacy',
-      },
+      ctx: null,
     });
 
     await expect(deps.sessionModelSet?.({
@@ -239,10 +606,7 @@ describe('createCliActionDeps hook dispatch', () => {
       },
       sessionId: 'sess-current',
       mode: 'plain',
-      ctx: {
-        encryptionKey: new Uint8Array([1, 2, 3, 4]),
-        encryptionVariant: 'legacy',
-      },
+      ctx: null,
     });
 
     await expect(deps.sessionModelSet?.({
@@ -284,10 +648,7 @@ describe('createCliActionDeps hook dispatch', () => {
       },
       sessionId: 'sess-current',
       mode: 'plain',
-      ctx: {
-        encryptionKey: new Uint8Array([1, 2, 3, 4]),
-        encryptionVariant: 'legacy',
-      },
+      ctx: null,
     });
 
     await expect(deps.sessionModelSet?.({
@@ -315,11 +676,38 @@ describe('createCliActionDeps hook dispatch', () => {
     });
   });
 
-  it('dispatches a session.spawned lifecycle hook after session.spawn_new succeeds', async () => {
-    createSpawnedSession.mockResolvedValue({
-      created: true,
-      sessionId: 'sess-new',
-      session: { id: 'sess-new' },
+  it('settles canonical session.spawn_new with exact placement and nested initial input', async () => {
+    const sessionCreationTag = deriveSessionCreationTagV1({
+      callerCreationNamespace: 'plugin:acme.plugin',
+      creationKey: 'create-1',
+    });
+    const creationKey = SessionCreationKeyV1Schema.parse('create-1');
+    const machineAdmissionTransport = vi.fn(async () => ({
+      status: 'accepted' as const,
+      localId: 'plugin-input-v1:spawn-transport',
+    }));
+    callMachineRpc.mockResolvedValue({
+      ok: true,
+      directory: '/repo/exact',
+      directoryCreationRequired: false,
+      checkout: null,
+    });
+    createSpawnedSession.mockImplementation(async (input) => {
+      const initialInputAdmission = input.buildInitialInputAdmission?.('sess-new');
+      expect(initialInputAdmission).toEqual(expect.objectContaining({
+        localId: expect.stringMatching(/^plugin-input-v1:/u),
+        inputAdmission: expect.any(Object),
+      }));
+      return {
+        disposition: 'rejoined',
+        sessionId: 'sess-new',
+        organizationPlacement: { folderId: 'folder-1', tagIds: ['tag-a', 'tag-b'] },
+        initialInput: {
+          status: 'alreadyAccepted',
+          localId: initialInputAdmission!.localId,
+        },
+        session: { id: 'sess-new' },
+      };
     });
     const deps = createCliActionDeps({
       token: 'token',
@@ -330,333 +718,129 @@ describe('createCliActionDeps hook dispatch', () => {
           secret: new Uint8Array([1, 2, 3, 4]),
         },
       },
-      sessionId: 'sess-1',
+      sessionId: 'sess-parent',
       mode: 'plain',
-      ctx: {
-        encryptionKey: new Uint8Array([1, 2, 3, 4]),
-        encryptionVariant: 'legacy',
-      },
-      rawSession: {
-        machineId: 'machine-1',
-        path: '/repo',
-        host: 'localhost',
-        metadata: {
-          workspaceId: 'workspace-1',
-        },
-      },
+      ctx: null,
       happyHomeDir: '/tmp/happier-home',
+      machineAdmissionTransport,
     });
 
     await expect(deps.sessionSpawnNew({
-      path: '/repo',
-      backendTargetKey: 'agent:claude',
-      title: 'My title',
-      tag: 'tag-1',
-      initialMessage: 'Hello from spawn',
-      modelId: 'gpt-4o',
-      providerConnectionId: 'pc_work',
-    })).resolves.toEqual({
-      type: 'success',
-      sessionId: 'sess-new',
-      created: true,
-      session: { id: 'sess-new' },
-    });
-
-    expect(createSpawnedSession).toHaveBeenCalledWith(expect.objectContaining({
-      credentials: expect.objectContaining({ token: 'token' }),
-      directory: '/repo',
-      machineId: 'machine-1',
-      backendTarget: {
-        kind: 'backend',
-        backendId: 'claude',
-        sourceKind: 'built_in',
+      creationKey,
+      sessionCreationTag,
+      executionTarget: {
+        serverId: configuration.activeServerId,
+        machineId: 'machine-exact',
       },
-      tag: 'tag-1',
-      title: 'My title',
-      initialMessage: 'Hello from spawn',
+      directory: '/repo/exact',
+      organizationPlacement: {
+        folderId: 'folder-1',
+        tagIds: ['tag-b', 'tag-a'],
+      },
+      agentTarget: {
+        kind: 'agent',
+        identity: {
+          pluginId: 'happier.agent.codex',
+          localId: 'codex',
+        },
+      },
       modelSelection: {
         v: 1,
-        updatedAt: expect.any(Number),
+        updatedAt: 4,
         ref: {
-          agentTargetKey: 'backend:claude',
-          providerConnectionId: 'pc_work',
-          modelId: 'gpt-4o',
+          agentTargetKey: 'backend:codex',
+          providerConnectionId: null,
+          modelId: 'gpt-5',
         },
       },
-    }));
-    expect(emitSessionLifecycleHookEvent).toHaveBeenCalledWith(expect.objectContaining({
-      happyHomeDir: '/tmp/happier-home',
-      eventId: 'session.spawned',
-      happySessionId: 'sess-new',
-      machineId: 'machine-1',
-      cwd: '/repo',
-      backendTarget: 'backend:claude',
-      payload: {
-        sessionId: 'sess-new',
-        agentId: 'claude',
-        runtimeTarget: {
-          kind: 'backend',
-          backendId: 'claude',
-          sourceKind: 'built_in',
-        },
-        cwd: '/repo',
-        tag: 'tag-1',
-        modelId: 'gpt-4o',
-        initialMessage: 'Hello from spawn',
-        machineId: 'machine-1',
+      title: 'Atomic title',
+      initialMessage: 'Inspect the repository',
+      actionRequestId: 'spawn-attempt-1',
+      actionCaller: {
+        kind: 'plugin',
+        pluginId: 'acme.plugin',
+        contributionLocalId: 'spawn',
       },
-    }));
-    expect(emitSessionLifecycleHookEvent.mock.calls[0]?.[0]).not.toHaveProperty('workspaceId');
-
-    sendSessionMessage.mockResolvedValue({
-      ok: true,
-      sessionId: 'sess-1',
-      localId: 'local-current-connection',
-      waited: false,
-    });
-    emitSessionLifecycleHookEvent.mockClear();
-    await deps.sessionSendMessage({
-      sessionId: 'sess-1',
-      message: 'Use the current connection',
-      modelOverride: 'default',
-    });
-    expect(sendSessionMessage).toHaveBeenLastCalledWith(expect.objectContaining({
-      modelSelectionInput: { modelId: 'default' },
-    }));
-    const hookPayload = emitSessionLifecycleHookEvent.mock.calls[0]?.[0]?.payload as Readonly<Record<string, unknown>>;
-    expect(hookPayload).not.toHaveProperty('modelOverride');
-    expect(hookPayload).not.toHaveProperty('providerConnectionId');
-  });
-
-  it('uses the exact local machine when machineId is explicit and its normalized host assertion matches', async () => {
-    createSpawnedSession.mockResolvedValue({
-      created: true,
-      sessionId: 'sess-explicit',
-      session: { id: 'sess-explicit' },
-    });
-    const deps = createCliActionDeps({
-      token: 'token',
-      credentials: {
-        token: 'token',
-        encryption: { type: 'legacy' as const, secret: new Uint8Array([1, 2, 3, 4]) },
-      },
-      sessionId: 'sess-parent',
-      mode: 'plain',
-      ctx: {
-        encryptionKey: new Uint8Array([1, 2, 3, 4]),
-        encryptionVariant: 'legacy',
-      },
-      rawSession: {
-        machineId: 'parent-machine',
-        path: '/repo/parent',
-        host: 'parent-machine',
-        metadata: {
-          workspaceId: 'parent-workspace',
-        },
-      },
-      happyHomeDir: '/tmp/happier-home',
-    });
-
-    await expect(deps.sessionSpawnNew({
-      machineId: 'local-machine',
-      host: 'LOCAL-MACHINE',
-      path: '/repo/explicit',
-      backendTargetKey: 'agent:claude',
-    })).resolves.toMatchObject({ type: 'success', sessionId: 'sess-explicit' });
-
-    expect(createSpawnedSession).toHaveBeenCalledWith(expect.objectContaining({
-      machineId: 'local-machine',
-      directory: '/repo/explicit',
-    }));
-    const emitted = emitSessionLifecycleHookEvent.mock.calls.at(-1)?.[0];
-    expect(emitted).toEqual(expect.objectContaining({
-      happySessionId: 'sess-explicit',
-      machineId: 'local-machine',
-      cwd: '/repo/explicit',
-      payload: expect.objectContaining({
-        sessionId: 'sess-explicit',
-        machineId: 'local-machine',
-        cwd: '/repo/explicit',
-      }),
-    }));
-    expect(emitted).not.toHaveProperty('workspaceId');
-  });
-
-  it.each([
-    {
-      name: 'unknown machine identity',
-      input: { machineId: 'unknown-machine', path: '/repo/explicit' },
-    },
-    {
-      name: 'conflicting host assertion',
-      input: { machineId: 'local-machine', host: 'another-machine', path: '/repo/explicit' },
-    },
-    {
-      name: 'different server scope',
-      input: { machineId: 'local-machine', serverId: 'definitely-not-the-active-server', path: '/repo/explicit' },
-    },
-  ])('fails an explicit $name with invalid_parameters before spawn', async ({ input }) => {
-    createSpawnedSession.mockResolvedValue({
-      created: true,
-      sessionId: 'sess-unexpected',
-      session: { id: 'sess-unexpected' },
-    });
-    const deps = createCliActionDeps({
-      token: 'token',
-      credentials: {
-        token: 'token',
-        encryption: { type: 'legacy' as const, secret: new Uint8Array([1, 2, 3, 4]) },
-      },
-      sessionId: 'sess-parent',
-      mode: 'plain',
-      ctx: {
-        encryptionKey: new Uint8Array([1, 2, 3, 4]),
-        encryptionVariant: 'legacy',
-      },
-      rawSession: {
-        machineId: 'parent-machine',
-        path: '/repo/parent',
-        host: 'parent-machine',
-        metadata: {},
-      },
-    });
-
-    await expect(deps.sessionSpawnNew({
-      ...input,
-      backendTargetKey: 'agent:claude',
+      callerSurface: 'plugin',
     })).resolves.toEqual({
-      type: 'error',
-      errorCode: 'invalid_parameters',
-      errorMessage: 'invalid_parameters',
-    });
-    expect(createSpawnedSession).not.toHaveBeenCalled();
-  });
-
-  it('does not borrow the current session directory for a different explicit machine', async () => {
-    createSpawnedSession.mockResolvedValue({
-      created: true,
-      sessionId: 'sess-unexpected',
-      session: { id: 'sess-unexpected' },
-    });
-    const deps = createCliActionDeps({
-      token: 'token',
-      credentials: {
-        token: 'token',
-        encryption: { type: 'legacy' as const, secret: new Uint8Array([1, 2, 3, 4]) },
-      },
-      sessionId: 'sess-parent',
-      mode: 'plain',
-      ctx: {
-        encryptionKey: new Uint8Array([1, 2, 3, 4]),
-        encryptionVariant: 'legacy',
-      },
-      rawSession: {
-        machineId: 'parent-machine',
-        path: '/repo/parent',
-        host: 'parent-machine',
-        metadata: {},
-      },
-    });
-
-    await expect(deps.sessionSpawnNew({
-      machineId: 'local-machine',
-      backendTargetKey: 'agent:claude',
-    })).resolves.toEqual({
-      type: 'error',
-      errorCode: 'spawn_target_missing',
-      errorMessage: 'spawn_target_missing',
-    });
-    expect(createSpawnedSession).not.toHaveBeenCalled();
-  });
-
-  it('rejects a provider connection without an explicit model selection', async () => {
-    const deps = createCliActionDeps({
-      token: 'token',
-      credentials: {
-        token: 'token',
-        encryption: { type: 'legacy' as const, secret: new Uint8Array([1, 2, 3, 4]) },
-      },
-      sessionId: 'sess-parent',
-      ctx: {
-        encryptionKey: new Uint8Array([1, 2, 3, 4]),
-        encryptionVariant: 'legacy',
-      },
-      rawSession: { machineId: 'machine-1', path: '/repo', metadata: {} },
-    });
-
-    await expect(deps.sessionSpawnNew({
-      backendTargetKey: 'agent:claude',
-      providerConnectionId: 'pc_work',
-    })).resolves.toMatchObject({ type: 'error', errorCode: 'invalid_parameters' });
-    expect(createSpawnedSession).not.toHaveBeenCalled();
-  });
-
-  it('preserves a provider model whose literal id is default', async () => {
-    createSpawnedSession.mockResolvedValue({
-      created: true,
+      type: 'success',
+      disposition: 'rejoined',
       sessionId: 'sess-new',
-      session: { id: 'sess-new' },
-    });
-    const deps = createCliActionDeps({
-      token: 'token',
-      credentials: {
-        token: 'token',
-        encryption: { type: 'legacy' as const, secret: new Uint8Array([1, 2, 3, 4]) },
+      executionTarget: {
+        serverId: configuration.activeServerId,
+        machineId: 'machine-exact',
       },
-      sessionId: 'sess-parent',
-      ctx: {
-        encryptionKey: new Uint8Array([1, 2, 3, 4]),
-        encryptionVariant: 'legacy',
+      organizationPlacement: {
+        folderId: 'folder-1',
+        tagIds: ['tag-a', 'tag-b'],
       },
-      rawSession: { machineId: 'machine-1', path: '/repo', metadata: {} },
+      initialInput: {
+        status: 'alreadyAccepted',
+        localId: expect.stringMatching(/^plugin-input-v1:/u),
+      },
     });
 
-    await expect(deps.sessionSpawnNew({
-      backendTargetKey: 'agent:claude',
-      providerConnectionId: 'pc_work',
-      modelId: 'default',
-    })).resolves.toMatchObject({ type: 'success', sessionId: 'sess-new' });
     expect(createSpawnedSession).toHaveBeenCalledWith(expect.objectContaining({
-      modelSelection: expect.objectContaining({
-        ref: {
-          agentTargetKey: 'backend:claude',
-          providerConnectionId: 'pc_work',
-          modelId: 'default',
-        },
+      directory: '/repo/exact',
+      machineId: 'machine-exact',
+      sessionCreationTag,
+      organizationPlacement: {
+        folderId: 'folder-1',
+        tagIds: ['tag-a', 'tag-b'],
+      },
+      initialTitle: 'Atomic title',
+      initialMessage: 'Inspect the repository',
+      machineAdmissionTransport,
+      spawnNonce: expect.stringMatching(/^session\.spawn_new\.action:/u),
+      sessionCreationCorrespondence: expect.objectContaining({
+        v: 1,
+        sessionCreationTag,
+        recipe: expect.objectContaining({
+          execution: {
+            machineId: 'machine-exact',
+            directory: '/repo/exact',
+          },
+          organization: {
+            folderId: 'folder-1',
+            tagIds: ['tag-a', 'tag-b'],
+          },
+          agentTarget: {
+            kind: 'agent',
+            identity: {
+              pluginId: 'happier.agent.codex',
+              localId: 'codex',
+            },
+          },
+        }),
       }),
+    }));
+    expect(createSpawnedSession.mock.calls[0]?.[0]).not.toHaveProperty('pendingFirstInput');
+    expect(createSpawnedSession.mock.calls[0]?.[0]).not.toHaveProperty('tag');
+    expect(createSpawnedSession.mock.calls[0]?.[0]).not.toHaveProperty('path');
+    expect(callMachineRpc).toHaveBeenCalledWith(expect.objectContaining({
+      machineId: 'machine-exact',
+      method: RPC_METHODS.DAEMON_SESSION_CREATION_PREPARE,
+      request: { directory: '/repo/exact' },
     }));
   });
 
-  it('refuses inherited model intent when the source agent target is unknown', async () => {
-    const deps = createCliActionDeps({
-      token: 'token',
-      credentials: {
-        token: 'token',
-        encryption: { type: 'legacy' as const, secret: new Uint8Array([1, 2, 3, 4]) },
-      },
-      sessionId: 'sess-parent',
-      ctx: {
-        encryptionKey: new Uint8Array([1, 2, 3, 4]),
-        encryptionVariant: 'legacy',
-      },
-      rawSession: {
-        machineId: 'machine-1',
-        path: '/repo',
-        metadata: { modelOverrideV1: { v: 1, updatedAt: 1, modelId: 'model-a' } },
-      },
-    });
-
-    await expect(deps.sessionSpawnNew({
-      backendTargetKey: 'agent:codex',
-    })).resolves.toMatchObject({ type: 'error', errorCode: 'invalid_parameters' });
-    expect(createSpawnedSession).not.toHaveBeenCalled();
-  });
-
-  it('inherits current session metadata-backed spawn fields when session.spawn_new omits them', async () => {
+  it('uses the host-private direct target transport without returning preparation through Socket RPC', async () => {
+    const controller = new AbortController();
+    const prepare = vi.fn(async () => ({
+      ok: true as const,
+      directory: '/repo/direct',
+      directoryCreationRequired: false,
+      checkout: null,
+    }));
+    const spawnedSession = {
+      spawn: vi.fn(),
+      resolveSpawnSessionByNonce: vi.fn(),
+    };
     createSpawnedSession.mockResolvedValue({
-      created: true,
-      sessionId: 'sess-child',
-      session: { id: 'sess-child' },
+      disposition: 'created',
+      sessionId: 'sess-direct',
+      organizationPlacement: { folderId: null, tagIds: [] },
+      initialInput: { status: 'notRequested' },
     });
     const deps = createCliActionDeps({
       token: 'token',
@@ -667,552 +851,1127 @@ describe('createCliActionDeps hook dispatch', () => {
           secret: new Uint8Array([1, 2, 3, 4]),
         },
       },
-      sessionId: 'sess-parent',
+      sessionId: 'cli-global',
       mode: 'plain',
-      ctx: {
-        encryptionKey: new Uint8Array([1, 2, 3, 4]),
-        encryptionVariant: 'legacy',
-      },
-      rawSession: {
-        machineId: 'machine-1',
-        host: 'localhost',
-        metadata: {
-          flavor: 'claude',
-          path: '/repo',
-          permissionMode: 'safe-yolo',
-          permissionModeUpdatedAt: 123,
-          modelOverrideV1: { v: 1, updatedAt: 456, modelId: 'gpt-test' },
-          acpSessionModeOverrideV1: { v: 1, updatedAt: 457, modeId: 'plan' },
-          acpConfigOptionOverridesV1: {
-            v: 1,
-            updatedAt: 458,
-            overrides: {
-              effort: { updatedAt: 458, value: 'xhigh' },
-            },
-          },
-          connectedServices: {
-            v: 1,
-            bindingsByServiceId: {
-              'openai-codex': { source: 'connected', selection: 'profile', profileId: 'work' },
-            },
-          },
-          connectedServicesUpdatedAt: 459,
-          profileId: 'profile-parent',
-          mcpSelectionV1: {
-            v: 1,
-            managedServersEnabled: false,
-            forceIncludeServerIds: ['local-search'],
-            forceExcludeServerIds: ['prod-browser'],
-          },
-        },
+      ctx: null,
+      sessionSpawnDirectTargetTransport: {
+        machineId: 'machine-exact',
+        prepare,
+        spawnedSession,
       },
     });
 
     await expect(deps.sessionSpawnNew({
-      backendTargetKey: 'agent:codex',
-      title: 'Inherited child',
-    })).resolves.toEqual({
+      creationKey: SessionCreationKeyV1Schema.parse('automation-run:run-1'),
+      sessionCreationTag: deriveSessionCreationTagV1({
+        callerCreationNamespace: 'automation:automation-1',
+        creationKey: 'automation-run:run-1',
+      }),
+      executionTarget: {
+        serverId: configuration.activeServerId,
+        machineId: 'machine-exact',
+      },
+      directory: '/repo/direct',
+      organizationPlacement: { folderId: null, tagIds: [] },
+      agentTarget: {
+        kind: 'agent',
+        identity: {
+          pluginId: 'happier.agent.codex',
+          localId: 'codex',
+        },
+      },
+      connectedServices: { v: 1, bindingsByServiceId: {} },
+      actionCaller: {
+        kind: 'automationRun',
+        automationId: 'automation-1',
+        runId: 'run-1',
+        origin: 'event',
+      },
+      callerSurface: 'cli',
+      signal: controller.signal,
+    })).resolves.toMatchObject({
       type: 'success',
-      sessionId: 'sess-child',
-      created: true,
-      session: { id: 'sess-child' },
+      sessionId: 'sess-direct',
     });
 
+    expect(prepare).toHaveBeenCalledWith(
+      { directory: '/repo/direct' },
+      { signal: controller.signal },
+    );
     expect(createSpawnedSession).toHaveBeenCalledWith(expect.objectContaining({
-      credentials: expect.objectContaining({ token: 'token' }),
-      directory: '/repo',
-      machineId: 'machine-1',
-      backendTarget: {
-        kind: 'backend',
-        backendId: 'codex',
-        sourceKind: 'built_in',
-      },
-      title: 'Inherited child',
-      permissionMode: 'safe-yolo',
-      permissionModeUpdatedAt: 123,
-      agentModeId: 'plan',
-      agentModeUpdatedAt: 457,
-      sessionConfigOptionOverrides: {
-        v: 1,
-        updatedAt: 458,
-        overrides: {
-          effort: { updatedAt: 458, value: 'xhigh' },
-        },
-      },
-      connectedServices: {
-        v: 1,
-        bindingsByServiceId: {
-          'openai-codex': { source: 'connected', selection: 'profile', profileId: 'work' },
-        },
-      },
-      connectedServicesUpdatedAt: 459,
-      profileId: 'profile-parent',
-      mcpSelection: {
-        v: 1,
-        managedServersEnabled: false,
-        forceIncludeServerIds: ['local-search'],
-        forceExcludeServerIds: ['prod-browser'],
-      },
+      directTransport: spawnedSession,
+      machineId: 'machine-exact',
     }));
-    expect(vi.mocked(createSpawnedSession).mock.calls.at(-1)?.[0]).not.toHaveProperty('modelSelection');
+    expect(readMachineOperationProtocolCapabilitiesV1).not.toHaveBeenCalled();
+    expect(callMachineRpc).not.toHaveBeenCalled();
   });
 
-  it('inherits current session backend target when session-agent spawn omits an explicit target', async () => {
+  it('requires exact target directory approval before the private spawn bridge can create a missing directory', async () => {
+    const v2Input = {
+      creationKey: SessionCreationKeyV1Schema.parse('create-missing-directory'),
+      executionTarget: {
+        serverId: configuration.activeServerId,
+        machineId: 'machine-exact',
+      },
+      directory: '/repo/new-directory',
+      agentTarget: {
+        kind: 'agent' as const,
+        identity: {
+          pluginId: 'happier.agent.codex',
+          localId: 'codex',
+        },
+      },
+    };
+    const sessionCreationTag = deriveSessionCreationTagV1({
+      callerCreationNamespace: 'user',
+      creationKey: v2Input.creationKey,
+    });
+    callMachineRpc.mockResolvedValue({
+      ok: true,
+      directory: '/repo/new-directory',
+      directoryCreationRequired: true,
+      checkout: null,
+    });
     createSpawnedSession.mockResolvedValue({
-      created: true,
-      sessionId: 'sess-child-configured',
-      session: { id: 'sess-child-configured' },
+      disposition: 'created',
+      sessionId: 'sess-directory-approved',
+      organizationPlacement: { folderId: null, tagIds: [] },
+      initialInput: { status: 'notRequested' },
+      session: { id: 'sess-directory-approved' },
     });
     const deps = createCliActionDeps({
       token: 'token',
       credentials: {
         token: 'token',
-        encryption: {
-          type: 'legacy',
-          secret: new Uint8Array([1, 2, 3, 4]),
-        },
+        encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3, 4]) },
       },
       sessionId: 'sess-parent',
       mode: 'plain',
-      ctx: {
-        encryptionKey: new Uint8Array([1, 2, 3, 4]),
-        encryptionVariant: 'legacy',
+      ctx: null,
+    });
+
+    const preflight = await deps.sessionSpawnNewDirectoryApprovalPreflight?.({ input: v2Input });
+    expect(preflight).toEqual({
+      type: 'approval_required',
+      approval: {
+        v: 1,
+        executionTarget: v2Input.executionTarget,
+        directory: '/repo/new-directory',
       },
-      rawSession: {
-        machineId: 'machine-1',
-        host: 'localhost',
-        metadata: {
-          path: '/repo',
-          permissionMode: 'safe-yolo',
-          permissionModeUpdatedAt: 123,
-          runtimeDescriptorV1: {
-            v: 1,
-            agentId: 'claude',
-            agent: {},
-          },
-        },
-      },
-      getCurrentSessionBackendTarget: () => ({
-        kind: 'backend',
-        backendId: 'review-bot',
-        sourceKind: 'configured',
-        configuredBackendId: 'review-bot',
-      }),
-      happyHomeDir: '/tmp/happier-home',
     });
 
     await expect(deps.sessionSpawnNew({
-      title: 'Inherited configured backend child',
-      callerSurface: 'agent',
-      callerPermissionMode: 'safe-yolo',
+      ...v2Input,
+      sessionCreationTag,
+      actionCaller: { kind: 'host' },
     })).resolves.toEqual({
-      type: 'success',
-      sessionId: 'sess-child-configured',
-      created: true,
-      session: { id: 'sess-child-configured' },
+      type: 'error',
+      code: 'permission_denied',
+      retryable: false,
     });
+    expect(createSpawnedSession).not.toHaveBeenCalled();
 
-    expect(createSpawnedSession).toHaveBeenCalledWith(expect.objectContaining({
-      directory: '/repo',
-      machineId: 'machine-1',
-      backendTarget: {
-        kind: 'backend',
-        backendId: 'review-bot',
-        sourceKind: 'configured',
-        configuredBackendId: 'review-bot',
-      },
-      runtimeDescriptorV1: {
+    await expect(deps.sessionSpawnNew({
+      ...v2Input,
+      sessionCreationTag,
+      actionCaller: { kind: 'host' },
+      sessionCreationDirectoryApproval: {
         v: 1,
-        agentId: 'claude',
-        agent: {},
-      },
-      title: 'Inherited configured backend child',
-    }));
-    expect(emitSessionLifecycleHookEvent).toHaveBeenCalledWith(expect.objectContaining({
-      happySessionId: 'sess-child-configured',
-      payload: expect.objectContaining({
-        sessionId: 'sess-child-configured',
-        agentId: 'claude',
-        runtimeTarget: {
-          kind: 'backend',
-          backendId: 'review-bot',
-          sourceKind: 'configured',
-          configuredBackendId: 'review-bot',
+        executionTarget: {
+          ...v2Input.executionTarget,
+          machineId: 'different-machine',
         },
-      }),
+        directory: '/repo/new-directory',
+      },
+    })).resolves.toEqual({
+      type: 'error',
+      code: 'permission_denied',
+      retryable: false,
+    });
+    expect(createSpawnedSession).not.toHaveBeenCalled();
+
+    if (!preflight || preflight.type !== 'approval_required') {
+      throw new Error('expected target-owned directory approval preflight');
+    }
+    await expect(deps.sessionSpawnNew({
+      ...v2Input,
+      sessionCreationTag,
+      actionCaller: { kind: 'host' },
+      sessionCreationDirectoryApproval: preflight.approval,
+    })).resolves.toMatchObject({
+      type: 'success',
+      sessionId: 'sess-directory-approved',
+    });
+    expect(createSpawnedSession).toHaveBeenCalledWith(expect.objectContaining({
+      approvedNewDirectoryCreation: true,
+      directory: '/repo/new-directory',
     }));
   });
 
-  it('inherits runtime descriptor metadata when session-agent spawn omits runtime and backend target', async () => {
-    const inheritedRuntimeDescriptor = {
-      v: 1,
-      agentId: 'opencode',
-      agent: {
-        backendMode: 'server',
-        providerSessionId: 'sess_opencode_parent',
-        serverBaseUrl: 'http://127.0.0.1:4096/',
-        serverBaseUrlExplicit: true,
+  it('delegates a sourceContext spawn to the canonical creator as a replay-seeded creation', async () => {
+    const v2Input = {
+      creationKey: SessionCreationKeyV1Schema.parse('configure-from-source'),
+      executionTarget: {
+        serverId: configuration.activeServerId,
+        machineId: 'machine-exact',
       },
+      directory: '/repo',
+      agentTarget: {
+        kind: 'agent' as const,
+        identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
+      },
+      sourceContext: {
+        v: 1 as const,
+        kind: 'session_replay' as const,
+        sourceSessionId: 'source-session',
+        forkPoint: { type: 'seq' as const, upToSeqInclusive: 12 },
+      },
+    };
+    const sessionCreationTag = deriveSessionCreationTagV1({
+      callerCreationNamespace: 'user',
+      creationKey: v2Input.creationKey,
+    });
+    callMachineRpc.mockResolvedValue({
+      ok: true,
+      directory: '/repo',
+      directoryCreationRequired: false,
+      checkout: null,
+    });
+    fetchSessionByIdCompat.mockResolvedValue({ share: null, machineId: 'machine-exact' });
+    resolveReplaySeedDraft.mockResolvedValue({
+      status: 'seeded',
+      seedDraft: 'Continue this conversation',
+      dialog: [],
+      summaryText: null,
+      sourceCutoffSeqInclusive: 12,
+      referencedSessionMediaWorkspacePaths: [],
+    });
+    createSpawnedSession.mockResolvedValue({
+      disposition: 'created',
+      sessionId: 'sess-source-context',
+      organizationPlacement: { folderId: null, tagIds: [] },
+      initialInput: { status: 'notRequested' },
+    });
+    const deps = createCliActionDeps({
+      token: 'token',
+      credentials: {
+        token: 'token',
+        encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3, 4]) },
+      },
+      sessionId: 'cli-global',
+      mode: 'plain',
+      ctx: null,
+    });
+
+    await expect(deps.sessionSpawnNew({
+      ...v2Input,
+      sessionCreationTag,
+      actionCaller: { kind: 'host' },
+    })).resolves.toMatchObject({ type: 'success', sessionId: 'sess-source-context' });
+
+    // The ingress must hand the resolved recipe to the canonical creator rather
+    // than reacquiring any creation behaviour of its own.
+    const spawnArgs = createSpawnedSession.mock.calls[0]?.[0];
+    expect(spawnArgs?.replaySeededCreation).toMatchObject({
+      tag: sessionCreationTag,
+      sourceRecipe: { sourceSessionId: 'source-session', cutoffSeqInclusive: 12 },
+    });
+    expect(spawnArgs?.replaySeededCreation?.metadata).toMatchObject({
+      forkV1: {
+        v: 1,
+        parentSessionId: 'source-session',
+        parentCutoffSeqInclusive: 12,
+        strategy: 'replay',
+      },
+      replaySeedV1: {
+        v: 1,
+        seedText: 'Continue this conversation',
+        sourceSessionId: 'source-session',
+        sourceCutoffSeqInclusive: 12,
+      },
+    });
+    // The recipe travels inside the canonical creation identity, never as a
+    // second correspondence recipe field.
+    expect(spawnArgs?.sessionCreationTag).toBe(sessionCreationTag);
+  });
+
+  it('refuses a shared sourceContext before it creates a child Session', async () => {
+    const v2Input = {
+      creationKey: SessionCreationKeyV1Schema.parse('shared-source-context'),
+      executionTarget: {
+        serverId: configuration.activeServerId,
+        machineId: 'machine-exact',
+      },
+      directory: '/repo',
+      agentTarget: {
+        kind: 'agent' as const,
+        identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
+      },
+      sourceContext: {
+        v: 1 as const,
+        kind: 'session_replay' as const,
+        sourceSessionId: 'shared-source-session',
+        forkPoint: { type: 'latest' as const },
+      },
+    };
+    callMachineRpc.mockResolvedValue({
+      ok: true,
+      directory: '/repo',
+      directoryCreationRequired: false,
+      checkout: null,
+    });
+    fetchSessionByIdCompat.mockResolvedValue({
+      share: { accessLevel: 'edit', canApprovePermissions: false },
+      machineId: 'machine-exact',
+    });
+    resolveReplaySeedDraft.mockResolvedValue({
+      status: 'seeded',
+      seedDraft: 'Do not copy this shared Session.',
+      dialog: [],
+      summaryText: null,
+      sourceCutoffSeqInclusive: 12,
+      referencedSessionMediaWorkspacePaths: [],
+    });
+    createSpawnedSession.mockResolvedValue({
+      disposition: 'created',
+      sessionId: 'must-not-exist',
+      organizationPlacement: { folderId: null, tagIds: [] },
+      initialInput: { status: 'notRequested' },
+    });
+    const deps = createCliActionDeps({
+      token: 'token',
+      credentials: {
+        token: 'token',
+        encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3, 4]) },
+      },
+      sessionId: 'cli-global',
+      mode: 'plain',
+      ctx: null,
+    });
+
+    await expect(deps.sessionSpawnNew({
+      ...v2Input,
+      sessionCreationTag: deriveSessionCreationTagV1({
+        callerCreationNamespace: 'user',
+        creationKey: v2Input.creationKey,
+      }),
+      actionCaller: { kind: 'host' },
+    })).resolves.toEqual({
+      type: 'error',
+      code: 'permission_denied',
+      retryable: false,
+    });
+
+    expect(createSpawnedSession).not.toHaveBeenCalled();
+  });
+
+  it('omits source-local media when a direct child target is not the source machine', async () => {
+    const v2Input = {
+      creationKey: SessionCreationKeyV1Schema.parse('cross-machine-source-context'),
+      executionTarget: {
+        serverId: configuration.activeServerId,
+        machineId: 'machine-exact',
+      },
+      directory: '/repo',
+      agentTarget: {
+        kind: 'agent' as const,
+        identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
+      },
+      sourceContext: {
+        v: 1 as const,
+        kind: 'session_replay' as const,
+        sourceSessionId: 'source-on-another-machine',
+        forkPoint: { type: 'latest' as const },
+      },
+    };
+    const prepare = vi.fn().mockResolvedValue({
+      ok: true,
+      directory: '/repo',
+      directoryCreationRequired: false,
+      checkout: null,
+    });
+    fetchSessionByIdCompat.mockResolvedValue({ share: null, machineId: 'source-machine' });
+    resolveReplaySeedDraft.mockResolvedValue({
+      status: 'seeded',
+      seedDraft: 'Source dialog',
+      dialog: [],
+      summaryText: null,
+      sourceCutoffSeqInclusive: 12,
+      referencedSessionMediaWorkspacePaths: ['/source-only/attachment.png'],
+    });
+    createSpawnedSession.mockResolvedValue({
+      disposition: 'created',
+      sessionId: 'sess-cross-machine-source-context',
+      organizationPlacement: { folderId: null, tagIds: [] },
+      initialInput: { status: 'notRequested' },
+    });
+    const deps = createCliActionDeps({
+      token: 'token',
+      credentials: {
+        token: 'token',
+        encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3, 4]) },
+      },
+      sessionId: 'cli-global',
+      mode: 'plain',
+      ctx: null,
+      sessionSpawnDirectTargetTransport: {
+        machineId: 'machine-exact',
+        prepare,
+        spawnedSession: {
+          spawn: vi.fn(),
+          resolveSpawnSessionByNonce: vi.fn(),
+        },
+      },
+    });
+
+    await expect(deps.sessionSpawnNew({
+      ...v2Input,
+      sessionCreationTag: deriveSessionCreationTagV1({
+        callerCreationNamespace: 'user',
+        creationKey: v2Input.creationKey,
+      }),
+      actionCaller: { kind: 'host' },
+    })).resolves.toMatchObject({
+      type: 'success',
+      sessionId: 'sess-cross-machine-source-context',
+    });
+
+    const spawnArgs = createSpawnedSession.mock.calls[0]?.[0];
+    expect(spawnArgs?.replaySeededCreation?.metadata).not.toHaveProperty('sessionMediaContinuityV1');
+  });
+
+  it('creates no child when the source recipe cannot be resolved', async () => {
+    const v2Input = {
+      creationKey: SessionCreationKeyV1Schema.parse('configure-from-unreadable-source'),
+      executionTarget: {
+        serverId: configuration.activeServerId,
+        machineId: 'machine-exact',
+      },
+      directory: '/repo',
+      agentTarget: {
+        kind: 'agent' as const,
+        identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
+      },
+      sourceContext: {
+        v: 1 as const,
+        kind: 'session_replay' as const,
+        sourceSessionId: 'source-session',
+        forkPoint: { type: 'latest' as const },
+      },
+    };
+    callMachineRpc.mockResolvedValue({
+      ok: true,
+      directory: '/repo',
+      directoryCreationRequired: false,
+      checkout: null,
+    });
+    fetchSessionByIdCompat.mockResolvedValue({ share: null, machineId: 'machine-exact' });
+    resolveReplaySeedDraft.mockResolvedValue({ status: 'unavailable' });
+    const deps = createCliActionDeps({
+      token: 'token',
+      credentials: {
+        token: 'token',
+        encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3, 4]) },
+      },
+      sessionId: 'cli-global',
+      mode: 'plain',
+      ctx: null,
+    });
+
+    await expect(deps.sessionSpawnNew({
+      ...v2Input,
+      sessionCreationTag: deriveSessionCreationTagV1({
+        callerCreationNamespace: 'user',
+        creationKey: v2Input.creationKey,
+      }),
+      actionCaller: { kind: 'host' },
+    })).resolves.toMatchObject({ type: 'error' });
+    // Required semantics: an unresolvable source leaves the authoring draft
+    // intact and commits nothing.
+    expect(createSpawnedSession).not.toHaveBeenCalled();
+  });
+
+  it('rejects an opaque V2 target that disagrees with the local direct daemon', async () => {
+    const prepare = vi.fn();
+    const deps = createCliActionDeps({
+      token: 'token',
+      credentials: {
+        token: 'token',
+        encryption: {
+          type: 'legacy' as const,
+          secret: new Uint8Array([1, 2, 3, 4]),
+        },
+      },
+      sessionId: 'cli-global',
+      mode: 'plain',
+      ctx: null,
+      sessionSpawnDirectTargetTransport: {
+        machineId: 'machine-exact',
+        prepare,
+        spawnedSession: {
+          spawn: vi.fn(),
+          resolveSpawnSessionByNonce: vi.fn(),
+        },
+      },
+    });
+
+    await expect(deps.sessionSpawnNew({
+      creationKey: SessionCreationKeyV1Schema.parse('automation-run:run-1'),
+      sessionCreationTag: deriveSessionCreationTagV1({
+        callerCreationNamespace: 'automation:automation-1',
+        creationKey: 'automation-run:run-1',
+      }),
+      executionTarget: {
+        serverId: configuration.activeServerId,
+        machineId: 'different-machine',
+      },
+      directory: '/repo/direct',
+      organizationPlacement: { folderId: null, tagIds: [] },
+      agentTarget: {
+        kind: 'agent',
+        identity: {
+          pluginId: 'happier.agent.codex',
+          localId: 'codex',
+        },
+      },
+      actionCaller: { kind: 'host' },
+    })).resolves.toEqual({
+      type: 'error',
+      code: 'target_unavailable',
+      retryable: false,
+    });
+
+    expect(prepare).not.toHaveBeenCalled();
+    expect(createSpawnedSession).not.toHaveBeenCalled();
+    expect(readMachineOperationProtocolCapabilitiesV1).not.toHaveBeenCalled();
+    expect(callMachineRpc).not.toHaveBeenCalled();
+  });
+
+  it('replays the provenance-pinned flat approval artifact through the real Action executor and canonical Session owner', async () => {
+    // Current moving-predecessor grammar: remote-dev@e47e0307b5db9c61d7dedf7970cac1995e67fb7d
+    // still emits the pre-V2 flat Action shape. The approval artifact is the
+    // only allowed ingress for its metadata label.
+    const predecessorActionArgs = {
+      tag: 'predecessor metadata label',
+      agentId: 'codex',
+      modelId: 'gpt-5',
+      directory: '/workspace/project',
+      machineId: 'machine-1',
+      prompt: 'Inspect this repository.',
     } as const;
+    let persistedApproval: ApprovalRequestV1 | null = {
+      v: 1,
+      status: 'open',
+      createdAtMs: 42,
+      updatedAtMs: 42,
+      createdBy: { surface: 'cli' },
+      requestedSurface: 'cli',
+      actionId: 'session.spawn_new',
+      actionArgs: predecessorActionArgs,
+      summary: 'Create session',
+      serverId: configuration.activeServerId,
+    };
+    const approvalsGet = vi.fn(async (): Promise<ApprovalRequestV1 | null> => persistedApproval);
+    const approvalsUpdate = vi.fn(async ({ request }: Readonly<{ request: ApprovalRequestV1 }>) => {
+      persistedApproval = request;
+      return { ok: true as const };
+    });
+    callMachineRpc.mockResolvedValue({
+      ok: true,
+      directory: '/workspace/project',
+      directoryCreationRequired: false,
+      checkout: null,
+    });
     createSpawnedSession.mockResolvedValue({
-      created: true,
-      sessionId: 'sess-child-runtime',
-      session: { id: 'sess-child-runtime' },
+      disposition: 'created',
+      sessionId: 'sess-predecessor',
+      organizationPlacement: { folderId: null, tagIds: [] },
+      initialInput: { status: 'notRequested' },
+      session: { id: 'sess-predecessor' },
     });
     const deps = createCliActionDeps({
       token: 'token',
       credentials: {
         token: 'token',
-        encryption: {
-          type: 'legacy',
-          secret: new Uint8Array([1, 2, 3, 4]),
-        },
+        encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3, 4]) },
       },
       sessionId: 'sess-parent',
       mode: 'plain',
-      ctx: {
-        encryptionKey: new Uint8Array([1, 2, 3, 4]),
-        encryptionVariant: 'legacy',
-      },
-      rawSession: {
-        machineId: 'machine-1',
-        path: '/repo',
-        metadata: {
-          permissionMode: 'safe-yolo',
-          permissionModeUpdatedAt: 123,
-          runtimeDescriptorV1: inheritedRuntimeDescriptor,
-        },
-      },
+      ctx: null,
+    });
+    const executor = createActionExecutor({
+      ...deps,
+      approvalsGet,
+      approvalsUpdate,
     });
 
-    await expect(deps.sessionSpawnNew({
-      title: 'Inherited runtime child',
-      callerSurface: 'agent',
-      callerPermissionMode: 'safe-yolo',
-    })).resolves.toEqual({
-      type: 'success',
-      sessionId: 'sess-child-runtime',
-      created: true,
-      session: { id: 'sess-child-runtime' },
-    });
+    await expect(executor.execute('approval.request.decide', {
+      artifactId: 'approval-remote-dev-1',
+      decision: 'approve',
+    }, { surface: 'cli' })).resolves.toMatchObject({ ok: true });
 
-    expect(createSpawnedSession).toHaveBeenCalledWith(expect.objectContaining({
-      directory: '/repo',
+    const expectedCreationKey = 'approval-artifact:approval-remote-dev-1';
+    const expectedSessionCreationTag = deriveSessionCreationTagV1({
+      callerCreationNamespace: 'user',
+      creationKey: expectedCreationKey,
+    });
+    expect(approvalsGet).toHaveBeenCalledWith({
+      artifactId: 'approval-remote-dev-1',
+      serverId: null,
+    });
+    expect(callMachineRpc).toHaveBeenCalledWith(expect.objectContaining({
       machineId: 'machine-1',
-      backendTarget: {
-        kind: 'backend',
-        backendId: 'opencode',
-        sourceKind: 'built_in',
-      },
-      runtimeDescriptorV1: inheritedRuntimeDescriptor,
-      title: 'Inherited runtime child',
+      method: RPC_METHODS.DAEMON_SESSION_CREATION_PREPARE,
+      request: { directory: '/workspace/project' },
     }));
+    expect(createSpawnedSession).toHaveBeenCalledWith(expect.objectContaining({
+      directory: '/workspace/project',
+      machineId: 'machine-1',
+      backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
+      legacyMetadataLabel: 'predecessor metadata label',
+      sessionCreationTag: expectedSessionCreationTag,
+      initialMessage: 'Inspect this repository.',
+      sessionCreationCorrespondence: expect.objectContaining({
+        sessionCreationTag: expectedSessionCreationTag,
+      }),
+    }));
+    const canonicalCreateRequest = createSpawnedSession.mock.calls[0]?.[0];
+    expect(canonicalCreateRequest).not.toHaveProperty('tag');
+    expect(canonicalCreateRequest).not.toHaveProperty('creationKey');
+    expect(persistedApproval).toMatchObject({
+      status: 'executed',
+      execution: { ok: true },
+    });
   });
 
-  it('does not inherit a parent runtime descriptor when an explicit built-in Agent target is requested', async () => {
+  it('materializes a checkout on the exact target before correspondence and spawn', async () => {
+    const sessionCreationTag = deriveSessionCreationTagV1({
+      callerCreationNamespace: 'user',
+      creationKey: SessionCreationKeyV1Schema.parse('create-checkout'),
+    });
+    callMachineRpc.mockResolvedValue({
+      ok: true,
+      directory: '/repo/.dev/worktree/feature-session',
+      directoryCreationRequired: false,
+      checkout: {
+        kind: 'git_worktree',
+        finalDirectory: '/repo/.dev/worktree/feature-session',
+        baseRef: 'main',
+        branchMode: 'new',
+      },
+    });
     createSpawnedSession.mockResolvedValue({
-      created: true,
-      sessionId: 'sess-explicit-agent-child',
-      session: { id: 'sess-explicit-agent-child' },
+      disposition: 'created',
+      sessionId: 'sess-checkout',
+      organizationPlacement: { folderId: null, tagIds: [] },
+      initialInput: { status: 'notRequested' },
+      session: { id: 'sess-checkout' },
     });
     const deps = createCliActionDeps({
       token: 'token',
       credentials: {
         token: 'token',
-        encryption: {
-          type: 'legacy',
-          secret: new Uint8Array([1, 2, 3, 4]),
-        },
+        encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3, 4]) },
       },
       sessionId: 'sess-parent',
       mode: 'plain',
-      ctx: {
-        encryptionKey: new Uint8Array([1, 2, 3, 4]),
-        encryptionVariant: 'legacy',
-      },
-      rawSession: {
-        machineId: 'machine-1',
-        path: '/repo',
-        metadata: {
-          runtimeDescriptorV1: {
-            v: 1,
-            agentId: 'claude',
-            agent: {},
-          },
-        },
-      },
-      happyHomeDir: '/tmp/happier-home',
+      ctx: null,
     });
 
     await expect(deps.sessionSpawnNew({
-      path: '/repo',
-      backendTargetKey: 'agent:codex',
-    })).resolves.toMatchObject({
+      creationKey: SessionCreationKeyV1Schema.parse('create-checkout'),
+      sessionCreationTag,
+      executionTarget: {
+        serverId: configuration.activeServerId,
+        machineId: 'machine-exact',
+      },
+      directory: '~/repo',
+      checkoutCreationDraft: {
+        kind: 'git_worktree',
+        displayName: 'feature-session',
+        baseRef: 'main',
+        branchMode: 'new',
+      },
+      agentTarget: {
+        kind: 'agent',
+        identity: {
+          pluginId: 'happier.agent.codex',
+          localId: 'codex',
+        },
+      },
+      actionCaller: { kind: 'host' },
+    })).resolves.toEqual(expect.objectContaining({
       type: 'success',
-      sessionId: 'sess-explicit-agent-child',
-    });
+      disposition: 'created',
+      sessionId: 'sess-checkout',
+    }));
 
-    const spawnInput = vi.mocked(createSpawnedSession).mock.calls.at(-1)?.[0];
-    expect(spawnInput).toEqual(expect.objectContaining({
-      backendTarget: {
-        kind: 'backend',
-        backendId: 'codex',
-        sourceKind: 'built_in',
+    expect(callMachineRpc).toHaveBeenCalledWith(expect.objectContaining({
+      machineId: 'machine-exact',
+      method: RPC_METHODS.DAEMON_SESSION_CREATION_PREPARE,
+      request: {
+        directory: '~/repo',
+        checkoutCreationDraft: {
+          kind: 'git_worktree',
+          displayName: 'feature-session',
+          baseRef: 'main',
+          branchMode: 'new',
+        },
       },
     }));
-    expect(spawnInput).not.toHaveProperty('runtimeDescriptorV1');
-    expect(emitSessionLifecycleHookEvent).toHaveBeenCalledWith(expect.objectContaining({
-      happySessionId: 'sess-explicit-agent-child',
-      payload: expect.objectContaining({
-        sessionId: 'sess-explicit-agent-child',
-        agentId: 'codex',
+    expect(createSpawnedSession).toHaveBeenCalledWith(expect.objectContaining({
+      directory: '/repo/.dev/worktree/feature-session',
+      sessionCreationCorrespondence: expect.objectContaining({
+        recipe: expect.objectContaining({
+          execution: {
+            machineId: 'machine-exact',
+            directory: '/repo/.dev/worktree/feature-session',
+          },
+          checkout: {
+            kind: 'git_worktree',
+            finalDirectory: '/repo/.dev/worktree/feature-session',
+            baseRef: 'main',
+            branchMode: 'new',
+          },
+        }),
       }),
     }));
   });
 
-  it('does not publish a configured backend id as an Agent id when no carrier Agent is known', async () => {
+  it('resolves a resumed Action attempt through its stable spawn nonce without submitting a second create', async () => {
+    callMachineRpc.mockResolvedValue({
+      ok: true,
+      directory: '/repo/exact',
+      directoryCreationRequired: false,
+      checkout: null,
+    });
     createSpawnedSession.mockResolvedValue({
-      created: true,
-      sessionId: 'sess-configured-without-carrier',
-      session: { id: 'sess-configured-without-carrier' },
+      disposition: 'rejoined',
+      sessionId: 'sess-resumed',
+      organizationPlacement: { folderId: null, tagIds: [] },
+      initialInput: { status: 'notRequested' },
+      session: { id: 'sess-resumed' },
+    });
+    const sessionCreationTag = deriveSessionCreationTagV1({
+      callerCreationNamespace: 'user',
+      creationKey: SessionCreationKeyV1Schema.parse('create-resume'),
     });
     const deps = createCliActionDeps({
       token: 'token',
       credentials: {
         token: 'token',
-        encryption: {
-          type: 'legacy',
-          secret: new Uint8Array([1, 2, 3, 4]),
-        },
+        encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3, 4]) },
       },
       sessionId: 'sess-parent',
       mode: 'plain',
-      ctx: {
-        encryptionKey: new Uint8Array([1, 2, 3, 4]),
-        encryptionVariant: 'legacy',
-      },
-      rawSession: {
-        machineId: 'machine-1',
-        path: '/repo',
-        metadata: {
-          runtimeDescriptorV1: {
-            v: 1,
-            agentId: 'claude',
-            agent: {},
-          },
-        },
-      },
-      happyHomeDir: '/tmp/happier-home',
+      ctx: null,
     });
 
     await expect(deps.sessionSpawnNew({
-      path: '/repo',
-      backendTarget: {
-        kind: 'backend',
-        backendId: 'review-bot',
-        sourceKind: 'configured',
-        configuredBackendId: 'review-bot',
+      creationKey: SessionCreationKeyV1Schema.parse('create-resume'),
+      sessionCreationTag,
+      executionTarget: {
+        serverId: configuration.activeServerId,
+        machineId: 'machine-exact',
       },
-    })).resolves.toMatchObject({
-      type: 'success',
-      sessionId: 'sess-configured-without-carrier',
-    });
-
-    expect(createSpawnedSession).toHaveBeenCalledWith(expect.objectContaining({
-      backendTarget: {
-        kind: 'backend',
-        backendId: 'review-bot',
-        sourceKind: 'configured',
-        configuredBackendId: 'review-bot',
-      },
-    }));
-    expect(vi.mocked(createSpawnedSession).mock.calls.at(-1)?.[0]).not.toHaveProperty('runtimeDescriptorV1');
-    expect(emitSessionLifecycleHookEvent).not.toHaveBeenCalled();
-  });
-
-  it('inherits configured ACP backend metadata before runtime descriptor metadata', async () => {
-    createSpawnedSession.mockResolvedValue({
-      created: true,
-      sessionId: 'sess-child-configured-metadata',
-      session: { id: 'sess-child-configured-metadata' },
-    });
-    const deps = createCliActionDeps({
-      token: 'token',
-      credentials: {
-        token: 'token',
-        encryption: {
-          type: 'legacy',
-          secret: new Uint8Array([1, 2, 3, 4]),
+      directory: '/repo/exact',
+      agentTarget: {
+        kind: 'agent',
+        identity: {
+          pluginId: 'happier.agent.codex',
+          localId: 'codex',
         },
       },
-      sessionId: 'sess-parent',
-      mode: 'plain',
-      ctx: {
-        encryptionKey: new Uint8Array([1, 2, 3, 4]),
-        encryptionVariant: 'legacy',
-      },
-      rawSession: {
-        machineId: 'machine-1',
-        path: '/repo',
-        metadata: {
-          permissionMode: 'safe-yolo',
-          permissionModeUpdatedAt: 123,
-          acpConfiguredBackendV1: {
-            v: 1,
-            backendId: 'review-bot',
-            title: 'Review Bot',
-            updatedAt: 120,
-          },
-          runtimeDescriptorV1: {
-            v: 1,
-            agentId: 'claude',
-            agent: {},
-          },
-        },
-      },
-    });
-
-    await expect(deps.sessionSpawnNew({
-      title: 'Inherited configured metadata child',
-      callerSurface: 'agent',
-      callerPermissionMode: 'safe-yolo',
+      actionRequestId: 'resume-attempt-1',
+      resumeActionRequest: true,
+      actionCaller: { kind: 'host' },
     })).resolves.toEqual({
       type: 'success',
-      sessionId: 'sess-child-configured-metadata',
-      created: true,
-      session: { id: 'sess-child-configured-metadata' },
+      disposition: 'rejoined',
+      sessionId: 'sess-resumed',
+      executionTarget: {
+        serverId: configuration.activeServerId,
+        machineId: 'machine-exact',
+      },
+      organizationPlacement: { folderId: null, tagIds: [] },
+      initialInput: { status: 'notRequested' },
     });
 
     expect(createSpawnedSession).toHaveBeenCalledWith(expect.objectContaining({
-      directory: '/repo',
-      machineId: 'machine-1',
-      backendTarget: {
-        kind: 'backend',
-        backendId: 'review-bot',
-        sourceKind: 'configured',
-        configuredBackendId: 'review-bot',
-      },
-      runtimeDescriptorV1: {
-        v: 1,
-        agentId: 'claude',
-        agent: {},
-      },
-      title: 'Inherited configured metadata child',
+      spawnNonce: expect.stringMatching(/^session\.spawn_new\.action:/u),
+      resumeOnly: true,
     }));
   });
 
-  it('consumes inherited legacy ACP runtime descriptors without copying their carrier into a child or hook', async () => {
-    createSpawnedSession.mockResolvedValue({
-      created: true,
-      sessionId: 'sess-child-configured-legacy-runtime',
-      session: { id: 'sess-child-configured-legacy-runtime' },
+  it('preserves an admitted-but-unresolved spawn as pending with an unknown outcome', async () => {
+    callMachineRpc.mockResolvedValue({
+      ok: true,
+      directory: '/repo/exact',
+      directoryCreationRequired: false,
+      checkout: null,
+    });
+    const error = new Error('Timed out waiting for the child Session webhook');
+    (error as Error & { code: string }).code = 'SESSION_WEBHOOK_TIMEOUT';
+    createSpawnedSession.mockRejectedValue(error);
+    const sessionCreationTag = deriveSessionCreationTagV1({
+      callerCreationNamespace: 'user',
+      creationKey: SessionCreationKeyV1Schema.parse('create-outcome-unknown'),
     });
     const deps = createCliActionDeps({
       token: 'token',
       credentials: {
         token: 'token',
-        encryption: {
-          type: 'legacy',
-          secret: new Uint8Array([1, 2, 3, 4]),
-        },
+        encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3, 4]) },
       },
       sessionId: 'sess-parent',
       mode: 'plain',
-      ctx: {
-        encryptionKey: new Uint8Array([1, 2, 3, 4]),
-        encryptionVariant: 'legacy',
-      },
-      rawSession: {
-        machineId: 'machine-1',
-        path: '/repo',
-        metadata: {
-          acpConfiguredBackendV1: {
-            v: 1,
-            backendId: 'review-bot',
-            title: 'Review Bot',
-            updatedAt: 120,
-          },
-          runtimeDescriptorV1: {
-            v: 1,
-            agentId: 'customAcp',
-            agent: {},
-          },
-        },
-      },
-      happyHomeDir: '/tmp/happier-home',
+      ctx: null,
     });
 
     await expect(deps.sessionSpawnNew({
-      title: 'Inherited configured metadata child',
-    })).resolves.toMatchObject({
-      type: 'success',
-      sessionId: 'sess-child-configured-legacy-runtime',
-    });
-
-    const spawnInput = vi.mocked(createSpawnedSession).mock.calls.at(-1)?.[0];
-    expect(spawnInput).toEqual(expect.objectContaining({
-      backendTarget: {
-        kind: 'backend',
-        backendId: 'review-bot',
-        sourceKind: 'configured',
-        configuredBackendId: 'review-bot',
+      creationKey: SessionCreationKeyV1Schema.parse('create-outcome-unknown'),
+      sessionCreationTag,
+      executionTarget: {
+        serverId: configuration.activeServerId,
+        machineId: 'machine-exact',
       },
-    }));
-    expect(spawnInput).not.toHaveProperty('runtimeDescriptorV1');
-    expect(emitSessionLifecycleHookEvent).not.toHaveBeenCalled();
+      directory: '/repo/exact',
+      agentTarget: {
+        kind: 'agent',
+        identity: {
+          pluginId: 'happier.agent.codex',
+          localId: 'codex',
+        },
+      },
+      actionCaller: { kind: 'host' },
+    })).resolves.toEqual({
+      type: 'pending',
+      retryWithSameCreationKey: true,
+      outcome: 'unknown',
+    });
   });
 
-  it('rejects session-agent spawn permission escalation before creating a child session', async () => {
-    createSpawnedSession.mockResolvedValue({
-      created: true,
-      sessionId: 'sess-should-not-spawn',
-      session: { id: 'sess-should-not-spawn' },
+  it('maps the exact terminal organization-placement refusal without parsing message text', async () => {
+    callMachineRpc.mockResolvedValue({
+      ok: true,
+      directory: '/repo/exact',
+      directoryCreationRequired: false,
+      checkout: null,
+    });
+    const error = new Error('opaque daemon wording') as Error & {
+      code: string;
+      details: unknown;
+    };
+    error.code = SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED;
+    error.details = {
+      spawnResponse: {
+        errorDetail: {
+          kind: 'session_creation_organization_invalid',
+          code: 'organization_invalid',
+        },
+      },
+    };
+    createSpawnedSession.mockRejectedValue(error);
+    const sessionCreationTag = deriveSessionCreationTagV1({
+      callerCreationNamespace: 'user',
+      creationKey: SessionCreationKeyV1Schema.parse('create-invalid-placement'),
     });
     const deps = createCliActionDeps({
       token: 'token',
       credentials: {
         token: 'token',
-        encryption: {
-          type: 'legacy',
-          secret: new Uint8Array([1, 2, 3, 4]),
-        },
+        encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3, 4]) },
       },
       sessionId: 'sess-parent',
       mode: 'plain',
-      ctx: {
-        encryptionKey: new Uint8Array([1, 2, 3, 4]),
-        encryptionVariant: 'legacy',
-      },
-      rawSession: {
-        machineId: 'machine-1',
-        path: '/repo',
-        metadata: {
-          permissionMode: 'default',
-          permissionModeUpdatedAt: 100,
-        },
-      },
+      ctx: null,
     });
 
     await expect(deps.sessionSpawnNew({
-      path: '/repo',
-      backendTargetKey: 'agent:codex',
-      permissionMode: 'workspace_write',
-      callerSurface: 'agent',
-    })).resolves.toEqual(expect.objectContaining({
+      creationKey: SessionCreationKeyV1Schema.parse('create-invalid-placement'),
+      sessionCreationTag,
+      executionTarget: {
+        serverId: configuration.activeServerId,
+        machineId: 'machine-exact',
+      },
+      directory: '/repo/exact',
+      organizationPlacement: { folderId: 'folder-invalid', tagIds: [] },
+      agentTarget: {
+        kind: 'agent',
+        identity: {
+          pluginId: 'happier.agent.codex',
+          localId: 'codex',
+        },
+      },
+      actionCaller: { kind: 'host' },
+    })).resolves.toEqual({
       type: 'error',
-      errorCode: 'permission_escalation_denied',
-      errorMessage: 'permission_escalation_denied',
-    }));
+      code: 'organization_invalid',
+      retryable: false,
+    });
+  });
+
+  it('maps the exact terminal creation-correspondence conflict without parsing message text', async () => {
+    callMachineRpc.mockResolvedValue({
+      ok: true,
+      directory: '/repo/exact',
+      directoryCreationRequired: false,
+      checkout: null,
+    });
+    const error = new Error('opaque daemon wording') as Error & {
+      code: string;
+      details: unknown;
+    };
+    error.code = SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED;
+    error.details = {
+      spawnResponse: {
+        errorDetail: {
+          kind: 'session_creation_correspondence_conflict',
+          code: 'creation_conflict',
+        },
+      },
+    };
+    createSpawnedSession.mockRejectedValue(error);
+    const sessionCreationTag = deriveSessionCreationTagV1({
+      callerCreationNamespace: 'user',
+      creationKey: SessionCreationKeyV1Schema.parse('create-correspondence-conflict'),
+    });
+    const deps = createCliActionDeps({
+      token: 'token',
+      credentials: {
+        token: 'token',
+        encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3, 4]) },
+      },
+      sessionId: 'sess-parent',
+      mode: 'plain',
+      ctx: null,
+    });
+
+    await expect(deps.sessionSpawnNew({
+      creationKey: SessionCreationKeyV1Schema.parse('create-correspondence-conflict'),
+      sessionCreationTag,
+      executionTarget: {
+        serverId: configuration.activeServerId,
+        machineId: 'machine-exact',
+      },
+      directory: '/repo/exact',
+      agentTarget: {
+        kind: 'agent',
+        identity: {
+          pluginId: 'happier.agent.codex',
+          localId: 'codex',
+        },
+      },
+      actionCaller: { kind: 'host' },
+    })).resolves.toEqual({
+      type: 'error',
+      code: 'creation_conflict',
+      retryable: false,
+    });
+  });
+
+  it('keeps a possibly admitted spawn pending when caller cancellation races its settlement', async () => {
+    callMachineRpc.mockResolvedValue({
+      ok: true,
+      directory: '/repo/exact',
+      directoryCreationRequired: false,
+      checkout: null,
+    });
+    const controller = new AbortController();
+    createSpawnedSession.mockImplementation(async () => {
+      controller.abort();
+      const error = new Error('Caller cancellation raced session-spawn submission') as Error & {
+        code: string;
+        details: { spawnNonce: string };
+      };
+      error.code = SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT;
+      error.details = { spawnNonce: 'session.spawn_new.action:ambiguous' };
+      throw error;
+    });
+    const sessionCreationTag = deriveSessionCreationTagV1({
+      callerCreationNamespace: 'user',
+      creationKey: SessionCreationKeyV1Schema.parse('create-cancellation-race'),
+    });
+    const deps = createCliActionDeps({
+      token: 'token',
+      credentials: {
+        token: 'token',
+        encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3, 4]) },
+      },
+      sessionId: 'sess-parent',
+      mode: 'plain',
+      ctx: null,
+    });
+
+    await expect(deps.sessionSpawnNew({
+      creationKey: SessionCreationKeyV1Schema.parse('create-cancellation-race'),
+      sessionCreationTag,
+      executionTarget: {
+        serverId: configuration.activeServerId,
+        machineId: 'machine-exact',
+      },
+      directory: '/repo/exact',
+      agentTarget: {
+        kind: 'agent',
+        identity: {
+          pluginId: 'happier.agent.codex',
+          localId: 'codex',
+        },
+      },
+      actionCaller: { kind: 'host' },
+      signal: controller.signal,
+    })).resolves.toEqual({
+      type: 'pending',
+      retryWithSameCreationKey: true,
+      outcome: 'unknown',
+    });
+  });
+
+  it('returns a typed pre-submission target failure when preparation times out without spawning', async () => {
+    callMachineRpc.mockRejectedValue(Object.assign(
+      new Error('Machine RPC call timeout'),
+      { code: 'MACHINE_RPC_TIMEOUT' },
+    ));
+    const sessionCreationTag = deriveSessionCreationTagV1({
+      callerCreationNamespace: 'user',
+      creationKey: SessionCreationKeyV1Schema.parse('create-preparation-timeout'),
+    });
+    const deps = createCliActionDeps({
+      token: 'token',
+      credentials: {
+        token: 'token',
+        encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3, 4]) },
+      },
+      sessionId: 'sess-parent',
+      mode: 'plain',
+      ctx: null,
+    });
+
+    await expect(deps.sessionSpawnNew({
+      creationKey: SessionCreationKeyV1Schema.parse('create-preparation-timeout'),
+      sessionCreationTag,
+      executionTarget: {
+        serverId: configuration.activeServerId,
+        machineId: 'machine-exact',
+      },
+      directory: '~/repo',
+      checkoutCreationDraft: {
+        kind: 'git_worktree',
+        displayName: 'feature-timeout',
+        baseRef: null,
+      },
+      agentTarget: {
+        kind: 'agent',
+        identity: {
+          pluginId: 'happier.agent.codex',
+          localId: 'codex',
+        },
+      },
+      actionCaller: { kind: 'host' },
+    })).resolves.toEqual({
+      type: 'error',
+      code: 'machine_offline',
+      retryable: true,
+    });
     expect(createSpawnedSession).not.toHaveBeenCalled();
   });
 
-  it('uses the live caller permission accessor before metadata for session-agent spawn', async () => {
-    createSpawnedSession.mockResolvedValue({
-      created: true,
-      sessionId: 'sess-child-live-permission',
-      session: { id: 'sess-child-live-permission' },
+  it('projects a preparation RPC authentication failure as permission denied before spawning', async () => {
+    callMachineRpc.mockRejectedValue(createAuthenticationHttpStatusError(401, 'Session creation requires authentication.'));
+    const sessionCreationTag = deriveSessionCreationTagV1({
+      callerCreationNamespace: 'user',
+      creationKey: SessionCreationKeyV1Schema.parse('create-preparation-authentication-failure'),
     });
-    const params = {
+    const deps = createCliActionDeps({
+      token: 'token',
+      credentials: {
+        token: 'token',
+        encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3, 4]) },
+      },
+      sessionId: 'sess-parent',
+      mode: 'plain',
+      ctx: null,
+    });
+
+    await expect(deps.sessionSpawnNew({
+      creationKey: SessionCreationKeyV1Schema.parse('create-preparation-authentication-failure'),
+      sessionCreationTag,
+      executionTarget: {
+        serverId: configuration.activeServerId,
+        machineId: 'machine-exact',
+      },
+      directory: '/repo/exact',
+      agentTarget: {
+        kind: 'agent',
+        identity: {
+          pluginId: 'happier.agent.codex',
+          localId: 'codex',
+        },
+      },
+      actionCaller: { kind: 'host' },
+    })).resolves.toEqual({
+      type: 'error',
+      code: 'permission_denied',
+      retryable: false,
+    });
+    expect(createSpawnedSession).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when the exact target lacks the live session-spawn handler', async () => {
+    callMachineRpc.mockResolvedValue({
+      ok: true,
+      directory: '/repo/exact',
+      directoryCreationRequired: false,
+      checkout: null,
+    });
+    const error = new Error('The exact machine does not expose session spawning');
+    (error as Error & { code: string }).code = SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE;
+    createSpawnedSession.mockRejectedValue(error);
+    const sessionCreationTag = deriveSessionCreationTagV1({
+      callerCreationNamespace: 'user',
+      creationKey: SessionCreationKeyV1Schema.parse('create-live-capability-negative'),
+    });
+    const deps = createCliActionDeps({
+      token: 'token',
+      credentials: {
+        token: 'token',
+        encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3, 4]) },
+      },
+      sessionId: 'sess-parent',
+      mode: 'plain',
+      ctx: null,
+    });
+
+    await expect(deps.sessionSpawnNew({
+      creationKey: SessionCreationKeyV1Schema.parse('create-live-capability-negative'),
+      sessionCreationTag,
+      executionTarget: {
+        serverId: configuration.activeServerId,
+        machineId: 'machine-exact',
+      },
+      directory: '/repo/exact',
+      agentTarget: {
+        kind: 'agent',
+        identity: {
+          pluginId: 'happier.agent.codex',
+          localId: 'codex',
+        },
+      },
+      actionCaller: { kind: 'host' },
+    })).resolves.toEqual({
+      type: 'error',
+      code: 'incompatible_target',
+      retryable: false,
+    });
+  });
+
+  it('fails closed for a mismatched server or unregistered qualified Agent target', async () => {
+    const sessionCreationTag = deriveSessionCreationTagV1({
+      callerCreationNamespace: 'user',
+      creationKey: 'create-2',
+    });
+    const creationKey = SessionCreationKeyV1Schema.parse('create-2');
+    const deps = createCliActionDeps({
       token: 'token',
       credentials: {
         token: 'token',
@@ -1222,526 +1981,106 @@ describe('createCliActionDeps hook dispatch', () => {
         },
       },
       sessionId: 'sess-parent',
-      mode: 'plain' as const,
-      ctx: {
-        encryptionKey: new Uint8Array([1, 2, 3, 4]),
-        encryptionVariant: 'legacy' as const,
+      mode: 'plain',
+      ctx: null,
+    });
+    const base = {
+      creationKey,
+      sessionCreationTag,
+      executionTarget: {
+        serverId: 'different-server',
+        machineId: 'machine-exact',
       },
-      rawSession: {
-        machineId: 'machine-1',
-        path: '/repo',
-        metadata: {
-          permissionMode: 'default',
-          permissionModeUpdatedAt: 100,
+      directory: '/repo/exact',
+      agentTarget: {
+        kind: 'agent' as const,
+        identity: {
+          pluginId: PluginIdSchema.parse('happier.agent.codex'),
+          localId: PluginContributionLocalIdSchema.parse('codex'),
         },
       },
-      getCallerPermissionMode: () => 'yolo',
+      actionCaller: { kind: 'host' as const },
     };
-    const deps = createCliActionDeps(params);
+
+    await expect(deps.sessionSpawnNew(base)).resolves.toEqual({
+      type: 'error',
+      code: 'target_unavailable',
+      retryable: false,
+    });
+    expect(createSpawnedSession).not.toHaveBeenCalled();
 
     await expect(deps.sessionSpawnNew({
-      path: '/repo',
-      backendTargetKey: 'agent:codex',
-      permissionMode: 'yolo',
-      callerSurface: 'agent',
-    })).resolves.toEqual({
-      type: 'success',
-      sessionId: 'sess-child-live-permission',
-      created: true,
-      session: { id: 'sess-child-live-permission' },
-    });
-
-    expect(createSpawnedSession).toHaveBeenCalledWith(expect.objectContaining({
-      directory: '/repo',
-      permissionMode: 'yolo',
-    }));
-  });
-
-  it('rejects session-agent spawn policy field denials before creating a child session', async () => {
-    createSpawnedSession.mockResolvedValue({
-      created: true,
-      sessionId: 'sess-should-not-spawn',
-      session: { id: 'sess-should-not-spawn' },
-    });
-    const deps = createCliActionDeps({
-      token: 'token',
-      credentials: {
-        token: 'token',
-        encryption: {
-          type: 'legacy',
-          secret: new Uint8Array([1, 2, 3, 4]),
+      ...base,
+      executionTarget: {
+        serverId: configuration.activeServerId,
+        machineId: 'machine-exact',
+      },
+      agentTarget: {
+        kind: 'agent',
+        identity: {
+          pluginId: 'missing.plugin',
+          localId: 'missing',
         },
       },
+    })).resolves.toEqual({
+      type: 'error',
+      code: 'target_unavailable',
+      retryable: false,
+    });
+    expect(createSpawnedSession).not.toHaveBeenCalled();
+  });
+
+  it('rejects an exact target without the persisted session-spawn capability before it can create a Session', async () => {
+    readMachineOperationProtocolCapabilitiesV1.mockResolvedValue({
+      capabilities: {},
+      revision: 1,
+    });
+    const sessionCreationTag = deriveSessionCreationTagV1({
+      callerCreationNamespace: 'user',
+      creationKey: SessionCreationKeyV1Schema.parse('create-capability-negative'),
+    });
+    const credentials = {
+      token: 'token',
+      encryption: {
+        type: 'legacy' as const,
+        secret: new Uint8Array([1, 2, 3, 4]),
+      },
+    };
+    const deps = createCliActionDeps({
+      token: credentials.token,
+      credentials,
       sessionId: 'sess-parent',
       mode: 'plain',
-      ctx: {
-        encryptionKey: new Uint8Array([1, 2, 3, 4]),
-        encryptionVariant: 'legacy',
-      },
-      rawSession: {
-        machineId: 'machine-1',
-        path: '/repo',
-        metadata: {
-          permissionMode: 'safe-yolo',
-          permissionModeUpdatedAt: 100,
-        },
-      },
+      ctx: null,
     });
 
     await expect(deps.sessionSpawnNew({
-      path: '/tmp/other-repo',
-      backendTargetKey: 'agent:codex',
-      callerSurface: 'agent',
-      sessionAgentSpawnPolicyV1: {
-        v: 1,
-        allowCustomDirectory: false,
+      creationKey: SessionCreationKeyV1Schema.parse('create-capability-negative'),
+      sessionCreationTag,
+      legacyMetadataLabel: 'predecessor metadata label',
+      executionTarget: {
+        serverId: configuration.activeServerId,
+        machineId: 'machine-incompatible',
       },
-    })).resolves.toEqual(expect.objectContaining({
-      type: 'error',
-      errorCode: 'spawn_policy_denied',
-      errorMessage: 'spawn_policy_denied',
-      field: 'path',
-    }));
-    expect(createSpawnedSession).not.toHaveBeenCalled();
-  });
-
-  it('allows explicit session-agent spawn overrides with the default-open spawn policy', async () => {
-    createSpawnedSession.mockResolvedValue({
-      created: true,
-      sessionId: 'sess-child',
-      session: { id: 'sess-child' },
-    });
-    const deps = createCliActionDeps({
-      token: 'token',
-      credentials: {
-        token: 'token',
-        encryption: {
-          type: 'legacy',
-          secret: new Uint8Array([1, 2, 3, 4]),
+      directory: '/repo/exact',
+      agentTarget: {
+        kind: 'agent',
+        identity: {
+          pluginId: 'happier.agent.codex',
+          localId: 'codex',
         },
       },
-      sessionId: 'sess-parent',
-      mode: 'plain',
-      ctx: {
-        encryptionKey: new Uint8Array([1, 2, 3, 4]),
-        encryptionVariant: 'legacy',
-      },
-      rawSession: {
-        machineId: 'machine-1',
-        path: '/repo',
-        metadata: {
-          permissionMode: 'safe-yolo',
-          permissionModeUpdatedAt: 100,
-        },
-      },
-    });
-
-    await expect(deps.sessionSpawnNew({
-      path: '/tmp/other-repo',
-      backendTargetKey: 'agent:codex',
-      permissionMode: 'read_only',
-      environmentVariables: { FEATURE_FLAG: 'enabled' },
-      callerSurface: 'agent',
-    })).resolves.toEqual({
-      type: 'success',
-      sessionId: 'sess-child',
-      created: true,
-      session: { id: 'sess-child' },
-    });
-    expect(createSpawnedSession).toHaveBeenCalledWith(expect.objectContaining({
-      directory: '/tmp/other-repo',
-      permissionMode: 'read-only',
-      environmentVariables: { FEATURE_FLAG: 'enabled' },
-    }));
-  });
-
-  it('spawns canonical plugin backendTargetKey values when the runtime carrier is explicit', async () => {
-    createSpawnedSession.mockResolvedValue({
-      created: true,
-      sessionId: 'sess-plugin',
-      session: { id: 'sess-plugin' },
-    });
-    const deps = createCliActionDeps({
-      token: 'token',
-      credentials: {
-        token: 'token',
-        encryption: {
-          type: 'legacy',
-          secret: new Uint8Array([1, 2, 3, 4]),
-        },
-      },
-      sessionId: 'sess-1',
-      mode: 'plain',
-      ctx: {
-        encryptionKey: new Uint8Array([1, 2, 3, 4]),
-        encryptionVariant: 'legacy',
-      },
-      rawSession: {
-        machineId: 'machine-1',
-        path: '/repo',
-      },
-    });
-
-    await expect(deps.sessionSpawnNew({
-      agentId: 'claude',
-      backendTargetKey: 'backend:plugin-review-bot',
-      path: '/repo',
-    })).resolves.toEqual({
-      type: 'success',
-      sessionId: 'sess-plugin',
-      created: true,
-      session: { id: 'sess-plugin' },
-    });
-
-    expect(createSpawnedSession).toHaveBeenCalledWith(expect.objectContaining({
-      directory: '/repo',
-      machineId: 'machine-1',
-      backendTarget: {
-        kind: 'backend',
-        backendId: 'plugin-review-bot',
-        sourceKind: 'built_in',
-      },
-    }));
-  });
-
-  it('routes structured plugin lifecycle hooks by the reconciled backend target, not the runtime Agent', async () => {
-    createSpawnedSession.mockResolvedValue({
-      created: true,
-      sessionId: 'sess-structured-plugin',
-      session: { id: 'sess-structured-plugin' },
-    });
-    const deps = createCliActionDeps({
-      token: 'token',
-      credentials: {
-        token: 'token',
-        encryption: {
-          type: 'legacy',
-          secret: new Uint8Array([1, 2, 3, 4]),
-        },
-      },
-      sessionId: 'sess-1',
-      mode: 'plain',
-      ctx: {
-        encryptionKey: new Uint8Array([1, 2, 3, 4]),
-        encryptionVariant: 'legacy',
-      },
-      rawSession: {
-        machineId: 'machine-1',
-        path: '/repo',
-      },
-      happyHomeDir: '/tmp/happier-home',
-    });
-
-    await expect(deps.sessionSpawnNew({
-      agentId: 'claude',
-      backendTarget: {
-        kind: 'backend',
-        backendId: 'plugin-review-bot',
-        sourceKind: 'built_in',
-      },
-      path: '/repo',
-    })).resolves.toMatchObject({
-      type: 'success',
-      sessionId: 'sess-structured-plugin',
-    });
-
-    expect(emitSessionLifecycleHookEvent).toHaveBeenCalledWith(expect.objectContaining({
-      eventId: 'session.spawned',
-      backendTarget: 'backend:plugin-review-bot',
-      payload: expect.objectContaining({
-        agentId: 'claude',
-        runtimeTarget: {
-          kind: 'backend',
-          backendId: 'plugin-review-bot',
-          sourceKind: 'built_in',
-        },
-      }),
-    }));
-  });
-
-  it('spawns a V1 plugin target key with a distinct runtime descriptor Agent carrier', async () => {
-    createSpawnedSession.mockResolvedValue({
-      created: true,
-      sessionId: 'sess-v1-plugin',
-      session: { id: 'sess-v1-plugin' },
-    });
-    const runtimeDescriptorV1 = {
-      v: 1 as const,
-      agentId: 'claude',
-      agent: {},
-    };
-    const deps = createCliActionDeps({
-      token: 'token',
-      credentials: {
-        token: 'token',
-        encryption: {
-          type: 'legacy',
-          secret: new Uint8Array([1, 2, 3, 4]),
-        },
-      },
-      sessionId: 'sess-1',
-      mode: 'plain',
-      ctx: {
-        encryptionKey: new Uint8Array([1, 2, 3, 4]),
-        encryptionVariant: 'legacy',
-      },
-      rawSession: {
-        machineId: 'machine-1',
-        path: '/repo',
-      },
-      happyHomeDir: '/tmp/happier-home',
-    });
-
-    await expect(deps.sessionSpawnNew({
-      backendTargetKey: 'agent:plugin-review-bot',
-      runtimeDescriptorV1,
-      path: '/repo',
-    })).resolves.toMatchObject({
-      type: 'success',
-      sessionId: 'sess-v1-plugin',
-    });
-
-    expect(createSpawnedSession).toHaveBeenCalledWith(expect.objectContaining({
-      backendTarget: {
-        kind: 'backend',
-        backendId: 'plugin-review-bot',
-        sourceKind: 'built_in',
-      },
-      runtimeDescriptorV1,
-    }));
-    expect(emitSessionLifecycleHookEvent).toHaveBeenCalledWith(expect.objectContaining({
-      backendTarget: 'backend:plugin-review-bot',
-      payload: expect.objectContaining({
-        agentId: 'claude',
-      }),
-    }));
-  });
-
-  it('rejects a V1 plugin target key without an explicit runtime Agent carrier', async () => {
-    createSpawnedSession.mockResolvedValue({
-      created: true,
-      sessionId: 'sess-v1-plugin-without-carrier',
-      session: { id: 'sess-v1-plugin-without-carrier' },
-    });
-    const deps = createCliActionDeps({
-      token: 'token',
-      credentials: {
-        token: 'token',
-        encryption: {
-          type: 'legacy',
-          secret: new Uint8Array([1, 2, 3, 4]),
-        },
-      },
-      sessionId: 'sess-1',
-      mode: 'plain',
-      ctx: {
-        encryptionKey: new Uint8Array([1, 2, 3, 4]),
-        encryptionVariant: 'legacy',
-      },
-      rawSession: {
-        machineId: 'machine-1',
-        path: '/repo',
-      },
-      happyHomeDir: '/tmp/happier-home',
-    });
-
-    await expect(deps.sessionSpawnNew({
-      backendTargetKey: 'agent:plugin-review-bot',
-      path: '/repo',
-    })).resolves.toMatchObject({
-      type: 'error',
-      errorCode: 'invalid_parameters',
-    });
-
-    expect(createSpawnedSession).not.toHaveBeenCalled();
-    expect(emitSessionLifecycleHookEvent).not.toHaveBeenCalled();
-  });
-
-  it('spawns equivalent lossy V1 configured and lossless V2 structured targets', async () => {
-    createSpawnedSession.mockResolvedValue({
-      created: true,
-      sessionId: 'sess-v1-v2-configured',
-      session: { id: 'sess-v1-v2-configured' },
-    });
-    const backendTarget = {
-      kind: 'backend' as const,
-      backendId: 'customAcpRuntimeCarrier',
-      configuredBackendId: 'kiro',
-      sourceKind: 'configured' as const,
-    };
-    const deps = createCliActionDeps({
-      token: 'token',
-      credentials: {
-        token: 'token',
-        encryption: {
-          type: 'legacy',
-          secret: new Uint8Array([1, 2, 3, 4]),
-        },
-      },
-      sessionId: 'sess-1',
-      mode: 'plain',
-      ctx: {
-        encryptionKey: new Uint8Array([1, 2, 3, 4]),
-        encryptionVariant: 'legacy',
-      },
-      rawSession: {
-        machineId: 'machine-1',
-        path: '/repo',
-      },
-      happyHomeDir: '/tmp/happier-home',
-    });
-
-    await expect(deps.sessionSpawnNew({
-      backendTargetKey: 'acpBackend:kiro',
-      backendTarget,
-      path: '/repo',
-    })).resolves.toMatchObject({
-      type: 'success',
-      sessionId: 'sess-v1-v2-configured',
-    });
-
-    expect(createSpawnedSession).toHaveBeenCalledWith(expect.objectContaining({
-      backendTarget,
-    }));
-    expect(emitSessionLifecycleHookEvent).not.toHaveBeenCalled();
-  });
-
-  it('does not publish a structured non-Agent backend id without an explicit Agent carrier', async () => {
-    createSpawnedSession.mockResolvedValue({
-      created: true,
-      sessionId: 'sess-structured-plugin',
-      session: { id: 'sess-structured-plugin' },
-    });
-    const deps = createCliActionDeps({
-      token: 'token',
-      credentials: {
-        token: 'token',
-        encryption: {
-          type: 'legacy',
-          secret: new Uint8Array([1, 2, 3, 4]),
-        },
-      },
-      sessionId: 'sess-1',
-      mode: 'plain',
-      ctx: {
-        encryptionKey: new Uint8Array([1, 2, 3, 4]),
-        encryptionVariant: 'legacy',
-      },
-      rawSession: {
-        machineId: 'machine-1',
-        path: '/repo',
-      },
-      happyHomeDir: '/tmp/happier-home',
-    });
-
-    await expect(deps.sessionSpawnNew({
-      backendTarget: {
-        kind: 'backend',
-        backendId: 'plugin-review-bot',
-        sourceKind: 'built_in',
-      },
-      path: '/repo',
-    })).resolves.toMatchObject({
-      type: 'success',
-      sessionId: 'sess-structured-plugin',
-    });
-
-    expect(createSpawnedSession).toHaveBeenCalledWith(expect.objectContaining({
-      backendTarget: {
-        kind: 'backend',
-        backendId: 'plugin-review-bot',
-        sourceKind: 'built_in',
-      },
-    }));
-    expect(emitSessionLifecycleHookEvent).not.toHaveBeenCalled();
-  });
-
-  it.each([
-    ['Agent id', { agentId: 'claude' }],
-    ['runtime descriptor Agent', {
-      runtimeDescriptorV1: {
-        v: 1,
-        agentId: 'claude',
-        agent: {},
-      },
-    }],
-    ['backend target key', { backendTargetKey: 'agent:claude' }],
-  ] as const)('rejects a structured built-in target that conflicts with an explicit %s', async (_label, conflictingInput) => {
-    createSpawnedSession.mockResolvedValue({
-      created: true,
-      sessionId: 'sess-conflicting-target',
-      session: { id: 'sess-conflicting-target' },
-    });
-    const deps = createCliActionDeps({
-      token: 'token',
-      credentials: {
-        token: 'token',
-        encryption: {
-          type: 'legacy',
-          secret: new Uint8Array([1, 2, 3, 4]),
-        },
-      },
-      sessionId: 'sess-1',
-      mode: 'plain',
-      ctx: {
-        encryptionKey: new Uint8Array([1, 2, 3, 4]),
-        encryptionVariant: 'legacy',
-      },
-      rawSession: {
-        machineId: 'machine-1',
-        path: '/repo',
-      },
-      happyHomeDir: '/tmp/happier-home',
-    });
-
-    await expect(deps.sessionSpawnNew({
-      backendTarget: {
-        kind: 'backend',
-        backendId: 'codex',
-        sourceKind: 'built_in',
-      },
-      path: '/repo',
-      ...conflictingInput,
-    })).resolves.toMatchObject({
-      type: 'error',
-      errorCode: 'invalid_parameters',
-    });
-
-    expect(createSpawnedSession).not.toHaveBeenCalled();
-    expect(emitSessionLifecycleHookEvent).not.toHaveBeenCalled();
-  });
-
-  it('fails closed when legacy customAcp is used without an explicit concrete backend target', async () => {
-    const deps = createCliActionDeps({
-      token: 'token',
-      credentials: {
-        token: 'token',
-        encryption: {
-          type: 'legacy',
-          secret: new Uint8Array([1, 2, 3, 4]),
-        },
-      },
-      sessionId: 'sess-1',
-      mode: 'plain',
-      ctx: {
-        encryptionKey: new Uint8Array([1, 2, 3, 4]),
-        encryptionVariant: 'legacy',
-      },
-      rawSession: {
-        machineId: 'machine-1',
-        path: '/repo',
-      },
-    });
-
-    await expect(deps.sessionSpawnNew({
-      agentId: 'customAcp',
-      path: '/repo',
+      actionCaller: { kind: 'host' },
     })).resolves.toEqual({
       type: 'error',
-      errorCode: 'invalid_parameters',
-      errorMessage: 'invalid_parameters',
+      code: 'incompatible_target',
+      retryable: false,
     });
 
+    expect(readMachineOperationProtocolCapabilitiesV1).toHaveBeenCalledWith({
+      credentials,
+      machineId: 'machine-incompatible',
+    });
     expect(createSpawnedSession).not.toHaveBeenCalled();
   });
 
@@ -1763,10 +2102,7 @@ describe('createCliActionDeps hook dispatch', () => {
       },
       sessionId: 'sess-1',
       mode: 'plain',
-      ctx: {
-        encryptionKey: new Uint8Array([1, 2, 3, 4]),
-        encryptionVariant: 'legacy',
-      },
+      ctx: null,
       rawSession: {
         machineId: 'machine-1',
         path: '/repo',
@@ -1780,6 +2116,7 @@ describe('createCliActionDeps hook dispatch', () => {
     await expect(deps.sessionSendMessage({
       sessionId: 'sess-1',
       message: 'Hello world',
+      requestedAction: { v: 1, kind: 'steer_if_active' },
       wait: true,
       timeoutSeconds: 30,
       permissionModeOverride: 'read_only',
@@ -1796,6 +2133,7 @@ describe('createCliActionDeps hook dispatch', () => {
       credentials: expect.objectContaining({ token: 'token' }),
       idOrPrefix: 'sess-1',
       message: 'Hello world',
+      requestedAction: { v: 1, kind: 'steer_if_active' },
       wait: true,
       timeoutMs: 30000,
       permissionModeOverride: 'read_only',
@@ -1819,6 +2157,144 @@ describe('createCliActionDeps hook dispatch', () => {
     }));
   });
 
+  it('derives plugin admission identity and protected metadata from the host-stamped Action caller', async () => {
+    sendSessionMessage.mockImplementation(async (request) => ({
+      ok: true,
+      sessionId: 'sess-1',
+      localId: request.localId,
+      waited: false,
+      admissionResult: { status: 'accepted', localId: request.localId },
+    }));
+    const deps = createCliActionDeps({
+      token: 'token',
+      credentials: {
+        token: 'token',
+        encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3, 4]) },
+      },
+      sessionId: 'sess-1',
+      mode: 'plain',
+      ctx: null,
+      rawSession: {
+        machineId: 'machine-1',
+        path: '/repo',
+        metadata: { workspaceId: 'workspace-1' },
+      },
+      happyHomeDir: '/tmp/happier-home',
+    });
+    const cancellation = new AbortController();
+
+    const result = await deps.sessionSendMessage({
+      sessionId: 'sess-1',
+      message: 'Forward this',
+      requestedAction: { v: 1, kind: 'steer_if_active' },
+      actionCaller: {
+        kind: 'plugin',
+        pluginId: 'acme.channels',
+        contributionLocalId: 'inbound',
+      },
+      callerSurface: 'mcp',
+      signal: cancellation.signal,
+      idempotencyKey: 'message-42',
+      source: {
+        sourceRef: 'channel-7',
+        sourceRevisionOrEpoch: 'message-42',
+        remoteApprovalMaxScope: 'request',
+        requestedPermissionCeiling: 'read-only',
+        externalActor: { kind: 'human', displayNameSnapshot: 'Ada' },
+        contentProvenance: 'forwarded',
+      },
+    });
+
+    expect(result).toEqual({
+      status: 'accepted',
+      localId: expect.stringMatching(/^plugin-input-v1:[A-Za-z0-9_-]{43}$/u),
+    });
+    expect(sendSessionMessage).toHaveBeenCalledWith(expect.objectContaining({
+      signal: cancellation.signal,
+      localId: expect.stringMatching(/^plugin-input-v1:[A-Za-z0-9_-]{43}$/u),
+      inputAdmission: {
+        provenance: {
+          v: 1,
+          kind: 'pluginSession',
+          pluginId: 'acme.channels',
+          contributionLocalId: 'inbound',
+          surface: 'mcp',
+          sourceRef: 'channel-7',
+          sourceRevisionOrEpoch: 'message-42',
+          externalActor: { kind: 'human', displayNameSnapshot: 'Ada' },
+          contentProvenance: 'forwarded',
+        },
+        request: {
+          v: 1,
+          producer: 'pluginSession',
+          caller: {
+            kind: 'plugin',
+            pluginId: 'acme.channels',
+            contributionLocalId: 'inbound',
+          },
+          sourceAuthority: {
+            mediatorPluginId: 'acme.channels',
+            sourceRef: 'channel-7',
+            sourceRevisionOrEpoch: 'message-42',
+            remoteApprovalMaxScope: 'request',
+          },
+          permission: { requestedPermissionCeiling: 'read-only' },
+        },
+      },
+    }));
+    expect(emitSessionLifecycleHookEvent).toHaveBeenCalledWith(expect.objectContaining({
+      payload: expect.objectContaining({ source: 'plugin' }),
+    }));
+  });
+
+  it('rejects a plugin global permission-mode override before it reaches protected Session persistence', async () => {
+    sendSessionMessage.mockResolvedValue({
+      ok: true,
+      sessionId: 'sess-1',
+      localId: 'unexpected',
+      waited: false,
+    });
+    const deps = createCliActionDeps({
+      token: 'token',
+      credentials: {
+        token: 'token',
+        encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3, 4]) },
+      },
+      sessionId: 'sess-1',
+      mode: 'plain',
+      ctx: null,
+      rawSession: {
+        machineId: 'machine-1',
+        path: '/repo',
+        metadata: { workspaceId: 'workspace-1' },
+      },
+    });
+
+    await expect(deps.sessionSendMessage({
+      sessionId: 'sess-1',
+      message: 'Forward this',
+      requestedAction: { v: 1, kind: 'steer_if_active' },
+      actionCaller: {
+        kind: 'plugin',
+        pluginId: 'acme.channels',
+        contributionLocalId: 'inbound',
+      },
+      callerSurface: 'plugin',
+      idempotencyKey: 'message-42',
+      permissionModeOverride: 'yolo',
+      source: {
+        sourceRef: 'channel-7',
+        sourceRevisionOrEpoch: 'message-42',
+        remoteApprovalMaxScope: 'request',
+        requestedPermissionCeiling: 'read-only',
+      },
+    })).resolves.toEqual({
+      status: 'rejected',
+      code: 'session_input_invalid',
+    });
+    expect(sendSessionMessage).not.toHaveBeenCalled();
+  });
+
   it('rejects session-agent message permission overrides above the caller permission ordinal', async () => {
     sendSessionMessage.mockResolvedValue({
       ok: true,
@@ -1837,10 +2313,7 @@ describe('createCliActionDeps hook dispatch', () => {
       },
       sessionId: 'sess-1',
       mode: 'plain',
-      ctx: {
-        encryptionKey: new Uint8Array([1, 2, 3, 4]),
-        encryptionVariant: 'legacy',
-      },
+      ctx: null,
       rawSession: {
         machineId: 'machine-1',
         path: '/repo',
@@ -1854,6 +2327,7 @@ describe('createCliActionDeps hook dispatch', () => {
     await expect(deps.sessionSendMessage({
       sessionId: 'sess-1',
       message: 'Hello world',
+      requestedAction: { v: 1, kind: 'steer_if_active' },
       permissionModeOverride: 'workspace_write',
       callerSurface: 'agent',
     })).resolves.toEqual(expect.objectContaining({
@@ -1882,10 +2356,7 @@ describe('createCliActionDeps hook dispatch', () => {
       },
       sessionId: 'sess-1',
       mode: 'plain',
-      ctx: {
-        encryptionKey: new Uint8Array([1, 2, 3, 4]),
-        encryptionVariant: 'legacy',
-      },
+      ctx: null,
       rawSession: {
         machineId: 'machine-1',
         path: '/repo',
@@ -1896,6 +2367,7 @@ describe('createCliActionDeps hook dispatch', () => {
     await expect(deps.sessionSendMessage({
       sessionId: 'sess',
       message: 'Hello world',
+      requestedAction: { v: 1, kind: 'steer_if_active' },
       wait: false,
       timeoutSeconds: 15,
     })).resolves.toEqual({
@@ -1909,6 +2381,7 @@ describe('createCliActionDeps hook dispatch', () => {
       credentials: expect.objectContaining({ token: 'token' }),
       idOrPrefix: 'sess',
       message: 'Hello world',
+      requestedAction: { v: 1, kind: 'steer_if_active' },
       wait: false,
       timeoutMs: 15000,
     });
@@ -1942,10 +2415,7 @@ describe('createCliActionDeps hook dispatch', () => {
         },
       },
       mode: 'plain',
-      ctx: {
-        encryptionKey: new Uint8Array([5, 6, 7, 8]),
-        encryptionVariant: 'legacy',
-      },
+      ctx: null,
     });
     const deps = createCliActionDeps({
       token: 'token',
@@ -1958,10 +2428,7 @@ describe('createCliActionDeps hook dispatch', () => {
       },
       sessionId: 'sess-parent',
       mode: 'plain',
-      ctx: {
-        encryptionKey: new Uint8Array([1, 2, 3, 4]),
-        encryptionVariant: 'legacy',
-      },
+      ctx: null,
       rawSession: {
         machineId: 'parent-machine',
         path: '/repo/parent',
@@ -1975,6 +2442,7 @@ describe('createCliActionDeps hook dispatch', () => {
     await expect(deps.sessionSendMessage({
       sessionId: 'sess-target',
       message: 'Hello target',
+      requestedAction: { v: 1, kind: 'steer_if_active' },
     })).resolves.toEqual({
       ok: true,
       sessionId: 'sess-target',
@@ -2046,10 +2514,7 @@ describe('createCliActionDeps hook dispatch', () => {
       },
       sessionId: 'sess-1',
       mode: 'plain',
-      ctx: {
-        encryptionKey: new Uint8Array([1, 2, 3, 4]),
-        encryptionVariant: 'legacy',
-      },
+      ctx: null,
       rawSession: {
         metadata: {},
       },
@@ -2072,7 +2537,75 @@ describe('createCliActionDeps hook dispatch', () => {
     expect(executeExecutionRunAction).not.toHaveBeenCalled();
   });
 
-  it('fails explicit completed permission request ids locally instead of acknowledging stale responses', async () => {
+  it('routes an exact completed permission response to the canonical session handler for rejoin', async () => {
+    const rawSession = {
+      metadata: {},
+      agentState: {
+        requests: {},
+        completedRequests: {
+          'perm-done': {
+            kind: 'permission',
+            tool: 'Bash',
+            status: 'approved',
+          },
+        },
+      },
+    };
+    resolveSessionTransportContext.mockResolvedValue({
+      ok: true,
+      sessionId: 'sess-1',
+      rawSession,
+      ctx: {
+        encryptionKey: new Uint8Array([1, 2, 3, 4]),
+        encryptionVariant: 'legacy',
+      },
+      mode: 'plain',
+    });
+    callSessionRpc.mockResolvedValue({ ok: true });
+
+    const deps = createCliActionDeps({
+      token: 'token',
+      credentials: {
+        token: 'token',
+        encryption: {
+          type: 'legacy',
+          secret: new Uint8Array([1, 2, 3, 4]),
+        },
+      },
+      sessionId: 'sess-1',
+      mode: 'plain',
+      ctx: null,
+      rawSession: {
+        metadata: {},
+      },
+    });
+
+    await expect(deps.sessionPermissionRespond?.({
+      sessionId: 'sess-1',
+      decision: 'allow',
+      requestId: 'perm-done',
+    })).resolves.toEqual({ ok: true });
+
+    expect(callSessionRpc).toHaveBeenCalledTimes(1);
+    expect(callSessionRpc).toHaveBeenCalledWith(expect.objectContaining({
+      token: 'token',
+      sessionId: 'sess-1',
+      method: 'sess-1:session.permission.respond',
+      request: { id: 'perm-done', approved: true },
+    }));
+    expect(rawSession.agentState).toEqual({
+      requests: {},
+      completedRequests: {
+        'perm-done': {
+          kind: 'permission',
+          tool: 'Bash',
+          status: 'approved',
+        },
+      },
+    });
+  });
+
+  it('forwards a distinct completed permission response once for canonical conflict adjudication', async () => {
     resolveSessionTransportContext.mockResolvedValue({
       ok: true,
       sessionId: 'sess-1',
@@ -2095,8 +2628,12 @@ describe('createCliActionDeps hook dispatch', () => {
       },
       mode: 'plain',
     });
-    callSessionRpc.mockResolvedValue({ ok: true });
-
+    callSessionRpc.mockResolvedValue({
+      ok: false,
+      errorCode: 'permission_request_not_found',
+      errorMessage: 'permission_request_not_found',
+      sessionId: 'sess-1',
+    });
     const deps = createCliActionDeps({
       token: 'token',
       credentials: {
@@ -2108,10 +2645,7 @@ describe('createCliActionDeps hook dispatch', () => {
       },
       sessionId: 'sess-1',
       mode: 'plain',
-      ctx: {
-        encryptionKey: new Uint8Array([1, 2, 3, 4]),
-        encryptionVariant: 'legacy',
-      },
+      ctx: null,
       rawSession: {
         metadata: {},
       },
@@ -2119,7 +2653,7 @@ describe('createCliActionDeps hook dispatch', () => {
 
     await expect(deps.sessionPermissionRespond?.({
       sessionId: 'sess-1',
-      decision: 'allow',
+      decision: 'deny',
       requestId: 'perm-done',
     })).resolves.toEqual({
       ok: false,
@@ -2128,7 +2662,326 @@ describe('createCliActionDeps hook dispatch', () => {
       sessionId: 'sess-1',
     });
 
+    expect(callSessionRpc).toHaveBeenCalledTimes(1);
+    expect(callSessionRpc).toHaveBeenCalledWith(expect.objectContaining({
+      token: 'token',
+      sessionId: 'sess-1',
+      method: 'sess-1:session.permission.respond',
+      request: { id: 'perm-done', approved: false, decision: 'denied' },
+    }));
+  });
+
+  it('fails remote permission actions closed without creating an unauthenticated Session RPC path', async () => {
+    const deps = createCliActionDeps({
+      token: 'token',
+      credentials: {
+        token: 'token',
+        encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3, 4]) },
+      },
+      sessionId: 'sess-1',
+      mode: 'plain',
+      ctx: null,
+      rawSession: { metadata: {} },
+    });
+    const remoteAction = deps.sessionPermissionRemoteAction;
+
+    expect(remoteAction).toBeTypeOf('function');
+    await expect(remoteAction!({
+      actionId: 'session.permission.remote.pending.list',
+      input: {
+        sessionId: 'sess-1',
+        sourceRef: 'binding:ops',
+        sourceRevisionOrEpoch: '42',
+      },
+      caller: {
+        kind: 'plugin',
+        pluginId: 'happier.channels',
+        contributionLocalId: 'discord',
+      },
+    })).resolves.toEqual({
+      ok: false,
+      errorCode: 'ownerMachineUnavailable',
+      error: 'ownerMachineUnavailable',
+    });
+
+    const executor = createActionExecutor(deps);
+    await expect(executor.execute(
+      'session.permission.remote.pending.list',
+      {
+        sessionId: 'sess-1',
+        sourceRef: 'binding:ops',
+        sourceRevisionOrEpoch: '42',
+      },
+      {
+        surface: 'plugin',
+        actionCaller: {
+          kind: 'plugin',
+          pluginId: 'happier.channels',
+          contributionLocalId: 'discord',
+        },
+      },
+    )).resolves.toEqual({
+      ok: false,
+      errorCode: 'ownerMachineUnavailable',
+      error: 'ownerMachineUnavailable',
+    });
+
+    const aborted = new AbortController();
+    aborted.abort();
+    await expect(remoteAction!({
+      actionId: 'session.permission.remote.respond',
+      input: {
+        sessionId: 'sess-1',
+        turnId: 'turn-request-1',
+        requestId: 'request-1',
+        sourceRef: 'binding:ops',
+        sourceRevisionOrEpoch: '42',
+        idempotencyKey: 'retry-1',
+        actor: { namespace: 'discord', principalId: 'person-1' },
+        decision: 'allow',
+        scope: 'request',
+      },
+      caller: { kind: 'plugin', pluginId: 'happier.channels' },
+      signal: aborted.signal,
+    })).resolves.toEqual({ status: 'rejected', code: 'canceled' });
     expect(callSessionRpc).not.toHaveBeenCalled();
+  });
+
+  it('routes every remote mediation operation through only the exact current Session permission owner', async () => {
+    const firstAbort = new AbortController();
+    const secondAbort = new AbortController();
+    const firstList = vi.fn(() => ({
+      requests: [{ requestId: 'first-request', turnId: 'turn-first', createdAtMs: 1, allowedScopes: ['request'] as const }],
+      truncated: true,
+    }));
+    const secondList = vi.fn(() => ({
+      requests: [{ requestId: 'second-request', turnId: 'turn-second', createdAtMs: 2, allowedScopes: ['request'] as const }],
+      truncated: false,
+    }));
+    const firstRespond = vi.fn<
+      NonNullable<CurrentSessionCapabilityBinding['permissionHandler']>['respondToMediatedPendingPermission']
+    >(async () => ({
+      status: 'applied' as const,
+      settlementId: 'settlement-1',
+      requestId: 'first-request',
+      decision: 'allow' as const,
+      effect: { kind: 'allowOnce' as const },
+    }));
+    const firstGrants = vi.fn(async () => ({
+      grants: [],
+      nextCursor: null,
+    }));
+    const firstRevoke = vi.fn(async () => ({
+      status: 'revoked' as const,
+      grantId: 'grant-1',
+    }));
+    let firstCurrent = true;
+    const register = (
+      signal: AbortSignal,
+      isCurrent: () => boolean,
+      permissionHandler: Readonly<Record<string, unknown>>,
+    ) => (
+      registerCurrentSessionUiBinding({
+        sessionId: 'sess-mediated',
+        service: {} as never,
+        signal,
+        isCurrent,
+        capabilities: {
+          permissionHandler: {
+            handleToolCall: vi.fn(),
+            ...permissionHandler,
+          } as never,
+          readPermissionMode: () => 'default',
+        },
+      })
+    );
+    const disposeFirst = register(firstAbort.signal, () => firstCurrent, {
+      listMediatedPendingRequests: firstList,
+      respondToMediatedPendingPermission: firstRespond,
+      listMediatedPermissionGrants: firstGrants,
+      revokeMediatedPermissionGrant: firstRevoke,
+    });
+    const deps = createCliActionDeps({
+      token: 'token',
+      sessionId: 'sess-unrelated',
+      mode: 'plain',
+      ctx: null,
+    });
+    const remoteAction = deps.sessionPermissionRemoteAction;
+    expect(remoteAction).toBeTypeOf('function');
+    const listInput = {
+      actionId: 'session.permission.remote.pending.list' as const,
+      input: {
+        sessionId: 'sess-mediated',
+        sourceRef: 'binding:ops',
+        sourceRevisionOrEpoch: '42',
+      },
+      caller: {
+        kind: 'plugin' as const,
+        pluginId: 'happier.channels',
+        contributionLocalId: 'discord',
+      },
+    };
+
+    try {
+      await expect(remoteAction!(listInput)).resolves.toEqual({
+        requests: [{ requestId: 'first-request', turnId: 'turn-first', createdAtMs: 1, allowedScopes: ['request'] }],
+        truncated: true,
+      });
+      expect(firstList).toHaveBeenCalledWith({
+        mediatorPluginId: 'happier.channels',
+        sourceRef: 'binding:ops',
+        sourceRevisionOrEpoch: '42',
+      });
+
+      await expect(remoteAction!({
+        actionId: 'session.permission.remote.respond',
+        input: {
+          sessionId: 'sess-mediated',
+          turnId: 'turn-first',
+          requestId: 'first-request',
+          sourceRef: 'binding:ops',
+          sourceRevisionOrEpoch: '42',
+          idempotencyKey: 'retry-1',
+          actor: { namespace: 'discord', principalId: 'person-1' },
+          decision: 'allow',
+          scope: 'request',
+        },
+        caller: listInput.caller,
+      })).resolves.toEqual({
+        status: 'applied',
+        settlementId: 'settlement-1',
+        requestId: 'first-request',
+        decision: 'allow',
+        effect: { kind: 'allowOnce' },
+      });
+      expect(firstRespond).toHaveBeenCalledWith({
+        sessionId: 'sess-mediated',
+        turnId: 'turn-first',
+        requestId: 'first-request',
+        sourceRef: 'binding:ops',
+        sourceRevisionOrEpoch: '42',
+        idempotencyKey: 'retry-1',
+        actor: { namespace: 'discord', principalId: 'person-1' },
+        decision: 'allow',
+        scope: 'request',
+        mediator: { pluginId: 'happier.channels', contributionLocalId: 'discord' },
+      });
+
+      await expect(remoteAction!({
+        actionId: 'session.permission.remote.grants.list',
+        input: { sessionId: 'sess-mediated', limit: 50, cursor: 'page-1' },
+        caller: listInput.caller,
+      })).resolves.toEqual({ grants: [], nextCursor: null });
+      expect(firstGrants).toHaveBeenCalledWith({
+        viewer: { kind: 'mediatorPlugin', pluginId: 'happier.channels' },
+        limit: 50,
+        cursor: 'page-1',
+      });
+
+      await expect(remoteAction!({
+        actionId: 'session.permission.remote.grants.list',
+        input: { sessionId: 'sess-mediated', limit: 1 },
+        caller: { kind: 'host' },
+      })).resolves.toEqual({ grants: [], nextCursor: null });
+      expect(firstGrants).toHaveBeenLastCalledWith({
+        viewer: { kind: 'host' },
+        limit: 1,
+      });
+
+      await expect(remoteAction!({
+        actionId: 'session.permission.remote.grants.revoke',
+        input: { sessionId: 'sess-mediated', turnId: 'turn-first', requestId: 'first-request', grantId: 'grant-1' },
+        caller: listInput.caller,
+      })).resolves.toEqual({ status: 'revoked', grantId: 'grant-1' });
+      expect(firstRevoke).toHaveBeenCalledWith({
+        turnId: 'turn-first',
+        requestId: 'first-request',
+        grantId: 'grant-1',
+        caller: { kind: 'mediatorPlugin', pluginId: 'happier.channels' },
+      });
+
+      await expect(remoteAction!({
+        actionId: 'session.permission.remote.grants.revoke',
+        input: { sessionId: 'sess-mediated', turnId: 'turn-first', requestId: 'first-request', grantId: 'grant-1' },
+        caller: { kind: 'host' },
+      })).resolves.toEqual({ status: 'revoked', grantId: 'grant-1' });
+      expect(firstRevoke).toHaveBeenLastCalledWith({
+        turnId: 'turn-first',
+        requestId: 'first-request',
+        grantId: 'grant-1',
+        caller: { kind: 'host' },
+      });
+
+      let resolveStaleRespond: (result: MediatedPermissionResponse) => void = () => {
+        throw new Error('stale response resolver was not initialized');
+      };
+      firstRespond.mockImplementationOnce(async () => await new Promise<MediatedPermissionResponse>((resolve) => {
+        resolveStaleRespond = resolve;
+      }));
+      const staleResponse = remoteAction!({
+        actionId: 'session.permission.remote.respond',
+        input: {
+          sessionId: 'sess-mediated',
+          turnId: 'turn-first',
+          requestId: 'first-request',
+          sourceRef: 'binding:ops',
+          sourceRevisionOrEpoch: '42',
+          idempotencyKey: 'retry-stale',
+          actor: { namespace: 'discord', principalId: 'person-1' },
+          decision: 'allow',
+          scope: 'request',
+        },
+        caller: listInput.caller,
+      });
+      expect(firstRespond).toHaveBeenCalledTimes(2);
+
+      const disposeSecond = register(secondAbort.signal, () => true, {
+        listMediatedPendingRequests: secondList,
+      });
+      firstCurrent = false;
+      disposeFirst();
+
+      resolveStaleRespond({
+        status: 'applied',
+        settlementId: 'settlement-stale',
+        requestId: 'first-request',
+        decision: 'allow',
+        effect: { kind: 'allowOnce' },
+      });
+      await expect(staleResponse).resolves.toEqual({
+        status: 'rejected',
+        code: 'ownerMachineUnavailable',
+      });
+
+      await expect(remoteAction!(listInput)).resolves.toEqual({
+        requests: [{ requestId: 'second-request', turnId: 'turn-second', createdAtMs: 2, allowedScopes: ['request'] }],
+        truncated: false,
+      });
+      expect(firstList).toHaveBeenCalledTimes(1);
+      expect(secondList).toHaveBeenCalledTimes(1);
+
+      secondAbort.abort();
+      await expect(remoteAction!(listInput)).resolves.toEqual({
+        ok: false,
+        errorCode: 'ownerMachineUnavailable',
+        error: 'ownerMachineUnavailable',
+      });
+
+      const invocationAbort = new AbortController();
+      invocationAbort.abort();
+      await expect(remoteAction!({
+        ...listInput,
+        signal: invocationAbort.signal,
+      })).resolves.toEqual({ ok: false, errorCode: 'canceled', error: 'canceled' });
+      expect(secondList).toHaveBeenCalledTimes(1);
+
+      disposeSecond();
+    } finally {
+      disposeFirst();
+      firstAbort.abort();
+      secondAbort.abort();
+    }
   });
 
   it('fails explicit completed user-action request ids locally instead of acknowledging stale answers', async () => {
@@ -2167,10 +3020,7 @@ describe('createCliActionDeps hook dispatch', () => {
       },
       sessionId: 'sess-1',
       mode: 'plain',
-      ctx: {
-        encryptionKey: new Uint8Array([1, 2, 3, 4]),
-        encryptionVariant: 'legacy',
-      },
+      ctx: null,
       rawSession: {
         metadata: {},
       },
@@ -2188,6 +3038,109 @@ describe('createCliActionDeps hook dispatch', () => {
     });
 
     expect(callSessionRpc).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['permission', 'sessionPermissionRespond', { decision: 'allow' }],
+    ['user_action', 'sessionUserActionAnswer', { answers: [{ question: 'Continue?', values: ['Yes'] }] }],
+  ] as const)('routes a trusted plugin answer to the current %s request through the live Session RPC', async (kind, depName, response) => {
+    resolveSessionTransportContext.mockResolvedValue({
+      ok: true,
+      sessionId: 'sess-1',
+      rawSession: {
+        metadata: {},
+        agentState: {
+          requests: {
+            'owned-request': {
+              kind,
+              tool: kind === 'permission' ? 'Bash' : 'AskUserQuestion',
+              arguments: {},
+              owner: { kind: 'plugin', pluginId: 'plugin.owner', runtimeId: 'plugin.owner/actions/run' },
+            },
+          },
+          completedRequests: {},
+        },
+      },
+      ctx: {
+        encryptionKey: new Uint8Array([1, 2, 3, 4]),
+        encryptionVariant: 'legacy',
+      },
+      mode: 'plain',
+    });
+    callSessionRpc.mockResolvedValue({ ok: true });
+    const deps = createCliActionDeps({
+      token: 'token',
+      credentials: {
+        token: 'token',
+        encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3, 4]) },
+      },
+      sessionId: 'sess-1',
+      mode: 'plain',
+      ctx: null,
+      rawSession: { metadata: {} },
+    });
+
+    await expect(deps[depName]?.({
+      sessionId: 'sess-1',
+      requestId: 'owned-request',
+      ...response,
+    } as never)).resolves.toEqual({ ok: true });
+    expect(callSessionRpc).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: 'sess-1',
+      method: `sess-1:${kind === 'permission' ? 'session.permission.respond' : 'session.user_action.answer'}`,
+      request: expect.not.objectContaining({ requesterPluginId: expect.anything() }),
+    }));
+  });
+
+  it.each([
+    ['permission', 'sessionPermissionRespond', { decision: 'allow' }],
+    ['user_action', 'sessionUserActionAnswer', { answers: [{ question: 'Continue?', values: ['Yes'] }] }],
+  ] as const)('routes a trusted plugin answer to its own %s request with caller cancellation', async (kind, depName, response) => {
+    resolveSessionTransportContext.mockResolvedValue({
+      ok: true,
+      sessionId: 'sess-1',
+      rawSession: {
+        metadata: {},
+        agentState: {
+          requests: {
+            'owned-request': {
+              kind,
+              tool: kind === 'permission' ? 'Bash' : 'AskUserQuestion',
+              arguments: {},
+              owner: { kind: 'plugin', pluginId: 'plugin.caller', runtimeId: 'plugin.caller/actions/run' },
+            },
+          },
+          completedRequests: {},
+        },
+      },
+      ctx: null,
+      mode: 'plain',
+    });
+    callSessionRpc.mockResolvedValue({ ok: true });
+    const deps = createCliActionDeps({
+      token: 'token',
+      credentials: {
+        token: 'token',
+        encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3, 4]) },
+      },
+      sessionId: 'sess-1',
+      mode: 'plain',
+      ctx: null,
+      rawSession: { metadata: {} },
+    });
+    const signal = new AbortController().signal;
+
+    await expect(deps[depName]?.({
+      sessionId: 'sess-1',
+      requestId: 'owned-request',
+      signal,
+      ...response,
+    } as never)).resolves.toEqual({ ok: true });
+    expect(callSessionRpc).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: 'sess-1',
+      method: `sess-1:${kind === 'permission' ? 'session.permission.respond' : 'session.user_action.answer'}`,
+      signal,
+    }));
   });
 
   it('routes terminal composer clear through the live session RPC transport', async () => {
@@ -2216,10 +3169,7 @@ describe('createCliActionDeps hook dispatch', () => {
       },
       sessionId: 'sess-current',
       mode: 'plain',
-      ctx: {
-        encryptionKey: new Uint8Array([1, 2, 3, 4]),
-        encryptionVariant: 'legacy',
-      },
+      ctx: null,
       rawSession: {
         metadata: {},
       },
@@ -2270,10 +3220,7 @@ describe('createCliActionDeps hook dispatch', () => {
       },
       sessionId: 'sess-current',
       mode: 'plain',
-      ctx: {
-        encryptionKey: new Uint8Array([1, 2, 3, 4]),
-        encryptionVariant: 'legacy',
-      },
+      ctx: null,
       rawSession: {
         machineId: 'target-machine',
         metadata: { machineId: 'target-machine' },
@@ -2321,10 +3268,7 @@ describe('createCliActionDeps hook dispatch', () => {
       },
       sessionId: 'sess-current',
       mode: 'plain',
-      ctx: {
-        encryptionKey: new Uint8Array([1, 2, 3, 4]),
-        encryptionVariant: 'legacy',
-      },
+      ctx: null,
       rawSession: {
         metadata: {},
       },
@@ -2391,7 +3335,7 @@ describe('createCliActionDeps hook dispatch', () => {
       },
       sessionId: 'sess-current',
       mode: 'plain',
-      ctx: { encryptionKey: new Uint8Array([1, 2, 3, 4]), encryptionVariant: 'legacy' },
+      ctx: null,
       isUsageLimitRecoveryEnabled: async () => true,
     });
 
@@ -2427,7 +3371,7 @@ describe('createCliActionDeps hook dispatch', () => {
       },
       sessionId: 'sess-current',
       mode: 'plain',
-      ctx: { encryptionKey: new Uint8Array([1, 2, 3, 4]), encryptionVariant: 'legacy' },
+      ctx: null,
       isUsageLimitRecoveryEnabled: async () => true,
     });
 
@@ -2462,7 +3406,7 @@ describe('createCliActionDeps hook dispatch', () => {
       },
       sessionId: 'sess-current',
       mode: 'plain' as const,
-      ctx: { encryptionKey: new Uint8Array([1, 2, 3, 4]), encryptionVariant: 'legacy' as const },
+      ctx: null,
       isUsageLimitRecoveryEnabled: async () => true,
     });
 
@@ -2501,10 +3445,7 @@ describe('createCliActionDeps hook dispatch', () => {
       },
       sessionId: 'sess-current',
       mode: 'plain',
-      ctx: {
-        encryptionKey: new Uint8Array([1, 2, 3, 4]),
-        encryptionVariant: 'legacy',
-      },
+      ctx: null,
       rawSession: {
         metadata: {},
       },
@@ -2552,10 +3493,7 @@ describe('createCliActionDeps hook dispatch', () => {
       },
       sessionId: 'sess-current',
       mode: 'plain',
-      ctx: {
-        encryptionKey: new Uint8Array([1, 2, 3, 4]),
-        encryptionVariant: 'legacy',
-      },
+      ctx: null,
       rawSession: {
         metadata: {},
       },
@@ -2608,10 +3546,7 @@ describe('createCliActionDeps hook dispatch', () => {
       },
       sessionId: 'sess-current',
       mode: 'plain',
-      ctx: {
-        encryptionKey: new Uint8Array([1, 2, 3, 4]),
-        encryptionVariant: 'legacy',
-      },
+      ctx: null,
       rawSession: {
         metadata: {},
       },
@@ -2691,10 +3626,7 @@ describe('createCliActionDeps hook dispatch', () => {
       },
       sessionId: 'sess-current',
       mode: 'plain',
-      ctx: {
-        encryptionKey: new Uint8Array([1, 2, 3, 4]),
-        encryptionVariant: 'legacy',
-      },
+      ctx: null,
       rawSession: {
         metadata: {},
       },
@@ -2726,10 +3658,7 @@ describe('createCliActionDeps hook dispatch', () => {
       token: 'token',
       sessionId: 'sess-current',
       mode: 'plain',
-      ctx: {
-        encryptionKey: new Uint8Array([1, 2, 3, 4]),
-        encryptionVariant: 'legacy',
-      },
+      ctx: null,
       rawSession: {
         metadata: {},
       },
@@ -2765,10 +3694,7 @@ describe('createCliActionDeps hook dispatch', () => {
       },
       sessionId: 'sess-current',
       mode: 'plain',
-      ctx: {
-        encryptionKey: new Uint8Array([1, 2, 3, 4]),
-        encryptionVariant: 'legacy',
-      },
+      ctx: null,
       rawSession: {
         metadata: {},
       },
@@ -2797,10 +3723,7 @@ describe('createCliActionDeps hook dispatch', () => {
       },
       sessionId: 'sess-current',
       mode: 'plain',
-      ctx: {
-        encryptionKey: new Uint8Array([1, 2, 3, 4]),
-        encryptionVariant: 'legacy',
-      },
+      ctx: null,
       rawSession: {
         metadata: {},
       },
@@ -2847,10 +3770,7 @@ describe('createCliActionDeps hook dispatch', () => {
       },
       sessionId: 'sess-1',
       mode: 'plain',
-      ctx: {
-        encryptionKey: new Uint8Array([1, 2, 3, 4]),
-        encryptionVariant: 'legacy',
-      },
+      ctx: null,
       rawSession: {
         metadata: {},
       },
@@ -2870,5 +3790,335 @@ describe('createCliActionDeps hook dispatch', () => {
     }, expect.any(Function));
     expect(unsubscribe).toHaveBeenCalledTimes(1);
     expect(hostSubagentStore.list).not.toHaveBeenCalled();
+  });
+
+  it('derives mutating HostSubagentStore actors only from the stamped action caller', async () => {
+    const store = createHostSubagentStore();
+    hostSubagentStore.upsert.mockImplementation((args) => store.upsert(args));
+    hostSubagentStore.updateStatus.mockImplementation((args) => store.updateStatus(args));
+    hostSubagentStore.complete.mockImplementation((args) => store.complete(args));
+    const deps = createCliActionDeps({
+      token: 'token',
+      credentials: {
+        token: 'token',
+        encryption: {
+          type: 'legacy',
+          secret: new Uint8Array([1, 2, 3, 4]),
+        },
+      },
+      sessionId: 'sess-1',
+      mode: 'plain',
+      ctx: null,
+      rawSession: { metadata: {} },
+    });
+    const executor = createActionExecutor(deps);
+    const owner = {
+      kind: 'plugin' as const,
+      pluginId: 'happier.agent.acme',
+      contributionLocalId: 'acme.sample',
+    };
+    const ownerContext = { surface: 'plugin' as const, actionCaller: owner };
+    const input = {
+      id: 'subagent-1',
+      parentSessionId: 'sess-1',
+      origin: 'agent' as const,
+      kind: 'native' as const,
+      agentRef: { agentId: 'acme.sample' },
+    };
+
+    await expect(executor.execute('sessions.subagents.upsert', input, ownerContext)).resolves.toMatchObject({
+      ok: true,
+      result: { id: 'subagent-1', status: 'pending' },
+    });
+    await expect(executor.execute('sessions.subagents.updateStatus', {
+      id: 'subagent-1',
+      parentSessionId: 'sess-1',
+      status: 'running',
+    }, ownerContext)).resolves.toMatchObject({
+      ok: true,
+      result: { id: 'subagent-1', status: 'running' },
+    });
+    await expect(executor.execute('sessions.subagents.complete', {
+      id: 'subagent-1',
+      parentSessionId: 'sess-1',
+      status: 'completed',
+    }, ownerContext)).resolves.toMatchObject({
+      ok: true,
+      result: { id: 'subagent-1', status: 'completed' },
+    });
+
+    expect(hostSubagentStore.upsert).toHaveBeenCalledWith({
+      actor: { kind: 'plugin', pluginId: 'happier.agent.acme', agentId: 'acme.sample' },
+      input,
+    });
+    expect(hostSubagentStore.updateStatus).toHaveBeenCalledWith({
+      actor: { kind: 'plugin', pluginId: 'happier.agent.acme', agentId: 'acme.sample' },
+      id: 'subagent-1',
+      parentSessionId: 'sess-1',
+      status: 'running',
+    });
+    expect(hostSubagentStore.complete).toHaveBeenCalledWith({
+      actor: { kind: 'plugin', pluginId: 'happier.agent.acme', agentId: 'acme.sample' },
+      id: 'subagent-1',
+      parentSessionId: 'sess-1',
+      status: 'completed',
+    });
+
+    await expect(executor.execute('sessions.subagents.updateStatus', {
+      id: 'subagent-1',
+      parentSessionId: 'sess-1',
+      status: 'running',
+    }, {
+      surface: 'plugin',
+      actionCaller: {
+        kind: 'plugin',
+        pluginId: 'happier.agent.peer',
+        contributionLocalId: 'peer.sample',
+      },
+    })).resolves.toEqual({
+      ok: false,
+      errorCode: 'subagent_write_forbidden',
+      error: 'subagent_write_forbidden',
+    });
+
+    const rpcInput = {
+      id: 'subagent-rpc',
+      parentSessionId: 'sess-1',
+      origin: 'plugin' as const,
+      kind: 'custom' as const,
+    };
+    await expect(executor.execute('sessions.subagents.upsert', rpcInput, {
+      surface: 'rpc',
+    })).resolves.toEqual({
+      ok: false,
+      errorCode: 'subagent_write_forbidden',
+      error: 'subagent_write_forbidden',
+    });
+    expect(hostSubagentStore.upsert).toHaveBeenLastCalledWith({
+      actor: { kind: 'externalRpc' },
+      input: rpcInput,
+    });
+  });
+});
+
+describe('createCliActionDeps session lifecycle bindings', () => {
+  const credentials = {
+    token: 'token',
+    encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(1) },
+  };
+
+  beforeEach(() => {
+    resolveSessionTransportContext.mockReset();
+    callSessionRpc.mockReset();
+    callMachineRpc.mockReset();
+    readSettings.mockReset();
+    readSettings.mockResolvedValue({ machineId: 'machine-current' });
+  });
+
+  function resolveSession(active = false, metadata: Record<string, unknown> = {}) {
+    resolveSessionTransportContext.mockResolvedValue({
+      ok: true,
+      sessionId: 'session-1',
+      rawSession: {
+        id: 'session-1',
+        active,
+        machineId: 'machine-source',
+        path: '/repo',
+        seq: 17,
+        metadata,
+      },
+      accountEncryptionCurrentness: { mode: 'plain' },
+      mode: 'plain',
+      ctx: null,
+    });
+  }
+
+  function createDeps() {
+    return createCliActionDeps({
+      token: credentials.token,
+      credentials,
+      sessionId: 'session-current',
+      mode: 'plain',
+      ctx: null,
+    });
+  }
+
+  it('routes inactive session.open through the canonical resume owner with host-stamped attempt identity', async () => {
+    resolveSession(false, {
+      machineId: 'machine-source',
+      path: '/repo',
+      runtimeDescriptorV1: { v: 1, agentId: 'claude', agent: {} },
+      claudeSessionId: 'provider-session-1',
+    });
+    callMachineRpc.mockResolvedValue({ type: 'success', sessionId: 'session-1' });
+    const signal = new AbortController().signal;
+
+    await expect(createDeps().sessionOpen({
+      sessionId: 'session-1',
+      actionRequestId: 'plugin-invocation-1:session.open:1',
+      signal,
+    })).resolves.toEqual({ ok: true, status: 'opened', sessionId: 'session-1' });
+
+    expect(callMachineRpc).toHaveBeenCalledWith(expect.objectContaining({
+      credentials,
+      machineId: 'machine-source',
+      method: RPC_METHODS.SPAWN_HAPPY_SESSION,
+      signal,
+      request: expect.objectContaining({
+        type: 'resume-session',
+        sessionId: 'session-1',
+        executionAuthorization: {
+          provenance: 'user_request',
+          requestId: 'plugin-invocation-1:session.open:1',
+        },
+      }),
+    }));
+  });
+
+  it('treats an already-active session.open as satisfied without spawning another runtime', async () => {
+    resolveSession(true);
+
+    await expect(createDeps().sessionOpen({ sessionId: 'session-1' }))
+      .resolves.toEqual({ ok: true, status: 'opened', sessionId: 'session-1' });
+
+    expect(callMachineRpc).not.toHaveBeenCalled();
+  });
+
+  it('routes fork and replay continuation through the canonical machine lifecycle RPC owner', async () => {
+    resolveSession(true);
+    callMachineRpc
+      .mockResolvedValueOnce({ ok: true, childSessionId: 'session-child' })
+      .mockResolvedValueOnce({ type: 'success', sessionId: 'session-replayed' });
+    const signal = new AbortController().signal;
+    const deps = createDeps();
+
+    await expect(deps.sessionFork({ sessionId: 'session-1', signal }))
+      .resolves.toEqual({ ok: true, childSessionId: 'session-child' });
+    const replayInput = {
+      directory: '/repo',
+      backendTarget: { kind: 'backend' as const, backendId: 'claude', sourceKind: 'built_in' as const },
+      approvedNewDirectoryCreation: true,
+      replay: { previousSessionId: 'session-1', strategy: 'recent_messages' as const },
+      signal,
+    };
+    await expect(deps.sessionContinueWithReplay?.(replayInput))
+      .resolves.toEqual({ type: 'success', sessionId: 'session-replayed' });
+
+    expect(callMachineRpc.mock.calls).toEqual([
+      [expect.objectContaining({
+        credentials,
+        machineId: 'machine-source',
+        method: RPC_METHODS.SESSION_FORK,
+        request: { parentSessionId: 'session-1', forkPoint: { type: 'latest' } },
+        signal,
+      })],
+      [expect.objectContaining({
+        credentials,
+        machineId: 'machine-current',
+        method: RPC_METHODS.SESSION_CONTINUE_WITH_REPLAY,
+        request: expect.not.objectContaining({ signal: expect.anything() }),
+        signal,
+      })],
+    ]);
+  });
+
+  it('routes rollback and checkpoint actions through the canonical live Session RPC owner', async () => {
+    resolveSession(true);
+    callSessionRpc.mockResolvedValue({ ok: true });
+    const signal = new AbortController().signal;
+    const deps = createDeps();
+    const checkpointRequest = {
+      v: 1 as const,
+      sessionId: 'session-1',
+      scopes: ['workspace' as const],
+      candidate: { source: 'happier_scm' as const },
+      timing: 'idle' as const,
+    };
+    const restoreRequest = {
+      v: 1 as const,
+      sessionId: 'session-1',
+      scopes: ['workspace' as const],
+      candidate: {
+        source: 'happier_scm' as const,
+        checkpointRef: 'refs/happier/checkpoints/session/turn-final/turn-1',
+      },
+      confirmation: { sourceChoiceConfirmed: true },
+    };
+    const codeRollbackRequest = {
+      v: 1 as const,
+      sessionId: 'session-1',
+      turnId: 'turn-1',
+      cwd: '/repo',
+      codeMode: 'code_only_without_stash' as const,
+      backupMode: 'happier_checkpoint_only' as const,
+      expectedStartRef: 'refs/happier/checkpoints/session/turn-start/turn-1',
+      expectedFinalRef: 'refs/happier/checkpoints/session/turn-final/turn-1',
+      codeOnlyTranscriptDivergenceConfirmed: true,
+    };
+
+    await deps.sessionRollback({ sessionId: 'session-1', target: { type: 'latest_turn' }, signal });
+    await deps.checkpointCodeRollback?.({ request: codeRollbackRequest, signal });
+    await deps.sessionCheckpoint?.({ request: checkpointRequest, signal });
+    await deps.sessionRestore?.({ request: restoreRequest, signal });
+
+    expect(callSessionRpc.mock.calls.map(([call]) => ({
+      method: call.method,
+      request: call.request,
+      signal: call.signal,
+    }))).toEqual([
+      {
+        method: `session-1:${SESSION_RPC_METHODS.SESSION_ROLLBACK}`,
+        request: { sessionId: 'session-1', target: { type: 'latest_turn' } },
+        signal,
+      },
+      {
+        method: `session-1:${SESSION_RPC_METHODS.SESSION_CHECKPOINT_CODE_ROLLBACK}`,
+        request: codeRollbackRequest,
+        signal,
+      },
+      {
+        method: `session-1:${SESSION_RPC_METHODS.SESSION_CHECKPOINT}`,
+        request: checkpointRequest,
+        signal,
+      },
+      {
+        method: `session-1:${SESSION_RPC_METHODS.SESSION_RESTORE}`,
+        request: restoreRequest,
+        signal,
+      },
+    ]);
+  });
+
+  it('host-stamps handoff source facts and routes only the high-level action to its source-machine owner', async () => {
+    resolveSession(true, { path: '/repo' });
+    callMachineRpc.mockResolvedValue({ handoffId: 'handoff-1' });
+    const signal = new AbortController().signal;
+
+    const deps = createDeps();
+    await expect(deps.sessionHandoffStart?.({
+      sessionId: 'session-1',
+      targetMachineId: 'machine-target',
+      targetSessionStorageMode: 'direct',
+      signal,
+    })).resolves.toEqual({ handoffId: 'handoff-1' });
+
+    expect(callMachineRpc).toHaveBeenCalledWith({
+      credentials,
+      machineId: 'machine-source',
+      method: RPC_METHODS.DAEMON_SESSION_HANDOFF_START,
+      signal,
+      request: {
+        sessionId: 'session-1',
+        sourceMachineId: 'machine-source',
+        targetMachineId: 'machine-target',
+        sessionStorageMode: 'persisted',
+        targetSessionStorageMode: 'direct',
+        preferredTransportStrategies: ['direct_peer', 'server_routed_stream'],
+      },
+    });
+    expect(deps.sessionHandoffPrepareTarget).toBeUndefined();
+    expect(deps.sessionHandoffPrepareTargetResume).toBeUndefined();
+    expect(deps.sessionHandoffCommit).toBeUndefined();
+    expect(deps.sessionHandoffAbort).toBeUndefined();
   });
 });

@@ -1,16 +1,21 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 
-import type { Credentials } from '@/persistence';
+import type { Credentials, StoredCredentials } from '@/persistence';
 import type { RawSessionRecord } from '@/session/transport/http/sessionsHttp';
 import { buildCodexAgentRuntimeDescriptorV1 as buildCodexAgentRuntimeDescriptor } from '@happier-dev/protocol/agents/runtimeDescriptorContributionsV1';
 
 const mocks = vi.hoisted(() => ({
+  fetchAccountMachineReplacements: vi.fn(),
   updateSessionMetadataWithRetry: vi.fn(async (params: {
     updater: (metadata: Record<string, unknown>) => Record<string, unknown>;
   }) => ({
     version: 2,
     metadata: params.updater({ concurrent: 'preserved' }),
   })),
+}));
+
+vi.mock('@/api/machine/fetchAccountMachineReplacements', () => ({
+  fetchAccountMachineReplacements: mocks.fetchAccountMachineReplacements,
 }));
 
 vi.mock('@/session/metadata/updateSessionMetadataWithRetry', () => ({
@@ -26,6 +31,13 @@ function createCredentials(): Credentials {
       type: 'legacy',
       secret: new Uint8Array(32).fill(9),
     },
+  };
+}
+
+function createTokenOnlyCredentials(): StoredCredentials {
+  return {
+    token: 'token',
+    encryption: null,
   };
 }
 
@@ -53,7 +65,7 @@ function createMetadata(overrides: Record<string, unknown> = {}): Record<string,
   };
 }
 
-const ctx = {
+const e2eeCtx = {
   encryptionKey: new Uint8Array(32).fill(1),
   encryptionVariant: 'legacy' as const,
 };
@@ -61,10 +73,17 @@ const ctx = {
 describe('routeSessionGoalControl', () => {
   beforeEach(() => {
     mocks.updateSessionMetadataWithRetry.mockClear();
+    mocks.fetchAccountMachineReplacements.mockReset();
+    // The Account genuinely knows both machines and neither replaced the other,
+    // so a refusal below is the guard deciding, not an empty chain.
+    mocks.fetchAccountMachineReplacements.mockResolvedValue([
+      { id: 'machine-local' },
+      { id: 'machine-remote' },
+    ]);
   });
 
   it('delegates inactive local set mutations to the provider adapter and persists returned metadata', async () => {
-    const rawSession = createRawSession();
+    const rawSession = createRawSession({ path: '/home/coder/project' });
     const nextMetadata = {
       machineId: 'machine-local',
       sessionWorkStateV1: { v: 1, items: [], primaryItemId: null, updatedAt: 1 },
@@ -77,12 +96,20 @@ describe('routeSessionGoalControl', () => {
 
     await expect(routeSessionGoalControl({
       token: 'token',
-      credentials: createCredentials(),
+      credentials: createTokenOnlyCredentials(),
       sessionId: 'sess_1',
       rawSession,
-      metadata: createMetadata(),
+      metadata: createMetadata({
+        path: '/home/coder/project',
+        sessionWorkspaceLocationV1: {
+          v: 1,
+          machineId: 'machine-local',
+          agentPath: '/home/coder/project',
+          machinePath: '/Users/alice/project',
+        },
+      }),
       currentMachineId: 'machine-local',
-      ctx,
+      ctx: null,
       mode: 'plain',
       operation: 'set',
       request: { status: 'paused' },
@@ -98,9 +125,12 @@ describe('routeSessionGoalControl', () => {
 
     expect(resolveAdapter).toHaveBeenCalledWith('codex');
     expect(setGoal).toHaveBeenCalledWith(expect.objectContaining({
+      credentials: createTokenOnlyCredentials(),
       sessionId: 'sess_1',
       request: { status: 'paused' },
-      cwd: '/repo',
+      cwd: '/Users/alice/project',
+      ctx: null,
+      mode: 'plain',
     }));
     expect(mocks.updateSessionMetadataWithRetry).toHaveBeenCalledWith(expect.objectContaining({
       token: 'token',
@@ -127,8 +157,8 @@ describe('routeSessionGoalControl', () => {
       rawSession: createRawSession({ active: true }),
       metadata: createMetadata(),
       currentMachineId: 'machine-local',
-      ctx,
-      mode: 'plain',
+      ctx: e2eeCtx,
+      mode: 'e2ee',
       operation: 'set',
       request: { status: 'paused' },
       callLiveSessionRpc,
@@ -160,8 +190,8 @@ describe('routeSessionGoalControl', () => {
       rawSession: createRawSession({ active: true }),
       metadata: createMetadata(),
       currentMachineId: 'machine-local',
-      ctx,
-      mode: 'plain',
+      ctx: e2eeCtx,
+      mode: 'e2ee',
       operation: 'set',
       request: { status: 'paused' },
       callLiveSessionRpc: vi.fn(async () => ({
@@ -178,6 +208,8 @@ describe('routeSessionGoalControl', () => {
 
     expect(resolveAdapter).toHaveBeenCalledWith('codex');
     expect(setGoal).toHaveBeenCalled();
+    // Cost discipline: the common path never reads the Account machine chain.
+    expect(mocks.fetchAccountMachineReplacements).not.toHaveBeenCalled();
   });
 
   it('does not delegate or persist remote inactive goal controls', async () => {
@@ -190,8 +222,8 @@ describe('routeSessionGoalControl', () => {
       rawSession: createRawSession({ machineId: 'machine-remote' }),
       metadata: createMetadata({ machineId: 'machine-remote' }),
       currentMachineId: 'machine-local',
-      ctx,
-      mode: 'plain',
+      ctx: e2eeCtx,
+      mode: 'e2ee',
       operation: 'set',
       request: { status: 'paused' },
       callLiveSessionRpc: vi.fn(),
@@ -233,8 +265,8 @@ describe('routeSessionGoalControl', () => {
       currentMachineId: 'machine-after-restart',
       currentMachineHost: 'leeroy-mbp',
       currentMachineHomeDir: 'c:/users/leeroy',
-      ctx,
-      mode: 'plain',
+      ctx: e2eeCtx,
+      mode: 'e2ee',
       operation: 'set',
       request: { status: 'paused' },
       callLiveSessionRpc: vi.fn(),
@@ -252,5 +284,72 @@ describe('routeSessionGoalControl', () => {
       currentMachineId: 'machine-after-restart',
       sessionMachineId: 'machine-before-restart',
     }));
+  });
+  /**
+   * The user's ruling: replacing a machine must not strand the Sessions the
+   * previous one hosted. Nothing re-homes a Session row, so its recorded host
+   * stays the PREDECESSOR forever, and the client already picks this daemon as
+   * the RPC target by walking the same replacement chain. A replacement is a
+   * genuinely new host, so it cannot earn the same-host-home proof.
+   */
+  it('delegates inactive goal controls for a session whose recorded machine this one replaced', async () => {
+    mocks.fetchAccountMachineReplacements.mockResolvedValue([
+      { id: 'machine-old', replacedByMachineId: 'machine-new' },
+      { id: 'machine-new' },
+    ]);
+    const nextWorkState = { v: 1, items: [], primaryItemId: null, updatedAt: 12 };
+    const setGoal = vi.fn(async () => ({
+      metadata: createMetadata({ machineId: 'machine-old', sessionWorkStateV1: nextWorkState }),
+      workState: nextWorkState,
+    }));
+    const resolveAdapter = vi.fn(async () => ({ setGoal }));
+
+    await expect(routeSessionGoalControl({
+      token: 'token',
+      credentials: createCredentials(),
+      sessionId: 'sess_replaced_goal',
+      rawSession: createRawSession({ id: 'sess_replaced_goal', machineId: 'machine-old' }),
+      metadata: createMetadata({ machineId: 'machine-old', host: 'old-laptop', homeDir: '/Users/leeroy' }),
+      currentMachineId: 'machine-new',
+      currentMachineHost: 'new-laptop',
+      currentMachineHomeDir: '/Users/leeroy',
+      ctx: e2eeCtx,
+      mode: 'e2ee',
+      operation: 'set',
+      request: { status: 'paused' },
+      callLiveSessionRpc: vi.fn(),
+      resolveAdapter,
+    })).resolves.toMatchObject({ workState: nextWorkState });
+
+    expect(setGoal).toHaveBeenCalledWith(expect.objectContaining({
+      currentMachineId: 'machine-new',
+      sessionMachineId: 'machine-old',
+    }));
+  });
+
+  it('still refuses inactive goal controls when the replacement chain is unreadable', async () => {
+    mocks.fetchAccountMachineReplacements.mockResolvedValue(null);
+    const resolveAdapter = vi.fn(async () => ({ setGoal: vi.fn() }));
+
+    await expect(routeSessionGoalControl({
+      token: 'token',
+      credentials: createCredentials(),
+      sessionId: 'sess_1',
+      rawSession: createRawSession({ machineId: 'machine-old' }),
+      metadata: createMetadata({ machineId: 'machine-old' }),
+      currentMachineId: 'machine-new',
+      ctx: e2eeCtx,
+      mode: 'e2ee',
+      operation: 'set',
+      request: { status: 'paused' },
+      callLiveSessionRpc: vi.fn(),
+      resolveAdapter,
+    })).resolves.toEqual({
+      ok: false,
+      errorCode: 'session_goal_control_remote_unavailable',
+      error: 'session_goal_control_remote_unavailable',
+    });
+
+    expect(resolveAdapter).not.toHaveBeenCalled();
   });
 });

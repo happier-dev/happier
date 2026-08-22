@@ -4,15 +4,11 @@ import type { AgentMessage } from '@/agent';
 import { updateMetadataBestEffort } from '@/api/session/sessionWritesBestEffort';
 import type { ACPMessageData } from '@/api/session/sessionMessageTypes';
 import type { SendAgentSessionMediaCommittedRequest } from '@/api/session/client/transcript/sessionMediaBridge';
-import type { RuntimeEventV1 } from '@happier-dev/protocol';
+import type { AcpRuntimeEventDraft } from '../createAcpRuntime';
+import type { AcpSendFn } from '@/agent/acp/bridge/acpSessionForwarding';
 
 type EventAgentMessage = Extract<AgentMessage, { type: 'event' }>;
 type ContextCompactionAcpMessage = Extract<ACPMessageData, { type: 'context-compaction' }>;
-type ContextCompactionRuntimeEvent = Omit<
-    Extract<RuntimeEventV1, { kind: 'context-compaction' }>,
-    'sessionId' | 'emittedAtMs'
->;
-
 function asRecord(value: unknown): Record<string, unknown> | null {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
     return value as Record<string, unknown>;
@@ -60,6 +56,7 @@ function normalizeContextCompactionPayload(
     const trigger =
         payloadRecord.trigger === 'manual'
         || payloadRecord.trigger === 'auto'
+        || payloadRecord.trigger === 'automatic'
         || payloadRecord.trigger === 'threshold'
         || payloadRecord.trigger === 'overflow'
         || payloadRecord.trigger === 'unknown'
@@ -100,26 +97,92 @@ function normalizeContextCompactionPayload(
 
 function buildContextCompactionRuntimeEvent(
     payload: ContextCompactionAcpMessage,
-): ContextCompactionRuntimeEvent | null {
-    if (!payload.source) return null;
-    return {
-        kind: 'context-compaction',
-        phase: payload.phase,
-        source: payload.source,
-        ...(payload.lifecycleId ? { lifecycleId: payload.lifecycleId } : {}),
-        ...(payload.backendId ? { backendId: payload.backendId } : {}),
-        ...(payload.agentId ? { agentId: payload.agentId } : {}),
-        ...(payload.trigger ? { trigger: payload.trigger } : {}),
-        ...(payload.agentEventId ? { agentEventId: payload.agentEventId } : {}),
-        ...(payload.agentSessionId ? { agentSessionId: payload.agentSessionId } : {}),
+): AcpRuntimeEventDraft | null {
+    const compactionId = payload.lifecycleId ?? payload.agentEventId ?? payload.agentSessionId;
+    if (!compactionId) return null;
+    const trigger: 'manual' | 'automatic' | 'threshold' | 'overflow' | 'unknown' = payload.trigger === 'auto' || payload.trigger === 'automatic'
+        ? 'automatic'
+        : payload.trigger === 'manual'
+          || payload.trigger === 'threshold'
+          || payload.trigger === 'overflow'
+            ? payload.trigger
+            : 'unknown';
+    const tokenCountSource = payload.tokenCountSource === 'providerReported'
+        || payload.tokenCountSource === 'providerEstimated'
+        || payload.tokenCountSource === 'derivedEstimate'
+        ? payload.tokenCountSource
+        : undefined;
+    const base: Readonly<{
+        kind: 'context-compaction';
+        compactionId: string;
+        trigger: 'manual' | 'automatic' | 'threshold' | 'overflow' | 'unknown';
+        turnId?: string;
+        retryAttempt?: number;
+    }> = {
+        kind: 'context-compaction' as const,
+        compactionId,
+        trigger,
         ...(payload.turnId ? { turnId: payload.turnId } : {}),
-        ...(payload.tokenCountBefore !== undefined ? { tokenCountBefore: payload.tokenCountBefore } : {}),
-        ...(payload.tokenCountAfter !== undefined ? { tokenCountAfter: payload.tokenCountAfter } : {}),
-        ...(payload.tokenCountSource ? { tokenCountSource: payload.tokenCountSource } : {}),
         ...(payload.retryAttempt !== undefined ? { retryAttempt: payload.retryAttempt } : {}),
-        ...(payload.errorCode ? { errorCode: payload.errorCode } : {}),
-        ...(payload.sanitizedErrorPreview ? { sanitizedErrorPreview: payload.sanitizedErrorPreview } : {}),
     };
+    if (payload.phase === 'failed') {
+        return {
+            ...base,
+            phase: payload.phase,
+            diagnostic: {
+                code: payload.errorCode ?? 'acp_context_compaction_failed',
+                severity: 'error',
+                ...(payload.sanitizedErrorPreview ? { message: payload.sanitizedErrorPreview } : {}),
+            },
+        };
+    }
+    if (payload.phase === 'cancelled') {
+        return {
+            ...base,
+            phase: payload.phase,
+            ...(payload.errorCode || payload.sanitizedErrorPreview
+                ? {
+                    diagnostic: {
+                        code: payload.errorCode ?? 'acp_context_compaction_cancelled',
+                        severity: 'warning' as const,
+                        ...(payload.sanitizedErrorPreview ? { message: payload.sanitizedErrorPreview } : {}),
+                    },
+                }
+                : {}),
+        };
+    }
+    if (payload.phase === 'started') {
+        const hasCount = payload.tokenCountBefore !== undefined && tokenCountSource !== undefined;
+        return {
+            ...base,
+            phase: payload.phase,
+            ...(hasCount ? { tokenCountBefore: payload.tokenCountBefore, tokenCountSource } : {}),
+        };
+    }
+    if (payload.phase === 'completed') {
+        const hasCounts = tokenCountSource !== undefined
+            && (payload.tokenCountBefore !== undefined || payload.tokenCountAfter !== undefined);
+        return {
+            ...base,
+            phase: payload.phase,
+            ...(hasCounts
+                ? {
+                    ...(payload.tokenCountBefore !== undefined ? { tokenCountBefore: payload.tokenCountBefore } : {}),
+                    ...(payload.tokenCountAfter !== undefined ? { tokenCountAfter: payload.tokenCountAfter } : {}),
+                    tokenCountSource,
+                }
+                : {}),
+            ...(payload.continuation === 'paused'
+                ? {
+                    continuation: 'paused' as const,
+                    ...(payload.pauseReason === 'agent-idle-after-compaction'
+                        ? { pauseReason: 'agentIdleAfterCompaction' as const }
+                        : {}),
+                }
+                : {}),
+        };
+    }
+    return { ...base, phase: 'progress' };
 }
 
 function isSessionMediaCommittedRequest(value: unknown): value is SendAgentSessionMediaCommittedRequest {
@@ -225,37 +288,44 @@ function normalizeConfigOptionsArray(raw: unknown): NormalizedConfigOption[] {
     return out;
 }
 
-export function handleAcpRuntimeEventMessage(params: Readonly<{
+export async function handleAcpRuntimeEventMessage(params: Readonly<{
     provider: string;
     session: AcpRuntimeSessionClient;
     seenSessionMediaKeys?: Set<string>;
     streamedTranscriptWriter: Readonly<{
         appendThinkingDelta: (text: string) => void;
     }>;
-    publishRuntimeEvent?: (event: Omit<RuntimeEventV1, 'sessionId' | 'emittedAtMs'>) => void;
+    publishRuntimeEvent?: (event: AcpRuntimeEventDraft) => void;
+    publishTranscriptAgentMessageCommitted: AcpSendFn;
     msg: EventAgentMessage;
-}>): void {
+}>): Promise<void> {
     const name = params.msg.name;
 
     if (name === 'session_media') {
         if (!isSessionMediaCommittedRequest(params.msg.payload)) return;
         const request = params.msg.payload;
         const seenSessionMediaKeys = params.seenSessionMediaKeys;
+        const mediaKeys = request.media.map((entry) => buildSessionMediaDedupeKey(request, entry));
         const media = seenSessionMediaKeys
-            ? request.media.filter((entry) => {
-                const key = buildSessionMediaDedupeKey(request, entry);
-                if (seenSessionMediaKeys.has(key)) return false;
-                seenSessionMediaKeys.add(key);
-                return true;
-            })
+            ? request.media.filter((_entry, index) => !seenSessionMediaKeys.has(mediaKeys[index]!))
             : request.media;
         if (media.length === 0) return;
-        void params.session.sendAgentSessionMediaCommitted?.(
+        const sendSessionMedia = params.session.sendAgentSessionMediaCommitted;
+        if (!sendSessionMedia) {
+            throw new Error('ACP session media requires durable transcript custody');
+        }
+        await sendSessionMedia.call(
+            params.session,
             params.provider,
             media.length === request.media.length
                 ? request
                 : { ...request, media },
         );
+        if (seenSessionMediaKeys) {
+            for (const entry of media) {
+                seenSessionMediaKeys.add(buildSessionMediaDedupeKey(request, entry));
+            }
+        }
         return;
     }
 
@@ -267,7 +337,7 @@ export function handleAcpRuntimeEventMessage(params: Readonly<{
             if (runtimeEvent) {
                 params.publishRuntimeEvent?.(runtimeEvent);
             }
-            params.session.sendAgentMessage(params.provider, normalizedPayload);
+            params.publishTranscriptAgentMessageCommitted(params.provider, normalizedPayload);
         }
         return;
     }

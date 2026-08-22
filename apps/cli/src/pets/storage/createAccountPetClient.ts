@@ -5,7 +5,8 @@ import {
 } from '@happier-dev/protocol';
 
 import { configuration } from '@/configuration';
-import { readCredentials, type Credentials } from '@/persistence';
+import { readStoredCredentials, type StoredCredentials } from '@/persistence';
+import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 
 type AccountPetFetch = (url: string, init: RequestInit) => Promise<Response>;
 
@@ -19,11 +20,11 @@ export async function createAccountPetViaActiveServer(
   request: AccountPetCreateRequestV1,
   deps: Readonly<{
     serverUrl?: string;
-    readCredentials?: () => Promise<Credentials | null>;
+    readCredentials?: () => Promise<StoredCredentials | null>;
     fetcher?: AccountPetFetch;
   }> = {},
 ): Promise<AccountPetCreateResponseV1> {
-  const credentials = await (deps.readCredentials ?? readCredentials)();
+  const credentials = await (deps.readCredentials ?? readStoredCredentials)();
   if (!credentials) {
     return { ok: false, errorCode: 'internal_error', error: 'Account credentials are unavailable.' };
   }
@@ -31,6 +32,7 @@ export async function createAccountPetViaActiveServer(
   const response = await (deps.fetcher ?? fetch)(buildAccountPetsUrl(deps.serverUrl ?? configuration.serverUrl), {
     method: 'POST',
     headers: {
+      ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
       Authorization: `Bearer ${credentials.token}`,
       'Content-Type': 'application/json',
     },

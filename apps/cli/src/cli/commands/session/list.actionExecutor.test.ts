@@ -62,6 +62,54 @@ describe('happier session list (action executor)', () => {
     }
   });
 
+  it.each([
+    ['an unknown option', ['list', '--definitely-invalid', '--json']],
+    ['a non-positive limit', ['list', '--limit', '0', '--json']],
+    ['a non-integer limit', ['list', '--limit', '10oops', '--json']],
+    ['a missing cursor value', ['list', '--cursor', '--json']],
+  ])('rejects %s before listing sessions', async (_label, argv) => {
+    execute.mockResolvedValueOnce({
+      ok: true,
+      result: { sessions: [], nextCursor: null, hasNext: false },
+    });
+    const readCredentialsFn = vi.fn(async () => ({
+      token: 'token_test',
+      encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(1) },
+    }));
+    const { cmdSessionList } = await import('./list');
+
+    await expect(cmdSessionList(argv, { readCredentialsFn })).rejects.toThrow();
+
+    expect(readCredentialsFn).not.toHaveBeenCalled();
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it('clamps the requested limit to the supported maximum', async () => {
+    execute.mockResolvedValueOnce({
+      ok: true,
+      result: { sessions: [], nextCursor: null, hasNext: false },
+    });
+    const { cmdSessionList } = await import('./list');
+
+    const output = captureConsoleJsonOutput();
+    try {
+      await cmdSessionList(['list', '--limit', '999', '--json'], {
+        readCredentialsFn: async () => ({
+          token: 'token_test',
+          encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
+        }),
+      });
+
+      expect(execute).toHaveBeenLastCalledWith(
+        'session.list',
+        { limit: 200 },
+        { surface: 'cli', defaultSessionId: null },
+      );
+    } finally {
+      output.restore();
+    }
+  });
+
   it('requests terminal rows for human-readable output', async () => {
     execute.mockResolvedValueOnce({
       ok: true,

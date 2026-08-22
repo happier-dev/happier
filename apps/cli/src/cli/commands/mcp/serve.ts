@@ -22,11 +22,10 @@ export async function runMcpServeCommand(
   reloadConfiguration();
 
   const defaultSessionId = readFlagValue(argv, '--session');
-  const credentials = await deps.readCredentials();
+  const credentials = await deps.readStoredCredentials();
   if (!credentials) {
     throw new Error('not_authenticated');
   }
-
   await deps.ensureMachineIdForCredentials(credentials);
   const accountSettingsContext = await deps.bootstrapAccountSettingsContext({
     credentials,

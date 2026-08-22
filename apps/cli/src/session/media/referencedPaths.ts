@@ -1,7 +1,8 @@
-import { lstatSync, realpathSync, statSync } from 'node:fs';
-import { isAbsolute, relative, resolve, sep } from 'node:path';
+import { statSync } from 'node:fs';
+import { isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { authorizeFilesystemPath } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemPathAuthorization';
 import { readSessionHandoffAgentBundleRecords } from '@/session/handoff/agentBundle/records';
 import type { SessionHandoffAgentBundle } from '@/session/handoff/types';
 
@@ -114,54 +115,19 @@ export function isCanonicalSessionMediaWorkspacePath(
     || normalizedPath.startsWith(ARTIFACT_MEDIA_PREFIX);
 }
 
-function isPathWithinAllowedRoots(path: string, allowedRoots: readonly string[]): boolean {
-  const resolvedPath = resolve(path);
-  return isResolvedPathWithinAllowedRoots(resolvedPath, allowedRoots);
-}
-
-function isResolvedPathWithinAllowedRoots(resolvedPath: string, allowedRoots: readonly string[]): boolean {
-  for (const root of allowedRoots) {
-    if (typeof root !== 'string' || root.trim().length === 0) continue;
-    const resolvedRoot = resolve(root.trim());
-    const rel = relative(resolvedRoot, resolvedPath);
-    if (rel === '' || (!rel.startsWith('..') && !isAbsolute(rel) && rel !== '..' && !rel.startsWith(`..${sep}`))) {
-      return true;
-    }
-  }
-  return false;
-}
-
-function isRealPathWithinAllowedRoots(realPath: string, allowedRoots: readonly string[]): boolean {
-  for (const root of allowedRoots) {
-    if (typeof root !== 'string' || root.trim().length === 0) continue;
-    try {
-      if (isResolvedPathWithinAllowedRoots(realPath, [realpathSync(root.trim())])) {
-        return true;
-      }
-    } catch {
-      // Invalid roots cannot safely authorize provider-controlled media paths.
-    }
-  }
-  return false;
-}
-
-function realRegularFilePath(path: string): string | null {
-  try {
-    const linkOrFile = lstatSync(path);
-    if (!linkOrFile.isFile() && !linkOrFile.isSymbolicLink()) return null;
-
-    const realPath = realpathSync(path);
-    return statSync(realPath).isFile() ? realPath : null;
-  } catch {
-    return null;
-  }
-}
-
 function isTransientMediaFileAllowed(path: string, allowedRoots: readonly string[]): boolean {
-  if (!isPathWithinAllowedRoots(path, allowedRoots)) return false;
-
-  const realPath = realRegularFilePath(path);
-  return realPath !== null && isRealPathWithinAllowedRoots(realPath, allowedRoots);
+  const authorization = authorizeFilesystemPath({
+    targetPath: path,
+    defaultDirectory: process.cwd(),
+    accessPolicy: { kind: 'restrictedRoots', roots: [] },
+    additionalAllowedDirs: allowedRoots,
+  });
+  if (!authorization.valid || !authorization.resolvedPath) return false;
+  try {
+    return statSync(authorization.resolvedPath).isFile();
+  } catch {
+    return false;
+  }
 }
 
 function readTransientSessionMediaFiles(

@@ -1,3 +1,4 @@
+import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import {
   AccountProfileResponseSchema,
   SessionMcpSelectionV1Schema,
@@ -10,17 +11,14 @@ import {
 import axios from 'axios';
 import { homedir } from 'node:os';
 import {
-  AGENTS_CORE,
   buildConnectedServiceAccountGroupOptionsByServiceId,
   buildConnectedServiceProfileOptionsByServiceId,
-  isAgentId,
+  getAgentCore,
   legacyCustomAcpCompat,
-  resolveAgentSupportedConnectedServiceIds,
-  type AgentId,
 } from '@happier-dev/agents';
 
 import { resolveAccountSettingsHttpBaseUrl } from '@/settings/accountSettings/resolveAccountSettingsHttpBaseUrl';
-import { readSettings, type Credentials } from '@/persistence';
+import { readSettings, type StoredCredentials } from '@/persistence';
 import type { ProbedAgentModelsResult } from '@/capabilities/probes/agentModelsProbe';
 import type { ProbedAgentModesResult } from '@/capabilities/probes/agentModesProbe';
 import type { ProbedAgentConfigOptionsResult } from '@/capabilities/probes/agentConfigOptionsProbe';
@@ -31,12 +29,12 @@ import { listServerProfiles } from '@/server/serverProfiles';
 import { mapProfileToListItem } from '@/settings/profiles/profileListProjection';
 import { readProfilesFromAccountSettings } from '@/settings/profiles/readProfilesFromAccountSettings';
 import { resolveSpawnConnectedServicesDefaults } from '@/session/services/spawnConnectedServicesDefaults';
+import { resolveCatalogAgentConnectedServiceIds } from '@/agent/catalog/registry';
 import { readMcpServersSettingsFromAccountSettings } from '@/mcp/servers/readMcpServersSettingsFromAccountSettings';
 import {
   resolveSessionEncryptionContextFromCredentials,
   resolveSessionStoredContentEncryptionMode,
-  type SessionEncryptionContext,
-  type SessionStoredContentEncryptionMode,
+  type SessionStoredContentCryptoContext,
 } from '@/session/transport/encryption/sessionEncryptionContext';
 
 import {
@@ -298,7 +296,7 @@ async function probeActionModelsBestEffort(params: Readonly<{
     machineId?: unknown;
   }> | null;
   accountSettings: import('@happier-dev/protocol').AccountSettings | null;
-  credentials: Credentials | null;
+  credentials: StoredCredentials | null;
   probeDeps?: AgentProbeInventoryDeps;
 }>): Promise<ProbedAgentModelsResult | null> {
   const probeAgentId = resolveProbeAgentId({
@@ -339,7 +337,7 @@ async function probeActionModesBestEffort(params: Readonly<{
     machineId?: unknown;
   }> | null;
   accountSettings: import('@happier-dev/protocol').AccountSettings | null;
-  credentials: Credentials | null;
+  credentials: StoredCredentials | null;
   probeDeps?: AgentProbeInventoryDeps;
 }>): Promise<ProbedAgentModesResult | null> {
   const probeAgentId = resolveProbeAgentId({
@@ -380,7 +378,7 @@ async function probeActionConfigOptionsBestEffort(params: Readonly<{
     machineId?: unknown;
   }> | null;
   accountSettings: import('@happier-dev/protocol').AccountSettings | null;
-  credentials: Credentials | null;
+  credentials: StoredCredentials | null;
   probeDeps?: AgentProbeInventoryDeps;
 }>): Promise<ProbedAgentConfigOptionsResult | null> {
   const probeAgentId = resolveProbeAgentId({
@@ -413,10 +411,8 @@ async function probeActionConfigOptionsBestEffort(params: Readonly<{
 
 export function createCliActionInventoryDeps(params: Readonly<{
   token: string;
-  credentials?: Credentials;
+  credentials?: StoredCredentials;
   sessionId: string;
-  ctx: SessionEncryptionContext;
-  mode?: SessionStoredContentEncryptionMode;
   rawSession?: Readonly<{
     metadata?: unknown;
     path?: unknown;
@@ -427,7 +423,7 @@ export function createCliActionInventoryDeps(params: Readonly<{
   accountProfile?: AccountProfile | null;
   probeDeps?: AgentProbeInventoryDeps;
   mcpPreviewDeps?: SpawnMcpPreviewInventoryDeps;
-}>): Pick<
+}> & SessionStoredContentCryptoContext): Pick<
   ActionExecutorDeps,
   | 'pathsListRecent'
   | 'machinesList'
@@ -445,9 +441,8 @@ export function createCliActionInventoryDeps(params: Readonly<{
   const metadataCache = new Map<string, Record<string, unknown> | null>();
   let accountProfilePromise: Promise<AccountProfile | null> | null = null;
   const seededMetadata = readSessionMetadata({
+    ...params,
     rawSession: params.rawSession,
-    mode: params.mode,
-    ctx: params.ctx,
   });
   metadataCache.set(params.sessionId, seededMetadata);
 
@@ -462,7 +457,7 @@ export function createCliActionInventoryDeps(params: Readonly<{
     try {
       const rawSession = await fetchSessionById({ token: params.token, sessionId: normalizedSessionId });
       const mode =
-        normalizedSessionId === params.sessionId && params.mode
+        normalizedSessionId === params.sessionId
           ? params.mode
           : resolveSessionStoredContentEncryptionMode(rawSession ?? undefined);
       const rawMetadata = (rawSession as any)?.metadata;
@@ -471,6 +466,15 @@ export function createCliActionInventoryDeps(params: Readonly<{
         metadataRequiresDecryption && normalizedSessionId !== params.sessionId && params.credentials
           ? resolveSessionEncryptionContextFromCredentials(params.credentials, rawSession ?? undefined)
           : params.ctx;
+      if (mode === 'plain') {
+        const metadata = readSessionMetadata({ rawSession, mode, ctx: null });
+        metadataCache.set(normalizedSessionId, metadata);
+        return metadata;
+      }
+      if (!ctx) {
+        metadataCache.set(normalizedSessionId, null);
+        return null;
+      }
       const metadata = readSessionMetadata({ rawSession, mode, ctx });
       metadataCache.set(normalizedSessionId, metadata);
       return metadata;
@@ -496,6 +500,7 @@ export function createCliActionInventoryDeps(params: Readonly<{
         try {
           const response = await axios.get(`${resolveAccountSettingsHttpBaseUrl()}/v1/account/profile`, {
             headers: {
+              ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
               Authorization: `Bearer ${params.credentials!.token}`,
               'Content-Type': 'application/json',
             },
@@ -733,15 +738,16 @@ export function createCliActionInventoryDeps(params: Readonly<{
     },
     spawnConnectedServicesList: async (args) => {
       const normalizedAgentId = normalizeStringValue((args as { agentId?: unknown }).agentId);
-      if (!isAgentId(normalizedAgentId)) {
+      const supportedServiceIds = resolveCatalogAgentConnectedServiceIds(normalizedAgentId);
+      if (supportedServiceIds.length === 0) {
         return { ...(normalizedAgentId ? { agentId: normalizedAgentId } : {}), supportedServiceIds: [], items: [] };
       }
-      const agentId = normalizedAgentId as AgentId;
+      const agentId = normalizedAgentId;
+      // An installed Agent that contributes no bundled core has none here; it
+      // must not borrow another Agent's.
+      const bundledAgentCore = agentId ? getAgentCore(agentId) : null;
       const accountProfile = await readAccountProfile();
       const accountSettings = await readAccountSettings();
-      const supportedServiceIds = resolveAgentSupportedConnectedServiceIds({
-        agentCore: AGENTS_CORE[agentId],
-      });
       const connectedServicesV2 = accountProfile?.connectedServicesV2 ?? [];
       const labelsByKey = accountSettings && typeof accountSettings === 'object'
         ? ((accountSettings as any).connectedServicesProfileLabelByKey ?? {})
@@ -751,7 +757,7 @@ export function createCliActionInventoryDeps(params: Readonly<{
         : {};
       const profileOptionsByServiceId = buildConnectedServiceProfileOptionsByServiceId({
         accountProfileConnectedServicesV2: connectedServicesV2,
-        agentCore: AGENTS_CORE[agentId],
+        agentCore: bundledAgentCore,
         supportedConnectedServiceIds: supportedServiceIds,
         labelsByKey,
       });

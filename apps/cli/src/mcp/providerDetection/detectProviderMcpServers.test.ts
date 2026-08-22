@@ -1,12 +1,13 @@
+import { AGENT_IDS } from '@happier-dev/agents';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   detectProviderMcpServers,
-  type PluginMcpDiscoveryProviderEntry,
+  type PluginMcpDiscoverySourceEntry,
 } from './detectProviderMcpServers';
 
-type PluginMcpDiscoveryProviderRegistration =
-  PluginMcpDiscoveryProviderEntry['registration'];
+type PluginMcpDiscoverySourceRegistration =
+  PluginMcpDiscoverySourceEntry['registration'];
 
 const runtimeLeaseMocks = vi.hoisted(() => ({
   acquireAuthoritativePluginRuntimeRegistryLease: vi.fn(),
@@ -28,16 +29,16 @@ describe('detectProviderMcpServers', () => {
 
   it('uses the authoritative plugin runtime registry lease for discovered providers when no providers are injected', async () => {
     const release = vi.fn(async () => {});
-    const piDiscovery: PluginMcpDiscoveryProviderRegistration = {
+    const piDiscovery: PluginMcpDiscoverySourceRegistration = {
       id: 'config',
-      discover: async () => [{
-        id: 'pi.config.docs',
-        name: 'docs',
-        transport: {
+      discover: async () => ({
+        endpoints: [{
+          id: 'pi.config.docs',
+          name: 'docs',
           kind: 'http',
           url: 'https://mcp.pi.example.test/http',
-        },
-      }],
+        }],
+      }),
     };
     const discoverMcpServersForDetection = vi.fn(async (
       input: Readonly<{ input: Parameters<typeof piDiscovery.discover>[0] }>,
@@ -48,7 +49,7 @@ describe('detectProviderMcpServers', () => {
     runtimeLeaseMocks.acquireAuthoritativePluginRuntimeRegistryLease.mockResolvedValue({
       registry: {
         contributes: {
-          mcpDiscoveryProviders: [{
+          mcpDiscoverySources: [{
             pluginId: 'happier.agent.pi',
             definition: {
               id: 'config',
@@ -73,7 +74,7 @@ describe('detectProviderMcpServers', () => {
     expect(discoverMcpServersForDetection).toHaveBeenCalledWith({
       pluginId: 'happier.agent.pi',
       localId: 'config',
-      input: expect.objectContaining({ directory: '/tmp/project' }),
+      input: { directory: '/tmp/project' },
       signal: expect.any(AbortSignal),
     });
     expect(release).toHaveBeenCalledTimes(1);
@@ -85,16 +86,19 @@ describe('detectProviderMcpServers', () => {
 
   it('does not bind an unowned declaration to another plugin registration with the same local id', async () => {
     const release = vi.fn(async () => {});
-    const discover = vi.fn(async () => [{
-      id: 'pi.config.foreign',
-      name: 'foreign',
-      transport: { kind: 'http' as const, url: 'https://foreign.example.test/mcp' },
-    }]);
-    const discoverMcpServersForDetection = vi.fn(async () => []);
+    const discover = vi.fn(async () => ({
+      endpoints: [{
+        id: 'pi.config.foreign',
+        name: 'foreign',
+        kind: 'http' as const,
+        url: 'https://foreign.example.test/mcp',
+      }],
+    }));
+    const discoverMcpServersForDetection = vi.fn(async () => ({ endpoints: [] }));
     runtimeLeaseMocks.acquireAuthoritativePluginRuntimeRegistryLease.mockResolvedValue({
       registry: {
         contributes: {
-          mcpDiscoveryProviders: [{
+          mcpDiscoverySources: [{
             definition: {
               id: 'pi.synthetic',
               title: 'Unowned Pi MCP discovery',
@@ -120,35 +124,35 @@ describe('detectProviderMcpServers', () => {
       provider: 'pi',
       code: 'read_failed',
       path: 'plugin:pi.synthetic',
-      detail: 'Plugin MCP discovery provider is unavailable',
+      detail: 'Plugin MCP discovery source is unavailable',
     })]);
     expect(release).toHaveBeenCalledTimes(1);
   });
 
   it('activates every declared discovery-provider owner when detection has no provider filter', async () => {
     const release = vi.fn(async () => {});
-    const registrations: Record<string, PluginMcpDiscoveryProviderRegistration> = {
+    const registrations: Record<string, PluginMcpDiscoverySourceRegistration> = {
       pi: {
         id: 'pi.synthetic',
-        discover: async () => [],
+        discover: async () => ({ endpoints: [] }),
       },
       opencode: {
         id: 'opencode.synthetic',
-        discover: async () => [],
+        discover: async () => ({ endpoints: [] }),
       },
     };
     const discoverMcpServersForDetection = vi.fn(async (request: Readonly<{
       localId: string;
-      input: Parameters<PluginMcpDiscoveryProviderRegistration['discover']>[0];
+      input: Parameters<PluginMcpDiscoverySourceRegistration['discover']>[0];
     }>) => {
       const agentId = request.localId.split('.')[0];
       const registration = agentId ? registrations[agentId] : undefined;
-      return await registration?.discover(request.input) ?? [];
+      return await registration?.discover(request.input) ?? { endpoints: [] };
     });
     runtimeLeaseMocks.acquireAuthoritativePluginRuntimeRegistryLease.mockResolvedValue({
       registry: {
         contributes: {
-          mcpDiscoveryProviders: [
+          mcpDiscoverySources: [
             {
               pluginId: 'happier.agent.pi',
               definition: { id: 'pi.synthetic', title: 'Pi MCP discovery', metadata: { agentId: 'pi' } },
@@ -185,32 +189,34 @@ describe('detectProviderMcpServers', () => {
 
   it('fans out over plugin MCP discovery providers and applies provider filtering generically', async () => {
     const calls: string[] = [];
-    const piDiscovery: PluginMcpDiscoveryProviderRegistration = {
+    const piDiscovery: PluginMcpDiscoverySourceRegistration = {
       id: 'pi.synthetic',
       discover: async (input) => {
         calls.push(`pi:${input?.directory ?? ''}`);
-        return [{
-          id: 'pi.config.docs',
-          name: 'docs',
-          transport: {
+        return {
+          endpoints: [{
+            id: 'pi.config.docs',
+            name: 'docs',
             kind: 'http',
             url: 'https://mcp.pi.example.test/http',
-          },
-        }];
+          }],
+          warnings: [],
+        };
       },
     };
-    const openCodeDiscovery: PluginMcpDiscoveryProviderRegistration = {
+    const openCodeDiscovery: PluginMcpDiscoverySourceRegistration = {
       id: 'opencode.synthetic',
       discover: async () => {
         calls.push('opencode');
-        return [{
-          id: 'opencode.config.workspace',
-          name: 'workspace',
-          transport: {
+        return {
+          endpoints: [{
+            id: 'opencode.config.workspace',
+            name: 'workspace',
             kind: 'sse',
             url: 'https://mcp.opencode.example.test/sse',
-          },
-        }];
+          }],
+          warnings: [],
+        };
       },
     };
 
@@ -218,9 +224,9 @@ describe('detectProviderMcpServers', () => {
       directory: '/tmp/project',
       providers: ['pi'],
       env: {},
-      mcpDiscoveryProviders: [
-        { pluginId: 'happier.agent.pi', registration: piDiscovery },
-        { pluginId: 'happier.agent.opencode', registration: openCodeDiscovery },
+      mcpDiscoverySources: [
+        { pluginId: 'happier.agent.pi', provider: 'pi', registration: piDiscovery },
+        { pluginId: 'happier.agent.opencode', provider: 'opencode', registration: openCodeDiscovery },
       ],
     };
     const result = await detectProviderMcpServers(params);
@@ -245,10 +251,10 @@ describe('detectProviderMcpServers', () => {
   });
 
   it('propagates plugin discovery warnings from generic fanout results', async () => {
-    const piDiscovery: PluginMcpDiscoveryProviderRegistration = {
+    const piDiscovery: PluginMcpDiscoverySourceRegistration = {
       id: 'pi.synthetic',
       discover: async () => ({
-        servers: [],
+        endpoints: [],
         warnings: [{
           provider: 'pi',
           code: 'parse_failed',
@@ -261,8 +267,8 @@ describe('detectProviderMcpServers', () => {
       directory: '/tmp/project',
       providers: ['pi'],
       env: {},
-      mcpDiscoveryProviders: [
-        { pluginId: 'happier.agent.pi', registration: piDiscovery },
+      mcpDiscoverySources: [
+        { pluginId: 'happier.agent.pi', provider: 'pi', registration: piDiscovery },
       ],
     });
 
@@ -276,20 +282,20 @@ describe('detectProviderMcpServers', () => {
 
   it('bounds a hung plugin discovery provider and continues detecting other providers', async () => {
     let timedOutSignal: AbortSignal | undefined;
-    const piDiscovery: PluginMcpDiscoveryProviderRegistration = {
+    const piDiscovery: PluginMcpDiscoverySourceRegistration = {
       id: 'pi.synthetic',
       discover: async () => await new Promise(() => {}),
     };
-    const openCodeDiscovery: PluginMcpDiscoveryProviderRegistration = {
+    const openCodeDiscovery: PluginMcpDiscoverySourceRegistration = {
       id: 'opencode.synthetic',
-      discover: async () => [{
-        id: 'opencode.config.workspace',
-        name: 'workspace',
-        transport: {
+      discover: async () => ({
+        endpoints: [{
+          id: 'opencode.config.workspace',
+          name: 'workspace',
           kind: 'sse',
           url: 'https://mcp.opencode.example.test/sse',
-        },
-      }],
+        }],
+      }),
     };
 
     const result = await detectProviderMcpServers({
@@ -297,16 +303,17 @@ describe('detectProviderMcpServers', () => {
       providers: ['pi', 'opencode'],
       env: {},
       discoveryTimeoutMs: 5,
-      mcpDiscoveryProviders: [
+      mcpDiscoverySources: [
         {
           pluginId: 'happier.agent.pi',
+          provider: 'pi',
           registration: piDiscovery,
           discover: async (_input, signal) => {
             timedOutSignal = signal;
             return await new Promise(() => {});
           },
         },
-        { pluginId: 'happier.agent.opencode', registration: openCodeDiscovery },
+        { pluginId: 'happier.agent.opencode', provider: 'opencode', registration: openCodeDiscovery },
       ],
     });
 
@@ -333,76 +340,24 @@ describe('detectProviderMcpServers', () => {
     }]);
   }, 1_000);
 
-  it('accepts discovery stdio env key placeholders without leaking env values', async () => {
-    const piDiscovery: PluginMcpDiscoveryProviderRegistration = {
-      id: 'pi.synthetic',
-      discover: async () => ({
-        servers: [{
-          id: 'pi.config.env',
-          name: 'env',
-          transport: {
-            kind: 'stdio',
-            launch: {
-              kind: 'binary',
-              executablePath: 'env-mcp',
-              args: ['--stdio'],
-              env: {
-                API_TOKEN: '',
-              },
-            },
-          },
-        }],
-        warnings: [],
-      }),
-    };
-
-    const result = await detectProviderMcpServers({
-      directory: '/tmp/project',
-      providers: ['pi'],
-      env: {},
-      mcpDiscoveryProviders: [
-        { pluginId: 'happier.agent.pi', registration: piDiscovery },
-      ],
-    });
-
-    expect(result.warnings).toEqual([]);
-    expect(result.servers).toEqual([{
-      provider: 'pi',
+  it('rejects endpoint discovery rows that smuggle a transport specification', async () => {
+    const endpointWithTransport = {
+      id: 'pi.config.env',
       name: 'env',
-      transport: 'stdio',
-      stdio: {
-        command: 'env-mcp',
-        args: ['--stdio'],
+      kind: 'http' as const,
+      url: 'https://mcp.pi.example.test/http',
+      transport: {
+        kind: 'stdio',
+        launch: {
+          executable: { kind: 'systemTool', id: 'env-mcp' },
+          env: { API_TOKEN: 'secret-value' },
+        },
       },
-      envKeys: ['API_TOKEN'],
-      enabled: null,
-      source: {
-        kind: 'project',
-        path: 'plugin:pi.synthetic',
-      },
-    }]);
-    expect(JSON.stringify(result)).not.toContain('API_TOKEN:');
-  });
-
-  it('drops plugin discovery servers that contain raw secret-shaped runtime material', async () => {
-    const piDiscovery: PluginMcpDiscoveryProviderRegistration = {
+    };
+    const piDiscovery: PluginMcpDiscoverySourceRegistration = {
       id: 'pi.synthetic',
       discover: async () => ({
-        servers: [{
-          id: 'pi.config.secret',
-          name: 'secret',
-          transport: {
-            kind: 'stdio',
-            launch: {
-              kind: 'binary',
-              executablePath: 'secret-mcp',
-              args: ['--auth', 'Bearer secret-token'],
-              env: {
-                API_TOKEN: 'secret-env-value',
-              },
-            },
-          },
-        }],
+        endpoints: [endpointWithTransport],
         warnings: [],
       }),
     };
@@ -411,33 +366,30 @@ describe('detectProviderMcpServers', () => {
       directory: '/tmp/project',
       providers: ['pi'],
       env: {},
-      mcpDiscoveryProviders: [
-        { pluginId: 'happier.agent.pi', registration: piDiscovery },
+      mcpDiscoverySources: [
+        { pluginId: 'happier.agent.pi', provider: 'pi', registration: piDiscovery },
       ],
     });
 
-    expect(result.servers).toEqual([]);
     expect(result.warnings).toEqual([{
       provider: 'pi',
       code: 'unsupported',
       path: 'plugin:pi.synthetic',
     }]);
-    expect(JSON.stringify(result)).not.toContain('secret-token');
+    expect(result.servers).toEqual([]);
     expect(JSON.stringify(result)).not.toContain('API_TOKEN');
-    expect(JSON.stringify(result)).not.toContain('secret-env-value');
+    expect(JSON.stringify(result)).not.toContain('secret-value');
   });
 
   it('drops remote discovery servers with benign URL fragments at the canonical MCP URL boundary', async () => {
-    const piDiscovery: PluginMcpDiscoveryProviderRegistration = {
+    const piDiscovery: PluginMcpDiscoverySourceRegistration = {
       id: 'pi.synthetic',
       discover: async () => ({
-        servers: [{
+        endpoints: [{
           id: 'pi.config.fragment',
           name: 'fragment',
-          transport: {
-            kind: 'http',
-            url: 'https://mcp.pi.example.test/http#section',
-          },
+          kind: 'http',
+          url: 'https://mcp.pi.example.test/http#section',
         }],
         warnings: [],
       }),
@@ -447,8 +399,8 @@ describe('detectProviderMcpServers', () => {
       directory: '/tmp/project',
       providers: ['pi'],
       env: {},
-      mcpDiscoveryProviders: [
-        { pluginId: 'happier.agent.pi', registration: piDiscovery },
+      mcpDiscoverySources: [
+        { pluginId: 'happier.agent.pi', provider: 'pi', registration: piDiscovery },
       ],
     });
 
@@ -460,166 +412,182 @@ describe('detectProviderMcpServers', () => {
     }]);
   });
 
-  it('drops plugin discovery servers that contain raw env values', async () => {
-    const piDiscovery: PluginMcpDiscoveryProviderRegistration = {
-      id: 'pi.synthetic',
-      discover: async () => ({
-        servers: [{
-          id: 'pi.config.env-secret',
-          name: 'env-secret',
-          transport: {
-            kind: 'stdio',
-            launch: {
-              kind: 'binary',
-              executablePath: 'env-secret-mcp',
-              args: ['--stdio'],
-              env: {
-                API_TOKEN: 'secret-env-value',
-              },
+  it('detects MCP servers for every installed Agent, bundled or externally contributed', async () => {
+    const release = vi.fn(async () => {});
+    const externalAgentId = 'acme.cli';
+    const installedAgentIds = [...AGENT_IDS, externalAgentId];
+    const discoverMcpServersForDetection = vi.fn(async (request: Readonly<{
+      pluginId: string;
+      localId: string;
+    }>) => ({
+      endpoints: [{
+        id: `${request.pluginId}.${request.localId}.docs`,
+        name: 'docs',
+        kind: 'http' as const,
+        url: 'https://mcp.example.test/http',
+      }],
+    }));
+    runtimeLeaseMocks.acquireAuthoritativePluginRuntimeRegistryLease.mockResolvedValue({
+      registry: {
+        contributes: {
+          mcpDiscoverySources: installedAgentIds.map((agentId) => ({
+            pluginId: `happier.agent.${agentId}`,
+            definition: {
+              id: 'config',
+              title: `${agentId} MCP configuration`,
+              metadata: { agentId },
             },
-          },
-        }],
-        warnings: [],
-      }),
-    };
+          })),
+        },
+        discoverMcpServersForDetection,
+      },
+      release,
+    });
 
     const result = await detectProviderMcpServers({
       directory: '/tmp/project',
-      providers: ['pi'],
+      providers: [],
       env: {},
-      mcpDiscoveryProviders: [
-        { pluginId: 'happier.agent.pi', registration: piDiscovery },
-      ],
     });
 
-    expect(result.servers).toEqual([]);
-    expect(result.warnings).toEqual([{
-      provider: 'pi',
-      code: 'unsupported',
-      path: 'plugin:pi.synthetic',
-    }]);
-    expect(JSON.stringify(result)).not.toContain('secret-env-value');
+    expect(result.servers.map((server) => server.provider)).toEqual(installedAgentIds);
+    expect(result.warnings).toEqual([]);
+    expect(release).toHaveBeenCalledTimes(1);
   });
 
-  it('drops plugin discovery servers that expose malformed env key placeholders', async () => {
-    const piDiscovery: PluginMcpDiscoveryProviderRegistration = {
-      id: 'pi.synthetic',
-      discover: async () => ({
-        servers: [{
-          id: 'pi.config.env-malformed',
-          name: 'env-malformed',
-          transport: {
-            kind: 'stdio',
-            launch: {
-              kind: 'binary',
-              executablePath: 'env-malformed-mcp',
-              args: ['--stdio'],
-              env: {
-                'API_TOKEN=secret-env-value': '',
-              },
+  it('detects MCP servers for a single externally contributed Agent when it is the requested provider', async () => {
+    const release = vi.fn(async () => {});
+    const discoverMcpServersForDetection = vi.fn(async () => ({
+      endpoints: [{
+        id: 'acme.config.docs',
+        name: 'docs',
+        kind: 'http' as const,
+        url: 'https://mcp.acme.example.test/http',
+      }],
+    }));
+    runtimeLeaseMocks.acquireAuthoritativePluginRuntimeRegistryLease.mockResolvedValue({
+      registry: {
+        contributes: {
+          mcpDiscoverySources: [
+            {
+              pluginId: 'happier.agent.acme',
+              definition: { id: 'config', title: 'Acme MCP configuration', metadata: { agentId: 'acme.cli' } },
             },
-          },
-        }],
-        warnings: [],
-      }),
-    };
-
-    const result = await detectProviderMcpServers({
-      directory: '/tmp/project',
-      providers: ['pi'],
-      env: {},
-      mcpDiscoveryProviders: [
-        { pluginId: 'happier.agent.pi', registration: piDiscovery },
-      ],
-    });
-
-    expect(result.servers).toEqual([]);
-    expect(result.warnings).toEqual([{
-      provider: 'pi',
-      code: 'unsupported',
-      path: 'plugin:pi.synthetic',
-    }]);
-    expect(JSON.stringify(result)).not.toContain('secret-env-value');
-  });
-
-  it('drops plugin discovery servers that expose oversized env key placeholders', async () => {
-    const longEnvKey = `API_${'A'.repeat(200)}`;
-    const piDiscovery: PluginMcpDiscoveryProviderRegistration = {
-      id: 'pi.synthetic',
-      discover: async () => ({
-        servers: [{
-          id: 'pi.config.env-long',
-          name: 'env-long',
-          transport: {
-            kind: 'stdio',
-            launch: {
-              kind: 'binary',
-              executablePath: 'env-long-mcp',
-              args: ['--stdio'],
-              env: {
-                [longEnvKey]: '',
-              },
+            {
+              pluginId: 'happier.agent.claude',
+              definition: { id: 'config', title: 'Claude MCP configuration', metadata: { agentId: 'claude' } },
             },
-          },
-        }],
-        warnings: [],
-      }),
-    };
+          ],
+        },
+        discoverMcpServersForDetection,
+      },
+      release,
+    });
 
     const result = await detectProviderMcpServers({
       directory: '/tmp/project',
-      providers: ['pi'],
+      providers: ['acme.cli'],
       env: {},
-      mcpDiscoveryProviders: [
-        { pluginId: 'happier.agent.pi', registration: piDiscovery },
-      ],
     });
 
-    expect(result.servers).toEqual([]);
-    expect(result.warnings).toEqual([{
-      provider: 'pi',
-      code: 'unsupported',
-      path: 'plugin:pi.synthetic',
-    }]);
-    expect(JSON.stringify(result)).not.toContain(longEnvKey);
+    expect(discoverMcpServersForDetection).toHaveBeenCalledTimes(1);
+    expect(result.servers).toEqual([expect.objectContaining({ provider: 'acme.cli', name: 'docs' })]);
+    expect(result.warnings).toEqual([]);
   });
 
-  it('drops plugin discovery servers that contain sensitive stdio argv flags', async () => {
-    const piDiscovery: PluginMcpDiscoveryProviderRegistration = {
-      id: 'pi.synthetic',
-      discover: async () => ({
-        servers: [{
-          id: 'pi.config.argv',
-          name: 'argv',
-          transport: {
-            kind: 'stdio',
-            launch: {
-              kind: 'binary',
-              executablePath: 'argv-mcp',
-              args: ['--token', 'raw-token-value'],
-            },
-          },
-        }],
-        warnings: [],
-      }),
-    };
+  it('warns instead of silently dropping a discovery source whose Agent id cannot be resolved', async () => {
+    const release = vi.fn(async () => {});
+    const discoverMcpServersForDetection = vi.fn(async () => ({ endpoints: [] }));
+    runtimeLeaseMocks.acquireAuthoritativePluginRuntimeRegistryLease.mockResolvedValue({
+      registry: {
+        contributes: {
+          mcpDiscoverySources: [{
+            pluginId: 'happier.agent.acme',
+            definition: { id: 'config', title: 'Acme MCP configuration' },
+          }],
+        },
+        discoverMcpServersForDetection,
+      },
+      release,
+    });
 
     const result = await detectProviderMcpServers({
       directory: '/tmp/project',
-      providers: ['pi'],
+      providers: [],
       env: {},
-      mcpDiscoveryProviders: [
-        { pluginId: 'happier.agent.pi', registration: piDiscovery },
-      ],
+    });
+
+    expect(discoverMcpServersForDetection).not.toHaveBeenCalled();
+    expect(result.servers).toEqual([]);
+    expect(result.warnings).toEqual([{
+      code: 'unsupported',
+      path: 'plugin:config',
+      detail: 'Plugin MCP discovery source declares no Agent id (plugin happier.agent.acme)',
+    }]);
+    expect(release).toHaveBeenCalledTimes(1);
+  });
+
+  it('never borrows an Agent identity from a discovery source local id', async () => {
+    const release = vi.fn(async () => {});
+    const discoverMcpServersForDetection = vi.fn(async () => ({
+      endpoints: [{
+        id: 'config.docs',
+        name: 'docs',
+        kind: 'http' as const,
+        url: 'https://mcp.example.test/http',
+      }],
+    }));
+    runtimeLeaseMocks.acquireAuthoritativePluginRuntimeRegistryLease.mockResolvedValue({
+      registry: {
+        contributes: {
+          mcpDiscoverySources: [{
+            pluginId: 'happier.agent.acme',
+            definition: { id: 'config.servers', title: 'Acme MCP configuration' },
+          }],
+        },
+        discoverMcpServersForDetection,
+      },
+      release,
+    });
+
+    const result = await detectProviderMcpServers({
+      directory: '/tmp/project',
+      providers: [],
+      env: {},
     });
 
     expect(result.servers).toEqual([]);
-    expect(result.warnings).toEqual([{
-      provider: 'pi',
-      code: 'unsupported',
-      path: 'plugin:pi.synthetic',
-    }]);
-    expect(JSON.stringify(result)).not.toContain('--token');
-    expect(JSON.stringify(result)).not.toContain('raw-token-value');
+    expect(result.warnings.map((warning) => warning.provider)).toEqual([undefined]);
   });
+
+  it('does not turn an entirely unusable provider filter into an unfiltered detection', async () => {
+    const release = vi.fn(async () => {});
+    const discoverMcpServersForDetection = vi.fn(async () => ({ endpoints: [] }));
+    runtimeLeaseMocks.acquireAuthoritativePluginRuntimeRegistryLease.mockResolvedValue({
+      registry: {
+        contributes: {
+          mcpDiscoverySources: [{
+            pluginId: 'happier.agent.claude',
+            definition: { id: 'config', title: 'Claude MCP configuration', metadata: { agentId: 'claude' } },
+          }],
+        },
+        discoverMcpServersForDetection,
+      },
+      release,
+    });
+
+    const result = await detectProviderMcpServers({
+      directory: '/tmp/project',
+      providers: ['   '],
+      env: {},
+    });
+
+    expect(discoverMcpServersForDetection).not.toHaveBeenCalled();
+    expect(result.servers).toEqual([]);
+    expect(result.warnings).toEqual([{
+      code: 'unsupported',
+      detail: 'MCP detection was asked for an unresolvable Agent id',
+    }]);
+  });
+
 });

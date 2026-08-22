@@ -13,6 +13,7 @@ export class BufferedFileAppender {
     private pendingLines: string[] = [];
     private pendingBytes = 0;
     private flushTimer: NodeJS.Timeout | null = null;
+    private thresholdFlushToken: object | null = null;
     private flushInFlight = false;
 
     constructor(params: Readonly<{
@@ -32,7 +33,7 @@ export class BufferedFileAppender {
         this.pendingBytes += line.length;
         if (this.pendingBytes >= this.maxBufferedBytes) {
             this.clearFlushTimer();
-            void this.flushAsync();
+            this.scheduleThresholdFlush();
             return;
         }
         this.scheduleFlush();
@@ -40,6 +41,7 @@ export class BufferedFileAppender {
 
     flushSync(): void {
         this.clearFlushTimer();
+        this.thresholdFlushToken = null;
         const chunk = this.takePendingChunk();
         if (chunk === null) return;
         try {
@@ -64,6 +66,17 @@ export class BufferedFileAppender {
         if (!this.flushTimer) return;
         clearTimeout(this.flushTimer);
         this.flushTimer = null;
+    }
+
+    private scheduleThresholdFlush(): void {
+        if (this.thresholdFlushToken) return;
+        const token = {};
+        this.thresholdFlushToken = token;
+        queueMicrotask(() => {
+            if (this.thresholdFlushToken !== token) return;
+            this.thresholdFlushToken = null;
+            void this.flushAsync();
+        });
     }
 
     private takePendingChunk(): string | null {

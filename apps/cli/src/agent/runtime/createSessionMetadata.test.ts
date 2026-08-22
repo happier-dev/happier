@@ -400,6 +400,33 @@ describe('createSessionMetadata', () => {
         expect(metadata.path).toBe('/tmp/happier-explicit-directory');
     });
 
+    it('publishes the agent and machine workspace roots captured at daemon launch', () => {
+        const processEnvironment: NodeJS.ProcessEnv = {
+            HAPPIER_SESSION_MACHINE_WORKSPACE_PATH: '/Users/alice/project',
+        };
+        const launchControlMetadata = captureSessionLaunchControlMetadata({
+            explicitEnvironment: processEnvironment as Record<string, string>,
+            processEnvironment,
+        });
+
+        const { metadata } = createMetadata({
+            flavor: 'codex',
+            machineId: 'machine-1',
+            startedBy: 'daemon',
+            directory: '/home/coder/project',
+            launchControlMetadata,
+        });
+
+        expect(metadata.path).toBe('/home/coder/project');
+        expect(metadata.sessionWorkspaceLocationV1).toEqual({
+            v: 1,
+            machineId: 'machine-1',
+            agentPath: '/home/coder/project',
+            machinePath: '/Users/alice/project',
+        });
+        expect(processEnvironment.HAPPIER_SESSION_MACHINE_WORKSPACE_PATH).toBeUndefined();
+    });
+
     it('prefers the daemon-seeded requested directory over a canonicalized cwd', () => {
         const previousRequestedDirectory = process.env.HAPPIER_SESSION_REQUESTED_DIRECTORY;
         const previousPwd = process.env.PWD;

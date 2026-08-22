@@ -15,6 +15,8 @@ import {
     AcpConfigOptionOverridesV1Schema,
     AgentSessionStartupInstructionsV1Schema,
     SessionModelSelectionV1Schema,
+    SessionCreationCorrespondenceV1Schema,
+    SessionCreationTagV1Schema,
     buildBackendTargetKeyV2,
     SessionMcpSelectionV1Schema,
     SpawnSessionExecutionAuthorizationSchema,
@@ -70,6 +72,9 @@ export function createSpawnNewSessionLifecycleActionHandler(params: Readonly<{
             agentRuntimeDescriptorV1: legacyAgentRuntimeDescriptorV1,
             mcpSelection,
             agentSessionStartupInstructionsV1,
+            sessionCreationTag,
+            sessionCreationCorrespondence,
+            initialTitle,
         } = (rawParams && typeof rawParams === 'object' ? rawParams : {}) as Record<string, unknown>;
 
         const parsedAgentSessionStartupInstructionsV1 =
@@ -92,6 +97,55 @@ export function createSpawnNewSessionLifecycleActionHandler(params: Readonly<{
             parsedAgentSessionStartupInstructionsV1?.success
                 ? parsedAgentSessionStartupInstructionsV1.data
                 : undefined;
+        const parsedSessionCreationTag = sessionCreationTag === undefined
+            ? null
+            : SessionCreationTagV1Schema.safeParse(sessionCreationTag);
+        if (parsedSessionCreationTag && !parsedSessionCreationTag.success) {
+            return {
+                type: 'error',
+                errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+                errorMessage: 'Invalid Session creation identity',
+            };
+        }
+        const normalizedSessionCreationTag = parsedSessionCreationTag?.success
+            ? parsedSessionCreationTag.data
+            : undefined;
+        const parsedSessionCreationCorrespondence = sessionCreationCorrespondence === undefined
+            ? null
+            : SessionCreationCorrespondenceV1Schema.safeParse(sessionCreationCorrespondence);
+        if (parsedSessionCreationCorrespondence && !parsedSessionCreationCorrespondence.success) {
+            return {
+                type: 'error',
+                errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+                errorMessage: 'Invalid Session creation correspondence',
+            };
+        }
+        const normalizedSessionCreationCorrespondence = parsedSessionCreationCorrespondence?.success
+            ? parsedSessionCreationCorrespondence.data
+            : undefined;
+        if (
+            normalizedSessionCreationCorrespondence
+            && (
+                !normalizedSessionCreationTag
+                || normalizedSessionCreationCorrespondence.sessionCreationTag !== normalizedSessionCreationTag
+            )
+        ) {
+            return {
+                type: 'error',
+                errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+                errorMessage: 'Session creation correspondence requires its matching identity',
+            };
+        }
+        const normalizedInitialTitle = typeof initialTitle === 'string'
+            ? initialTitle.trim()
+            : '';
+        if (initialTitle !== undefined && !normalizedInitialTitle) {
+            return {
+                type: 'error',
+                errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+                errorMessage: 'Invalid initial Session title',
+            };
+        }
         const normalizedModelId = typeof modelId === 'string' && modelId.trim().length > 0 ? modelId.trim() : undefined;
         const normalizedPermissionMode =
             typeof permissionMode === 'string' && isPermissionMode(permissionMode) ? permissionMode : undefined;
@@ -239,41 +293,6 @@ export function createSpawnNewSessionLifecycleActionHandler(params: Readonly<{
         const normalizedBackendMode =
             normalizedRuntimeSelection.providerBackendMode ?? normalizedRuntimeSelection.codexBackendMode;
         const normalizedCodexBackendMode = normalizedRuntimeSelection.codexBackendMode;
-        const envKeys = normalizedEnvironmentVariables ? Object.keys(normalizedEnvironmentVariables) : [];
-        const maxEnvKeysToLog = 20;
-        const envKeySample = envKeys.slice(0, maxEnvKeysToLog);
-        logger.debug('[API MACHINE] Spawning session', {
-            directory,
-            sessionId,
-            machineId,
-            backendTarget: normalizedBackendTarget,
-            approvedNewDirectoryCreation,
-            profileId,
-            terminal,
-            permissionMode: normalizedPermissionMode,
-            permissionModeUpdatedAt: normalizedPermissionModeUpdatedAt,
-            accountSettingsVersionHint: normalizedAccountSettingsVersionHint,
-            agentModeId: normalizedAgentModeId,
-            agentModeUpdatedAt: normalizedAgentModeUpdatedAt,
-            modelSelection: normalizedModelSelection
-                ? {
-                    connection: normalizedModelSelection.ref.providerConnectionId,
-                    modelId: normalizedModelSelection.ref.modelId,
-                }
-                : undefined,
-            sessionConfigOptionOverrides: normalizedSessionConfigOptionOverrides,
-            environmentVariableCount: envKeys.length,
-            environmentVariableKeySample: envKeySample,
-            environmentVariableKeysTruncated: envKeys.length > maxEnvKeysToLog,
-            hasMcpSelection: normalizedMcpSelection !== undefined,
-            mcpSelectionForceIncludeCount: normalizedMcpSelection?.forceIncludeServerIds.length ?? 0,
-            mcpSelectionForceExcludeCount: normalizedMcpSelection?.forceExcludeServerIds.length ?? 0,
-            hasResume: normalizedResume !== undefined,
-            hasInitialTranscriptAfterSeq: normalizedInitialTranscriptAfterSeq !== undefined,
-            backendMode: normalizedBackendMode,
-            codexBackendMode: normalizedCodexBackendMode,
-        });
-
         const buildBaseSpawnOptions = (resolvedDirectory: string): SpawnSessionOptions => ({
             directory: resolvedDirectory,
             spawnNonce: normalizedSpawnNonce,
@@ -300,6 +319,13 @@ export function createSpawnNewSessionLifecycleActionHandler(params: Readonly<{
             windowsRemoteSessionConsole: windowsRemoteSessionConsole as SpawnSessionOptions['windowsRemoteSessionConsole'],
             windowsTerminalWindowName: typeof windowsTerminalWindowName === 'string' ? windowsTerminalWindowName : undefined,
             mcpSelection: normalizedMcpSelection,
+            ...(normalizedSessionCreationTag
+                ? { sessionCreationTag: normalizedSessionCreationTag }
+                : {}),
+            ...(normalizedSessionCreationCorrespondence
+                ? { sessionCreationCorrespondence: normalizedSessionCreationCorrespondence }
+                : {}),
+            ...(normalizedInitialTitle ? { initialTitle: normalizedInitialTitle } : {}),
             ...(normalizedAgentSessionStartupInstructionsV1
                 ? {
                     agentSessionStartupInstructionsV1:
@@ -313,7 +339,7 @@ export function createSpawnNewSessionLifecycleActionHandler(params: Readonly<{
 
         if (isResumeSessionRequest) {
             const existingSessionId = normalizedSessionId ?? '';
-            logger.debug(`[API MACHINE] Resuming inactive session ${existingSessionId}`);
+            logger.debug('[API MACHINE] Resuming inactive session');
 
             if (typeof directory !== 'string' || directory.length === 0) {
                 return {
@@ -363,11 +389,11 @@ export function createSpawnNewSessionLifecycleActionHandler(params: Readonly<{
 
         switch (result.type) {
             case 'success':
-                logger.debug(`[API MACHINE] Spawned session ${result.sessionId}`);
-                return { type: 'success', sessionId: result.sessionId };
+                logger.debug('[API MACHINE] Session spawn succeeded');
+                return result;
 
             case 'requestToApproveDirectoryCreation':
-                logger.debug(`[API MACHINE] Requesting directory creation approval for: ${result.directory}`);
+                logger.debug('[API MACHINE] Session directory creation requires approval');
                 return { type: 'requestToApproveDirectoryCreation', directory: result.directory };
 
             case 'error':

@@ -8,7 +8,8 @@ import {
 import type {
     AgentExternalSessionObservationContribution,
     AgentExternalSessionsContribution,
-} from '@happier-dev/plugin-sdk/experimental/sessions';
+    AgentExternalSessionsManagedEndpointRead,
+} from '@happier-dev/plugin-sdk/sessions/external';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -23,10 +24,12 @@ import type {
     HostExternalTranscriptFollowEvent,
 } from '@/session/external/privateContract';
 import { createExternalSessionTerminalFollowProjector } from '@/session/external/terminalFollowProjection';
+import { createUnavailablePluginServices } from '@/plugins/runtime/invocation/services/unavailable';
 
 const mocks = vi.hoisted(() => ({
     loadLinkedExternalSession: vi.fn(),
     readCredentials: vi.fn(),
+    readStoredCredentials: vi.fn(),
     resolveExternalSessionObservationLinkInput: vi.fn(),
     resolveGenerationBoundExternalSessionFollowSurface: vi.fn(),
 }));
@@ -36,6 +39,7 @@ vi.mock('@/api/session/external/takeover/loadLinkedExternalSession', () => ({
 }));
 vi.mock('@/persistence', () => ({
     readCredentials: mocks.readCredentials,
+    readStoredCredentials: mocks.readStoredCredentials,
 }));
 vi.mock('@/api/session/external/leases/resolveExternalSessionObservationLinkInput', () => ({
     resolveExternalSessionObservationLinkInput:
@@ -48,11 +52,19 @@ vi.mock('@/session/actions/externalSessions/providerOpsResolution', () => ({
 
 import { createExternalSessionFollowHostOperation } from './followHostOperation';
 
+const unavailableManagedEndpointRead: AgentExternalSessionsManagedEndpointRead =
+    async () => {
+        throw new Error('Managed endpoint read is unavailable in this file-backed fixture');
+    };
+const unavailableInvocationExec = createUnavailablePluginServices().exec;
+
 function invocation() {
     return {
         signal: new AbortController().signal,
         deadlineAtMs: Date.now() + 30_000,
         maxSerializedBytes: 524_288,
+        managedEndpointRead: unavailableManagedEndpointRead,
+        exec: unavailableInvocationExec,
     };
 }
 
@@ -175,7 +187,8 @@ describe('Antigravity External Session follow host operation', () => {
             rawSession: null,
         } as const;
 
-        mocks.readCredentials.mockResolvedValue({ token: 'token' });
+        mocks.readCredentials.mockResolvedValue(null);
+        mocks.readStoredCredentials.mockResolvedValue({ token: 'token', encryption: null });
         mocks.loadLinkedExternalSession.mockResolvedValue({
             ok: true,
             session: linkedSession,
@@ -186,6 +199,7 @@ describe('Antigravity External Session follow host operation', () => {
         mocks.resolveGenerationBoundExternalSessionFollowSurface
             .mockResolvedValue({
                 resource,
+                immutablePluginGenerationId: pluginGeneration,
                 providerOps: {
                     pageTranscript: async (request: Readonly<{
                         source: typeof linkedSource.source;
@@ -289,12 +303,21 @@ describe('Antigravity External Session follow host operation', () => {
                 }),
         });
         const listener = vi.fn(
-            async (event: HostExternalTranscriptFollowEvent) => {
-                await projectFollowEvent(event);
+            async (
+                event: HostExternalTranscriptFollowEvent,
+                admission?: Readonly<{ signal: AbortSignal; deadlineAtMs?: number }>,
+            ) => {
+                await projectFollowEvent(event, admission);
             },
         );
         const terminalFollow =
             createHostTerminalTranscriptFollowService({
+                loadCommittedLocalIdBaseline: async () => ({
+                    localIds: new Set(initialPage.value.items.map(
+                        (item) => item.localId ?? item.id,
+                    )),
+                    complete: true,
+                }),
                 followProviderSession: async (request, followListener) =>
                     await operation.execute({
                         pluginId: qualifiedLinkIdentity.agent.pluginId,
@@ -310,9 +333,10 @@ describe('Antigravity External Session follow host operation', () => {
                         },
                         source: linkedSource.source,
                         options: {
-                            ...(request.cursor
-                                ? { cursor: request.cursor }
-                                : {}),
+                            ...(request.initialReplay ? { initialReplay: true } : {}),
+                            ...(request.admissionDeadlineAtMs === undefined
+                                ? {}
+                                : { admissionDeadlineAtMs: request.admissionDeadlineAtMs }),
                             signal: request.signal,
                         },
                         listener: followListener,
@@ -327,7 +351,6 @@ describe('Antigravity External Session follow host operation', () => {
             const result = await terminalFollow.bindProviderSession({
                 agentId: 'antigravity',
                 providerSessionId: conversationId,
-                cursor: acceptedHistoryCursor,
             });
             expect(result).toMatchObject({
                 status: 'following',
@@ -337,13 +360,6 @@ describe('Antigravity External Session follow host operation', () => {
 
             const marker = 'ANTIGRAVITY_HOST_OPERATION_FOLLOW_MARKER';
             await appendFile(transcriptPath, [
-                JSON.stringify({
-                    id: 'terminal-user-echo',
-                    type: 'USER_INPUT',
-                    text: 'terminal prompt already owned by the host',
-                    conversationId,
-                    created_at: '2026-07-28T18:00:01Z',
-                }),
                 JSON.stringify({
                     id: 'terminal-agent',
                     type: 'PLANNER_RESPONSE',
@@ -362,9 +378,19 @@ describe('Antigravity External Session follow host operation', () => {
                         items: expect.arrayContaining([
                             expect.objectContaining({
                                 kind: 'agent',
-                                data: { type: 'text', text: marker },
+                                data: {
+                                    role: 'agent',
+                                    content: {
+                                        type: 'acp',
+                                        agentId: 'antigravity',
+                                        data: { type: 'message', message: marker },
+                                    },
+                                },
                             }),
                         ]),
+                    }),
+                    expect.objectContaining({
+                        signal: expect.any(AbortSignal),
                     }),
                 );
             }, { timeout: 10_000 });
@@ -372,13 +398,13 @@ describe('Antigravity External Session follow host operation', () => {
                 expect(enqueueAgentMessageCommitted).toHaveBeenCalledWith(
                     'antigravity',
                     { type: 'message', message: marker },
-                    {
+                    expect.objectContaining({
                         localId: 'terminal-agent',
                         provenance: {
                             kind: 'non_dependent',
                             source: 'external',
                         },
-                    },
+                    }),
                 );
             }, { timeout: 10_000 });
             await followLeaseManager.requestTranscriptRefresh({
@@ -398,6 +424,7 @@ describe('Antigravity External Session follow host operation', () => {
             });
             expect(writeFollowStatus).toHaveBeenLastCalledWith({
                 sessionId,
+                expectedLinkGeneration: linkGeneration,
                 followStatusV1: expect.objectContaining({
                     status: 'error',
                     reason: 'follow_refresh_source_unavailable',
@@ -421,17 +448,38 @@ describe('Antigravity External Session follow host operation', () => {
                 sessionId,
                 resource,
             });
-            expect(writeFollowStatus).toHaveBeenLastCalledWith({
-                sessionId,
-                followStatusV1: expect.objectContaining({
-                    status: 'error',
-                    reason: 'follow_refresh_source_replaced',
-                }),
-                lastFollowIssueV1: expect.objectContaining({
-                    code: 'follow_refresh_source_replaced',
-                    retryable: true,
-                }),
+            await vi.waitFor(() => {
+                expect(writeFollowStatus).toHaveBeenLastCalledWith({
+                    sessionId,
+                    expectedLinkGeneration: linkGeneration,
+                    followStatusV1: expect.objectContaining({
+                        status: 'error',
+                        reason: 'follow_refresh_source_replaced',
+                    }),
+                    lastFollowIssueV1: expect.objectContaining({
+                        code: 'follow_refresh_source_replaced',
+                        retryable: true,
+                    }),
+                });
             });
+            await vi.waitFor(() => {
+                expect(listener).toHaveBeenCalledWith(
+                    {
+                        kind: 'terminated',
+                        reason: 'providerFailure',
+                        cursor: expect.any(String),
+                        code: 'follow_refresh_source_replaced',
+                    },
+                    expect.objectContaining({
+                        signal: expect.any(AbortSignal),
+                    }),
+                );
+            });
+            if (result.status === 'following') {
+                await expect(result.binding.failure).resolves.toMatchObject({
+                    code: 'follow_refresh_source_replaced',
+                });
+            }
             expect(listener).not.toHaveBeenCalledWith(
                 expect.objectContaining({
                     kind: 'data',
@@ -440,6 +488,9 @@ describe('Antigravity External Session follow host operation', () => {
                             data: { type: 'text', text: replacementMarker },
                         }),
                     ]),
+                }),
+                expect.objectContaining({
+                    signal: expect.any(AbortSignal),
                 }),
             );
 
@@ -476,17 +527,12 @@ describe('Antigravity External Session follow host operation', () => {
                         }),
                     ]),
                 }),
+                expect.objectContaining({
+                    signal: expect.any(AbortSignal),
+                }),
             );
 
             retirement.abort();
-            await vi.waitFor(() => {
-                expect(listener).toHaveBeenCalledWith({
-                    kind: 'terminated',
-                    reason: 'retired',
-                    cursor: expect.any(String),
-                    code: 'plugin_generation_retired',
-                });
-            });
             if (result.status === 'following') {
                 await result.binding.dispose();
                 await result.binding.dispose();

@@ -30,6 +30,7 @@ async function publishCurrentRuntimeRegistry(params: Readonly<{
         registry,
         changedPluginIds: params.changedPluginIds,
         durableRevision: params.generation,
+        runningSessionDisposition: 'retainRunningSessions',
     });
     if (!adoption.ok) {
         throw new Error(`Failed to publish plugin runtime registry generation ${params.generation}`);
@@ -46,21 +47,37 @@ async function writePlugin(params: Readonly<{
     await mkdir(manifestDir, { recursive: true });
 
     await writeFile(
+        join(params.rootDir, 'agentRuntime.mjs'),
+        [
+            'export const acmeRuntimeFactory = async () => ({',
+            '  sessions: {',
+            '    open: async () => ({',
+            '      send: async () => ({ status: "admitted" }),',
+            '      stop: async () => ({ status: "requested" }),',
+            '      watch: () => ({ dispose() {} }),',
+            '      dispose: async () => {},',
+            '    }),',
+            '  },',
+            '});',
+            '',
+        ].join('\n'),
+        'utf8',
+    );
+
+    await writeFile(
         join(params.rootDir, 'daemon.mjs'),
         [
             "import { appendFileSync } from 'node:fs';",
+            "import { acmeRuntimeFactory } from './agentRuntime.mjs';",
             `appendFileSync(${JSON.stringify(params.sentinelPath)}, 'loaded');`,
             'export async function activate(api) {',
-            '  api.agents.register("acme-runtime", async () => ({',
-            '      sessions: {',
-            '        open: async () => ({',
-            '          send: async () => ({ status: "admitted" }),',
-            '          stop: async () => ({ status: "requested" }),',
-            '          watch: () => ({ dispose() {} }),',
-            '          dispose: async () => {},',
-            '        }),',
-            '      },',
-            '    }));',
+            '  api.agents.register("acme-runtime", acmeRuntimeFactory, {',
+            '    sessionRunnerFactory: {',
+            '      module: "./agentRuntime.mjs",',
+            '      export: "acmeRuntimeFactory",',
+            '      runtimeApiVersion: 1,',
+            '    },',
+            '  });',
             '}',
             '',
         ].join('\n'),

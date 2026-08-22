@@ -1,6 +1,6 @@
 import {
+  createPlainSessionOwnerMetadataEnvelopeV1,
   SessionOwnerMetadataV1Schema,
-  sealSessionOwnerMetadataV1,
 } from '@happier-dev/protocol';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -35,6 +35,144 @@ describe('resolveSessionIdOrPrefix', () => {
     });
   });
 
+  it('returns a missing full session id before the outer tool budget expires', async () => {
+    const { reloadConfiguration } = await import('@/configuration');
+    const originalServerUrl = process.env.HAPPIER_SERVER_URL;
+    const originalWebappUrl = process.env.HAPPIER_WEBAPP_URL;
+
+    process.env.HAPPIER_SERVER_URL = 'http://example.test';
+    process.env.HAPPIER_WEBAPP_URL = 'http://example.test';
+    reloadConfiguration();
+
+    mockAxiosGet.mockImplementation(async (urlRaw: string) => {
+      const url = String(urlRaw);
+      if (url.includes('/v2/sessions/c000000000000000000000000')) {
+        return { status: 404, data: {}, headers: {} };
+      }
+      return {
+        status: 200,
+        data: { sessions: [], nextCursor: null, hasNext: false },
+        headers: {},
+      };
+    });
+
+    let budgetTimer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const { resolveSessionIdOrPrefix } = await import('./resolveSessionId');
+      const res = await Promise.race([
+        resolveSessionIdOrPrefix({
+          credentials: {
+            token: 'token_test',
+            encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
+          },
+          idOrPrefix: 'c000000000000000000000000',
+        }),
+        new Promise<'outer_budget_exceeded'>((resolve) => {
+          budgetTimer = setTimeout(() => resolve('outer_budget_exceeded'), 250);
+        }),
+      ]);
+
+      expect(res).toEqual({ ok: false, code: 'session_not_found' });
+      expect(mockAxiosGet).toHaveBeenCalledTimes(3);
+      expect(mockAxiosPost).toHaveBeenCalledOnce();
+    } finally {
+      if (budgetTimer) clearTimeout(budgetTimer);
+      if (originalServerUrl === undefined) delete process.env.HAPPIER_SERVER_URL;
+      else process.env.HAPPIER_SERVER_URL = originalServerUrl;
+      if (originalWebappUrl === undefined) delete process.env.HAPPIER_WEBAPP_URL;
+      else process.env.HAPPIER_WEBAPP_URL = originalWebappUrl;
+      reloadConfiguration();
+    }
+  });
+
+  it('reports a lookup timeout instead of not-found when a full-id fallback lookup cannot complete', async () => {
+    vi.useFakeTimers();
+    const { reloadConfiguration } = await import('@/configuration');
+    const originalServerUrl = process.env.HAPPIER_SERVER_URL;
+    const originalWebappUrl = process.env.HAPPIER_WEBAPP_URL;
+
+    process.env.HAPPIER_SERVER_URL = 'http://example.test';
+    process.env.HAPPIER_WEBAPP_URL = 'http://example.test';
+    reloadConfiguration();
+
+    mockAxiosGet.mockImplementation(async (urlRaw: string) => {
+      const url = String(urlRaw);
+      if (url.includes('/v2/sessions/c000000000000000000000000')) {
+        return { status: 404, data: {}, headers: {} };
+      }
+      throw new Error(`unexpected url: ${url}`);
+    });
+    mockAxiosPost.mockImplementation(async (_url: string, _body: unknown, config?: { signal?: AbortSignal }) => {
+      return await new Promise((_resolve, reject) => {
+        config?.signal?.addEventListener('abort', () => reject(new Error('request aborted')), { once: true });
+      });
+    });
+
+    try {
+      const { resolveSessionIdOrPrefix } = await import('./resolveSessionId');
+      const resultPromise = resolveSessionIdOrPrefix({
+        credentials: {
+          token: 'token_test',
+          encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
+        },
+        idOrPrefix: 'c000000000000000000000000',
+      });
+
+      await vi.advanceTimersByTimeAsync(25_000);
+
+      await expect(resultPromise).resolves.toEqual({ ok: false, code: 'session_lookup_timeout' });
+      expect(mockAxiosGet).toHaveBeenCalledOnce();
+      expect(mockAxiosPost).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+      if (originalServerUrl === undefined) delete process.env.HAPPIER_SERVER_URL;
+      else process.env.HAPPIER_SERVER_URL = originalServerUrl;
+      if (originalWebappUrl === undefined) delete process.env.HAPPIER_WEBAPP_URL;
+      else process.env.HAPPIER_WEBAPP_URL = originalWebappUrl;
+      reloadConfiguration();
+    }
+  });
+
+  it('preserves indexed exact tag resolution when the tag is shaped like a full session id', async () => {
+    const { reloadConfiguration } = await import('@/configuration');
+    const originalServerUrl = process.env.HAPPIER_SERVER_URL;
+    const originalWebappUrl = process.env.HAPPIER_WEBAPP_URL;
+    const cuidShapedTag = 'c000000000000000000000000';
+    const indexedSession = createSessionRecordFixture({ id: 'session-with-cuid-shaped-tag' });
+
+    process.env.HAPPIER_SERVER_URL = 'http://example.test';
+    process.env.HAPPIER_WEBAPP_URL = 'http://example.test';
+    reloadConfiguration();
+
+    mockAxiosGet.mockResolvedValue({ status: 404, data: {}, headers: {} });
+    mockAxiosPost.mockResolvedValue({
+      status: 200,
+      data: { sessions: [indexedSession] },
+      headers: {},
+    });
+
+    try {
+      const { resolveSessionIdOrPrefix } = await import('./resolveSessionId');
+      const res = await resolveSessionIdOrPrefix({
+        credentials: {
+          token: 'token_test',
+          encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
+        },
+        idOrPrefix: cuidShapedTag,
+      });
+
+      expect(res).toMatchObject({ ok: true, sessionId: 'session-with-cuid-shaped-tag' });
+      expect(mockAxiosGet).toHaveBeenCalledOnce();
+      expect(mockAxiosPost).toHaveBeenCalledOnce();
+    } finally {
+      if (originalServerUrl === undefined) delete process.env.HAPPIER_SERVER_URL;
+      else process.env.HAPPIER_SERVER_URL = originalServerUrl;
+      if (originalWebappUrl === undefined) delete process.env.HAPPIER_WEBAPP_URL;
+      else process.env.HAPPIER_WEBAPP_URL = originalWebappUrl;
+      reloadConfiguration();
+    }
+  });
+
   it('prefers the indexed exact layout-v1 tag over an id prefix match', async () => {
     const { reloadConfiguration } = await import('@/configuration');
     const originalServerUrl = process.env.HAPPIER_SERVER_URL;
@@ -46,14 +184,12 @@ describe('resolveSessionIdOrPrefix', () => {
       encryptionMode: 'plain',
       metadataLayoutVersion: 1,
       metadata: JSON.stringify({ v: 1 }),
-      ownerMetadata: sealSessionOwnerMetadataV1({
-        material: { type: 'legacy', secret },
-        ownerMetadata: SessionOwnerMetadataV1Schema.parse({
+      ownerMetadata: createPlainSessionOwnerMetadataEnvelopeV1(
+        SessionOwnerMetadataV1Schema.parse({
           v: 1,
           nativeSession: { tag },
         }),
-        randomBytes: (length) => new Uint8Array(length).fill(7),
-      }),
+      ),
     });
 
     process.env.HAPPIER_SERVER_URL = 'http://example.test';
@@ -117,14 +253,12 @@ describe('resolveSessionIdOrPrefix', () => {
       encryptionMode: 'plain',
       metadataLayoutVersion: 1,
       metadata: JSON.stringify({ v: 1 }),
-      ownerMetadata: sealSessionOwnerMetadataV1({
-        material: { type: 'legacy', secret },
-        ownerMetadata: SessionOwnerMetadataV1Schema.parse({
+      ownerMetadata: createPlainSessionOwnerMetadataEnvelopeV1(
+        SessionOwnerMetadataV1Schema.parse({
           v: 1,
           nativeSession: { tag },
         }),
-        randomBytes: (length) => new Uint8Array(length).fill(8),
-      }),
+      ),
     });
 
     process.env.HAPPIER_SERVER_URL = 'http://example.test';
@@ -349,6 +483,70 @@ describe('resolveSessionIdOrPrefix', () => {
       });
 
       expect(res).toEqual({ ok: true, sessionId: 'sess_dup_123' });
+    } finally {
+      if (originalServerUrl === undefined) delete process.env.HAPPIER_SERVER_URL;
+      else process.env.HAPPIER_SERVER_URL = originalServerUrl;
+      if (originalWebappUrl === undefined) delete process.env.HAPPIER_WEBAPP_URL;
+      else process.env.HAPPIER_WEBAPP_URL = originalWebappUrl;
+      reloadConfiguration();
+    }
+  });
+
+  it('threads cancellation through indexed tag lookup and prefix paging', async () => {
+    const { reloadConfiguration } = await import('@/configuration');
+    const originalServerUrl = process.env.HAPPIER_SERVER_URL;
+    const originalWebappUrl = process.env.HAPPIER_WEBAPP_URL;
+    const cancellation = new AbortController();
+
+    process.env.HAPPIER_SERVER_URL = 'http://example.test';
+    process.env.HAPPIER_WEBAPP_URL = 'http://example.test';
+    reloadConfiguration();
+
+    mockAxiosGet
+      .mockResolvedValueOnce({
+        status: 200,
+        data: {
+          sessions: [createSessionRecordFixture({ id: 'cancelx-session' })],
+          nextCursor: null,
+          hasNext: false,
+        },
+        headers: {},
+      })
+      .mockResolvedValueOnce({
+        status: 200,
+        data: {
+          sessions: [],
+          nextCursor: null,
+          hasNext: false,
+        },
+        headers: {},
+      });
+
+    try {
+      const { resolveSessionIdOrPrefix } = await import('./resolveSessionId');
+      const res = await resolveSessionIdOrPrefix({
+        credentials: {
+          token: 'token_test',
+          encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
+        },
+        idOrPrefix: 'cancelx',
+        signal: cancellation.signal,
+      });
+
+      expect(res).toEqual({ ok: true, sessionId: 'cancelx-session' });
+      expect(mockAxiosPost).toHaveBeenCalledWith(
+        'http://example.test/v2/sessions/lookup-by-tags',
+        { tags: ['cancelx'] },
+        expect.objectContaining({ signal: cancellation.signal }),
+      );
+      expect(mockAxiosGet).toHaveBeenCalledWith(
+        'http://example.test/v2/sessions',
+        expect.objectContaining({ signal: cancellation.signal }),
+      );
+      expect(mockAxiosGet).toHaveBeenCalledWith(
+        'http://example.test/v2/sessions/archived',
+        expect.objectContaining({ signal: cancellation.signal }),
+      );
     } finally {
       if (originalServerUrl === undefined) delete process.env.HAPPIER_SERVER_URL;
       else process.env.HAPPIER_SERVER_URL = originalServerUrl;

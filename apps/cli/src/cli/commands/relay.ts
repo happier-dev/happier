@@ -41,7 +41,7 @@ export async function handleRelayCommand(args: string[]): Promise<void> {
   } catch (error) {
     if (!json) throw error;
     const mapped = mapUnknownErrorToControlError(error);
-    printJsonEnvelope(
+    await printJsonEnvelope(
       {
         ok: false,
         kind,
@@ -68,7 +68,7 @@ export async function handleRelayCliCommand(context: CommandContext): Promise<vo
   } catch (error) {
     if (json) {
       const mapped = mapUnknownErrorToControlError(error);
-      printJsonEnvelope(
+      await printJsonEnvelope(
         {
           ok: false,
           kind,

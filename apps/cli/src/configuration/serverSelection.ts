@@ -209,7 +209,7 @@ export function resolveServerSelection(params: Readonly<{
       }
     }
     const activeServerId = sanitizeServerIdForFilesystem(
-      persistedMatch?.id ?? (params.envActiveServerId ?? deriveServerIdFromUrl(envCanonicalServerUrl)),
+      params.envActiveServerId ?? persistedMatch?.id ?? deriveServerIdFromUrl(envCanonicalServerUrl),
       'cloud',
     );
     return { activeServerId, serverUrl: envCanonicalServerUrl, apiServerUrl: envApiServerUrl, webappUrl };

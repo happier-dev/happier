@@ -10,6 +10,7 @@ import {
   type HostSessionRuntimePlan,
 } from '@/agent/runtime/session/loop/lifecycle';
 import type { RuntimeTurnOperations } from '@/agent/runtime/turns/runtimeTurnOperations';
+import type { HostSessionRuntimeFactoryResult } from '@/agent/runtime/session/loop/factoryResult';
 import {
   resolveRuntimeActivityApplicability,
   type RuntimeActivityApplicability,
@@ -19,8 +20,18 @@ type CatalogHostSessionRuntimePlanConfig<TRuntime extends RuntimeTurnOperations>
   HostSessionRuntimeConfig,
   'createSessionRuntime'
 > & Readonly<{
-  createNativeRuntime: (params: HostSessionRuntimeFactoryParams) => TRuntime | Promise<TRuntime>;
+  createNativeRuntime: (
+    params: HostSessionRuntimeFactoryParams,
+  ) => TRuntime
+    | HostSessionRuntimeFactoryResult<TRuntime>
+    | Promise<TRuntime | HostSessionRuntimeFactoryResult<TRuntime>>;
 }>;
+
+function isHostSessionRuntimeFactoryResult<TRuntime extends RuntimeTurnOperations>(
+  value: TRuntime | HostSessionRuntimeFactoryResult<TRuntime>,
+): value is HostSessionRuntimeFactoryResult<TRuntime> {
+  return typeof value === 'object' && value !== null && 'operations' in value;
+}
 
 export type CatalogHostSessionRuntimeDefaults<TRuntime extends RuntimeTurnOperations> = Omit<
   CatalogHostSessionRuntimePlanConfig<TRuntime>,
@@ -103,10 +114,28 @@ export function createCatalogHostSessionRuntimePlan<
     config: {
       ...config,
       createSessionRuntime: async (runtimeParams) => {
-        const nativeRuntime = await createNativeRuntime(runtimeParams);
+        const createdNativeRuntime = await createNativeRuntime(runtimeParams);
+        if (isHostSessionRuntimeFactoryResult(createdNativeRuntime)) {
+          return {
+            operations: createdNativeRuntime.operations,
+            nativeRuntime: createdNativeRuntime.nativeRuntime ?? null,
+            ...(createdNativeRuntime.terminalRemoteModeLoop
+              ? {
+                  terminalRemoteModeLoop:
+                    createdNativeRuntime.terminalRemoteModeLoop,
+                }
+              : {}),
+            ...(createdNativeRuntime.admittedProviderBindingHandoff
+              ? {
+                  admittedProviderBindingHandoff:
+                    createdNativeRuntime.admittedProviderBindingHandoff,
+                }
+              : {}),
+          };
+        }
         return {
-          operations: nativeRuntime,
-          nativeRuntime,
+          operations: createdNativeRuntime,
+          nativeRuntime: createdNativeRuntime,
         };
       },
     },

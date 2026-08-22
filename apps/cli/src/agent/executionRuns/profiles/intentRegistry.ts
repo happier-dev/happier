@@ -15,6 +15,7 @@ import { PlanProfile } from './plan/PlanProfile';
 import { DelegateProfile } from './delegate/DelegateProfile';
 import { VoiceAgentProfile } from './voiceAgent/VoiceAgentProfile';
 import { MemoryHintsProfile } from './memoryHints/MemoryHintsProfile';
+import { TaskProfile } from './task/TaskProfile';
 import { ScmCommitMessageProfile } from '@/agent/runtime/bridges/executionRun/kinds/scmCommitMessage/ScmCommitMessageProfile';
 import { ScmDiffSummaryProfile } from '@/agent/runtime/bridges/executionRun/kinds/scmDiffSummary/ScmDiffSummaryProfile';
 import {
@@ -26,6 +27,7 @@ const PROFILES: Record<ExecutionRunIntent, ExecutionRunIntentProfile> = {
   review: ReviewProfile,
   plan: PlanProfile,
   delegate: DelegateProfile,
+  task: TaskProfile,
   voice_agent: VoiceAgentProfile,
   memory_hints: MemoryHintsProfile,
   scm_commit_message: ScmCommitMessageProfile,
@@ -45,16 +47,20 @@ export type ExecutionRunProfileContributionCatalog = Readonly<{
 
 export type ExecutionRunProfileContributionCatalogInput =
   | PluginExecutionRunProfileContributionV2
-  | Readonly<{ pluginId: string; definition: PluginExecutionRunProfileContributionV2 }>;
+  | Readonly<{
+    pluginId: string;
+    immutableGenerationId: string;
+    definition: PluginExecutionRunProfileContributionV2;
+  }>;
 
 export type OwnedExecutionRunProfileDescriptor = Readonly<{
   pluginId: string | null;
+  immutableGenerationId: string | null;
   qualifiedId: string;
   definition: PluginExecutionRunProfileContributionV2;
 }>;
 
 export type ExecutionRunProfileCatalogOptions = Readonly<{
-  generationId?: string;
   resolveAgentIdentity?: (agentId: string) => Readonly<{
     pluginId: string;
     localId: string;
@@ -145,8 +151,16 @@ function normalizeDescriptor(input: ExecutionRunProfileContributionCatalogInput)
   const owned = 'definition' in input;
   const definition = owned ? input.definition : input;
   const pluginId = owned ? input.pluginId : null;
+  const immutableGenerationId = owned ? input.immutableGenerationId.trim() : null;
+  if (owned && !immutableGenerationId) {
+    return failProfileSelection(
+      'execution_run_profile_generation_invalid',
+      `Execution-run profile '${pluginId}/${definition.id}' is missing its immutable generation identity`,
+    );
+  }
   return {
     pluginId,
+    immutableGenerationId,
     qualifiedId: pluginId
       ? buildQualifiedPluginContributionKey(createPluginContributionIdentity({ pluginId, localId: definition.id }))
       : definition.id,
@@ -179,7 +193,10 @@ function withDescriptorBehavior(
       const requestedGenerationId = typeof params.request.profileGenerationId === 'string'
         ? params.request.profileGenerationId.trim()
         : '';
-      if (options.generationId && requestedGenerationId !== options.generationId) {
+      if (
+        ownedDescriptor.immutableGenerationId !== null
+        && requestedGenerationId !== ownedDescriptor.immutableGenerationId
+      ) {
         return failProfileSelection(
           'execution_run_profile_stale',
           `Execution-run profile '${ownedDescriptor.qualifiedId}' is not from the current committed generation`,
@@ -355,8 +372,12 @@ export function resolveExecutionRunProfileContributionDescriptor(
 
 export function listExecutionRunProfileContributionDescriptors(
   catalog: ExecutionRunProfileContributionCatalog,
-): readonly PluginExecutionRunProfileContributionV2[] {
+): readonly (PluginExecutionRunProfileContributionV2 & Readonly<{ generationId: string | null }>)[] {
   return Object.freeze(Array.from(catalog.profileDescriptorsById.values()).map((descriptor) => {
-    return Object.freeze({ ...descriptor.definition, id: descriptor.qualifiedId });
+    return Object.freeze({
+      ...descriptor.definition,
+      id: descriptor.qualifiedId,
+      generationId: descriptor.immutableGenerationId,
+    });
   }));
 }

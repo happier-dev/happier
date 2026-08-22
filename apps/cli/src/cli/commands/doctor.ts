@@ -5,6 +5,7 @@ import { renderHelpPage } from '@happier-dev/cli-common/output';
 import { handleServiceRepairCliCommand } from './service/repair/handleServiceRepairCliCommand';
 
 import type { CommandContext } from '@/cli/commandRegistry';
+import { writeJsonStdout } from '@/cli/output/jsonEnvelope';
 
 function printDoctorHelp(): void {
   console.log(renderHelpPage({
@@ -45,7 +46,7 @@ export async function handleDoctorCliCommand(context: CommandContext): Promise<v
 
   if (args.includes('--json')) {
     const snapshot = await buildDoctorSnapshot();
-    console.log(JSON.stringify(snapshot, null, 2));
+    await writeJsonStdout(snapshot, { pretty: true });
     return;
   }
 

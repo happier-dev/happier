@@ -1,20 +1,12 @@
-import {
-  parseHappierToolsShellBridgeCommand,
-  type HappierToolsShellBridgeCommand,
-} from '@happier-dev/protocol';
+import type { HappierToolsShellBridgeCommand } from '@happier-dev/protocol';
 import { isChangeTitleToolNameAlias } from '@happier-dev/protocol/tools/v2';
+import { parseTrustedHappierToolsShellBridgeCommand } from '@/agent/tools/happierTools/runtime/buildHappierToolsShellBridgeCommand';
 
 type UnknownRecord = Record<string, unknown>;
 
 function asRecord(value: unknown): UnknownRecord | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   return value as UnknownRecord;
-}
-
-function isBridgeCommand(value: unknown): value is HappierToolsShellBridgeCommand {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-  const record = value as UnknownRecord;
-  return (record.kind === 'call' || record.kind === 'list') && typeof record.rawCommand === 'string';
 }
 
 function canonicalizeBridgeCommand(command: HappierToolsShellBridgeCommand): string | null {
@@ -39,10 +31,6 @@ export function extractHappierToolsShellBridgeToolNameHint(input: Record<string,
   const record = asRecord(input);
   if (!record) return null;
 
-  const embedded = isBridgeCommand(record.happierToolsShellBridge)
-    ? record.happierToolsShellBridge
-    : null;
-
   const rawCommand =
     typeof record.command === 'string'
       ? record.command
@@ -50,7 +38,7 @@ export function extractHappierToolsShellBridgeToolNameHint(input: Record<string,
         ? record.cmd
         : null;
 
-  const parsed = embedded ?? (rawCommand ? parseHappierToolsShellBridgeCommand(rawCommand) : null);
+  const parsed = rawCommand ? parseTrustedHappierToolsShellBridgeCommand(rawCommand) : null;
   if (!parsed) return null;
 
   return canonicalizeBridgeCommand(parsed);

@@ -6,6 +6,9 @@ import { describe, expect, it, vi } from 'vitest';
 import type {
   ExternalSessionPersistedTakeoverImportRecord,
 } from './materializeAction';
+import type {
+  LoadedLinkedExternalSession,
+} from '@/api/session/external/takeover/loadLinkedExternalSession';
 import {
   assertExternalSessionExternalLinkedTakeoverSourceContinuity,
   assertExternalSessionPersistedTakeoverSourceContinuity,
@@ -14,6 +17,7 @@ import {
   createExternalSessionSourceGenerationAnchor,
 } from './sourceGenerationAnchor';
 import {
+  createExternalSessionPersistedTakeoverPreparation,
   reconstructPersistedTakeoverTargetFromRetiredMetadata,
 } from './takeoverPhaseRunner';
 
@@ -41,6 +45,7 @@ function admittingRecord(
     },
     plan: 'takeover' as const,
     targetStorageMode: 'persisted' as const,
+    targetDirectory: '/local/selected/workspace',
     targetRuntimeMode: 'terminal' as const,
   };
   const publication = {
@@ -90,6 +95,82 @@ function admittingRecord(
 }
 
 describe('persisted takeover source continuity', () => {
+  it('resolves the canonical spawn working directory before persisted historical import', async () => {
+    const record = admittingRecord('source-cursor-b');
+    const linked: LoadedLinkedExternalSession = {
+      rawSession: {
+        id: record.request.sessionId,
+        encryptionMode: 'plain',
+      } as LoadedLinkedExternalSession['rawSession'],
+      metadata: {
+        externalSessionV1: {
+          v: 1,
+          agentId: 'example',
+          machineId: record.request.source.machineId,
+          remoteSessionId: record.request.source.remoteSessionId,
+          linkedAtMs: 1,
+          source: { kind: 'jsonl' },
+          qualifiedIdentity: record.request.source.qualifiedIdentity,
+        },
+      },
+      sessionPath: '/stale/link/workspace',
+      agentId: 'example',
+      machineId: record.request.source.machineId,
+      remoteSessionId: record.request.source.remoteSessionId,
+      linkGeneration: record.request.source.linkGeneration,
+      source: { kind: 'jsonl' },
+      codexBackendMode: null,
+    };
+    const preparedSource = {
+      linked,
+      pluginGeneration: record.request.source.contributionGeneration,
+      quiescenceIdentity: 'quiescence-1',
+    };
+    const followLeaseManager = {
+      suspendSession: vi.fn(async () => true),
+      resumeSession: vi.fn(async () => ({
+        resumed: true as const,
+        leaseAcquired: false,
+      })),
+    } satisfies Parameters<
+      typeof createExternalSessionPersistedTakeoverPreparation
+    >[0]['followLeaseManager'];
+    const loadCurrent = vi.fn(async () => preparedSource);
+    const resolveSpawn = vi.fn(async () => ({
+      ok: true as const,
+      value: {
+        options: {
+          directory: '/canonical/takeover/workspace',
+        },
+        origin: {
+          agentId: 'example',
+          pluginId: 'example.plugin',
+          generation: record.request.source.contributionGeneration,
+        },
+      },
+    }));
+    const prepare = createExternalSessionPersistedTakeoverPreparation({
+      followLeaseManager,
+      loadCurrent,
+      resolveSpawn,
+    });
+
+    const result = await prepare(record);
+
+    expect(result.workingDirectory).toBe('/canonical/takeover/workspace');
+    expect(loadCurrent).toHaveBeenCalledTimes(2);
+    expect(resolveSpawn).toHaveBeenCalledWith({
+      linked,
+      sessionId: record.request.sessionId,
+      targetDirectory: record.request.targetDirectory,
+    });
+    expect(followLeaseManager.suspendSession).toHaveBeenCalledOnce();
+    expect(followLeaseManager.resumeSession).not.toHaveBeenCalled();
+
+    await result.resumeFollowOnFailure();
+    expect(followLeaseManager.resumeSession).toHaveBeenCalledOnce();
+  });
+
   it('reconstructs only the exact hosted takeover target from retired-link provenance', () => {
     const record = admittingRecord('source-cursor-b');
     const rawSession = {

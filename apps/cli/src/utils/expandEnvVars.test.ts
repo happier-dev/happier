@@ -28,6 +28,37 @@ describe('expandEnvironmentVariables', () => {
         }
     });
 
+    it('keeps referenced environment names and values out of diagnostics', () => {
+        process.env.DEBUG = '1';
+        const privateSourceName = 'PRIVATE_CUSTOMER_SOURCE_TOKEN';
+        const privateEmptyName = 'PRIVATE_CUSTOMER_EMPTY_TOKEN';
+        const privateMissingName = 'PRIVATE_CUSTOMER_MISSING_TOKEN';
+        const privateSourceValue = 'private-source-value';
+
+        const result = expandEnvironmentVariables({
+            RESOLVED: `\${${privateSourceName}}`,
+            EMPTY: `\${${privateEmptyName}}`,
+            MISSING: `\${${privateMissingName}}`,
+        }, {
+            [privateSourceName]: privateSourceValue,
+            [privateEmptyName]: '',
+        });
+
+        expect(result).toEqual({
+            RESOLVED: privateSourceValue,
+            EMPTY: '',
+            MISSING: `\${${privateMissingName}}`,
+        });
+        const diagnostics = JSON.stringify({
+            debug: vi.mocked(logger.debug).mock.calls,
+            warn: vi.mocked(logger.warn).mock.calls,
+        });
+        expect(diagnostics).not.toContain(privateSourceName);
+        expect(diagnostics).not.toContain(privateEmptyName);
+        expect(diagnostics).not.toContain(privateMissingName);
+        expect(diagnostics).not.toContain(privateSourceValue);
+    });
+
     it('should expand simple ${VAR} reference', () => {
         const envVars = {
             TARGET: '${SOURCE}'

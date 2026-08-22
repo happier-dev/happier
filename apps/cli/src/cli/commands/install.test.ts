@@ -18,7 +18,6 @@ import {
 import { createPluginStateStore } from '@/plugins/store/state.testkit';
 import { resolvePluginStorePaths } from '@/plugins/store/paths';
 import { readPluginRegistryCommitRecord } from '@/plugins/store/registry/commitRecord';
-import { readInstallationStateRevision } from '@/plugins/store/registry/generationStore';
 import { loadInstalledPlugins } from '@/plugins/discovery/load/installed';
 import { inspectPluginSource } from '@/plugins/store/install/source';
 import { waitForCondition } from '@/testkit/async/waitFor';
@@ -64,25 +63,25 @@ vi.mock('@/plugins/projection/registry/createResolvedContributionRegistry', asyn
 
 let activePluginChangeService: DaemonPluginChangeService | null = null;
 let activePluginReloadController: PluginReloadController | null = null;
-const INSTALL_COMMAND_TEST_DAEMON_ID = 'install-command-test';
-
-async function waitForGenerationHealthObservation(
+async function waitForGenerationCommit(
   pluginId: string,
-  immutableGenerationId: string,
+  immutableGenerationId: string | null,
+  minimumReloadGeneration: number,
 ): Promise<void> {
   const paths = resolvePluginStorePaths({ happyHomeDir: configuration.happyHomeDir });
   await waitForCondition(async () => {
     const commit = await readPluginRegistryCommitRecord(paths);
-    if (commit?.pluginGenerations[pluginId]?.immutableGenerationId !== immutableGenerationId) {
+    const committedGenerationId = commit?.pluginGenerations[pluginId]?.immutableGenerationId ?? null;
+    if (committedGenerationId !== immutableGenerationId) {
       return false;
     }
-    const revision = await readInstallationStateRevision({
-      paths,
-      reference: commit.installationState,
-    });
+    const reloadState = activePluginReloadController?.getState();
     if (
-      revision.health[immutableGenerationId]?.observation?.daemonInstanceId
-      !== INSTALL_COMMAND_TEST_DAEMON_ID
+      !reloadState
+      || reloadState.generation < minimumReloadGeneration
+      || reloadState.lastResult?.registryStatus !== 'active'
+      || !reloadState.activeRegistry
+      || reloadState.activeRegistry.activatedPluginIds.has(pluginId) !== (immutableGenerationId !== null)
     ) {
       return false;
     }
@@ -93,7 +92,7 @@ async function waitForGenerationHealthObservation(
   }, {
     timeoutMs: 5_000,
     intervalMs: 10,
-    label: `plugin generation ${immutableGenerationId} health observation`,
+    label: `plugin generation ${immutableGenerationId ?? 'removed'} activation`,
   });
 }
 
@@ -106,6 +105,12 @@ function createPluginChangeService(): DaemonPluginChangeService {
     materialize: vi.fn(async () => {
       throw new Error('Unexpected connected-account materialization during plugin install command test');
     }),
+    listAccounts: async () => {
+        throw new Error('Connected Account listing is outside this fixture');
+    },
+    materializeListedAccount: async () => {
+        throw new Error('Exact-listed Connected Account materialization is outside this fixture');
+    },
     watch: vi.fn(() => Object.freeze({ dispose() {} })),
   });
   activePluginReloadController = createPluginReloadController({
@@ -115,8 +120,6 @@ function createPluginChangeService(): DaemonPluginChangeService {
     happyHomeDir: configuration.happyHomeDir,
     reloadController: activePluginReloadController,
     staleCandidateCleanup: 'disabled',
-    daemonInstanceId: INSTALL_COMMAND_TEST_DAEMON_ID,
-    daemonUptimeMs: () => 0,
     connectedAccounts,
   }).changeService;
 }
@@ -144,7 +147,7 @@ async function createArchivedSamplePluginFixture(rootName = 'sample-plugin'): Pr
     version: '1.0.0',
     keywords: ['happier-plugin'],
     happier: { manifest: '.happier-plugin/plugin.json' },
-    files: ['.happier-plugin', 'daemon.mjs'],
+    files: ['.happier-plugin', 'daemon.mjs', 'agentRuntime.mjs'],
   }), 'utf8');
   const archivePath = join(pluginSourceRoot, `${rootName}.tar.gz`);
 
@@ -189,9 +192,14 @@ describe('runInstallCliCommand', () => {
     });
     daemonBoundary.decideChange.mockImplementation(async (decision) => {
       if (!activePluginChangeService) throw new Error('Plugin change decision arrived before its request');
+      const minimumReloadGeneration = (activePluginReloadController?.getState().generation ?? 0) + 1;
       const result = await activePluginChangeService.decidePluginChange(decision);
-      if (result.kind === 'committed' && result.desiredGeneration) {
-        await waitForGenerationHealthObservation(result.pluginId, result.desiredGeneration);
+      if (result.kind === 'committed') {
+        await waitForGenerationCommit(
+          result.pluginId,
+          result.desiredGeneration,
+          minimumReloadGeneration,
+        );
       }
       return result;
     });
@@ -428,14 +436,18 @@ describe('runInstallCliCommand', () => {
 
     const { pluginSourceRoot, archivePath } = await createArchivedSamplePluginFixture();
     try {
+      const error = vi.fn();
+      const exit = vi.fn();
       await runInstallCliCommand(makeContext(['install', 'plugin', archivePath, '--kind', 'archive']), {
         log: vi.fn(),
-        error: vi.fn(),
-        exit: vi.fn(),
+        error,
+        exit,
         runDoctorCommand: vi.fn(),
         invokeAgentCliInstall: vi.fn(),
         isInteractiveTerminal: () => true,
       });
+      expect(error).not.toHaveBeenCalled();
+      expect(exit).not.toHaveBeenCalled();
 
       const store = createPluginStateStore({ happyHomeDir: home });
       const state = await store.read();

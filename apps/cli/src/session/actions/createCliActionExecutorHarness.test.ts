@@ -36,6 +36,7 @@ describe('createCliActionExecutorHarness', () => {
       {
         token: 'token',
         sessionId: 'sess_1',
+        mode: 'e2ee',
         ctx: {
           encryptionKey: new Uint8Array(32).fill(1),
           encryptionVariant: 'legacy',
@@ -70,6 +71,7 @@ describe('createCliActionExecutorHarness', () => {
     const harness = createCliActionExecutorHarness({
       token: 'token',
       sessionId: 'sess_1',
+      mode: 'e2ee',
       ctx: {
         encryptionKey: new Uint8Array(32).fill(1),
         encryptionVariant: 'legacy',
@@ -94,6 +96,7 @@ describe('createCliActionExecutorHarness', () => {
       {
         token: 'token',
         sessionId: 'sess_1',
+        mode: 'e2ee',
         ctx: {
           encryptionKey: new Uint8Array(32).fill(1),
           encryptionVariant: 'legacy',
@@ -132,6 +135,7 @@ describe('createCliActionExecutorHarness', () => {
       {
         token: 'token',
         sessionId: 'sess_1',
+        mode: 'e2ee',
         ctx: {
           encryptionKey: new Uint8Array(32).fill(1),
           encryptionVariant: 'legacy',

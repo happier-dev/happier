@@ -1,4 +1,4 @@
-import { readCredentials, type Credentials } from '@/persistence';
+import { readStoredCredentials, type StoredCredentials } from '@/persistence';
 import { hasFlag } from '@/cli/commands/shared/argvFlags';
 
 import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
@@ -88,7 +88,7 @@ function printSessionSubcommandHelp(argv: readonly string[]): boolean {
 export async function handleSessionCommand(
   argv: string[],
   deps?: Readonly<{
-    readCredentialsFn?: () => Promise<Credentials | null>;
+    readCredentialsFn?: () => Promise<StoredCredentials | null>;
   }>,
 ): Promise<void> {
   const json = wantsJson(argv);
@@ -106,7 +106,7 @@ export async function handleSessionCommand(
       return;
     }
 
-    const readCredentialsFn = deps?.readCredentialsFn ?? (async () => await readCredentials());
+    const readCredentialsFn = deps?.readCredentialsFn ?? (async () => await readStoredCredentials());
 
     switch (subcommand) {
       case 'list': {
@@ -291,7 +291,7 @@ export async function handleSessionCommand(
   } catch (error) {
     if (!json) throw error;
     const mapped = mapUnknownErrorToControlError(error);
-    printJsonEnvelope(
+    await printJsonEnvelope(
       {
         ok: false,
         kind,

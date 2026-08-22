@@ -1,6 +1,7 @@
-import { AGENT_IDS, getAgentCliRuntimeSpec, type AgentId } from '@happier-dev/agents'
 import { buildBackendTargetKey, buildBackendTargetKeyV2, type AccountSettings } from '@happier-dev/protocol'
 
+import { readAgentCatalogSnapshot } from '@/agent/catalog/snapshot'
+import { readAgentContributionDisplayTitle } from '@/agent/catalog/agentDisplayTitle'
 import { listConfiguredAcpBackendsFromAccountSettingsOrPlugins } from '@/agent/acp/catalog/configured/resolveBackend'
 
 import { isBackendEnabled } from './backendAvailability'
@@ -20,11 +21,13 @@ function normalizeLimit(value: unknown): number | null {
   return Math.max(1, Math.min(200, Math.floor(parsed)))
 }
 
-function buildBuiltInBackendInventoryItems(
+function buildCatalogBackendInventoryItems(
   accountSettings: AccountSettings | null,
 ): readonly ActionBackendInventoryItem[] {
-  return AGENT_IDS
+  const { agentDefinitionsById, catalogEntriesById } = readAgentCatalogSnapshot()
+  return Object.keys(catalogEntriesById)
     .map((agentId) => {
+      const contribution = agentDefinitionsById.get(agentId)
       const targetKey = buildBackendTargetKeyV2({
         kind: 'backend',
         backendId: agentId,
@@ -33,7 +36,7 @@ function buildBuiltInBackendInventoryItems(
       const legacyTargetKey = buildBackendTargetKey({ kind: 'builtInAgent', agentId })
       return {
         targetKey,
-        label: getAgentCliRuntimeSpec(agentId).title,
+        label: readAgentContributionDisplayTitle(contribution, agentId) ?? agentId,
         enabled: isBackendEnabled(accountSettings, [targetKey, legacyTargetKey]),
         agentId,
       }
@@ -84,7 +87,7 @@ export async function buildAgentBackendInventoryItems(params: Readonly<{
     params.happyHomeDir,
   )
   const items = [
-    ...buildBuiltInBackendInventoryItems(accountSettings),
+    ...buildCatalogBackendInventoryItems(accountSettings),
     ...configuredAcpBackends,
   ].filter((item) => includeDisabled || item.enabled !== false)
 

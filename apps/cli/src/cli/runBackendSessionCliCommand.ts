@@ -8,8 +8,8 @@ import {
   type ProviderErrorV1,
 } from '@happier-dev/protocol';
 
-import type { Credentials } from '@/persistence';
-import { readCredentials } from '@/persistence';
+import type { StoredCredentials } from '@/persistence';
+import { readStoredCredentials } from '@/persistence';
 import { authAndSetupMachineIfNeeded, ensureMachineIdForCredentials } from '@/ui/auth';
 import type { CommandContext } from '@/cli/commandRegistry';
 import { bootstrapAccountSettingsContext, type AccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
@@ -47,9 +47,6 @@ import { getSessionHostBridge } from '@/agent/runtime/bridges/session/SessionHos
 import { selfMigrateDaemonSpawnedSessionProcessOutOfDaemonServiceCgroup } from '@/daemon/platform/linux/daemonSpawnedSessionCgroupSelfMigration';
 import { resolveRequestedSessionDirectory } from '@/agent/runtime/resolveRequestedSessionDirectory';
 import { resolveProviderSessionRuntimePreferences } from '@/session/runtime/catalogHooks';
-import { prepareDirectProviderLaunch } from '@/providers/lifecycle/prepareDirectLaunch';
-import type { CatalogAgentId } from '@/agent/catalog/ids';
-import type { ProviderLaunchCleanup } from '@/providers/lifecycle/resourceScope';
 import { presentProviderCliRefusal } from '@/providers/lifecycle/presentProviderCliRefusal';
 import {
   buildScopedProcessEnv,
@@ -60,28 +57,24 @@ import {
   stripSessionControlEnvOverrides,
   stripSessionControlUnsetEnvKeys,
 } from '@/session/runtime/control/sessionControlEnvironment';
-import {
-  resolveDirectConnectedServiceEnvironment,
-} from '@/cli/connectedServices/resolveDirectConnectedServiceEnvironment';
 import { resolveDirectCliConnectedServiceBindings } from '@/cli/connectedServices/resolveDirectCliConnectedServiceBindings';
-import { HAPPIER_SESSION_CONNECTED_SERVICES_BINDINGS_ENV_KEY } from '@/agent/runtime/sessionConnectedServicesBindingsEnv';
 import {
   admitDaemonForegroundAgentRuntime,
   releaseDaemonForegroundAgentRuntime,
 } from '@/daemon/controlClient';
 import {
   claimDaemonForegroundAgentRuntimeEnvironment,
-} from '@/agent/runtime/session/process/agentRuntimeDaemonBridgeClient';
+} from '@/agent/runtime/session/process/foregroundAgentRuntimeAdmissionClient';
 import {
-  HAPPIER_AGENT_RUNTIME_DAEMON_BRIDGE_TOKEN_FILE_ENV_KEY,
-} from '@/agent/runtime/session/process/agentRuntimeDaemonBridgeProtocol';
+  HAPPIER_FOREGROUND_AGENT_RUNTIME_ADMISSION_FILE_ENV_KEY,
+} from '@/daemon/agentRuntime/foregroundAdmissionContract';
 import {
   isAgentSessionContinuationUnreachableError,
   SESSION_RUNNER_EXIT_CODES,
 } from '@/session/shared/spawnSessionContract';
 
 type CommonBackendRunOptions = ParsedSessionStartArgs & {
-  credentials: Credentials;
+  credentials: StoredCredentials;
   directory?: string;
   terminalRuntime: CommandContext['terminalRuntime'];
   happyHomeDir: string;
@@ -169,20 +162,19 @@ export async function runBackendSessionCliCommand<Extra extends Record<string, u
   versionFlags?: readonly string[];
   providerInfoCommandPrefixes?: readonly ProviderCliInfoCommandPrefix[];
   resolveExtraOptions?: (args: string[], parsed: ProviderSessionArgPartitionResult) => Extra;
-  resolveDirectConnectedServiceEnvironmentFn?: typeof resolveDirectConnectedServiceEnvironment;
 }): Promise<void> {
   let releaseSessionRunnerLock: (() => Promise<void>) | null = null;
-  let releaseDirectProviderLaunch: ProviderLaunchCleanup | null = null;
-  const cleanupDirectProviderLaunch = async (): Promise<void> => {
-    const cleanup = releaseDirectProviderLaunch;
-    releaseDirectProviderLaunch = null;
+  let releaseForegroundAdmission: (() => void | Promise<void>) | null = null;
+  const cleanupForegroundAdmission = async (): Promise<void> => {
+    const cleanup = releaseForegroundAdmission;
+    releaseForegroundAdmission = null;
     if (!cleanup) return;
     try {
       await cleanup();
     } catch (error) {
       void error;
-      logger.warn('[session] Direct Provider launch cleanup failed', {
-        error: 'provider_cleanup_failed',
+      logger.warn('[session] Foreground admission cleanup failed', {
+        error: 'foreground_admission_cleanup_failed',
       });
     }
   };
@@ -287,7 +279,7 @@ Provider CLI Options:
       sourceKind: 'built_in',
     };
 
-    let credentials = await readCredentials();
+    let credentials = await readStoredCredentials();
     let machineId: string;
     if (!credentials) {
       const auth = await authAndSetupMachineIfNeeded();
@@ -367,12 +359,33 @@ Provider CLI Options:
     const hasForegroundProviderSelection =
       modelSelection?.ref.providerConnectionId !== null
       && modelSelection?.ref.providerConnectionId !== undefined;
+    let directConnectedServices =
+      params.context.directSessionLaunch?.connectedServices ?? null;
+    const shouldResolveCliConnectedServices =
+      startedBy !== 'daemon'
+      && params.context.directSessionLaunch === undefined
+      && catalogAgentId !== null
+      && accountSettingsContext !== null;
+    if (shouldResolveCliConnectedServices) {
+      if (!catalogAgentId || !accountSettingsContext) {
+        throw new Error('connected_service_auth_unsupported');
+      }
+      directConnectedServices = await resolveDirectCliConnectedServiceBindings({
+        agentId: catalogAgentId,
+        credentials,
+        accountSettings: accountSettingsContext.settings,
+        authRaw: parsed.connectedServicesAuthRaw,
+        authJsonRaw: parsed.connectedServicesAuthJsonRaw,
+      });
+    }
     let foregroundReservedEnvironmentVariableNames: readonly string[] =
       Object.freeze([]);
     let profileSecretRequirementNamesMissingBinding: readonly string[] =
       Object.freeze([]);
     let foregroundAdmissionClaim: Readonly<{
-      tokenFilePath: string;
+      admissionFilePath: string;
+      bootstrapFilePath: string;
+      authorityFilePath: string;
       sessionId: string;
       attemptId: string;
     }> | null = null;
@@ -405,6 +418,9 @@ Provider CLI Options:
           v: 1,
           attemptId,
           sessionId: providerSessionId,
+          ...(normalizedExistingSessionId
+            ? { existingSessionId: normalizedExistingSessionId }
+            : {}),
           foregroundPid: process.pid,
           directory:
             parsed.directory ?? resolveRequestedSessionDirectory(),
@@ -425,6 +441,10 @@ Provider CLI Options:
             : {}),
           previousBinding:
             params.context.directSessionLaunch?.providerBinding ?? null,
+          ...(directConnectedServices
+            ? { connectedServices: directConnectedServices }
+            : {}),
+          ...(resume ? { vendorResumeId: resume } : {}),
         }, {
           ...(params.context.signal ? { signal: params.context.signal } : {}),
         });
@@ -433,7 +453,12 @@ Provider CLI Options:
         }
         return Object.freeze({
           claim: Object.freeze({
-            tokenFilePath: admission.capability.tokenFilePath,
+            admissionFilePath:
+              admission.capability.admissionFilePath,
+            bootstrapFilePath:
+              admission.capability.bootstrapFilePath,
+            authorityFilePath:
+              admission.capability.authorityFilePath,
             sessionId: providerSessionId,
             attemptId,
           }),
@@ -450,7 +475,7 @@ Provider CLI Options:
         initialAdmission.reservedEnvironmentVariableNames;
       profileSecretRequirementNamesMissingBinding =
         initialAdmission.profileSecretRequirementNamesMissingBinding;
-      const releaseForegroundAdmission = async () => {
+      const releaseActiveForegroundAdmission = async () => {
         const activeClaim = foregroundAdmissionClaim;
         foregroundAdmissionClaim = null;
         if (!activeClaim) return;
@@ -460,7 +485,7 @@ Provider CLI Options:
           sessionId: activeClaim.sessionId,
         }).catch(() => undefined);
       };
-      releaseDirectProviderLaunch = releaseForegroundAdmission;
+      releaseForegroundAdmission = releaseActiveForegroundAdmission;
     }
 
     let profileEnvironmentVariables: Record<string, string> = {};
@@ -504,87 +529,6 @@ Provider CLI Options:
       typeof permissionModeSeedRaw === 'string' && isPermissionMode(permissionModeSeedRaw) ? permissionModeSeedRaw : null;
     const permissionMode: PermissionMode | undefined = resolved.permissionMode ?? (permissionModeSeed ?? undefined);
     const permissionModeUpdatedAt = resolved.permissionModeUpdatedAt ?? (permissionModeSeed ? Date.now() : undefined);
-    let directConnectedServices = params.context.directSessionLaunch?.connectedServices ?? null;
-    let resolveDirectConnectedServices =
-      params.context.directSessionLaunch?.resolveConnectedServiceEnvironment;
-    const shouldResolveCliConnectedServices =
-      startedBy !== 'daemon'
-      && params.context.directSessionLaunch === undefined
-      && catalogAgentId !== null
-      && accountSettingsContext !== null
-      && !process.env[HAPPIER_SESSION_CONNECTED_SERVICES_BINDINGS_ENV_KEY];
-    if (shouldResolveCliConnectedServices) {
-      if (!catalogAgentId || !accountSettingsContext) {
-        throw new Error('connected_service_auth_unsupported');
-      }
-      const directAccountSettings = accountSettingsContext.settings;
-      directConnectedServices = await resolveDirectCliConnectedServiceBindings({
-        agentId: catalogAgentId,
-        credentials,
-        accountSettings: directAccountSettings,
-        authRaw: parsed.connectedServicesAuthRaw,
-        authJsonRaw: parsed.connectedServicesAuthJsonRaw,
-      });
-      if (directConnectedServices) {
-        resolveDirectConnectedServices = (connectedServices) => connectedServices
-          ? (
-              params.resolveDirectConnectedServiceEnvironmentFn
-              ?? resolveDirectConnectedServiceEnvironment
-            )({
-              agentId: catalogAgentId as CatalogAgentId,
-              credentials,
-              accountSettings: directAccountSettings,
-              directory: parsed.directory ?? resolveRequestedSessionDirectory(),
-              sessionId: providerSessionId,
-              connectedServices,
-            })
-          : Promise.resolve(null);
-      }
-    }
-    let directProviderEnvironment: Readonly<Record<string, string>> = Object.freeze({});
-    let directProviderUnsetEnvKeys: readonly string[] = Object.freeze([]);
-    if (
-      startedBy !== 'daemon'
-      && resolveDirectConnectedServices !== undefined
-    ) {
-      const directLaunch = await prepareDirectProviderLaunch({
-        backendTarget: readBackendTargetRefV2(
-          modelSelectionBackendTargetInput,
-        ),
-        machineId,
-        agentId: catalogAgentId,
-        sessionId: providerSessionId,
-        previousBinding: params.context.directSessionLaunch?.providerBinding ?? null,
-        confirmation: null,
-        confirmSecurityChange: params.context.directSessionLaunch?.confirmProviderSecurityChange,
-        connectedServices: directConnectedServices,
-        featureEnabled: false,
-      }, {
-        resolvePrerequisites: async () => {
-          throw new Error(
-            'Native Connected Services launch has no Provider prerequisites',
-          );
-        },
-        createAuthorizationAttempt: async () => {
-          throw new Error(
-            'Native Connected Services launch has no Provider authorization',
-          );
-        },
-        resolveConnectedServices: resolveDirectConnectedServices,
-      });
-      if (!directLaunch.ok) {
-        throw new Error(
-          'Direct Connected Services environment could not be prepared',
-        );
-      }
-      const releaseAdmission = releaseDirectProviderLaunch;
-      releaseDirectProviderLaunch = async () => {
-        await directLaunch.cleanupOnExit?.();
-        await releaseAdmission?.();
-      };
-      directProviderEnvironment = directLaunch.environment;
-      directProviderUnsetEnvKeys = directLaunch.unsetEnvKeys;
-    }
     const providerSpawnExtras =
       params.agentIdForAccountSettings && accountSettingsContext
         ? await resolveProviderRunOptions({
@@ -619,7 +563,6 @@ Provider CLI Options:
       ...(providerEnvironmentVariables ?? {}),
       ...(extraEnvironmentVariables ?? {}),
       ...(scopedEnvironmentVariables ?? {}),
-      ...directProviderEnvironment,
     };
     const baseUnsetEnvironmentVariables =
       stripSessionControlUnsetEnvKeys(normalizeUnsetEnvKeys([
@@ -634,7 +577,6 @@ Provider CLI Options:
         ...(readUnsetEnvironmentVariables(
           params.context.scopedEnvironment?.unsetEnvKeys,
         ) ?? []),
-        ...directProviderUnsetEnvKeys,
       ]));
     const finalizeEnvironment = (
       admissionEnvironment: Readonly<Record<string, string>>,
@@ -701,7 +643,9 @@ Provider CLI Options:
           Object.freeze([]),
         );
     let resolveLateEnvironment:
-      | (() => Promise<ReturnType<typeof finalizeEnvironment>>)
+      | ((input: Readonly<{
+          sessionId: string;
+        }>) => Promise<ReturnType<typeof finalizeEnvironment>>)
       | undefined;
     if (foregroundAdmissionClaim) {
       for (const reservedName of foregroundReservedEnvironmentVariableNames) {
@@ -721,7 +665,7 @@ Provider CLI Options:
         ),
         unsetEnvironmentVariables: baseUnsetEnvironmentVariables,
       });
-      resolveLateEnvironment = async () => {
+      resolveLateEnvironment = async ({ sessionId }) => {
         const claim = async () => {
           const activeClaim = foregroundAdmissionClaim;
           if (!activeClaim) {
@@ -731,11 +675,13 @@ Provider CLI Options:
           }
           return await claimDaemonForegroundAgentRuntimeEnvironment({
             env: {
-              [HAPPIER_AGENT_RUNTIME_DAEMON_BRIDGE_TOKEN_FILE_ENV_KEY]:
-                activeClaim.tokenFilePath,
+              [HAPPIER_FOREGROUND_AGENT_RUNTIME_ADMISSION_FILE_ENV_KEY]:
+                activeClaim.admissionFilePath,
             },
-            sessionId: activeClaim.sessionId,
+            provisionalSessionId: activeClaim.sessionId,
+            canonicalSessionId: sessionId,
             attemptId: activeClaim.attemptId,
+            foregroundPid: process.pid,
             foregroundSatisfiedProfileSecretRequirementNames,
             ...(params.context.signal
               ? { signal: params.context.signal }
@@ -863,6 +809,11 @@ Provider CLI Options:
       ...providerSpawnExtras,
       ...extraOptions,
       ...(parsed.nativeForkSource ? { nativeForkSource: parsed.nativeForkSource } : {}),
+      ...(parsed.sessionCreationTag ? { sessionCreationTag: parsed.sessionCreationTag } : {}),
+      ...(parsed.sessionCreationCorrespondence
+        ? { sessionCreationCorrespondence: parsed.sessionCreationCorrespondence }
+        : {}),
+      ...(parsed.initialTitle ? { initialTitle: parsed.initialTitle } : {}),
       backendTarget: modelSelectionBackendTargetInput,
       ...(modelSelection ? { modelSelection } : {}),
       environmentVariables:
@@ -881,8 +832,10 @@ Provider CLI Options:
         backendId,
         sessionRuntimeParams,
         {
-          agentRuntimeDaemonBridgeTokenFilePath:
-            foregroundAdmissionClaim.tokenFilePath,
+          agentRuntimeRunnerBootstrapFilePath:
+            foregroundAdmissionClaim.bootstrapFilePath,
+          agentRuntimeDaemonServiceAuthorityFilePath:
+            foregroundAdmissionClaim.authorityFilePath,
         },
       );
     } else {
@@ -892,6 +845,7 @@ Provider CLI Options:
       );
     }
   } catch (error) {
+    logger.fatal(error);
     const exitCode =
       isAgentSessionContinuationUnreachableError(error)
         ? SESSION_RUNNER_EXIT_CODES.CONTINUATION_UNREACHABLE
@@ -906,12 +860,12 @@ Provider CLI Options:
         : String(error);
       console.error(rawDiagnostic);
     }
-    await cleanupDirectProviderLaunch();
+    await cleanupForegroundAdmission();
     await releaseSessionRunnerLock?.().catch(() => {});
     releaseSessionRunnerLock = null;
     process.exit(exitCode);
   } finally {
-    await cleanupDirectProviderLaunch();
+    await cleanupForegroundAdmission();
     await releaseSessionRunnerLock?.().catch(() => {});
   }
 }

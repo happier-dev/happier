@@ -1,4 +1,4 @@
-import type { BackendTargetRefV1, LlmTaskRunnerConfigV1 } from '@happier-dev/protocol';
+import type { BackendTargetRefV1, ExecutionRunIntent, LlmTaskRunnerConfigV1 } from '@happier-dev/protocol';
 
 import { runEphemeralExecutionRunTextPromptWithRunnerConfig } from '@/agent/executionRuns/tasks/textPromptWithRunnerConfig';
 
@@ -10,7 +10,7 @@ export type ReplaySummaryTextPromptRunner = (params: Readonly<{
   backendTarget: BackendTargetRefV1;
   modelId?: string;
   permissionMode: string;
-  intent: string;
+  intent: ExecutionRunIntent;
   prompt: string;
   timeoutMs?: number | null;
 }>) => Promise<string>;
@@ -96,7 +96,9 @@ export async function runReplaySummaryForDialog(params: Readonly<{
     backendTarget,
     modelId,
     permissionMode,
-    intent: 'replay_summary',
+    // Replay summary is a generic bounded task; it does not own a separate
+    // execution-run lifecycle or intent vocabulary.
+    intent: 'task',
     prompt,
   });
 

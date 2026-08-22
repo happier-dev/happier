@@ -5,6 +5,7 @@ import { DeferredApiSessionClient } from './DeferredApiSessionClient';
 import type { Metadata } from '@/api/types';
 import type { SessionRuntimeControls } from '@/rpc/handlers/sessionControls';
 import type { RegisteredSessionStateFieldMutationV1 } from '@/api/session/client/transport/mutations/sessionClientDurableMutationTypes';
+import { createCliRuntimeSessionStateBridge } from '../state/bridge';
 
 function createMetadataStub(overrides?: Partial<Metadata>): Metadata {
   return {
@@ -89,11 +90,7 @@ describe('DeferredApiSessionClient', () => {
     const real = {
       sessionId: 'sess_1',
       rpcHandlerManager: { registerHandler: vi.fn(), invokeLocal: vi.fn(async () => ({})) },
-      sendSessionEvent: vi.fn(),
-      sendProviderMessage: vi.fn(),
-      sendAgentMessage: vi.fn(),
-      sendAgentMessageCommitted: vi.fn(async () => {}),
-      sendUserTextMessage: vi.fn(),
+      enqueueSessionEventCommitted: vi.fn(async () => ({ persisted: true, delivered: true })),
       onUserMessage: vi.fn(),
       updateMetadata: vi.fn(),
       updateAgentState: vi.fn(),
@@ -155,6 +152,32 @@ describe('DeferredApiSessionClient', () => {
     await expect(deferred.fetchLatestUserPermissionIntentFromTranscript({ take: 5 })).resolves.toBeNull();
   });
 
+  it('holds semantic termination until the durable target attaches', async () => {
+    const deferred = new DeferredApiSessionClient({
+      placeholderSessionId: 'PID-1',
+      limits: { maxEntries: 10, maxBytes: 10_000 },
+    });
+    const endSessionAndClose = vi.fn(async () => undefined);
+
+    const ending = deferred.endSessionAndClose();
+    let settled = false;
+    void ending.then(() => { settled = true; });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    await deferred.attach({
+      sessionId: 'sess_1',
+      rpcHandlerManager: {
+        registerHandler: vi.fn(),
+        invokeLocal: vi.fn(async () => ({})),
+      },
+      endSessionAndClose,
+    } as unknown as Parameters<DeferredApiSessionClient['attach']>[0]);
+
+    await ending;
+    expect(endSessionAndClose).toHaveBeenCalledOnce();
+  });
+
   it('defers pending queue materialization before attach instead of reporting no pending work', async () => {
     const deferred = new DeferredApiSessionClient({
       placeholderSessionId: 'PID-1',
@@ -202,11 +225,8 @@ describe('DeferredApiSessionClient', () => {
     const real = {
       sessionId: 'sess_1',
       rpcHandlerManager: { registerHandler: vi.fn(), invokeLocal: vi.fn(async () => ({})) },
-      sendSessionEvent: vi.fn(),
-      sendProviderMessage: vi.fn(),
-      sendAgentMessage: vi.fn(),
-      sendAgentMessageCommitted: vi.fn(async () => {}),
-      sendUserTextMessage: vi.fn(),
+      enqueueSessionEventCommitted: vi.fn(async () => ({ persisted: true, delivered: true })),
+      enqueueAgentMessageCommitted: vi.fn(async () => ({ persisted: true, delivered: true })),
       updateMetadata: vi.fn(),
       updateAgentState: vi.fn(),
       keepAlive: vi.fn(),
@@ -231,26 +251,20 @@ describe('DeferredApiSessionClient', () => {
     expect(onUserMessage).toHaveBeenCalledWith(handler);
   });
 
-  it('buffers provider dispatch and user message writes until attach then flushes', async () => {
+  it('buffers durable user message writes until attach and reports custody', async () => {
     const deferred = new DeferredApiSessionClient({
       placeholderSessionId: 'PID-1',
       limits: { maxEntries: 10, maxBytes: 10_000 },
     });
 
     const calls: string[] = [];
-    const providerMessages: unknown[] = [];
     const real = {
       sessionId: 'sess_1',
       rpcHandlerManager: { registerHandler: vi.fn(), invokeLocal: vi.fn(async () => ({})) },
-      sendSessionEvent: vi.fn(),
-      sendProviderMessage: vi.fn((request: unknown) => {
-        providerMessages.push(request);
-        calls.push('provider');
-      }),
-      sendAgentMessage: vi.fn(),
-      sendAgentMessageCommitted: vi.fn(async () => {}),
-      sendUserTextMessage: vi.fn(() => {
+      enqueueSessionEventCommitted: vi.fn(async () => ({ persisted: true, delivered: true })),
+      enqueueUserTextMessageCommitted: vi.fn(async () => {
         calls.push('user');
+        return { persisted: true, delivered: false };
       }),
       onUserMessage: vi.fn(),
       updateMetadata: vi.fn(),
@@ -272,17 +286,21 @@ describe('DeferredApiSessionClient', () => {
     const legacyClaudeDispatch = ['send', 'Claude', 'Session', 'Message'].join('');
     expect(legacyCodexDispatch in deferred).toBe(false);
     expect(legacyClaudeDispatch in deferred).toBe(false);
-    expect('sendProviderMessage' in deferred).toBe(true);
+    expect('sendProviderMessage' in deferred).toBe(false);
 
-    deferred.sendUserTextMessage('hi');
-    deferred.sendProviderMessage({ body: { type: 'message', message: 'hello' }, meta: { source: 'startup-test' } });
+    const custody = deferred.enqueueUserTextMessageCommitted('hi', {
+      localId: 'startup-user-1',
+      provenance: { kind: 'non_dependent', source: 'external' },
+    });
 
     expect(calls).toEqual([]);
     await deferred.attach(real);
-    expect(calls).toEqual(['user', 'provider']);
-    expect(providerMessages).toEqual([
-      { body: { type: 'message', message: 'hello' }, meta: { source: 'startup-test' } },
-    ]);
+    await expect(custody).resolves.toEqual({ persisted: true, delivered: false });
+    expect(calls).toEqual(['user']);
+    expect(real.enqueueUserTextMessageCommitted).toHaveBeenCalledWith('hi', {
+      localId: 'startup-user-1',
+      provenance: { kind: 'non_dependent', source: 'external' },
+    });
   });
 
   it('rejects detached live sends while preserving buffered durable transcript writes', async () => {
@@ -295,17 +313,15 @@ describe('DeferredApiSessionClient', () => {
     const real = {
       sessionId: 'sess_1',
       rpcHandlerManager: { registerHandler: vi.fn(), invokeLocal: vi.fn(async () => ({})) },
-      sendSessionEvent: vi.fn(),
-      sendProviderMessage: vi.fn(),
-      sendAgentMessage: vi.fn(),
+      enqueueSessionEventCommitted: vi.fn(async () => ({ persisted: true, delivered: true })),
       sendAgentMessageEphemeral: vi.fn((_provider: unknown, body: any) => {
         calls.push(`live:${String(body?.message ?? '')}`);
         return { accepted: true as const, epoch: 1 };
       }),
-      sendAgentMessageCommitted: vi.fn(async (_provider: unknown, body: any) => {
+      enqueueAgentMessageCommitted: vi.fn(async (_provider: unknown, body: any) => {
         calls.push(`commit:${String(body?.message ?? '')}`);
+        return { persisted: true, delivered: true };
       }),
-      sendUserTextMessage: vi.fn(),
       onUserMessage: vi.fn(),
       updateMetadata: vi.fn(),
       updateAgentState: vi.fn(),
@@ -322,15 +338,18 @@ describe('DeferredApiSessionClient', () => {
       close: vi.fn(async () => {}),
     } as const;
 
-    const liveOutcome = (deferred as any).sendAgentMessageEphemeral(
+    const liveOutcome = deferred.sendAgentMessageEphemeral(
       'codex',
       { type: 'message', message: 'Hello' },
       { localId: 'segment-1', createdAt: 1, updatedAt: 2 },
     );
-    const committedPromise = (deferred as any).sendAgentMessageCommitted(
+    const committedPromise = deferred.enqueueAgentMessageCommitted(
       'codex',
       { type: 'message', message: 'Hello world' },
-      { localId: 'segment-1' },
+      {
+        localId: 'segment-1',
+        provenance: { kind: 'non_dependent', source: 'external' },
+      },
     );
 
     expect(liveOutcome).toEqual({
@@ -340,10 +359,114 @@ describe('DeferredApiSessionClient', () => {
     });
     expect(calls).toEqual([]);
 
-    await deferred.attach(real as any);
-    await committedPromise;
+    await deferred.attach(real);
+    await expect(committedPromise).resolves.toEqual({ persisted: true, delivered: true });
 
     expect(calls).toEqual(['commit:Hello world']);
+  });
+
+  it('reports no durable custody when a buffered committed transcript write is cancelled', async () => {
+    const deferred = new DeferredApiSessionClient({
+      placeholderSessionId: 'PID-1',
+      limits: { maxEntries: 10, maxBytes: 10_000 },
+    });
+
+    const custody = deferred.enqueueAgentMessageCommitted(
+      'codex',
+      { type: 'message', message: 'cancelled' },
+      {
+        localId: 'segment-cancelled',
+        provenance: { kind: 'non_dependent', source: 'external' },
+      },
+    );
+
+    deferred.cancel();
+
+    await expect(custody).resolves.toEqual({ persisted: false, delivered: false });
+    await expect(deferred.enqueueAgentMessageCommitted(
+      'codex',
+      { type: 'message', message: 'after cancellation' },
+      {
+        localId: 'segment-after-cancellation',
+        provenance: { kind: 'non_dependent', source: 'external' },
+      },
+    )).resolves.toEqual({ persisted: false, delivered: false });
+  });
+
+  it('reports no durable custody when buffer overflow evicts a committed transcript write', async () => {
+    const deferred = new DeferredApiSessionClient({
+      placeholderSessionId: 'PID-1',
+      limits: { maxEntries: 1, maxBytes: 10_000 },
+    });
+
+    const custody = deferred.enqueueAgentMessageCommitted(
+      'codex',
+      { type: 'message', message: 'evicted' },
+      {
+        localId: 'segment-evicted',
+        provenance: { kind: 'non_dependent', source: 'external' },
+      },
+    );
+    deferred.enqueueSessionEventCommitted({ type: 'message', message: 'newer buffered event' });
+
+    await expect(custody).resolves.toEqual({ persisted: false, delivered: false });
+  });
+
+  it('reports no durable custody when attached buffer drain fails', async () => {
+    const deferred = new DeferredApiSessionClient({
+      placeholderSessionId: 'PID-1',
+      limits: { maxEntries: 10, maxBytes: 10_000 },
+    });
+    const custody = deferred.enqueueAgentMessageCommitted(
+      'codex',
+      { type: 'message', message: 'drain failure' },
+      {
+        localId: 'segment-drain-failure',
+        provenance: { kind: 'non_dependent', source: 'external' },
+      },
+    );
+
+    await expect(deferred.attach({
+      sessionId: 'sess_1',
+      rpcHandlerManager: {
+        registerHandler: vi.fn(),
+        invokeLocal: vi.fn(async () => ({})),
+      },
+      enqueueSessionEventCommitted: vi.fn(async () => ({ persisted: true, delivered: true })),
+      enqueueAgentMessageCommitted: vi.fn(async () => {
+        throw new Error('durable enqueue failed');
+      }),
+    } as unknown as Parameters<DeferredApiSessionClient['attach']>[0])).resolves.toBeUndefined();
+
+    await expect(custody).resolves.toEqual({ persisted: false, delivered: false });
+  });
+
+  it('does not fabricate durable custody from the legacy committed-send fallback', async () => {
+    const deferred = new DeferredApiSessionClient({
+      placeholderSessionId: 'PID-1',
+      limits: { maxEntries: 10, maxBytes: 10_000 },
+    });
+    const legacySendAgentMessageCommitted = vi.fn(async () => undefined);
+    const retiredCommittedSendKey = ['send', 'Agent', 'Message', 'Committed'].join('');
+
+    await deferred.attach({
+      sessionId: 'sess_1',
+      rpcHandlerManager: {
+        registerHandler: vi.fn(),
+        invokeLocal: vi.fn(async () => ({})),
+      },
+      [retiredCommittedSendKey]: legacySendAgentMessageCommitted,
+    } as unknown as Parameters<DeferredApiSessionClient['attach']>[0]);
+
+    await expect(deferred.enqueueAgentMessageCommitted(
+      'codex',
+      { type: 'message', message: 'legacy fallback' },
+      {
+        localId: 'segment-legacy-fallback',
+        provenance: { kind: 'non_dependent', source: 'external' },
+      },
+    )).resolves.toEqual({ persisted: false, delivered: false });
+    expect(legacySendAgentMessageCommitted).not.toHaveBeenCalled();
   });
 
   it('rejects failed buffered metadata writes while continuing later buffered calls', async () => {
@@ -356,13 +479,11 @@ describe('DeferredApiSessionClient', () => {
     const real = {
       sessionId: 'sess_1',
       rpcHandlerManager: { registerHandler: vi.fn(), invokeLocal: vi.fn(async () => ({})) },
-      sendSessionEvent: vi.fn((event: unknown) => {
+      enqueueSessionEventCommitted: vi.fn(async (event: unknown) => {
         events.push(event);
+        return { persisted: true, delivered: true };
       }),
-      sendProviderMessage: vi.fn(),
-      sendAgentMessage: vi.fn(),
-      sendAgentMessageCommitted: vi.fn(async () => {}),
-      sendUserTextMessage: vi.fn(),
+      enqueueAgentMessageCommitted: vi.fn(async () => ({ persisted: true, delivered: true })),
       onUserMessage: vi.fn(),
       updateMetadata: vi.fn(async () => {
         throw new Error('boom');
@@ -383,7 +504,7 @@ describe('DeferredApiSessionClient', () => {
 
     const updatePromise = deferred.updateMetadata((metadata) => metadata) as Promise<void>;
     const updateFailure = expect(updatePromise).rejects.toThrow('boom');
-    deferred.sendSessionEvent({ type: 'message', message: 'hi' });
+    deferred.enqueueSessionEventCommitted({ type: 'message', message: 'hi' });
 
     await expect(deferred.attach(real)).resolves.toBeUndefined();
     await updateFailure;
@@ -402,13 +523,11 @@ describe('DeferredApiSessionClient', () => {
     const real = {
       sessionId: 'sess_1',
       rpcHandlerManager: { registerHandler: vi.fn(), invokeLocal: vi.fn(async () => ({})) },
-      sendSessionEvent: vi.fn((event: unknown) => {
+      enqueueSessionEventCommitted: vi.fn(async (event: unknown) => {
         calls.push(`event:${String((event as any)?.id ?? '')}`);
+        return { persisted: true, delivered: true };
       }),
-      sendProviderMessage: vi.fn(),
-      sendAgentMessage: vi.fn(),
-      sendAgentMessageCommitted: vi.fn(async () => {}),
-      sendUserTextMessage: vi.fn(),
+      enqueueAgentMessageCommitted: vi.fn(async () => ({ persisted: true, delivered: true })),
       onUserMessage: vi.fn(),
       updateMetadata: vi.fn(async () => {
         calls.push('metadata:start');
@@ -432,11 +551,8 @@ describe('DeferredApiSessionClient', () => {
     const ignored = {
       sessionId: 'sess_ignored',
       rpcHandlerManager: { registerHandler: vi.fn(), invokeLocal: vi.fn(async () => ({})) },
-      sendSessionEvent: vi.fn(),
-      sendProviderMessage: vi.fn(),
-      sendAgentMessage: vi.fn(),
-      sendAgentMessageCommitted: vi.fn(async () => {}),
-      sendUserTextMessage: vi.fn(),
+      enqueueSessionEventCommitted: vi.fn(async () => ({ persisted: true, delivered: true })),
+      enqueueAgentMessageCommitted: vi.fn(async () => ({ persisted: true, delivered: true })),
       onUserMessage: vi.fn(),
       updateMetadata: vi.fn(),
       updateAgentState: vi.fn(),
@@ -453,7 +569,7 @@ describe('DeferredApiSessionClient', () => {
       close: vi.fn(async () => {}),
     } as const;
 
-    deferred.sendSessionEvent({ id: 'before' });
+    deferred.enqueueSessionEventCommitted({ id: 'before' });
     deferred.updateMetadata((m) => m);
 
     const attach1 = deferred.attach(real);
@@ -474,14 +590,14 @@ describe('DeferredApiSessionClient', () => {
 
     // This write happens while attach is still flushing.
     // It should be delivered after the buffered flush completes.
-    deferred.sendSessionEvent({ id: 'during' });
+    deferred.enqueueSessionEventCommitted({ id: 'during' });
 
     metadataGate.resolve(undefined);
     await attach1;
     await attach2;
 
     expect(calls).toEqual(['event:before', 'metadata:start', 'metadata:end', 'event:during']);
-    expect(ignored.sendSessionEvent).toHaveBeenCalledTimes(0);
+    expect(ignored.enqueueSessionEventCommitted).toHaveBeenCalledTimes(0);
   });
 
   it('buffers calls until attach(), then flushes in order', async () => {
@@ -501,17 +617,14 @@ describe('DeferredApiSessionClient', () => {
         }),
         invokeLocal: vi.fn(async () => ({})),
       },
-      sendSessionEvent: vi.fn(() => {
+      enqueueSessionEventCommitted: vi.fn(async () => {
         calls.push('event');
+        return { persisted: true, delivered: true };
       }),
-      sendProviderMessage: vi.fn(() => {
-        calls.push('provider');
-      }),
-      sendAgentMessage: vi.fn(() => {
+      enqueueAgentMessageCommitted: vi.fn(async () => {
         calls.push('agent');
+        return { persisted: true, delivered: true };
       }),
-      sendAgentMessageCommitted: vi.fn(async () => {}),
-      sendUserTextMessage: vi.fn(),
       updateMetadata: vi.fn(() => {
         calls.push('metadata');
       }),
@@ -534,9 +647,15 @@ describe('DeferredApiSessionClient', () => {
     // Register handlers + send events before attach.
     // These should not reach the real session yet.
     deferred.rpcHandlerManager.registerHandler('abort', async () => {});
-    deferred.sendSessionEvent({ type: 'message' });
-    deferred.sendProviderMessage({ body: { type: 'user' } });
-    deferred.sendAgentMessage('claude', { type: 'message' });
+    deferred.enqueueSessionEventCommitted({ type: 'message' });
+    const agentCustody = deferred.enqueueAgentMessageCommitted(
+      'claude',
+      { type: 'message' },
+      {
+        localId: 'buffered-agent-message',
+        provenance: { kind: 'non_dependent', source: 'external' },
+      },
+    );
     deferred.updateMetadata((m) => m);
     deferred.updateAgentState((s) => s);
 
@@ -544,8 +663,9 @@ describe('DeferredApiSessionClient', () => {
     expect(rpcHandlers.map((h) => h.method)).toEqual([]);
 
     await deferred.attach(real);
+    await expect(agentCustody).resolves.toEqual({ persisted: true, delivered: true });
 
-    expect(calls).toEqual(['event', 'provider', 'agent', 'metadata', 'agentState']);
+    expect(calls).toEqual(['event', 'agent', 'metadata', 'agentState']);
     expect(rpcHandlers.map((h) => h.method)).toEqual(['abort']);
   });
 
@@ -564,7 +684,7 @@ describe('DeferredApiSessionClient', () => {
         }),
         invokeLocal: vi.fn(async () => ({})),
       },
-      sendSessionEvent: vi.fn((event: unknown) => {
+      enqueueSessionEventCommitted: vi.fn((event: unknown) => {
         const type =
           event && typeof event === 'object' && 'type' in event
             ? String(event.type)
@@ -589,7 +709,7 @@ describe('DeferredApiSessionClient', () => {
     });
     deferred.keepAlive(true, 'remote');
     deferred.wakePendingMaterialization();
-    deferred.sendSessionEvent({ type: 'ready' });
+    deferred.enqueueSessionEventCommitted({ type: 'ready' });
 
     const attach = (
       deferred.attach as unknown as (
@@ -618,7 +738,7 @@ describe('DeferredApiSessionClient', () => {
       'prepare:start',
     ]);
 
-    deferred.sendSessionEvent({ type: 'message', message: 'during preparation' });
+    deferred.enqueueSessionEventCommitted({ type: 'message', message: 'during preparation' });
     preparationGate.resolve(undefined);
     await attach;
 
@@ -727,6 +847,177 @@ describe('DeferredApiSessionClient', () => {
     expect(cancelledTargetEnqueue).not.toHaveBeenCalled();
   });
 
+  it('holds a pre-attach durable-required bridge write until real-session admission and rebases only the placeholder session identity', async () => {
+    const deferred = new DeferredApiSessionClient({
+      placeholderSessionId: 'PID-41',
+      limits: { maxEntries: 10, maxBytes: 10_000 },
+    });
+    const bridge = createCliRuntimeSessionStateBridge({
+      credentials: { token: 'token' } as never,
+      session: deferred,
+    });
+    const admissionGate = createDeferred<void>();
+    const admitted: RegisteredSessionStateFieldMutationV1[] = [];
+    const write = bridge.writeHappierField({
+      fieldId: 'runtime.workState',
+      value: {
+        v: 1,
+        backendId: 'codex-app-server',
+        updatedAt: 123,
+        items: [],
+      },
+      reason: 'reconciliation',
+      metadataReason: 'pre-attach-work-state',
+    });
+    const stableMutation: RegisteredSessionStateFieldMutationV1 = {
+      v: 1,
+      sessionId: 'PID-41',
+      mutationId: 'stable-mutation-id',
+      fieldId: 'runtime.workState',
+      deliveryClass: 'durable_required',
+      op: { kind: 'clear' },
+      source: 'runtime',
+      observedAt: 124,
+    };
+    const stableWrite = deferred.enqueueRegisteredSessionStateFieldMutation(stableMutation);
+    const nonPlaceholderMutation: RegisteredSessionStateFieldMutationV1 = {
+      ...stableMutation,
+      sessionId: 'sess_other',
+      mutationId: 'non-placeholder-mutation-id',
+    };
+    const nonPlaceholderWrite = deferred.enqueueRegisteredSessionStateFieldMutation(
+      nonPlaceholderMutation,
+    );
+
+    let settled = false;
+    void write.then(() => { settled = true; });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    const attach = deferred.attach({
+      sessionId: 'sess_real_41',
+      rpcHandlerManager: {
+        registerHandler: vi.fn(),
+        invokeLocal: vi.fn(async () => ({})),
+      },
+      enqueueRegisteredSessionStateFieldMutation: vi.fn(async (mutation) => {
+        admitted.push(mutation);
+        await admissionGate.promise;
+      }),
+    } as unknown as Parameters<DeferredApiSessionClient['attach']>[0]);
+
+    await vi.waitFor(() => {
+      expect(admitted).toHaveLength(1);
+    });
+    expect(settled).toBe(false);
+    expect(admitted[0]).toEqual(expect.objectContaining({
+      sessionId: 'sess_real_41',
+      fieldId: 'runtime.workState',
+      deliveryClass: 'durable_required',
+      source: 'runtime',
+    }));
+    expect(admitted[0]?.mutationId).toEqual(expect.any(String));
+
+    admissionGate.resolve(undefined);
+    await expect(write).resolves.toEqual({ ok: true, version: 0 });
+    await expect(stableWrite).resolves.toBeUndefined();
+    await expect(nonPlaceholderWrite).resolves.toBeUndefined();
+    await expect(attach).resolves.toBeUndefined();
+    expect(admitted[1]).toEqual({
+      ...stableMutation,
+      sessionId: 'sess_real_41',
+    });
+    expect(admitted[2]).toEqual(nonPlaceholderMutation);
+  });
+
+  it('returns typed unavailable when cancellation drops a pre-attach durable-required bridge write', async () => {
+    const deferred = new DeferredApiSessionClient({
+      placeholderSessionId: 'PID-42',
+      limits: { maxEntries: 10, maxBytes: 10_000 },
+    });
+    const bridge = createCliRuntimeSessionStateBridge({
+      credentials: { token: 'token' } as never,
+      session: deferred,
+    });
+    const write = bridge.writeHappierField({
+      fieldId: 'runtime.workState',
+      value: null,
+      reason: 'reconciliation',
+      metadataReason: 'cancelled-pre-attach-work-state',
+    });
+
+    deferred.cancel();
+
+    await expect(write).resolves.toEqual({
+      ok: false,
+      reason: 'durable_delivery_unavailable',
+      fieldId: 'runtime.workState',
+      deliveryClass: 'durable_required',
+    });
+  });
+
+  it('returns typed unavailable when overflow evicts a pre-attach durable-required bridge write', async () => {
+    const deferred = new DeferredApiSessionClient({
+      placeholderSessionId: 'PID-43',
+      limits: { maxEntries: 1, maxBytes: 10_000 },
+    });
+    const bridge = createCliRuntimeSessionStateBridge({
+      credentials: { token: 'token' } as never,
+      session: deferred,
+    });
+    const write = bridge.writeHappierField({
+      fieldId: 'runtime.workState',
+      value: null,
+      reason: 'reconciliation',
+      metadataReason: 'overflowed-pre-attach-work-state',
+    });
+
+    deferred.enqueueSessionEventCommitted({ type: 'newer-buffered-entry' });
+
+    await expect(write).resolves.toEqual({
+      ok: false,
+      reason: 'durable_delivery_unavailable',
+      fieldId: 'runtime.workState',
+      deliveryClass: 'durable_required',
+    });
+  });
+
+  it('returns typed unavailable when the attached target rejects durable-required admission', async () => {
+    const deferred = new DeferredApiSessionClient({
+      placeholderSessionId: 'PID-44',
+      limits: { maxEntries: 10, maxBytes: 10_000 },
+    });
+    const bridge = createCliRuntimeSessionStateBridge({
+      credentials: { token: 'token' } as never,
+      session: deferred,
+    });
+    const write = bridge.writeHappierField({
+      fieldId: 'runtime.workState',
+      value: null,
+      reason: 'reconciliation',
+      metadataReason: 'rejected-pre-attach-work-state',
+    });
+
+    await expect(deferred.attach({
+      sessionId: 'sess_real_44',
+      rpcHandlerManager: {
+        registerHandler: vi.fn(),
+        invokeLocal: vi.fn(async () => ({})),
+      },
+      enqueueRegisteredSessionStateFieldMutation: vi.fn(async () => {
+        throw new Error('durable admission rejected');
+      }),
+      enqueueSessionEventCommitted: vi.fn(async () => ({ persisted: true, delivered: true })),
+    } as unknown as Parameters<DeferredApiSessionClient['attach']>[0])).resolves.toBeUndefined();
+
+    await expect(write).resolves.toEqual({
+      ok: false,
+      reason: 'durable_delivery_unavailable',
+      fieldId: 'runtime.workState',
+      deliveryClass: 'durable_required',
+    });
+  });
+
   it('retains metadata and execution observers before attach without allowing reentrant delivery through the barrier', async () => {
     const deferred = new DeferredApiSessionClient({
       placeholderSessionId: 'PID-1',
@@ -749,7 +1040,7 @@ describe('DeferredApiSessionClient', () => {
       (activeCount) => {
         order.push(`execution:${activeCount}`);
         if (activeCount > 0) {
-          deferred.sendSessionEvent({
+          deferred.enqueueSessionEventCommitted({
             type: 'execution-observer-publication',
           });
         }
@@ -784,7 +1075,7 @@ describe('DeferredApiSessionClient', () => {
           };
         },
       ),
-      sendSessionEvent: vi.fn(() => {
+      enqueueSessionEventCommitted: vi.fn(() => {
         order.push('delivery');
       }),
     } as unknown as Parameters<DeferredApiSessionClient['attach']>[0];
@@ -808,7 +1099,7 @@ describe('DeferredApiSessionClient', () => {
       'prepare:start',
       'metadata',
     ]);
-    expect(real.sendSessionEvent).not.toHaveBeenCalled();
+    expect(real.enqueueSessionEventCommitted).not.toHaveBeenCalled();
 
     preparationGate.resolve(undefined);
     await attach;
@@ -857,9 +1148,9 @@ describe('DeferredApiSessionClient', () => {
         limits: { maxEntries: 10, maxBytes: 10_000 },
       });
       retainConsumer(deferred);
-      deferred.sendSessionEvent({ type: 'ready' });
+      deferred.enqueueSessionEventCommitted({ type: 'ready' });
 
-      const sendSessionEvent = vi.fn();
+      const enqueueSessionEventCommitted = vi.fn();
       const beforeBufferedDrain = vi.fn();
       await expect(
         deferred.attach({
@@ -868,7 +1159,7 @@ describe('DeferredApiSessionClient', () => {
             registerHandler: vi.fn(),
             invokeLocal: vi.fn(async () => ({})),
           },
-          sendSessionEvent,
+          enqueueSessionEventCommitted,
           ...observerMethods(),
         } as unknown as Parameters<DeferredApiSessionClient['attach']>[0], {
           beforeBufferedDrain,
@@ -876,7 +1167,7 @@ describe('DeferredApiSessionClient', () => {
       ).rejects.toThrow();
 
       expect(beforeBufferedDrain).not.toHaveBeenCalled();
-      expect(sendSessionEvent).not.toHaveBeenCalled();
+      expect(enqueueSessionEventCommitted).not.toHaveBeenCalled();
       expect(deferred.sessionId).toBe('PID-1');
     },
   );
@@ -886,16 +1177,16 @@ describe('DeferredApiSessionClient', () => {
       placeholderSessionId: 'PID-1',
       limits: { maxEntries: 10, maxBytes: 10_000 },
     });
-    const sendSessionEvent = vi.fn();
+    const enqueueSessionEventCommitted = vi.fn();
     const real = {
       sessionId: 'sess_1',
       rpcHandlerManager: {
         registerHandler: vi.fn(),
         invokeLocal: vi.fn(async () => ({})),
       },
-      sendSessionEvent,
+      enqueueSessionEventCommitted,
     } as unknown as Parameters<DeferredApiSessionClient['attach']>[0];
-    deferred.sendSessionEvent({ type: 'ready' });
+    deferred.enqueueSessionEventCommitted({ type: 'ready' });
 
     await expect(
       (
@@ -912,7 +1203,7 @@ describe('DeferredApiSessionClient', () => {
       }),
     ).rejects.toThrow('required snapshot refresh failed');
 
-    expect(sendSessionEvent).not.toHaveBeenCalled();
+    expect(enqueueSessionEventCommitted).not.toHaveBeenCalled();
   });
 
   it('resolves updateMetadata promises after attach flush', async () => {
@@ -932,11 +1223,8 @@ describe('DeferredApiSessionClient', () => {
     const real = {
       sessionId: 'sess_1',
       rpcHandlerManager: { registerHandler: vi.fn(), invokeLocal: vi.fn(async () => ({})) },
-      sendSessionEvent: vi.fn(),
-      sendProviderMessage: vi.fn(),
-      sendAgentMessage: vi.fn(),
-      sendAgentMessageCommitted: vi.fn(async () => {}),
-      sendUserTextMessage: vi.fn(),
+      enqueueSessionEventCommitted: vi.fn(async () => ({ persisted: true, delivered: true })),
+      enqueueAgentMessageCommitted: vi.fn(async () => ({ persisted: true, delivered: true })),
       onUserMessage: vi.fn(),
       updateMetadata: vi.fn(),
       updateAgentState: vi.fn(),
@@ -966,9 +1254,9 @@ describe('DeferredApiSessionClient', () => {
       limits: { maxEntries: 2, maxBytes: 10_000 },
     });
 
-    deferred.sendSessionEvent({ id: 1 });
-    deferred.sendSessionEvent({ id: 2 });
-    deferred.sendSessionEvent({ id: 3 });
+    deferred.enqueueSessionEventCommitted({ id: 1 });
+    deferred.enqueueSessionEventCommitted({ id: 2 });
+    deferred.enqueueSessionEventCommitted({ id: 3 });
 
     expect(deferred.getBufferStats()).toEqual(
       expect.objectContaining({
@@ -977,17 +1265,15 @@ describe('DeferredApiSessionClient', () => {
       }),
     );
 
-    const seen: unknown[] = [];
+    const committed: unknown[] = [];
     const real = {
       sessionId: 'sess_1',
       rpcHandlerManager: { registerHandler: vi.fn(), invokeLocal: vi.fn(async () => ({})) },
-      sendSessionEvent: vi.fn((event: unknown) => {
-        seen.push(event);
+      enqueueSessionEventCommitted: vi.fn(async (event: unknown) => {
+        committed.push(event);
+        return { persisted: true, delivered: true };
       }),
-      sendProviderMessage: vi.fn(),
-      sendAgentMessage: vi.fn(),
-      sendAgentMessageCommitted: vi.fn(async () => {}),
-      sendUserTextMessage: vi.fn(),
+      enqueueAgentMessageCommitted: vi.fn(async () => ({ persisted: true, delivered: true })),
       onUserMessage: vi.fn(),
       updateMetadata: vi.fn(),
       updateAgentState: vi.fn(),
@@ -1006,10 +1292,14 @@ describe('DeferredApiSessionClient', () => {
 
     await deferred.attach(real);
 
-    expect(seen.length).toBe(3);
-    expect(seen[0]).toEqual(expect.objectContaining({ type: 'message' }));
-    expect((seen[0] as any).message).toContain('startup-buffer-overflow');
-    expect(seen.slice(1)).toEqual([{ id: 2 }, { id: 3 }]);
+    expect(committed).toEqual([
+      expect.objectContaining({
+        type: 'message',
+        message: expect.stringContaining('startup-buffer-overflow'),
+      }),
+      { id: 2 },
+      { id: 3 },
+    ]);
   });
 
   it('emits a warning session event when buffered entries overflow before attach', async () => {
@@ -1018,20 +1308,18 @@ describe('DeferredApiSessionClient', () => {
       limits: { maxEntries: 1, maxBytes: 10_000 },
     });
 
-    deferred.sendSessionEvent({ id: 1 });
-    deferred.sendSessionEvent({ id: 2 });
+    deferred.enqueueSessionEventCommitted({ id: 1 });
+    deferred.enqueueSessionEventCommitted({ id: 2 });
 
-    const seen: unknown[] = [];
+    const committed: unknown[] = [];
     const real = {
       sessionId: 'sess_1',
       rpcHandlerManager: { registerHandler: vi.fn(), invokeLocal: vi.fn(async () => ({})) },
-      sendSessionEvent: vi.fn((event: unknown) => {
-        seen.push(event);
+      enqueueSessionEventCommitted: vi.fn(async (event: unknown) => {
+        committed.push(event);
+        return { persisted: true, delivered: true };
       }),
-      sendProviderMessage: vi.fn(),
-      sendAgentMessage: vi.fn(),
-      sendAgentMessageCommitted: vi.fn(async () => {}),
-      sendUserTextMessage: vi.fn(),
+      enqueueAgentMessageCommitted: vi.fn(async () => ({ persisted: true, delivered: true })),
       onUserMessage: vi.fn(),
       updateMetadata: vi.fn(),
       updateAgentState: vi.fn(),
@@ -1050,15 +1338,56 @@ describe('DeferredApiSessionClient', () => {
 
     await deferred.attach(real);
 
-    // Warning event first, then the last retained event.
-    expect(seen.length).toBe(2);
-    expect(seen[0]).toEqual(
+    expect(committed).toEqual([
       expect.objectContaining({
         type: 'message',
+        message: expect.stringContaining('startup-buffer-overflow'),
       }),
+      { id: 2 },
+    ]);
+  });
+
+  it('admits a stable warning through committed delivery when a buffered call fails to flush', async () => {
+    const deferred = new DeferredApiSessionClient({
+      placeholderSessionId: 'PID-1',
+      limits: { maxEntries: 10, maxBytes: 10_000 },
+    });
+    deferred.enqueueSessionEventCommitted({ id: 'will-fail' });
+
+    const enqueueSessionEventCommitted = vi.fn(async () => ({
+      persisted: true,
+      delivered: true,
+    })).mockImplementationOnce(() => {
+      throw new Error('flush failed');
+    });
+
+    await deferred.attach({
+      sessionId: 'sess_1',
+      rpcHandlerManager: { registerHandler: vi.fn(), invokeLocal: vi.fn(async () => ({})) },
+      enqueueSessionEventCommitted,
+      enqueueAgentMessageCommitted: vi.fn(async () => ({ persisted: true, delivered: true })),
+      updateMetadata: vi.fn(),
+      updateAgentState: vi.fn(),
+      keepAlive: vi.fn(),
+      getMetadataSnapshot: vi.fn(() => null),
+      waitForMetadataUpdate: vi.fn(async () => false),
+      popPendingMessage: vi.fn(async () => false),
+      peekPendingMessageQueueV2Count: vi.fn(async () => 0),
+      discardPendingMessageQueueV2All: vi.fn(async () => 0),
+      discardCommittedMessageLocalIds: vi.fn(async () => 0),
+      setSessionRuntimeControls: vi.fn(),
+      flush: vi.fn(async () => {}),
+      close: vi.fn(async () => {}),
+    });
+
+    expect(enqueueSessionEventCommitted).toHaveBeenCalledTimes(2);
+    expect(enqueueSessionEventCommitted).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'message',
+        message: expect.stringContaining('startup-buffer-flush-error'),
+      }),
+      undefined,
     );
-    expect((seen[0] as any).message).toContain('startup-buffer-overflow');
-    expect(seen[1]).toEqual({ id: 2 });
   });
 
   it('cancels buffered writes and resolves pending update promises without attaching', async () => {

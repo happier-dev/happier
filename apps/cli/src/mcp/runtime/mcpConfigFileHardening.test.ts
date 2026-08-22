@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { basename, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
@@ -53,18 +53,21 @@ describe('MCP runtime config hardening', () => {
       payload: { hello: 'world' },
     });
 
-    const dir = join(tmpdir(), prefix);
+    const dir = dirname(configPath);
     try {
+      expect(dir).not.toBe(join(tmpdir(), prefix));
       expect(join(dir, basename(configPath))).toBe(configPath);
 
       const name = basename(configPath);
-      expect(name).toMatch(new RegExp(`^${prefix}\\.[0-9a-fA-F-]{36}\\.json$`));
+      expect(name).toMatch(new RegExp(`^${prefix}\\.owned\\.[0-9a-fA-F-]{36}\\.json$`));
 
-      const fileMode = (await stat(configPath)).mode & 0o777;
-      expect(fileMode).toBe(0o600);
+      if (process.platform !== 'win32') {
+        const fileMode = (await stat(configPath)).mode & 0o777;
+        expect(fileMode).toBe(0o600);
 
-      const dirMode = (await stat(dir)).mode & 0o777;
-      expect(dirMode).toBe(0o700);
+        const dirMode = (await stat(dir)).mode & 0o777;
+        expect(dirMode).toBe(0o700);
+      }
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

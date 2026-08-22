@@ -23,6 +23,7 @@ export type FetchTranscriptRawPageParams = Readonly<{
   scope: TranscriptScope;
   sidechainId?: string | null;
   roles?: readonly StoredTranscriptRole[];
+  signal?: AbortSignal;
 }>;
 
 export type FetchTranscriptRawPageResult = Readonly<{
@@ -63,7 +64,15 @@ function defaultFetchTranscriptRawPage(params: FetchTranscriptRawPageParams): Pr
     scope: params.scope,
     ...(params.sidechainId ? { sidechainId: params.sidechainId } : {}),
     ...(params.roles && params.roles.length > 0 ? { roles: params.roles } : {}),
+    ...(params.signal ? { signal: params.signal } : {}),
   });
+}
+
+function throwIfTranscriptReadAborted(signal: AbortSignal | undefined): void {
+  if (!signal?.aborted) return;
+  const error = new Error('Transcript page read was cancelled');
+  error.name = 'AbortError';
+  throw error;
 }
 
 function orderSemanticItems(items: readonly SemanticTranscriptItem[]): readonly SemanticTranscriptItem[] {
@@ -117,7 +126,7 @@ function recordSemanticPageDiagnostics(params: Readonly<{
 export async function fetchTranscriptSemanticPage(params: Readonly<{
   token: string;
   sessionId: string;
-  ctx: Readonly<{ encryptionKey: Uint8Array; encryptionVariant: 'legacy' | 'dataKey' }>;
+  ctx: Readonly<{ encryptionKey: Uint8Array; encryptionVariant: 'legacy' | 'dataKey' }> | null;
   limit: number;
   rawPageLimit: number;
   maxRawRowsToScan: number;
@@ -138,6 +147,7 @@ export async function fetchTranscriptSemanticPage(params: Readonly<{
   maxPayloadChars?: number;
   maxTotalPayloadBytes?: number;
   fetchPage?: FetchTranscriptRawPage;
+  signal?: AbortSignal;
 }>): Promise<FetchTranscriptSemanticPageResult> {
   const limit = Math.max(0, Math.floor(params.limit));
   if (limit === 0) {
@@ -166,6 +176,7 @@ export async function fetchTranscriptSemanticPage(params: Readonly<{
   const sequenceState = createTranscriptHistoryNormalizationSequenceState();
 
   while (items.length < limit && rawRowsScanned < maxRawRowsToScan) {
+    throwIfTranscriptReadAborted(params.signal);
     const page = await fetchPage({
       token: params.token,
       sessionId: params.sessionId,
@@ -176,7 +187,9 @@ export async function fetchTranscriptSemanticPage(params: Readonly<{
       scope: params.scope,
       ...(params.sidechainId ? { sidechainId: params.sidechainId } : {}),
       ...(params.serverRoles && params.serverRoles.length > 0 ? { roles: params.serverRoles } : {}),
+      ...(params.signal ? { signal: params.signal } : {}),
     });
+    throwIfTranscriptReadAborted(params.signal);
     pagesFetched += 1;
 
     nextCursor = params.direction === 'after'

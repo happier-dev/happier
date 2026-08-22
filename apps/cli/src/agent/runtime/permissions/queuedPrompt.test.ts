@@ -47,6 +47,46 @@ describe('combinePermissionModeQueuedPrompts', () => {
     expect(combined.userMessageSeqs).toEqual([5, 9]);
   });
 
+  it('preserves the exact admitted authority when queue-key-compatible prompts batch', () => {
+    const authority = {
+      kind: 'admittedSessionInputV1' as const,
+      admittedPermissionCeiling: 'read-only' as const,
+      sourceAuthority: {
+        kind: 'mediatedExternal' as const,
+        mediatorPluginId: 'example.plugin',
+        sourceRef: 'source-1',
+        sourceRevisionOrEpoch: 'rev-1',
+        admittedPermissionCeiling: 'read-only' as const,
+        remoteApprovalMaxScope: 'request' as const,
+      },
+    };
+    expect(combinePermissionModeQueuedPrompts([
+      { text: 'one', localId: 'a', causalPermissionAuthority: authority },
+      { text: 'two', localId: 'b', causalPermissionAuthority: authority },
+    ] as any)).toMatchObject({ causalPermissionAuthority: authority });
+  });
+
+  it('rejects an invalid batch containing multiple structured prompts instead of discarding later context', () => {
+    expect(() => combinePermissionModeQueuedPrompts([
+      {
+        text: 'first structured prompt',
+        localId: 'structured-1',
+        structuredInput: {
+          v: 1,
+          skillMentions: [{ name: 'first', path: '/skills/first/SKILL.md' }],
+        },
+      },
+      {
+        text: 'second structured prompt',
+        localId: 'structured-2',
+        structuredInput: {
+          v: 1,
+          skillMentions: [{ name: 'second', path: '/skills/second/SKILL.md' }],
+        },
+      },
+    ])).toThrow('Cannot combine multiple structured prompts');
+  });
+
   it('leaves userMessageSeq unset when no prompt in the batch carries one', () => {
     const combined = combinePermissionModeQueuedPrompts([
       { text: 'one', localId: 'a' },

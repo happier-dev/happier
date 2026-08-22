@@ -10,25 +10,38 @@ import {
   type SessionMetadataTupleMutationV1,
 } from '@happier-dev/cli-common/sessionMetadata';
 import {
+  createPlainSessionOwnerMetadataEnvelopeV1,
+  createAccountScopedCryptoMaterialSnapshotV1,
+  convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1,
+  openSessionOwnerMetadataEnvelopeV1,
+  projectSessionMetadataAgentVocabularyWriteCompatibilityV1,
   projectSessionOwnerCompatibilityViewV1,
-  sealSessionOwnerMetadataV1,
+  sealSessionOwnerMetadataEnvelopeV1,
   SESSION_METADATA_LAYOUT_VERSION_V1,
+  SessionOwnerMetadataEnvelopeV1Schema,
   SessionSharedMetadataV1Schema,
   type SessionMetadataInactiveModelIntentExpectationV1,
   type SessionMetadataInactiveModelIntentOwnerPatchV1,
+  type AccountScopedCryptoMaterial,
+  type SessionOwnerMetadataEnvelopeV1,
+  type SessionOwnerMetadataV1,
   type SessionMetadataOwnerPatchV1,
+  type SessionMetadataPublisherPreconditionV1,
   type SessionMetadataTuplePatchV1,
+  type AccountEncryptionCurrentnessResponse,
 } from '@happier-dev/protocol';
 
 import type { AgentState, Metadata } from '@/api/types';
-import type { Credentials } from '@/persistence';
+import type { StoredCredentials } from '@/persistence';
+import { requireAccountEncryptionCredentials } from '@/api/client/encryptionKey';
+import { fetchAccountEncryptionCurrentness } from '@/api/client/connectedServiceCredentialApi';
 import {
   decryptStoredSessionPayload,
   encryptStoredSessionPayload,
   resolveSessionEncryptionContextFromCredentials,
   resolveSessionStoredContentEncryptionMode,
   tryDecryptSessionOwnerMetadata,
-  type SessionEncryptionContext,
+  type SessionStoredContentCryptoContext,
   type SessionStoredContentEncryptionMode,
 } from '@/session/transport/encryption/sessionEncryptionContext';
 import {
@@ -36,6 +49,7 @@ import {
   patchSessionMetadata,
   patchSessionMetadataEnvelopeTuple,
 } from '@/session/transport/http/sessionsHttp';
+import { delay, delayUnrefAbortable } from '@/utils/time';
 import { readSessionMetadataLayoutVersion } from './sessionMetadataLayout';
 
 type MetadataUpdateErrorCode =
@@ -43,6 +57,7 @@ type MetadataUpdateErrorCode =
   | 'unknown_error'
   | 'conflict'
   | 'metadata_privacy_upgrade_required'
+  | 'session_publisher_authority_lost'
   | 'session_active'
   | 'session_not_found';
 
@@ -77,7 +92,7 @@ function resolveLegacyMaxAttempts(value: number | undefined): number {
 function isAmbiguousTupleCommitError(error: unknown): boolean {
   if (!error || typeof error !== 'object') return false;
   const code = (error as { code?: unknown }).code;
-  return code === 'ECONNABORTED' || code === 'ETIMEDOUT';
+  return code === 'ECONNABORTED' || code === 'ECONNRESET' || code === 'ETIMEDOUT';
 }
 
 export type SessionMetadataEnvelopeTupleSnapshot =
@@ -92,6 +107,31 @@ export type SessionMetadataLegacyOwnerSnapshot =
 export type SessionMetadataTupleWriterSnapshot =
   | SessionMetadataLegacyOwnerSnapshot
   | SessionMetadataEnvelopeTupleSnapshot;
+
+export type SessionMetadataMutationCurrentness = Readonly<{
+  signal?: AbortSignal;
+  assertCurrent?: () => void;
+}>;
+
+export function assertSessionMetadataMutationCurrentness(
+  currentness: SessionMetadataMutationCurrentness | undefined,
+): void {
+  currentness?.assertCurrent?.();
+  currentness?.signal?.throwIfAborted();
+}
+
+async function waitForSessionMetadataRetry(params: Readonly<{
+  delayMs: number;
+  currentness: SessionMetadataMutationCurrentness | undefined;
+}>): Promise<void> {
+  assertSessionMetadataMutationCurrentness(params.currentness);
+  if (params.currentness?.signal) {
+    await delayUnrefAbortable(params.delayMs, params.currentness.signal);
+  } else {
+    await delay(params.delayMs);
+  }
+  assertSessionMetadataMutationCurrentness(params.currentness);
+}
 
 export type SessionMetadataEnvelopeTupleMutation =
   SessionMetadataTupleMutationV1<Metadata, AgentState>;
@@ -119,11 +159,93 @@ type LayoutAwareRawSession = Readonly<{
   dataEncryptionKey?: unknown;
 }>;
 
-function readLayout0WriterSnapshot(params: Readonly<{
+function resolveStoredSessionCryptoContext(params: Readonly<{
+  credentials: StoredCredentials;
   rawSession: LayoutAwareRawSession;
   mode: SessionStoredContentEncryptionMode;
-  ctx: SessionEncryptionContext;
-}>): SessionMetadataLegacyOwnerSnapshot {
+}>): SessionStoredContentCryptoContext {
+  if (params.mode === 'plain') return { mode: 'plain', ctx: null };
+  const context = resolveSessionEncryptionContextFromCredentials(
+    params.credentials,
+    params.rawSession,
+  );
+  if (!context) {
+    throw createMetadataUpdateError(
+      'Account encryption material is unavailable',
+      'metadata_privacy_upgrade_required',
+    );
+  }
+  return { mode: 'e2ee', ctx: context };
+}
+
+function resolveAccountEncryptionMaterial(
+  credentials: StoredCredentials,
+): AccountScopedCryptoMaterial {
+  const encryption = requireAccountEncryptionCredentials(credentials).encryption;
+  return encryption.type === 'legacy'
+    ? { type: 'legacy', secret: encryption.secret }
+    : { type: 'dataKey', machineKey: encryption.machineKey };
+}
+
+function resolveOwnerMigrationCurrentness(params: Readonly<{
+  credentials: StoredCredentials;
+  accountEncryptionCurrentness: AccountEncryptionCurrentnessResponse;
+}>) {
+  if (params.accountEncryptionCurrentness.mode === 'plain') {
+    return {
+      expectedAccountEncryptionMode: 'plain' as const,
+      expectedAccountContentPublicKeyFingerprint: null,
+    };
+  }
+  const encryption =
+    requireAccountEncryptionCredentials(params.credentials).encryption;
+  const snapshot = createAccountScopedCryptoMaterialSnapshotV1({
+    accountEncryptionMode: 'e2ee',
+    material: resolveAccountEncryptionMaterial(params.credentials),
+    ...(encryption.type === 'dataKey'
+      ? { dataKeyPublicKey: encryption.publicKey }
+      : {}),
+  });
+  if (
+    params.accountEncryptionCurrentness.contentKeyFingerprint === null
+    || convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1(
+      snapshot.contentPublicKeyFingerprint,
+    )
+      !== params.accountEncryptionCurrentness.contentKeyFingerprint
+  ) {
+    throw createMetadataUpdateError(
+      'Account encryption material does not match current Account state',
+      'metadata_privacy_upgrade_required',
+    );
+  }
+  return {
+    expectedAccountEncryptionMode: 'e2ee' as const,
+    expectedAccountContentPublicKeyFingerprint:
+      snapshot.contentPublicKeyFingerprint,
+  };
+}
+
+function encodeSessionOwnerMetadataEnvelope(params: Readonly<{
+  credentials: StoredCredentials;
+  accountEncryptionMode: AccountEncryptionCurrentnessResponse['mode'];
+  ownerMetadata: SessionOwnerMetadataV1;
+}>): SessionOwnerMetadataEnvelopeV1 {
+  if (params.accountEncryptionMode === 'plain') {
+    return createPlainSessionOwnerMetadataEnvelopeV1(
+      params.ownerMetadata,
+    );
+  }
+  return sealSessionOwnerMetadataEnvelopeV1({
+    material: resolveAccountEncryptionMaterial(params.credentials),
+    ownerMetadata: params.ownerMetadata,
+    randomBytes: (length) => nodeRandomBytes(length),
+  });
+}
+
+function readLayout0WriterSnapshot(params: Readonly<{
+  rawSession: LayoutAwareRawSession;
+}> & SessionStoredContentCryptoContext): SessionMetadataLegacyOwnerSnapshot {
+  const cryptoContext: SessionStoredContentCryptoContext = params;
   if (
     params.rawSession.metadataLayoutVersion !== undefined
     && params.rawSession.metadataLayoutVersion !== 0
@@ -165,15 +287,13 @@ function readLayout0WriterSnapshot(params: Readonly<{
     );
   }
   const metadata = asRecord(decryptStoredSessionPayload({
-    mode: params.mode,
-    ctx: params.ctx,
+    ...cryptoContext,
     value: metadataCiphertext,
   }));
   const agentState = agentStateCiphertext === null
     ? null
     : asRecord(decryptStoredSessionPayload({
-        mode: params.mode,
-        ctx: params.ctx,
+        ...cryptoContext,
         value: agentStateCiphertext,
       }));
   if (!metadata || (agentStateCiphertext !== null && !agentState)) {
@@ -199,11 +319,11 @@ function readLayout0WriterSnapshot(params: Readonly<{
 }
 
 function readLayout1TupleSnapshot(params: Readonly<{
-  credentials: Credentials;
+  credentials: StoredCredentials;
+  accountEncryptionCurrentness: AccountEncryptionCurrentnessResponse;
   rawSession: LayoutAwareRawSession;
-  mode: SessionStoredContentEncryptionMode;
-  ctx: SessionEncryptionContext;
-}>): SessionMetadataEnvelopeTupleSnapshot {
+}> & SessionStoredContentCryptoContext): SessionMetadataEnvelopeTupleSnapshot {
+  const cryptoContext: SessionStoredContentCryptoContext = params;
   if (
     readSessionMetadataLayoutVersion(params.rawSession.metadataLayoutVersion)
     !== SESSION_METADATA_LAYOUT_VERSION_V1
@@ -223,22 +343,22 @@ function readLayout1TupleSnapshot(params: Readonly<{
   }
 
   const sharedPlaintext = decryptStoredSessionPayload({
-    mode: params.mode,
-    ctx: params.ctx,
+    ...cryptoContext,
     value: String(params.rawSession.metadata ?? '').trim(),
   });
   const sharedMetadata = SessionSharedMetadataV1Schema.safeParse(sharedPlaintext);
   const ownerMetadata = tryDecryptSessionOwnerMetadata({
     credentials: params.credentials,
+    accountEncryptionMode: params.accountEncryptionCurrentness.mode,
     rawSession: params.rawSession,
   });
-  const ownerMetadataCiphertext = typeof params.rawSession.ownerMetadata === 'string'
-    ? params.rawSession.ownerMetadata
-    : '';
+  const ownerMetadataEnvelope = SessionOwnerMetadataEnvelopeV1Schema.safeParse(
+    params.rawSession.ownerMetadata,
+  );
   if (
     !sharedMetadata.success
     || !ownerMetadata
-    || ownerMetadataCiphertext.trim().length === 0
+    || !ownerMetadataEnvelope.success
   ) {
     throw createMetadataUpdateError(
       'Owner session metadata is unavailable',
@@ -252,8 +372,7 @@ function readLayout1TupleSnapshot(params: Readonly<{
     : '';
   if (rawAgentState) {
     const decryptedAgentState = asRecord(decryptStoredSessionPayload({
-      mode: params.mode,
-      ctx: params.ctx,
+      ...cryptoContext,
       value: rawAgentState,
     }));
     if (!decryptedAgentState) {
@@ -279,7 +398,7 @@ function readLayout1TupleSnapshot(params: Readonly<{
     metadataVersion,
     sharedMetadataCiphertext:
       String(params.rawSession.metadata ?? '').trim(),
-    ownerMetadataCiphertext,
+    ownerMetadataEnvelope: ownerMetadataEnvelope.data,
     agentStateVersion,
     agentStateCiphertext: rawAgentState || null,
     value: {
@@ -295,47 +414,55 @@ function readLayout1TupleSnapshot(params: Readonly<{
 }
 
 export function readSessionMetadataEnvelopeTupleSnapshot(params: Readonly<{
-  credentials: Credentials;
+  credentials: StoredCredentials;
+  accountEncryptionCurrentness: AccountEncryptionCurrentnessResponse;
   rawSession: LayoutAwareRawSession;
 }>): SessionMetadataEnvelopeTupleSnapshot {
   const mode = resolveSessionStoredContentEncryptionMode(params.rawSession);
-  const ctx = resolveSessionEncryptionContextFromCredentials(
-    params.credentials,
-    params.rawSession,
-  );
-  return readLayout1TupleSnapshot({
+  const cryptoContext = resolveStoredSessionCryptoContext({
     credentials: params.credentials,
     rawSession: params.rawSession,
     mode,
-    ctx,
+  });
+  return readLayout1TupleSnapshot({
+    credentials: params.credentials,
+    accountEncryptionCurrentness: params.accountEncryptionCurrentness,
+    rawSession: params.rawSession,
+    ...cryptoContext,
   });
 }
 
 export function readSessionMetadataTupleWriterSnapshot(params: Readonly<{
-  credentials: Credentials;
+  credentials: StoredCredentials;
+  accountEncryptionCurrentness: AccountEncryptionCurrentnessResponse;
   rawSession: LayoutAwareRawSession;
 }>): SessionMetadataTupleWriterSnapshot {
   const mode = resolveSessionStoredContentEncryptionMode(params.rawSession);
-  const ctx = resolveSessionEncryptionContextFromCredentials(
-    params.credentials,
-    params.rawSession,
-  );
   const layoutVersion = readSessionMetadataLayoutVersion(
     params.rawSession.metadataLayoutVersion,
   );
   if (layoutVersion === 0) {
-    return readLayout0WriterSnapshot({
-      rawSession: params.rawSession,
-      mode,
-      ctx,
-    });
-  }
-  if (layoutVersion === SESSION_METADATA_LAYOUT_VERSION_V1) {
-    return readLayout1TupleSnapshot({
+    const cryptoContext = resolveStoredSessionCryptoContext({
       credentials: params.credentials,
       rawSession: params.rawSession,
       mode,
-      ctx,
+    });
+    return readLayout0WriterSnapshot({
+      rawSession: params.rawSession,
+      ...cryptoContext,
+    });
+  }
+  if (layoutVersion === SESSION_METADATA_LAYOUT_VERSION_V1) {
+    const cryptoContext = resolveStoredSessionCryptoContext({
+      credentials: params.credentials,
+      rawSession: params.rawSession,
+      mode,
+    });
+    return readLayout1TupleSnapshot({
+      credentials: params.credentials,
+      accountEncryptionCurrentness: params.accountEncryptionCurrentness,
+      rawSession: params.rawSession,
+      ...cryptoContext,
     });
   }
   throw createMetadataUpdateError(
@@ -346,28 +473,31 @@ export function readSessionMetadataTupleWriterSnapshot(params: Readonly<{
 
 export async function prepareSessionMetadataTuplePatchForTransaction(
   params: Readonly<{
-    credentials: Credentials;
+    credentials: StoredCredentials;
+    accountEncryptionCurrentness: AccountEncryptionCurrentnessResponse;
     rawSession: LayoutAwareRawSession;
     updater: (
       metadata: Record<string, unknown>,
     ) => Record<string, unknown> | Promise<Record<string, unknown>>;
   }>,
 ): Promise<SessionMetadataOwnerPatchV1> {
-  const mode = resolveSessionStoredContentEncryptionMode(params.rawSession);
-  const ctx = resolveSessionEncryptionContextFromCredentials(
-    params.credentials,
-    params.rawSession,
-  );
-  const current = toSharedTupleSnapshot(readSessionMetadataTupleWriterSnapshot({
+  const current = readSessionMetadataTupleWriterSnapshot({
     credentials: params.credentials,
+    accountEncryptionCurrentness: params.accountEncryptionCurrentness,
     rawSession: params.rawSession,
-  }));
+  });
   if (current.mode === 'legacy_owner') {
     throw createMetadataUpdateError(
       'External Session metadata is not eligible for tuple conversion',
       'metadata_privacy_upgrade_required',
     );
   }
+  const mode = resolveSessionStoredContentEncryptionMode(params.rawSession);
+  const cryptoContext = resolveStoredSessionCryptoContext({
+    credentials: params.credentials,
+    rawSession: params.rawSession,
+    mode,
+  });
   const patch = await prepareSessionMetadataTuplePatchV1<Metadata, AgentState>({
     current,
     mutation: {
@@ -378,23 +508,14 @@ export async function prepareSessionMetadataTuplePatchForTransaction(
     crypto: {
       encryptPayload: async (payload) =>
         encryptStoredSessionPayload({
-          mode,
-          ctx,
+          ...cryptoContext,
           payload,
         }),
-      sealOwnerMetadata: (ownerMetadata) =>
-        sealSessionOwnerMetadataV1({
-          material: params.credentials.encryption.type === 'legacy'
-            ? {
-                type: 'legacy',
-                secret: params.credentials.encryption.secret,
-              }
-            : {
-                type: 'dataKey',
-                machineKey: params.credentials.encryption.machineKey,
-              },
+      encodeOwnerMetadata: (ownerMetadata) =>
+        encodeSessionOwnerMetadataEnvelope({
+          credentials: params.credentials,
+          accountEncryptionMode: params.accountEncryptionCurrentness.mode,
           ownerMetadata,
-          randomBytes: (length) => nodeRandomBytes(length),
         }),
     },
   });
@@ -416,16 +537,16 @@ export async function prepareSessionMetadataTuplePatchForTransaction(
 async function updateLegacyMetadataWithHttpRetry(params: Readonly<{
   token: string;
   sessionId: string;
-  mode: SessionStoredContentEncryptionMode;
-  ctx: SessionEncryptionContext;
   request: SessionMetadataLegacyOwnerMutationRequestV1<
     Metadata,
     AgentState
   >;
   sessionExpectation?:
     SessionMetadataInactiveModelIntentExpectationV1;
+  currentness?: SessionMetadataMutationCurrentness;
   maxAttempts: number;
-}>): Promise<SessionMetadataLegacyOwnerSnapshot> {
+}> & SessionStoredContentCryptoContext): Promise<SessionMetadataLegacyOwnerSnapshot> {
+  const cryptoContext: SessionStoredContentCryptoContext = params;
   if (params.request.kind !== 'metadata') {
     throw createMetadataUpdateError(
       'Legacy Session Agent-state mutation requires its socket owner',
@@ -440,11 +561,16 @@ async function updateLegacyMetadataWithHttpRetry(params: Readonly<{
     >,
     attempt: number,
   ): Promise<SessionMetadataLegacyOwnerSnapshot> => {
+    assertSessionMetadataMutationCurrentness(params.currentness);
+    const wireMetadata =
+      projectSessionMetadataAgentVocabularyWriteCompatibilityV1(
+        request.updatedMetadata,
+      );
     const ciphertext = encryptStoredSessionPayload({
-      mode: params.mode,
-      ctx: params.ctx,
-      payload: request.updatedMetadata,
+      ...cryptoContext,
+      payload: wireMetadata,
     });
+    assertSessionMetadataMutationCurrentness(params.currentness);
     const result = await patchSessionMetadata({
       token: params.token,
       sessionId: params.sessionId,
@@ -463,6 +589,7 @@ async function updateLegacyMetadataWithHttpRetry(params: Readonly<{
         },
       };
     }
+    assertSessionMetadataMutationCurrentness(params.currentness);
     if (result.error === 'session_active') {
       throw createMetadataUpdateError(
         'Session became active before its model intent could be recorded',
@@ -479,8 +606,7 @@ async function updateLegacyMetadataWithHttpRetry(params: Readonly<{
     const currentMetadata = currentCiphertext === null
       ? null
       : asRecord(decryptStoredSessionPayload({
-          mode: params.mode,
-          ctx: params.ctx,
+          ...cryptoContext,
           value: currentCiphertext,
         }));
     if (currentCiphertext === null || !currentMetadata) {
@@ -498,8 +624,9 @@ async function updateLegacyMetadataWithHttpRetry(params: Readonly<{
         metadata: currentMetadata as Metadata,
       },
     };
-    await new Promise((resolve) => {
-      setTimeout(resolve, Math.min(50 * attempt, 250));
+    await waitForSessionMetadataRetry({
+      delayMs: Math.min(50 * attempt, 250),
+      currentness: params.currentness,
     });
     const reapplied = await updateSessionMetadataTupleWithRetry<
       Metadata,
@@ -511,7 +638,7 @@ async function updateLegacyMetadataWithHttpRetry(params: Readonly<{
         encryptPayload: async () => {
           throw new Error('legacy metadata retry must not build a tuple');
         },
-        sealOwnerMetadata: () => {
+        encodeOwnerMetadata: () => {
           throw new Error('legacy metadata retry must not seal owner metadata');
         },
       },
@@ -543,12 +670,12 @@ async function updateLegacyMetadataWithHttpRetry(params: Readonly<{
 export async function updateSessionMetadataEnvelopeTupleWithRetry(
   params: Readonly<{
     token: string;
-    credentials: Credentials;
+    credentials: StoredCredentials;
+    accountEncryptionCurrentness: AccountEncryptionCurrentnessResponse;
     sessionId: string;
-    mode: SessionStoredContentEncryptionMode;
-    ctx: SessionEncryptionContext;
     initialSnapshot: SessionMetadataTupleWriterSnapshot;
     mutation: SessionMetadataEnvelopeTupleMutation;
+    publisherPrecondition?: SessionMetadataPublisherPreconditionV1;
     sessionExpectation?:
       SessionMetadataInactiveModelIntentExpectationV1;
     mutateLegacy?: (
@@ -557,9 +684,12 @@ export async function updateSessionMetadataEnvelopeTupleWithRetry(
         AgentState
       >,
     ) => Promise<SessionMetadataLegacyOwnerSnapshot>;
+    currentness?: SessionMetadataMutationCurrentness;
     maxAttempts?: number;
-  }>,
+  }> & SessionStoredContentCryptoContext,
 ): Promise<SessionMetadataTupleWriterSnapshot> {
+  const cryptoContext: SessionStoredContentCryptoContext = params;
+  let accountEncryptionCurrentness = params.accountEncryptionCurrentness;
   const updated = await updateSessionMetadataTupleWithRetry<
     Metadata,
     AgentState
@@ -569,29 +699,33 @@ export async function updateSessionMetadataEnvelopeTupleWithRetry(
     crypto: {
       encryptPayload: async (payload) =>
         encryptStoredSessionPayload({
-          mode: params.mode,
-          ctx: params.ctx,
+          ...cryptoContext,
           payload,
         }),
-      sealOwnerMetadata: (ownerMetadata) =>
-        sealSessionOwnerMetadataV1({
-          material: params.credentials.encryption.type === 'legacy'
-            ? {
-                type: 'legacy',
-                secret: params.credentials.encryption.secret,
-              }
-            : {
-                type: 'dataKey',
-                machineKey: params.credentials.encryption.machineKey,
-              },
+      encodeOwnerMetadata: (ownerMetadata) =>
+        encodeSessionOwnerMetadataEnvelope({
+          credentials: params.credentials,
+          accountEncryptionMode: accountEncryptionCurrentness.mode,
           ownerMetadata,
-          randomBytes: (length) => nodeRandomBytes(length),
         }),
     },
     commit: async (patch) => {
+      assertSessionMetadataMutationCurrentness(params.currentness);
       let transportPatch:
         | SessionMetadataTuplePatchV1
         | SessionMetadataInactiveModelIntentOwnerPatchV1 = patch;
+      if (params.publisherPrecondition) {
+        if (patch.mode !== 'owner' || params.sessionExpectation) {
+          throw createMetadataUpdateError(
+            'Current-publisher metadata authority applies only to active owner tuple writes',
+            'metadata_privacy_upgrade_required',
+          );
+        }
+        transportPatch = {
+          ...patch,
+          publisherPrecondition: params.publisherPrecondition,
+        } satisfies SessionMetadataOwnerPatchV1;
+      }
       if (params.sessionExpectation) {
         if (patch.mode !== 'owner') {
           throw createMetadataUpdateError(
@@ -629,54 +763,83 @@ export async function updateSessionMetadataEnvelopeTupleWithRetry(
           'session_active',
         );
       }
+      if (result.error === 'session_publisher_authority_lost') {
+        throw createMetadataUpdateError(
+          'Session publisher authority was superseded before metadata commit',
+          'session_publisher_authority_lost',
+        );
+      }
       return { result: 'conflict' as const };
     },
     refreshAfterConflict: async () => {
+      assertSessionMetadataMutationCurrentness(params.currentness);
       if (params.credentials.token !== params.token) {
         throw createMetadataUpdateError(
           'Current Account credentials do not match the Session owner',
           'metadata_privacy_upgrade_required',
         );
       }
-      const authoritativeRaw = await fetchSessionByIdCompat({
-        token: params.token,
-        sessionId: params.sessionId,
-        reason: 'waitForMetadataUpdate',
-      });
+      const [authoritativeRaw, refreshedAccountCurrentness] =
+        await Promise.all([
+          fetchSessionByIdCompat({
+            token: params.token,
+            sessionId: params.sessionId,
+            reason: 'waitForMetadataUpdate',
+          }),
+          fetchAccountEncryptionCurrentness({ token: params.token }),
+        ]);
+      assertSessionMetadataMutationCurrentness(params.currentness);
       if (!authoritativeRaw) {
         throw createMetadataUpdateError(
           'Session not found',
           'session_not_found',
         );
       }
+      accountEncryptionCurrentness = refreshedAccountCurrentness;
       const authoritativeMode =
         resolveSessionStoredContentEncryptionMode(authoritativeRaw);
-      const authoritativeCtx =
-        resolveSessionEncryptionContextFromCredentials(
-          params.credentials,
-          authoritativeRaw,
+      const authoritativeContext = resolveStoredSessionCryptoContext({
+        credentials: params.credentials,
+        rawSession: authoritativeRaw,
+        mode: authoritativeMode,
+      });
+      const contextChanged = authoritativeMode !== params.mode
+        || (
+          authoritativeMode === 'e2ee'
+          && params.mode === 'e2ee'
+          && authoritativeContext.mode === 'e2ee'
+          && authoritativeContext.ctx.encryptionVariant
+            !== params.ctx.encryptionVariant
         );
-      if (
-        authoritativeMode !== params.mode
-        || authoritativeCtx.encryptionVariant
-          !== params.ctx.encryptionVariant
-      ) {
+      if (contextChanged) {
         throw createMetadataUpdateError(
           'Session encryption context changed during tuple mutation',
           'metadata_privacy_upgrade_required',
         );
       }
-      return toSharedTupleSnapshot(readSessionMetadataTupleWriterSnapshot({
-        credentials: params.credentials,
-        rawSession: authoritativeRaw,
-      }));
+      const authoritativeSnapshot = toSharedTupleSnapshot(
+        readSessionMetadataTupleWriterSnapshot({
+          credentials: params.credentials,
+          accountEncryptionCurrentness,
+          rawSession: authoritativeRaw,
+        }),
+      );
+      return authoritativeSnapshot;
     },
     waitBeforeRetry: async ({ attempt }) => {
-      await new Promise((resolve) => {
-        setTimeout(resolve, Math.min(50 * attempt, 250));
+      await waitForSessionMetadataRetry({
+        delayMs: Math.min(50 * attempt, 250),
+        currentness: params.currentness,
       });
     },
     isAmbiguousCommitError: isAmbiguousTupleCommitError,
+    resolveOwnerMigrationCurrentness: () =>
+      resolveOwnerMigrationCurrentness({
+        credentials: params.credentials,
+        accountEncryptionCurrentness,
+      }),
+    assertCurrent: () =>
+      assertSessionMetadataMutationCurrentness(params.currentness),
     mutateLegacy: params.mutateLegacy,
     maxAttempts: params.maxAttempts,
   });
@@ -700,7 +863,8 @@ export async function updateSessionMetadataEnvelopeTupleWithRetry(
 
 export async function updateSessionMetadataWithRetry(params: Readonly<{
   token: string;
-  credentials: Credentials;
+  credentials: StoredCredentials;
+  accountEncryptionCurrentness?: AccountEncryptionCurrentnessResponse;
   sessionId: string;
   rawSession: LayoutAwareRawSession;
   updater: (
@@ -708,24 +872,33 @@ export async function updateSessionMetadataWithRetry(params: Readonly<{
   ) => Record<string, unknown> | Promise<Record<string, unknown>>;
   sessionExpectation?:
     SessionMetadataInactiveModelIntentExpectationV1;
+  currentness?: SessionMetadataMutationCurrentness;
   maxAttempts?: number;
 }>): Promise<{ version: number; metadata: Record<string, unknown> }> {
+  assertSessionMetadataMutationCurrentness(params.currentness);
+  const accountEncryptionCurrentness = params.accountEncryptionCurrentness
+    ?? await fetchAccountEncryptionCurrentness({ token: params.token });
+  assertSessionMetadataMutationCurrentness(params.currentness);
   const mode = resolveSessionStoredContentEncryptionMode(params.rawSession);
-  const ctx = resolveSessionEncryptionContextFromCredentials(
-    params.credentials,
-    params.rawSession,
-  );
-  const initialSnapshot = readSessionMetadataTupleWriterSnapshot({
+  const cryptoContext = resolveStoredSessionCryptoContext({
     credentials: params.credentials,
     rawSession: params.rawSession,
+    mode,
   });
+  const initialSnapshot = readSessionMetadataTupleWriterSnapshot({
+    credentials: params.credentials,
+    accountEncryptionCurrentness,
+    rawSession: params.rawSession,
+  });
+  assertSessionMetadataMutationCurrentness(params.currentness);
   const updated = await updateSessionMetadataEnvelopeTupleWithRetry({
     token: params.token,
     credentials: params.credentials,
+    accountEncryptionCurrentness,
     sessionId: params.sessionId,
-    mode,
-    ctx,
+    ...cryptoContext,
     initialSnapshot,
+    currentness: params.currentness,
     sessionExpectation: params.sessionExpectation,
     mutation: {
       kind: 'metadata',
@@ -736,10 +909,10 @@ export async function updateSessionMetadataWithRetry(params: Readonly<{
       await updateLegacyMetadataWithHttpRetry({
         token: params.token,
         sessionId: params.sessionId,
-        mode,
-        ctx,
+        ...cryptoContext,
         request,
         sessionExpectation: params.sessionExpectation,
+        currentness: params.currentness,
         maxAttempts: resolveLegacyMaxAttempts(params.maxAttempts),
       }),
     maxAttempts: params.maxAttempts,

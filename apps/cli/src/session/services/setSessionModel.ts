@@ -1,4 +1,4 @@
-import type { Credentials } from '@/persistence';
+import type { StoredCredentials } from '@/persistence';
 import {
   buildBackendTargetKeyV2,
   ProviderBoundModelRefSchema,
@@ -22,13 +22,15 @@ import { updateSessionMetadataWithRetry } from '@/session/metadata/updateSession
 import { callSessionRpc } from '@/session/transport/rpc/sessionRpc';
 import { tryDecryptSessionOwnerMetadataView } from '@/session/transport/encryption/sessionEncryptionContext';
 
-import { resolveSessionTransportContext } from './resolveSessionTransportContext';
+import {
+  resolveSessionTransportContext,
+  type ResolveSessionTransportContextResult,
+} from './resolveSessionTransportContext';
 
-type SetSessionModelLookupFailure = Readonly<{
-  ok: false;
-  code: 'session_not_found' | 'session_id_ambiguous' | 'unsupported';
-  candidates?: string[];
-}>;
+type SetSessionModelLookupFailure = Readonly<Extract<
+  ResolveSessionTransportContextResult,
+  Readonly<{ ok: false }>
+>>;
 
 type SetSessionModelActiveResult = SessionModelTransitionResultV1 & Readonly<{
   sessionId: string;
@@ -50,13 +52,13 @@ export type SetSessionModelResult =
   | SetSessionModelInactiveResult;
 
 type ResolvedSessionTransportContext = Extract<
-  Awaited<ReturnType<typeof resolveSessionTransportContext>>,
+  ResolveSessionTransportContextResult,
   Readonly<{ ok: true }>
 >;
 
 function resolveRequestedSelection(params: Readonly<{
   sessionTarget: ResolvedSessionTransportContext;
-  credentials: Credentials;
+  credentials: StoredCredentials;
   modelId: string;
   hasExplicitProviderConnectionId: boolean;
   explicitProviderConnectionId: ProviderConnectionId | null;
@@ -67,6 +69,7 @@ function resolveRequestedSelection(params: Readonly<{
   const metadata = tryDecryptSessionOwnerMetadataView({
     credentials: params.credentials,
     rawSession: params.sessionTarget.rawSession,
+    accountEncryptionMode: params.sessionTarget.accountEncryptionCurrentness.mode,
   });
   if (!metadata) return null;
   const backendTarget = resolveBackendTargetFromSessionMetadata(metadata);
@@ -101,7 +104,7 @@ function resolveRequestedSelection(params: Readonly<{
 }
 
 async function invokeActiveModelTransition(params: Readonly<{
-  credentials: Credentials;
+  credentials: StoredCredentials;
   sessionTarget: ResolvedSessionTransportContext;
   selection: ProviderBoundModelRef;
 }>): Promise<SetSessionModelActiveResult> {
@@ -109,9 +112,7 @@ async function invokeActiveModelTransition(params: Readonly<{
     const result = SessionModelTransitionResultV1Schema.parse(
       await callSessionRpc({
         token: params.credentials.token,
-        sessionId: params.sessionTarget.sessionId,
-        mode: params.sessionTarget.mode,
-        ctx: params.sessionTarget.ctx,
+        ...params.sessionTarget,
         method:
           `${params.sessionTarget.sessionId}:${SESSION_RPC_METHODS.SESSION_MODEL_TRANSITION}`,
         request: { v: 1, selection: params.selection },
@@ -134,7 +135,7 @@ async function invokeActiveModelTransition(params: Readonly<{
 }
 
 export async function setSessionModel(params: Readonly<{
-  credentials: Credentials;
+  credentials: StoredCredentials;
   idOrPrefix: string;
   modelId: string;
   providerConnectionId?: ProviderConnectionId | string | null;
@@ -188,6 +189,7 @@ export async function setSessionModel(params: Readonly<{
         credentials: params.credentials,
         sessionId: sessionTarget.sessionId,
         rawSession: sessionTarget.rawSession,
+        accountEncryptionCurrentness: sessionTarget.accountEncryptionCurrentness,
         updater: candidate.update,
         sessionExpectation: { kind: 'inactive_model_intent' },
       });

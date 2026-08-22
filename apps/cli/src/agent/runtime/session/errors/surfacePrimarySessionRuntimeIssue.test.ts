@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { RuntimeEventV1Schema } from '@happier-dev/protocol';
+import { AgentSessionRuntimeEventV1Schema } from '@happier-dev/protocol';
 
 import {
   classifyPrimarySessionRuntimeIssue,
@@ -66,8 +66,7 @@ describe('surfacePrimarySessionRuntimeIssue', () => {
     expect(issue.code).toBe(expectedSource);
   });
 
-  it('publishes a typed turn-failed runtime event without legacy projection by default', async () => {
-    const sendAgentMessage = vi.fn();
+  it('publishes a typed canonical turn-failed runtime event without a generic projection', async () => {
     const publishRuntimeEvent = vi.fn();
     const recordIssue = vi.fn();
 
@@ -80,7 +79,6 @@ describe('surfacePrimarySessionRuntimeIssue', () => {
       agentTurnId: 'provider-turn-1',
       session: {
         sessionId: 'happy-session-1',
-        sendAgentMessage,
       },
       publishRuntimeEvent,
       recordIssue,
@@ -89,16 +87,32 @@ describe('surfacePrimarySessionRuntimeIssue', () => {
     expect(issue).not.toBeNull();
     if (issue === null) return;
     expect(issue.source).toBe('auth_error');
-    expect(sendAgentMessage).not.toHaveBeenCalled();
-    const event = RuntimeEventV1Schema.parse(publishRuntimeEvent.mock.calls[0]?.[0]);
+    const event = AgentSessionRuntimeEventV1Schema.parse({
+      ...publishRuntimeEvent.mock.calls[0]?.[0],
+      sequence: 1,
+      sessionId: 'happy-session-1',
+      emittedAtMs: 300,
+    });
     expect(event).toEqual(expect.objectContaining({
       kind: 'turn-failed',
       sessionId: 'happy-session-1',
       emittedAtMs: 300,
       turnId: 'session-turn-1',
       agentTurnId: 'provider-turn-1',
-      issue,
+      diagnostic: {
+        code: issue.code,
+        severity: 'error',
+        ...(issue.sanitizedPreview ? { message: issue.sanitizedPreview } : {}),
+        details: {
+          v: 1,
+          source: issue.source,
+          occurredAt: 300,
+          agentId: 'claude',
+          agentTurnId: 'provider-turn-1',
+        },
+      },
     }));
+    if (event.kind !== 'turn-failed') throw new Error('Expected a canonical turn-failed runtime event');
     expect(event.turnId).not.toBe(event.agentTurnId);
     expect(recordIssue).toHaveBeenCalledWith({
       provider: 'claude',
@@ -108,23 +122,22 @@ describe('surfacePrimarySessionRuntimeIssue', () => {
     });
   });
 
-  it('emits ACP turn_failed markers only when explicitly requested as ACP compatibility', async () => {
-    const sendAgentMessage = vi.fn();
+  it('publishes ACP turn_failed markers through committed transcript custody when requested', async () => {
+    const publishTranscriptAgentMessageCommitted = vi.fn();
 
     const issue = await surfacePrimarySessionRuntimeIssue({
       provider: 'acp',
       cause: 'usage_limit',
       error: 'quota exceeded',
       occurredAt: 350,
-      session: { sendAgentMessage },
-      emitAcpLifecycleMarker: true,
+      publishTranscriptAgentMessageCommitted,
     });
 
     expect(issue).not.toBeNull();
-    expect(sendAgentMessage).toHaveBeenCalledWith('acp', expect.objectContaining({
+    expect(publishTranscriptAgentMessageCommitted).toHaveBeenCalledWith('acp', expect.objectContaining({
       type: 'turn_failed',
       id: expect.any(String),
-    }));
+    }), expect.objectContaining({ localId: expect.stringContaining(':turn_failed') }));
   });
 
   it('ignores stale primary-turn projection compatibility input', async () => {
@@ -153,8 +166,7 @@ describe('surfacePrimarySessionRuntimeIssue', () => {
     }));
   });
 
-  it('publishes a typed turn-cancelled runtime event without recording a runtime issue', async () => {
-    const sendAgentMessage = vi.fn();
+  it('publishes a typed canonical turn-cancelled runtime event without recording a runtime issue', async () => {
     const publishRuntimeEvent = vi.fn();
     const recordIssue = vi.fn();
 
@@ -167,46 +179,49 @@ describe('surfacePrimarySessionRuntimeIssue', () => {
       occurredAt: 400,
       session: {
         sessionId: 'happy-session-1',
-        sendAgentMessage,
       },
       publishRuntimeEvent,
       recordIssue,
     });
 
     expect(issue).toBeNull();
-    expect(sendAgentMessage).not.toHaveBeenCalled();
-    expect(RuntimeEventV1Schema.parse(publishRuntimeEvent.mock.calls[0]?.[0])).toEqual(expect.objectContaining({
+    expect(AgentSessionRuntimeEventV1Schema.parse({
+      ...publishRuntimeEvent.mock.calls[0]?.[0],
+      sequence: 1,
+      sessionId: 'happy-session-1',
+      emittedAtMs: 400,
+    })).toEqual(expect.objectContaining({
       kind: 'turn-cancelled',
       sessionId: 'happy-session-1',
       emittedAtMs: 400,
       turnId: 'session-turn-cancelled-1',
       agentTurnId: 'provider-turn-cancelled-1',
-      reason: 'cancelled',
+      cause: 'providerCancelled',
     }));
     expect(recordIssue).not.toHaveBeenCalled();
   });
 
-  it('keeps cancelled ACP lifecycle markers behind explicit ACP compatibility', async () => {
-    const sendAgentMessage = vi.fn();
+  it('publishes cancelled ACP lifecycle markers through committed transcript custody', async () => {
+    const publishTranscriptAgentMessageCommitted = vi.fn();
 
     await expect(surfacePrimarySessionRuntimeIssue({
       provider: 'pi',
       cause: 'cancelled',
       error: 'user cancelled',
       occurredAt: 425,
-      session: { sendAgentMessage },
-      emitAcpLifecycleMarker: true,
+      publishTranscriptAgentMessageCommitted,
     })).resolves.toBeNull();
 
-    expect(sendAgentMessage).toHaveBeenCalledWith('pi', expect.objectContaining({
+    expect(publishTranscriptAgentMessageCommitted).toHaveBeenCalledWith('pi', expect.objectContaining({
       type: 'turn_cancelled',
-    }));
+    }), expect.objectContaining({ localId: expect.stringContaining(':turn_cancelled') }));
   });
 
   it.each([
     ['status_error', '401 Unauthorized: login required', 'auth_error'],
     ['status_error', 'usage limit reached: upgrade your plan', 'usage_limit'],
     ['status_error', 'permission denied by policy', 'permission_blocked'],
+    ['session_error', 'Token refresh failed: 401', 'agent_session_error'],
   ] as const)('maps observable %s text to %s source', (cause, error, source) => {
     const issue = classifyPrimarySessionRuntimeIssue({
       provider: 'acp',

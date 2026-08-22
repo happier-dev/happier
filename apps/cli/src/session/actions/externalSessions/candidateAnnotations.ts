@@ -6,12 +6,13 @@ import {
     type ExternalSessionsSource,
 } from '@happier-dev/protocol';
 
-import type { Credentials } from '@/persistence';
+import type { StoredCredentials } from '@/persistence';
 import {
     fetchSessionsPage,
     type RawSessionListRow,
 } from '@/session/transport/http/sessionsHttp';
 import { tryDecryptSessionOwnerMetadataView } from '@/session/transport/encryption/sessionEncryptionContext';
+import { fetchAccountEncryptionCurrentness } from '@/api/client/connectedServiceCredentialApi';
 import { resolveExternalSessionCandidateIdentityKey } from './candidateQuery';
 
 const DEFAULT_ANNOTATION_SCAN_MAX_PAGES = 10;
@@ -22,6 +23,16 @@ type CandidateAnnotation = Readonly<{
     linkedSessionId: string;
     imported?: true;
     materializedThrough?: number;
+}>;
+
+type CandidateAnnotationResult = Readonly<{
+    candidates: readonly ExternalSessionCandidateV1[];
+    /**
+     * The bounded Session scan stopped before it proved every served candidate has
+     * no link/import projection. Positive annotations remain authoritative; an
+     * omitted annotation is not a negative fact in this case.
+     */
+    annotationsIncomplete: boolean;
 }>;
 
 function resolveAnnotationScanMaxPages(explicitMaxPages?: number): number {
@@ -122,7 +133,7 @@ function annotateFromRow(params: Readonly<{
 
 export async function annotateExternalSessionCandidates(
     params: Readonly<{
-        credentials: Credentials;
+        credentials: StoredCredentials;
         machineId: string;
         agentId: ExternalSessionsAgentId;
         source: ExternalSessionsSource;
@@ -136,18 +147,29 @@ export async function annotateExternalSessionCandidates(
     dependencies: Readonly<{
         fetchPage: typeof fetchSessionsPage;
         decryptMetadata: typeof tryDecryptSessionOwnerMetadataView;
+        getAccountEncryptionCurrentness?: typeof fetchAccountEncryptionCurrentness;
     }> = {
         fetchPage: fetchSessionsPage,
         decryptMetadata: tryDecryptSessionOwnerMetadataView,
+        getAccountEncryptionCurrentness: fetchAccountEncryptionCurrentness,
     },
-): Promise<readonly ExternalSessionCandidateV1[]> {
-    if (params.candidates.length === 0) return params.candidates;
+): Promise<CandidateAnnotationResult> {
+    if (params.candidates.length === 0) {
+        return { candidates: params.candidates, annotationsIncomplete: false };
+    }
+    const accountEncryptionCurrentness = await (
+        dependencies.getAccountEncryptionCurrentness
+        ?? fetchAccountEncryptionCurrentness
+    )({
+        token: params.credentials.token,
+    });
     const candidateKeys = new Set(params.candidates.map((candidate) => (
         candidate.candidateKey ?? resolveExternalSessionCandidateIdentityKey(candidate)
     )));
     const annotations = new Map<string, CandidateAnnotation>();
     const expectedSourceKey = params.sourceKeyOwner.sourceKey;
     const maxPages = resolveAnnotationScanMaxPages(params.maxPages);
+    let annotationsIncomplete = false;
 
     for (const archivedOnly of [false, true]) {
         let cursor: string | undefined;
@@ -162,6 +184,7 @@ export async function annotateExternalSessionCandidates(
                 const metadata = dependencies.decryptMetadata({
                     credentials: params.credentials,
                     rawSession: row,
+                    accountEncryptionMode: accountEncryptionCurrentness.mode,
                 });
                 if (!metadata) continue;
                 annotateFromRow({
@@ -175,16 +198,25 @@ export async function annotateExternalSessionCandidates(
                     annotations,
                 });
             }
-            if (!page.hasNext || !page.nextCursor) break;
+            if (!page.hasNext) break;
+            if (!page.nextCursor || pageIndex === maxPages - 1) {
+                annotationsIncomplete = true;
+                break;
+            }
             cursor = page.nextCursor;
         }
     }
 
-    if (annotations.size === 0) return params.candidates;
-    return params.candidates.map((candidate) => {
-        const annotation = annotations.get(
-            candidate.candidateKey ?? resolveExternalSessionCandidateIdentityKey(candidate),
-        );
-        return annotation ? { ...candidate, ...annotation } : candidate;
-    });
+    if (annotations.size === 0) {
+        return { candidates: params.candidates, annotationsIncomplete };
+    }
+    return {
+        candidates: params.candidates.map((candidate) => {
+            const annotation = annotations.get(
+                candidate.candidateKey ?? resolveExternalSessionCandidateIdentityKey(candidate),
+            );
+            return annotation ? { ...candidate, ...annotation } : candidate;
+        }),
+        annotationsIncomplete,
+    };
 }

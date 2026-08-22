@@ -83,6 +83,36 @@ export class MessageQueue2<Mode, Message = string> {
     this.push(message, mode);
   }
 
+  /**
+   * Keep this prompt as its own delivery while retaining all already-admitted
+   * peers. Structured input cannot be batched because each entry carries its
+   * own dispatch-time context, but admitting it must not erase prior input.
+   */
+  pushIsolate(message: Message, mode: Mode): void {
+    if (this.closed) {
+      throw new Error('Cannot push to closed queue');
+    }
+
+    const modeHash = this.modeHasher(mode);
+
+    this.queue.push({
+      message,
+      mode,
+      modeHash,
+      isolate: true,
+    });
+
+    if (this.onMessageHandler) {
+      this.onMessageHandler(message, mode);
+    }
+
+    if (this.waiter) {
+      const waiter = this.waiter;
+      this.waiter = null;
+      waiter(true);
+    }
+  }
+
   pushIsolateAndClear(message: Message, mode: Mode): void {
     if (this.closed) {
       throw new Error('Cannot push to closed queue');

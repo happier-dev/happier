@@ -13,6 +13,11 @@ import {
 
 const axiosPostMock = vi.mocked(axios.post);
 
+const plainEventStorageParams = {
+    resolveAccountId: () => 'account-1',
+    resolveAccountEncryptionMode: async () => 'plain' as const,
+};
+
 vi.mock('axios', () => ({
     default: {
         post: vi.fn(),
@@ -29,6 +34,7 @@ describe('createCliReviewCommentActionExecutorFromCredentials', () => {
     it('signs host-derived agent review-comment principal headers with the machine installation identity', async () => {
         const installationKeyPair = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(7));
         const executor = createCliReviewCommentActionExecutorFromCredentials({
+            ...plainEventStorageParams,
             credentials: {
                 token: 'token-1',
                 encryption: {
@@ -99,8 +105,6 @@ describe('createCliReviewCommentActionExecutorFromCredentials', () => {
             projectId: 'project-1',
             workspaceId: 'workspace-1',
             immutableGenerationId: 'generation-1',
-            packageDigest: `sha256:${'a'.repeat(64)}`,
-            manifestDigest: `sha256:${'b'.repeat(64)}`,
         };
 
         await executor('reviews.comments.create', requestBody, {
@@ -125,7 +129,11 @@ describe('createCliReviewCommentActionExecutorFromCredentials', () => {
             nonce: expect.any(String),
             signatureBase64Url: expect.any(String),
         }));
+        const postedBody = axiosPostMock.mock.calls[0]?.[1];
         expect(decoded.proof!.bodySha256Base64Url).toBe(createHash('sha256')
+            .update(stringifyReviewCommentPrincipalCanonicalJsonV1(postedBody))
+            .digest('base64url'));
+        expect(decoded.currentIntent?.effectBodySha256Base64Url).toBe(createHash('sha256')
             .update(stringifyReviewCommentPrincipalCanonicalJsonV1(requestBody))
             .digest('base64url'));
 
@@ -155,6 +163,7 @@ describe('createCliReviewCommentActionExecutorFromCredentials', () => {
         const installationKeyPair = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(8));
         const events: string[] = [];
         const executor = createCliReviewCommentActionExecutorFromCredentials({
+            ...plainEventStorageParams,
             credentials: {
                 token: 'token-1',
                 encryption: { type: 'legacy', secret: new Uint8Array([1]) },
@@ -199,8 +208,6 @@ describe('createCliReviewCommentActionExecutorFromCredentials', () => {
                     projectId: 'project-1',
                     workspaceId: 'workspace-1',
                     immutableGenerationId: 'generation-1',
-                    packageDigest: `sha256:${'c'.repeat(64)}`,
-                    manifestDigest: `sha256:${'d'.repeat(64)}`,
                 },
             },
         })).rejects.toThrow('execution_run_host_action_stale');
@@ -219,6 +226,7 @@ describe('createCliReviewCommentActionExecutorFromCredentials', () => {
         });
         const signingKeyPair = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(9));
         const executor = createCliReviewCommentActionExecutorFromCredentials({
+            ...plainEventStorageParams,
             credentials: { token: 'token-1', encryption: { type: 'legacy', secret: new Uint8Array([1]) } },
             resolvePrincipalSigningContext: async () => ({
                 machineId: 'machine-1',
@@ -241,5 +249,85 @@ describe('createCliReviewCommentActionExecutorFromCredentials', () => {
         })).rejects.toMatchObject({ code: 'review_comment_direct_write_permission_required' });
 
         expect(axiosPostMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('seals the verified user mutation binding into the single plain POST', async () => {
+        axiosPostMock.mockResolvedValueOnce({
+            status: 200,
+            data: {
+                comment: {
+                    v: 1,
+                    id: 'comment-1',
+                    accountId: 'account-1',
+                    projectId: 'project-1',
+                    anchor: { kind: 'file', filePath: 'src/a.ts' },
+                    snapshot: { kind: 'too_large', filePath: 'src/a.ts', sizeBytes: 2, capBytes: 1, capturedAt: 1 },
+                    body: 'body',
+                    bodyVersion: 1,
+                    edits: [],
+                    author: { kind: 'user', userId: 'account-1' },
+                    state: 'proposed',
+                    flags: {},
+                    dispositions: {},
+                    threadId: 'comment-1',
+                    transitions: [{
+                        transitionId: 'transition-1',
+                        toState: 'proposed',
+                        transitionedAt: 1,
+                        transitionedBy: { kind: 'user', userId: 'account-1' },
+                        serverRevision: 1,
+                    }],
+                    createdAt: 1,
+                    updatedAt: 1,
+                    serverRevision: 1,
+                },
+            },
+        });
+        const executor = createCliReviewCommentActionExecutorFromCredentials({
+            ...plainEventStorageParams,
+            credentials: { token: 'token-1', encryption: null },
+        });
+
+        await executor('reviews.comments.create', {
+            projectId: 'project-1',
+            anchor: { kind: 'file', filePath: 'src/a.ts' },
+            snapshot: { kind: 'too_large', filePath: 'src/a.ts', sizeBytes: 2, capBytes: 1, capturedAt: 1 },
+            body: 'body',
+            clientMutationId: 'mutation-1',
+        });
+
+        expect(axiosPostMock).toHaveBeenCalledTimes(1);
+        const body = axiosPostMock.mock.calls[0]?.[1] as Record<string, unknown>;
+        expect(body.eventEnvelope).toEqual({
+            t: 'plain',
+            v: expect.objectContaining({
+                v: 1,
+                requestBinding: expect.objectContaining({
+                    accountId: 'account-1',
+                    projectId: 'project-1',
+                    actionId: 'reviews.comments.create',
+                    actor: { kind: 'user', userId: 'account-1' },
+                    target: { kind: 'create' },
+                    expectedCurrentness: { kind: 'create' },
+                }),
+            }),
+        });
+    });
+
+    it('fails token-only E2EE before the mutation POST', async () => {
+        const executor = createCliReviewCommentActionExecutorFromCredentials({
+            credentials: { token: 'token-1', encryption: null },
+            resolveAccountId: () => 'account-1',
+            resolveAccountEncryptionMode: async () => 'e2ee',
+        });
+
+        await expect(executor('reviews.comments.create', {
+            projectId: 'project-1',
+            anchor: { kind: 'file', filePath: 'src/a.ts' },
+            snapshot: { kind: 'too_large', filePath: 'src/a.ts', sizeBytes: 2, capBytes: 1, capturedAt: 1 },
+            body: 'body',
+            clientMutationId: 'mutation-1',
+        })).rejects.toThrow('review_comment_encryption_material_unavailable');
+        expect(axiosPostMock).not.toHaveBeenCalled();
     });
 });

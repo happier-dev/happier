@@ -7,17 +7,20 @@ import { readMcpServersSettingsFromAccountSettings } from '@/mcp/servers/readMcp
 import { McpServersSettingsV1Schema } from '@happier-dev/protocol';
 
 import type { McpCommandDeps } from '../deps';
-import { createInvalidArgumentsError } from './errors';
+import {
+  createInvalidArgumentsError,
+  reportMcpServersAccountSettingsMutation,
+} from './errors';
 
 export async function cmdMcpServersBind(
   argv: string[],
   deps: McpCommandDeps,
   opts: Readonly<{ json: boolean }>,
 ): Promise<void> {
-  const credentials = await deps.readCredentials();
+  const credentials = await deps.readStoredCredentials();
   if (!credentials) {
     if (opts.json) {
-      printJsonEnvelope({ ok: false, kind: 'mcp_servers_bind', error: { code: 'not_authenticated' } }, { exitCode: 1 });
+      await printJsonEnvelope({ ok: false, kind: 'mcp_servers_bind', error: { code: 'not_authenticated' } }, { exitCode: 1 });
       return;
     }
     console.error(chalk.red('Error:'), 'Not authenticated. Run "happier auth login" first.');
@@ -34,33 +37,46 @@ export async function cmdMcpServersBind(
 
   const bindingId = deps.randomUUID();
   const now = deps.nowMs();
-
-  await deps.updateAccountSettingsV2WithRetry({
+  const context = await deps.bootstrapAccountSettingsContext({
     credentials,
-    mutate: (settings: Readonly<Record<string, unknown>>) => {
-      const current = readMcpServersSettingsFromAccountSettings(settings);
-      const server = current.servers.find((s) => s.id === serverRef || s.name === serverRef) ?? null;
-      if (!server) throw createInvalidArgumentsError(`MCP server not found: ${serverRef}`);
-      const next = McpServersSettingsV1Schema.parse({
-        ...current,
-        bindings: [
-          ...current.bindings,
-          {
-            id: bindingId,
-            serverId: server.id,
-            enabled: true,
-            target: { t: 'allMachines' },
-            createdAt: now,
-            updatedAt: now,
-          },
-        ],
-      });
-      return { ...settings, mcpServersSettingsV1: next };
-    },
+    mode: 'blocking',
+    refresh: 'force',
+  });
+  const current = readMcpServersSettingsFromAccountSettings(
+    context.rawSettings ?? context.settings,
+  );
+  const server = current.servers.find((candidate) => (
+    candidate.id === serverRef || candidate.name === serverRef
+  )) ?? null;
+  if (!server) throw createInvalidArgumentsError(`MCP server not found: ${serverRef}`);
+  const next = McpServersSettingsV1Schema.parse({
+    ...current,
+    bindings: [
+      ...current.bindings,
+      {
+        id: bindingId,
+        serverId: server.id,
+        enabled: true,
+        target: { t: 'allMachines' },
+        createdAt: now,
+        updatedAt: now,
+      },
+    ],
   });
 
+  const mutation = await deps.updateAccountSettingsV2WithRetry({
+    credentials,
+    mutation: {
+      operations: [{ op: 'set', key: 'mcpServersSettingsV1', value: next }],
+    },
+  });
+  if (!await reportMcpServersAccountSettingsMutation(mutation, {
+    kind: 'mcp_servers_bind',
+    json: opts.json,
+  })) return;
+
   if (opts.json) {
-    printJsonEnvelope({ ok: true, kind: 'mcp_servers_bind', data: { createdBindingId: bindingId } });
+    await printJsonEnvelope({ ok: true, kind: 'mcp_servers_bind', data: { createdBindingId: bindingId } });
     return;
   }
 

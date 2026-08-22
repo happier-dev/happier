@@ -13,7 +13,7 @@ import {
 } from '@happier-dev/agents';
 
 import type { ApiSessionClient } from '@/api/session/sessionClient';
-import type { Credentials } from '@/persistence';
+import type { StoredCredentials } from '@/persistence';
 import { createCliSessionStateMetadataUpdatePort } from './metadataUpdatePort';
 import { mergeHostSessionStateCapabilities } from './sessionStateMetadataCapabilities';
 import { enqueueDurableRegisteredSessionStateFieldWrite } from './registeredFieldDurability';
@@ -32,7 +32,7 @@ export type CliRuntimeSessionStateBridge = Readonly<{
 }>;
 
 export function createCliRuntimeSessionStateBridge(params: Readonly<{
-  credentials: Credentials;
+  credentials: StoredCredentials;
   session: Pick<ApiSessionClient, 'sessionId'> & Partial<Pick<ApiSessionClient, 'enqueueRegisteredSessionStateFieldMutation'>>;
   facet?: SessionStateFacet | null;
   capabilities?: SessionStateCapabilitiesV1 | null;

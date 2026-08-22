@@ -8,11 +8,6 @@ import type {
 } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';
 import type { ResolvedAgentRuntimeContribution } from '@/plugins/projection/registry/types';
 
-const getExecutionRunBackendDescriptorMock = vi.fn();
-
-vi.mock('@/agent/executionRuns/registry/executionRunBackendRegistry', () => ({
-    getExecutionRunBackendDescriptor: (...args: unknown[]) => getExecutionRunBackendDescriptorMock(...args),
-}));
 
 function createStubRuntime(): ExecutionRunHostRuntime {
     let handler: ExecutionRunHostRuntimeMessageHandler | null = null;
@@ -50,12 +45,10 @@ function createBuiltInBackendContribution(backendId: string): ResolvedAgentRunti
 describe('createCliRuntimeCore execution-run descriptor fallback governance', () => {
     beforeEach(() => {
         vi.resetModules();
-        getExecutionRunBackendDescriptorMock.mockReset();
     });
 
     it('fails closed for non-review execution runs when no bound runtimeCore exist even if terminalRuntime launch is available', async () => {
         const descriptorFactory = vi.fn(() => createStubRuntime());
-        getExecutionRunBackendDescriptorMock.mockReturnValue({ factory: descriptorFactory });
 
         const launch = vi.fn(async () => createStubRuntime());
 

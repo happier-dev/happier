@@ -1,39 +1,53 @@
 import { describe, expect, it } from 'vitest';
 
-import type { ACPMessageData } from '@/api/session/sessionMessageTypes';
+import {
+  AgentSessionRuntimeEventV1Schema,
+  type AgentSessionRuntimeEventV1,
+} from '@happier-dev/protocol';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
 import { createAcpRuntime } from '../createAcpRuntime';
 import { createFakeAcpRuntimeBackend } from '@/testkit/backends/acpRuntimeBackend';
 import { createApprovedPermissionHandler } from '@/testkit/backends/permissionHandler';
+import { createBasicSessionClientWithOverrides } from '@/testkit/backends/sessionFixtures';
+
+function createRuntimeWithUsageEvents(): Readonly<{
+  backend: ReturnType<typeof createFakeAcpRuntimeBackend>;
+  runtime: ReturnType<typeof createAcpRuntime>;
+  usageEvents: AgentSessionRuntimeEventV1[];
+}> {
+  const backend = createFakeAcpRuntimeBackend();
+  const runtime = createAcpRuntime({
+    provider: 'opencode',
+    directory: '/tmp',
+    session: createBasicSessionClientWithOverrides(),
+    messageBuffer: new MessageBuffer(),
+    mcpServers: {},
+    permissionHandler: createApprovedPermissionHandler(),
+    onThinkingChange: () => {},
+    ensureBackend: async () => backend,
+  });
+  const usageEvents: AgentSessionRuntimeEventV1[] = [];
+  runtime.subscribeRuntimeEvents((message) => {
+    const event = AgentSessionRuntimeEventV1Schema.parse(message);
+    if (event.kind === 'usage-observed') usageEvents.push(event);
+  });
+  return { backend, runtime, usageEvents };
+}
+
+function readUsageObservation(
+  event: AgentSessionRuntimeEventV1 | undefined,
+): Extract<AgentSessionRuntimeEventV1, { kind: 'usage-observed' }> {
+  if (!event || event.kind !== 'usage-observed') {
+    throw new Error(`expected a usage-observed event, received ${event?.kind ?? 'none'}`);
+  }
+  return event;
+}
 
 describe('createAcpRuntime (token-count forwarding)', () => {
-  it('forwards token-count agent messages as token_count session messages', async () => {
-    const backend = createFakeAcpRuntimeBackend();
-    const sent: ACPMessageData[] = [];
-    const session = {
-      keepAlive: () => {},
-      sendAgentMessage: (_provider: any, body: any) => {
-        sent.push(body);
-      },
-      sendAgentMessageCommitted: async () => {},
-      sendUserTextMessageCommitted: async () => {},
-      fetchRecentTranscriptTextItemsForAcpImport: async () => [],
-      updateMetadata: () => {},
-    };
-
-    const runtime = createAcpRuntime({
-      provider: 'opencode',
-      directory: '/tmp',
-      session: session as any,
-      messageBuffer: new MessageBuffer(),
-      mcpServers: {},
-      permissionHandler: createApprovedPermissionHandler(),
-      onThinkingChange: () => {},
-      ensureBackend: async () => backend,
-    });
+  it('normalizes token-count agent messages into canonical usage observations', async () => {
+    const { backend, runtime, usageEvents } = createRuntimeWithUsageEvents();
 
     await runtime.sendTurnPrompt('session setup');
-
     backend.emit({
       type: 'token-count',
       key: 'turn-1',
@@ -44,139 +58,140 @@ describe('createAcpRuntime (token-count forwarding)', () => {
       scope: 'turn_delta',
       context_used_tokens: 5,
       context_window_tokens: 100,
-    } as any);
+    } as never);
 
-    expect(sent.some((b) => b.type === 'token_count')).toBe(true);
-    const token = sent.find((b) => b.type === 'token_count') as any;
-    expect(token.tokens).toEqual({ total: 5, input: 2, output: 3 });
-    expect(token.key).toBe('turn-1');
-    expect(token.model).toBe('model-a');
-    expect(token.cost).toEqual({ total: 1.25 });
-    expect(token.source).toBe('acp-prompt-usage');
-    expect(token.scope).toBe('turn_delta');
-    expect(token.context_used_tokens).toBe(5);
-    expect(token.context_window_tokens).toBe(100);
+    expect(usageEvents).toEqual([
+      expect.objectContaining({
+        kind: 'usage-observed',
+        source: 'acp-prompt-usage',
+        scope: 'turn_delta',
+        modelId: 'model-a',
+        tokens: {
+          input: 2,
+          output: 3,
+          reasoning: 0,
+          cacheRead: 0,
+          cacheWrite: 0,
+          total: 5,
+        },
+      }),
+    ]);
+    // Cost and context are carried by both the canonical schema and the usage
+    // consumer (nativeAgentSession -> usage ingest). A token-only observation
+    // silently drops user-visible spend and context-window reporting.
+    expect(readUsageObservation(usageEvents[0]).cost).toEqual({
+      reportedUsd: 0,
+      estimatedUsd: 1.25,
+      currency: 'USD',
+    });
+    expect(readUsageObservation(usageEvents[0]).context).toEqual({
+      v: 1,
+      modelId: 'model-a',
+      usedTokens: 5,
+      windowTokens: 100,
+      totalProcessedTokens: null,
+      baselineTokens: null,
+      isAutoCompactEnabled: null,
+      categories: null,
+      observedAtMs: expect.any(Number),
+      source: 'provider_turn',
+    });
   });
 
-  it('sanitizes tokens and cost payloads before forwarding', async () => {
-    const backend = createFakeAcpRuntimeBackend();
-    const sent: ACPMessageData[] = [];
-    const session = {
-      keepAlive: () => {},
-      sendAgentMessage: (_provider: any, body: any) => {
-        sent.push(body);
-      },
-      sendAgentMessageCommitted: async () => {},
-      sendUserTextMessageCommitted: async () => {},
-      fetchRecentTranscriptTextItemsForAcpImport: async () => [],
-      updateMetadata: () => {},
-    };
-
-    const runtime = createAcpRuntime({
-      provider: 'opencode',
-      directory: '/tmp',
-      session: session as any,
-      messageBuffer: new MessageBuffer(),
-      mcpServers: {},
-      permissionHandler: createApprovedPermissionHandler(),
-      onThinkingChange: () => {},
-      ensureBackend: async () => backend,
-    });
+  it('preserves a provider-supplied context snapshot instead of re-deriving one', async () => {
+    const { backend, runtime, usageEvents } = createRuntimeWithUsageEvents();
+    const contextSnapshot = {
+      v: 1,
+      modelId: 'model-a',
+      usedTokens: 7,
+      windowTokens: 200,
+      totalProcessedTokens: 41,
+      baselineTokens: 12,
+      isAutoCompactEnabled: true,
+      categories: [{ key: 'system', label: 'System prompt', tokens: 3 }],
+      observedAtMs: 1_700_000_000_000,
+      source: 'provider_live',
+    } as const;
 
     await runtime.sendTurnPrompt('session setup');
+    backend.emit({
+      type: 'token-count',
+      model: 'model-a',
+      tokens: { total: 5, input: 2, output: 3 },
+      contextSnapshot,
+    } as never);
 
+    expect(readUsageObservation(usageEvents[0]).context).toEqual(contextSnapshot);
+  });
+
+  it('keeps the canonical token shape when legacy input contains invalid and extra values', async () => {
+    const { backend, runtime, usageEvents } = createRuntimeWithUsageEvents();
+
+    await runtime.sendTurnPrompt('session setup');
     backend.emit({
       type: 'token-count',
       key: '  turn-1  ',
       model: ' model-a ',
       tokens: { total: 'nope', input: 2, extra: 'x' },
       cost: { total: 'bad', component: 0.1, nested: { leak: 999 }, __proto__: 1 },
-    } as any);
+    } as never);
 
-    const token = sent.find((b) => b.type === 'token_count') as any;
-    expect(token).toBeTruthy();
-    expect(token.key).toBe('turn-1');
-    expect(token.model).toBe('model-a');
-    expect(token.tokens).toEqual({ total: 2, input: 2 });
-    expect(token.cost).toEqual({ total: 0.1, component: 0.1 });
-    expect(Object.getPrototypeOf(token.cost)).toBeNull();
-    expect((token.cost?.nested ?? null)).toBeNull();
+    expect(usageEvents).toEqual([
+      expect.objectContaining({
+        modelId: 'model-a',
+        tokens: {
+          input: 2,
+          output: 0,
+          reasoning: 0,
+          cacheRead: 0,
+          cacheWrite: 0,
+          total: 2,
+        },
+      }),
+    ]);
+    // Numeric cost components survive as the canonical breakdown; nested
+    // non-numeric payloads and prototype-pollution keys do not.
+    expect(readUsageObservation(usageEvents[0]).cost).toEqual({
+      reportedUsd: 0,
+      estimatedUsd: 0.1,
+      currency: 'USD',
+      breakdown: { component: 0.1 },
+    });
+    expect(JSON.stringify(usageEvents[0])).not.toContain('nested');
+    expect(JSON.stringify(usageEvents[0])).not.toContain('leak');
+    expect(JSON.stringify(usageEvents[0])).not.toContain('__proto__');
   });
 
-  it('does not forward token-count messages when tokens are missing', async () => {
-    const backend = createFakeAcpRuntimeBackend();
-    const sent: ACPMessageData[] = [];
-    const session = {
-      keepAlive: () => {},
-      sendAgentMessage: (_provider: any, body: any) => {
-        sent.push(body);
-      },
-      sendAgentMessageCommitted: async () => {},
-      sendUserTextMessageCommitted: async () => {},
-      fetchRecentTranscriptTextItemsForAcpImport: async () => [],
-      updateMetadata: () => {},
-    };
-
-    const runtime = createAcpRuntime({
-      provider: 'opencode',
-      directory: '/tmp',
-      session: session as any,
-      messageBuffer: new MessageBuffer(),
-      mcpServers: {},
-      permissionHandler: createApprovedPermissionHandler(),
-      onThinkingChange: () => {},
-      ensureBackend: async () => backend,
-    });
+  it('does not publish a usage observation when token-count data is missing', async () => {
+    const { backend, runtime, usageEvents } = createRuntimeWithUsageEvents();
 
     await runtime.sendTurnPrompt('session setup');
+    backend.emit({ type: 'token-count', foo: 'bar' } as never);
 
-    backend.emit({ type: 'token-count', foo: 'bar' } as any);
-
-    expect(sent.some((b) => b.type === 'token_count')).toBe(false);
+    expect(usageEvents).toEqual([]);
   });
 
-  it('clamps token-count token maps to a bounded keyset', async () => {
-    const backend = createFakeAcpRuntimeBackend();
-    const sent: ACPMessageData[] = [];
-    const session = {
-      keepAlive: () => {},
-      sendAgentMessage: (_provider: any, body: any) => {
-        sent.push(body);
-      },
-      sendAgentMessageCommitted: async () => {},
-      sendUserTextMessageCommitted: async () => {},
-      fetchRecentTranscriptTextItemsForAcpImport: async () => [],
-      updateMetadata: () => {},
-    };
-
-    const runtime = createAcpRuntime({
-      provider: 'opencode',
-      directory: '/tmp',
-      session: session as any,
-      messageBuffer: new MessageBuffer(),
-      mcpServers: {},
-      permissionHandler: createApprovedPermissionHandler(),
-      onThinkingChange: () => {},
-      ensureBackend: async () => backend,
-    });
-
-    await runtime.sendTurnPrompt('session setup');
-
+  it('maps only canonical token categories from oversized legacy token maps', async () => {
+    const { backend, runtime, usageEvents } = createRuntimeWithUsageEvents();
     const tokens: Record<string, number> = { input: 1, output: 2 };
-    for (let i = 0; i < 100; i++) {
-      tokens[`k${i}`] = i;
+    for (let index = 0; index < 100; index += 1) {
+      tokens[`k${index}`] = index;
     }
 
-    backend.emit({
-      type: 'token-count',
-      tokens,
-    } as any);
+    await runtime.sendTurnPrompt('session setup');
+    backend.emit({ type: 'token-count', tokens } as never);
 
-    const token = sent.find((b) => b.type === 'token_count') as any;
-    expect(token).toBeTruthy();
-    expect(Object.keys(token.tokens).length).toBeLessThanOrEqual(32);
-    expect(token.tokens.total).toBeGreaterThan(0);
-    expect(token.tokens.input).toBe(1);
-    expect(token.tokens.output).toBe(2);
+    expect(usageEvents).toEqual([
+      expect.objectContaining({
+        tokens: {
+          input: 1,
+          output: 2,
+          reasoning: 0,
+          cacheRead: 0,
+          cacheWrite: 0,
+          total: 3,
+        },
+      }),
+    ]);
   });
 });

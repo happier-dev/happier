@@ -5,7 +5,7 @@ import { cmdMcpServersDetect } from './detect';
 
 function createDeps(overrides?: Partial<McpCommandDeps>): McpCommandDeps {
   return {
-    readCredentials: vi.fn(async () => null),
+    readStoredCredentials: vi.fn(async () => null),
     bootstrapAccountSettingsContext: vi.fn(async () => ({}) as any),
     updateAccountSettingsV2WithRetry: vi.fn(async () => ({}) as any),
     ensureMachineIdForCredentials: vi.fn(async () => ({ machineId: 'machine-1' })),

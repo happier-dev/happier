@@ -27,6 +27,10 @@ export type BlockingApprovalCoordinator = Readonly<{
     artifactId: string;
     request: BlockingApprovalRequest;
   }>) => void;
+  subscribeApprovalChanges: (listener: (change: Readonly<{
+    artifactId: string;
+    request: BlockingApprovalRequest;
+  }>) => void) => Readonly<{ dispose(): void }>;
   resolveBlockingDecision: (args: Readonly<{
     artifactId: string;
     request: ApprovalRequestV1;
@@ -105,6 +109,10 @@ function normalizePollIntervalMs(raw: unknown): number {
 export function createBlockingApprovalCoordinator(): BlockingApprovalCoordinator {
   const waitersByArtifactId = new Map<string, Set<Waiter>>();
   const detachedWaiterCountByArtifactId = new Map<string, number>();
+  const approvalChangeListeners = new Set<(change: Readonly<{
+    artifactId: string;
+    request: BlockingApprovalRequest;
+  }>) => void>();
 
   const removeWaiter = (artifactId: string, waiter: Waiter): void => {
     const waiters = waitersByArtifactId.get(artifactId);
@@ -195,6 +203,14 @@ export function createBlockingApprovalCoordinator(): BlockingApprovalCoordinator
     notifyApprovalUpdated: ({ artifactId: rawArtifactId, request }) => {
       const artifactId = normalizeId(rawArtifactId);
       if (!artifactId) return;
+      const change = Object.freeze({ artifactId, request });
+      for (const listener of [...approvalChangeListeners]) {
+        try {
+          listener(change);
+        } catch {
+          // Queue delivery listeners are isolated; their owner records diagnostics.
+        }
+      }
       const decision = readDurableDecision(request);
       if (!decision) return;
 
@@ -205,6 +221,17 @@ export function createBlockingApprovalCoordinator(): BlockingApprovalCoordinator
         waiter.cleanup();
         waiter.resolve(decision);
       }
+    },
+    subscribeApprovalChanges: (listener) => {
+      approvalChangeListeners.add(listener);
+      let disposed = false;
+      return Object.freeze({
+        dispose() {
+          if (disposed) return;
+          disposed = true;
+          approvalChangeListeners.delete(listener);
+        },
+      });
     },
     resolveBlockingDecision: async ({ artifactId: rawArtifactId, request, decision }) => {
       const artifactId = normalizeId(rawArtifactId);
@@ -224,6 +251,7 @@ export function createBlockingApprovalCoordinator(): BlockingApprovalCoordinator
       rejectWaiters(normalizeId(artifactId), reason);
     },
     dispose: (reason = 'approval_coordinator_disposed') => {
+      approvalChangeListeners.clear();
       for (const artifactId of [...waitersByArtifactId.keys()]) {
         rejectWaiters(artifactId, reason);
       }

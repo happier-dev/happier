@@ -1,7 +1,7 @@
 import chalk from 'chalk';
 import { errorFrame } from '@happier-dev/cli-common/output';
 
-import { readCredentials, type Credentials } from '@/persistence';
+import { readStoredCredentials, type StoredCredentials } from '@/persistence';
 import { createSessionAttachFile } from '@/daemon/sessionAttachFile';
 import { requireCatalogEntry } from '@/agent/catalog/registry';
 import type { CatalogAgentId } from '@/agent/catalog/ids';
@@ -14,10 +14,15 @@ import {
 } from '@/session/transport/encryption/sessionEncryptionContext';
 import { encodeBase64 } from '@/api/encryption';
 import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
+import { resolveSessionStartAccountSettingsContext } from '@/settings/accountSettings/resolveSessionStartAccountSettingsContext';
 import { resolveMergedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
-import type { AccountSettings, ConnectedServiceBindingsV1 } from '@happier-dev/protocol';
-import { accountSettingsParse } from '@happier-dev/protocol';
+import type {
+  AccountEncryptionCurrentnessResponse,
+  AccountSettings,
+  ConnectedServiceBindingsV1,
+} from '@happier-dev/protocol';
+import { fetchAccountEncryptionCurrentness } from '@/api/client/connectedServiceCredentialApi';
 import {
   ConnectedServiceBindingsV1Schema,
   readAcpConfiguredBackendV1FromMetadata,
@@ -33,7 +38,7 @@ import { buildCliSessionRowModel } from '@/cli/output/session/buildCliSessionRow
 import { handleConfiguredAcpCatalogCliCommand } from '@/agent/acp/catalog/configured/handleCatalogCliCommand';
 import { buildResumeSelectionModel, formatResumeSelectionFooter } from './resumeInteractiveSelection';
 import { promptConfirmYesNo } from '@/terminal/prompts/promptConfirmYesNo';
-import { resolveDirectConnectedServiceEnvironment } from '@/cli/connectedServices/resolveDirectConnectedServiceEnvironment';
+import { SESSION_HELP_LINES } from '@/cli/commands/session/shared/sessionCommandUsage';
 
 import type { CommandContext, CommandHandler } from '@/cli/commandRegistry';
 
@@ -44,14 +49,14 @@ type FetchSessionsPageFn = (params: { token: string; cursor?: string; limit?: nu
   hasNext: boolean;
 }>;
 
-type ReadAccountSettingsFn = (params: { credentials: Credentials }) => Promise<AccountSettings>;
+type ReadAccountSettingsFn = (params: { credentials: StoredCredentials }) => Promise<AccountSettings>;
 type ResumeContributionRegistry = Pick<ResolvedContributionRegistry, 'agentDefinitionsById'>;
 type ResolveResumeContributionRegistryFn = () => Promise<ResumeContributionRegistry | null>;
 
 export type ResumeCommandDeps = Readonly<{
   terminalRuntime?: CommandContext['terminalRuntime'];
   rawArgv?: CommandContext['rawArgv'];
-  readCredentialsFn?: () => Promise<Credentials | null>;
+  readCredentialsFn?: () => Promise<StoredCredentials | null>;
   readAccountSettingsFn?: ReadAccountSettingsFn;
   fetchSessionByIdFn?: FetchSessionByIdFn;
   fetchSessionsPageFn?: FetchSessionsPageFn;
@@ -62,6 +67,7 @@ export type ResumeCommandDeps = Readonly<{
   canUseInkSelectorFn?: () => boolean;
   selectResumableSessionIdFn?: typeof selectResumableSessionId;
   promptConfirmYesNoFn?: typeof promptConfirmYesNo;
+  getAccountEncryptionCurrentnessFn?: () => Promise<AccountEncryptionCurrentnessResponse>;
 }>;
 
 type ResumableSessionSelection =
@@ -77,9 +83,16 @@ async function resolveAgentHandler(agentId: CatalogAgentId): Promise<CommandHand
   return await entry.getCliCommandHandler();
 }
 
-async function defaultReadAccountSettings(params: { credentials: Credentials }): Promise<AccountSettings> {
-  const ctx = await bootstrapAccountSettingsContext({ credentials: params.credentials, mode: 'fast' });
-  return ctx.settings;
+async function defaultReadAccountSettings(params: { credentials: StoredCredentials }): Promise<AccountSettings> {
+  const snapshot = await bootstrapAccountSettingsContext({
+    credentials: params.credentials,
+    mode: 'fast',
+  });
+  const context = await resolveSessionStartAccountSettingsContext({
+    startedBy: 'terminal',
+    snapshot,
+  });
+  return context.settings;
 }
 
 async function defaultResolveResumeContributionRegistry(): Promise<ResumeContributionRegistry | null> {
@@ -111,10 +124,11 @@ function readConnectedServicesFromMetadata(metadata: Record<string, unknown> | n
 }
 
 async function selectResumableSessionId(params: Readonly<{
-  credentials: Credentials;
+  credentials: StoredCredentials;
   accountSettings: AccountSettings;
   fetchSessionsPageFn: FetchSessionsPageFn;
   contributionRegistry: ResumeContributionRegistry | null;
+  accountEncryptionMode: AccountEncryptionCurrentnessResponse['mode'];
 }>): Promise<ResumableSessionSelection> {
   const model = await buildResumeSelectionModel(params);
   const footerHint = formatResumeSelectionFooter(model.hint);
@@ -138,14 +152,13 @@ export async function handleResumeCommand(
     return trimmed === '--help' || trimmed === '-h';
   });
   if (hasHelpFlag) {
-    console.log('happier resume');
-    console.log('happier resume <session-id-or-prefix>');
+    console.log(SESSION_HELP_LINES.resume);
     console.log('');
     console.log('Resumes an inactive session (vendor-resume) from the CLI.');
     return;
   }
 
-  const readCredentialsFn = deps?.readCredentialsFn ?? readCredentials;
+  const readCredentialsFn = deps?.readCredentialsFn ?? readStoredCredentials;
   const readAccountSettingsFn = deps?.readAccountSettingsFn ?? defaultReadAccountSettings;
   const fetchSessionByIdFn = deps?.fetchSessionByIdFn ?? fetchSessionById;
   const fetchSessionsPageFn = deps?.fetchSessionsPageFn ?? fetchSessionsPage;
@@ -156,19 +169,21 @@ export async function handleResumeCommand(
   const canUseInkSelectorFn = deps?.canUseInkSelectorFn ?? canUseInkSelector;
   const selectResumableSessionIdFn = deps?.selectResumableSessionIdFn ?? selectResumableSessionId;
   const promptConfirmYesNoFn = deps?.promptConfirmYesNoFn ?? promptConfirmYesNo;
-
   const credentials = await readCredentialsFn();
   if (!credentials) {
     console.error(chalk.yellow('⚠️  Not authenticated with Happier'));
     console.error(chalk.gray('  Please run "happier auth login" first'));
     process.exit(1);
   }
+  const getAccountEncryptionCurrentnessFn = deps?.getAccountEncryptionCurrentnessFn
+    ?? (async () => await fetchAccountEncryptionCurrentness({ token: credentials.token }));
 
   const rawInput = argv[0]?.trim() ?? '';
   const isInteractive = rawInput.length === 0;
 
-  const accountSettings = await readAccountSettingsFn({ credentials }).catch(() => accountSettingsParse({}));
+  const accountSettings = await readAccountSettingsFn({ credentials });
   const contributionRegistry = await resolveContributionRegistryFn();
+  const accountEncryptionCurrentness = await getAccountEncryptionCurrentnessFn();
 
   let sessionIdOrPrefix = rawInput;
   if (isInteractive) {
@@ -184,6 +199,7 @@ export async function handleResumeCommand(
       accountSettings,
       fetchSessionsPageFn,
       contributionRegistry,
+      accountEncryptionMode: accountEncryptionCurrentness.mode,
     });
     if (selected.type === 'cancelled') {
       console.log(chalk.blue('Resume cancelled'));
@@ -213,6 +229,9 @@ export async function handleResumeCommand(
       if (resolved.code === 'session_id_ambiguous') {
         throw new Error(`Session id is ambiguous (${resolved.candidates?.join(', ') ?? 'multiple matches'})`);
       }
+      if (resolved.code === 'session_lookup_timeout') {
+        throw new Error('Session lookup timed out; try again');
+      }
       throw new Error('Session not found');
     }
     rawSession = await fetchSessionByIdFn({ token: credentials.token, sessionId: resolved.sessionId });
@@ -224,6 +243,7 @@ export async function handleResumeCommand(
     rawSession,
     accountSettings,
     contributionRegistry,
+    accountEncryptionMode: accountEncryptionCurrentness.mode,
   });
 
   if (rowModel.archivedAt !== null) {
@@ -235,14 +255,22 @@ export async function handleResumeCommand(
 
   const directory = rowModel.path;
   if (!directory) {
-    const metadata = tryDecryptSessionOwnerMetadataView({ credentials, rawSession });
+    const metadata = tryDecryptSessionOwnerMetadataView({
+      credentials,
+      rawSession,
+      accountEncryptionMode: accountEncryptionCurrentness.mode,
+    });
     if (!metadata) {
       throw new Error('Failed to decrypt session metadata. Reconnect your terminal and try again.');
     }
     throw new Error('Session metadata is missing a working directory path.');
   }
 
-  const metadata = tryDecryptSessionOwnerMetadataView({ credentials, rawSession });
+  const metadata = tryDecryptSessionOwnerMetadataView({
+    credentials,
+    rawSession,
+    accountEncryptionMode: accountEncryptionCurrentness.mode,
+  });
   const metadataRecord = metadata && typeof metadata === 'object' && !Array.isArray(metadata)
     ? (metadata as Record<string, unknown>)
     : null;
@@ -274,6 +302,9 @@ export async function handleResumeCommand(
       ? { v: 2, encryptionMode: 'plain' }
       : (() => {
         const ctx = resolveSessionEncryptionContextFromCredentials(credentials, rawSession);
+        if (!ctx) {
+          throw new Error('Session encryption material is unavailable.');
+        }
         return {
           v: 2 as const,
           encryptionMode: 'e2ee' as const,
@@ -340,18 +371,6 @@ export async function handleResumeCommand(
           confirmProviderSecurityChange,
           connectedServices: readConnectedServicesFromMetadata(metadataRecord),
           sessionAttachFilePath: attach.filePath,
-          resolveConnectedServiceEnvironment: (connectedServices) => connectedServices
-            ? resolveDirectConnectedServiceEnvironment({
-                agentId,
-                credentials,
-                accountSettings,
-                directory,
-                sessionId: rawSession.id,
-                vendorResumeId: vendorResume.vendorResumeId,
-                sessionMetadata: metadataRecord,
-                connectedServices,
-              })
-            : Promise.resolve(null),
         },
       };
       await handler(context);

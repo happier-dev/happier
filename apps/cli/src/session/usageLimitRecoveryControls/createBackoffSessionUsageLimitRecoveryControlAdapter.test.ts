@@ -50,10 +50,7 @@ function createParams() {
     currentMachineId: 'machine-local',
     sessionMachineId: 'machine-local',
     cwd: '/repo',
-    ctx: {
-      encryptionKey: new Uint8Array(32).fill(1),
-      encryptionVariant: 'legacy' as const,
-    },
+    ctx: null,
     mode: 'plain' as const,
   };
 }

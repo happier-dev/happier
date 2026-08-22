@@ -1,7 +1,7 @@
 import type { ToolNormalizationProtocol, TurnChangeSet } from '@happier-dev/protocol';
 
 import type { ApiSessionClient } from '@/api/session/sessionClient';
-import type { ACPProvider } from '@/api/session/sessionMessageTypes';
+import type { ACPMessageData, ACPProvider } from '@/api/session/sessionMessageTypes';
 import { emitCanonicalTurnDiffTool } from '@/agent/runtime/emitCanonicalTurnDiffTool';
 import type { PromptLoopCheckpointLifecycle } from '@/agent/runtime/runPermissionModePromptLoop';
 import type { ScmBackendContext } from '@/scm/types';
@@ -110,36 +110,53 @@ function buildUnavailableDiffResult(input: Readonly<{
     };
 }
 
-function emitCheckpointTurnChangeSet(input: Readonly<{
+async function emitCheckpointTurnChangeSet(input: Readonly<{
     session: ApiSessionClient;
     provider: ACPProvider;
     protocol: ToolNormalizationProtocol;
     turnChangeSet: TurnChangeSet;
-}>): void {
+}>): Promise<void> {
+    const messages: Array<Readonly<{ body: ACPMessageData; localId: string }>> = [];
     emitCanonicalTurnDiffTool({
         turnChangeSet: input.turnChangeSet,
         protocol: input.protocol,
         rawToolName: 'RepositoryCheckpointDiff',
         sendToolCall: ({ toolName, input: toolInput, callId }) => {
             const resolvedCallId = callId ?? `repository-checkpoint-${input.turnChangeSet.turnId}`;
-            input.session.sendAgentMessage(input.provider, {
-                type: 'tool-call',
-                id: resolvedCallId,
-                callId: resolvedCallId,
-                name: toolName,
-                input: toolInput,
+            messages.push({
+                body: {
+                    type: 'tool-call',
+                    id: resolvedCallId,
+                    callId: resolvedCallId,
+                    name: toolName,
+                    input: toolInput,
+                },
+                localId: `${resolvedCallId}:tool-call`,
             });
             return resolvedCallId;
         },
         sendToolResult: ({ callId, output }) => {
-            input.session.sendAgentMessage(input.provider, {
-                type: 'tool-result',
-                id: callId,
-                callId,
-                output,
+            messages.push({
+                body: {
+                    type: 'tool-result',
+                    id: callId,
+                    callId,
+                    output,
+                },
+                localId: `${callId}:tool-result`,
             });
         },
     });
+    for (const message of messages) {
+        await input.session.enqueueAgentMessageCommitted(
+            input.provider,
+            message.body,
+            {
+                localId: message.localId,
+                provenance: { kind: 'non_dependent', source: 'external' },
+            },
+        );
+    }
 }
 
 export function createRepositoryCheckpointPromptLifecycle(params: Readonly<{
@@ -164,14 +181,14 @@ export function createRepositoryCheckpointPromptLifecycle(params: Readonly<{
             : 'unknown';
     }
 
-    function emitProjectedDiff(input: Readonly<{
+    async function emitProjectedDiff(input: Readonly<{
         binding: ActiveCheckpointBinding;
         turnId: string;
         status: TurnChangeSet['status'];
         checkpointDiff: RepositoryCheckpointDiffResult;
         startRef?: string;
         finalRef?: string;
-    }>): void {
+    }>): Promise<void> {
         const checkpointOnlyTurnChangeSet = projectRepositoryCheckpointTurnChangeSet({
             providerTurnChangeSet: {
                 sessionId: params.session.sessionId,
@@ -187,7 +204,7 @@ export function createRepositoryCheckpointPromptLifecycle(params: Readonly<{
             startRef: input.startRef,
             finalRef: input.finalRef,
         });
-        emitCheckpointTurnChangeSet({
+        await emitCheckpointTurnChangeSet({
             session: params.session,
             provider: params.provider,
             protocol: params.protocol,
@@ -297,7 +314,7 @@ export function createRepositoryCheckpointPromptLifecycle(params: Readonly<{
                             ? 'message_start'
                             : 'unavailable';
                 if (binding.unavailableReason || !binding.context) {
-                    emitProjectedDiff({
+                    await emitProjectedDiff({
                         binding,
                         turnId,
                         status,
@@ -320,7 +337,7 @@ export function createRepositoryCheckpointPromptLifecycle(params: Readonly<{
                 });
                 const receiptsAfterFinal = appendReceipts(binding.receipts, finalized.receipts);
                 if (!finalized.success) {
-                    emitProjectedDiff({
+                    await emitProjectedDiff({
                         binding,
                         turnId,
                         status,
@@ -338,7 +355,7 @@ export function createRepositoryCheckpointPromptLifecycle(params: Readonly<{
                     return;
                 }
                 if (!baseRef || baseRefSource === 'unavailable') {
-                    emitProjectedDiff({
+                    await emitProjectedDiff({
                         binding,
                         turnId,
                         status,
@@ -374,7 +391,7 @@ export function createRepositoryCheckpointPromptLifecycle(params: Readonly<{
                 if (!diff.success) {
                     logger.debug('Repository checkpoint diff unavailable (non-fatal)', diff);
                 }
-                emitProjectedDiff({
+                await emitProjectedDiff({
                     binding,
                     turnId,
                     status,

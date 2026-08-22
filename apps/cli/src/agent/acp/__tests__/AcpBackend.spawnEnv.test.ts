@@ -25,6 +25,7 @@ function writeEnvCaptureAcpAgentScript(params: { dir: string }): string {
         HAPPIER_SESSION_PROFILE_ID: process.env.HAPPIER_SESSION_PROFILE_ID ?? null,
         HAPPIER_SESSION_ATTACH_FILE: process.env.HAPPIER_SESSION_ATTACH_FILE ?? null,
         HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON: process.env.HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON ?? null,
+        HAPPIER_PROVIDER_KEY: process.env.HAPPIER_PROVIDER_KEY ?? null,
       }), 'utf8');
     }
 
@@ -89,6 +90,7 @@ describe('AcpBackend spawn environment', () => {
     'HAPPIER_SESSION_PROFILE_ID',
     'HAPPIER_SESSION_ATTACH_FILE',
     'HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON',
+    'HAPPIER_PROVIDER_KEY',
   ]);
 
   afterEach(() => {
@@ -143,9 +145,49 @@ describe('AcpBackend spawn environment', () => {
           HAPPIER_SESSION_PROFILE_ID: null,
           HAPPIER_SESSION_ATTACH_FILE: null,
           HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON: null,
+          HAPPIER_PROVIDER_KEY: null,
         });
       } finally {
         await backendForCleanup?.dispose().catch(() => {});
+      }
+    });
+  });
+
+  it('substitutes the runner Provider marker only in the final ACP child environment', async () => {
+    await withTempDir('happier-acp-provider-env-', async (dir) => {
+      const placeholder =
+        'happier_runner_placeholder_AAAAAAAAAAAAAAAAAAAAAAAAAAA';
+      const capturePath = join(dir, 'env.json');
+      const scriptPath = writeEnvCaptureAcpAgentScript({ dir });
+      const transformAgentChildLaunchEnvironment = (
+        environment: Readonly<Record<string, string>>,
+      ) => Object.freeze({
+        ...environment,
+        HAPPIER_PROVIDER_KEY:
+          environment.HAPPIER_PROVIDER_KEY === placeholder
+            ? 'runner-owned-secret'
+            : environment.HAPPIER_PROVIDER_KEY,
+      });
+      const backend = new AcpBackend({
+        agentName: 'test-provider-child',
+        cwd: dir,
+        command: process.execPath,
+        args: [scriptPath],
+        env: {
+          HAPPIER_TEST_ENV_CAPTURE: capturePath,
+          HAPPIER_PROVIDER_KEY: placeholder,
+        },
+        transformAgentChildLaunchEnvironment,
+        transportHandler: createAcpTestTransportHandler({ idleTimeoutMs: 1 }),
+      });
+      try {
+        await backend.startSession();
+        expect(JSON.parse(readFileSync(capturePath, 'utf8')))
+          .toMatchObject({
+            HAPPIER_PROVIDER_KEY: 'runner-owned-secret',
+          });
+      } finally {
+        await backend.dispose().catch(() => {});
       }
     });
   });

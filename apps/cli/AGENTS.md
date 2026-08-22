@@ -41,6 +41,37 @@ Use the smallest relevant test slice while iterating and broaden before handoff.
 
 Details: `../../docs/agents-catalog.md` and `../../docs/providers.md`.
 
+## Generated bundled-plugin artifacts
+
+`scripts/build-owned/generateBundledPluginEntries.ts` is the single producer and single owner of the generated bundled-plugin and bundled-Voice projection files. Two live here and the remaining outputs live in `apps/ui`:
+
+- `src/plugins/projection/registry/sources/generatedBundledPluginArtifacts.ts`
+- `src/plugins/projection/registry/sources/generatedBundledPlugins.ts`
+- `../ui/sources/sync/domains/plugins/availability/generatedBundledPluginUiArtifacts.ts`
+- `../ui/sources/sync/domains/plugins/availability/generatedBundledPluginUiArtifacts.web.ts`
+- `../ui/sources/sync/domains/plugins/availability/generatedBundledPluginUiArtifacts.ios.ts`
+- `../ui/sources/sync/domains/plugins/availability/generatedBundledPluginUiArtifacts.android.ts`
+- `../ui/sources/agents/registry/generatedBundledPluginEntries.ts`
+- `../ui/sources/text/bundledPluginTranslations.generated.ts`
+- `../ui/sources/voice/registry/generatedBundledVoiceEntries.ts`
+- `../ui/sources/voice/registry/generatedBundledVoiceRuntimeEntries.ts`
+- `../ui/sources/voice/registry/generatedBundledVoiceRuntimeEntries.ios.ts`
+- `../ui/sources/voice/registry/generatedBundledVoiceRuntimeEntries.android.ts`
+
+- Change the generator, never an emitted file. A hand edit to any emitted artifact is erased by the next run and is a review finding; the real defect is in the generator, in a bundled plugin's manifest, or in the bundled-plugin membership list.
+- Regeneration is the **last** step of a batch and runs **once**. Adding, renaming or re-manifesting a bundled plugin invalidates all six artifacts, and several programs do this concurrently. Land every manifest/membership source change first, then run one regeneration:
+
+  ```bash
+  node --experimental-strip-types scripts/migrations/extensions/generateBundledPluginEntries.ts --mode write
+  ```
+
+  (that path is a thin compatibility entrypoint that re-exports `main` from the build-owned generator).
+- The drift gate already exists — do not add a second one. It runs the same publisher in `--mode check` under one of two scopes, and CI reaches both through `test:migration:governance`:
+  - `yarn test:migration:bundled-plugin-projections` (`--scope projections`) compares the generated projections against the bundled plugin sources and the bundle bytes **as installed**. Every input is owned by `packages/plugins/*`, so a failure names a plugin-source or projection defect.
+  - `yarn test:migration:bundled-plugin-runtime-determinism` (`--scope all`) additionally re-stages every bundled daemon runtime with esbuild and requires the installed bytes to equal that fresh build. The stage runs `bundle: true, packages: 'bundle'`, so the current `plugin-sdk`/`protocol` output is inlined into every bundle: rebuilding one shared workspace dependency changes all bundled runtimes at once, and the recorded artifact digests with them. That is whole-repo build determinism, not a plugin fact, and it is why the two questions no longer share one name.
+  - `--scope projections` is check-only; `--mode write` always publishes the full scope.
+- **The producer is mid-relocation; commit both halves atomically (observed 2026-08-19).** At `HEAD` the producer is still `scripts/migrations/extensions/generateBundledPluginEntries.ts` (5,546 lines, emitting only the two `apps/cli` artifacts). In the working tree that tracked file has been rewritten into a 14-line re-export shim, and the real producer moved to `scripts/build-owned/` — where it and its siblings (`generateBundledPluginEntries.test.ts`, `bundledImmutableArtifactEligibility.ts`, `bundledProviderVerification.ts`, `readTypescriptModule.mjs`), plus `scripts/verifyBundledPluginArtifacts.mjs`, are untracked and not gitignored. Committing the shim rewrite without that directory breaks `test:migration:governance` in CI, because the tracked entrypoint would re-export a file CI does not have. All six emitted artifacts are already tracked and already reflect the relocated generator — the four UI artifacts have no producer at `HEAD` at all — so the tracked artifact set and the tracked producer are already out of correspondence.
+
 ## Terminal and integrations
 
 - `src/terminal/**` owns provider-agnostic terminal runtime, attachment, metadata, and terminal UX/domain behavior.

@@ -137,7 +137,6 @@ describe('happier daemon start output', () => {
         join(credDir, 'access.key'),
         JSON.stringify(
           {
-            encryption: { publicKey: Buffer.from('a').toString('base64'), machineKey: Buffer.from('b').toString('base64') },
             token: buildJwtWithSub('account-123'),
           },
           null,

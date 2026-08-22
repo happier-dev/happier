@@ -3,7 +3,9 @@ import { describe, expect, it, vi } from 'vitest'
 import { initializeBackendRunSession } from '@/agent/runtime/initializeBackendRunSession'
 import type { ApiSessionClient } from '@/api/session/sessionClient'
 import type { AgentState, Metadata, Session } from '@/api/types'
-import type { SetupOfflineReconnectionResult } from '@/api/offline/setupOfflineReconnection'
+import { SessionCreationPlacementError } from '@/api/session/sessionCreationPlacementError'
+import { SessionCreationCorrespondenceConflictError } from '@/api/session/sessionCreationCorrespondenceConflictError'
+import { createEnvKeyScope } from '@/testkit/env/envScope'
 
 function createSessionStub(overrides: Partial<ApiSessionClient> = {}): ApiSessionClient {
   return {
@@ -29,6 +31,210 @@ function createSessionResponse(id: string, metadata: Metadata, state: AgentState
 }
 
 describe('initialize run session', () => {
+  it('reports a canonical creation-correspondence conflict before the runner can attach', async () => {
+    const envScope = createEnvKeyScope(['HAPPIER_SESSION_STARTUP_SPAWN_NONCE'])
+    envScope.patch({ HAPPIER_SESSION_STARTUP_SPAWN_NONCE: 'creation-conflict-attempt-1' })
+    const metadata = { startedBy: 'daemon' } as unknown as Metadata
+    const state = { controlledByUser: false } as AgentState
+    const failure = new SessionCreationCorrespondenceConflictError()
+    const sessionSyncClient = vi.fn(() => createSessionStub())
+    const reportSessionStartupFailureToDaemonIfRunningFn = vi.fn(async () => {})
+
+    try {
+      await expect(initializeBackendRunSession(
+        {
+          api: {
+            getOrCreateSession: async () => {
+              throw failure
+            },
+            sessionSyncClient,
+          },
+          sessionTag: 'tag-creation-conflict',
+          metadata,
+          state,
+          uiLogPrefix: '[Test]',
+          startupMetadataOverrides: {
+            permissionModeOverride: { mode: 'default', updatedAt: 100 },
+          },
+        },
+        {
+          reportSessionStartupFailureToDaemonIfRunningFn,
+        },
+      )).rejects.toBe(failure)
+
+      expect(reportSessionStartupFailureToDaemonIfRunningFn).toHaveBeenCalledWith({
+        spawnNonce: 'creation-conflict-attempt-1',
+        errorDetail: {
+          kind: 'session_creation_correspondence_conflict',
+          code: 'creation_conflict',
+        },
+      })
+      expect(sessionSyncClient).not.toHaveBeenCalled()
+    } finally {
+      envScope.restore()
+    }
+  })
+
+  it('reports the exact server organization refusal to the daemon before propagating it', async () => {
+    const envScope = createEnvKeyScope(['HAPPIER_SESSION_STARTUP_SPAWN_NONCE'])
+    envScope.patch({ HAPPIER_SESSION_STARTUP_SPAWN_NONCE: 'creation-attempt-1' })
+    const metadata = { startedBy: 'daemon' } as unknown as Metadata
+    const state = { controlledByUser: false } as AgentState
+    const failure = new SessionCreationPlacementError()
+    const reportSessionStartupFailureToDaemonIfRunningFn = vi.fn(async () => {})
+
+    try {
+      await expect(initializeBackendRunSession(
+        {
+          api: {
+            getOrCreateSession: async () => {
+              throw failure
+            },
+            sessionSyncClient: () => createSessionStub(),
+          },
+          sessionTag: 'tag-invalid-placement',
+          metadata,
+          state,
+          uiLogPrefix: '[Test]',
+          startupMetadataOverrides: {
+            permissionModeOverride: { mode: 'default', updatedAt: 100 },
+          },
+        },
+        {
+          reportSessionStartupFailureToDaemonIfRunningFn,
+        },
+      )).rejects.toBe(failure)
+
+      expect(reportSessionStartupFailureToDaemonIfRunningFn).toHaveBeenCalledWith({
+        spawnNonce: 'creation-attempt-1',
+        errorDetail: {
+          kind: 'session_creation_organization_invalid',
+          code: 'organization_invalid',
+        },
+      })
+    } finally {
+      envScope.restore()
+    }
+  })
+
+  it('does not report a creation refusal after the startup carrier is cancelled', async () => {
+    const envScope = createEnvKeyScope(['HAPPIER_SESSION_STARTUP_SPAWN_NONCE'])
+    envScope.patch({ HAPPIER_SESSION_STARTUP_SPAWN_NONCE: 'creation-attempt-cancelled' })
+    const metadata = { startedBy: 'daemon' } as unknown as Metadata
+    const state = { controlledByUser: false } as AgentState
+    const controller = new AbortController()
+    const failure = new SessionCreationPlacementError()
+    const reportSessionStartupFailureToDaemonIfRunningFn = vi.fn(async () => {})
+
+    try {
+      await expect(initializeBackendRunSession(
+        {
+          api: {
+            getOrCreateSession: async () => {
+              controller.abort('startup carrier cancelled')
+              throw failure
+            },
+            sessionSyncClient: () => createSessionStub(),
+          },
+          sessionTag: 'tag-invalid-placement-cancelled',
+          metadata,
+          state,
+          uiLogPrefix: '[Test]',
+          signal: controller.signal,
+          startupMetadataOverrides: {
+            permissionModeOverride: { mode: 'default', updatedAt: 100 },
+          },
+        },
+        {
+          reportSessionStartupFailureToDaemonIfRunningFn,
+        },
+      )).rejects.toBe(failure)
+
+      expect(reportSessionStartupFailureToDaemonIfRunningFn).not.toHaveBeenCalled()
+    } finally {
+      envScope.restore()
+    }
+  })
+
+  it('does not emit the new terminal failure shape without a daemon-issued nonce', async () => {
+    const envScope = createEnvKeyScope(['HAPPIER_SESSION_STARTUP_SPAWN_NONCE'])
+    envScope.patch({ HAPPIER_SESSION_STARTUP_SPAWN_NONCE: undefined })
+    const metadata = { startedBy: 'daemon' } as unknown as Metadata
+    const state = { controlledByUser: false } as AgentState
+    const failure = new SessionCreationPlacementError()
+    const reportSessionStartupFailureToDaemonIfRunningFn = vi.fn(async () => {})
+
+    try {
+      await expect(initializeBackendRunSession(
+        {
+          api: {
+            getOrCreateSession: async () => {
+              throw failure
+            },
+            sessionSyncClient: () => createSessionStub(),
+          },
+          sessionTag: 'tag-invalid-placement-no-nonce',
+          metadata,
+          state,
+          uiLogPrefix: '[Test]',
+          startupMetadataOverrides: {
+            permissionModeOverride: { mode: 'default', updatedAt: 100 },
+          },
+        },
+        {
+          reportSessionStartupFailureToDaemonIfRunningFn,
+        },
+      )).rejects.toBe(failure)
+
+      expect(reportSessionStartupFailureToDaemonIfRunningFn).not.toHaveBeenCalled()
+    } finally {
+      envScope.restore()
+    }
+  })
+
+  it('preserves the full daemon-issued spawn nonce for the terminal failure report', async () => {
+    const envScope = createEnvKeyScope(['HAPPIER_SESSION_STARTUP_SPAWN_NONCE'])
+    const spawnNonce = 'n'.repeat(1_025)
+    envScope.patch({ HAPPIER_SESSION_STARTUP_SPAWN_NONCE: spawnNonce })
+    const metadata = { startedBy: 'daemon' } as unknown as Metadata
+    const state = { controlledByUser: false } as AgentState
+    const failure = new SessionCreationPlacementError()
+    const reportSessionStartupFailureToDaemonIfRunningFn = vi.fn(async () => {})
+
+    try {
+      await expect(initializeBackendRunSession(
+        {
+          api: {
+            getOrCreateSession: async () => {
+              throw failure
+            },
+            sessionSyncClient: () => createSessionStub(),
+          },
+          sessionTag: 'tag-invalid-placement-long-nonce',
+          metadata,
+          state,
+          uiLogPrefix: '[Test]',
+          startupMetadataOverrides: {
+            permissionModeOverride: { mode: 'default', updatedAt: 100 },
+          },
+        },
+        {
+          reportSessionStartupFailureToDaemonIfRunningFn,
+        },
+      )).rejects.toBe(failure)
+
+      expect(reportSessionStartupFailureToDaemonIfRunningFn).toHaveBeenCalledWith({
+        spawnNonce,
+        errorDetail: {
+          kind: 'session_creation_organization_invalid',
+          code: 'organization_invalid',
+        },
+      })
+    } finally {
+      envScope.restore()
+    }
+  })
+
   it('passes cancellation to session creation and fences late creation from startup effects', async () => {
     const metadata = { terminal: { mode: 'tmux' }, startedBy: 'daemon' } as unknown as Metadata
     const state = { controlledByUser: false } as AgentState
@@ -80,7 +286,7 @@ describe('initialize run session', () => {
     expect(sendTerminalFallbackMessageIfNeededFn).not.toHaveBeenCalled()
   })
 
-  it('disposes acquired resources once when cancellation wins during startup effects', async () => {
+  it('closes the acquired session once when cancellation wins during startup effects', async () => {
     const metadata = { terminal: { mode: 'tmux' }, startedBy: 'daemon' } as unknown as Metadata
     const state = { controlledByUser: false } as AgentState
     const controller = new AbortController()
@@ -94,7 +300,6 @@ describe('initialize run session', () => {
     })
     const sessionClose = vi.fn(async () => undefined)
     const session = createSessionStub({ close: sessionClose })
-    const reconnectionCancel = vi.fn()
     const persistTerminalAttachmentInfoIfNeededFn = vi.fn(async () => undefined)
     const sendTerminalFallbackMessageIfNeededFn = vi.fn()
 
@@ -114,12 +319,6 @@ describe('initialize run session', () => {
         },
       },
       {
-        setupOfflineReconnectionFn: () => ({
-          session,
-          reconnectionHandle: { cancel: reconnectionCancel },
-          isOffline: false,
-        // Boundary fixture only supplies the cancellation surface exercised by this test.
-        } as unknown as SetupOfflineReconnectionResult),
         primeAgentStateForUiFn: vi.fn(),
         reportSessionToDaemonIfRunningFn: async () => {
           reportStarted()
@@ -134,7 +333,6 @@ describe('initialize run session', () => {
     releaseReport()
 
     await expect(initializing).rejects.toBe('carrier retired')
-    expect(reconnectionCancel).toHaveBeenCalledOnce()
     expect(sessionClose).toHaveBeenCalledOnce()
     expect(persistTerminalAttachmentInfoIfNeededFn).not.toHaveBeenCalled()
     expect(sendTerminalFallbackMessageIfNeededFn).not.toHaveBeenCalled()
@@ -760,7 +958,6 @@ describe('initialize run session', () => {
     const metadata = { terminal: { mode: 'tmux' }, startedBy: 'daemon' } as unknown as Metadata
     const state = { controlledByUser: false } as AgentState
     const initialSession = createSessionStub()
-    const swappedSession = createSessionStub()
 
     const api = {
       getOrCreateSession: async () => createSessionResponse('new-session', metadata, state),
@@ -770,7 +967,6 @@ describe('initialize run session', () => {
     const daemonReports: Array<{ sessionId: string; requireDaemonAck?: boolean }> = []
     const persisted: string[] = []
     let fallbackCount = 0
-    let onSessionSwapCount = 0
 
     const result = await initializeBackendRunSession(
       {
@@ -782,21 +978,8 @@ describe('initialize run session', () => {
         startupMetadataOverrides: {
           permissionModeOverride: { mode: 'default', updatedAt: 100 },
         },
-        onSessionSwap: (newSession) => {
-          if (newSession === swappedSession) {
-            onSessionSwapCount += 1
-          }
-        },
       },
       {
-        setupOfflineReconnectionFn: () => {
-          onSessionSwapCount += 0
-          return {
-            session: initialSession,
-            reconnectionHandle: null,
-            isOffline: false,
-          }
-        },
         primeAgentStateForUiFn: () => {},
         reportSessionToDaemonIfRunningFn: async (opts) => {
           daemonReports.push({
@@ -819,43 +1002,54 @@ describe('initialize run session', () => {
     expect(daemonReports).toEqual([{ sessionId: 'new-session', requireDaemonAck: true }])
     expect(persisted).toEqual(['new-session'])
     expect(fallbackCount).toBe(1)
-    expect(onSessionSwapCount).toBe(0)
+  })
 
-    // Ensure callback wiring remains available for runtime reconnection swaps.
-    const setupResult = await initializeBackendRunSession(
+  it('forwards the authoritative create-or-rejoin outcome to the daemon startup report', async () => {
+    const metadata = { startedBy: 'daemon' } as unknown as Metadata
+    const state = { controlledByUser: false } as AgentState
+    const session = createSessionStub()
+    const reportSessionToDaemonIfRunningFn = vi.fn(async () => {})
+    const created = Object.assign(
+      createSessionResponse('session-create-outcome', metadata, state),
       {
-        api,
-        sessionTag: 'tag-4',
+        sessionCreationOutcome: {
+          disposition: 'rejoined' as const,
+          organizationPlacement: { folderId: 'folder-1', tagIds: ['tag-1'] },
+        },
+      },
+    )
+
+    await initializeBackendRunSession(
+      {
+        api: {
+          getOrCreateSession: async () => created,
+          sessionSyncClient: () => session,
+        },
+        sessionTag: 'tag-create-outcome',
         metadata,
         state,
-        uiLogPrefix: '[OpenCode]',
+        uiLogPrefix: '[Test]',
         startupMetadataOverrides: {
           permissionModeOverride: { mode: 'default', updatedAt: 100 },
         },
-        onSessionSwap: (newSession) => {
-          if (newSession === swappedSession) {
-            onSessionSwapCount += 1
-          }
-        },
       },
       {
-        setupOfflineReconnectionFn: (opts) => {
-          opts.onSessionSwap(swappedSession)
-          return {
-            session: initialSession,
-            reconnectionHandle: null,
-            isOffline: false,
-          }
-        },
         primeAgentStateForUiFn: () => {},
-        reportSessionToDaemonIfRunningFn: async () => {},
+        reportSessionToDaemonIfRunningFn,
         persistTerminalAttachmentInfoIfNeededFn: async () => {},
         sendTerminalFallbackMessageIfNeededFn: () => {},
       },
     )
 
-    expect(setupResult.session).toBe(initialSession)
-    expect(onSessionSwapCount).toBe(1)
+    expect(reportSessionToDaemonIfRunningFn).toHaveBeenCalledWith({
+      sessionId: 'session-create-outcome',
+      metadata,
+      sessionCreationOutcome: {
+        disposition: 'rejoined',
+        organizationPlacement: { folderId: 'folder-1', tagIds: ['tag-1'] },
+      },
+      requireDaemonAck: true,
+    })
   })
 
   it('fails a daemon-started fresh session before terminal side effects when required acknowledgement is refused', async () => {
@@ -864,7 +1058,8 @@ describe('initialize run session', () => {
       startedBy: 'daemon',
     } as unknown as Metadata
     const state = { controlledByUser: false } as AgentState
-    const session = createSessionStub()
+    const close = vi.fn(async () => undefined)
+    const session = createSessionStub({ close })
     const requiredAckFailure =
       new Error('Daemon session readiness was not acknowledged')
     const persistTerminalAttachmentInfoIfNeededFn = vi.fn(async () => {})
@@ -886,11 +1081,6 @@ describe('initialize run session', () => {
         },
       },
       {
-        setupOfflineReconnectionFn: () => ({
-          session,
-          reconnectionHandle: null,
-          isOffline: false,
-        }),
         primeAgentStateForUiFn: () => {},
         reportSessionToDaemonIfRunningFn: async (report) => {
           expect(report).toMatchObject({
@@ -906,9 +1096,10 @@ describe('initialize run session', () => {
 
     expect(persistTerminalAttachmentInfoIfNeededFn).not.toHaveBeenCalled()
     expect(sendTerminalFallbackMessageIfNeededFn).not.toHaveBeenCalled()
+    expect(close).toHaveBeenCalledOnce()
   })
 
-  it('throws when a new session cannot be created and offline stubs are not allowed', async () => {
+  it('throws a typed error when the server cannot create a durable Session', async () => {
     const metadata = {} as Metadata
     const state = { controlledByUser: false } as AgentState
     const api = {
@@ -927,7 +1118,10 @@ describe('initialize run session', () => {
           permissionModeOverride: { mode: 'default', updatedAt: 100 },
         },
       }),
-    ).rejects.toThrow('Failed to create session')
+    ).rejects.toMatchObject({
+      name: 'BackendRunSessionUnavailableError',
+      code: 'backend_run_session_unavailable',
+    })
   })
 
   it('applies startup side effects in persist-first order when requested', async () => {
@@ -976,7 +1170,81 @@ describe('initialize run session', () => {
     expect(events).toEqual(['persist', 'fallback', 'report'])
   })
 
-  it('does not block existing-session attach completion on daemon report retries', async () => {
+  it('does not block ordinary existing-session attach completion on daemon report retries', async () => {
+    const metadata = { terminal: { mode: 'tmux' }, startedBy: 'daemon' } as unknown as Metadata
+    const state = { controlledByUser: false } as AgentState
+    const session = createSessionStub({
+      ensureMetadataSnapshot: async () => ({ path: '/tmp/project' } as unknown as Metadata),
+    })
+
+    const api = {
+      getOrCreateSession: async () => null,
+      sessionSyncClient: () => session,
+    }
+
+    const events: string[] = []
+    let releaseDaemonReport!: () => void
+    const daemonReportBlocked = new Promise<void>((resolve) => {
+      releaseDaemonReport = resolve
+    })
+    let daemonReportFinishedResolve!: () => void
+    const daemonReportFinished = new Promise<void>((resolve) => {
+      daemonReportFinishedResolve = resolve
+    })
+
+    let settled = false
+
+    const initializePromise = initializeBackendRunSession(
+      {
+        api,
+        sessionTag: 'tag-ordinary-attach-daemon-report',
+        metadata,
+        state,
+        existingSessionId: 'session-ordinary-attach-daemon-report',
+        uiLogPrefix: '[Codex]',
+        startupMetadataOverrides: {
+          permissionModeOverride: { mode: 'default', updatedAt: 100 },
+        },
+        startupSideEffectsOrder: 'persist-first',
+      },
+      {
+        createBaseSessionForAttachFn: async () =>
+          createSessionResponse('session-ordinary-attach-daemon-report', metadata, state),
+        applyStartupMetadataUpdateToSessionFn: async () => {},
+        primeAgentStateForUiFn: () => {},
+        persistTerminalAttachmentInfoIfNeededFn: async () => {
+          events.push('persist')
+        },
+        sendTerminalFallbackMessageIfNeededFn: () => {
+          events.push('fallback')
+        },
+        reportSessionToDaemonIfRunningFn: async (report) => {
+          expect(report.requireDaemonAck).toBeUndefined()
+          events.push('report-start')
+          await daemonReportBlocked
+          events.push('report-end')
+          daemonReportFinishedResolve()
+        },
+      },
+    ).then((result) => {
+      settled = true
+      events.push('initialized')
+      return result
+    })
+
+    await new Promise<void>((resolve) => setTimeout(resolve, 0))
+
+    expect(settled).toBe(true)
+    expect(events).toEqual(['persist', 'fallback', 'report-start', 'initialized'])
+
+    releaseDaemonReport()
+    await daemonReportFinished
+    await initializePromise
+
+    expect(events).toEqual(['persist', 'fallback', 'report-start', 'initialized', 'report-end'])
+  })
+
+  it('waits for daemon readiness before completing an authority-backed existing-session attach', async () => {
     const metadata = { terminal: { mode: 'tmux' }, startedBy: 'daemon' } as unknown as Metadata
     const state = { controlledByUser: false } as AgentState
     const session = createSessionStub({
@@ -1012,6 +1280,7 @@ describe('initialize run session', () => {
           permissionModeOverride: { mode: 'default', updatedAt: 100 },
         },
         startupSideEffectsOrder: 'persist-first',
+        requireDaemonAckOnAttach: true,
       },
       {
         createBaseSessionForAttachFn: async () =>
@@ -1025,7 +1294,7 @@ describe('initialize run session', () => {
           events.push('fallback')
         },
         reportSessionToDaemonIfRunningFn: async (report) => {
-          expect(report.requireDaemonAck).toBeUndefined()
+          expect(report.requireDaemonAck).toBe(true)
           events.push('report-start')
           await daemonReportBlocked
           events.push('report-end')
@@ -1040,151 +1309,14 @@ describe('initialize run session', () => {
 
     await new Promise<void>((resolve) => setTimeout(resolve, 0))
 
-    expect(settled).toBe(true)
-    expect(events).toEqual(['persist', 'fallback', 'report-start', 'initialized'])
+    expect(settled).toBe(false)
+    expect(events).toEqual(['persist', 'fallback', 'report-start'])
 
     releaseDaemonReport()
     await daemonReportFinished
     await initializePromise
 
-    expect(events).toEqual(['persist', 'fallback', 'report-start', 'initialized', 'report-end'])
+    expect(events).toEqual(['persist', 'fallback', 'report-start', 'report-end', 'initialized'])
   })
 
-  it('runs startup side effects after offline reconnection swaps in a real session', async () => {
-    const metadata = { terminal: { mode: 'tmux' }, startedBy: 'daemon' } as unknown as Metadata
-    const state = { controlledByUser: false } as AgentState
-    const offlineSession = createSessionStub({ sessionId: 'offline-tag' })
-    const realSession = createSessionStub({ sessionId: 'real-session' })
-
-    const api = {
-      getOrCreateSession: async () => null,
-      sessionSyncClient: () => offlineSession,
-    }
-
-    const daemonReports: Array<{ sessionId: string; requireDaemonAck?: boolean }> = []
-    const persisted: string[] = []
-    let fallbackCount = 0
-    const primed: string[] = []
-    let capturedSwap: ((next: ApiSessionClient) => void) | undefined
-    let userOnSwapCount = 0
-
-    const result = await initializeBackendRunSession(
-      {
-        api,
-        sessionTag: 'tag-offline',
-        metadata,
-        state,
-        uiLogPrefix: '[Codex]',
-        startupMetadataOverrides: {
-          permissionModeOverride: { mode: 'default', updatedAt: 100 },
-        },
-        allowOfflineStub: true,
-        onSessionSwap: async () => {
-          userOnSwapCount += 1
-          throw new Error('user onSessionSwap failed')
-        },
-      },
-      {
-        setupOfflineReconnectionFn: (opts) => {
-          capturedSwap = opts.onSessionSwap
-          return {
-            session: offlineSession,
-            reconnectionHandle: { cancel: () => {}, getSession: () => null, isReconnected: () => false },
-            isOffline: true,
-          }
-        },
-        primeAgentStateForUiFn: (session) => {
-          primed.push(session.sessionId)
-        },
-        reportSessionToDaemonIfRunningFn: async (opts) => {
-          daemonReports.push({
-            sessionId: opts.sessionId,
-            ...(opts.requireDaemonAck ? { requireDaemonAck: true } : {}),
-          })
-        },
-        persistTerminalAttachmentInfoIfNeededFn: async (opts) => {
-          persisted.push(opts.sessionId)
-        },
-        sendTerminalFallbackMessageIfNeededFn: () => {
-          fallbackCount += 1
-        },
-      },
-    )
-
-    expect(result.attachedToExistingSession).toBe(false)
-    expect(result.reportedSessionId).toBeNull()
-    expect(result.session).toBe(offlineSession)
-    expect(primed).toEqual(['offline-tag'])
-    expect(daemonReports).toEqual([])
-    expect(persisted).toEqual([])
-    expect(fallbackCount).toBe(0)
-
-    if (typeof capturedSwap !== 'function') {
-      throw new Error('Expected setupOfflineReconnection to provide an onSessionSwap callback')
-    }
-
-    const onUnhandled = vi.fn()
-    process.on('unhandledRejection', onUnhandled)
-    try {
-      capturedSwap(realSession)
-
-      await new Promise<void>((resolve) => setTimeout(resolve, 0))
-      expect(onUnhandled).not.toHaveBeenCalled()
-    } finally {
-      process.off('unhandledRejection', onUnhandled)
-    }
-
-    expect(userOnSwapCount).toBe(1)
-    expect(primed).toEqual(['offline-tag', 'real-session'])
-    expect(daemonReports).toEqual([{
-      sessionId: 'real-session',
-      requireDaemonAck: true,
-    }])
-    expect(persisted).toEqual(['real-session'])
-    expect(fallbackCount).toBe(1)
-  })
-
-  it('passes offline notify messages through setupOfflineReconnection when provided', async () => {
-    const metadata = { startedBy: 'terminal' } as unknown as Metadata
-    const state = { controlledByUser: false } as AgentState
-    const offlineSession = createSessionStub({ sessionId: 'offline-tag' })
-
-    const api = {
-      getOrCreateSession: async () => null,
-      sessionSyncClient: () => offlineSession,
-    }
-
-    const notifications: string[] = []
-
-    await initializeBackendRunSession(
-      {
-        api,
-        sessionTag: 'tag-offline-notify',
-        metadata,
-        state,
-        uiLogPrefix: '[Codex]',
-        startupMetadataOverrides: {
-          permissionModeOverride: { mode: 'default', updatedAt: 100 },
-        },
-        allowOfflineStub: true,
-        offlineNotify: (message: string) => notifications.push(message),
-      },
-      {
-        setupOfflineReconnectionFn: (opts) => {
-          opts.onNotify?.('hello')
-          return {
-            session: offlineSession,
-            reconnectionHandle: { cancel: () => {}, getSession: () => null, isReconnected: () => false },
-            isOffline: true,
-          }
-        },
-        primeAgentStateForUiFn: () => {},
-        reportSessionToDaemonIfRunningFn: async () => {},
-        persistTerminalAttachmentInfoIfNeededFn: async () => {},
-        sendTerminalFallbackMessageIfNeededFn: () => {},
-      },
-    )
-
-    expect(notifications).toEqual(['hello'])
-  })
 })

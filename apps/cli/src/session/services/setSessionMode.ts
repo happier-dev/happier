@@ -1,9 +1,9 @@
-import type { Credentials } from '@/persistence';
+import type { StoredCredentials } from '@/persistence';
 
 import { updateSessionStateFieldForTarget } from './updateSessionStateFieldForTarget';
 
 export async function setSessionMode(params: Readonly<{
-  credentials: Credentials;
+  credentials: StoredCredentials;
   idOrPrefix: string;
   modeId: string;
   updatedAt?: number;

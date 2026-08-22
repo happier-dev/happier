@@ -2,11 +2,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { VoiceAgentProfile } from './VoiceAgentProfile';
 
-const readCredentialsMock = vi.fn();
+const readStoredCredentialsMock = vi.fn();
 const resolveReplaySeedDraftMock = vi.fn();
 
 vi.mock('@/persistence', () => ({
-  readCredentials: () => readCredentialsMock(),
+  readStoredCredentials: () => readStoredCredentialsMock(),
 }));
 
 vi.mock('@/session/replay/resolveReplaySeedDraft', () => ({
@@ -15,7 +15,7 @@ vi.mock('@/session/replay/resolveReplaySeedDraft', () => ({
 
 describe('VoiceAgentProfile', () => {
   beforeEach(() => {
-    readCredentialsMock.mockReset();
+    readStoredCredentialsMock.mockReset();
     resolveReplaySeedDraftMock.mockReset();
   });
 
@@ -70,8 +70,9 @@ describe('VoiceAgentProfile', () => {
   });
 
   it('merges replay seed context and upgrades ready-handshake bootstraps to first-turn mode', async () => {
-    readCredentialsMock.mockResolvedValue({ token: 'credential-token' });
+    readStoredCredentialsMock.mockResolvedValue({ token: 'credential-token' });
     resolveReplaySeedDraftMock.mockResolvedValue({
+      status: 'seeded',
       seedDraft: 'Seeded summary from the previous voice session.',
     });
 

@@ -2,25 +2,18 @@ import {
   createActionExecutor,
   createUnavailableRuntimeActionExecutor,
   type ActionExecutorDeps,
-  type ApprovalRequestV1,
 } from '@happier-dev/protocol';
 
 import { isActionApprovalRequiredByEnv, isActionEnabledByEnv } from '@/settings/actionsSettings';
 
 import { createCliActionDeps } from './createCliActionDeps';
+import { createActionExecutionHookDeps } from './createActionExecutionHookDeps';
 import { getSharedBlockingApprovalCoordinator } from './approvals/blockingApprovalCoordinator';
 
 function normalizePollIntervalMs(raw: unknown): number {
   const parsed = typeof raw === 'number' ? raw : Number(raw);
   if (!Number.isFinite(parsed) || parsed <= 0) return 250;
   return Math.max(1, Math.min(60_000, Math.floor(parsed)));
-}
-
-function shouldNotifyApprovalUpdated(request: ApprovalRequestV1): boolean {
-  return request.status === 'rejected'
-    || request.status === 'canceled'
-    || request.status === 'executed'
-    || request.status === 'failed';
 }
 
 type MutableActionExecutorDeps = {
@@ -30,6 +23,7 @@ type MutableActionExecutorDeps = {
 type ApprovalWaitForDecisionArgs = Parameters<NonNullable<ActionExecutorDeps['approvalsWaitForDecision']>>[0];
 type ApprovalResolveBlockingDecisionArgs = Parameters<NonNullable<ActionExecutorDeps['approvalsResolveBlockingDecision']>>[0];
 type ApprovalUpdateArgs = Parameters<NonNullable<ActionExecutorDeps['approvalsUpdate']>>[0];
+type ApprovalCreateArgs = Parameters<NonNullable<ActionExecutorDeps['approvalsCreate']>>[0];
 
 export function createCliActionExecutorHarness(
   params: Parameters<typeof createCliActionDeps>[0],
@@ -72,13 +66,25 @@ export function createCliActionExecutorHarness(
     isActionEnabled: envIsActionEnabled,
     isActionApprovalRequired: envIsActionApprovalRequired,
     runtimeActionExecute: createUnavailableRuntimeActionExecutor(),
+    ...createActionExecutionHookDeps(),
     ...(overrides ?? {}),
   };
   const originalApprovalsUpdate = rawDeps.approvalsUpdate;
+  const originalApprovalsCreate = rawDeps.approvalsCreate;
+  if (originalApprovalsCreate) {
+    rawDeps.approvalsCreate = async (args: ApprovalCreateArgs) => {
+      const result = await originalApprovalsCreate(args);
+      const artifactId = typeof (result as { artifactId?: unknown }).artifactId === 'string'
+        ? (result as { artifactId: string }).artifactId
+        : null;
+      if (artifactId) coordinator.notifyApprovalUpdated({ artifactId, request: args.request });
+      return result;
+    };
+  }
   if (originalApprovalsUpdate) {
     rawDeps.approvalsUpdate = async (args: ApprovalUpdateArgs) => {
       const result = await originalApprovalsUpdate(args);
-      if ((result as { ok?: false })?.ok !== false && shouldNotifyApprovalUpdated(args.request)) {
+      if ((result as { ok?: false })?.ok !== false) {
         coordinator.notifyApprovalUpdated({
           artifactId: args.artifactId,
           request: args.request,

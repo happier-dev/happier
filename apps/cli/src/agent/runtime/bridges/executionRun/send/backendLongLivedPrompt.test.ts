@@ -60,7 +60,7 @@ function createLongLivedResumableRun(overrides?: Partial<ExecutionRunState>): Ex
 
 describe('sendBackendLongLivedRun (resume)', () => {
   it('forwards tool-call events after resuming a long-lived run (no fresh-vs-resume divergence)', async () => {
-    const sendAcp = vi.fn();
+    const sendAcp = vi.fn(async (..._args: unknown[]) => {});
     const { runtime, setSendPrompt } = createResumableBackendHarness();
     setSendPrompt((_sessionId, _prompt, actions) => {
       actions.emit({ type: 'tool-call', toolName: 'bash', callId: 'call_123', args: { command: 'ls' } });
@@ -79,8 +79,8 @@ describe('sendBackendLongLivedRun (resume)', () => {
       createRuntime: () => runtime,
       maxTurns: null,
       getNowMs: () => 123,
-      finishRun: () => undefined,
-      sendAcp: sendAcp as any,
+      finishRun: async () => undefined,
+      sendAcp,
       parentProvider: 'acme.runtime.provider' as any,
       streamedTranscriptSession: null,
       writeActivityMarker: async () => undefined,
@@ -106,8 +106,8 @@ describe('sendBackendLongLivedRun (resume)', () => {
       createRuntime: () => runtime,
       maxTurns: 2,
       getNowMs: () => 123,
-      finishRun: () => undefined,
-      sendAcp: (() => undefined) as any,
+      finishRun: async () => undefined,
+      sendAcp: async () => {},
       parentProvider: 'acme.runtime.provider' as any,
       streamedTranscriptSession: null,
       writeActivityMarker: async () => undefined,
@@ -135,8 +135,8 @@ describe('sendBackendLongLivedRun (resume)', () => {
       createRuntime: () => runtime,
       maxTurns: null,
       getNowMs: () => 123,
-      finishRun: () => undefined,
-      sendAcp: (() => undefined) as any,
+      finishRun: async () => undefined,
+      sendAcp: async () => {},
       parentProvider: 'acme.runtime.provider' as any,
       streamedTranscriptSession: null,
       writeActivityMarker: async () => undefined,

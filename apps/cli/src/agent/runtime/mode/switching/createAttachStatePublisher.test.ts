@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { Credentials } from '@/persistence';
+import type { Credentials, StoredCredentials } from '@/persistence';
 import { buildSessionMetadataEnvelopeFields } from '@/session/metadata/buildSessionMetadataEnvelopeCreateFields';
 import { createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
 import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
@@ -9,9 +9,9 @@ import { createAgentAttachStatePublisher } from './createAttachStatePublisher';
 
 describe('createAgentAttachStatePublisher', () => {
   it('keeps an ordinary OpenCode layout 0 attach-state mutation on the legacy socket owner', async () => {
-    const credentials: Credentials = {
+    const credentials: StoredCredentials = {
       token: 'token-1',
-      encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
+      encryption: null,
     };
     const rawSession = createSessionRecordFixture({
       id: 'sid_opencode_ordinary',
@@ -44,6 +44,9 @@ describe('createAgentAttachStatePublisher', () => {
     const waitForSocketConnectFn = vi.fn(async () => undefined);
     const legacyWrites: unknown[] = [];
     const updateSessionAgentStateWithAckFn = vi.fn(async (params: any) => {
+      expect(params).toMatchObject({ sessionEncryptionMode: 'plain' });
+      expect(params).not.toHaveProperty('encryptionKey');
+      expect(params).not.toHaveProperty('encryptionVariant');
       const next = params.handler(params.getAgentState() ?? {});
       legacyWrites.push(next);
       const version = params.getAgentStateVersion() + 1;
@@ -58,6 +61,8 @@ describe('createAgentAttachStatePublisher', () => {
     });
     const updateSessionMetadataEnvelopeTupleWithRetryFn = vi.fn(
       async (params: any) => {
+        expect(params).toMatchObject({ mode: 'plain' });
+        expect(params.ctx).toBeNull();
         expect(params.initialSnapshot).toMatchObject({
           mode: 'legacy_owner',
           metadataLayoutVersion: 0,
@@ -78,6 +83,10 @@ describe('createAgentAttachStatePublisher', () => {
       agentId: 'opencode',
       sessionId: 'sid_opencode_ordinary',
       credentials,
+      getAccountEncryptionCurrentness: async () => ({
+        mode: 'plain', version: 1, signingKeyFingerprint: null,
+        contentKeyFingerprint: null, updatedAt: 1,
+      }),
       rawSession,
       createSessionScopedSocketFn,
       waitForSocketConnectFn,
@@ -175,6 +184,10 @@ describe('createAgentAttachStatePublisher', () => {
       agentId: 'opencode',
       sessionId: 'sid_opencode_1',
       credentials,
+      getAccountEncryptionCurrentness: async () => ({
+        mode: 'plain', version: 1, signingKeyFingerprint: null,
+        contentKeyFingerprint: null, updatedAt: 1,
+      }),
       rawSession,
       createSessionScopedSocketFn,
       waitForSocketConnectFn,
@@ -237,6 +250,10 @@ describe('createAgentAttachStatePublisher', () => {
       agentId: 'claude',
       sessionId: 'sid_claude_1',
       credentials,
+      getAccountEncryptionCurrentness: async () => ({
+        mode: 'plain', version: 1, signingKeyFingerprint: null,
+        contentKeyFingerprint: null, updatedAt: 1,
+      }),
       rawSession,
     });
 
@@ -257,19 +274,20 @@ describe('createAgentAttachStatePublisher', () => {
     const agentState = { existing: 'value' };
     const tuple = buildSessionMetadataEnvelopeFields({
       credentials,
+      accountEncryptionMode: 'plain',
       metadata,
       agentState,
-      storedContentMode: 'plain',
+      storedContentMode: 'e2ee',
       encryptionKey: ownerSecret,
       encryptionVariant: 'legacy',
     });
     const rawSession = createSessionRecordFixture({
       id: 'sid_opencode_layout_1',
-      encryptionMode: 'plain',
+      encryptionMode: 'e2ee',
       metadataLayoutVersion: 1,
       metadata: tuple.sharedMetadata.ciphertext,
       metadataVersion: 4,
-      ownerMetadata: tuple.ownerMetadata.ciphertext,
+      ownerMetadata: tuple.ownerMetadata,
       agentState: tuple.agentState,
       agentStateVersion: 7,
     });
@@ -293,6 +311,10 @@ describe('createAgentAttachStatePublisher', () => {
       agentId: 'opencode',
       sessionId: 'sid_opencode_layout_1',
       credentials,
+      getAccountEncryptionCurrentness: async () => ({
+        mode: 'plain', version: 1, signingKeyFingerprint: null,
+        contentKeyFingerprint: null, updatedAt: 1,
+      }),
       rawSession,
       updateSessionMetadataEnvelopeTupleWithRetryFn,
     });

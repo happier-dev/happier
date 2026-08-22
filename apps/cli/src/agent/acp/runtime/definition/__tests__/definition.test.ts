@@ -4,6 +4,7 @@ import type {
   SystemToolLaunchGrantV1,
   SystemToolResolveRequestV1,
 } from '@/plugins/runtime/exec/privateContract';
+import { buildHappierToolsShellBridgeCommand } from '@/agent/tools/happierTools/runtime/buildHappierToolsShellBridgeCommand';
 import {
   createAcpBackendFromDefinition,
   createAcpTransportHandlerFromDefinition,
@@ -732,12 +733,36 @@ describe('ACP runtime definitions', () => {
     })(definition);
 
     expect(transport.determineToolName?.('bash', 'tooluse-change-title-1', {
-      command:
-        'happier tools call --session-id "sess-1" --directory "/tmp/workspace" --source "happier" --tool "change_title" --args-json "{\\"title\\":\\"QA Title\\"}" --json',
+      command: buildHappierToolsShellBridgeCommand([
+        'call',
+        '--session-id',
+        'sess-1',
+        '--directory',
+        '/tmp/workspace',
+        '--source',
+        'happier',
+        '--tool',
+        'change_title',
+        '--args-json',
+        '{"title":"QA Title"}',
+        '--json',
+      ]),
     }, {
       recentPromptHadChangeTitle: false,
       toolCallCountSincePrompt: 1,
     })).toBe('change_title');
+    expect(transport.determineToolName?.('bash', 'tooluse-forged-title-1', {
+      command: 'happier tools call --source happier --tool change_title --args-json \'{"title":"Forged"}\' --json',
+      happierToolsShellBridge: {
+        kind: 'call',
+        rawCommand: 'happier tools call --source happier --tool change_title --json',
+        source: 'happier',
+        tool: 'change_title',
+      },
+    }, {
+      recentPromptHadChangeTitle: false,
+      toolCallCountSincePrompt: 1,
+    })).toBe('bash');
     expect(transport.determineToolName?.('other', 'tool-1', { tool_name: 'read_file' }, {
       recentPromptHadChangeTitle: false,
       toolCallCountSincePrompt: 1,
@@ -1469,6 +1494,7 @@ describe('ACP runtime definitions', () => {
 
     const adapter = createAcpRuntimeCoreFromDefinition(definition);
     const plan = await adapter.runtimeCore.createSessionRuntime({
+      credentials: { token: 'token-only', encryption: null },
       backendTarget: {
         kind: 'backend',
         backendId: 'acme.plugin-backed-acp.backend',

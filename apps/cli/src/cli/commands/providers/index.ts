@@ -1,4 +1,7 @@
 import {
+  CUSTOM_PROVIDER_AUTHORING_PROTOCOLS_V1,
+  CustomProviderAuthoringProtocolV1Schema,
+  CustomProviderCredentialStyleV1Schema,
   CustomProviderTemplateV1Schema,
   ProviderModelIdSchema,
   parseProviderManualModelInput,
@@ -134,15 +137,20 @@ async function addCustom(args: readonly string[], deps: ProviderCliDependencies)
     } else {
       assertOnlyAllowedFlags(args, CUSTOM_SIMPLE_FLAGS);
       const name = readFlag(args, '--name') ?? await deps.prompt('Provider connection name: ');
-      const protocol = readFlag(args, '--protocol') ?? await deps.prompt('Protocol (openai-chat, openai-responses, anthropic): ');
+      // The authoring protocol and credential vocabularies are owned by
+      // Protocol: prompt from that membership and narrow the raw flag through
+      // its schema instead of restating the members as a cast here.
+      const protocol = readFlag(args, '--protocol')
+        ?? await deps.prompt(`Protocol (${CUSTOM_PROVIDER_AUTHORING_PROTOCOLS_V1.join(', ')}): `);
       const baseUrl = readFlag(args, '--base-url') ?? await deps.prompt('Base URL: ');
       const catalog = readFlag(args, '--catalog') ?? await deps.prompt('Catalog (manual or probe): ');
+      const credentialStyle = readFlag(args, '--credential-style');
       template = normalizeCustomProviderTemplateV1({
         name,
-        protocol: protocol as 'openai-chat' | 'openai-responses' | 'anthropic',
+        protocol: CustomProviderAuthoringProtocolV1Schema.parse(protocol),
         baseUrl,
-        ...(readFlag(args, '--credential-style') ? {
-          credentialStyle: readFlag(args, '--credential-style') as 'bearer' | 'x-api-key' | 'api-key' | 'custom-header',
+        ...(credentialStyle ? {
+          credentialStyle: CustomProviderCredentialStyleV1Schema.parse(credentialStyle),
         } : {}),
         ...(readFlag(args, '--credential-header') ? { credentialHeader: readFlag(args, '--credential-header')! } : {}),
         catalog: catalog as 'manual' | 'probe',

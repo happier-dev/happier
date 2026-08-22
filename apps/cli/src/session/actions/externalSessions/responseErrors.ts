@@ -1,18 +1,26 @@
 import type {
     ActionExecuteResult,
     ExternalSessionTakeoverPersistResponse,
-    ExternalSessionTakeoverResponse,
 } from '@happier-dev/protocol';
 import {
     ExternalSessionTakeoverResultV1Schema,
     type ExternalSessionTakeoverErrorCodeV1,
     type ExternalSessionTakeoverResultV1,
+    type ExternalSessionsRpcErrorCode,
 } from '@happier-dev/protocol/sessions';
 
 import { logger } from '@/ui/logger';
+import {
+    ExternalSessionViewerLeaseCapacityExceededError,
+} from '@/api/session/external/leases/createExternalSessionFollowLeaseManager';
+import {
+    isExternalSessionFollowFailureError,
+    type ExternalSessionFollowFailureKind,
+} from '@/session/external/externalSessionFollowFailure';
 import { isExternalSessionProviderFailureError } from '@/session/external/providerOps';
+import { isAgentExternalSessionsFailureCode } from '@happier-dev/plugin-sdk/sessions/external';
 
-export type ExternalSessionsErrorCode = 'invalid_request' | 'machine_offline' | 'agent_unavailable' | 'internal_error';
+export type ExternalSessionsErrorCode = ExternalSessionsRpcErrorCode;
 
 export function externalSessionsError(
     errorCode: ExternalSessionsErrorCode,
@@ -39,32 +47,93 @@ export function mapActionFailureToExternalSessionsError(
     );
 }
 
+/**
+ * Contribution failure codes that name a malformed request rather than an
+ * unavailable Agent. Every other code the SDK admits is an Agent-side failure.
+ */
+const AGENT_FAILURE_CODES_ANSWERED_AS_INVALID_REQUEST: ReadonlySet<string> = new Set([
+    'invalid_request',
+    'source_invalid',
+    'candidate_not_found',
+]);
+
+/**
+ * Anything else — a host-internal condition such as `conflict`, or a code no
+ * owner recognizes — is a genuine internal error. Answering `agent_unavailable`
+ * there sends a person to look at their Agent for a fault that is not theirs.
+ */
 function mapProviderFailureCodeToExternalSessionsErrorCode(code: string): ExternalSessionsErrorCode {
-    if (code === 'invalid_request' || code === 'source_invalid' || code === 'candidate_not_found') {
-        return 'invalid_request';
-    }
-    if (
-        code === 'agent_unavailable'
-        || code === 'unavailable'
-        || code === 'not_authorized'
-        || code === 'provider_error'
-        || code === 'timeout'
-        || code === 'source_unreachable'
-        || code === 'unsupported'
-        || code === 'follow_not_supported'
-        || code === 'takeover_not_available'
-        || code === 'cancelled'
-    ) {
-        return 'agent_unavailable';
-    }
-    return 'agent_unavailable';
+    if (AGENT_FAILURE_CODES_ANSWERED_AS_INVALID_REQUEST.has(code)) return 'invalid_request';
+    if (isAgentExternalSessionsFailureCode(code)) return 'agent_unavailable';
+    return 'internal_error';
 }
 
 export function mapExternalSessionProviderFailureToExternalSessionsError(
     error: unknown,
-): { ok: false; errorCode: ExternalSessionsErrorCode; error: string } | null {
+): { ok: false; errorCode: ExternalSessionsErrorCode; error: string; retryable: boolean } | null {
     if (!isExternalSessionProviderFailureError(error)) return null;
-    return externalSessionsError(mapProviderFailureCodeToExternalSessionsErrorCode(error.code));
+    return {
+        ...externalSessionsError(mapProviderFailureCodeToExternalSessionsErrorCode(error.code)),
+        retryable: error.retryable,
+    };
+}
+
+/**
+ * Outward answers for the host-owned follow failures. The detail strings are
+ * authored here — never taken from a failure message — so a typed failure stays
+ * as safe as the opaque internal-error envelope it replaces.
+ */
+const EXTERNAL_SESSION_FOLLOW_FAILURE_RESPONSES: Readonly<Record<
+    ExternalSessionFollowFailureKind,
+    Readonly<{ errorCode: ExternalSessionsErrorCode; error: string; retryable: boolean }>
+>> = {
+    agent_unavailable: {
+        errorCode: 'agent_unavailable',
+        error: 'external_session_agent_unavailable',
+        retryable: true,
+    },
+    source_changed: {
+        errorCode: 'agent_unavailable',
+        error: 'external_session_source_changed',
+        retryable: true,
+    },
+    follow_unavailable: {
+        errorCode: 'agent_unavailable',
+        error: 'external_session_follow_unavailable',
+        retryable: false,
+    },
+    daemon_unavailable: {
+        errorCode: 'agent_unavailable',
+        error: 'external_session_daemon_unavailable',
+        retryable: true,
+    },
+};
+
+/**
+ * Single classifier for a thrown External Sessions corridor failure. Agent
+ * failures keep the provider mapping; host-owned follow failures and viewer
+ * capacity exhaustion answer with their own typed code. Anything unrecognized
+ * returns `null` so its caller keeps reporting a genuine `internal_error`.
+ */
+export function mapExternalSessionCorridorFailureToExternalSessionsError(
+    error: unknown,
+): { ok: false; errorCode: ExternalSessionsErrorCode; error: string; retryable?: boolean } | null {
+    const providerFailure = mapExternalSessionProviderFailureToExternalSessionsError(error);
+    if (providerFailure) return providerFailure;
+    if (error instanceof ExternalSessionViewerLeaseCapacityExceededError) {
+        return externalSessionsError(
+            'agent_unavailable',
+            'external_session_viewer_capacity_exceeded',
+        );
+    }
+    if (isExternalSessionFollowFailureError(error)) {
+        const response = EXTERNAL_SESSION_FOLLOW_FAILURE_RESPONSES[error.kind];
+        return {
+            ...externalSessionsError(response.errorCode, response.error),
+            retryable: response.retryable,
+        };
+    }
+    return null;
 }
 
 function mapExternalTakeoverErrorCodeToExternalSessionsErrorCode(
@@ -104,15 +173,6 @@ function mapExternalTakeoverFailureToExternalSessionsError(
         mapExternalTakeoverErrorCodeToExternalSessionsErrorCode(result.errorCode, result.error),
         safeDetail,
     );
-}
-
-export function mapExternalTakeoverResultToDirectTakeoverResponse(
-    value: unknown,
-): ExternalSessionTakeoverResponse {
-    const parsed = ExternalSessionTakeoverResultV1Schema.safeParse(value);
-    if (!parsed.success) return externalSessionsError('internal_error', 'takeover_action_result_invalid') satisfies ExternalSessionTakeoverResponse;
-    if (!parsed.data.ok) return mapExternalTakeoverFailureToExternalSessionsError(parsed.data) satisfies ExternalSessionTakeoverResponse;
-    return { ok: true } satisfies ExternalSessionTakeoverResponse;
 }
 
 export function mapExternalTakeoverResultToDirectTakeoverPersistResponse(

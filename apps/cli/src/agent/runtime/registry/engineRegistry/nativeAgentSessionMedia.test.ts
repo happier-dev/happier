@@ -5,6 +5,8 @@ import { join } from 'node:path';
 
 import { createPluginSessionMediaHostAdapter } from './nativeAgentSessionMedia';
 
+const authorizeAnyCanonicalRoot = async () => true;
+
 function createHarness() {
   let activeSessionId: string | null = 'session-1';
   const sendAgentSessionMediaCommitted = vi.fn(async () => undefined);
@@ -29,9 +31,9 @@ describe('createPluginSessionMediaHostAdapter', () => {
     await mkdir(join(sourceRoot, 'references'), { recursive: true });
     await writeFile(join(sourceRoot, 'generated/image.png'), 'generated');
     await writeFile(join(sourceRoot, 'references/input.png'), 'reference');
-    await expect(harness.adapter.forNativeSession('session-1').registerSourceRoot({ rootPath: 'relative/assets' }))
+    await expect(harness.adapter.forAuthorizedSession('session-1', authorizeAnyCanonicalRoot).registerSourceRoot({ rootPath: 'relative/assets' }))
       .rejects.toThrow('media_source_root_invalid');
-    const source = await harness.adapter.forNativeSession('session-1').registerSourceRoot({
+    const source = await harness.adapter.forAuthorizedSession('session-1', authorizeAnyCanonicalRoot).registerSourceRoot({
       rootPath: join(sourceRoot, '.'),
     });
 
@@ -74,7 +76,7 @@ describe('createPluginSessionMediaHostAdapter', () => {
     const sourceRoot = join(directory, 'assets');
     await mkdir(sourceRoot);
     harness.setActiveSessionId('session-2');
-    await expect(harness.adapter.forNativeSession('session-1').registerSourceRoot({ rootPath: sourceRoot }))
+    await expect(harness.adapter.forAuthorizedSession('session-1', authorizeAnyCanonicalRoot).registerSourceRoot({ rootPath: sourceRoot }))
       .rejects.toThrow('media_session_scope_forbidden');
     expect(harness.sendAgentSessionMediaCommitted).not.toHaveBeenCalled();
   });
@@ -98,7 +100,7 @@ describe('createPluginSessionMediaHostAdapter', () => {
         };
       },
     });
-    const source = await adapter.forNativeSession('session-1').registerSourceRoot({
+    const source = await adapter.forAuthorizedSession('session-1', authorizeAnyCanonicalRoot).registerSourceRoot({
       rootPath: sourceRoot,
     });
 
@@ -109,14 +111,14 @@ describe('createPluginSessionMediaHostAdapter', () => {
     expect(sendAgentSessionMediaCommitted).not.toHaveBeenCalled();
   });
 
-  it('lets a native session register its own canonical root without a host seed', async () => {
+  it('publishes through a host-authorized canonical source root', async () => {
     const harness = createHarness();
     const directory = await mkdtemp(join(tmpdir(), 'plugin-media-root-'));
     const sourceRoot = join(directory, 'native-assets');
     await mkdir(sourceRoot);
     await writeFile(join(sourceRoot, 'generated.png'), 'generated');
 
-    const source = await harness.adapter.forNativeSession('session-1').registerSourceRoot({
+    const source = await harness.adapter.forAuthorizedSession('session-1', authorizeAnyCanonicalRoot).registerSourceRoot({
       rootPath: sourceRoot,
     });
     await expect(source.publishGenerated({
@@ -133,9 +135,9 @@ describe('createPluginSessionMediaHostAdapter', () => {
     const alias = join(directory, 'alias');
     await mkdir(target);
     await symlink(target, alias);
-    await expect(harness.adapter.forNativeSession('session-1').registerSourceRoot({ rootPath: join(directory, 'missing') }))
+    await expect(harness.adapter.forAuthorizedSession('session-1', authorizeAnyCanonicalRoot).registerSourceRoot({ rootPath: join(directory, 'missing') }))
       .rejects.toThrow('media_source_root_invalid');
-    await expect(harness.adapter.forNativeSession('session-1').registerSourceRoot({ rootPath: alias }))
+    await expect(harness.adapter.forAuthorizedSession('session-1', authorizeAnyCanonicalRoot).registerSourceRoot({ rootPath: alias }))
       .rejects.toThrow('media_source_root_invalid');
   });
 
@@ -148,7 +150,7 @@ describe('createPluginSessionMediaHostAdapter', () => {
     await mkdir(sourceRoot);
     await writeFile(outsidePath, 'outside');
     await symlink(outsidePath, aliasPath);
-    const source = await harness.adapter.forNativeSession('session-1').registerSourceRoot({
+    const source = await harness.adapter.forAuthorizedSession('session-1', authorizeAnyCanonicalRoot).registerSourceRoot({
       rootPath: sourceRoot,
     });
 
@@ -168,7 +170,7 @@ describe('createPluginSessionMediaHostAdapter', () => {
     expect(harness.sendAgentSessionMediaCommitted).not.toHaveBeenCalled();
   });
 
-  it('keeps source-root registration exclusive to the native host session owner', async () => {
+  it('keeps source-root registration exclusive to a host-authorized session service', async () => {
     const harness = createHarness();
     const directory = await mkdtemp(join(tmpdir(), 'plugin-media-root-'));
     const sourceRoot = join(directory, 'assets');
@@ -178,8 +180,41 @@ describe('createPluginSessionMediaHostAdapter', () => {
       .rejects.toThrow('media_source_root_forbidden');
     await expect(harness.adapter.forSession('session-1').registerSourceRoot({ rootPath: sourceRoot }))
       .rejects.toThrow('media_source_root_forbidden');
-    await expect(harness.adapter.forNativeSession('session-1').registerSourceRoot({ rootPath: sourceRoot }))
+    await expect(harness.adapter.forAuthorizedSession('session-1', authorizeAnyCanonicalRoot).registerSourceRoot({ rootPath: sourceRoot }))
       .resolves.toMatchObject({ dispose: expect.any(Function) });
+  });
+
+  it('binds ordinary callers to a host-authorized canonical source root', async () => {
+    const harness = createHarness();
+    const directory = await mkdtemp(join(tmpdir(), 'plugin-media-root-'));
+    const allowed = join(directory, 'allowed');
+    const denied = join(directory, 'denied');
+    await mkdir(allowed);
+    await mkdir(denied);
+    const authorizeSourceRoot = vi.fn(async (rootPath: string) => rootPath === await realpath(allowed));
+    const service = harness.adapter.forAuthorizedSession('session-1', authorizeSourceRoot);
+
+    await expect(service.registerSourceRoot({ rootPath: denied }))
+      .rejects.toThrow('media_source_root_forbidden');
+    await expect(service.registerSourceRoot({ rootPath: allowed }))
+      .resolves.toMatchObject({ dispose: expect.any(Function) });
+    expect(authorizeSourceRoot).toHaveBeenCalledWith(await realpath(denied));
+    expect(authorizeSourceRoot).toHaveBeenCalledWith(await realpath(allowed));
+  });
+
+  it('does not admit source-root registration after caller cancellation', async () => {
+    const harness = createHarness();
+    const directory = await mkdtemp(join(tmpdir(), 'plugin-media-root-'));
+    const sourceRoot = join(directory, 'allowed');
+    await mkdir(sourceRoot);
+    const authorizeSourceRoot = vi.fn(async () => true);
+    const service = harness.adapter.forAuthorizedSession('session-1', authorizeSourceRoot);
+    const controller = new AbortController();
+    controller.abort(new Error('caller retired'));
+
+    await expect(service.registerSourceRoot({ rootPath: sourceRoot }, { signal: controller.signal }))
+      .rejects.toThrow('caller retired');
+    expect(authorizeSourceRoot).not.toHaveBeenCalled();
   });
 
   it('revokes retained roots after scope switch, explicit disposal, and adapter disposal', async () => {
@@ -188,7 +223,7 @@ describe('createPluginSessionMediaHostAdapter', () => {
     const sourceRoot = join(directory, 'assets');
     await mkdir(sourceRoot);
     await writeFile(join(sourceRoot, 'one.png'), 'not used by adapter');
-    const switched = await harness.adapter.forNativeSession('session-1').registerSourceRoot({
+    const switched = await harness.adapter.forAuthorizedSession('session-1', authorizeAnyCanonicalRoot).registerSourceRoot({
       rootPath: sourceRoot,
     });
     harness.setActiveSessionId('session-2');
@@ -196,14 +231,14 @@ describe('createPluginSessionMediaHostAdapter', () => {
       .rejects.toThrow('media_session_scope_forbidden');
     harness.setActiveSessionId('session-1');
 
-    const explicitlyDisposed = await harness.adapter.forNativeSession('session-1').registerSourceRoot({
+    const explicitlyDisposed = await harness.adapter.forAuthorizedSession('session-1', authorizeAnyCanonicalRoot).registerSourceRoot({
       rootPath: sourceRoot,
     });
     explicitlyDisposed.dispose();
     await expect(explicitlyDisposed.publishGenerated({ localId: 'two', path: '/workspace/two.png' }))
       .rejects.toThrow('media_source_root_revoked');
 
-    const adapterDisposed = await harness.adapter.forNativeSession('session-1').registerSourceRoot({
+    const adapterDisposed = await harness.adapter.forAuthorizedSession('session-1', authorizeAnyCanonicalRoot).registerSourceRoot({
       rootPath: sourceRoot,
     });
     harness.adapter.dispose();

@@ -4,7 +4,6 @@ import type { HappierBuiltInToolDefinition } from './types';
 import {
   actionExecuteToolInputSchema,
   changeTitleToolInputSchema,
-  pluginsReloadToolInputSchema,
 } from './manualToolContracts';
 
 function buildActionBackedTools(): readonly HappierBuiltInToolDefinition[] {
@@ -37,12 +36,6 @@ const MANUAL_TOOLS: readonly HappierBuiltInToolDefinition[] = Object.freeze([
     title: 'Execute Action',
     description: 'Execute a Happier action by action id with structured input',
     inputSchema: actionExecuteToolInputSchema,
-  },
-  {
-    name: 'plugins_reload',
-    title: 'Reload Trusted Plugin',
-    description: 'Reload a trusted local dev plugin after editing its files',
-    inputSchema: pluginsReloadToolInputSchema,
   },
 ]);
 

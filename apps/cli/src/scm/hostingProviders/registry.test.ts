@@ -1,8 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
 import { ScmHostingProviderRefSchema } from '@happier-dev/protocol';
-import type { ScmHostingProviderRuntimeRegistration } from '@happier-dev/plugin-sdk/experimental/scm';
+import type { PluginApi } from '@happier-dev/plugin-sdk';
+import { createPluginRegistrationScope } from '@happier-dev/plugin-sdk/host/registration';
+import type { HostingProviderRuntimeRegistration as ScmHostingProviderRuntimeRegistration } from '@happier-dev/plugin-sdk/scm/hosting';
 
+import type { ActivationTarget } from '../../plugins/runtime/lifecycle/activation/targets';
+import { createTargetScmRuntimeEntries } from '../../plugins/runtime/lifecycle/contributions/targetScm';
+import { readHostingProviderExecutionAuthority } from './executionAuthority';
 import { createScmHostingProviderRegistry } from './registry';
 
 type DetectedProviderFixture = NonNullable<
@@ -37,6 +42,115 @@ function createRegistryWithDetectedProvider(
 }
 
 describe('SCM hosting provider registry', () => {
+    it('uses a committed hosting callback without reconstructing its runtime topology', () => {
+        class Adapter {
+            calls = 0;
+
+            detectRemote() {
+                this.calls += 1;
+                return {
+                    id: 'forge',
+                    kind: 'forge',
+                    displayName: 'Captured Forge',
+                    baseUrl: 'https://forge.example.test',
+                    authority: readHostingProviderExecutionAuthority(),
+                };
+            }
+        }
+
+        const adapter = new Adapter();
+        const scope = createPluginRegistrationScope({
+            pluginId: 'acme.forge',
+            target: { realm: 'daemon' },
+            rights: [{
+                family: 'scmHostingProviders',
+                localId: 'forge',
+                target: { realm: 'daemon' },
+            }],
+        });
+        scope.api.scm.registerHostingProvider('forge', {
+            adapter,
+        } as unknown as Parameters<PluginApi['scm']['registerHostingProvider']>[1]);
+        const [registration] = scope.commit();
+        if (registration?.family !== 'scmHostingProviders') {
+            throw new Error('Expected committed SCM hosting registration');
+        }
+        adapter.detectRemote = () => {
+            throw new Error('The post-commit adapter method must not run');
+        };
+        const target = {
+            pluginId: 'acme.forge',
+            manifest: {
+                contributes: {
+                    scmBackends: [],
+                    scmHostingProviders: [{ id: 'forge' }],
+                },
+            },
+        } as unknown as ActivationTarget;
+        let active = true;
+        const runtimeEntries = createTargetScmRuntimeEntries({
+            generation: 7,
+            activationTargets: [target],
+            targetRegistrations: [{
+                pluginId: 'acme.forge',
+                generation: '7',
+                registration,
+            }],
+            isGenerationActive: () => active,
+        });
+        const registry = createScmHostingProviderRegistry({
+            providers: [{
+                id: 'forge',
+                pluginId: 'acme.forge',
+                kind: 'forge',
+                displayName: 'Captured Forge',
+                capabilities: [],
+            }],
+            runtimeRegistrations: runtimeEntries.hostingProviders,
+        });
+
+        const exposed = registry.getAdapter('acme.forge/forge');
+        expect(exposed?.detectRemote?.({
+            remoteName: 'origin',
+            remoteUrl: 'https://forge.example.test/acme/repo',
+        })).toMatchObject({
+            id: 'forge',
+            authority: {
+                pluginId: 'acme.forge',
+                generation: '7',
+                contributionId: 'forge',
+            },
+        });
+        expect(adapter.calls).toBe(1);
+
+        active = false;
+        expect(() => exposed?.detectRemote?.({
+            remoteName: 'origin',
+            remoteUrl: 'https://forge.example.test/acme/repo',
+        })).toThrow(/no longer active/i);
+        expect(adapter.calls).toBe(1);
+    });
+
+    it('reports the bound adapter structure to enumeration exactly as property access resolves it', () => {
+        const registry = createRegistryWithDetectedProvider({
+            id: 'forge',
+            kind: 'forge',
+            displayName: 'Forge',
+            baseUrl: 'https://forge.example.test',
+        });
+
+        const exposed = registry.getAdapter('happier.scm.forge/forge');
+        if (!exposed) throw new Error('Expected bound hosting adapter');
+
+        expect(Object.keys(exposed)).toEqual(['detectRemote', 'buildCompareUrl']);
+        expect(Object.keys({ ...exposed })).toEqual(['detectRemote', 'buildCompareUrl']);
+
+        // Enumeration must hand back the authority-bound callable, not the raw one.
+        const [enumeratedDetectRemote] = Object.values(exposed);
+        expect(enumeratedDetectRemote).toBe(exposed.detectRemote);
+        expect(enumeratedDetectRemote).toBeTypeOf('function');
+    });
+
     it('keeps same-local-id providers from distinct plugins independently addressable', () => {
         const providers = ['one', 'two'].map((suffix) => ({
             id: 'shared',

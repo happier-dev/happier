@@ -10,9 +10,15 @@ import {
 import { ensureWorkspacePackagesBuiltByName as ensureWorkspacePackagesBuiltByNameDefault } from '../../../scripts/workspaces/ensureWorkspacePackagesBuilt.mjs';
 import { resolveWorkspaceBundlePublicationMode } from '../../../scripts/workspaces/workspaceBundlePublication.mjs';
 import {
+  DEFAULT_WORKSPACE_BUNDLE_LOCK_TIMEOUT_MS,
   resolveCliSharedDepsBuildLockPath,
   withOptionalCliSharedDepsBuildLock,
 } from './optionalWorkspaceBundleLock.mjs';
+import {
+  formatBundledPluginArtifactVerification,
+  readBundledPluginArtifactInventory,
+  verifyBundledPluginArtifactsAgainstInventory,
+} from './verifyBundledPluginArtifacts.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SCRIPT_REPO_ROOT = findRepoRoot(__dirname);
@@ -99,6 +105,15 @@ function resolveDeclaredBundledPluginWorkspacePackageNames({ repoRoot }) {
   return packageNames;
 }
 
+function resolveGeneratorOwnedBundledPluginPackageNames({ repoRoot }) {
+  const artifacts = readBundledPluginArtifactInventory({ repoRoot }) ?? [];
+  return new Set(
+    artifacts
+      .map((artifact) => String(artifact?.packageName ?? '').trim())
+      .filter((packageName) => packageName.startsWith(PLUGINS_PACKAGE_PREFIX)),
+  );
+}
+
 export async function bundleWorkspaceDeps(opts = {}) {
   // `repoRoot`/`happyCliDir` refer to the target repository we are bundling into.
   // In tests, this is a sandbox directory. The implementation helpers (cli-common workspaces)
@@ -128,6 +143,7 @@ export async function bundleWorkspaceDeps(opts = {}) {
       {
         force: forceArtifactWorkspaceBuilds,
         includeDevDependencies: false,
+        publicationMode,
       },
     );
 
@@ -181,29 +197,68 @@ export async function bundleWorkspaceDeps(opts = {}) {
       repoRoot: targetRepoRoot,
       hostPackageDir: happyCliDir,
     });
-    await ensureWorkspacePackagesBuiltByName(
-      targetRepoRoot,
-      [...new Set(bundles.map((bundle) => String(bundle?.packageName ?? bundle?.name ?? '').trim()).filter(Boolean))],
-      {
-        quiet: false,
-        env: heldLockEnv,
-        includeDevDependencies: false,
-        ...(forceArtifactWorkspaceBuilds
-          ? { force: true }
-          : {}),
-      },
+    const bundledWorkspacePackageNames = [...new Set(
+      bundles.map((bundle) => String(bundle?.packageName ?? bundle?.name ?? '').trim()).filter(Boolean),
+    )];
+    const generatorOwnedPluginPackageNames = forceArtifactWorkspaceBuilds
+      ? resolveGeneratorOwnedBundledPluginPackageNames({ repoRoot: targetRepoRoot })
+      : new Set();
+    // `build:shared` is the natural prepack builder and owns the full force-build
+    // followed by immutable plugin runtime publication. Once its generated inventory
+    // names a plugin, the pack-time copier must not admit that package to the ordinary
+    // workspace compiler again: even a non-forced staleness check can replace the
+    // staged bundle/chunk tree with compiler-owned reexports. The exact inventory
+    // verification below is the admission check for those immutable bytes.
+    const workspacePackageNamesToForceBuild = bundledWorkspacePackageNames.filter(
+      (packageName) => !generatorOwnedPluginPackageNames.has(packageName),
     );
+    if (workspacePackageNamesToForceBuild.length > 0) {
+      await ensureWorkspacePackagesBuiltByName(
+        targetRepoRoot,
+        workspacePackageNamesToForceBuild,
+        {
+          quiet: false,
+          env: heldLockEnv,
+          includeDevDependencies: false,
+          publicationMode,
+          ...(forceArtifactWorkspaceBuilds
+            ? { force: true }
+            : {}),
+        },
+      );
+    }
     bundleWorkspacePackagesWithRuntimeDependencies({
       bundles,
       publicationMode,
     });
+
+    // Exact artifact publication is the only tree that reaches a tarball, and the
+    // generated bundled-plugin inventory travels inside that same tarball as the
+    // runtime's authority for every bundled plugin generation. Prove the shipped
+    // plugin bytes are the ones the inventory publishes before the pack step reads
+    // this tree. Live source-dev publication deliberately retains prior generation
+    // targets, so it has no exact tree to compare.
+    if (publicationMode === 'artifact') {
+      const bundledPluginPackageDirs = new Map(
+        bundles.map((bundle) => [String(bundle?.packageName ?? '').trim(), bundle.destDir]),
+      );
+      const verification = verifyBundledPluginArtifactsAgainstInventory({
+        repoRoot: targetRepoRoot,
+        resolvePackageDir: (packageName) => (
+          bundledPluginPackageDirs.get(packageName)
+          ?? resolve(happyCliDir, 'node_modules', ...packageName.split('/'))
+        ),
+      });
+      const failure = formatBundledPluginArtifactVerification(verification);
+      if (failure) throw new Error(failure);
+    }
   }, {
     repoRoot: targetRepoRoot,
     lockPath,
     env: baseEnv,
-    lockTimeoutMs: 240_000,
+    lockTimeoutMs: DEFAULT_WORKSPACE_BUNDLE_LOCK_TIMEOUT_MS,
     lockPollIntervalMs: 250,
-    lockStaleAfterMs: 240_000,
+    lockStaleAfterMs: DEFAULT_WORKSPACE_BUNDLE_LOCK_TIMEOUT_MS,
   });
 }
 

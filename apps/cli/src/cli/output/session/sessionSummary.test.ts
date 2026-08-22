@@ -1,12 +1,29 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  sealSessionOwnerMetadataV1,
+  createPlainSessionOwnerMetadataEnvelopeV1,
   SessionOwnerMetadataV1Schema,
 } from '@happier-dev/protocol';
 import { encodeBase64, encryptLegacy } from '@/api/encryption';
 import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
-import { summarizeSessionRow } from '@/cli/output/session/sessionSummary';
+import {
+  summarizeSessionRow as summarizeSessionRowOwner,
+} from '@/cli/output/session/sessionSummary';
+
+function summarizeSessionRow(
+  params: Omit<
+    Parameters<typeof summarizeSessionRowOwner>[0],
+    'accountEncryptionMode'
+  > & Partial<Pick<
+    Parameters<typeof summarizeSessionRowOwner>[0],
+    'accountEncryptionMode'
+  >>,
+) {
+  return summarizeSessionRowOwner({
+    ...params,
+    accountEncryptionMode: params.accountEncryptionMode ?? 'plain',
+  });
+}
 
 describe('summarizeSessionRow', () => {
   const credentials = {
@@ -79,14 +96,8 @@ describe('summarizeSessionRow', () => {
         },
       },
     });
-    const ownerMetadataCiphertext = sealSessionOwnerMetadataV1({
-      material: {
-        type: 'legacy',
-        secret: credentials.encryption.secret,
-      },
-      ownerMetadata,
-      randomBytes: (length) => new Uint8Array(length).fill(7),
-    });
+    const ownerMetadataEnvelope =
+      createPlainSessionOwnerMetadataEnvelopeV1(ownerMetadata);
     const row = createSessionRecordFixture({
       id: 'session-layout-v1-owner',
       encryptionMode: 'plain',
@@ -98,7 +109,7 @@ describe('summarizeSessionRow', () => {
           updatedAt: 10,
         },
       }),
-      ownerMetadata: ownerMetadataCiphertext,
+      ownerMetadata: ownerMetadataEnvelope,
     });
 
     expect(summarizeSessionRow({ credentials, row })).toMatchObject({
@@ -114,10 +125,14 @@ describe('summarizeSessionRow', () => {
       credentials,
       row: {
         ...row,
-        ownerMetadata: 'not-owner-ciphertext',
+        ownerMetadata: {
+          t: 'encrypted',
+          c: 'not-owner-ciphertext',
+        },
       },
     });
-    for (const key of ['title', 'tag', 'path', 'host', 'isSystem', 'systemPurpose'] as const) {
+    expect(unreadableOwnerSummary.title).toBe('Recipient-safe title');
+    for (const key of ['tag', 'path', 'host', 'isSystem', 'systemPurpose'] as const) {
       expect(unreadableOwnerSummary).not.toHaveProperty(key);
     }
 
@@ -144,5 +159,59 @@ describe('summarizeSessionRow', () => {
 
     expect(session.isSystem).toBeUndefined();
     expect(session.systemPurpose).toBeUndefined();
+  });
+
+  it('summarizes a plain Session with token-only credentials without fabricating encryption material', () => {
+    const session = summarizeSessionRow({
+      credentials: {
+        token: 'token-only',
+        encryption: null,
+      },
+      row: createSessionRecordFixture({
+        id: 'session-plain-token-only',
+        encryptionMode: 'plain',
+        metadata: JSON.stringify({
+          tag: 'PlainSession',
+          summary: {
+            text: 'Plain session',
+            updatedAt: 10,
+          },
+          path: '/worktree',
+          host: 'plain-host',
+        }),
+      }),
+    });
+
+    expect(session).toMatchObject({
+      id: 'session-plain-token-only',
+      encryptionMode: 'plain',
+      encryption: null,
+      tag: 'PlainSession',
+      title: 'Plain session',
+      path: '/worktree',
+      host: 'plain-host',
+    });
+  });
+
+  it('keeps a retained E2EE Session visible when token-only credentials cannot open its metadata', () => {
+    const session = summarizeSessionRow({
+      credentials: {
+        token: 'token-only',
+        encryption: null,
+      },
+      row: createSessionRecordFixture({
+        id: 'session-e2ee-token-only',
+        encryptionMode: 'e2ee',
+        metadata: 'retained-ciphertext',
+      }),
+    });
+
+    expect(session).toMatchObject({
+      id: 'session-e2ee-token-only',
+      encryptionMode: 'e2ee',
+      encryption: null,
+    });
+    expect(session.title).toBeUndefined();
+    expect(session.path).toBeUndefined();
   });
 });

@@ -28,10 +28,76 @@ import { describe, expect, it, vi } from 'vitest';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol';
 
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import type { ProjectedPluginToolCatalogEntry } from '@/plugins/runtime/toolCatalog';
 
 import { createActionToolExecutorBridge } from './createActionToolExecutorBridge';
 
 describe('createActionToolExecutorBridge', () => {
+  it('preserves V2 session spawn option context for the canonical action options resolver', async () => {
+    const calls: unknown[] = [];
+    const bridge = createActionToolExecutorBridge({
+      surface: 'mcp',
+      executor: {
+        execute: async (actionId, input, ctx) => {
+          calls.push({ actionId, input, ctx });
+          return {
+            ok: true,
+            result: {
+              actionId: 'session.spawn_new',
+              fieldPath: 'modelSelection',
+              optionsSourceId: 'agents.models.available',
+              options: [],
+            },
+          };
+        },
+      },
+    });
+    const sessionSpawnOptionContext = {
+      executionTarget: { serverId: 'local', machineId: 'm1' },
+      directory: '/repo',
+      agentTarget: {
+        kind: 'agent',
+        identity: { pluginId: 'happier.agent.claude', localId: 'claude' },
+      },
+      modelSelection: {
+        v: 1,
+        updatedAt: 1,
+        ref: { agentTargetKey: 'backend:claude', modelId: 'claude-opus-4-8' },
+      },
+    } as const;
+
+    await expect(bridge.resolveActionOptions({
+      actionId: 'session.spawn_new',
+      fieldPath: 'modelSelection',
+      optionsSourceId: null,
+      sessionId: null,
+      limit: 10,
+      query: null,
+      ...sessionSpawnOptionContext,
+    } as Parameters<typeof bridge.resolveActionOptions>[0] & typeof sessionSpawnOptionContext, 'sess-1')).resolves.toEqual({
+      ok: true,
+      result: {
+        actionId: 'session.spawn_new',
+        fieldPath: 'modelSelection',
+        optionsSourceId: 'agents.models.available',
+        options: [],
+      },
+    });
+
+    expect(calls).toEqual([
+      expect.objectContaining({
+        actionId: 'action.options.resolve',
+        input: {
+          actionId: 'session.spawn_new',
+          fieldPath: 'modelSelection',
+          limit: 10,
+          ...sessionSpawnOptionContext,
+        },
+        ctx: expect.objectContaining({ defaultSessionId: 'sess-1', surface: 'mcp' }),
+      }),
+    ]);
+  });
+
   it('does not route discoverable-only first-party tools through direct tool names on session agents', async () => {
     const calls: unknown[] = [];
     const bridge = createActionToolExecutorBridge({
@@ -102,6 +168,50 @@ describe('createActionToolExecutorBridge', () => {
         defaultSessionId: 'sess-1',
         surface: 'agent',
         approvalOrigin,
+      }),
+    ]);
+  });
+
+  it('stamps the active turn causal authority onto agent execution-run actions', async () => {
+    const calls: unknown[] = [];
+    const causalPermissionAuthority = {
+      kind: 'admittedSessionInputV1',
+      admittedPermissionCeiling: 'default',
+    } as const;
+    const bridge = createActionToolExecutorBridge({
+      surface: 'agent',
+      resolveCallerPermissionMode: () => 'yolo',
+      resolveCausalPermissionAuthority: () => causalPermissionAuthority,
+      executor: {
+        execute: async (actionId, input, ctx) => {
+          calls.push({ actionId, input, ctx });
+          return { ok: true, result: { ok: true } };
+        },
+      },
+    });
+
+    await expect(bridge.executeActionByToolName('action_execute', {
+      actionId: 'execution.run.start',
+      input: {
+        intent: 'delegate',
+        backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+        instructions: 'Inspect the change.',
+        permissionMode: 'yolo',
+        retentionPolicy: 'ephemeral',
+        runClass: 'bounded',
+        ioMode: 'request_response',
+      },
+    }, 'sess-1')).resolves.toEqual({ ok: true, result: {} });
+
+    expect(calls).toEqual([
+      expect.objectContaining({
+        actionId: 'execution.run.start',
+        ctx: expect.objectContaining({
+          defaultSessionId: 'sess-1',
+          surface: 'agent',
+          callerPermissionMode: 'yolo',
+          causalPermissionAuthority,
+        }),
       }),
     ]);
   });
@@ -393,8 +503,9 @@ describe('createActionToolExecutorBridge', () => {
 
     expect(res).toEqual({
       ok: false,
-      errorCode: 'timeout',
-      error: 'timeout',
+      errorCode: 'execution_run_wait_timeout',
+      error: 'Execution run wait timed out',
+      details: { runId: 'run-1' },
     });
   });
 
@@ -407,7 +518,6 @@ describe('createActionToolExecutorBridge', () => {
           source: { kind: 'path' },
           pluginId: 'acme.review.plugin',
           manifestPath: '/plugins/acme/review/.happier-plugin/plugin.json',
-          manifestDigest: 'sha256:acme-review',
           daemonEntryPath: '/plugins/acme/review/daemon.mjs',
           sourceSpec: {
             kind: 'path',
@@ -434,6 +544,7 @@ describe('createActionToolExecutorBridge', () => {
               cli: true,
               rpc: false,
               sdk: false,
+              plugin: false,
             },
             inputHints: null,
             inputSchema: {
@@ -457,7 +568,6 @@ describe('createActionToolExecutorBridge', () => {
           source: { kind: 'path' },
           pluginId: 'acme.review.plugin',
           manifestPath: '/plugins/acme/review/.happier-plugin/plugin.json',
-          manifestDigest: 'sha256:acme-review',
           daemonEntryPath: '/plugins/acme/review/daemon.mjs',
           sourceSpec: {
             kind: 'path',
@@ -512,6 +622,56 @@ describe('createActionToolExecutorBridge', () => {
         }),
       },
     });
+  });
+
+  it('carries an admitted plugin generation through direct and generic action execution', async () => {
+    const calls: Array<{ actionId: string; context: unknown }> = [];
+    const pluginToolCatalog: readonly ProjectedPluginToolCatalogEntry[] = [{
+      toolId: 'acme.composition/review-tool',
+      actionId: 'acme.composition/review-start',
+      name: 'acme_composition_review_start',
+      title: 'Acme composition review',
+      description: 'Run the composition-selected review action.',
+      inputSchema: { type: 'object', additionalProperties: false },
+      safety: 'safe',
+      surfaces: ['agent'],
+      expectedContributorImmutableGenerationId: 'generation-g',
+    }];
+    const bridge = createActionToolExecutorBridge({
+      surface: 'agent',
+      pluginToolCatalog,
+      executor: {
+        execute: async (actionId, _input, context) => {
+          calls.push({ actionId, context });
+          return { ok: true, result: { actionId } };
+        },
+      },
+    });
+
+    await expect(bridge.executeActionByToolName(
+      'acme_composition_review_start',
+      {},
+      'sess-1',
+    )).resolves.toEqual({ ok: true, result: { actionId: 'acme.composition/review-start' } });
+    await expect(bridge.executeActionByToolName('action_execute', {
+      actionId: 'acme.composition/review-start',
+      input: {},
+    }, 'sess-1')).resolves.toEqual({ ok: true, result: { actionId: 'acme.composition/review-start' } });
+
+    expect(calls).toEqual([
+      expect.objectContaining({
+        actionId: 'acme.composition/review-start',
+        context: expect.objectContaining({
+          expectedContributorImmutableGenerationId: 'generation-g',
+        }),
+      }),
+      expect.objectContaining({
+        actionId: 'acme.composition/review-start',
+        context: expect.objectContaining({
+          expectedContributorImmutableGenerationId: 'generation-g',
+        }),
+      }),
+    ]);
   });
 
   // CON-4: the in-transcript agent tool dispatch chokepoint MUST tag the executor context with

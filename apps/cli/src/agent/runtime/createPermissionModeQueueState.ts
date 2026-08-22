@@ -26,6 +26,10 @@ export function createPermissionModeQueueState(opts: {
 }): {
   messageQueue: MessageQueue2<PermissionModeQueuedPromptMode, PermissionModeQueuedPrompt>;
   rebindSession: (session: ApiSessionClient) => void;
+  releaseRejectedBeforeProviderPromptIdentity: (
+    session: ApiSessionClient,
+    message: PermissionModeQueuedPrompt,
+  ) => void;
   getCurrentPermissionMode: () => PermissionMode | undefined;
   setCurrentPermissionMode: (mode: PermissionMode | undefined) => void;
   getCurrentPermissionModeUpdatedAt: () => number;
@@ -40,6 +44,8 @@ export function createPermissionModeQueueState(opts: {
         modelSelection: mode.modelSelection ?? null,
         suppressUserEcho: mode.suppressUserEcho === true,
         providerPromptAlreadyResolved: mode.providerPromptAlreadyResolved === true,
+        causalPermissionAuthority: mode.causalPermissionAuthority ?? null,
+        inputContextBlock: mode.inputContextBlock ?? '',
       }),
     {
       batcher: (messages) => combinePermissionModeQueuedPrompts(messages),
@@ -66,6 +72,9 @@ export function createPermissionModeQueueState(opts: {
     messageQueue,
     rebindSession: (session) => {
       binding.bindSession(session);
+    },
+    releaseRejectedBeforeProviderPromptIdentity: (session, message) => {
+      binding.releaseRejectedBeforeProviderPromptIdentity(session, message);
     },
     getCurrentPermissionMode: () => currentPermissionMode,
     setCurrentPermissionMode: (mode) => {

@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createExternalSessionFollowLeaseManager } from '@/api/session/external/leases/createExternalSessionFollowLeaseManager';
+import {
+    ExternalSessionFollowFailureError,
+} from '@/session/external/externalSessionFollowFailure';
+import { ExternalSessionProviderFailureError } from '@/session/external/providerOps';
 
 const {
     emitExternalSessionTranscriptRefreshInvalidationMock,
@@ -44,7 +48,7 @@ vi.mock('@/api/session/external/takeover/loadLinkedExternalSession', () => ({
 }));
 
 vi.mock('@/persistence', () => ({
-    readCredentials: (...args: unknown[]) => readCredentialsMock(...args),
+    readStoredCredentials: (...args: unknown[]) => readCredentialsMock(...args),
 }));
 
 vi.mock('@/api/session/external/leases/resolveExternalSessionObservationLinkInput', () => ({
@@ -141,6 +145,91 @@ describe('external-session follow lease actions', () => {
         });
     });
 
+    it('rejects a stale viewer identity before creating follow demand or a lease', async () => {
+        loadLinkedExternalSessionMock.mockResolvedValueOnce({
+            ok: false,
+            errorCode: 'invalid_request',
+            error: 'linked_session_identity_mismatch',
+        });
+        const attach = vi.fn();
+        const reconcileTranscriptDemand = vi.fn();
+
+        await expect(executeExternalSessionAttachAction({
+            machineId: 'machine-1',
+            sessionId: 'session-1',
+            agentId: 'opencode',
+            remoteSessionId: 'remote-1',
+            source: { kind: 'opencodeServer', directory: '/tmp/workspace' },
+            leaseId: 'viewer-stale',
+        }, {
+            followLeaseManager: { attach },
+            observationProjection: { reconcileTranscriptDemand },
+        } as never)).resolves.toEqual({
+            ok: false,
+            errorCode: 'invalid_request',
+            error: 'linked_session_identity_mismatch',
+        });
+
+        expect(loadLinkedExternalSessionMock).toHaveBeenCalledWith({
+            credentials: expect.any(Object),
+            sessionId: 'session-1',
+            machineId: 'machine-1',
+            expectedIdentity: {
+                agentId: 'opencode',
+                machineId: 'machine-1',
+                remoteSessionId: 'remote-1',
+                source: { kind: 'opencodeServer', directory: '/tmp/workspace' },
+            },
+        });
+        expect(validateExternalMachineSourceMock).not.toHaveBeenCalled();
+        expect(attach).not.toHaveBeenCalled();
+        expect(reconcileTranscriptDemand).not.toHaveBeenCalled();
+        expect(resolveGenerationBoundExternalSessionFollowSurfaceMock)
+            .not.toHaveBeenCalled();
+    });
+
+    it('rejects a stale background-follow identity before persistence or lease effects', async () => {
+        loadPersistedLinkedExternalSessionMock.mockResolvedValueOnce({
+            ok: false,
+            errorCode: 'invalid_request',
+            error: 'linked_session_identity_mismatch',
+        });
+        const setBackgroundFollowEnabled = vi.fn();
+
+        await expect(executeExternalSessionFollowPolicySetAction({
+            machineId: 'machine-1',
+            sessionId: 'session-1',
+            agentId: 'opencode',
+            remoteSessionId: 'remote-1',
+            source: { kind: 'opencodeServer', directory: '/tmp/relinked' },
+            enabled: true,
+        }, {
+            followLeaseManager: { setBackgroundFollowEnabled },
+            observationProjection: { reconcileTranscriptDemand: vi.fn() },
+        } as never)).resolves.toEqual({
+            ok: false,
+            errorCode: 'invalid_request',
+            error: 'linked_session_identity_mismatch',
+        });
+
+        expect(loadPersistedLinkedExternalSessionMock).toHaveBeenCalledWith({
+            credentials: expect.any(Object),
+            sessionId: 'session-1',
+            machineId: 'machine-1',
+            expectedIdentity: {
+                agentId: 'opencode',
+                machineId: 'machine-1',
+                remoteSessionId: 'remote-1',
+                source: { kind: 'opencodeServer', directory: '/tmp/relinked' },
+            },
+        });
+        expect(updateSessionMetadataWithExternalSessionFollowPolicyMock)
+            .not.toHaveBeenCalled();
+        expect(setBackgroundFollowEnabled).not.toHaveBeenCalled();
+        expect(validateExternalMachineSourceMock).not.toHaveBeenCalled();
+        expect(loadLinkedExternalSessionFromRawMock).not.toHaveBeenCalled();
+    });
+
     it('routes two viewers through one generation-qualified physical follower', async () => {
         const retirement = new AbortController();
         resolveGenerationBoundExternalSessionFollowSurfaceMock.mockResolvedValue({
@@ -213,6 +302,48 @@ describe('external-session follow lease actions', () => {
         )).toHaveLength(1);
     });
 
+    it('preserves a provider failure from initial viewer follow acquisition', async () => {
+        resolveGenerationBoundExternalSessionFollowSurfaceMock.mockResolvedValue({
+            providerOps: {
+                pageTranscript: vi.fn(async () => {
+                    throw new ExternalSessionProviderFailureError({
+                        code: 'agent_unavailable',
+                        message: 'OpenCode endpoint unavailable',
+                        operation: 'pageTranscript',
+                        retryable: true,
+                    });
+                }),
+                readAfterTranscript: vi.fn(async () => ({ outcome: 'already_current' })),
+            },
+            resource: {
+                linkGeneration: 'link-1',
+                pluginGeneration: 'plugin-1',
+            },
+        });
+        const followLeaseManager = createExternalSessionFollowLeaseManager();
+
+        await expect(executeExternalSessionAttachAction({
+            machineId: 'machine-1',
+            sessionId: 'session-1',
+            agentId: 'opencode',
+            remoteSessionId: 'remote-1',
+            source: { kind: 'opencodeServer', directory: '/tmp/workspace' },
+            leaseId: 'viewer-provider-failure',
+        }, {
+            followLeaseManager,
+            observationProjection: {
+                reconcileTranscriptDemand: vi.fn(async () => ({ state: 'observing' })),
+            },
+        } as never)).resolves.toEqual({
+            ok: false,
+            errorCode: 'agent_unavailable',
+            error: 'agent_unavailable',
+            retryable: true,
+        });
+
+        await followLeaseManager.dispose();
+    });
+
     it('admits a grouping-only Codex viewer through canonical descriptor hydration', async () => {
         const source = {
             kind: 'codexHome',
@@ -223,7 +354,7 @@ describe('external-session follow lease actions', () => {
             ok: true,
             source,
         });
-        loadLinkedExternalSessionMock.mockResolvedValueOnce({
+        loadLinkedExternalSessionMock.mockResolvedValue({
             ok: true,
             session: {
                 agentId: 'codex',
@@ -354,10 +485,14 @@ describe('external-session follow lease actions', () => {
         ) => input.demanded
             ? { state: 'observing', release: observationRelease }
             : { state: 'not-demanded' });
+        const deviceLocalSecretStorage = {
+            deriveOpaqueIdentity: vi.fn(() => 'a'.repeat(64)),
+        } as never;
         const context = {
             machineId: 'machine-1',
             followLeaseManager,
             observationProjection: { reconcileTranscriptDemand },
+            deviceLocalSecretStorage,
             emitExternalSessionTranscriptUpdate: vi.fn(async () => {}),
         } as never;
 
@@ -386,6 +521,7 @@ describe('external-session follow lease actions', () => {
                 sessionId: 'session-1',
                 cursor: 'happier_external_cursor_v1:YzA',
                 isCurrent: expect.any(Function),
+                deviceLocalSecretStorage,
             }),
         );
         expect(reconcileTranscriptDemand).toHaveBeenCalledWith(expect.objectContaining({
@@ -551,6 +687,49 @@ describe('external-session follow lease actions', () => {
             errorCode: 'agent_unavailable',
             error: 'background_follow_not_supported',
         });
+    });
+
+    it('preserves a provider failure from initial background-follow acquisition', async () => {
+        resolveGenerationBoundExternalSessionFollowSurfaceMock.mockResolvedValue({
+            providerOps: {
+                pageTranscript: vi.fn(async () => {
+                    throw new ExternalSessionProviderFailureError({
+                        code: 'agent_unavailable',
+                        message: 'OpenCode endpoint unavailable',
+                        operation: 'pageTranscript',
+                        retryable: true,
+                    });
+                }),
+                readAfterTranscript: vi.fn(async () => ({ outcome: 'already_current' })),
+            },
+            resource: {
+                linkGeneration: 'link-1',
+                pluginGeneration: 'plugin-1',
+            },
+        });
+        const followLeaseManager = createExternalSessionFollowLeaseManager();
+
+        await expect(executeExternalSessionFollowPolicySetAction({
+            machineId: 'machine-1',
+            sessionId: 'session-1',
+            agentId: 'opencode',
+            remoteSessionId: 'remote-1',
+            source: { kind: 'opencodeServer', directory: '/tmp/workspace' },
+            enabled: true,
+        }, {
+            followLeaseManager,
+            observationProjection: {
+                reconcileTranscriptDemand: vi.fn(async () => ({ state: 'observing' })),
+            },
+        } as never)).resolves.toEqual({
+            ok: false,
+            errorCode: 'agent_unavailable',
+            error: 'agent_unavailable',
+            retryable: true,
+        });
+
+        expect(updateSessionMetadataWithExternalSessionFollowPolicyMock).not.toHaveBeenCalled();
+        await followLeaseManager.dispose();
     });
 
     it('validates Agent source only after active persisted follow identity is admitted', async () => {
@@ -778,7 +957,10 @@ describe('external-session follow lease actions', () => {
         await manager.dispose();
     });
 
-    it('surfaces a concurrent dual-row disagreement at the follow-policy mutation boundary', async () => {
+    it.each([
+        ['a concurrent dual-row disagreement', 'linked_session_reconciliation_required'],
+        ['a concurrent relink', 'linked_session_identity_mismatch'],
+    ] as const)('surfaces %s at the follow-policy mutation boundary', async (_label, error) => {
         const retirement = new AbortController();
         loadPersistedLinkedExternalSessionMock.mockResolvedValueOnce({
             ok: true,
@@ -807,7 +989,7 @@ describe('external-session follow lease actions', () => {
             },
         });
         updateSessionMetadataWithExternalSessionFollowPolicyMock.mockRejectedValueOnce(
-            new Error('linked_session_reconciliation_required'),
+            new Error(error),
         );
         const manager = createExternalSessionFollowLeaseManager();
 
@@ -828,7 +1010,7 @@ describe('external-session follow lease actions', () => {
         } as never)).resolves.toEqual({
             ok: false,
             errorCode: 'invalid_request',
-            error: 'linked_session_reconciliation_required',
+            error,
         });
         expect(manager.isBackgroundFollowEnabled('session-1')).toBe(false);
         await manager.dispose();
@@ -910,6 +1092,217 @@ describe('external-session follow lease actions', () => {
             leaseActive: false,
         }));
         expect(manager.isBackgroundFollowEnabled('session-1')).toBe(false);
+        await manager.dispose();
+    });
+
+    it('reports an attach with no current Agent generation as a typed availability failure', async () => {
+        resolveGenerationBoundExternalSessionFollowSurfaceMock.mockReset();
+        resolveGenerationBoundExternalSessionFollowSurfaceMock.mockRejectedValue(
+            new ExternalSessionFollowFailureError(
+                'agent_unavailable',
+                'Missing current external-session Agent generation for opencode',
+            ),
+        );
+        const attach = vi.fn();
+
+        await expect(executeExternalSessionAttachAction({
+            machineId: 'machine-1',
+            sessionId: 'session-1',
+            agentId: 'opencode',
+            remoteSessionId: 'remote-1',
+            source: { kind: 'opencodeServer', directory: '/tmp/workspace' },
+            leaseId: 'viewer-agent-unavailable',
+        }, {
+            followLeaseManager: { attach },
+            observationProjection: { reconcileTranscriptDemand: vi.fn() },
+        } as never)).resolves.toEqual({
+            ok: false,
+            errorCode: 'agent_unavailable',
+            error: 'external_session_agent_unavailable',
+            retryable: true,
+        });
+        expect(attach).not.toHaveBeenCalled();
+    });
+
+    it('reports an attach whose linked source changed during acquisition as a typed source-changed failure', async () => {
+        resolveGenerationBoundExternalSessionFollowSurfaceMock.mockReset();
+        resolveGenerationBoundExternalSessionFollowSurfaceMock.mockResolvedValue({
+            providerOps: {
+                pageTranscript: vi.fn(),
+                readAfterTranscript: vi.fn(),
+            },
+            resource: { linkGeneration: 'link-1', pluginGeneration: 'plugin-1' },
+        });
+        const attach = vi.fn(async () => {
+            throw new ExternalSessionFollowFailureError(
+                'source_changed',
+                'External Session link changed before follow acquisition',
+            );
+        });
+
+        await expect(executeExternalSessionAttachAction({
+            machineId: 'machine-1',
+            sessionId: 'session-1',
+            agentId: 'opencode',
+            remoteSessionId: 'remote-1',
+            source: { kind: 'opencodeServer', directory: '/tmp/workspace' },
+            leaseId: 'viewer-source-changed',
+        }, {
+            followLeaseManager: { attach },
+            observationProjection: { reconcileTranscriptDemand: vi.fn() },
+        } as never)).resolves.toEqual({
+            ok: false,
+            errorCode: 'agent_unavailable',
+            error: 'external_session_source_changed',
+            retryable: true,
+        });
+    });
+
+    it('reports an attach whose live follow was not admitted as a typed follow-unavailable failure', async () => {
+        resolveGenerationBoundExternalSessionFollowSurfaceMock.mockReset();
+        resolveGenerationBoundExternalSessionFollowSurfaceMock.mockResolvedValue({
+            providerOps: {
+                pageTranscript: vi.fn(),
+                readAfterTranscript: vi.fn(),
+            },
+            resource: { linkGeneration: 'link-1', pluginGeneration: 'plugin-1' },
+        });
+        const attach = vi.fn(async () => {
+            throw new ExternalSessionFollowFailureError(
+                'follow_unavailable',
+                'External Session live follow is unavailable: reconcile-only',
+            );
+        });
+
+        await expect(executeExternalSessionAttachAction({
+            machineId: 'machine-1',
+            sessionId: 'session-1',
+            agentId: 'opencode',
+            remoteSessionId: 'remote-1',
+            source: { kind: 'opencodeServer', directory: '/tmp/workspace' },
+            leaseId: 'viewer-follow-unavailable',
+        }, {
+            followLeaseManager: { attach },
+            observationProjection: { reconcileTranscriptDemand: vi.fn() },
+        } as never)).resolves.toEqual({
+            ok: false,
+            errorCode: 'agent_unavailable',
+            error: 'external_session_follow_unavailable',
+            retryable: false,
+        });
+    });
+
+    it('reports an attach against a disposed follow-lease owner as a typed daemon failure', async () => {
+        resolveGenerationBoundExternalSessionFollowSurfaceMock.mockReset();
+        resolveGenerationBoundExternalSessionFollowSurfaceMock.mockResolvedValue({
+            providerOps: {
+                pageTranscript: vi.fn(),
+                readAfterTranscript: vi.fn(),
+            },
+            resource: { linkGeneration: 'link-1', pluginGeneration: 'plugin-1' },
+        });
+        const followLeaseManager = createExternalSessionFollowLeaseManager();
+        await followLeaseManager.dispose();
+
+        await expect(executeExternalSessionAttachAction({
+            machineId: 'machine-1',
+            sessionId: 'session-1',
+            agentId: 'opencode',
+            remoteSessionId: 'remote-1',
+            source: { kind: 'opencodeServer', directory: '/tmp/workspace' },
+            leaseId: 'viewer-disposed',
+        }, {
+            followLeaseManager,
+            observationProjection: {
+                reconcileTranscriptDemand: vi.fn(async () => ({ state: 'observing' })),
+            },
+        } as never)).resolves.toEqual({
+            ok: false,
+            errorCode: 'agent_unavailable',
+            error: 'external_session_daemon_unavailable',
+            retryable: true,
+        });
+    });
+
+    it('reports a typed source-validation failure of attach without collapsing it to an internal error', async () => {
+        validateExternalMachineSourceMock.mockRejectedValueOnce(
+            new ExternalSessionFollowFailureError(
+                'agent_unavailable',
+                'Missing current external-session Agent operations for opencode',
+            ),
+        );
+        const attach = vi.fn();
+
+        await expect(executeExternalSessionAttachAction({
+            machineId: 'machine-1',
+            sessionId: 'session-1',
+            agentId: 'opencode',
+            remoteSessionId: 'remote-1',
+            source: { kind: 'opencodeServer', directory: '/tmp/workspace' },
+            leaseId: 'viewer-validate-source',
+        }, {
+            followLeaseManager: { attach },
+            observationProjection: { reconcileTranscriptDemand: vi.fn() },
+        } as never)).resolves.toEqual({
+            ok: false,
+            errorCode: 'agent_unavailable',
+            error: 'external_session_agent_unavailable',
+            retryable: true,
+        });
+        expect(attach).not.toHaveBeenCalled();
+    });
+
+    it('keeps a genuinely unexpected attach throw on the opaque internal-error envelope', async () => {
+        resolveGenerationBoundExternalSessionFollowSurfaceMock.mockReset();
+        resolveGenerationBoundExternalSessionFollowSurfaceMock.mockRejectedValue(
+            new Error('unexpected follow surface defect'),
+        );
+        const attach = vi.fn();
+
+        await expect(executeExternalSessionAttachAction({
+            machineId: 'machine-1',
+            sessionId: 'session-1',
+            agentId: 'opencode',
+            remoteSessionId: 'remote-1',
+            source: { kind: 'opencodeServer', directory: '/tmp/workspace' },
+            leaseId: 'viewer-unexpected',
+        }, {
+            followLeaseManager: { attach },
+            observationProjection: { reconcileTranscriptDemand: vi.fn() },
+        } as never)).resolves.toEqual({
+            ok: false,
+            errorCode: 'internal_error',
+            error: 'external_session_attach_failed',
+        });
+        expect(attach).not.toHaveBeenCalled();
+    });
+
+    it('reports a typed background-follow failure with the same corridor classification', async () => {
+        resolveGenerationBoundExternalSessionFollowSurfaceMock.mockReset();
+        resolveGenerationBoundExternalSessionFollowSurfaceMock.mockRejectedValue(
+            new ExternalSessionFollowFailureError(
+                'source_changed',
+                'External-session Agent generation retired while resolving opencode',
+            ),
+        );
+        const manager = createExternalSessionFollowLeaseManager();
+
+        await expect(executeExternalSessionFollowPolicySetAction({
+            machineId: 'machine-1',
+            sessionId: 'session-1',
+            agentId: 'opencode',
+            remoteSessionId: 'remote-1',
+            source: { kind: 'opencodeServer', directory: '/tmp/workspace' },
+            enabled: true,
+        }, {
+            followLeaseManager: manager,
+            observationProjection: { reconcileTranscriptDemand: vi.fn() },
+        } as never)).resolves.toEqual({
+            ok: false,
+            errorCode: 'agent_unavailable',
+            error: 'external_session_source_changed',
+            retryable: true,
+        });
         await manager.dispose();
     });
 });

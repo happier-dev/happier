@@ -7,36 +7,36 @@ import type {
     ServerRequest,
     ToolAnnotations,
 } from '@modelcontextprotocol/sdk/types.js';
-import type {
-    McpHostedToolDefinitionV1,
-    McpHostedToolResultV1,
-    McpServerSpecV1,
-} from '@happier-dev/plugin-sdk/experimental/mcp';
-import type { ValidateFunction } from 'ajv';
 import { z } from 'zod';
 
 import {
-    compilePluginJsonSchema,
-    isValidPluginJsonSchemaValue,
-} from '@/plugins/runtime/invocation/services/jsonSchemaValidation';
+  compilePluginJsonSchema,
+  isValidPluginJsonSchemaValue,
+  type PluginJsonSchemaValidator,
+} from '@happier-dev/protocol';
 
 import { assertHostedMcpServerRegistration } from './validation';
+import type {
+    HostedMcpToolDefinition,
+    HostedMcpToolResult,
+    PluginHostedMcpServerSpec,
+} from './runtimeTypes';
 
 type SdkToolSchema = AnySchema | ZodRawShapeCompat;
 type HostedInputSchemaResolution = Readonly<{
     schema: SdkToolSchema;
     native: boolean;
-    validateJsonSchema?: ValidateFunction;
+    validateJsonSchema?: PluginJsonSchemaValidator;
     invalidJsonSchema?: boolean;
 }>;
 type HostedOutputSchemaResolution = Readonly<{
     schema?: SdkToolSchema;
     native: boolean;
-    validateJsonSchema?: ValidateFunction;
+    validateJsonSchema?: PluginJsonSchemaValidator;
     invalidJsonSchema?: boolean;
 }>;
 type JsonSchemaCompilation = Readonly<{
-    validateJsonSchema?: ValidateFunction;
+    validateJsonSchema?: PluginJsonSchemaValidator;
     invalidJsonSchema?: boolean;
 }>;
 type JsonObjectSchemaCandidate = Readonly<
@@ -97,7 +97,7 @@ function readTrimmedString(value: string | null | undefined): string | undefined
 
 export function assertHostedMcpHandlerSpec(params: Readonly<{
     pluginId: string;
-    spec: McpServerSpecV1;
+    spec: PluginHostedMcpServerSpec;
 }>): void {
     assertHostedMcpServerRegistration(params.spec, { pluginId: params.pluginId });
 }
@@ -172,7 +172,7 @@ function resolveOutputSchema(schema: unknown): HostedOutputSchemaResolution {
     return { native: false, invalidJsonSchema: true };
 }
 
-function mergeHostedToolMeta(tool: McpHostedToolDefinitionV1, params: Readonly<{
+function mergeHostedToolMeta(tool: HostedMcpToolDefinition, params: Readonly<{
     inputSchemaIsNative: boolean;
     outputSchemaIsNative: boolean;
 }>): Record<string, unknown> | undefined {
@@ -188,14 +188,14 @@ function mergeHostedToolMeta(tool: McpHostedToolDefinitionV1, params: Readonly<{
     return Object.keys(meta).length > 0 ? meta : undefined;
 }
 
-function sanitizeHostedToolFailure(): McpHostedToolResultV1 {
+function sanitizeHostedToolFailure(): HostedMcpToolResult {
     return {
         content: [{ type: 'text', text: 'Hosted MCP tool failed' }],
         isError: true,
     };
 }
 
-function resolveToolAnnotations(tool: McpHostedToolDefinitionV1): ToolAnnotations | undefined {
+function resolveToolAnnotations(tool: HostedMcpToolDefinition): ToolAnnotations | undefined {
     return tool.annotations ? { ...tool.annotations } : undefined;
 }
 
@@ -203,7 +203,7 @@ function readHostedResultMeta(meta: Record<string, unknown> | undefined): Record
     return meta ? { ...meta } : undefined;
 }
 
-function toSdkToolResult(result: McpHostedToolResultV1): CallToolResult {
+function toSdkToolResult(result: HostedMcpToolResult): CallToolResult {
     return {
         content: result.content.map((entry) => {
             return {
@@ -219,14 +219,14 @@ function toSdkToolResult(result: McpHostedToolResultV1): CallToolResult {
     };
 }
 
-function invalidHostedToolInput(): McpHostedToolResultV1 {
+function invalidHostedToolInput(): HostedMcpToolResult {
     return {
         content: [{ type: 'text', text: 'Invalid MCP tool input' }],
         isError: true,
     };
 }
 
-function invalidHostedToolOutput(): McpHostedToolResultV1 {
+function invalidHostedToolOutput(): HostedMcpToolResult {
     return {
         content: [{ type: 'text', text: 'Invalid MCP tool output' }],
         isError: true,
@@ -236,7 +236,7 @@ function invalidHostedToolOutput(): McpHostedToolResultV1 {
 export function registerHostedMcpHandlers(params: Readonly<{
     server: McpServer;
     pluginId: string;
-    spec: McpServerSpecV1;
+    spec: PluginHostedMcpServerSpec;
     signal: AbortSignal;
 }>): void {
     assertHostedMcpHandlerSpec(params);

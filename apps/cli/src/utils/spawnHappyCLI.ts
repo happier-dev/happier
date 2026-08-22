@@ -62,6 +62,7 @@ import {
 } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { createHash } from 'node:crypto';
 import { projectPath } from '@/projectPath';
 import { logger } from '@/ui/logger';
 import { existsSync } from 'node:fs';
@@ -73,22 +74,34 @@ import { resolvePackagedRuntimeEntrypoint } from '@/packagedRuntime/resolvePacka
 import { parseOptionalBooleanEnv } from '@happier-dev/protocol';
 import { isEmbeddedBunBundlePath } from '@/packagedRuntime/js/isEmbeddedBunBundlePath';
 import cliDistBuildManifest from '@happier-dev/cli-common/cliDistBuildManifest';
-import { CLI_RUNTIME_SIDECAR_ENTRIES } from '@happier-dev/cli-common/componentArtifacts/cliRuntimeSidecars';
+import { CLI_RUNTIME_SIDECAR_ENTRIES } from '@happier-dev/cli-common/cliRuntimeSidecars';
+import {
+  copyCliNodeWorkspaceRuntimePackages,
+  copyCliNodeWorkspaceRuntimePackagesFromRuntimeRoot,
+  readCliNodeWorkspaceRuntimeIdentity,
+} from '@happier-dev/cli-common/componentArtifacts/copyCliNodeRuntimePayload';
 import {
   decidePinnedRunnerSnapshotPrune,
   type LiveRunnerSnapshotFingerprints,
 } from './pinnedRunnerSnapshotPrune';
+import {
+  isPinnedRunnerSnapshotReady,
+  listReadyPinnedRunnerSnapshots,
+  PINNED_RUNNER_LAYOUT_VERSION,
+  resolveNewestReadyPinnedRunnerSnapshot,
+  resolvePinnedRunnerSnapshotManagedProviderRuntimeIdentity,
+  type PinnedRunnerSnapshotLocation,
+} from '@happier-dev/cli-common/pinnedRunnerSnapshot';
 
 const STACK_RUNTIME_STATE_PATH_ENV = 'HAPPIER_CLI_SUBPROCESS_STACK_RUNTIME_STATE_PATH';
 const STACK_DIST_ENTRYPOINT_ENV = 'HAPPIER_CLI_SUBPROCESS_DIST_ENTRYPOINT';
 const DAEMON_DIST_CLOSURE_FINGERPRINT_ENV = 'HAPPIER_CLI_SUBPROCESS_DAEMON_DIST_CLOSURE_FINGERPRINT';
+const WORKSPACE_DIST_BUILD_LOCK_HELD_ENV = 'HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD';
 const RUNTIME_BACKED_SUBPROCESS_ENV = 'HAPPIER_CLI_SUBPROCESS_RUNTIME_BACKED';
 const PINNED_RUNNER_DIST_DIR = '.runner-snapshots';
-const PINNED_RUNNER_LAYOUT_VERSION = 'package-dist-v1';
-const PINNED_RUNNER_REQUIRED_ASSET_RELATIVE_PATHS = [
-  ...CLI_RUNTIME_SIDECAR_ENTRIES.map((relativePath) => ['scripts', ...relativePath] as const),
-  ['tools', 'unpacked'],
-] as const;
+const PINNED_RUNNER_NO_WORKSPACE_RUNTIME_SHA256 = createHash('sha256')
+  .update('happier:pinned-runner:no-workspace-runtime:v1')
+  .digest('hex');
 
 function getSubprocessRuntime(env: NodeJS.ProcessEnv = process.env): 'node' | 'bun' {
   const override = env.HAPPIER_CLI_SUBPROCESS_RUNTIME;
@@ -430,14 +443,6 @@ function isRelativePathInsideRoot(relativePath: string): boolean {
   );
 }
 
-function readPinnedSnapshotReadyMarker(snapshotRoot: string, fingerprint: string): boolean {
-  try {
-    return readFileSync(join(snapshotRoot, '.fingerprint'), 'utf8').trim() === fingerprint;
-  } catch {
-    return false;
-  }
-}
-
 function copyDirectoryContents(sourceDir: string, targetDir: string, options: { skipNames?: ReadonlySet<string> } = {}): void {
   if (!existsSync(sourceDir)) return;
   mkdirSync(targetDir, { recursive: true });
@@ -478,53 +483,128 @@ function copyCliRuntimeAssetsToPinnedSnapshot(runtimeRoot: string, snapshotRoot:
   );
 }
 
-function hasPinnedSnapshotRuntimeAssets(snapshotRoot: string): boolean {
-  return PINNED_RUNNER_REQUIRED_ASSET_RELATIVE_PATHS.every((relativePath) => (
-    existsSync(join(snapshotRoot, ...relativePath))
-  ));
-}
-
-function isPinnedSnapshotReady(
-  snapshotRoot: string,
-  snapshotEntrypoint: string,
-  fingerprint: string,
-): boolean {
+function resolvePinnedSnapshotLocation(input: Readonly<{
+  entrypoint: string;
+  fingerprint: string;
+  runtimeAssetSha256: string;
+  workspaceRuntimeIdentity: string;
+  env: NodeJS.ProcessEnv;
+}>): PinnedRunnerSnapshotLocation | null {
   if (
-    !readPinnedSnapshotReadyMarker(snapshotRoot, fingerprint)
-    || !existsSync(snapshotEntrypoint)
-    || !hasPinnedSnapshotRuntimeAssets(snapshotRoot)
+    !/^[a-f0-9]{16}$/u.test(input.fingerprint)
+    || !/^[a-f0-9]{64}$/u.test(input.runtimeAssetSha256)
+    || !/^[a-f0-9]{64}$/u.test(input.workspaceRuntimeIdentity)
   ) {
-    return false;
+    return null;
   }
-  const manifest = cliDistBuildManifest.readCliDistBuildManifest(snapshotEntrypoint);
-  if (!manifest.ok || manifest.fingerprint !== fingerprint) {
-    return false;
-  }
-  return cliDistBuildManifest.readCliDistClosure(snapshotEntrypoint, {
-    outputDir: snapshotRoot,
-  }).ok;
-}
-
-function resolvePinnedSnapshotLocation(entrypoint: string, fingerprint: string): {
-  snapshotsDir: string;
-  snapshotIdentity: string;
-  snapshotRoot: string;
-  snapshotEntrypoint: string;
-} | null {
+  const entrypoint = input.entrypoint;
   const distRoot = dirname(entrypoint);
   const entrypointRelativePath = relative(distRoot, entrypoint);
   if (!isRelativePathInsideRoot(entrypointRelativePath)) return null;
 
   const runtimeRoot = dirname(distRoot);
-  const snapshotsDir = join(runtimeRoot, PINNED_RUNNER_DIST_DIR);
-  const snapshotIdentity = `${fingerprint}-${PINNED_RUNNER_LAYOUT_VERSION}`;
+  const snapshotsDir = resolvePinnedRunnerSnapshotsDir(input.entrypoint, input.env);
+  if (!snapshotsDir) return null;
+  const snapshotIdentity = [
+    input.fingerprint,
+    input.runtimeAssetSha256,
+    input.workspaceRuntimeIdentity,
+    PINNED_RUNNER_LAYOUT_VERSION,
+  ].join('-');
   const snapshotRoot = join(snapshotsDir, snapshotIdentity);
   return {
     snapshotsDir,
     snapshotIdentity,
     snapshotRoot,
     snapshotEntrypoint: join(snapshotRoot, 'package-dist', entrypointRelativePath),
+    fingerprint: input.fingerprint,
+    runtimeAssetIdentity: input.runtimeAssetSha256,
+    workspaceRuntimeIdentity: input.workspaceRuntimeIdentity,
   };
+}
+
+function resolvePinnedRunnerSnapshotsDir(
+  entrypoint: string,
+  env: NodeJS.ProcessEnv,
+): string | null {
+  const distRoot = dirname(entrypoint);
+  if (!isRuntimeBackedSubprocess(env)) {
+    return join(dirname(distRoot), PINNED_RUNNER_DIST_DIR);
+  }
+
+  const cliHomeDir = readNonEmptyEnv('HAPPIER_HOME_DIR', env);
+  if (cliHomeDir) return join(cliHomeDir, PINNED_RUNNER_DIST_DIR);
+
+  const runtimeStatePath = readNonEmptyEnv(STACK_RUNTIME_STATE_PATH_ENV, env);
+  if (runtimeStatePath) {
+    return join(dirname(runtimeStatePath), 'cli', PINNED_RUNNER_DIST_DIR);
+  }
+
+  return null;
+}
+
+function readReadyPinnedSnapshotLocations(
+  entrypoint: string,
+  fingerprint: string | null = null,
+  env: NodeJS.ProcessEnv = process.env,
+): ReadonlyArray<Readonly<{ location: PinnedRunnerSnapshotLocation; mtimeMs: number }>> {
+  const snapshotsDir = resolvePinnedRunnerSnapshotsDir(entrypoint, env);
+  if (!snapshotsDir) return [];
+  return listReadyPinnedRunnerSnapshots(entrypoint, { fingerprint, snapshotsDir });
+}
+
+function resolveCurrentPinnedSnapshotLocation(
+  entrypoint: string,
+  fingerprint: string,
+  env: NodeJS.ProcessEnv = process.env,
+  workspaceRuntimeIdentityOverride = '',
+): PinnedRunnerSnapshotLocation | null {
+  const manifest = cliDistBuildManifest.readCliDistBuildManifest(entrypoint);
+  if (!manifest.ok || manifest.fingerprint !== fingerprint) return null;
+  const runtimeRoot = dirname(dirname(entrypoint));
+  const runtimeAssetSha256 = resolvePinnedRunnerSnapshotManagedProviderRuntimeIdentity({
+    entrypoint,
+    runtimeRoot,
+    manifest: manifest.manifest ?? {},
+  });
+  if (!runtimeAssetSha256) return null;
+  const workspaceRuntimeIdentity = String(
+    workspaceRuntimeIdentityOverride
+      || manifest.manifest?.workspaceRuntimeIdentity
+      || PINNED_RUNNER_NO_WORKSPACE_RUNTIME_SHA256,
+  ).trim().toLowerCase();
+  return resolvePinnedSnapshotLocation({
+    entrypoint,
+    fingerprint,
+    runtimeAssetSha256,
+    workspaceRuntimeIdentity,
+    env,
+  });
+}
+
+function resolveReadyPinnedSnapshotLocation(
+  entrypoint: string,
+  fingerprint: string,
+  env: NodeJS.ProcessEnv = process.env,
+): PinnedRunnerSnapshotLocation | null {
+  if (!/^[a-f0-9]{16}$/u.test(fingerprint)) return null;
+  const currentManifest = cliDistBuildManifest.readCliDistBuildManifest(entrypoint);
+  if (currentManifest.ok && currentManifest.fingerprint === fingerprint) {
+    const current = resolveCurrentPinnedSnapshotLocation(entrypoint, fingerprint, env);
+    return current && isPinnedRunnerSnapshotReady(current) ? current : null;
+  }
+
+  const candidates = readReadyPinnedSnapshotLocations(entrypoint, fingerprint, env);
+  return candidates.length === 1 ? candidates[0]!.location : null;
+}
+
+function resolveNewestReadyPinnedSnapshotLocation(
+  entrypoint: string,
+  env: NodeJS.ProcessEnv = process.env,
+): PinnedRunnerSnapshotLocation | null {
+  const snapshotsDir = resolvePinnedRunnerSnapshotsDir(entrypoint, env);
+  if (!snapshotsDir) return null;
+  return resolveNewestReadyPinnedRunnerSnapshot(entrypoint, { snapshotsDir });
 }
 
 let warnedOnceAboutUnreliableSnapshotLiveness = false;
@@ -571,13 +651,52 @@ function prunePinnedRunnerSnapshots(
   }
 }
 
+/**
+ * Apply pinned-runner retention once daemon startup has authoritatively reattached live sessions.
+ * This also bounds snapshot growth on daemon-only machines that never launch a session.
+ */
+export function pruneHappyCliRunnerSnapshots(
+  live: LiveRunnerSnapshotFingerprints,
+  environment: NodeJS.ProcessEnv = process.env,
+): void {
+  const daemonFingerprint = readNonEmptyEnv(DAEMON_DIST_CLOSURE_FINGERPRINT_ENV, environment);
+  if (!daemonFingerprint) return;
+
+  const distEntrypoint = resolveStackDistEntrypoint(resolveSubprocessEntrypoint(), environment);
+  const location = resolveReadyPinnedSnapshotLocation(
+    distEntrypoint,
+    daemonFingerprint,
+    environment,
+  );
+  if (!location) return;
+  prunePinnedRunnerSnapshots(location.snapshotsDir, location.snapshotIdentity, live);
+}
+
 function copyCliDistToPinnedSnapshot(
   entrypoint: string,
   fingerprint: string,
   live: LiveRunnerSnapshotFingerprints | null | undefined,
+  env: NodeJS.ProcessEnv,
 ): string | null {
   const distRoot = dirname(entrypoint);
-  const location = resolvePinnedSnapshotLocation(entrypoint, fingerprint);
+  const sourceRepoRoot = !isRuntimeBackedSubprocess(env)
+    ? readNonEmptyEnv('HAPPIER_STACK_REPO_DIR', env)
+    : '';
+  let sourceWorkspaceRuntime = null;
+  if (sourceRepoRoot) {
+    try {
+      sourceWorkspaceRuntime = readCliNodeWorkspaceRuntimeIdentity({ repoRoot: sourceRepoRoot });
+    } catch {
+      // Some source-mode invocations intentionally have no bundled workspace runtime.
+      // Preserve their existing dist-only pinning path.
+    }
+  }
+  const location = resolveCurrentPinnedSnapshotLocation(
+    entrypoint,
+    fingerprint,
+    env,
+    sourceWorkspaceRuntime?.fingerprint,
+  );
   if (!location) return null;
   const runtimeRoot = dirname(distRoot);
   const {
@@ -586,12 +705,13 @@ function copyCliDistToPinnedSnapshot(
     snapshotRoot,
     snapshotEntrypoint,
   } = location;
-  if (isPinnedSnapshotReady(snapshotRoot, snapshotEntrypoint, fingerprint)) {
+  if (isPinnedRunnerSnapshotReady(location)) {
     prunePinnedRunnerSnapshots(snapshotsDir, snapshotIdentity, live);
     return snapshotEntrypoint;
   }
 
   const tmpRoot = join(snapshotsDir, `.${snapshotIdentity}.${process.pid}.${Date.now()}.tmp`);
+  let publishedSnapshot = false;
   try {
     mkdirSync(snapshotsDir, { recursive: true });
     rmSync(tmpRoot, { recursive: true, force: true });
@@ -602,19 +722,65 @@ function copyCliDistToPinnedSnapshot(
       { skipNames: new Set([PINNED_RUNNER_DIST_DIR]) },
     );
     copyCliRuntimeAssetsToPinnedSnapshot(runtimeRoot, tmpRoot);
+    const distManifest = cliDistBuildManifest.readCliDistBuildManifest(entrypoint);
+    let expectedWorkspaceRuntimeIdentity = String(
+      distManifest.manifest?.workspaceRuntimeIdentity ?? '',
+    ).trim().toLowerCase();
+    if (isRuntimeBackedSubprocess(env)) {
+      if (expectedWorkspaceRuntimeIdentity) {
+        const workspaceRuntimePackages = distManifest.manifest?.workspaceRuntimePackages;
+        if (!Array.isArray(workspaceRuntimePackages)) {
+          throw new Error('CLI dist publication is missing its workspace runtime package membership');
+        }
+        copyCliNodeWorkspaceRuntimePackagesFromRuntimeRoot({
+          runtimeRoot,
+          payloadDir: tmpRoot,
+          packageNames: workspaceRuntimePackages,
+          expectedWorkspaceRuntimeIdentity,
+        });
+      }
+    } else {
+      if (sourceRepoRoot && sourceWorkspaceRuntime) {
+        expectedWorkspaceRuntimeIdentity = sourceWorkspaceRuntime.fingerprint;
+        cliDistBuildManifest.writeCliDistWorkspaceRuntimeIdentity({
+          entrypoint: join(tmpRoot, 'package-dist', relative(distRoot, entrypoint)),
+          workspaceRuntimeIdentity: expectedWorkspaceRuntimeIdentity,
+          workspaceRuntimePackages: sourceWorkspaceRuntime.packageNames,
+        });
+        if (!/^[a-f0-9]{64}$/u.test(expectedWorkspaceRuntimeIdentity)) {
+          throw new Error('CLI dist publication is missing its workspace runtime identity');
+        }
+        copyCliNodeWorkspaceRuntimePackages({
+          repoRoot: sourceRepoRoot,
+          payloadDir: tmpRoot,
+          expectedWorkspaceRuntimeIdentity,
+        });
+      } else if (sourceRepoRoot && expectedWorkspaceRuntimeIdentity) {
+        throw new Error('CLI source workspace runtime is unavailable for pinning');
+      }
+    }
     writeFileSync(join(tmpRoot, '.fingerprint'), `${fingerprint}\n`, 'utf8');
+    writeFileSync(
+      join(tmpRoot, '.workspace-runtime-identity'),
+      `${location.workspaceRuntimeIdentity}\n`,
+      'utf8',
+    );
     try {
       renameSync(tmpRoot, snapshotRoot);
+      publishedSnapshot = true;
     } catch {
-      if (!isPinnedSnapshotReady(snapshotRoot, snapshotEntrypoint, fingerprint)) {
+      if (!isPinnedRunnerSnapshotReady(location)) {
         throw new Error(`pinned dist snapshot was not ready: ${snapshotRoot}`);
       }
       rmSync(tmpRoot, { recursive: true, force: true });
     }
-    const ready = isPinnedSnapshotReady(snapshotRoot, snapshotEntrypoint, fingerprint);
+    const ready = isPinnedRunnerSnapshotReady(location);
     if (ready) {
       prunePinnedRunnerSnapshots(snapshotsDir, snapshotIdentity, live);
       return snapshotEntrypoint;
+    }
+    if (publishedSnapshot) {
+      rmSync(snapshotRoot, { recursive: true, force: true });
     }
     return null;
   } catch (error) {
@@ -635,13 +801,14 @@ function buildCurrentStackDistSubprocessInvocation(
   const runtimeBacked = isRuntimeBackedSubprocess(env);
   const daemonFingerprint = readNonEmptyEnv(DAEMON_DIST_CLOSURE_FINGERPRINT_ENV, env);
   if (!daemonFingerprint) return null;
+  const isInitialDaemonStartup = (
+    allowAdmittedDaemonStartupClosure
+    && args[0] === 'daemon'
+    && args[1] === 'start-sync'
+  );
+  const inheritedExactPublicationLease = readNonEmptyEnv(WORKSPACE_DIST_BUILD_LOCK_HELD_ENV, env);
   if (!runtimeBacked) {
     const runtimeFingerprint = readRuntimeStateDistClosureFingerprint(env);
-    const isInitialDaemonStartup = (
-      allowAdmittedDaemonStartupClosure
-      && args[0] === 'daemon'
-      && args[1] === 'start-sync'
-    );
     if (
       (!runtimeFingerprint || runtimeFingerprint !== daemonFingerprint)
       && !isInitialDaemonStartup
@@ -651,14 +818,13 @@ function buildCurrentStackDistSubprocessInvocation(
   }
 
   const distEntrypoint = resolveStackDistEntrypoint(defaultEntrypoint, env);
-  const admittedSnapshot = resolvePinnedSnapshotLocation(distEntrypoint, daemonFingerprint);
+  const admittedSnapshot = resolveReadyPinnedSnapshotLocation(
+    distEntrypoint,
+    daemonFingerprint,
+    env,
+  );
   if (
     admittedSnapshot
-    && isPinnedSnapshotReady(
-      admittedSnapshot.snapshotRoot,
-      admittedSnapshot.snapshotEntrypoint,
-      daemonFingerprint,
-    )
   ) {
     prunePinnedRunnerSnapshots(
       admittedSnapshot.snapshotsDir,
@@ -681,8 +847,42 @@ function buildCurrentStackDistSubprocessInvocation(
   if (!distManifest.ok || !distManifest.fingerprint || distManifest.fingerprint !== daemonFingerprint) {
     return null;
   }
-  const pinnedEntrypoint = copyCliDistToPinnedSnapshot(distEntrypoint, distManifest.fingerprint, live);
-  if (!pinnedEntrypoint) return null;
+  const pinnedEntrypoint = copyCliDistToPinnedSnapshot(
+    distEntrypoint,
+    distManifest.fingerprint,
+    live,
+    env,
+  );
+  if (!pinnedEntrypoint) {
+    // Stack holds the canonical publication lease while launching an exact admitted closure.
+    // Under that lease, selecting another ready snapshot would silently replace the admitted
+    // workspace/runtime identity. Let the caller fail with its typed immutable-closure error.
+    if (!isInitialDaemonStartup || inheritedExactPublicationLease) return null;
+    const lastGreenSnapshot = resolveNewestReadyPinnedSnapshotLocation(distEntrypoint, env);
+    if (!lastGreenSnapshot) return null;
+    logger.warn(
+      '[SPAWN HAPPIER CLI] The admitted daemon closure is unavailable; '
+      + `starting from the last ready immutable closure ${lastGreenSnapshot.fingerprint}.`,
+    );
+    prunePinnedRunnerSnapshots(
+      lastGreenSnapshot.snapshotsDir,
+      lastGreenSnapshot.snapshotIdentity,
+      live,
+    );
+    return {
+      runtime: 'node',
+      argv: [
+        ...readInheritedNodeLaunchFlags(),
+        '--no-warnings',
+        '--no-deprecation',
+        lastGreenSnapshot.snapshotEntrypoint,
+        ...args,
+      ],
+      env: {
+        [DAEMON_DIST_CLOSURE_FINGERPRINT_ENV]: lastGreenSnapshot.fingerprint,
+      },
+    };
+  }
 
   return {
     runtime: 'node',

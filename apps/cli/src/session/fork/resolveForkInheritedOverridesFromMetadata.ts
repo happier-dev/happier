@@ -2,6 +2,7 @@ import { isPermissionMode, type Metadata, type PermissionMode } from '@/api/type
 import {
   AcpConfigOptionOverridesV1Schema,
   AcpSessionModeOverrideV1Schema,
+  AgentModelOptionOverrideRuleReadSchema,
   ConnectedServiceBindingsV1Schema,
   SessionModelSelectionResolutionError,
   buildBackendTargetKeyV2,
@@ -197,12 +198,12 @@ function cloneSessionModelsState(
     availableModels: state.availableModels
       .filter((model) => model && isNonEmptyString(model.id) && isNonEmptyString(model.name))
       .map((model) => {
-        const modelOptions = cloneProviderOptionEntries(model.modelOptions);
+        const modelOptions = cloneCatalogOptionEntries(model.modelOptions);
         return {
           id: model.id,
           name: model.name,
           ...(isNonEmptyString(model.description) ? { description: model.description } : {}),
-          ...(modelOptions ? { modelOptions } : {}),
+          ...(modelOptions.length > 0 ? { modelOptions } : {}),
         };
       }),
   };
@@ -212,44 +213,66 @@ function isAllowedConfigValue(value: unknown): value is string | number | boolea
   return value === null || typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean';
 }
 
-function cloneProviderOptionEntries(
-  value: unknown,
-): NonNullable<NonNullable<Metadata['sessionModelsV1']>['availableModels'][number]['modelOptions']> | undefined {
-  if (!Array.isArray(value)) return undefined;
-  const entries = [];
-  for (const option of value) {
-    if (
-      !isRecord(option) ||
-      !isNonEmptyString(option.id) ||
-      !isNonEmptyString(option.name) ||
-      !isNonEmptyString(option.type) ||
-      !isAllowedConfigValue(option.currentValue)
-    ) {
-      continue;
-    }
-    const choices = [];
-    if (Array.isArray(option.options)) {
-      for (const choice of option.options) {
-        if (!isRecord(choice) || !isNonEmptyString(choice.name) || !isAllowedConfigValue(choice.value)) {
-          continue;
-        }
-        choices.push({
-          value: choice.value,
-          name: choice.name,
-          ...(isNonEmptyString(choice.description) ? { description: choice.description } : {}),
-        });
-      }
-    }
-    entries.push({
-      id: option.id,
-      name: option.name,
-      type: option.type,
-      currentValue: option.currentValue,
-      ...(isNonEmptyString(option.description) ? { description: option.description } : {}),
-      ...(Array.isArray(option.options) ? { options: choices } : {}),
-    });
+type InheritedCatalogOption = NonNullable<
+  NonNullable<Metadata['sessionModelsV1']>['availableModels'][number]['modelOptions']
+>[number];
+
+/**
+ * The ONLY field-by-field reconstruction of an inherited catalog option.
+ *
+ * Model options (`sessionModelsV1`/`acpSessionModelsV1`) and config options
+ * (`sessionConfigOptionsV1`/`acpConfigOptionsV1`) carry the same option shape, and both used to
+ * enumerate it separately here. A producer-declared field added to one enumeration and forgotten
+ * in the other disappears on fork with no type error and no failing test, so all four carriers
+ * share this mapper.
+ */
+function cloneCatalogOptionEntry(option: unknown): InheritedCatalogOption | null {
+  if (
+    !isRecord(option) ||
+    !isNonEmptyString(option.id) ||
+    !isNonEmptyString(option.name) ||
+    !isNonEmptyString(option.type) ||
+    !isAllowedConfigValue(option.currentValue)
+  ) {
+    return null;
   }
-  return entries.length > 0 ? entries : undefined;
+  const choices = [];
+  if (Array.isArray(option.options)) {
+    for (const choice of option.options) {
+      if (!isRecord(choice) || !isNonEmptyString(choice.name) || !isAllowedConfigValue(choice.value)) {
+        continue;
+      }
+      choices.push({
+        value: choice.value,
+        name: choice.name,
+        ...(isNonEmptyString(choice.description) ? { description: choice.description } : {}),
+      });
+    }
+  }
+  // Producer-declared (see AgentModelOptionOverrideRule). A fork READS an already-persisted
+  // catalog, so it uses the canonical read-side schema: same bounds as the producer contract — a
+  // fork never forwards a rule the strict owner-metadata envelope would reject — but an
+  // unrecognized nested field from a newer producer is stripped rather than costing the whole rule.
+  const overridesWhenOn = AgentModelOptionOverrideRuleReadSchema.safeParse(option.overridesWhenOn);
+  return {
+    id: option.id,
+    name: option.name,
+    type: option.type,
+    currentValue: option.currentValue,
+    ...(isNonEmptyString(option.description) ? { description: option.description } : {}),
+    ...(Array.isArray(option.options) ? { options: choices } : {}),
+    ...(overridesWhenOn.success ? { overridesWhenOn: overridesWhenOn.data } : {}),
+  };
+}
+
+function cloneCatalogOptionEntries(value: unknown): InheritedCatalogOption[] {
+  if (!Array.isArray(value)) return [];
+  const entries: InheritedCatalogOption[] = [];
+  for (const option of value) {
+    const cloned = cloneCatalogOptionEntry(option);
+    if (cloned) entries.push(cloned);
+  }
+  return entries;
 }
 
 function cloneSessionConfigOptionsState(
@@ -272,32 +295,7 @@ function cloneSessionConfigOptionsState(
     v: 1,
     agentId: stateAgentId,
     updatedAt: state.updatedAt,
-    configOptions: state.configOptions
-      .filter((option) =>
-        option &&
-        isNonEmptyString(option.id) &&
-        isNonEmptyString(option.name) &&
-        isNonEmptyString(option.type) &&
-        isAllowedConfigValue(option.currentValue),
-      )
-      .map((option) => ({
-        id: option.id,
-        name: option.name,
-        type: option.type,
-        currentValue: option.currentValue,
-        ...(isNonEmptyString(option.description) ? { description: option.description } : {}),
-        ...(Array.isArray(option.options)
-          ? {
-            options: option.options
-              .filter((choice) => choice && isNonEmptyString(choice.name) && isAllowedConfigValue(choice.value))
-              .map((choice) => ({
-                value: choice.value,
-                name: choice.name,
-                ...(isNonEmptyString(choice.description) ? { description: choice.description } : {}),
-              })),
-          }
-          : {}),
-      })),
+    configOptions: cloneCatalogOptionEntries(state.configOptions),
   };
 }
 

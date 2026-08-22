@@ -1,19 +1,71 @@
 import {
+  EXTERNAL_SESSION_OPERATION_PRESENTATION_METADATA_KEY,
   EXTERNAL_SESSION_OPERATION_TIMELINES_V1,
   ExternalSessionOperationRecordV1Schema,
+  ExternalSessionOperationReferenceV1Schema,
   ExternalSessionOperationProgressV1Schema,
   projectExternalSessionOperationProgressV1,
   projectExternalSessionOperationSharedPresentationV1,
+  type ExternalSessionOperationProgressV1,
   type ExternalSessionOperationRecordV1,
 } from '@happier-dev/protocol';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+const { repairDiagnosticMock } = vi.hoisted(() => ({
+  repairDiagnosticMock: vi.fn(),
+}));
+
+const admissionBoundaryMocks = vi.hoisted(() => ({
+  readStoredCredentials: vi.fn(),
+  fetchSessionById: vi.fn(),
+  fetchAccountEncryptionCurrentness: vi.fn(),
+  readSessionMetadataTupleWriterSnapshot: vi.fn(),
+}));
+
+vi.mock('./responseErrors', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./responseErrors')>();
+  return {
+    ...actual,
+    logExternalSessionsInternalError: repairDiagnosticMock,
+  };
+});
+
+vi.mock('@/persistence', () => ({
+  readStoredCredentials: admissionBoundaryMocks.readStoredCredentials,
+}));
+
+vi.mock('@/session/transport/http/sessionsHttp', () => ({
+  fetchSessionById: admissionBoundaryMocks.fetchSessionById,
+}));
+
+vi.mock('@/api/client/connectedServiceCredentialApi', () => ({
+  fetchAccountEncryptionCurrentness:
+    admissionBoundaryMocks.fetchAccountEncryptionCurrentness,
+}));
+
+vi.mock('@/session/metadata/updateSessionMetadataWithRetry', async (
+  importOriginal,
+) => {
+  const actual = await importOriginal<
+    typeof import('@/session/metadata/updateSessionMetadataWithRetry')
+  >();
+  return {
+    ...actual,
+    readSessionMetadataTupleWriterSnapshot:
+      admissionBoundaryMocks.readSessionMetadataTupleWriterSnapshot,
+  };
+});
+
 import {
+  assertExternalSessionOperationProgressCanBeSelected,
   convergeExternalSessionOperationProgressProjection,
-  repairExternalSessionOperationProgressProjections,
+  readExternalSessionOperationSharedPresentation,
+  repairExternalSessionOperationProgressProjections as repairExternalSessionOperationProgressProjectionsWithClaimInspection,
+  resolveExternalSessionOperationProjectionBarrierAcquisitionTimeoutMs,
   selectExternalSessionOperationPresentationMetadata,
   selectExternalSessionOperationProgressMetadata,
   selectExternalSessionOperationRecordsForPassiveRepair,
@@ -27,10 +79,13 @@ import {
 } from './takeoverStartAction';
 import {
   acknowledgeExternalSessionOperationProgressProjection,
-  externalSessionOperationIdForRequest,
+  compactExternalSessionOperationRecordToCompletionReceipt,
   readExternalSessionOperationRecord,
+  readExternalSessionOperationStoredEntry,
+  resolveExternalSessionOperationStartAdmission,
   writeExternalSessionOperationRecord,
 } from './operationRecordStore';
+
 import {
   createExternalSessionOperationExclusion,
 } from '@/session/external/operationExclusion';
@@ -38,12 +93,64 @@ import {
   createExternalSessionOperationPrivateStagingStore,
 } from '@/session/external/staging/operationPrivateStaging';
 
+function vitestOperationRecordsDirectory(activeServerDir: string): string {
+  return join(
+    activeServerDir,
+    'external-session-operations',
+    'by-account',
+    `sub-${createHash('sha256').update('vitest', 'utf8').digest('hex').slice(0, 32)}`,
+    'records',
+  );
+}
+
 const roots: string[] = [];
+
+type RepairDependencies = Parameters<
+  typeof repairExternalSessionOperationProgressProjectionsWithClaimInspection
+>[1];
+
+async function withInactiveOperationClaimBarrier<TResult>(
+  _input: Readonly<{
+    sessionId: string;
+    operationClaimId: string;
+  }>,
+  effect: () => Promise<TResult>,
+) {
+  return {
+    status: 'executed' as const,
+    value: await effect(),
+  };
+}
+
+function repairExternalSessionOperationProgressProjections(
+  activeServerDir: string,
+  dependencies: Omit<
+    RepairDependencies,
+    'inspectOperationClaim' | 'withOperationClaimBarrier'
+  > & Partial<Pick<
+    RepairDependencies,
+    'inspectOperationClaim' | 'withOperationClaimBarrier'
+  >>,
+) {
+  return repairExternalSessionOperationProgressProjectionsWithClaimInspection(
+    activeServerDir,
+    {
+      inspectOperationClaim: async () => 'inactive',
+      withOperationClaimBarrier: withInactiveOperationClaimBarrier,
+      ...dependencies,
+    },
+  );
+}
 
 afterEach(async () => {
   await Promise.all(roots.splice(0).map(async (root) => {
     await rm(root, { recursive: true, force: true });
   }));
+  repairDiagnosticMock.mockClear();
+  admissionBoundaryMocks.readStoredCredentials.mockReset();
+  admissionBoundaryMocks.fetchSessionById.mockReset();
+  admissionBoundaryMocks.fetchAccountEncryptionCurrentness.mockReset();
+  admissionBoundaryMocks.readSessionMetadataTupleWriterSnapshot.mockReset();
 });
 
 function progress(input: Readonly<{
@@ -103,7 +210,14 @@ function progress(input: Readonly<{
 function privateRecord(input: Readonly<{
   operationId: string;
   sessionId: string;
-  status: 'running' | 'awaiting_user_resume' | 'cancel_requested' | 'completed';
+  status:
+    | 'running'
+    | 'awaiting_user_resume'
+    | 'cancel_requested'
+    | 'completed'
+    | 'cancelled';
+  operationClaimId?: string;
+  targetRuntimeAttemptId?: string;
   phase?:
     | 'validating'
     | 'quiescing'
@@ -118,6 +232,7 @@ function privateRecord(input: Readonly<{
   targetStorageMode?: 'external-linked' | 'persisted';
 }>) {
   const isCompleted = input.status === 'completed';
+  const isCancelled = input.status === 'cancelled';
   const phase = input.phase ?? 'publishing';
   const plan = input.plan ?? 'materialize';
   const isExternalLinkedTakeover =
@@ -126,7 +241,7 @@ function privateRecord(input: Readonly<{
   return ExternalSessionOperationRecordV1Schema.parse({
     v: 1,
     operationId: input.operationId,
-    revision: isCompleted ? 2 : 0,
+    revision: isCompleted || isCancelled ? 2 : 0,
     request: {
       v: 1,
       idempotencyKey: `key-${input.operationId}`,
@@ -146,6 +261,9 @@ function privateRecord(input: Readonly<{
       plan,
       targetStorageMode: input.targetStorageMode
         ?? (plan === 'takeover' ? 'persisted' : 'external-linked'),
+      ...(plan === 'takeover'
+        ? { targetDirectory: '/local/selected/workspace' }
+        : {}),
       targetRuntimeMode: plan === 'takeover' ? 'terminal' : null,
     },
     status: input.status,
@@ -156,7 +274,7 @@ function privateRecord(input: Readonly<{
           : EXTERNAL_SESSION_OPERATION_TIMELINES_V1.takeover_persisted)
       : EXTERNAL_SESSION_OPERATION_TIMELINES_V1.materialize,
     createdAtMs: 1,
-    updatedAtMs: isCompleted ? 2 : 1,
+    updatedAtMs: isCompleted || isCancelled ? 2 : 1,
     priorStableStorage: { state: 'machine_only' },
     currentStorageState: isCompleted && !isExternalLinkedTakeover
       ? 'snapshot_complete'
@@ -180,7 +298,13 @@ function privateRecord(input: Readonly<{
         }
         : {}),
     },
-    bindings: { operationClaimId: `claim-${input.operationId}` },
+    bindings: {
+      operationClaimId:
+        input.operationClaimId ?? `claim-${input.operationId}`,
+      ...(input.targetRuntimeAttemptId === undefined
+        ? {}
+        : { targetRuntimeAttemptId: input.targetRuntimeAttemptId }),
+    },
     progressProjection: { acknowledgedRevision: null },
     canonicalOwnerEvidence: { linkedSessionRevision: 1 },
     fence: { kind: 'none' },
@@ -192,6 +316,14 @@ function privateRecord(input: Readonly<{
         cancellation: {
           requestedAtMs: 1,
           requestedAtRevision: 0,
+        },
+      }
+      : {}),
+    ...(isCancelled
+      ? {
+        cancellation: {
+          requestedAtMs: 1,
+          requestedAtRevision: 1,
         },
       }
       : {}),
@@ -210,6 +342,7 @@ function privateRecord(input: Readonly<{
         terminalResult: { kind: 'completed' },
       }
       : {}),
+    ...(isCancelled ? { terminalResult: { kind: 'cancelled' } } : {}),
   });
 }
 
@@ -245,6 +378,7 @@ function persistedTakeoverRuntimeRecord(input: Readonly<{
       },
       plan: 'takeover',
       targetStorageMode: 'persisted',
+      targetDirectory: '/local/selected/workspace',
       targetRuntimeMode: 'terminal',
     },
     status: 'running',
@@ -293,7 +427,211 @@ function persistedTakeoverRuntimeRecord(input: Readonly<{
 }
 
 describe('external-session operation progress producer selection', () => {
-  it('atomically clears a retained terminal before selecting a newly admitted operation', () => {
+  it('derives and saturates the finite projection barrier acquisition budget', () => {
+    expect(resolveExternalSessionOperationProjectionBarrierAcquisitionTimeoutMs({
+      sessionControlTimeoutMs: 1_000,
+      connectedServicesTimeoutMs: 2_000,
+    })).toBe(90_000);
+    expect(resolveExternalSessionOperationProjectionBarrierAcquisitionTimeoutMs({
+      sessionControlTimeoutMs: Number.MAX_SAFE_INTEGER,
+      connectedServicesTimeoutMs: Number.MAX_SAFE_INTEGER,
+    })).toBe(Number.MAX_SAFE_INTEGER);
+  });
+
+  it('accepts only exact same-session completed receipt evidence for terminal replacement admission', async () => {
+    const sessionId = 'session-receipt-predecessor-admission';
+    const predecessor = progress({
+      operationId: 'operation-receipt-predecessor-admission',
+      revision: 7,
+      status: 'completed',
+      phase: 'publishing',
+      updatedAtMs: 70,
+    });
+    const predecessorPresentation =
+      projectExternalSessionOperationSharedPresentationV1(predecessor);
+    const retainedButUnselected = progress({
+      operationId: 'operation-receipt-unselected-admission',
+      revision: 4,
+      status: 'completed',
+      phase: 'publishing',
+      updatedAtMs: 60,
+    });
+    const retainedButUnselectedPresentation =
+      projectExternalSessionOperationSharedPresentationV1(
+        retainedButUnselected,
+      );
+    const incoming = progress({
+      operationId: 'operation-receipt-successor-admission',
+      revision: 0,
+      status: 'running',
+      phase: 'validating',
+      updatedAtMs: 80,
+    });
+    admissionBoundaryMocks.readStoredCredentials.mockResolvedValue({
+      token: 'token',
+    });
+    admissionBoundaryMocks.fetchSessionById.mockResolvedValue({ id: sessionId });
+    admissionBoundaryMocks.fetchAccountEncryptionCurrentness.mockResolvedValue({});
+    admissionBoundaryMocks.readSessionMetadataTupleWriterSnapshot.mockReturnValue({
+      metadataLayoutVersion: 0,
+      value: {
+        metadata: {
+          [EXTERNAL_SESSION_OPERATION_PRESENTATION_METADATA_KEY]:
+            predecessorPresentation,
+        },
+      },
+    });
+
+    await expect(assertExternalSessionOperationProgressCanBeSelected({
+      sessionId,
+      progress: incoming,
+      priorTerminalReceiptEvidence: [
+        {
+          reference: ExternalSessionOperationReferenceV1Schema.parse({
+            sessionId,
+            operationId: retainedButUnselected.operationId,
+            revision: retainedButUnselected.revision,
+          }),
+          presentation: retainedButUnselectedPresentation,
+        },
+        {
+          reference: ExternalSessionOperationReferenceV1Schema.parse({
+            sessionId,
+            operationId: predecessor.operationId,
+            revision: predecessor.revision,
+          }),
+          presentation: predecessorPresentation,
+        },
+      ],
+    })).resolves.toEqual(predecessorPresentation);
+  });
+
+  it.each([
+    {
+      name: 'different session',
+      reference: { sessionId: 'session-other' },
+      presentation: {},
+    },
+    {
+      name: 'different operation',
+      reference: { operationId: 'operation-other' },
+      presentation: {},
+    },
+    {
+      name: 'different revision',
+      reference: { revision: 6 },
+      presentation: {},
+    },
+    {
+      name: 'non-completed presentation',
+      reference: {},
+      presentation: { status: 'discarded' },
+    },
+    {
+      name: 'malformed presentation',
+      reference: {},
+      presentation: { unexpected: true },
+    },
+  ] as const)(
+    'rejects $name receipt evidence for terminal replacement admission',
+    async ({ reference: referenceOverride, presentation: presentationOverride }) => {
+      const sessionId = 'session-invalid-receipt-predecessor';
+      const predecessor = progress({
+        operationId: 'operation-invalid-receipt-predecessor',
+        revision: 7,
+        status: 'completed',
+        phase: 'publishing',
+        updatedAtMs: 70,
+      });
+      const predecessorPresentation =
+        projectExternalSessionOperationSharedPresentationV1(predecessor);
+      admissionBoundaryMocks.readStoredCredentials.mockResolvedValue({
+        token: 'token',
+      });
+      admissionBoundaryMocks.fetchSessionById.mockResolvedValue({ id: sessionId });
+      admissionBoundaryMocks.fetchAccountEncryptionCurrentness.mockResolvedValue({});
+      admissionBoundaryMocks.readSessionMetadataTupleWriterSnapshot.mockReturnValue({
+        metadataLayoutVersion: 0,
+        value: {
+          metadata: {
+            [EXTERNAL_SESSION_OPERATION_PRESENTATION_METADATA_KEY]:
+              predecessorPresentation,
+          },
+        },
+      });
+
+      await expect(assertExternalSessionOperationProgressCanBeSelected({
+        sessionId,
+        progress: progress({
+          operationId: 'operation-invalid-receipt-successor',
+          revision: 0,
+          status: 'running',
+          phase: 'validating',
+          updatedAtMs: 80,
+        }),
+        priorTerminalReceiptEvidence: [{
+          reference: {
+            sessionId,
+            operationId: predecessor.operationId,
+            revision: predecessor.revision,
+            ...referenceOverride,
+          },
+          presentation: {
+            ...predecessorPresentation,
+            ...presentationOverride,
+          },
+        }],
+      })).rejects.toThrow('external_session_operation_projection_conflict');
+    },
+  );
+
+  it('rejects duplicate receipt evidence that exactly matches the selected predecessor', async () => {
+    const sessionId = 'session-duplicate-receipt-predecessor';
+    const predecessor = progress({
+      operationId: 'operation-duplicate-receipt-predecessor',
+      revision: 7,
+      status: 'completed',
+      phase: 'publishing',
+      updatedAtMs: 70,
+    });
+    const presentation =
+      projectExternalSessionOperationSharedPresentationV1(predecessor);
+    const evidence = {
+      reference: ExternalSessionOperationReferenceV1Schema.parse({
+        sessionId,
+        operationId: predecessor.operationId,
+        revision: predecessor.revision,
+      }),
+      presentation,
+    };
+    admissionBoundaryMocks.readStoredCredentials.mockResolvedValue({
+      token: 'token',
+    });
+    admissionBoundaryMocks.fetchSessionById.mockResolvedValue({ id: sessionId });
+    admissionBoundaryMocks.fetchAccountEncryptionCurrentness.mockResolvedValue({});
+    admissionBoundaryMocks.readSessionMetadataTupleWriterSnapshot.mockReturnValue({
+      metadataLayoutVersion: 0,
+      value: {
+        metadata: {
+          [EXTERNAL_SESSION_OPERATION_PRESENTATION_METADATA_KEY]: presentation,
+        },
+      },
+    });
+
+    await expect(assertExternalSessionOperationProgressCanBeSelected({
+      sessionId,
+      progress: progress({
+        operationId: 'operation-duplicate-receipt-successor',
+        revision: 0,
+        status: 'running',
+        phase: 'validating',
+        updatedAtMs: 80,
+      }),
+      priorTerminalReceiptEvidence: [evidence, evidence],
+    })).rejects.toThrow('external_session_operation_projection_conflict');
+  });
+
+  it('does not treat an unbound terminal-replacement flag as predecessor authority', () => {
     const terminal = progress({
       operationId: 'operation-1',
       revision: 8,
@@ -306,16 +644,165 @@ describe('external-session operation progress producer selection', () => {
       status: 'running',
       updatedAtMs: 101,
     });
+    const metadata = {
+      externalSessionOperationV1: { v: 1 as const, progress: terminal },
+    };
+    const originalMetadata = structuredClone(metadata);
+
+    expect(() => selectExternalSessionOperationProgressMetadata(metadata, next, {
+      allowDifferentTerminalReplacement: true,
+    })).toThrow('external_session_operation_projection_conflict');
+    expect(metadata).toEqual(originalMetadata);
+  });
+
+  it('atomically replaces the exact settled terminal selected at admission', () => {
+    const terminal = progress({
+      operationId: 'operation-exact-predecessor',
+      revision: 8,
+      status: 'completed',
+      updatedAtMs: 100,
+    });
+    const next = progress({
+      operationId: 'operation-exact-successor',
+      revision: 0,
+      status: 'running',
+      updatedAtMs: 101,
+    });
+    const expectedDifferentTerminalPresentation =
+      projectExternalSessionOperationSharedPresentationV1(terminal);
 
     expect(selectExternalSessionOperationProgressMetadata({
       externalSessionOperationV1: { v: 1, progress: terminal },
     }, next, {
       allowDifferentTerminalReplacement: true,
+      expectedDifferentTerminalPresentation,
     })).toEqual({
       externalSessionOperationV1: { v: 1, progress: next },
       externalSessionOperationPresentationV1:
         projectExternalSessionOperationSharedPresentationV1(next),
     });
+  });
+
+  it('does not let a stale complete publisher resurrect over a newer layout-zero terminal selection', () => {
+    const older = progress({
+      operationId: 'operation-layout-zero-older-terminal',
+      revision: 4,
+      status: 'completed',
+      updatedAtMs: 4,
+    });
+    const newer = progress({
+      operationId: 'operation-layout-zero-newer-terminal',
+      revision: 2,
+      status: 'completed',
+      updatedAtMs: 8,
+    });
+    const selected = selectExternalSessionOperationPresentationMetadata(
+      {},
+      newer,
+    );
+
+    expect(() => selectExternalSessionOperationProgressMetadata(
+      selected,
+      older,
+    )).toThrow('external_session_operation_projection_conflict');
+    expect(selected[EXTERNAL_SESSION_OPERATION_PRESENTATION_METADATA_KEY])
+      .toEqual(projectExternalSessionOperationSharedPresentationV1(newer));
+  });
+
+  it('does not overwrite a malformed layout-zero operation presentation', () => {
+    const incoming = progress({
+      operationId: 'operation-layout-zero-malformed-selection',
+      revision: 1,
+      status: 'running',
+      updatedAtMs: 1,
+      phase: 'validating',
+    });
+
+    expect(() => selectExternalSessionOperationProgressMetadata(
+      {
+        [EXTERNAL_SESSION_OPERATION_PRESENTATION_METADATA_KEY]: {
+          v: 1,
+          operationId: incoming.operationId,
+          revision: incoming.revision,
+          kind: 'materialize',
+          status: 'unknown',
+          phase: incoming.phase,
+        },
+      },
+      incoming,
+    )).toThrow('external_session_operation_projection_malformed');
+  });
+
+  it('does not overwrite a malformed layout-zero owner operation behind a valid presentation', () => {
+    const incoming = progress({
+      operationId: 'operation-layout-zero-malformed-owner-successor',
+      revision: 0,
+      status: 'running',
+      updatedAtMs: 2,
+      phase: 'validating',
+    });
+    const predecessor = progress({
+      operationId: 'operation-layout-zero-malformed-owner-predecessor',
+      revision: 1,
+      status: 'completed',
+      updatedAtMs: 1,
+    });
+    const metadata = {
+      externalSessionOperationV1: {
+        v: 1,
+        progress: {
+          operationId: predecessor.operationId,
+        },
+      },
+      [EXTERNAL_SESSION_OPERATION_PRESENTATION_METADATA_KEY]:
+        projectExternalSessionOperationSharedPresentationV1(predecessor),
+    };
+
+    expect(() => selectExternalSessionOperationPresentationMetadata(
+      metadata,
+      incoming,
+      { allowDifferentTerminalReplacement: true },
+    )).toThrow('external_session_operation_projection_malformed');
+    expect(() => selectExternalSessionOperationProgressMetadata(
+      metadata,
+      incoming,
+      { allowDifferentTerminalReplacement: true },
+    )).toThrow('external_session_operation_projection_malformed');
+  });
+
+  it('does not replace a terminal that changed after predecessor validation', () => {
+    const incoming = progress({
+      operationId: 'operation-validated-successor',
+      revision: 0,
+      status: 'running',
+      updatedAtMs: 3,
+      phase: 'validating',
+    });
+    const changedTerminal = progress({
+      operationId: 'operation-changed-terminal',
+      revision: 2,
+      status: 'completed',
+      updatedAtMs: 2,
+    });
+    const selected = selectExternalSessionOperationPresentationMetadata(
+      {},
+      changedTerminal,
+    );
+
+    expect(() => selectExternalSessionOperationProgressMetadata(
+      selected,
+      incoming,
+      {
+        allowDifferentTerminalReplacement: true,
+        expectedDifferentTerminalPresentation:
+          projectExternalSessionOperationSharedPresentationV1(progress({
+            operationId: 'operation-changed-terminal',
+            revision: 1,
+            status: 'completed',
+            updatedAtMs: 1,
+          })),
+      },
+    )).toThrow('external_session_operation_projection_conflict');
   });
 
   it.each(['layout0', 'layout1'] as const)(
@@ -386,6 +873,8 @@ describe('external-session operation progress producer selection', () => {
       externalSessionOperationV1: { v: 1, progress: current },
     }, next, {
       allowDifferentTerminalReplacement: true,
+      expectedDifferentTerminalPresentation:
+        projectExternalSessionOperationSharedPresentationV1(current),
     })).toEqual({
       externalSessionOperationPresentationV1:
         projectExternalSessionOperationSharedPresentationV1(next),
@@ -459,6 +948,38 @@ describe('external-session operation progress producer selection', () => {
         operationId: incoming.operationId,
       },
     });
+  });
+
+  it('reports a missing Session as gone for receipt pruning while convergence fails closed', async () => {
+    const record = privateRecord({
+      operationId: 'operation-gone-session-convergence',
+      sessionId: 'session-gone-convergence',
+      status: 'running',
+    });
+    admissionBoundaryMocks.readStoredCredentials.mockResolvedValue({
+      token: 'token',
+    });
+    admissionBoundaryMocks.fetchSessionById.mockResolvedValue(null);
+    admissionBoundaryMocks.fetchAccountEncryptionCurrentness.mockResolvedValue({});
+
+    await expect(readExternalSessionOperationSharedPresentation(
+      record.request.sessionId,
+    )).resolves.toEqual({ kind: 'gone' });
+    const publish = vi.fn(async () => undefined);
+    const acknowledge = vi.fn(async () => record);
+    await expect(convergeExternalSessionOperationProgressProjection(
+      '/unused-active-server-dir',
+      record,
+      {
+        readPresentation: async () => ({ kind: 'gone' }),
+        publish,
+        acknowledge,
+      },
+    )).rejects.toThrow(
+      'external_session_operation_publish_session_not_found',
+    );
+    expect(publish).not.toHaveBeenCalled();
+    expect(acknowledge).not.toHaveBeenCalled();
   });
 
   it('fails convergence closed without publishing or acknowledging a malformed presentation', async () => {
@@ -630,6 +1151,573 @@ describe('external-session operation progress producer selection', () => {
         acknowledgedRevision: terminal.revision,
       },
     });
+  });
+
+  it.each(['already-current', 'publish-required'] as const)(
+    'settles an unacknowledged terminal and prunes its expired predecessor without re-entering the Session lock when projection is %s',
+    async (mode) => {
+      const activeServerDir = await mkdtemp(join(
+        tmpdir(),
+        `happier-operation-terminal-admission-lock-${mode}-`,
+      ));
+      roots.push(activeServerDir);
+      const sessionId = `session-terminal-admission-lock-${mode}`;
+      const predecessorInput = privateRecord({
+        operationId: `operation-terminal-admission-lock-predecessor-${mode}`,
+        sessionId,
+        status: 'completed',
+        plan: 'takeover',
+        targetStorageMode: 'external-linked',
+        phase: 'finalizing',
+      });
+      await writeExternalSessionOperationRecord(
+        activeServerDir,
+        predecessorInput,
+      );
+      const predecessor =
+        await acknowledgeExternalSessionOperationProgressProjection({
+          activeServerDir,
+          operationId: predecessorInput.operationId,
+          projectedRevision: predecessorInput.revision,
+        });
+      await expect(compactExternalSessionOperationRecordToCompletionReceipt({
+        activeServerDir,
+        operationId: predecessor.operationId,
+        expectedRevision: predecessor.revision,
+        stagingDisposition: 'not_applicable',
+      })).resolves.toMatchObject({ status: 'compacted' });
+
+      const terminal = privateRecord({
+        operationId: `operation-terminal-admission-lock-terminal-${mode}`,
+        sessionId,
+        status: 'completed',
+      });
+      await writeExternalSessionOperationRecord(activeServerDir, terminal);
+      const currentTerminalPresentation =
+        projectExternalSessionOperationSharedPresentationV1(
+          projectExternalSessionOperationProgressV1(terminal),
+        );
+      let selectedPresentation = mode === 'already-current'
+        ? currentTerminalPresentation
+        : {
+          ...currentTerminalPresentation,
+          revision: currentTerminalPresentation.revision - 1,
+        };
+      let failInitialPruneRead = true;
+      const readPresentation = vi.fn(async () => {
+        if (failInitialPruneRead) {
+          failInitialPruneRead = false;
+          throw new Error('transient_session_read_failure');
+        }
+        return {
+          kind: 'valid' as const,
+          presentation: selectedPresentation,
+        };
+      });
+      const candidate = privateRecord({
+        operationId: `operation-terminal-admission-lock-candidate-${mode}`,
+        sessionId,
+        status: 'running',
+        phase: 'validating',
+      });
+      const admission = await resolveExternalSessionOperationStartAdmission({
+        activeServerDir,
+        durableIdempotencyKey: candidate.request.idempotencyKey,
+        intent: candidate.request,
+        nowMs: predecessor.updatedAtMs + 86_400_000,
+        readSelectedPresentation: readPresentation,
+      });
+      expect(admission.kind).toBe('new_operation');
+      if (admission.kind !== 'new_operation') {
+        throw new Error('expected a fresh successor admission');
+      }
+      const successor = {
+        ...candidate,
+        operationId: admission.operationId,
+      } satisfies ExternalSessionOperationRecordV1;
+      const publish = vi.fn(async () => {
+        selectedPresentation = currentTerminalPresentation;
+      });
+
+      const startedAtMs = Date.now();
+      await expect(writeExternalSessionOperationRecord(
+        activeServerDir,
+        successor,
+        {
+          settlePriorTerminalProgressProjection: async (
+            priorTerminalRecords,
+          ) => {
+            await settlePriorTerminalExternalSessionOperationProgressProjections(
+              activeServerDir,
+              priorTerminalRecords,
+              {
+                readPresentation,
+                publish,
+                sessionAdmissionLockHeld: true,
+              },
+            );
+          },
+          validateSessionAdmission: async () => undefined,
+        },
+      )).resolves.toEqual(successor);
+      expect(Date.now() - startedAtMs).toBeLessThan(2_500);
+      expect(publish).toHaveBeenCalledTimes(
+        mode === 'publish-required' ? 1 : 0,
+      );
+      await expect(readExternalSessionOperationRecord(
+        activeServerDir,
+        terminal.operationId,
+      )).resolves.toMatchObject({
+        progressProjection: { acknowledgedRevision: terminal.revision },
+      });
+      await expect(readExternalSessionOperationStoredEntry(
+        activeServerDir,
+        predecessor.operationId,
+      )).resolves.toBeNull();
+      await expect(readExternalSessionOperationRecord(
+        activeServerDir,
+        successor.operationId,
+      )).resolves.toEqual(successor);
+    },
+  );
+
+  it('converges a newly admitted successor after a crash before its first publication', async () => {
+    const activeServerDir = await mkdtemp(join(
+      tmpdir(),
+      'happier-operation-successor-first-publication-crash-',
+    ));
+    roots.push(activeServerDir);
+    const sessionId = 'session-successor-first-publication-crash';
+    const predecessorInput = privateRecord({
+      operationId: 'operation-successor-predecessor',
+      sessionId,
+      status: 'completed',
+    });
+    await writeExternalSessionOperationRecord(
+      activeServerDir,
+      predecessorInput,
+    );
+    const predecessor =
+      await acknowledgeExternalSessionOperationProgressProjection({
+        activeServerDir,
+        operationId: predecessorInput.operationId,
+        projectedRevision: predecessorInput.revision,
+      });
+    const successor = privateRecord({
+      operationId: 'operation-successor-after-crash',
+      sessionId,
+      status: 'running',
+      phase: 'validating',
+    });
+    await writeExternalSessionOperationRecord(activeServerDir, successor);
+    const publish = vi.fn(async () => undefined);
+    const dependencies = {
+      allowSettledTerminalPredecessorReplacement: true,
+      readPresentation: async () => ({
+        kind: 'valid' as const,
+        presentation:
+          projectExternalSessionOperationSharedPresentationV1(
+            projectExternalSessionOperationProgressV1(predecessor),
+          ),
+      }),
+      publish,
+    };
+
+    await expect(convergeExternalSessionOperationProgressProjection(
+      activeServerDir,
+      successor,
+      dependencies,
+    )).resolves.toBe('published');
+    expect(publish).toHaveBeenCalledWith({
+      activeServerDir,
+      sessionId,
+      progress: projectExternalSessionOperationProgressV1(successor),
+      allowDifferentTerminalReplacement: true,
+      expectedDifferentTerminalPresentation:
+        projectExternalSessionOperationSharedPresentationV1(
+          projectExternalSessionOperationProgressV1(predecessor),
+        ),
+    });
+    await expect(readExternalSessionOperationRecord(
+      activeServerDir,
+      successor.operationId,
+    )).resolves.toMatchObject({
+      progressProjection: {
+        acknowledgedRevision: successor.revision,
+      },
+    });
+  });
+
+  it('passively repairs a newly admitted successor after a crash before its first publication', async () => {
+    const activeServerDir = await mkdtemp(join(
+      tmpdir(),
+      'happier-operation-successor-first-publication-passive-repair-',
+    ));
+    roots.push(activeServerDir);
+    const sessionId =
+      'session-successor-first-publication-passive-repair';
+    const predecessorInput = privateRecord({
+      operationId: 'operation-passive-repair-predecessor',
+      sessionId,
+      status: 'completed',
+    });
+    await writeExternalSessionOperationRecord(
+      activeServerDir,
+      predecessorInput,
+    );
+    const predecessor =
+      await acknowledgeExternalSessionOperationProgressProjection({
+        activeServerDir,
+        operationId: predecessorInput.operationId,
+        projectedRevision: predecessorInput.revision,
+      });
+    const successor = privateRecord({
+      operationId: 'operation-passive-repair-successor',
+      sessionId,
+      status: 'running',
+      phase: 'validating',
+    });
+    await writeExternalSessionOperationRecord(activeServerDir, successor);
+    let selectedPresentation =
+      projectExternalSessionOperationSharedPresentationV1(
+        projectExternalSessionOperationProgressV1(predecessor),
+      );
+    const publish = vi.fn(async (input: Readonly<{
+      progress: ExternalSessionOperationProgressV1;
+    }>) => {
+      selectedPresentation =
+        projectExternalSessionOperationSharedPresentationV1(input.progress);
+    });
+
+    await expect(repairExternalSessionOperationProgressProjections(
+      activeServerDir,
+      {
+        readPresentation: async () => ({
+          kind: 'valid',
+          presentation: selectedPresentation,
+        }),
+        publish,
+        nowMs: () => 44,
+      },
+    )).resolves.toBe(1);
+
+    const repaired = await readExternalSessionOperationRecord(
+      activeServerDir,
+      successor.operationId,
+    );
+    expect(repaired).toMatchObject({
+      revision: successor.revision + 1,
+      status: 'awaiting_user_resume',
+      phase: successor.phase,
+      updatedAtMs: 44,
+      progressProjection: {
+        acknowledgedRevision: successor.revision + 1,
+      },
+    });
+    expect(publish).toHaveBeenNthCalledWith(1, {
+      activeServerDir,
+      sessionId,
+      progress: projectExternalSessionOperationProgressV1(successor),
+      allowDifferentTerminalReplacement: true,
+      expectedDifferentTerminalPresentation:
+        projectExternalSessionOperationSharedPresentationV1(
+          projectExternalSessionOperationProgressV1(predecessor),
+        ),
+    });
+    expect(publish).toHaveBeenNthCalledWith(2, {
+      activeServerDir,
+      sessionId,
+      progress: projectExternalSessionOperationProgressV1(
+        ExternalSessionOperationRecordV1Schema.parse(repaired),
+      ),
+    });
+    await expect(readExternalSessionOperationRecord(
+      activeServerDir,
+      predecessor.operationId,
+    )).resolves.toEqual(predecessor);
+  });
+
+  it('passively publishes an awaiting takeover successor left behind before its first publication', async () => {
+    const activeServerDir = await mkdtemp(join(
+      tmpdir(),
+      'happier-operation-awaiting-successor-first-publication-repair-',
+    ));
+    roots.push(activeServerDir);
+    const sessionId =
+      'session-awaiting-successor-first-publication-repair';
+    const predecessorInput = privateRecord({
+      operationId: 'operation-awaiting-successor-predecessor',
+      sessionId,
+      status: 'completed',
+      plan: 'takeover',
+      targetStorageMode: 'external-linked',
+      phase: 'finalizing',
+    });
+    await writeExternalSessionOperationRecord(
+      activeServerDir,
+      predecessorInput,
+    );
+    const predecessor =
+      await acknowledgeExternalSessionOperationProgressProjection({
+        activeServerDir,
+        operationId: predecessorInput.operationId,
+        projectedRevision: predecessorInput.revision,
+      });
+    const successor = privateRecord({
+      operationId: 'operation-awaiting-successor',
+      sessionId,
+      status: 'awaiting_user_resume',
+      plan: 'takeover',
+      targetStorageMode: 'external-linked',
+      phase: 'validating',
+    });
+    await writeExternalSessionOperationRecord(activeServerDir, successor);
+    const predecessorPresentation =
+      projectExternalSessionOperationSharedPresentationV1(
+        projectExternalSessionOperationProgressV1(predecessor),
+      );
+    let selectedPresentation = predecessorPresentation;
+    const publish = vi.fn(async (input: Readonly<{
+      progress: ExternalSessionOperationProgressV1;
+    }>) => {
+      selectedPresentation =
+        projectExternalSessionOperationSharedPresentationV1(input.progress);
+    });
+
+    await expect(repairExternalSessionOperationProgressProjections(
+      activeServerDir,
+      {
+        readPresentation: async () => ({
+          kind: 'valid',
+          presentation: selectedPresentation,
+        }),
+        publish,
+      },
+    )).resolves.toBe(1);
+
+    expect(publish).toHaveBeenCalledExactlyOnceWith({
+      activeServerDir,
+      sessionId,
+      progress: projectExternalSessionOperationProgressV1(successor),
+      allowDifferentTerminalReplacement: true,
+      expectedDifferentTerminalPresentation: predecessorPresentation,
+    });
+    await expect(readExternalSessionOperationRecord(
+      activeServerDir,
+      successor.operationId,
+    )).resolves.toEqual({
+      ...successor,
+      progressProjection: {
+        acknowledgedRevision: successor.revision,
+      },
+    });
+  });
+
+  it('retries successor repair after the predecessor replacement response is lost', async () => {
+    const activeServerDir = await mkdtemp(join(
+      tmpdir(),
+      'happier-operation-successor-predecessor-lost-response-',
+    ));
+    roots.push(activeServerDir);
+    const sessionId = 'session-successor-predecessor-lost-response';
+    const predecessorInput = privateRecord({
+      operationId: 'operation-successor-lost-response-predecessor',
+      sessionId,
+      status: 'completed',
+      plan: 'takeover',
+      targetStorageMode: 'external-linked',
+      phase: 'finalizing',
+    });
+    await writeExternalSessionOperationRecord(
+      activeServerDir,
+      predecessorInput,
+    );
+    const predecessor =
+      await acknowledgeExternalSessionOperationProgressProjection({
+        activeServerDir,
+        operationId: predecessorInput.operationId,
+        projectedRevision: predecessorInput.revision,
+      });
+    const successor = privateRecord({
+      operationId: 'operation-successor-lost-response',
+      sessionId,
+      status: 'running',
+      phase: 'validating',
+    });
+    await writeExternalSessionOperationRecord(activeServerDir, successor);
+    await expect(compactExternalSessionOperationRecordToCompletionReceipt({
+      activeServerDir,
+      operationId: predecessor.operationId,
+      expectedRevision: predecessor.revision,
+      stagingDisposition: 'not_applicable',
+    })).resolves.toMatchObject({ status: 'compacted' });
+    let selectedPresentation =
+      projectExternalSessionOperationSharedPresentationV1(
+        projectExternalSessionOperationProgressV1(predecessor),
+      );
+    let loseResponse = true;
+    const publish = vi.fn(async (input: Readonly<{
+      progress: ExternalSessionOperationProgressV1;
+    }>) => {
+      selectedPresentation =
+        projectExternalSessionOperationSharedPresentationV1(input.progress);
+      if (loseResponse) {
+        loseResponse = false;
+        throw new Error('projection response lost');
+      }
+    });
+    const repair = (nowMs: number) =>
+      repairExternalSessionOperationProgressProjections(
+        activeServerDir,
+        {
+          readPresentation: async () => ({
+            kind: 'valid',
+            presentation: selectedPresentation,
+          }),
+          publish,
+          nowMs: () => nowMs,
+        },
+      );
+
+    await expect(repair(44)).resolves.toBe(0);
+    await expect(readExternalSessionOperationRecord(
+      activeServerDir,
+      successor.operationId,
+    )).resolves.toEqual(successor);
+    expect(selectedPresentation).toEqual(
+      projectExternalSessionOperationSharedPresentationV1(
+        projectExternalSessionOperationProgressV1(successor),
+      ),
+    );
+    await expect(readExternalSessionOperationStoredEntry(
+      activeServerDir,
+      predecessor.operationId,
+    )).resolves.toMatchObject({ kind: 'completion_receipt' });
+
+    await expect(repair(55)).resolves.toBe(1);
+    await expect(readExternalSessionOperationRecord(
+      activeServerDir,
+      successor.operationId,
+    )).resolves.toMatchObject({
+      revision: successor.revision + 1,
+      status: 'awaiting_user_resume',
+      updatedAtMs: 55,
+      progressProjection: {
+        acknowledgedRevision: successor.revision + 1,
+      },
+    });
+    expect(publish).toHaveBeenCalledTimes(2);
+    await expect(readExternalSessionOperationStoredEntry(
+      activeServerDir,
+      predecessor.operationId,
+    )).resolves.toBeNull();
+  });
+
+  it('recovers an acknowledged successor by pruning its expired unselected predecessor receipt', async () => {
+    const activeServerDir = await mkdtemp(join(
+      tmpdir(),
+      'happier-operation-successor-ack-before-predecessor-delete-',
+    ));
+    roots.push(activeServerDir);
+    const sessionId =
+      'session-successor-ack-before-predecessor-delete';
+    const predecessorInput = privateRecord({
+      operationId: 'operation-ack-before-delete-predecessor',
+      sessionId,
+      status: 'completed',
+      plan: 'takeover',
+      targetStorageMode: 'external-linked',
+      phase: 'finalizing',
+    });
+    await writeExternalSessionOperationRecord(
+      activeServerDir,
+      predecessorInput,
+    );
+    const predecessor =
+      await acknowledgeExternalSessionOperationProgressProjection({
+        activeServerDir,
+        operationId: predecessorInput.operationId,
+        projectedRevision: predecessorInput.revision,
+      });
+    const successorInput = privateRecord({
+      operationId: 'operation-ack-before-delete-successor',
+      sessionId,
+      status: 'running',
+      phase: 'validating',
+    });
+    await writeExternalSessionOperationRecord(activeServerDir, successorInput);
+    await expect(compactExternalSessionOperationRecordToCompletionReceipt({
+      activeServerDir,
+      operationId: predecessor.operationId,
+      expectedRevision: predecessor.revision,
+      stagingDisposition: 'not_applicable',
+    })).resolves.toMatchObject({ status: 'compacted' });
+    const successor =
+      await acknowledgeExternalSessionOperationProgressProjection({
+        activeServerDir,
+        operationId: successorInput.operationId,
+        projectedRevision: successorInput.revision,
+      });
+    const successorPresentation =
+      projectExternalSessionOperationSharedPresentationV1(
+        projectExternalSessionOperationProgressV1(successor),
+      );
+
+    await expect(convergeExternalSessionOperationProgressProjection(
+      activeServerDir,
+      successor,
+      {
+        readPresentation: async () => ({
+          kind: 'valid',
+          presentation: successorPresentation,
+        }),
+      },
+    )).resolves.toBe('already_acknowledged');
+    await expect(readExternalSessionOperationStoredEntry(
+      activeServerDir,
+      predecessor.operationId,
+    )).resolves.toBeNull();
+  });
+
+  it('does not treat an unknown selected terminal as the admitted predecessor', async () => {
+    const activeServerDir = await mkdtemp(join(
+      tmpdir(),
+      'happier-operation-unknown-predecessor-',
+    ));
+    roots.push(activeServerDir);
+    const sessionId = 'session-unknown-predecessor';
+    const successor = privateRecord({
+      operationId: 'operation-unknown-predecessor-successor',
+      sessionId,
+      status: 'running',
+      phase: 'validating',
+    });
+    await writeExternalSessionOperationRecord(activeServerDir, successor);
+    const unknownTerminal = privateRecord({
+      operationId: 'operation-unknown-predecessor-terminal',
+      sessionId,
+      status: 'completed',
+    });
+    const publish = vi.fn(async () => undefined);
+
+    await expect(convergeExternalSessionOperationProgressProjection(
+      activeServerDir,
+      successor,
+      {
+        allowSettledTerminalPredecessorReplacement: true,
+        readPresentation: async () => ({
+          kind: 'valid',
+          presentation:
+            projectExternalSessionOperationSharedPresentationV1(
+              projectExternalSessionOperationProgressV1(unknownTerminal),
+            ),
+        }),
+        publish,
+      },
+    )).rejects.toThrow(
+      'external_session_operation_repair_different_selected_operation',
+    );
+    expect(publish).not.toHaveBeenCalled();
   });
 
   it('fails successor admission closed when more than one terminal projection is unsettled', async () => {
@@ -832,9 +1920,7 @@ describe('external-session operation progress producer selection', () => {
         ExternalSessionOperationRecordV1Schema.parse({
           ...terminalATemplate,
           operationId:
-            externalSessionOperationIdForRequest(
-              terminalATemplate.request,
-            ),
+            `external-${plan}:${layout}-${actionKind}-terminal-a`,
         });
       const terminalBTemplate = privateRecord({
         operationId: `operation-${layout}-${actionKind}-terminal-b`,
@@ -848,9 +1934,7 @@ describe('external-session operation progress producer selection', () => {
         ExternalSessionOperationRecordV1Schema.parse({
           ...terminalBTemplate,
           operationId:
-            externalSessionOperationIdForRequest(
-              terminalBTemplate.request,
-            ),
+            `external-${plan}:${layout}-${actionKind}-terminal-b`,
         });
       await writeExternalSessionOperationRecord(
         activeServerDir,
@@ -1100,6 +2184,256 @@ describe('external-session operation progress producer selection', () => {
       expect(publish).not.toHaveBeenCalled();
     },
   );
+
+  it('skips a live exact operation claim on connectivity repair and repairs once after release', async () => {
+    const activeServerDir = await mkdtemp(join(
+      tmpdir(),
+      'happier-operation-live-claim-repair-',
+    ));
+    roots.push(activeServerDir);
+    const operationExclusion = createExternalSessionOperationExclusion({
+      activeServerDir,
+      ownerId: 'daemon:live-operation',
+    });
+    const claimResult = await operationExclusion.acquire({
+      kind: 'materialize',
+      sessionId: 'session-live-operation',
+      requestId: 'key-operation-live-operation',
+      sourceIdentity: JSON.stringify({
+        v: 1,
+        agent: { pluginId: 'com.example.agent', localId: 'example' },
+        source: { kind: 'jsonl', contractVersion: 1 },
+      }),
+      sourceGeneration: 'source-1',
+    });
+    if (claimResult.status !== 'acquired') {
+      throw new Error('Expected the live operation claim to be acquired.');
+    }
+    const running = privateRecord({
+      operationId: 'operation-live-operation',
+      sessionId: 'session-live-operation',
+      status: 'running',
+      phase: 'staging',
+      operationClaimId: claimResult.claim.record.claimId,
+    });
+    await writeExternalSessionOperationRecord(activeServerDir, running);
+    const readPresentation = vi.fn(async () => ({ kind: 'absent' as const }));
+    const publish = vi.fn(async () => undefined);
+    const repair = () => repairExternalSessionOperationProgressProjections(
+      activeServerDir,
+      {
+        inspectOperationClaim:
+          operationExclusion.inspectPassiveRepairClaim,
+        withOperationClaimBarrier:
+          operationExclusion.withPassiveRepairClaimBarrier,
+        readPresentation,
+        publish,
+        nowMs: () => 44,
+      },
+    );
+
+    await expect(repair()).resolves.toBe(0);
+    await expect(readExternalSessionOperationRecord(
+      activeServerDir,
+      running.operationId,
+    )).resolves.toEqual(running);
+    expect(readPresentation).not.toHaveBeenCalled();
+    expect(publish).not.toHaveBeenCalled();
+
+    await claimResult.claim.release();
+    await expect(repair()).resolves.toBe(1);
+    await expect(readExternalSessionOperationRecord(
+      activeServerDir,
+      running.operationId,
+    )).resolves.toMatchObject({
+      revision: running.revision + 1,
+      status: 'awaiting_user_resume',
+      progressProjection: {
+        acknowledgedRevision: running.revision + 1,
+      },
+    });
+    expect(readPresentation).toHaveBeenCalledTimes(2);
+    expect(publish).toHaveBeenCalledOnce();
+  });
+
+  it('does not repair after an exact semantic claim is acquired during the presentation read', async () => {
+    const activeServerDir = await mkdtemp(join(
+      tmpdir(),
+      'happier-operation-claim-race-repair-',
+    ));
+    roots.push(activeServerDir);
+    const operationExclusion = createExternalSessionOperationExclusion({
+      activeServerDir,
+      ownerId: 'daemon:claim-race-repair',
+    });
+    const running = privateRecord({
+      operationId: 'operation-claim-race-repair',
+      sessionId: 'session-claim-race-repair',
+      status: 'running',
+      phase: 'staging',
+    });
+    await writeExternalSessionOperationRecord(activeServerDir, running);
+    let signalReadStarted!: () => void;
+    const readStarted = new Promise<void>((resolve) => {
+      signalReadStarted = resolve;
+    });
+    let releaseRead!: () => void;
+    const readBarrier = new Promise<void>((resolve) => {
+      releaseRead = resolve;
+    });
+    const readPresentation = vi.fn(async () => {
+      signalReadStarted();
+      await readBarrier;
+      return { kind: 'absent' as const };
+    });
+    const publish = vi.fn(async () => undefined);
+    const acknowledge = vi.fn(async () => running);
+    const repair = repairExternalSessionOperationProgressProjections(
+      activeServerDir,
+      {
+        inspectOperationClaim:
+          operationExclusion.inspectPassiveRepairClaim,
+        withOperationClaimBarrier:
+          operationExclusion.withPassiveRepairClaimBarrier,
+        readPresentation,
+        publish,
+        acknowledge,
+        nowMs: () => 44,
+      },
+    );
+    await readStarted;
+    const acquired = await operationExclusion.acquire({
+      kind: 'materialize',
+      sessionId: running.request.sessionId,
+      requestId: running.request.idempotencyKey,
+      sourceIdentity: JSON.stringify(
+        running.request.source.qualifiedIdentity,
+      ),
+      sourceGeneration: running.request.source.sourceGeneration,
+    });
+    if (acquired.status !== 'acquired') {
+      throw new Error('Expected the racing operation claim to be acquired.');
+    }
+
+    try {
+      releaseRead();
+      await expect(repair).resolves.toBe(0);
+      await expect(readExternalSessionOperationRecord(
+        activeServerDir,
+        running.operationId,
+      )).resolves.toEqual(running);
+      expect(readPresentation).toHaveBeenCalledOnce();
+      expect(publish).not.toHaveBeenCalled();
+      expect(acknowledge).not.toHaveBeenCalled();
+    } finally {
+      await acquired.claim.release();
+    }
+  });
+
+  it('keeps claim acquisition pending past the former lock deadline until passive repair publishes and acknowledges', async () => {
+    const activeServerDir = await mkdtemp(join(
+      tmpdir(),
+      'happier-operation-claim-projection-barrier-',
+    ));
+    roots.push(activeServerDir);
+    const operationExclusion = createExternalSessionOperationExclusion({
+      activeServerDir,
+      ownerId: 'daemon:claim-projection-barrier',
+      claimMutationLockAcquisitionTimeoutMs:
+        resolveExternalSessionOperationProjectionBarrierAcquisitionTimeoutMs(),
+    });
+    const running = privateRecord({
+      operationId: 'operation-claim-projection-barrier',
+      sessionId: 'session-claim-projection-barrier',
+      status: 'running',
+      phase: 'staging',
+    });
+    await writeExternalSessionOperationRecord(activeServerDir, running);
+    const events: string[] = [];
+    let signalPublishStarted!: () => void;
+    const publishStarted = new Promise<void>((resolve) => {
+      signalPublishStarted = resolve;
+    });
+    let releasePublish!: () => void;
+    const publishBarrier = new Promise<void>((resolve) => {
+      releasePublish = resolve;
+    });
+    const publish = vi.fn(async () => {
+      events.push('publish_started');
+      signalPublishStarted();
+      await publishBarrier;
+      events.push('publish_completed');
+    });
+    const acknowledge = vi.fn(async (input) => {
+      const acknowledged =
+        await acknowledgeExternalSessionOperationProgressProjection(input);
+      events.push('acknowledged');
+      return acknowledged;
+    });
+    const repair = repairExternalSessionOperationProgressProjections(
+      activeServerDir,
+      {
+        inspectOperationClaim:
+          operationExclusion.inspectPassiveRepairClaim,
+        withOperationClaimBarrier:
+          operationExclusion.withPassiveRepairClaimBarrier,
+        readPresentation: async () => ({ kind: 'absent' }),
+        publish,
+        acknowledge,
+        nowMs: () => 44,
+      },
+    );
+    await publishStarted;
+    let acquisitionSettled = false;
+    const acquisition = operationExclusion.acquire({
+      kind: 'materialize',
+      sessionId: running.request.sessionId,
+      requestId: running.request.idempotencyKey,
+      sourceIdentity: JSON.stringify(
+        running.request.source.qualifiedIdentity,
+      ),
+      sourceGeneration: running.request.source.sourceGeneration,
+    }).then(
+      (result) => {
+        acquisitionSettled = true;
+        if (result.status === 'acquired') events.push('claim_acquired');
+        return { status: 'resolved' as const, result };
+      },
+      (error: unknown) => {
+        acquisitionSettled = true;
+        return { status: 'rejected' as const, error };
+      },
+    );
+    await new Promise((resolve) => setTimeout(resolve, 5_100));
+    const remainedPendingPastFormerDeadline = !acquisitionSettled;
+
+    releasePublish();
+    await expect(repair).resolves.toBe(1);
+    const acquisitionOutcome = await acquisition;
+    try {
+      expect(remainedPendingPastFormerDeadline).toBe(true);
+      expect(acquisitionOutcome.status).toBe('resolved');
+      if (
+        acquisitionOutcome.status !== 'resolved'
+        || acquisitionOutcome.result.status !== 'acquired'
+      ) {
+        throw new Error('Expected claim acquisition after repair release.');
+      }
+      expect(events).toEqual([
+        'publish_started',
+        'publish_completed',
+        'acknowledged',
+        'claim_acquired',
+      ]);
+    } finally {
+      if (
+        acquisitionOutcome.status === 'resolved'
+        && acquisitionOutcome.result.status === 'acquired'
+      ) {
+        await acquisitionOutcome.result.claim.release();
+      }
+    }
+  }, 15_000);
 
   it('continues an interrupted publishing phase only after exact-current explicit Resume', async () => {
     const activeServerDir = await mkdtemp(join(
@@ -1404,6 +2738,7 @@ describe('external-session operation progress producer selection', () => {
       phase: 'spawning',
       plan: 'takeover',
       targetStorageMode: 'external-linked',
+      targetRuntimeAttemptId: 'attempt-external-linked-spawning-1',
     });
     await writeExternalSessionOperationRecord(activeServerDir, spawning);
     const publish = vi.fn(async () => undefined);
@@ -1422,12 +2757,74 @@ describe('external-session operation progress producer selection', () => {
       spawning.operationId,
     )).resolves.toMatchObject({
       revision: spawning.revision + 1,
-      status: 'awaiting_user_resume',
+      status: 'failed',
       phase: 'spawning',
       retryTargetPhase: 'spawning',
       currentStorageState: 'machine_only',
+      error: {
+        code: 'spawn_failed',
+        retryable: true,
+      },
       updatedAtMs: 44,
     });
+    expect(publish).toHaveBeenCalledOnce();
+  });
+
+  it('passively repairs a snapshot-backed external-linked spawning attempt and retains its publication tuple', async () => {
+    const activeServerDir = await mkdtemp(join(
+      tmpdir(),
+      'happier-external-linked-snapshot-takeover-repair-',
+    ));
+    roots.push(activeServerDir);
+    const publication = {
+      materializationPublicationId: 'publication-external-linked-snapshot',
+      materializedThroughSourceAt: 41,
+      publishedThroughServerSeq: 7,
+    };
+    const spawning = ExternalSessionOperationRecordV1Schema.parse({
+      ...privateRecord({
+        operationId: 'operation-external-linked-snapshot-spawning',
+        sessionId: 'session-external-linked-snapshot-spawning',
+        status: 'running',
+        phase: 'spawning',
+        plan: 'takeover',
+        targetStorageMode: 'external-linked',
+        targetRuntimeAttemptId: 'attempt-external-linked-snapshot-1',
+      }),
+      priorStableStorage: { state: 'snapshot_complete', publication },
+      currentStorageState: 'snapshot_complete',
+      publication,
+    });
+    await writeExternalSessionOperationRecord(activeServerDir, spawning);
+    const publish = vi.fn(async () => undefined);
+
+    await expect(repairExternalSessionOperationProgressProjections(
+      activeServerDir,
+      {
+        readPresentation: async () => ({ kind: 'absent' }),
+        publish,
+        nowMs: () => 44,
+      },
+    )).resolves.toBe(1);
+
+    const repaired = await readExternalSessionOperationRecord(
+      activeServerDir,
+      spawning.operationId,
+    );
+    expect(repaired).toMatchObject({
+      revision: spawning.revision + 1,
+      status: 'failed',
+      phase: 'spawning',
+      retryTargetPhase: 'spawning',
+      currentStorageState: 'snapshot_complete',
+      publication,
+      error: {
+        code: 'spawn_failed',
+        retryable: true,
+      },
+      updatedAtMs: 44,
+    });
+    expect(repaired?.canonicalOwnerEvidence.disagreement).toBeUndefined();
     expect(publish).toHaveBeenCalledOnce();
   });
 
@@ -1594,7 +2991,217 @@ describe('external-session operation progress producer selection', () => {
     ])).toThrow('external_session_operation_repair_conflicting_private_records');
   });
 
+  it('retries an unacknowledged boot projection without another semantic transition and stays byte-stable after acknowledgement', async () => {
+    const activeServerDir = await mkdtemp(join(
+      tmpdir(),
+      'happier-operation-projection-retry-',
+    ));
+    roots.push(activeServerDir);
+    const running = privateRecord({
+      operationId: 'operation-projection-retry',
+      sessionId: 'session-projection-retry',
+      status: 'running',
+      phase: 'staging',
+    });
+    await writeExternalSessionOperationRecord(activeServerDir, running);
+    const publish = vi.fn()
+      .mockRejectedValueOnce(new Error('server unavailable'))
+      .mockResolvedValue(undefined);
+
+    await expect(repairExternalSessionOperationProgressProjections(
+      activeServerDir,
+      {
+        readPresentation: async () => ({ kind: 'absent' }),
+        publish,
+        nowMs: () => 44,
+      },
+    )).resolves.toBe(0);
+
+    const interrupted = await readExternalSessionOperationRecord(
+      activeServerDir,
+      running.operationId,
+    );
+    expect(interrupted).toMatchObject({
+      revision: running.revision + 1,
+      status: 'awaiting_user_resume',
+      updatedAtMs: 44,
+      progressProjection: { acknowledgedRevision: null },
+    });
+
+    await expect(repairExternalSessionOperationProgressProjections(
+      activeServerDir,
+      {
+        readPresentation: async () => ({ kind: 'absent' }),
+        publish,
+        nowMs: () => 99,
+      },
+    )).resolves.toBe(1);
+    const acknowledged = await readExternalSessionOperationRecord(
+      activeServerDir,
+      running.operationId,
+    );
+    expect(acknowledged).toMatchObject({
+      revision: running.revision + 1,
+      status: 'awaiting_user_resume',
+      updatedAtMs: 44,
+      progressProjection: {
+        acknowledgedRevision: running.revision + 1,
+      },
+    });
+    const recordPath = join(
+      vitestOperationRecordsDirectory(activeServerDir),
+      `${createHash('sha256')
+        .update(running.operationId, 'utf8')
+        .digest('hex')}.json`,
+    );
+    const acknowledgedBytes = await readFile(recordPath, 'utf8');
+    if (!acknowledged) throw new Error('Expected acknowledged operation.');
+
+    await expect(repairExternalSessionOperationProgressProjections(
+      activeServerDir,
+      {
+        readPresentation: async () => ({
+          kind: 'valid',
+          presentation:
+            projectExternalSessionOperationSharedPresentationV1(
+              projectExternalSessionOperationProgressV1(acknowledged),
+            ),
+        }),
+        publish,
+        nowMs: () => 123,
+      },
+    )).resolves.toBe(1);
+
+    expect(publish).toHaveBeenCalledTimes(2);
+    await expect(readFile(recordPath, 'utf8')).resolves.toBe(
+      acknowledgedBytes,
+    );
+  });
+
+  it('leaves a malformed selected presentation unchanged and continues later independent repairs', async () => {
+    const activeServerDir = await mkdtemp(join(
+      tmpdir(),
+      'happier-operation-projection-malformed-isolation-',
+    ));
+    roots.push(activeServerDir);
+    const malformed = privateRecord({
+      operationId: 'operation-malformed-presentation',
+      sessionId: 'session-malformed-presentation',
+      status: 'running',
+      phase: 'staging',
+    });
+    const repairable = privateRecord({
+      operationId: 'operation-after-malformed-presentation',
+      sessionId: 'session-after-malformed-presentation',
+      status: 'running',
+      phase: 'staging',
+    });
+    await writeExternalSessionOperationRecord(activeServerDir, malformed);
+    await writeExternalSessionOperationRecord(activeServerDir, repairable);
+    const malformedPath = join(
+      vitestOperationRecordsDirectory(activeServerDir),
+      `${createHash('sha256')
+        .update(malformed.operationId, 'utf8')
+        .digest('hex')}.json`,
+    );
+    const malformedBytes = await readFile(malformedPath, 'utf8');
+    const publish = vi.fn(async () => undefined);
+
+    await expect(repairExternalSessionOperationProgressProjections(
+      activeServerDir,
+      {
+        readPresentation: async (sessionId) =>
+          sessionId === malformed.request.sessionId
+            ? { kind: 'malformed' }
+            : { kind: 'absent' },
+        publish,
+        nowMs: () => 44,
+      },
+    )).resolves.toBe(1);
+
+    await expect(readFile(malformedPath, 'utf8')).resolves.toBe(
+      malformedBytes,
+    );
+    await expect(readExternalSessionOperationRecord(
+      activeServerDir,
+      repairable.operationId,
+    )).resolves.toMatchObject({
+      revision: repairable.revision + 1,
+      status: 'awaiting_user_resume',
+      progressProjection: {
+        acknowledgedRevision: repairable.revision + 1,
+      },
+    });
+    expect(publish).toHaveBeenCalledExactlyOnceWith({
+      activeServerDir,
+      sessionId: repairable.request.sessionId,
+      progress: expect.objectContaining({
+        operationId: repairable.operationId,
+        revision: repairable.revision + 1,
+      }),
+    });
+    expect(repairDiagnosticMock).toHaveBeenCalledExactlyOnceWith(
+      'external_session.operation_projection_repair_session',
+      expect.any(Error),
+    );
+  });
+
+  it('isolates conflicting private rows to their session and repairs a later session', async () => {
+    const activeServerDir = await mkdtemp(join(
+      tmpdir(),
+      'happier-operation-repair-session-isolation-',
+    ));
+    roots.push(activeServerDir);
+    const conflictingA = privateRecord({
+      operationId: 'operation-conflicting-a',
+      sessionId: 'session-conflicting',
+      status: 'running',
+    });
+    const conflictingB = privateRecord({
+      operationId: 'operation-conflicting-b',
+      sessionId: 'session-conflicting',
+      status: 'running',
+    });
+    const repairable = privateRecord({
+      operationId: 'operation-after-conflict',
+      sessionId: 'session-after-conflict',
+      status: 'awaiting_user_resume',
+    });
+    await writeExternalSessionOperationRecord(activeServerDir, repairable);
+    const publish = vi.fn(async () => undefined);
+
+    await expect(repairExternalSessionOperationProgressProjections(
+      activeServerDir,
+      {
+        listRecords: async () => [
+          conflictingA,
+          conflictingB,
+          repairable,
+        ],
+        readPresentation: async () => ({ kind: 'absent' }),
+        publish,
+        acknowledge: async (input) => ({
+          ...repairable,
+          progressProjection: {
+            acknowledgedRevision: input.projectedRevision,
+          },
+        }),
+      },
+    )).resolves.toBe(1);
+
+    expect(publish).toHaveBeenCalledExactlyOnceWith({
+      activeServerDir,
+      sessionId: repairable.request.sessionId,
+      progress: projectExternalSessionOperationProgressV1(repairable),
+    });
+  });
+
   it('ignores multiple retained terminal rows without resurrecting a projection', async () => {
+    const activeServerDir = await mkdtemp(join(
+      tmpdir(),
+      'happier-operation-retained-terminal-history-',
+    ));
+    roots.push(activeServerDir);
     const terminalAInput = privateRecord({
       operationId: 'operation-terminal-a',
       sessionId: 'session-terminal-history',
@@ -1624,12 +3231,696 @@ describe('external-session operation progress producer selection', () => {
       terminalB,
     ])).toEqual([]);
     await expect(repairExternalSessionOperationProgressProjections(
-      '/unused-active-server-dir',
+      activeServerDir,
       {
         listRecords: async () => [terminalA, terminalB],
         publish,
       },
     )).resolves.toBe(0);
     expect(publish).not.toHaveBeenCalled();
+  });
+
+  it('keeps an external-linked completion full when publication acknowledgement is lost, then compacts on exact replay', async () => {
+    const activeServerDir = await mkdtemp(join(
+      tmpdir(),
+      'happier-operation-external-linked-lost-ack-',
+    ));
+    roots.push(activeServerDir);
+    const completed = privateRecord({
+      operationId: 'operation-external-linked-lost-ack',
+      sessionId: 'session-external-linked-lost-ack',
+      status: 'completed',
+      phase: 'finalizing',
+      plan: 'takeover',
+      targetStorageMode: 'external-linked',
+    });
+    await writeExternalSessionOperationRecord(activeServerDir, completed);
+    const presentation =
+      projectExternalSessionOperationSharedPresentationV1(
+        projectExternalSessionOperationProgressV1(completed),
+      );
+    let selectedPresentation:
+      typeof presentation | null = null;
+    const publish = vi.fn(async () => {
+      selectedPresentation = presentation;
+    });
+
+    await expect(convergeExternalSessionOperationProgressProjection(
+      activeServerDir,
+      completed,
+      {
+        readPresentation: async () => selectedPresentation
+          ? { kind: 'valid', presentation: selectedPresentation }
+          : { kind: 'absent' },
+        publish,
+        acknowledge: async () => {
+          throw new Error('projection_ack_response_lost');
+        },
+      },
+    )).rejects.toThrow('projection_ack_response_lost');
+    await expect(readExternalSessionOperationStoredEntry(
+      activeServerDir,
+      completed.operationId,
+    )).resolves.toEqual({ kind: 'full_record', record: completed });
+
+    await expect(convergeExternalSessionOperationProgressProjection(
+      activeServerDir,
+      completed,
+      {
+        readPresentation: async () => ({
+          kind: 'valid',
+          presentation,
+        }),
+        publish,
+      },
+    )).resolves.toBe('acknowledged');
+    expect(publish).toHaveBeenCalledOnce();
+    await expect(readExternalSessionOperationStoredEntry(
+      activeServerDir,
+      completed.operationId,
+    )).resolves.toMatchObject({ kind: 'completion_receipt' });
+  });
+
+  it('compacts an acknowledged external-linked completion on boot and keeps raw Start full-record-only', async () => {
+    const activeServerDir = await mkdtemp(join(
+      tmpdir(),
+      'happier-operation-completed-response-loss-repair-',
+    ));
+    roots.push(activeServerDir);
+    const completedInput = privateRecord({
+      operationId: 'operation-completed-response-loss-repair',
+      sessionId: 'session-completed-response-loss-repair',
+      status: 'completed',
+      phase: 'finalizing',
+      plan: 'takeover',
+      targetStorageMode: 'external-linked',
+    });
+    await writeExternalSessionOperationRecord(activeServerDir, completedInput);
+    const completed =
+      await acknowledgeExternalSessionOperationProgressProjection({
+        activeServerDir,
+        operationId: completedInput.operationId,
+        projectedRevision: completedInput.revision,
+      });
+
+    await expect(repairExternalSessionOperationProgressProjections(
+      activeServerDir,
+      {},
+    )).resolves.toBe(0);
+    await expect(readExternalSessionOperationStoredEntry(
+      activeServerDir,
+      completed.operationId,
+    )).resolves.toMatchObject({
+      kind: 'completion_receipt',
+      receipt: {
+        reference: {
+          sessionId: completed.request.sessionId,
+          operationId: completed.operationId,
+          revision: completed.revision,
+        },
+        presentation:
+          projectExternalSessionOperationSharedPresentationV1(
+            projectExternalSessionOperationProgressV1(completed),
+          ),
+      },
+    });
+
+    const {
+      sourceGeneration: _sourceGeneration,
+      contributionGeneration: _contributionGeneration,
+      ...rawSource
+    } = completed.request.source;
+    const describeSession = vi.fn();
+    const acquire = vi.fn();
+    const sendHistoricalCommand = vi.fn();
+    const validateProgressSelection = vi.fn();
+    const publishProgress = vi.fn(async () => undefined);
+    const executor = createExternalSessionTakeoverStartActionExecutor({
+      activeServerDir,
+      operationExclusion: { acquire },
+      describeSession,
+      sendHistoricalCommand,
+      validateProgressSelection,
+      publishProgress,
+      nowMs: () => completed.updatedAtMs + 1,
+    });
+
+    await expect(executor.start({
+      request: {
+        ...completed.request,
+        source: rawSource,
+      },
+    })).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'invalid_state' },
+    });
+    expect(describeSession).not.toHaveBeenCalled();
+    expect(acquire).not.toHaveBeenCalled();
+    expect(sendHistoricalCommand).not.toHaveBeenCalled();
+    expect(validateProgressSelection).not.toHaveBeenCalled();
+    expect(publishProgress).not.toHaveBeenCalled();
+    await expect(readExternalSessionOperationStoredEntry(
+      activeServerDir,
+      completed.operationId,
+    )).resolves.toMatchObject({ kind: 'completion_receipt' });
+  });
+
+  it('prunes an expired selected predecessor before boot compacts its already-acknowledged completed successor', async () => {
+    const activeServerDir = await mkdtemp(join(
+      tmpdir(),
+      'happier-operation-completed-successor-predecessor-repair-',
+    ));
+    roots.push(activeServerDir);
+    const sessionId = 'session-completed-successor-predecessor-repair';
+    const predecessorInput = privateRecord({
+      operationId: 'operation-completed-successor-predecessor',
+      sessionId,
+      status: 'completed',
+      phase: 'finalizing',
+      plan: 'takeover',
+      targetStorageMode: 'external-linked',
+    });
+    await writeExternalSessionOperationRecord(
+      activeServerDir,
+      predecessorInput,
+    );
+    const predecessor =
+      await acknowledgeExternalSessionOperationProgressProjection({
+        activeServerDir,
+        operationId: predecessorInput.operationId,
+        projectedRevision: predecessorInput.revision,
+      });
+    await expect(compactExternalSessionOperationRecordToCompletionReceipt({
+      activeServerDir,
+      operationId: predecessor.operationId,
+      expectedRevision: predecessor.revision,
+      stagingDisposition: 'not_applicable',
+    })).resolves.toMatchObject({ status: 'compacted' });
+
+    const successorInput = privateRecord({
+      operationId: 'operation-completed-successor-after-ack-crash',
+      sessionId,
+      status: 'completed',
+      phase: 'finalizing',
+      plan: 'takeover',
+      targetStorageMode: 'external-linked',
+    });
+    await writeExternalSessionOperationRecord(activeServerDir, successorInput);
+    const successor =
+      await acknowledgeExternalSessionOperationProgressProjection({
+        activeServerDir,
+        operationId: successorInput.operationId,
+        projectedRevision: successorInput.revision,
+      });
+    const successorPresentation =
+      projectExternalSessionOperationSharedPresentationV1(
+        projectExternalSessionOperationProgressV1(successor),
+      );
+    const repair = () => repairExternalSessionOperationProgressProjections(
+      activeServerDir,
+      {
+        readPresentation: async () => ({
+          kind: 'valid',
+          presentation: successorPresentation,
+        }),
+        nowMs: () => predecessor.updatedAtMs + 86_400_000,
+      },
+    );
+
+    await expect(repair()).resolves.toBe(0);
+    await expect(readExternalSessionOperationStoredEntry(
+      activeServerDir,
+      predecessor.operationId,
+    )).resolves.toBeNull();
+    const compactedSuccessor = await readExternalSessionOperationStoredEntry(
+      activeServerDir,
+      successor.operationId,
+    );
+    expect(compactedSuccessor).toMatchObject({
+      kind: 'completion_receipt',
+      receipt: {
+        reference: {
+          sessionId,
+          operationId: successor.operationId,
+          revision: successor.revision,
+        },
+        presentation: successorPresentation,
+      },
+    });
+
+    await expect(repair()).resolves.toBe(0);
+    await expect(readExternalSessionOperationStoredEntry(
+      activeServerDir,
+      predecessor.operationId,
+    )).resolves.toBeNull();
+    await expect(readExternalSessionOperationStoredEntry(
+      activeServerDir,
+      successor.operationId,
+    )).resolves.toEqual(compactedSuccessor);
+  });
+
+  it.each(['cleaned', 'missing'] as const)(
+    'compacts an acknowledged materialize completion after terminal staging is %s and repeat repair is byte-stable',
+    async (stagingDisposition) => {
+      const activeServerDir = await mkdtemp(join(
+        tmpdir(),
+        `happier-operation-materialize-completion-${stagingDisposition}-`,
+      ));
+      roots.push(activeServerDir);
+      const completed = privateRecord({
+        operationId:
+          `operation-materialize-completion-${stagingDisposition}`,
+        sessionId: `session-materialize-completion-${stagingDisposition}`,
+        status: 'completed',
+        phase: 'publishing',
+        plan: 'materialize',
+        targetStorageMode: 'external-linked',
+      });
+      await writeExternalSessionOperationRecord(activeServerDir, completed);
+      const cleanupTerminalStaging = vi.fn(async () => stagingDisposition);
+      const presentation =
+        projectExternalSessionOperationSharedPresentationV1(
+          projectExternalSessionOperationProgressV1(completed),
+        );
+
+      await expect(repairExternalSessionOperationProgressProjections(
+        activeServerDir,
+        {
+          readPresentation: async () => ({
+            kind: 'valid',
+            presentation,
+          }),
+          cleanupTerminalStaging,
+        },
+      )).resolves.toBe(1);
+      const stored = await readExternalSessionOperationStoredEntry(
+        activeServerDir,
+        completed.operationId,
+      );
+      expect(stored).toMatchObject({
+        kind: 'completion_receipt',
+        receipt: {
+          reference: {
+            sessionId: completed.request.sessionId,
+            operationId: completed.operationId,
+            revision: completed.revision,
+          },
+          presentation,
+        },
+      });
+      const recordBytes = await readFile(join(
+        vitestOperationRecordsDirectory(activeServerDir),
+        `${createHash('sha256')
+          .update(completed.operationId, 'utf8')
+          .digest('hex')}.json`,
+      ), 'utf8');
+
+      cleanupTerminalStaging.mockClear();
+      await expect(repairExternalSessionOperationProgressProjections(
+        activeServerDir,
+        { cleanupTerminalStaging },
+      )).resolves.toBe(0);
+      expect(cleanupTerminalStaging).not.toHaveBeenCalled();
+      await expect(readFile(join(
+        vitestOperationRecordsDirectory(activeServerDir),
+        `${createHash('sha256')
+          .update(completed.operationId, 'utf8')
+          .digest('hex')}.json`,
+      ), 'utf8')).resolves.toBe(recordBytes);
+    },
+  );
+
+  it('keeps an acknowledged cancelled materialize operation and its private staging through boot repair', async () => {
+    const activeServerDir = await mkdtemp(join(
+      tmpdir(),
+      'happier-operation-materialize-cancelled-cleanup-',
+    ));
+    roots.push(activeServerDir);
+    const cancelledInput = privateRecord({
+      operationId: 'operation-materialize-cancelled-cleanup',
+      sessionId: 'session-materialize-cancelled-cleanup',
+      status: 'cancelled',
+      phase: 'staging',
+      plan: 'materialize',
+      targetStorageMode: 'external-linked',
+    });
+    await writeExternalSessionOperationRecord(activeServerDir, cancelledInput);
+    const cancelled =
+      await acknowledgeExternalSessionOperationProgressProjection({
+        activeServerDir,
+        operationId: cancelledInput.operationId,
+        projectedRevision: cancelledInput.revision,
+      });
+    const cleanupTerminalStaging = vi.fn(async () => 'missing' as const);
+
+    await expect(repairExternalSessionOperationProgressProjections(
+      activeServerDir,
+      { cleanupTerminalStaging },
+    )).resolves.toBe(0);
+
+    expect(cleanupTerminalStaging).not.toHaveBeenCalled();
+    await expect(readExternalSessionOperationStoredEntry(
+      activeServerDir,
+      cancelled.operationId,
+    )).resolves.toMatchObject({
+      kind: 'full_record',
+      record: {
+        status: 'cancelled',
+        terminalResult: { kind: 'cancelled' },
+      },
+    });
+  });
+
+  it('keeps an acknowledged cancelled initial partial full during boot repair until server Discard discharges it', async () => {
+    const activeServerDir = await mkdtemp(join(
+      tmpdir(),
+      'happier-operation-materialize-cancelled-initial-partial-repair-',
+    ));
+    roots.push(activeServerDir);
+    const cancelledInput = ExternalSessionOperationRecordV1Schema.parse({
+      ...privateRecord({
+        operationId: 'operation-materialize-cancelled-initial-partial',
+        sessionId: 'session-materialize-cancelled-initial-partial',
+        status: 'cancelled',
+        phase: 'importing',
+        plan: 'materialize',
+        targetStorageMode: 'external-linked',
+      }),
+      currentStorageState: 'server_partial',
+      checkpoint: {
+        sourcePagesRead: 1,
+        stagedItemCount: 1,
+        importedItemCount: 1,
+        acceptedThroughServerSeq: 3,
+        acknowledgedBatchId: 'initial-partial-batch',
+        requiredItemFailures: {
+          total: 0,
+          record: 0,
+          media: 0,
+          conversion: 0,
+          diagnosticsTruncated: false,
+          diagnostics: [],
+        },
+      },
+      bindings: {
+        operationClaimId: 'initial-partial-claim',
+        historicalImportJobId: 'initial-partial-job',
+      },
+      fence: { kind: 'initial_server_partial', acceptedThroughServerSeq: 3 },
+    });
+    await writeExternalSessionOperationRecord(activeServerDir, cancelledInput);
+    const cancelled =
+      await acknowledgeExternalSessionOperationProgressProjection({
+        activeServerDir,
+        operationId: cancelledInput.operationId,
+        projectedRevision: cancelledInput.revision,
+      });
+    const cleanupTerminalStaging = vi.fn(async () => 'missing' as const);
+
+    await expect(repairExternalSessionOperationProgressProjections(
+      activeServerDir,
+      { cleanupTerminalStaging },
+    )).resolves.toBe(0);
+
+    expect(cleanupTerminalStaging).not.toHaveBeenCalled();
+    await expect(readExternalSessionOperationStoredEntry(
+      activeServerDir,
+      cancelled.operationId,
+    )).resolves.toEqual({ kind: 'full_record', record: cancelled });
+  });
+
+  it('keeps a completed materialize full while canonical staging cleanup is not ready', async () => {
+    const activeServerDir = await mkdtemp(join(
+      tmpdir(),
+      'happier-operation-materialize-completion-not-ready-',
+    ));
+    roots.push(activeServerDir);
+    const completedInput = privateRecord({
+      operationId: 'operation-materialize-completion-not-ready',
+      sessionId: 'session-materialize-completion-not-ready',
+      status: 'completed',
+      phase: 'publishing',
+      plan: 'materialize',
+      targetStorageMode: 'external-linked',
+    });
+    await writeExternalSessionOperationRecord(activeServerDir, completedInput);
+    const completed =
+      await acknowledgeExternalSessionOperationProgressProjection({
+        activeServerDir,
+        operationId: completedInput.operationId,
+        projectedRevision: completedInput.revision,
+      });
+
+    await expect(repairExternalSessionOperationProgressProjections(
+      activeServerDir,
+      { cleanupTerminalStaging: async () => 'not_ready' },
+    )).resolves.toBe(0);
+    await expect(readExternalSessionOperationStoredEntry(
+      activeServerDir,
+      completed.operationId,
+    )).resolves.toEqual({ kind: 'full_record', record: completed });
+  });
+
+  it('hands an exact external-linked admission attempt to explicit Retry instead of reopening or stranding it', async () => {
+    const activeServerDir = await mkdtemp(join(
+      tmpdir(),
+      'happier-operation-external-linked-admission-ack-ambiguous-boot-',
+    ));
+    roots.push(activeServerDir);
+    const ambiguous = privateRecord({
+      operationId: 'operation-external-linked-admission-ack-ambiguous',
+      sessionId: 'session-external-linked-admission-ack-ambiguous',
+      status: 'running',
+      phase: 'admitting',
+      plan: 'takeover',
+      targetStorageMode: 'external-linked',
+      targetRuntimeAttemptId: 'attempt-a',
+    });
+    await writeExternalSessionOperationRecord(activeServerDir, ambiguous);
+    const publish = vi.fn(async () => undefined);
+
+    await expect(repairExternalSessionOperationProgressProjections(
+      activeServerDir,
+      {
+        readPresentation: async () => ({ kind: 'absent' }),
+        publish,
+        nowMs: () => 44,
+      },
+    )).resolves.toBe(1);
+
+    const repaired = await readExternalSessionOperationRecord(
+      activeServerDir,
+      ambiguous.operationId,
+    );
+    // The process-local admission waiter does not survive a restart. Leaving the
+    // record `running` left Resume, Retry, Cancel and Dismiss all refusing it,
+    // so the retained attempt settles into the existing retryable
+    // reconciliation state and waits for an explicit user Retry.
+    expect(repaired).toMatchObject({
+      revision: ambiguous.revision + 1,
+      status: 'reconciliation_required',
+      phase: 'admitting',
+      retryTargetPhase: 'admitting',
+      updatedAtMs: 44,
+      error: {
+        code: 'reconciliation_required',
+        retryable: true,
+        occurredAtMs: 44,
+      },
+    });
+    // Nothing is reopened and nothing is invented: the exact attempt, the
+    // checkpoint, the fence, the storage state and the canonical-owner evidence
+    // are byte-identical, so Retry replays the same admission idempotently and
+    // the state stays unresumable and uncancellable. A fabricated disagreement
+    // here would make the same status unretryable and strand it again.
+    expect(repaired?.bindings).toEqual(ambiguous.bindings);
+    expect(repaired?.checkpoint).toEqual(ambiguous.checkpoint);
+    expect(repaired?.fence).toEqual(ambiguous.fence);
+    expect(repaired?.currentStorageState).toBe(ambiguous.currentStorageState);
+    expect(repaired?.canonicalOwnerEvidence).toEqual(
+      ambiguous.canonicalOwnerEvidence,
+    );
+    expect(repaired?.cancellation).toBeUndefined();
+    expect(publish).toHaveBeenCalledWith({
+      activeServerDir,
+      sessionId: ambiguous.request.sessionId,
+      progress: expect.objectContaining({
+        status: 'reconciliation_required',
+        phase: 'admitting',
+        retryTargetPhase: 'admitting',
+        error: expect.objectContaining({
+          code: 'reconciliation_required',
+          retryable: true,
+        }),
+      }),
+    });
+  });
+
+  it('passively repairs exactly the supported phase and storage matrix without source, admission, or spawn effects', async () => {
+    const activeServerDir = await mkdtemp(join(
+      tmpdir(),
+      'happier-operation-passive-phase-storage-matrix-',
+    ));
+    roots.push(activeServerDir);
+    const passiveCases = [
+      ...EXTERNAL_SESSION_OPERATION_TIMELINES_V1.materialize.map((phase) => ({
+        plan: 'materialize' as const,
+        targetStorageMode: 'external-linked' as const,
+        phase,
+        retryTargetPhase: phase,
+        expectedRepair: 'awaiting_user_resume' as const,
+      })),
+      ...EXTERNAL_SESSION_OPERATION_TIMELINES_V1.takeover_external_linked.map(
+        (phase) => ({
+          plan: 'takeover' as const,
+          targetStorageMode: 'external-linked' as const,
+          phase,
+          retryTargetPhase: phase,
+          expectedRepair: phase === 'spawning'
+            ? 'reconciliation_required' as const
+            : 'awaiting_user_resume' as const,
+        }),
+      ),
+      ...([
+        'validating',
+        'quiescing',
+        'staging',
+        'importing',
+        'final_catch_up',
+      ] as const).map((phase) => ({
+        plan: 'takeover' as const,
+        targetStorageMode: 'persisted' as const,
+        phase,
+        retryTargetPhase: phase === 'quiescing'
+          ? 'validating' as const
+          : phase,
+        expectedRepair: 'awaiting_user_resume' as const,
+      })),
+    ];
+    const passiveRecords = passiveCases.map((testCase, index) => privateRecord({
+      operationId: `operation-passive-matrix-${index}`,
+      sessionId: `session-passive-matrix-${index}`,
+      status: 'running',
+      phase: testCase.phase,
+      plan: testCase.plan,
+      targetStorageMode: testCase.targetStorageMode,
+    }));
+    const neighboringRecords = [
+      {
+        record: persistedTakeoverRuntimeRecord({
+          phase: 'admitting',
+          authorityPrepared: true,
+        }),
+        expectedStatus: 'failed',
+        expectedErrorCode: 'admission_failed',
+      },
+      {
+        record: persistedTakeoverRuntimeRecord({ phase: 'spawning' }),
+        expectedStatus: 'failed',
+        expectedErrorCode: 'spawn_failed',
+      },
+      {
+        record: privateRecord({
+          operationId: 'operation-passive-matrix-finalizing',
+          sessionId: 'session-passive-matrix-finalizing',
+          status: 'running',
+          phase: 'finalizing',
+          plan: 'takeover',
+          targetStorageMode: 'persisted',
+        }),
+        expectedStatus: 'running',
+        expectedErrorCode: undefined,
+      },
+    ] as const;
+    for (const record of [
+      ...passiveRecords,
+      ...neighboringRecords.map(({ record }) => record),
+    ]) {
+      await writeExternalSessionOperationRecord(activeServerDir, record);
+    }
+    const describeSource = vi.fn(async () => {
+      throw new Error('passive repair must not read the Agent source');
+    });
+    const reconcilePersistedTakeoverAdmission = vi.fn(async () => {
+      throw new Error('passive repair must not run admission');
+    });
+    const spawnRuntime = vi.fn(async () => {
+      throw new Error('passive repair must not spawn a runtime');
+    });
+    const publish = vi.fn(async () => undefined);
+    const passiveDependencies = {
+      readPresentation: async () => ({ kind: 'absent' as const }),
+      publish,
+      nowMs: () => 44,
+      describeSource,
+      reconcilePersistedTakeoverAdmission,
+      spawnRuntime,
+    };
+
+    await expect(repairExternalSessionOperationProgressProjections(
+      activeServerDir,
+      passiveDependencies,
+    )).resolves.toBe(passiveRecords.length + neighboringRecords.length);
+
+    for (const [index, original] of passiveRecords.entries()) {
+      const repaired = await readExternalSessionOperationRecord(
+        activeServerDir,
+        original.operationId,
+      );
+      const testCase = passiveCases[index];
+      if (testCase.expectedRepair === 'reconciliation_required') {
+        expect(repaired, JSON.stringify(testCase)).toEqual({
+          ...original,
+          revision: original.revision + 1,
+          status: 'reconciliation_required',
+          retryTargetPhase: testCase.retryTargetPhase,
+          updatedAtMs: 44,
+          error: {
+            code: 'reconciliation_required',
+            message:
+              'Persisted takeover admission evidence is incomplete or ambiguous after restart.',
+            retryable: true,
+            occurredAtMs: 44,
+          },
+          canonicalOwnerEvidence: {
+            ...original.canonicalOwnerEvidence,
+            disagreement: {
+              owner: 'runtime_control',
+              expectedRevision: 1,
+              observedRevision: 0,
+            },
+          },
+          progressProjection: {
+            acknowledgedRevision: original.revision + 1,
+          },
+        });
+      } else {
+        expect(repaired, JSON.stringify(testCase)).toEqual({
+          ...original,
+          revision: original.revision + 1,
+          status: 'awaiting_user_resume',
+          retryTargetPhase: testCase.retryTargetPhase,
+          updatedAtMs: 44,
+          progressProjection: {
+            acknowledgedRevision: original.revision + 1,
+          },
+        });
+      }
+    }
+    for (const testCase of neighboringRecords) {
+      const repaired = await readExternalSessionOperationRecord(
+        activeServerDir,
+        testCase.record.operationId,
+      );
+      expect(repaired?.status).toBe(testCase.expectedStatus);
+      expect(repaired?.status).not.toBe('awaiting_user_resume');
+      expect(repaired?.error?.code).toBe(testCase.expectedErrorCode);
+    }
+    expect(describeSource).not.toHaveBeenCalled();
+    expect(reconcilePersistedTakeoverAdmission).not.toHaveBeenCalled();
+    expect(spawnRuntime).not.toHaveBeenCalled();
+    expect(publish).toHaveBeenCalledTimes(
+      passiveRecords.length + neighboringRecords.length,
+    );
   });
 });

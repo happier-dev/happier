@@ -4,7 +4,6 @@ import { resolve } from 'node:path'
 import dotenv from 'dotenv'
 import { resolveVitestFeatureTestExcludeGlobs } from '../../scripts/testing/featureTestGating'
 import {
-    workspacePackageAliases,
     workspacePackageOptimizationExcludes,
     workspacePackageSourcesPlugin,
 } from './scripts/vitestWorkspacePackageResolution'
@@ -78,7 +77,6 @@ export default defineConfig({
     },
     resolve: {
         alias: [
-            ...workspacePackageAliases,
             {
                 find: '@',
                 replacement: resolve('./src'),

@@ -3,17 +3,16 @@ import {
     SPAWN_SESSION_ERROR_CODES,
     type SpawnSessionOptions,
 } from '@/session/shared/spawnSessionContract';
-import { createReplaySeededSession } from '@/session/replay/createReplaySeededSession';
+import { buildReplaySeededSpawnRecipe } from '@/session/replay/buildReplaySeededSpawnRecipe';
 import { resolveReplaySeedDraft } from '@/session/replay/resolveReplaySeedDraft';
+import { createSpawnedSession } from '@/session/services/createSpawnedSession';
 import { createConnectedServiceForkLaunchContext } from '@/session/fork/connectedServiceForkLaunchContext';
-import { isAmbiguousSpawnSessionFailure } from '@/session/shared/spawnNonce';
 import { logger } from '@/ui/logger';
 import { isAuthenticationError } from '@/api/client/httpStatusError';
-import { applySessionStateUpdatesToMetadata } from '@happier-dev/agents/session/state/metadataWriters';
 import { readRuntimeDescriptorV1FromMetadata } from '@happier-dev/protocol';
-import { projectAgentVisibleSessionMetadata } from '@/agent/runtime/sessionMetadataVisibility';
+import { buildForkSessionMetadata } from '@/session/fork/providerNativeForkDispatch';
+import { applyAgentAuthoredSessionStateUpdatesToMetadata } from '@/agent/runtime/state/agentAuthoredSessionStateUpdates';
 
-import { archiveSessionBestEffort } from './forkChildSessionRecovery';
 import type {
     ForkBackendResolution,
     ForkBridgeSurface,
@@ -48,146 +47,120 @@ export async function createReplayForkSession(params: Readonly<{
         ? await params.forkSurface.resolveReplayChildLaunch({
             parentSessionId: params.parentSessionId,
             parentMetadata:
-                projectAgentVisibleSessionMetadata(params.parentMetadata),
+                buildForkSessionMetadata(params.parentMetadata),
             directory: params.directory,
             forkPoint: params.forkPointType === 'seq'
                 ? { kind: 'message_seq', upToSeqInclusive: params.effectiveCutoffSeqInclusive }
                 : { kind: 'latest' },
         })
         : null;
-    const replayLaunchMetadata = applySessionStateUpdatesToMetadata(
+    const replayLaunchMetadata = applyAgentAuthoredSessionStateUpdatesToMetadata(
         {},
         replayForkContinuation?.sessionStateUpdates ?? [],
+        'fork.replayLaunch.sessionStateUpdates',
     );
     const replayChildDirectory = replayForkContinuation?.directory ?? params.directory;
     const replayRuntimeDescriptorV1 = readRuntimeDescriptorV1FromMetadata(replayLaunchMetadata) ?? undefined;
     const inheritedForkOverrides = createConnectedServiceForkLaunchContext({
         inherited: params.inheritedForkOverrides,
     }).inherited;
-    const resolvedSeed = await resolveReplaySeedDraft({
+    const recipeResult = await buildReplaySeededSpawnRecipe({
         credentials: params.credentials,
         cwd: params.directory,
         source: {
-            kind: 'fork_chain',
-            previousSessionId: params.parentSessionId,
-            ...(params.forkPointType === 'seq' ? { upToSeqInclusive: params.effectiveCutoffSeqInclusive } : {}),
+            sourceSessionId: params.parentSessionId,
+            // "Latest" is resolved ONCE, by the fork lifecycle, and this is that
+            // answer. Leaving the retrieval to re-resolve it made the child's
+            // CONTENT and its recorded LINEAGE answer to two different reads of
+            // the same live parent: a row committed between them entered the
+            // seed while the boundary still named the admitted cutoff.
+            forkPoint: { type: 'seq', upToSeqInclusive: params.effectiveCutoffSeqInclusive },
         },
-        strategy: params.replaySummaryRunner ? 'summary_plus_recent' : 'recent_messages',
-        recentMessagesCount: configuration.replaySeedCandidateLimit,
+        agentHintAgentId: params.forkBackendResolution.agentHintAgentId,
+        // The fork lifecycle already admitted this exact cutoff; persisted
+        // lineage must keep naming it rather than a retrieval-resolved one.
+        lineageCutoffSeqInclusive: params.effectiveCutoffSeqInclusive,
+        extraMetadata: {
+            ...inheritedForkOverrides.metadata,
+            ...params.forkBackendResolution.metadataOverlay,
+            ...replayLaunchMetadata,
+        },
+        // No count bound: the fork seed is bounded by CHARACTERS. Passing the
+        // page-size knob here as a message count is what capped the window at
+        // 500 turns in front of a 120k-character budget.
+        recentMessagesCount: null,
         maxSeedChars: typeof params.replayMaxSeedChars === 'number'
             ? params.replayMaxSeedChars
             : configuration.replaySeedMaxChars,
         candidateLimit: configuration.replaySeedCandidateLimit,
-        maxTextChars: params.maxTextChars,
+        ...(typeof params.maxTextChars === 'number' ? { maxTextChars: params.maxTextChars } : {}),
         summaryRunner: params.replaySummaryRunner ?? null,
-        deps: params.deps?.runReplaySummaryForDialog
-            ? { runReplaySummaryForDialog: params.deps.runReplaySummaryForDialog }
-            : undefined,
+        ...(params.deps?.runReplaySummaryForDialog
+            ? { deps: { runReplaySummaryForDialog: params.deps.runReplaySummaryForDialog } }
+            : {}),
     });
-    if (!resolvedSeed) {
+    if (!recipeResult.ok) {
         return {
             ok: false,
-            errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
-            errorMessage: 'Unable to hydrate replay dialog from transcript.',
+            errorCode: recipeResult.errorCode,
+            errorMessage: recipeResult.errorMessage,
         };
     }
-    const seedDraft = resolvedSeed.seedDraft;
-
-    if (!seedDraft.trim()) {
-        return {
-            ok: false,
-            errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
-            errorMessage: 'Replay seed draft is empty',
-        };
-    }
-
-    const nowMs = Date.now();
-    const created = await (async () => {
-        try {
-            return await createReplaySeededSession({
-                credentials: params.credentials,
-                directory: replayChildDirectory,
-                flavor: params.forkBackendResolution.replayFlavor,
-                tag: params.spawnNonce,
-                metadata: {
-                    ...inheritedForkOverrides.metadata,
-                    ...params.forkBackendResolution.metadataOverlay,
-                    ...replayLaunchMetadata,
-                    forkV1: {
-                        v: 1,
-                        parentSessionId: params.parentSessionId,
-                        parentCutoffSeqInclusive: params.effectiveCutoffSeqInclusive,
-                        createdAtMs: nowMs,
-                        strategy: 'replay',
-                        agentHint: { agentId: params.forkBackendResolution.agentHintAgentId },
-                    },
-                    replaySeedV1: {
-                        v: 1,
-                        seedText: seedDraft,
-                        sourceSessionId: params.parentSessionId,
-                        sourceCutoffSeqInclusive: params.effectiveCutoffSeqInclusive,
-                        createdAtMs: nowMs,
-                    },
-                    ...(resolvedSeed.referencedSessionMediaWorkspacePaths.length > 0
-                        ? {
-                            sessionMediaContinuityV1: {
-                                v: 1,
-                                sourceSessionId: params.parentSessionId,
-                                sourceCutoffSeqInclusive: params.effectiveCutoffSeqInclusive,
-                                referencedWorkspacePaths: resolvedSeed.referencedSessionMediaWorkspacePaths,
-                            },
-                        }
-                        : {}),
-                },
-            });
-        } catch (error) {
-            if (isAuthenticationError(error)) throw error;
-            logger.debug('[API MACHINE] Failed to create fork session for replay', {
-                error: error instanceof Error ? error.message : String(error),
-            });
-            return null;
-        }
-    })();
-
-    if (!created) {
-        return {
-            ok: false,
-            errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
-            errorMessage: 'Failed to create fork session',
-        };
-    }
+    const recipe = recipeResult.recipe;
 
     const parentMachineId = typeof params.parentMetadata.machineId === 'string'
         ? params.parentMetadata.machineId.trim()
         : '';
-    const spawnResult = await params.spawnSession({
-        directory: replayChildDirectory,
-        backendTarget: params.forkBackendResolution.backendTargetV2,
-        ...(parentMachineId ? { machineId: parentMachineId } : {}),
-        approvedNewDirectoryCreation: true,
-        spawnNonce: params.spawnNonce,
-        existingSessionId: created.sessionId,
-        ...(replayRuntimeDescriptorV1 ? { runtimeDescriptorV1: replayRuntimeDescriptorV1 } : {}),
-        ...(replayForkContinuation?.environmentVariables
-            ? { environmentVariables: { ...replayForkContinuation.environmentVariables } }
-            : {}),
-        ...inheritedForkOverrides.spawn,
-    } satisfies SpawnSessionOptions);
 
-    if (spawnResult.type !== 'success') {
-        if (!isAmbiguousSpawnSessionFailure(spawnResult)) {
-            await archiveSessionBestEffort(params.credentials.token, created.sessionId);
+    try {
+        // Row creation, create-or-rejoin settlement and orphan cleanup all
+        // belong to the canonical creator. This branch contributes only the
+        // fork's own retry identity and its inherited launch configuration.
+        const created = await createSpawnedSession({
+            credentials: params.credentials,
+            directory: replayChildDirectory,
+            backendTarget: params.forkBackendResolution.backendTargetV2,
+            ...(parentMachineId ? { machineId: parentMachineId } : {}),
+            approvedNewDirectoryCreation: true,
+            spawnNonce: params.spawnNonce,
+            replaySeededCreation: {
+                tag: params.spawnNonce,
+                flavor: params.forkBackendResolution.replayFlavor,
+                metadata: recipe.metadata,
+                sourceRecipe: {
+                    sourceSessionId: params.parentSessionId,
+                    cutoffSeqInclusive: params.effectiveCutoffSeqInclusive,
+                },
+            },
+            directTransport: {
+                spawn: async (request) => await params.spawnSession({
+                    ...request,
+                    backendTarget: params.forkBackendResolution.backendTargetV2,
+                    ...(replayRuntimeDescriptorV1 ? { runtimeDescriptorV1: replayRuntimeDescriptorV1 } : {}),
+                    ...(replayForkContinuation?.environmentVariables
+                        ? { environmentVariables: { ...replayForkContinuation.environmentVariables } }
+                        : {}),
+                    ...inheritedForkOverrides.spawn,
+                } satisfies SpawnSessionOptions),
+                resolveSpawnSessionByNonce: async () => ({ status: 'unsupported' as const }),
+            },
+        });
+
+        if (created.sessionId === params.parentSessionId) {
+            return { ok: false, errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED, errorMessage: 'Fork spawn returned parent session id' };
         }
-        return {
-            ok: false,
-            errorCode: (spawnResult as { errorCode?: string })?.errorCode ?? SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
-            errorMessage: (spawnResult as { errorMessage?: string })?.errorMessage ?? 'Failed to spawn fork session',
-        };
+        return { ok: true, childSessionId: created.sessionId };
+    } catch (error) {
+        if (isAuthenticationError(error)) throw error;
+        const errorCode = error && typeof error === 'object'
+            && typeof (error as { code?: unknown }).code === 'string'
+            && (error as { code: string }).code.trim().length > 0
+            ? (error as { code: string }).code
+            : SPAWN_SESSION_ERROR_CODES.UNEXPECTED;
+        const errorMessage = error instanceof Error && error.message.trim().length > 0
+            ? error.message
+            : 'Failed to create fork session';
+        logger.debug('[API MACHINE] Failed to create fork session for replay', { errorCode, errorMessage });
+        return { ok: false, errorCode, errorMessage };
     }
-
-    if (created.sessionId === params.parentSessionId) {
-        return { ok: false, errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED, errorMessage: 'Fork spawn returned parent session id' };
-    }
-
-    return { ok: true, childSessionId: created.sessionId };
 }

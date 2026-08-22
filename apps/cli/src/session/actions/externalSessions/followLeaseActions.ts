@@ -20,14 +20,13 @@ import {
 import {
     resolveExternalSessionObservationLinkInput,
 } from '@/api/session/external/leases/resolveExternalSessionObservationLinkInput';
-import { ExternalSessionViewerLeaseCapacityExceededError } from '@/api/session/external/leases/externalSessionViewerLeaseRegistry';
 import { validateExternalMachineSource } from '@/api/session/external/security/validateExternalMachineSource';
 import {
     loadLinkedExternalSession,
     loadLinkedExternalSessionFromRaw,
     loadPersistedLinkedExternalSession,
 } from '@/api/session/external/takeover/loadLinkedExternalSession';
-import { readCredentials } from '@/persistence';
+import { readStoredCredentials } from '@/persistence';
 
 import {
     resolveDefaultMaxBytes,
@@ -36,7 +35,11 @@ import {
 } from './actionConfiguration';
 import type { ExternalSessionActionContext } from './externalSessionActionContext';
 import { resolveGenerationBoundExternalSessionFollowSurface } from './providerOpsResolution';
-import { externalSessionsError, internalErrorResponse } from './responseErrors';
+import {
+    externalSessionsError,
+    internalErrorResponse,
+    mapExternalSessionCorridorFailureToExternalSessionsError,
+} from './responseErrors';
 
 export async function executeExternalSessionAttachAction(
     raw: unknown,
@@ -44,20 +47,7 @@ export async function executeExternalSessionAttachAction(
 ): Promise<ExternalSessionAttachResponse> {
     const parsed = ExternalSessionAttachRequestSchema.safeParse(raw);
     if (!parsed.success) return externalSessionsError('invalid_request') satisfies ExternalSessionAttachResponse;
-    let validatedSource: Awaited<ReturnType<typeof validateExternalMachineSource>>;
-    try {
-        validatedSource = await validateExternalMachineSource({
-            agentId: parsed.data.agentId,
-            source: parsed.data.source,
-            env: process.env,
-        });
-    } catch (error) {
-        return internalErrorResponse('external_session_attach.validate_source', error, 'external_session_attach_failed') satisfies ExternalSessionAttachResponse;
-    }
-    if (!validatedSource.ok) {
-        return externalSessionsError(validatedSource.errorCode ?? 'invalid_request', validatedSource.error) satisfies ExternalSessionAttachResponse;
-    }
-    const credentials = await readCredentials().catch(() => null);
+    const credentials = await readStoredCredentials().catch(() => null);
     if (!credentials) {
         return externalSessionsError('agent_unavailable', 'not_authenticated') satisfies ExternalSessionAttachResponse;
     }
@@ -66,15 +56,30 @@ export async function executeExternalSessionAttachAction(
             credentials,
             sessionId: parsed.data.sessionId,
             machineId: parsed.data.machineId,
+            expectedIdentity: {
+                agentId: parsed.data.agentId,
+                machineId: parsed.data.machineId,
+                remoteSessionId: parsed.data.remoteSessionId,
+                source: parsed.data.source,
+            },
         });
         if (!loaded.ok) {
             return externalSessionsError(loaded.errorCode, loaded.error) satisfies ExternalSessionAttachResponse;
         }
-        if (
-            loaded.session.agentId !== parsed.data.agentId
-            || loaded.session.remoteSessionId !== parsed.data.remoteSessionId
-        ) {
-            return externalSessionsError('invalid_request', 'linked_session_identity_mismatch') satisfies ExternalSessionAttachResponse;
+        let validatedSource: Awaited<ReturnType<typeof validateExternalMachineSource>>;
+        try {
+            validatedSource = await validateExternalMachineSource({
+                agentId: loaded.session.agentId,
+                source: loaded.session.source,
+                env: process.env,
+            });
+        } catch (error) {
+            const typedFailure = mapExternalSessionCorridorFailureToExternalSessionsError(error);
+            if (typedFailure) return typedFailure satisfies ExternalSessionAttachResponse;
+            return internalErrorResponse('external_session_attach.validate_source', error, 'external_session_attach_failed') satisfies ExternalSessionAttachResponse;
+        }
+        if (!validatedSource.ok) {
+            return externalSessionsError(validatedSource.errorCode ?? 'invalid_request', validatedSource.error) satisfies ExternalSessionAttachResponse;
         }
         const { providerOps, resource } =
             await resolveGenerationBoundExternalSessionFollowSurface(
@@ -106,6 +111,8 @@ export async function executeExternalSessionAttachAction(
                         sessionId: parsed.data.sessionId,
                         cursor,
                         isCurrent,
+                        deviceLocalSecretStorage:
+                            context.deviceLocalSecretStorage,
                         emitExternalSessionTranscriptUpdate:
                             context.emitExternalSessionTranscriptUpdate,
                     });
@@ -138,12 +145,8 @@ export async function executeExternalSessionAttachAction(
                 : {}),
         } satisfies ExternalSessionAttachResponse;
     } catch (error) {
-        if (error instanceof ExternalSessionViewerLeaseCapacityExceededError) {
-            return externalSessionsError(
-                'agent_unavailable',
-                'external_session_viewer_capacity_exceeded',
-            ) satisfies ExternalSessionAttachResponse;
-        }
+        const typedFailure = mapExternalSessionCorridorFailureToExternalSessionsError(error);
+        if (typedFailure) return typedFailure satisfies ExternalSessionAttachResponse;
         return internalErrorResponse('external_session_attach', error, 'external_session_attach_failed') satisfies ExternalSessionAttachResponse;
     }
 }
@@ -171,7 +174,7 @@ export async function executeExternalSessionFollowPolicySetAction(
     const parsed = ExternalSessionFollowPolicySetRequestSchema.safeParse(raw);
     if (!parsed.success) return externalSessionsError('invalid_request') satisfies ExternalSessionFollowPolicySetResponse;
 
-    const credentials = await readCredentials().catch(() => null);
+    const credentials = await readStoredCredentials().catch(() => null);
     if (!credentials) {
         return externalSessionsError('agent_unavailable', 'not_authenticated') satisfies ExternalSessionFollowPolicySetResponse;
     }
@@ -181,19 +184,18 @@ export async function executeExternalSessionFollowPolicySetAction(
             credentials,
             sessionId: parsed.data.sessionId,
             machineId: parsed.data.machineId,
+            expectedIdentity: {
+                agentId: parsed.data.agentId,
+                machineId: parsed.data.machineId,
+                remoteSessionId: parsed.data.remoteSessionId,
+                source: parsed.data.source,
+            },
         });
         if (!persisted.ok) {
             return externalSessionsError(
                 persisted.errorCode,
                 persisted.error,
             ) satisfies ExternalSessionFollowPolicySetResponse;
-        }
-        if (
-            persisted.session.agentId !== parsed.data.agentId
-            || persisted.session.remoteSessionId
-                !== parsed.data.remoteSessionId
-        ) {
-            return externalSessionsError('invalid_request', 'linked_session_identity_mismatch') satisfies ExternalSessionFollowPolicySetResponse;
         }
         const rawSession = persisted.session.rawSession;
         const updatedAtMs = Date.now();
@@ -206,16 +208,20 @@ export async function executeExternalSessionFollowPolicySetAction(
                     rawSession,
                     policy: parsed.data.enabled ? 'background_follow' : 'attached_only',
                     updatedAtMs,
+                    expectedLinkGeneration: persisted.session.linkGeneration,
                 });
                 return null;
             } catch (error) {
                 if (
                     error instanceof Error
-                    && error.message === 'linked_session_reconciliation_required'
+                    && (
+                        error.message === 'linked_session_reconciliation_required'
+                        || error.message === 'linked_session_identity_mismatch'
+                    )
                 ) {
                     return externalSessionsError(
                         'invalid_request',
-                        'linked_session_reconciliation_required',
+                        error.message,
                     ) satisfies ExternalSessionFollowPolicySetResponse;
                 }
                 return internalErrorResponse(
@@ -292,6 +298,8 @@ export async function executeExternalSessionFollowPolicySetAction(
                 env: process.env,
             });
         } catch (error) {
+            const typedFailure = mapExternalSessionCorridorFailureToExternalSessionsError(error);
+            if (typedFailure) return typedFailure satisfies ExternalSessionFollowPolicySetResponse;
             return internalErrorResponse(
                 'external_session_follow_policy_set.validate_source',
                 error,
@@ -307,22 +315,19 @@ export async function executeExternalSessionFollowPolicySetAction(
         const loaded = await loadLinkedExternalSessionFromRaw({
             credentials,
             rawSession,
+            accountEncryptionMode: persisted.session.accountEncryptionMode,
             machineId: parsed.data.machineId,
+            expectedIdentity: {
+                agentId: parsed.data.agentId,
+                machineId: parsed.data.machineId,
+                remoteSessionId: parsed.data.remoteSessionId,
+                source: validatedSource.source,
+            },
         });
         if (!loaded.ok) {
             return externalSessionsError(
                 loaded.errorCode,
                 loaded.error,
-            ) satisfies ExternalSessionFollowPolicySetResponse;
-        }
-        if (
-            loaded.session.agentId !== parsed.data.agentId
-            || loaded.session.remoteSessionId
-                !== parsed.data.remoteSessionId
-        ) {
-            return externalSessionsError(
-                'invalid_request',
-                'linked_session_identity_mismatch',
             ) satisfies ExternalSessionFollowPolicySetResponse;
         }
         const { providerOps, resource } =
@@ -378,6 +383,8 @@ export async function executeExternalSessionFollowPolicySetAction(
         const reconcileError = await reconcilePassiveFollow();
         return reconcileError ?? successResponse();
     } catch (error) {
+        const typedFailure = mapExternalSessionCorridorFailureToExternalSessionsError(error);
+        if (typedFailure) return typedFailure satisfies ExternalSessionFollowPolicySetResponse;
         return internalErrorResponse(
             'external_session_follow_policy_set',
             error,

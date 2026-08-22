@@ -3,12 +3,18 @@ import { describe, expect, it, vi } from 'vitest';
 import type {
   AgentRuntime,
   AgentSessionRuntime,
-} from '@happier-dev/plugin-sdk/agent-runtime';
+} from '@happier-dev/plugin-sdk/agents/runtime';
+import type { LoadedPlugin } from '@/plugins/discovery/load/installed';
+import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
+import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import type {
   ResolvedAgentContribution,
   ResolvedAgentRuntimeContribution,
 } from '@/plugins/projection/registry/types';
+import { projectLoadedPluginContributes } from '@/plugins/projection/registry/resolvePluginContributions';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
+import { createPluginReloadController } from '@/plugins/runtime/reload/controller';
+import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
 
 import { createEmptyBackendExecutionSurfaces } from '../engineRegistryTypes';
 import { resolveBackendRuntimeCore } from './runtimeCore';
@@ -41,9 +47,290 @@ function createSessionClient(sessionId: string) {
   };
 }
 
+function createCurrentnessRegistry(params: Readonly<{
+  mediatorPluginId: string;
+  materialized: boolean;
+}>): ResolvedExecutablePluginRuntimeRegistry {
+  const materialization = params.materialized
+    ? {
+      machineId: 'machine-1',
+      pluginId: params.mediatorPluginId,
+      materializationId: `materialization-${params.mediatorPluginId}`,
+    }
+    : null;
+  return {
+    contributes: {
+      agents: [],
+      actions: [],
+      resources: [],
+      uiViewsV2: [],
+      uiRenderersV2: [],
+      uiTranslationsV2: [],
+      activationTargets: [],
+      catalogEntriesById: {},
+      agentDefinitionsById: new Map(),
+      pluginDiagnosticsByPluginId: {},
+    },
+    pluginDiagnosticsByPluginId: {},
+    resolveCurrentPluginMaterializationRef: (pluginId: string) => (
+      pluginId === params.mediatorPluginId ? materialization : null
+    ),
+    resolveCurrentMediatorContributionMaterializationRef: (mediator: Readonly<{
+      pluginId: string;
+      contributionLocalId: string;
+    }>) => (
+      mediator.pluginId === params.mediatorPluginId
+      && mediator.contributionLocalId === 'discord'
+        ? materialization
+        : null
+    ),
+    retirePluginConsumers: vi.fn(),
+    settleRetiredBackgroundServices: vi.fn(async () => undefined),
+    dispose: vi.fn(async () => undefined),
+  } as unknown as ResolvedExecutablePluginRuntimeRegistry;
+}
+
+function createCurrentVoiceContributions(params: Readonly<{
+  provider: Readonly<{ pluginId: string; localId: string }>;
+  agent: Readonly<{ pluginId: string; localId: string }>;
+}>) {
+  const agentPlugin = {
+    pluginId: params.agent.pluginId,
+    pluginRootPath: `/plugins/${params.agent.pluginId}`,
+    manifestPath: `/plugins/${params.agent.pluginId}/.happier-plugin/plugin.json`,
+    daemonEntryPath: null,
+    devDaemonEntryPath: null,
+    sourceSpec: {
+      kind: 'path',
+      locator: `/plugins/${params.agent.pluginId}`,
+      trustPolicy: 'local_trusted',
+      installPolicy: 'link',
+    },
+    manifest: normalizePluginManifestV2(createPluginManifestV2Fixture({
+      id: params.agent.pluginId,
+      entrypoints: {},
+      contributes: {
+        agents: [{
+          id: params.agent.localId,
+          title: 'Acme Agent',
+          runtime: { kind: 'custom' },
+          primary: 'sessions',
+          capabilities: {
+            sessions: {
+              open: ['create'],
+              delivery: ['newTurn'],
+              cancel: true,
+            },
+          },
+        }],
+      },
+    })),
+  } satisfies LoadedPlugin;
+  const voicePlugin = {
+    pluginId: params.provider.pluginId,
+    pluginRootPath: `/plugins/${params.provider.pluginId}`,
+    manifestPath: `/plugins/${params.provider.pluginId}/.happier-plugin/plugin.json`,
+    daemonEntryPath: null,
+    devDaemonEntryPath: null,
+    sourceSpec: {
+      kind: 'path',
+      locator: `/plugins/${params.provider.pluginId}`,
+      trustPolicy: 'local_trusted',
+      installPolicy: 'link',
+    },
+    manifest: normalizePluginManifestV2(createPluginManifestV2Fixture({
+      id: params.provider.pluginId,
+      entrypoints: {},
+      contributes: {
+        voiceProviders: [{
+          id: params.provider.localId,
+          title: 'Acme Voice',
+          kind: 'conversation',
+          roles: ['realtime_conversation'],
+          platforms: ['web'],
+          capabilities: {
+            turn: { cancelResponse: false, bargeIn: false },
+          },
+          execution: {
+            kind: 'experimental_agent_session_realtime',
+            agent: params.agent,
+            supportedRuntimeVersions: ['1.2.3'],
+          },
+          settings: {
+            schemaVersion: 2,
+            fields: [],
+            connectedServicesBinding: {
+              id: 'globalConnectedServices',
+              title: 'Agent account',
+              agent: params.agent,
+              serviceIds: ['openai-codex'],
+            },
+          },
+          client: {
+            artifactId: 'acme-voice',
+            modulePath: './voice',
+            exportName: 'activate',
+          },
+        }],
+      },
+    })),
+  } satisfies LoadedPlugin;
+  return createResolvedContributionRegistry(projectLoadedPluginContributes({
+    loadResult: {
+      loadedPlugins: [agentPlugin, voicePlugin],
+      diagnosticsByPluginId: {},
+    },
+    provenance: 'external',
+  }));
+}
+
 describe('resolveBackendRuntimeCore retirement signal ownership', () => {
-  it('uses exact registry or carried declaration generations without substituting registry-wide retirement', async () => {
-    const agentId = 'acme.carried-agent';
+  it('uses the reload controller live materialization owner for a Session plan across disable and re-enable', async () => {
+    const pluginId = 'acme.session-agent';
+    const mediatorPluginId = 'happier.channels';
+    const initialRegistry = createCurrentnessRegistry({
+      mediatorPluginId,
+      materialized: true,
+    });
+    const controller = createPluginReloadController({
+      resolveRuntimeRegistry: async () => initialRegistry,
+    });
+    const runtimeRegistryLease = await controller.acquireRuntimeRegistry();
+    const backend = {
+      id: pluginId,
+      agentId: pluginId,
+      provenance: 'external',
+      source: { kind: 'path' },
+      definition: { kindVersion: 1, id: pluginId, agentId: pluginId },
+      pluginId,
+    } as unknown as ResolvedAgentRuntimeContribution;
+    const agent = {
+      id: pluginId,
+      identity: { pluginId, localId: pluginId },
+      provenance: 'external',
+      source: { kind: 'path' },
+      definition: { kindVersion: 1, id: pluginId, ownedBackendIds: [pluginId] },
+      richDefinition: {
+        provenance: 'external',
+        definition: {
+          id: pluginId,
+          title: { key: 'agents.acme.title', fallback: 'Acme' },
+          description: { key: 'agents.acme.description', fallback: 'Acme' },
+          runtime: { kind: 'custom' },
+          primary: 'sessions',
+          capabilities: {
+            sessions: {
+              open: ['create'],
+              delivery: ['newTurn'],
+              cancel: true,
+            },
+          },
+        },
+      },
+      pluginId,
+    } as unknown as ResolvedAgentContribution;
+
+    try {
+      const adapter = await resolveBackendRuntimeCore({
+        backend,
+        agent,
+        executionSurfaces: createEmptyBackendExecutionSurfaces(),
+        runtimeOwner: {
+          backendId: pluginId,
+          selected: {
+            kind: 'plugin_engine',
+            ownerId: pluginId,
+            provenance: 'external',
+            pluginId,
+          },
+          candidates: [],
+        },
+        runtimeRegistry: runtimeRegistryLease.registry,
+        // The engine registry will supply this canonical reload-controller
+        // resolver. Cast while RED because the runtime-core contract does not
+        // expose it yet.
+        resolveCurrentPluginMaterializationRef:
+          runtimeRegistryLease.resolveCurrentPluginMaterializationRef,
+        resolveCurrentMediatorContributionMaterializationRef: (
+          runtimeRegistryLease as unknown as Readonly<{
+            resolveCurrentMediatorContributionMaterializationRef: (
+              mediator: Readonly<{ pluginId: string; contributionLocalId: string }>,
+            ) => unknown;
+          }>
+        ).resolveCurrentMediatorContributionMaterializationRef,
+        nativeAgentRuntime: {
+          sessions: {
+            open: vi.fn(),
+          },
+        } as unknown as AgentRuntime,
+        nativeAgentRuntimeIdentity: {
+          pluginId,
+          pluginVersion: '1.0.0',
+          agentId: pluginId,
+          generation: 'agent-generation',
+          isCurrent: () => true,
+        },
+      } as never);
+      const plan = await adapter?.runtimeCore.createSessionRuntime({
+        credentials: {
+          token: 'test-token',
+          encryption: {
+            type: 'legacy',
+            secret: new Uint8Array([1, 2, 3]),
+          },
+        },
+        directory: '/tmp/runtime-currentness',
+        backendTarget: { kind: 'backend', backendId: pluginId },
+      });
+      if (!plan || !('config' in plan)) {
+        throw new Error('Expected native Agent host session plan');
+      }
+      const isMediatorContributionCurrent = (
+        plan.config as typeof plan.config & Readonly<{
+          isMediatorContributionCurrent?: (mediator: Readonly<{
+            pluginId: string;
+            contributionLocalId: string;
+          }>) => boolean;
+        }>
+      ).isMediatorContributionCurrent;
+      expect(isMediatorContributionCurrent?.({
+        pluginId: mediatorPluginId,
+        contributionLocalId: 'discord',
+      })).toBe(true);
+      expect(isMediatorContributionCurrent?.({
+        pluginId: mediatorPluginId,
+        contributionLocalId: 'other-contribution',
+      })).toBe(false);
+
+      await controller.adoptPreparedRuntimeRegistry({
+        registry: createCurrentnessRegistry({ mediatorPluginId, materialized: false }),
+        changedPluginIds: [mediatorPluginId],
+        durableRevision: 1,
+        runningSessionDisposition: 'retainRunningSessions',
+      });
+      expect(isMediatorContributionCurrent?.({
+        pluginId: mediatorPluginId,
+        contributionLocalId: 'discord',
+      })).toBe(false);
+
+      await controller.adoptPreparedRuntimeRegistry({
+        registry: createCurrentnessRegistry({ mediatorPluginId, materialized: true }),
+        changedPluginIds: [mediatorPluginId],
+        durableRevision: 2,
+        runningSessionDisposition: 'retainRunningSessions',
+      });
+      expect(isMediatorContributionCurrent?.({
+        pluginId: mediatorPluginId,
+        contributionLocalId: 'discord',
+      })).toBe(true);
+    } finally {
+      await runtimeRegistryLease.release();
+      await controller.shutdown({ timeoutMs: 0 });
+    }
+  });
+
+  it('uses exact registered Agent generations without substituting registry-wide retirement', async () => {
+    const agentId = 'generation-agent';
     const backendId = agentId;
     const pluginId = 'acme.carried-plugin';
     const backend = {
@@ -80,52 +367,20 @@ describe('resolveBackendRuntimeCore retirement signal ownership', () => {
       pluginId,
     } as unknown as ResolvedAgentContribution;
     const registryRetirement = new AbortController();
-    const carrierRetirement = new AbortController();
+    const agentGenerationRetirement = new AbortController();
     const voiceRetirement = new AbortController();
     const voiceProvider = {
       pluginId: 'acme.voice',
       localId: 'conversation',
     } as const;
+    const contributes = createCurrentVoiceContributions({
+      provider: voiceProvider,
+      agent: { pluginId, localId: agentId },
+    });
     const runtimeRegistry = {
-      contributes: {
-        agents: [],
-        voiceProviders: [{
-          pluginId: voiceProvider.pluginId,
-          identity: voiceProvider,
-          manifestDigest: 'manifest:acme-voice',
-          definition: {
-            id: voiceProvider.localId,
-            title: 'Acme Voice',
-            kind: 'conversation',
-            roles: ['realtime_conversation'],
-            platforms: ['web'],
-            capabilities: {
-              readiness: { requirements: [] },
-              turn: { cancelResponse: false, bargeIn: false },
-            },
-            execution: {
-              kind: 'experimental_agent_session_realtime',
-              agent: { pluginId, localId: agentId },
-            },
-            client: {
-              artifactId: 'acme-voice',
-              modulePath: './voice',
-              exportName: 'activate',
-            },
-          },
-        }],
-                actions: [],
-        resources: [],
-        uiViewsV2: [],
-        uiRenderersV2: [],
-        uiTranslationsV2: [],
-        activationTargets: [],
-        catalogEntriesById: {},
-        agentDefinitionsById: new Map(),
-                pluginDiagnosticsByPluginId: {},
-      },
+      contributes,
       retirementSignal: registryRetirement.signal,
-      resolveContributionRuntimeLifecycle: () => ({
+      resolveVoiceProviderRuntimeLifecycle: () => ({
         generation: 'voice-generation',
         isCurrent: () => !voiceRetirement.signal.aborted,
         retirementSignal: voiceRetirement.signal,
@@ -160,8 +415,8 @@ describe('resolveBackendRuntimeCore retirement signal ownership', () => {
         pluginId,
         pluginVersion: '1.0.0',
         agentId,
-        generation: 'carrier-generation',
-        retirementSignal: carrierRetirement.signal,
+        generation: 'agent-generation',
+        retirementSignal: agentGenerationRetirement.signal,
         isCurrent: () => true,
       },
     });
@@ -180,8 +435,8 @@ describe('resolveBackendRuntimeCore retirement signal ownership', () => {
       throw new Error('Expected native Agent host session plan');
     }
     const voiceAuthority = plan.config.agentSessionRealtimeVoiceAuthority;
-    expect(plan.config.daemonAgentRuntimeCarrierRetirementSignal).toBe(
-      carrierRetirement.signal,
+    expect(plan.config).not.toHaveProperty(
+      'daemonAgentRuntimeCarrierRetirementSignal',
     );
     expect(voiceAuthority?.resolveDeclaration(voiceProvider)?.id).toBe(
       voiceProvider.localId,
@@ -231,9 +486,10 @@ describe('resolveBackendRuntimeCore retirement signal ownership', () => {
         pluginId,
         pluginVersion: '1.0.0',
         agentId,
-        generation: 'carrier-generation',
-        retirementSignal: carrierRetirement.signal,
-        isCurrent: () => !carrierRetirement.signal.aborted,
+        generation: 'agent-generation',
+        retirementSignal: agentGenerationRetirement.signal,
+        isCurrent: () =>
+          !agentGenerationRetirement.signal.aborted,
       },
     });
     const carriedOnlyPlan =
@@ -259,7 +515,9 @@ describe('resolveBackendRuntimeCore retirement signal ownership', () => {
       carriedOnlyAuthority?.resolveProviderGeneration(voiceProvider),
     ).toBe('voice-generation');
     expect(carriedOnlyAuthority?.isCurrent(voiceProvider)).toBe(true);
-    carrierRetirement.abort(new Error('carrier retired'));
+    agentGenerationRetirement.abort(
+      new Error('Agent generation retired'),
+    );
     expect(carriedOnlyAuthority?.isCurrent(voiceProvider)).toBe(false);
   });
 });

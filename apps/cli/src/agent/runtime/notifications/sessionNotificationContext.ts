@@ -1,7 +1,6 @@
-import {
-  getAgentCliRuntimeSpec,
-  resolveAgentIdFromSessionMetadata,
-} from '@happier-dev/agents';
+import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
+
+import { resolveAgentDisplayTitle } from '@/agent/catalog/agentDisplayTitle';
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -60,5 +59,6 @@ export function getSessionNotificationAgentDisplayName(getMetadataSnapshot?: (()
   const agentId = resolveAgentIdFromSessionMetadata(metadata);
   if (!agentId) return null;
 
-  return normalizeNotificationText(getAgentCliRuntimeSpec(agentId).title);
+  // The installed Agent — bundled or externally contributed — owns its title.
+  return normalizeNotificationText(resolveAgentDisplayTitle(agentId));
 }

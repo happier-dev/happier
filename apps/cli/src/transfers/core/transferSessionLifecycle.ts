@@ -295,6 +295,8 @@ export function createTransferSessionLifecycle(params: Readonly<{
             deleteFileOnClose: input.source.deleteFileOnClose,
             chunkSizeBytes,
             recipientPublicKeyBase64: input.recipientPublicKeyBase64,
+            sourceOffsetBytes: input.source.sourceOffsetBytes,
+            sizeBytes: input.source.sizeBytes,
         });
     }
 
@@ -338,7 +340,12 @@ export function createTransferSessionLifecycle(params: Readonly<{
                 }
 
                 const buffer = Buffer.alloc(readSize);
-                const readResult = await session.file.read(buffer, 0, readSize, session.offset);
+                const readResult = await session.file.read(
+                    buffer,
+                    0,
+                    readSize,
+                    session.sourceOffsetBytes + session.offset,
+                );
                 const bytesRead = readResult.bytesRead ?? 0;
                 if (bytesRead === 0) {
                     await params.store.closeDownloadSession(input.downloadId);

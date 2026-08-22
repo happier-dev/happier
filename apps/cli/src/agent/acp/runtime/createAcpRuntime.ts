@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import { logger } from '@/ui/logger';
 import type { McpServerConfig } from '@/agent';
 import type { AcpPermissionHandler } from '@/agent/acp/permissions/acpPermissionHandler';
@@ -13,9 +15,16 @@ import type {
   RuntimeTurnOperations,
   RuntimeTurnSessionOpenIntent,
 } from '@/agent/runtime/turns/runtimeTurnOperations';
-import type { RuntimeEventV1 } from '@happier-dev/protocol';
+import {
+  AgentRuntimeJsonValueV1Schema,
+  AgentSessionRuntimeEventSchema,
+  type AgentSessionRuntimeEvent,
+} from '@happier-dev/protocol';
+import type { ACPMessageData, ACPProvider } from '@/api/session/sessionMessageTypes';
+import type { AcpSendFn } from '@/agent/acp/bridge/acpSessionForwarding';
 import { createAcpRuntimeLifecycleMethods } from './createAcpRuntimeLifecycleMethods';
 import { attachAcpRuntimeMessageHandler } from './attachAcpRuntimeMessageHandler';
+import { buildUsageObservedMeasurementFromTokenCountMessage } from './tokenCountForwarding';
 import type { AcpRuntimeBackend } from './acpRuntimeBackendContract';
 export type { AcpRuntimeBackend } from './acpRuntimeBackendContract';
 
@@ -59,6 +68,20 @@ export type AcpRuntime = Readonly<{
 }>;
 
 export type AcpRuntimeWithTurnOperations = AcpRuntime & RuntimeTurnOperations;
+
+type DistributiveOmit<T, K extends PropertyKey> = T extends unknown
+  ? Omit<T, Extract<keyof T, K>>
+  : never;
+
+export type AcpRuntimeEventDraft = DistributiveOmit<
+  AgentSessionRuntimeEvent,
+  'sequence' | 'sessionId' | 'emittedAtMs'
+>;
+
+export type AcpSequencelessRuntimeEvent = DistributiveOmit<
+  AgentSessionRuntimeEvent,
+  'sequence'
+>;
 
 export async function abortAcpRuntimeTurnIfNeeded(
   runtime: Pick<AcpRuntime, 'isTurnInFlight' | 'cancel'> | null | undefined,
@@ -176,20 +199,134 @@ export function createAcpRuntime(params: {
     currentTurnId: null as string | null,
     nextSessionOpenIntent: params.sessionOpenIntent ?? CREATE_ACP_SESSION_INTENT,
   };
-  const runtimeEventSubscribers = new Set<(event: RuntimeEventV1) => void>();
+  const runtimeEventSubscribers = new Set<(event: AgentSessionRuntimeEvent) => void>();
+  let runtimeEventSequence = 0;
   const readRuntimeSessionId = (): string => {
     const sessionId = typeof params.session.sessionId === 'string' ? params.session.sessionId.trim() : '';
     return sessionId || 'local-session';
   };
-  const publishRuntimeEvent = (event: Omit<RuntimeEventV1, 'sessionId' | 'emittedAtMs'>): void => {
-    if (runtimeEventSubscribers.size === 0) return;
-    const payload = {
+  const publishRuntimeEvent = (event: AcpRuntimeEventDraft): void => {
+    const parsed = AgentSessionRuntimeEventSchema.safeParse({
       ...event,
+      sequence: runtimeEventSequence + 1,
       sessionId: readRuntimeSessionId(),
       emittedAtMs: Date.now(),
-    } as RuntimeEventV1;
+    });
+    if (!parsed.success) {
+      logger.debug(`[${params.provider}] Rejected invalid canonical ACP runtime event`, {
+        kind: event.kind,
+        error: parsed.error.issues[0]?.message ?? 'invalid_event',
+      });
+      return;
+    }
+    runtimeEventSequence = parsed.data.sequence;
     for (const subscriber of runtimeEventSubscribers) {
-      subscriber(payload);
+      subscriber(parsed.data);
+    }
+  };
+  const publishTranscriptAgentMessageCommitted: AcpSendFn = (
+    provider: ACPProvider,
+    body: ACPMessageData,
+    opts?: { meta?: Record<string, unknown>; localId?: string },
+  ): void => {
+    const bodyRecord = body as Readonly<Record<string, unknown>>;
+    const localId = opts?.localId?.trim()
+      || (typeof bodyRecord.id === 'string' ? bodyRecord.id.trim() : '')
+      || randomUUID();
+    const turnId = state.currentRuntimeTurnId;
+    const sidechainId = typeof body.sidechainId === 'string' && body.sidechainId.trim()
+      ? body.sidechainId.trim()
+      : undefined;
+    const jsonValue = (value: unknown) => {
+      const parsed = AgentRuntimeJsonValueV1Schema.safeParse(value);
+      return parsed.success ? parsed.data : { unavailable: true };
+    };
+    switch (body.type) {
+      case 'message':
+      case 'reasoning':
+      case 'thinking': {
+        const text = body.type === 'thinking' ? body.text : body.message;
+        publishRuntimeEvent({
+          kind: 'transcript-message-committed',
+          messageId: localId,
+          role: body.type === 'message' ? 'assistant' : 'reasoning',
+          text,
+          ...(turnId ? { turnId } : {}),
+          ...(sidechainId ? { sidechainId } : {}),
+        });
+        return;
+      }
+      case 'tool-call':
+        if (!turnId) return;
+        publishRuntimeEvent({
+          kind: 'tool-call',
+          turnId,
+          toolCallId: body.callId,
+          toolName: body.name,
+          input: jsonValue(body.input),
+          ...(sidechainId ? { sidechainId } : {}),
+        });
+        return;
+      case 'tool-result':
+        if (!turnId) return;
+        publishRuntimeEvent({
+          kind: 'tool-result',
+          turnId,
+          toolCallId: body.callId,
+          output: jsonValue(body.output),
+          ...(body.isError === undefined ? {} : { isError: body.isError }),
+          ...(sidechainId ? { sidechainId } : {}),
+        });
+        return;
+      case 'terminal-output':
+        if (!turnId) return;
+        publishRuntimeEvent({
+          kind: 'tool-progress',
+          turnId,
+          toolCallId: body.callId,
+          progress: body.data,
+          ...(sidechainId ? { sidechainId } : {}),
+        });
+        return;
+      case 'file-edit':
+        if (!turnId) return;
+        publishRuntimeEvent({
+          kind: 'file-edit',
+          turnId,
+          editId: body.id,
+          path: body.filePath,
+          ...(body.description ? { description: body.description } : {}),
+          ...(body.diff ? { diff: body.diff } : {}),
+          ...(body.oldContent ? { oldContent: body.oldContent } : {}),
+          ...(body.newContent ? { newContent: body.newContent } : {}),
+          ...(sidechainId ? { sidechainId } : {}),
+        });
+        return;
+      case 'token_count': {
+        const measurement = buildUsageObservedMeasurementFromTokenCountMessage({
+          provider: params.provider,
+          body: bodyRecord,
+          observedAtMs: Date.now(),
+          defaultSource: 'acp-runtime',
+        });
+        if (!measurement) return;
+        publishRuntimeEvent({
+          kind: 'usage-observed',
+          observationId: localId,
+          ...(turnId ? { turnId } : {}),
+          ...measurement,
+        });
+        return;
+      }
+      case 'context-compaction':
+      case 'task_started':
+      case 'task_complete':
+      case 'turn_failed':
+      case 'turn_cancelled':
+      case 'turn_aborted':
+      case 'permission-request':
+      case 'permission-response':
+        return;
     }
   };
   const inFlightSteerEnabled = params.inFlightSteer?.enabled === true;
@@ -254,8 +391,9 @@ export function createAcpRuntime(params: {
     params.onSessionIdChange?.(state.sessionId);
   };
 
+  let drainRequiredPublications = async (): Promise<void> => {};
   const attachMessageHandler = (b: AcpRuntimeBackend) => {
-    attachAcpRuntimeMessageHandler({
+    const attachment = attachAcpRuntimeMessageHandler({
       backend: b,
       provider: params.provider,
       transcriptProvider,
@@ -275,7 +413,9 @@ export function createAcpRuntime(params: {
       recordToolCall,
       state,
       publishRuntimeEvent,
+      publishTranscriptAgentMessageCommitted,
     });
+    drainRequiredPublications = attachment.drainRequiredPublications;
   };
 
   const ensureBackend = async (): Promise<AcpRuntimeBackend> => {
@@ -311,6 +451,8 @@ export function createAcpRuntime(params: {
     streamedTranscriptWriter,
     onThinkingChange: params.onThinkingChange,
     publishRuntimeEvent,
+    publishTranscriptAgentMessageCommitted,
+    drainRequiredPublications: () => drainRequiredPublications(),
   });
   const openSessionForNextUse = async (
     opts: Readonly<{
@@ -354,7 +496,7 @@ export function createAcpRuntime(params: {
       await runtime.flushTurn();
     },
     subscribeRuntimeEvents(handler) {
-      const runtimeEventHandler = (event: RuntimeEventV1): void => {
+      const runtimeEventHandler = (event: AgentSessionRuntimeEvent): void => {
         handler(event);
       };
       runtimeEventSubscribers.add(runtimeEventHandler);

@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
-import { RuntimeEventV1Schema, type RuntimeEventV1 } from '@happier-dev/protocol';
+import {
+  AgentSessionRuntimeEventV1Schema,
+  type AgentSessionRuntimeEventV1,
+} from '@happier-dev/protocol';
 
 import { createFakeAcpRuntimeBackend } from '@/testkit/backends/acpRuntimeBackend';
 import { createApprovedPermissionHandler } from '@/testkit/backends/permissionHandler';
@@ -10,23 +13,19 @@ import { MessageBuffer } from '@/ui/ink/messageBuffer';
 describe('createAcpRuntime (turn hooks)', () => {
   function collectRuntimeEvents(runtime: Readonly<{
     subscribeRuntimeEvents: (handler: (message: unknown) => void) => () => void;
-  }>): RuntimeEventV1[] {
-    const events: RuntimeEventV1[] = [];
+  }>): AgentSessionRuntimeEventV1[] {
+    const events: AgentSessionRuntimeEventV1[] = [];
     runtime.subscribeRuntimeEvents((message) => {
-      events.push(RuntimeEventV1Schema.parse(message));
+      events.push(AgentSessionRuntimeEventV1Schema.parse(message));
     });
     return events;
   }
 
-  it('invokes turn hooks and allows emitting additional tool calls before task_complete', async () => {
+  it('invokes turn hooks and allows emitting additional tool calls before canonical turn completion', async () => {
     const backend = createFakeAcpRuntimeBackend();
     const sent: any[] = [];
 
-    const session = createBasicSessionClientWithOverrides({
-      sendAgentMessage: (_provider, body) => {
-        sent.push(body);
-      },
-    });
+    const session = createBasicSessionClientWithOverrides();
 
     const runtime = createAcpRuntime({
       provider: 'opencode',
@@ -50,6 +49,7 @@ describe('createAcpRuntime (turn hooks)', () => {
         },
       },
     });
+    const runtimeEvents = collectRuntimeEvents(runtime);
 
     await runtime.sendTurnPrompt('session setup');
 
@@ -60,8 +60,8 @@ describe('createAcpRuntime (turn hooks)', () => {
 
     await runtime.flushTurn();
 
-    const taskCompleteIdx = sent.findIndex((m) => m?.type === 'task_complete');
-    expect(taskCompleteIdx).toBeGreaterThan(-1);
+    const turnCompleteIdx = runtimeEvents.findIndex((event) => event.kind === 'turn-complete');
+    expect(turnCompleteIdx).toBeGreaterThan(-1);
 
     const hookBeginIdx = sent.findIndex((m) => m?.type === 'hook' && m?.name === 'begin');
     expect(hookBeginIdx).toBeGreaterThan(-1);
@@ -69,24 +69,26 @@ describe('createAcpRuntime (turn hooks)', () => {
     const hookToolResultIdx = sent.findIndex((m) => m?.type === 'hook' && m?.name === 'tool-result' && m?.toolName === 'Edit');
     expect(hookToolResultIdx).toBeGreaterThan(-1);
 
-    const diffToolCallIdx = sent.findIndex((m) => m?.type === 'tool-call' && m?.name === 'Diff');
-    const diffToolResultIdx = sent.findIndex((m) => m?.type === 'tool-result' && m?.callId && m?.output?.status === 'completed');
+    const diffToolCallIdx = runtimeEvents.findIndex((event) => (
+      event.kind === 'tool-call' && event.toolName === 'Diff'
+    ));
+    const diffToolResultIdx = runtimeEvents.findIndex((event) => (
+      event.kind === 'tool-result' && event.output
+        && typeof event.output === 'object'
+        && !Array.isArray(event.output)
+        && Object.getOwnPropertyDescriptor(event.output, 'status')?.value === 'completed'
+    ));
     expect(diffToolCallIdx).toBeGreaterThan(-1);
     expect(diffToolResultIdx).toBeGreaterThan(-1);
 
-    expect(diffToolCallIdx).toBeLessThan(taskCompleteIdx);
-    expect(diffToolResultIdx).toBeLessThan(taskCompleteIdx);
+    expect(diffToolCallIdx).toBeLessThan(turnCompleteIdx);
+    expect(diffToolResultIdx).toBeLessThan(turnCompleteIdx);
   });
 
-  it('uses one provider turn id for running and completion without the legacy primary-turn writer', async () => {
+  it('uses one provider turn id for canonical turn start and completion', async () => {
     const backend = createFakeAcpRuntimeBackend();
-    const sent: any[] = [];
 
-    const session = createBasicSessionClientWithOverrides({
-      sendAgentMessage: (_provider, body) => {
-        sent.push(body);
-      },
-    });
+    const session = createBasicSessionClientWithOverrides();
 
     const runtime = createAcpRuntime({
       provider: 'pi',
@@ -106,34 +108,21 @@ describe('createAcpRuntime (turn hooks)', () => {
     backend.emit({ type: 'model-output', textDelta: 'hello' });
     await runtime.flushTurn();
 
-    const taskStarted = sent.find((message) => message?.type === 'task_started');
-    const taskComplete = sent.find((message) => message?.type === 'task_complete');
-
-    expect(taskStarted?.id).toEqual(expect.any(String));
-    expect(taskComplete?.id).toBe(taskStarted.id);
     const turnStart = runtimeEvents.find((event) => event.kind === 'turn-start');
-    expect(turnStart).toEqual(expect.objectContaining({
-      kind: 'turn-start',
-      agentTurnId: taskStarted.id,
+    const turnComplete = runtimeEvents.find((event) => event.kind === 'turn-complete');
+
+    expect(turnStart?.agentTurnId).toEqual(expect.any(String));
+    expect(turnComplete).toEqual(expect.objectContaining({
+      kind: 'turn-complete',
+      turnId: turnStart?.turnId,
+      agentTurnId: turnStart?.agentTurnId,
     }));
-    expect(runtimeEvents).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        kind: 'turn-complete',
-        turnId: turnStart?.turnId,
-        agentTurnId: taskStarted.id,
-      }),
-    ]));
   });
 
   it('uses the active provider turn id when status errors fail a typed turn', async () => {
     const backend = createFakeAcpRuntimeBackend();
-    const sent: any[] = [];
 
-    const session = createBasicSessionClientWithOverrides({
-      sendAgentMessage: (_provider, body) => {
-        sent.push(body);
-      },
-    });
+    const session = createBasicSessionClientWithOverrides();
 
     const runtime = createAcpRuntime({
       provider: 'pi',
@@ -150,37 +139,26 @@ describe('createAcpRuntime (turn hooks)', () => {
     await runtime.sendTurnPrompt('session setup');
     runtime.beginTurn();
     backend.emit({ type: 'status', status: 'running' });
-    const taskStarted = sent.find((message) => message?.type === 'task_started');
+    const turnStart = runtimeEvents.find((event) => event.kind === 'turn-start');
     backend.emit({ type: 'status', status: 'error', detail: 'provider failed' });
 
     await vi.waitFor(() => {
-      expect(sent.some((message) => message?.type === 'turn_failed')).toBe(true);
+      expect(runtimeEvents.some((event) => event.kind === 'turn-failed')).toBe(true);
     });
-    const turnFailed = sent.find((message) => message?.type === 'turn_failed');
+    const turnFailed = runtimeEvents.find((event) => event.kind === 'turn-failed');
 
-    expect(taskStarted?.id).toEqual(expect.any(String));
-    expect(turnFailed?.id).toBe(taskStarted.id);
-    const turnStart = runtimeEvents.find((event) => event.kind === 'turn-start');
-    await vi.waitFor(() => {
-      expect(runtimeEvents).toEqual(expect.arrayContaining([
-        expect.objectContaining({
-          kind: 'turn-failed',
-          turnId: turnStart?.turnId,
-          agentTurnId: taskStarted.id,
-        }),
-      ]));
-    });
+    expect(turnStart?.agentTurnId).toEqual(expect.any(String));
+    expect(turnFailed).toEqual(expect.objectContaining({
+      kind: 'turn-failed',
+      turnId: turnStart?.turnId,
+      agentTurnId: turnStart?.agentTurnId,
+    }));
   });
 
-  it('does not wait on legacy primary-turn projection before flushTurn resolves', async () => {
+  it('publishes canonical turn completion before flushTurn resolves', async () => {
     const backend = createFakeAcpRuntimeBackend();
-    const sent: any[] = [];
 
-    const session = createBasicSessionClientWithOverrides({
-      sendAgentMessage: (_provider, body) => {
-        sent.push(body);
-      },
-    });
+    const session = createBasicSessionClientWithOverrides();
 
     const runtime = createAcpRuntime({
       provider: 'pi',
@@ -198,7 +176,6 @@ describe('createAcpRuntime (turn hooks)', () => {
     runtime.beginTurn();
 
     await runtime.flushTurn();
-    expect(sent.some((m) => m?.type === 'task_complete')).toBe(true);
     expect(runtimeEvents.some((event) => event.kind === 'turn-complete')).toBe(true);
   });
 
@@ -234,13 +211,7 @@ describe('createAcpRuntime (turn hooks)', () => {
     const backend = createFakeAcpRuntimeBackend({
       waitForResponseComplete: async () => ({ kind: 'refused', stopReason: 'refusal' }),
     });
-    const sent: any[] = [];
-
-    const session = createBasicSessionClientWithOverrides({
-      sendAgentMessage: (_provider, body) => {
-        sent.push(body);
-      },
-    });
+    const session = createBasicSessionClientWithOverrides();
 
     const runtime = createAcpRuntime({
       provider: 'gemini',
@@ -259,8 +230,6 @@ describe('createAcpRuntime (turn hooks)', () => {
     await runtime.sendPrompt('hello');
     await runtime.flushTurn();
 
-    expect(sent.some((m) => m?.type === 'task_complete')).toBe(false);
-    expect(sent.some((m) => m?.type === 'turn_failed')).toBe(true);
     expect(runtimeEvents.some((event) => event.kind === 'turn-failed')).toBe(true);
     expect(runtimeEvents.some((event) => event.kind === 'turn-complete')).toBe(false);
   });
@@ -269,13 +238,7 @@ describe('createAcpRuntime (turn hooks)', () => {
     const backend = createFakeAcpRuntimeBackend({
       waitForResponseComplete: async () => ({ kind: 'aborted', stopReason: 'cancelled' }),
     });
-    const sent: any[] = [];
-
-    const session = createBasicSessionClientWithOverrides({
-      sendAgentMessage: (_provider, body) => {
-        sent.push(body);
-      },
-    });
+    const session = createBasicSessionClientWithOverrides();
 
     const runtime = createAcpRuntime({
       provider: 'gemini',
@@ -294,8 +257,6 @@ describe('createAcpRuntime (turn hooks)', () => {
     await runtime.sendPrompt('hello');
     await runtime.flushTurn();
 
-    expect(sent.some((m) => m?.type === 'task_complete')).toBe(false);
-    expect(sent.some((m) => m?.type === 'turn_cancelled')).toBe(true);
     expect(runtimeEvents.some((event) => event.kind === 'turn-cancelled')).toBe(true);
     expect(runtimeEvents.some((event) => event.kind === 'turn-complete')).toBe(false);
   });
@@ -304,13 +265,7 @@ describe('createAcpRuntime (turn hooks)', () => {
     const backend = createFakeAcpRuntimeBackend({
       waitForResponseComplete: async () => ({ kind: 'completed', stopReason: 'end_turn' }),
     });
-    const sent: any[] = [];
-
-    const session = createBasicSessionClientWithOverrides({
-      sendAgentMessage: (_provider, body) => {
-        sent.push(body);
-      },
-    });
+    const session = createBasicSessionClientWithOverrides();
 
     const runtime = createAcpRuntime({
       provider: 'gemini',
@@ -329,8 +284,6 @@ describe('createAcpRuntime (turn hooks)', () => {
     await runtime.sendPrompt('hello');
     await runtime.flushTurn();
 
-    expect(sent.some((m) => m?.type === 'task_complete')).toBe(false);
-    expect(sent.some((m) => m?.type === 'turn_failed')).toBe(true);
     expect(runtimeEvents.some((event) => event.kind === 'turn-failed')).toBe(true);
     expect(runtimeEvents.some((event) => event.kind === 'turn-complete')).toBe(false);
   });
@@ -339,11 +292,7 @@ describe('createAcpRuntime (turn hooks)', () => {
     const backend = createFakeAcpRuntimeBackend();
     const sent: any[] = [];
 
-    const session = createBasicSessionClientWithOverrides({
-      sendAgentMessage: (_provider, body) => {
-        sent.push(body);
-      },
-    });
+    const session = createBasicSessionClientWithOverrides();
 
     const runtime = createAcpRuntime({
       provider: 'opencode',
@@ -360,6 +309,7 @@ describe('createAcpRuntime (turn hooks)', () => {
         },
       },
     });
+    const runtimeEvents = collectRuntimeEvents(runtime);
 
     await runtime.sendTurnPrompt('session setup');
 
@@ -368,9 +318,17 @@ describe('createAcpRuntime (turn hooks)', () => {
     backend.emit({ type: 'tool-result', toolName: 'think', callId: 't1', result: { ok: true } });
     await runtime.flushTurn();
 
-    expect(sent.some((m) => m?.type === 'tool-call' && String(m?.name ?? '').toLowerCase() === 'think')).toBe(false);
-    expect(sent.some((m) => m?.type === 'tool-result' && m?.callId === 't1')).toBe(false);
-    expect(sent).toContainEqual({ type: 'thinking', text: 'Hello' });
+    expect(runtimeEvents.some((event) => (
+      event.kind === 'tool-call' && event.toolName.toLowerCase() === 'think'
+    ))).toBe(false);
+    expect(runtimeEvents.some((event) => (
+      event.kind === 'tool-result' && event.toolCallId === 't1'
+    ))).toBe(false);
+    expect(runtimeEvents).toContainEqual(expect.objectContaining({
+      kind: 'transcript-message-committed',
+      role: 'reasoning',
+      text: 'Hello',
+    }));
     expect(sent.some((m) => m?.type === 'hook' && m?.name === 'tool-result' && m?.toolName === 'think')).toBe(false);
   });
 

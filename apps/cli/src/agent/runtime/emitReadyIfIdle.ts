@@ -2,7 +2,7 @@ export type EmitReadyIfIdleOptions = {
   pending: unknown;
   queueSize: () => number;
   shouldExit: boolean;
-  sendReady: () => void;
+  sendReady: () => Promise<void>;
   notify?: () => void;
 };
 
@@ -10,7 +10,7 @@ export type EmitReadyIfIdleOptions = {
  * Emits a ready event only when there is no in-flight work and no queued work.
  * Returns true when `sendReady` was invoked.
  */
-export function emitReadyIfIdle({ pending, queueSize, shouldExit, sendReady, notify }: EmitReadyIfIdleOptions): boolean {
+export async function emitReadyIfIdle({ pending, queueSize, shouldExit, sendReady, notify }: EmitReadyIfIdleOptions): Promise<boolean> {
   if (shouldExit) {
     return false;
   }
@@ -21,7 +21,7 @@ export function emitReadyIfIdle({ pending, queueSize, shouldExit, sendReady, not
     return false;
   }
 
-  sendReady();
+  await sendReady();
   notify?.();
   return true;
 }

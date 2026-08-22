@@ -1,5 +1,5 @@
 import { realpathSync, statSync } from 'node:fs';
-import { isAbsolute, relative, resolve, sep } from 'node:path';
+import { isAbsolute, relative, resolve } from 'node:path';
 
 import type {
     ExternalAgentObservationWatchFileChangesV1,
@@ -9,7 +9,8 @@ import {
 } from '@happier-dev/protocol';
 import type {
     AgentExternalSessionsResolvedIdentity,
-} from '@happier-dev/plugin-sdk/experimental/sessions';
+} from '@happier-dev/plugin-sdk/sessions/external';
+import { isCanonicalAbsolutePathInsideRoot } from '@/utils/path/expandHomeDirPath';
 
 function collectResolvedSourceAbsoluteRoots(value: unknown): string[] {
     if (typeof value === 'string') {
@@ -23,15 +24,6 @@ function collectResolvedSourceAbsoluteRoots(value: unknown): string[] {
         return [];
     }
     return Object.values(value).flatMap(collectResolvedSourceAbsoluteRoots);
-}
-
-function isPathInsideRoot(path: string, root: string): boolean {
-    const relativePath = relative(root, path);
-    return relativePath === '' || (
-        relativePath !== '..'
-        && !relativePath.startsWith(`..${sep}`)
-        && !isAbsolute(relativePath)
-    );
 }
 
 function sourceRoots(
@@ -53,10 +45,10 @@ function isAuthorizedBySourceRoot(
 ): boolean {
     return roots.some((root) => (
         (
-            isPathInsideRoot(lexicalPath, root.lexical)
-            || isPathInsideRoot(lexicalPath, root.canonical)
+            isCanonicalAbsolutePathInsideRoot(root.lexical, lexicalPath)
+            || isCanonicalAbsolutePathInsideRoot(root.canonical, lexicalPath)
         )
-        && isPathInsideRoot(canonicalPath, root.canonical)
+        && isCanonicalAbsolutePathInsideRoot(root.canonical, canonicalPath)
     ));
 }
 
@@ -65,10 +57,10 @@ function canonicalizeMissingPathFromSourceRoot(
     roots: readonly Readonly<{ lexical: string; canonical: string }>[],
 ): string | null {
     for (const root of roots) {
-        if (isPathInsideRoot(lexicalPath, root.canonical)) {
+        if (isCanonicalAbsolutePathInsideRoot(root.canonical, lexicalPath)) {
             return lexicalPath;
         }
-        if (isPathInsideRoot(lexicalPath, root.lexical)) {
+        if (isCanonicalAbsolutePathInsideRoot(root.lexical, lexicalPath)) {
             return resolve(root.canonical, relative(root.lexical, lexicalPath));
         }
     }

@@ -12,6 +12,7 @@ import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient'
 import type {
     ExternalSessionPassiveReconcileResult,
 } from '@/api/session/external/leases/startExternalSessionPassiveObservation';
+import type { DeviceLocalSecretStorage } from '@/daemon/deviceLocalSecretStorage';
 
 export type ExternalSessionTakeoverActionInput = Readonly<{
     linkedSessionId: string;
@@ -40,6 +41,7 @@ export type ExternalSessionActionContext = Readonly<{
         sessionId: string,
     ) => Promise<ExternalSessionPassiveReconcileResult>;
     getServerFeaturesSnapshot?: () => CliServerFeaturesSnapshot | undefined;
+    deviceLocalSecretStorage?: DeviceLocalSecretStorage;
     emitExternalSessionTranscriptUpdate?: (payload: ExternalSessionTranscriptInvalidationV1) => void | Promise<void>;
     transientMediaReadAllowance?: Pick<TransientSessionMediaReadAllowance, 'grantReadFiles'>;
     spawnSession?: (options: SpawnSessionOptions) => Promise<SpawnSessionResult>;

@@ -2,7 +2,7 @@ import { normalizeVoiceAgentTurnTranscriptText, type HappierReplayDialogItem } f
 import { SessionSynopsisV1Schema, VoiceAgentTurnV1Schema } from '@happier-dev/protocol';
 
 import { isAuthenticationError } from '@/api/client/httpStatusError';
-import type { Credentials } from '@/persistence';
+import type { StoredCredentials } from '@/persistence';
 import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
 import { decryptTranscriptRows } from '@/session/replay/decryptTranscriptRows';
 import { fetchEncryptedTranscriptMessages } from '@/session/replay/fetchEncryptedTranscriptMessages';
@@ -29,23 +29,23 @@ function truncateReplayText(text: string, maxTextChars?: number): string {
 }
 
 async function tryHydrateSynopsisFromSystemRecord(params: Readonly<{
-  credentials: Credentials;
+  credentials: StoredCredentials;
   sessionId: string;
   encryptionMode: SessionStoredContentEncryptionMode;
-  ctx: SessionEncryptionContext;
+  ctx: SessionEncryptionContext | null;
 }>): Promise<string | null> {
   const synopsis = await fetchLatestMemorySynopsisSystemRecord({
     token: params.credentials.token,
     sessionId: params.sessionId,
     mode: params.encryptionMode,
-    ...(params.encryptionMode === 'e2ee' ? { ctx: params.ctx } : {}),
+    ...(params.encryptionMode === 'e2ee' && params.ctx ? { ctx: params.ctx } : {}),
   }).catch(() => null);
   const text = typeof synopsis?.synopsis === 'string' ? synopsis.synopsis.trim() : '';
   return text.length > 0 ? text : null;
 }
 
 export async function hydrateVoiceReplayDialogFromTranscript(params: Readonly<{
-  credentials: Credentials;
+  credentials: StoredCredentials;
   previousSessionId: string;
   transcriptEpoch: number;
   limit: number;
@@ -72,6 +72,7 @@ export async function hydrateVoiceReplayDialogFromTranscript(params: Readonly<{
 
   const ctx = resolveSessionEncryptionContextFromCredentials(params.credentials, session as any);
   const encryptionMode = resolveSessionStoredContentEncryptionMode(session as any);
+  if (encryptionMode === 'e2ee' && !ctx) return null;
   const decryptedRows = decryptTranscriptRows({ ctx, rows });
   if (decryptedRows.length === 0) {
     return {

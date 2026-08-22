@@ -1,8 +1,5 @@
 import {
-  AGENTS_CORE,
-  AGENT_IDS,
   resolveConnectedServiceSessionSelection,
-  type AgentId,
 } from '@happier-dev/agents';
 import {
   ConnectedServicesDefaultAuthByAgentIdV1Schema,
@@ -11,11 +8,12 @@ import {
   type ConnectedServiceBindingsV1,
 } from '@happier-dev/protocol';
 
-import type { Credentials } from '@/persistence';
+import type { StoredCredentials } from '@/persistence';
+import { resolveCatalogAgentConnectedServiceIds } from '@/agent/catalog/registry';
 import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 
-export function agentSupportsSpawnConnectedServicesDefaults(agentId: AgentId): boolean {
-  return (AGENTS_CORE[agentId].connectedServices?.supportedServiceIds.length ?? 0) > 0;
+export function agentSupportsSpawnConnectedServicesDefaults(agentId: string): boolean {
+  return resolveCatalogAgentConnectedServiceIds(agentId).length > 0;
 }
 
 export type SpawnConnectedServicesDefaultDisposition =
@@ -37,7 +35,7 @@ export class ConnectedServicesDefaultUnavailableError extends Error {
 /**
  * THE session spawn-defaulting owner (one defaulting owner, one settings path — QA2-F02).
  *
- * Resolves the account-default connected-services selection for a built-in agent from a FRESH,
+ * Resolves the account-default connected-services selection for a catalog Agent from a FRESH,
  * bounded blocking account-settings bootstrap (`bootstrapAccountSettingsContext` mode 'blocking';
  * its network reads carry internal 15s timeouts, so the wait is bounded). Callers must NEVER
  * substitute an in-process settings snapshot for this resolution: a second settings surface is
@@ -47,14 +45,13 @@ export class ConnectedServicesDefaultUnavailableError extends Error {
  */
 export async function resolveSessionSpawnConnectedServicesDefaultsPayload(params: Readonly<{
   agentId: string;
-  credentials: Credentials;
+  credentials: StoredCredentials;
 }>): Promise<Readonly<{
   connectedServices: ConnectedServiceBindingsV1;
   connectedServicesUpdatedAt: number;
 }> | null> {
   const agentId = params.agentId.trim();
-  if (!AGENT_IDS.includes(agentId as AgentId)) return null;
-  if (!agentSupportsSpawnConnectedServicesDefaults(agentId as AgentId)) return null;
+  if (!agentSupportsSpawnConnectedServicesDefaults(agentId)) return null;
 
   try {
     const accountSettingsContext = await bootstrapAccountSettingsContext({
@@ -64,7 +61,7 @@ export async function resolveSessionSpawnConnectedServicesDefaultsPayload(params
     });
     const disposition = resolveSpawnConnectedServicesDefaultDisposition({
       accountSettings: accountSettingsContext.settings,
-      agentId: agentId as AgentId,
+      agentId,
     });
     if (disposition.kind === 'unavailable') {
       throw new ConnectedServicesDefaultUnavailableError(disposition.reason);
@@ -96,9 +93,9 @@ function normalizeBindingForSpawn(
 
 export function resolveSpawnConnectedServicesDefaultDisposition(params: Readonly<{
   accountSettings: unknown;
-  agentId: AgentId;
+  agentId: string;
 }>): SpawnConnectedServicesDefaultDisposition {
-  const supportedServiceIds = AGENTS_CORE[params.agentId].connectedServices?.supportedServiceIds ?? [];
+  const supportedServiceIds = resolveCatalogAgentConnectedServiceIds(params.agentId);
   if (supportedServiceIds.length === 0) return { kind: 'native' };
 
   const settingsRecord = params.accountSettings && typeof params.accountSettings === 'object' && !Array.isArray(params.accountSettings)
@@ -141,7 +138,7 @@ export function resolveSpawnConnectedServicesDefaultDisposition(params: Readonly
 
 export function resolveSpawnConnectedServicesDefaults(params: Readonly<{
   accountSettings: unknown;
-  agentId: AgentId;
+  agentId: string;
 }>): ConnectedServiceBindingsV1 | null {
   const disposition = resolveSpawnConnectedServicesDefaultDisposition(params);
   return disposition.kind === 'connected' ? disposition.bindings : null;

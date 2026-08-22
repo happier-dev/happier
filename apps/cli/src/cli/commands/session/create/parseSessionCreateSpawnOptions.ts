@@ -1,12 +1,14 @@
 import {
   AcpConfigOptionOverridesV1Schema,
   ConnectedServiceBindingsV1Schema,
-  readBackendTargetRefV2,
   RuntimeDescriptorV1Schema,
   SessionMcpSelectionV1Schema,
+  type AcpConfigOptionOverridesV1,
+  type ConnectedServiceBindingsV1,
+  type RuntimeDescriptorV1,
+  type SessionMcpSelectionV1,
   type SpawnConfigOptionValue,
 } from '@happier-dev/protocol';
-import { isAgentId } from '@happier-dev/agents';
 
 import { readFlagValue, hasFlag } from '@/cli/commands/shared/argvFlags';
 import { normalizeBackendTargetKeysFromCsv } from '@/cli/commands/session/shared/normalizeBackendTargetKeys';
@@ -16,7 +18,33 @@ import {
   type ConnectedServicesLaunchAuthIntent,
 } from '@/cli/connectedServicesLaunchAuth';
 
-export type SessionCreateSpawnActionInput = Record<string, unknown>;
+/**
+ * CLI argv projection only. `normalizeSessionCreateSpawnRequest` owns its
+ * conversion into the strict public `SessionSpawnNewInputV2` Action input.
+ */
+export type SessionCreateSpawnRequest = Readonly<{
+  directory: string;
+  backendTargetKey: string | null;
+  title?: string;
+  tag?: string;
+  initialMessage?: string;
+  modelId?: string;
+  providerConnectionId?: string;
+  permissionMode?: string;
+  agentModeId?: string;
+  sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1;
+  configOptions?: Readonly<Record<string, SpawnConfigOptionValue>>;
+  profileId?: string;
+  environmentVariables?: Readonly<Record<string, string>>;
+  connectedServices?: ConnectedServiceBindingsV1;
+  mcpSelection?: SessionMcpSelectionV1;
+  transcriptStorage?: 'persisted' | 'direct';
+  terminal?: Readonly<Record<string, unknown>>;
+  runtimeDescriptorV1?: RuntimeDescriptorV1;
+  host?: string;
+  machineId?: string;
+  serverId?: string;
+}>;
 
 export type ParsedSessionCreateSpawnOptions = Readonly<{
   json: boolean;
@@ -25,7 +53,7 @@ export type ParsedSessionCreateSpawnOptions = Readonly<{
   spawnAttemptId: string | null;
   resumeSpawnAttempt: boolean;
   connectedServicesAuthIntent?: ConnectedServicesLaunchAuthIntent;
-  actionInput: SessionCreateSpawnActionInput;
+  spawnRequest: SessionCreateSpawnRequest;
 }>;
 
 function readRepeatedFlagValues(argv: readonly string[], flag: string): string[] {
@@ -74,10 +102,6 @@ function parseConfigOptions(argv: readonly string[]): Record<string, SpawnConfig
   const reasoningEffort = readFlagValue(argv, '--reasoning-effort');
   if (reasoningEffort) {
     configOptions.reasoning_effort = reasoningEffort.trim();
-  }
-
-  if (hasFlag(argv, '--ultracode')) {
-    configOptions.ultracode = true;
   }
 
   return Object.keys(configOptions).length > 0 ? configOptions : null;
@@ -147,17 +171,6 @@ export function parseSessionCreateSpawnOptions(argv: readonly string[]): ParsedS
   const backendRaw = (readFlagValue(argv, '--backend') ?? readFlagValue(argv, '--agent') ?? '').trim();
   const backendTargetKeys = normalizeBackendTargetKeysFromCsv(backendRaw);
   const backendTargetKey = backendTargetKeys.length === 1 ? backendTargetKeys[0] : null;
-  const backendAgentId = (() => {
-    if (!backendTargetKey) return null;
-    try {
-      const target = readBackendTargetRefV2(backendTargetKey);
-      return target.sourceKind !== 'configured' && isAgentId(target.backendId)
-        ? target.backendId
-        : null;
-    } catch {
-      return null;
-    }
-  })();
   const modelId = (readFlagValue(argv, '--model') ?? '').trim();
   const providerConnectionId = (readFlagValue(argv, '--provider-connection') ?? '').trim();
   if (providerConnectionId && !modelId) {
@@ -236,10 +249,9 @@ export function parseSessionCreateSpawnOptions(argv: readonly string[]): ParsedS
     spawnAttemptId,
     resumeSpawnAttempt,
     ...(connectedServicesAuthIntent ? { connectedServicesAuthIntent } : {}),
-    actionInput: {
-      path,
-      ...(backendTargetKey ? { backendTargetKey } : {}),
-      ...(backendAgentId ? { agentId: backendAgentId } : {}),
+    spawnRequest: {
+      directory: path,
+      backendTargetKey,
       ...(title ? { title } : {}),
       ...(tag ? { tag } : {}),
       ...(initialPrompt ? { initialMessage: initialPrompt } : {}),

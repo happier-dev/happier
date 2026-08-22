@@ -22,12 +22,6 @@ function isRetryableWindowsRenameError(error: unknown): boolean {
   return code === 'EBUSY' || code === 'EEXIST' || code === 'EPERM';
 }
 
-function isWindowsDestinationReplacementError(error: unknown): boolean {
-  if (process.platform !== 'win32') return false;
-  const code = (error as NodeJS.ErrnoException | null)?.code;
-  return code === 'EEXIST' || code === 'EPERM';
-}
-
 async function renameWithWindowsRetries(sourcePath: string, destinationPath: string): Promise<void> {
   for (let attempt = 1; attempt <= WINDOWS_RENAME_MAX_ATTEMPTS; attempt += 1) {
     try {
@@ -42,41 +36,6 @@ async function renameWithWindowsRetries(sourcePath: string, destinationPath: str
   }
 }
 
-async function renameReplacingExisting(sourcePath: string, destinationPath: string): Promise<void> {
-  try {
-    await renameWithWindowsRetries(sourcePath, destinationPath);
-    return;
-  } catch (replacementError) {
-    if (!isWindowsDestinationReplacementError(replacementError)) {
-      throw replacementError;
-    }
-
-    const backupPath = `${sourcePath}.previous`;
-    try {
-      await renameWithWindowsRetries(destinationPath, backupPath);
-    } catch (backupError) {
-      const code = (backupError as NodeJS.ErrnoException | null)?.code;
-      throw code === 'ENOENT' ? replacementError : backupError;
-    }
-
-    try {
-      await renameWithWindowsRetries(sourcePath, destinationPath);
-    } catch (publicationError) {
-      try {
-        await renameWithWindowsRetries(backupPath, destinationPath);
-      } catch (restoreError) {
-        throw new AggregateError(
-          [publicationError, restoreError],
-          'Failed to publish an atomic file replacement and restore the prior file',
-        );
-      }
-      throw publicationError;
-    }
-
-    await unlink(backupPath).catch(() => {});
-  }
-}
-
 export async function writeFileAtomically(input: Readonly<{
   path: string;
   writeTemporaryFile: (temporaryPath: string) => Promise<void>;
@@ -88,7 +47,7 @@ export async function writeFileAtomically(input: Readonly<{
   try {
     await input.writeTemporaryFile(tmpPath);
     await bestEffortChmod0600(tmpPath);
-    await renameReplacingExisting(tmpPath, path);
+    await renameWithWindowsRetries(tmpPath, path);
     await bestEffortChmod0600(path);
   } catch (error) {
     await unlink(tmpPath).catch(() => {});

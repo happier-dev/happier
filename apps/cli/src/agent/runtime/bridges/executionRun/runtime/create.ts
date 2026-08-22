@@ -10,6 +10,8 @@ import {
     type BackendTargetRefV2Input,
     type ConnectedServiceBindingsV1,
     type ExecutionRunConnectedServicesLaunchV1,
+    type ProviderBoundModelRef,
+    type SessionInputCausalPermissionAuthorityV1,
 } from '@happier-dev/protocol';
 
 import type {
@@ -30,8 +32,18 @@ import { assertBackendEnabledByAccountSettings } from '@/settings/backendEnabled
 
 import { withExecutionRunHostRuntimeCleanup } from '../hostRuntime/cleanup';
 import { createLazyExecutionRunHostRuntime } from '../hostRuntime/lazy';
-import { resolveExecutionRunConnectedServicesEnv } from './connectedServicesEnv';
+import {
+    hasConnectedExecutionRunBinding,
+    resolveExecutionRunConnectedServicesEnv,
+    resolveExecutionRunConnectedServicesSelection,
+    type ResolvedExecutionRunConnectedServicesSelection,
+} from './connectedServicesEnv';
 import { cleanupExecutionRunIsolationBundle } from './isolation';
+import { buildExecutionRunConfiguration } from './openInputs';
+import {
+    prepareExecutionRunProviderLaunch,
+    type PreparedExecutionRunProviderLaunch,
+} from './providerLaunch';
 
 function normalizeAccountSettings(value: unknown): Readonly<Record<string, unknown>> | null {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -115,7 +127,9 @@ function createEngineExecutionRunRuntimeShellConfig(opts: Readonly<{
     backendTarget?: BackendTargetRefV2Input;
     backendSourceKind?: string;
     modelId?: string;
+    modelSelection?: ProviderBoundModelRef;
     sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1;
+    causalPermissionAuthority?: SessionInputCausalPermissionAuthorityV1;
     permissionMode: string;
     accountSettings?: Readonly<Record<string, unknown>> | null;
     connectedServices?: ConnectedServiceBindingsV1 | null;
@@ -125,6 +139,8 @@ function createEngineExecutionRunRuntimeShellConfig(opts: Readonly<{
     engineRegistry?: ResolvedCliEngineRegistry;
     parentSessionStateTarget?: ExecutionRunSessionStateTarget | null;
     onConnectedServicesRegistration?: (registration: ExecutionRunConnectedServicesLaunchV1) => void | Promise<void>;
+    machineId?: string;
+    resolveProvidersFeatureEnabled?: () => boolean | Promise<boolean>;
 }>): LazyExecutionRunRuntimeShellConfig {
     let resolvedBackendPromise: Promise<ExecutionRunHostRuntime> | null = null;
 
@@ -146,6 +162,80 @@ function createEngineExecutionRunRuntimeShellConfig(opts: Readonly<{
             if (typeof runtimeCore?.createExecutionRunBackend !== 'function') {
                 throw new Error(`Engine adapter for ${opts.backendId} does not expose runtimeCore.createExecutionRunBackend`);
             }
+            const effectiveBackendTarget = opts.backendTarget
+                ? readBackendTargetRefV2(opts.backendTarget)
+                : null;
+            if (opts.modelSelection && !effectiveBackendTarget) {
+                throw new Error('Execution-run model selection requires an exact backend target');
+            }
+            const boundedOpenInputs = effectiveBackendTarget
+                ? buildExecutionRunConfiguration({
+                    backendTarget: effectiveBackendTarget,
+                    ...(opts.modelId ? { modelId: opts.modelId } : {}),
+                    ...(opts.modelSelection
+                        ? { modelSelection: opts.modelSelection }
+                        : {}),
+                    ...(opts.sessionConfigOptionOverrides
+                        ? {
+                            sessionConfigOptionOverrides:
+                                opts.sessionConfigOptionOverrides,
+                        }
+                        : {}),
+                    permissionMode: opts.permissionMode,
+                    updatedAtMs: Date.now(),
+                })
+                : null;
+            const connectedServicesSelection =
+                await resolveExecutionRunConnectedServicesSelection({
+                    backendId: opts.backendId,
+                    backendSourceKind:
+                        opts.backendSourceKind ?? 'built_in',
+                    ...(opts.connectedServices !== undefined
+                        ? { connectedServices: opts.connectedServices }
+                        : {}),
+                    ...(opts.connectedServicesDefaultServiceIds
+                        && opts.connectedServicesDefaultServiceIds.length > 0
+                        ? {
+                            connectedServicesDefaultServiceIds:
+                                opts.connectedServicesDefaultServiceIds,
+                        }
+                        : {}),
+                });
+            let providerLaunch: PreparedExecutionRunProviderLaunch | null = null;
+            if (opts.modelSelection && effectiveBackendTarget) {
+                const featureEnabled =
+                    opts.modelSelection.providerConnectionId === null
+                    || await opts.resolveProvidersFeatureEnabled?.() === true;
+                providerLaunch = await prepareExecutionRunProviderLaunch({
+                    selection: opts.modelSelection,
+                    backendTarget: effectiveBackendTarget,
+                    machineId: opts.machineId,
+                    agentId: engineResolution.agentId,
+                    runId: String(opts.runId ?? '').trim(),
+                    connectedServices:
+                        connectedServicesSelection?.bindings ?? null,
+                    featureEnabled,
+                    happyHomeDir:
+                        opts.happyHomeDir ?? configuration.happyHomeDir,
+                });
+            }
+            const materializedConnectedServicesSelection:
+                ResolvedExecutionRunConnectedServicesSelection | null =
+                providerLaunch?.providerBinding
+                && providerLaunch.connectedServices
+                && hasConnectedExecutionRunBinding(
+                    providerLaunch.connectedServices,
+                )
+                    ? {
+                        bindings: providerLaunch.connectedServices,
+                        source:
+                            connectedServicesSelection?.source ?? 'explicit',
+                        hadCredentials:
+                            connectedServicesSelection?.hadCredentials ?? null,
+                    }
+                    : providerLaunch?.providerBinding
+                        ? null
+                        : connectedServicesSelection;
             // Connected-services env resolution (generic, provider-agnostic): resolved via the
             // daemon bridge BEFORE the per-backend launch and merged into the isolation bundle
             // env so every backend path (catalog/ACP + plugin) receives it the same way.
@@ -154,23 +244,35 @@ function createEngineExecutionRunRuntimeShellConfig(opts: Readonly<{
             // Defaulting happens INSIDE the helper through the session spawn-defaulting owner
             // (QA2-F02) — never from this process's account-settings snapshot.
             const connectedServicesRunKey = String(opts.runId ?? '').trim() || `run_${opts.backendId}_${randomUUID()}`;
-            const connectedServicesEnv = await resolveExecutionRunConnectedServicesEnv({
-                runId: connectedServicesRunKey,
-                backendId: opts.backendId,
-                backendSourceKind: opts.backendSourceKind ?? 'built_in',
-                ...(opts.connectedServices !== undefined ? { connectedServices: opts.connectedServices } : {}),
-                ...(opts.connectedServicesDefaultServiceIds && opts.connectedServicesDefaultServiceIds.length > 0
-                    ? { connectedServicesDefaultServiceIds: opts.connectedServicesDefaultServiceIds }
-                    : {}),
-                cwd: opts.cwd,
-            });
-            if (connectedServicesEnv && opts.onConnectedServicesRegistration) {
-                try {
+            let connectedServicesEnv: Awaited<
+                ReturnType<typeof resolveExecutionRunConnectedServicesEnv>
+            > = null;
+            try {
+                connectedServicesEnv = await resolveExecutionRunConnectedServicesEnv({
+                    runId: connectedServicesRunKey,
+                    backendId: opts.backendId,
+                    backendSourceKind: opts.backendSourceKind ?? 'built_in',
+                    ...(opts.connectedServices !== undefined
+                        ? {
+                            connectedServices:
+                                providerLaunch?.connectedServices
+                                ?? opts.connectedServices,
+                        }
+                        : {}),
+                    ...(opts.connectedServicesDefaultServiceIds && opts.connectedServicesDefaultServiceIds.length > 0
+                        ? { connectedServicesDefaultServiceIds: opts.connectedServicesDefaultServiceIds }
+                        : {}),
+                    resolvedSelection:
+                        materializedConnectedServicesSelection,
+                    cwd: opts.cwd,
+                });
+                if (connectedServicesEnv && opts.onConnectedServicesRegistration) {
                     await opts.onConnectedServicesRegistration(connectedServicesEnv.registration);
-                } catch (error) {
-                    await connectedServicesEnv.cleanup().catch(() => {});
-                    throw error;
                 }
+            } catch (error) {
+                await connectedServicesEnv?.cleanup().catch(() => {});
+                await providerLaunch?.cleanupOnExit?.();
+                throw error;
             }
             const pluginIsolationBundle = engineResolution.runtimeOwner?.selected?.kind === 'plugin_engine'
                 ? resolveExecutionRunPluginIsolationBundle(opts)
@@ -178,6 +280,7 @@ function createEngineExecutionRunRuntimeShellConfig(opts: Readonly<{
             const isolationEnv: Record<string, string> = {
                 ...(pluginIsolationBundle?.env ?? {}),
                 ...(connectedServicesEnv?.env ?? {}),
+                ...(providerLaunch?.environment ?? {}),
             };
             const runtimeOpts = {
                 cwd: opts.cwd,
@@ -185,26 +288,73 @@ function createEngineExecutionRunRuntimeShellConfig(opts: Readonly<{
                 backendId: opts.backendId,
                 backendTarget: opts.backendTarget,
                 modelId: opts.modelId,
+                ...(boundedOpenInputs?.modelSelection
+                    ? { modelSelection: boundedOpenInputs.modelSelection }
+                    : {}),
                 ...(opts.sessionConfigOptionOverrides
                     ? { sessionConfigOptionOverrides: opts.sessionConfigOptionOverrides }
+                    : {}),
+                ...(opts.causalPermissionAuthority
+                    ? { causalPermissionAuthority: opts.causalPermissionAuthority }
+                    : {}),
+                ...(boundedOpenInputs
+                    ? { configuration: boundedOpenInputs.configuration }
+                    : {}),
+                ...(providerLaunch?.providerBinding
+                    ? { providerBinding: providerLaunch.providerBinding }
+                    : {}),
+                ...(providerLaunch
+                    ? {
+                        revalidateProviderBeforeOpen:
+                            providerLaunch.revalidateBeforeCommit,
+                        sanitizeProviderDiagnosticText:
+                            providerLaunch.sanitizeDiagnosticText,
+                    }
                     : {}),
                 permissionMode: opts.permissionMode,
                 accountSettings: opts.accountSettings ?? null,
                 start: opts.start ?? null,
                 ...(opts.parentSessionStateTarget ? { parentSessionStateTarget: opts.parentSessionStateTarget } : {}),
                 ...(Object.keys(isolationEnv).length > 0
-                    ? { isolation: { env: isolationEnv } }
+                    || (providerLaunch?.unsetEnvKeys.length ?? 0) > 0
+                    ? {
+                        isolation: {
+                            env: isolationEnv,
+                            ...(providerLaunch?.unsetEnvKeys.length
+                                ? { unsetEnvKeys: providerLaunch.unsetEnvKeys }
+                                : {}),
+                        },
+                    }
                     : {}),
             };
 
             let runtime: ExecutionRunHostRuntime;
             try {
+                const providerCurrent = await providerLaunch?.revalidateBeforeCommit();
+                if (providerCurrent && !providerCurrent.ok) {
+                    const error = Object.assign(
+                        new Error(providerCurrent.error.code),
+                        { code: providerCurrent.error.code },
+                    );
+                    throw error;
+                }
                 runtime = runtimeCore.createExecutionRunBackend(runtimeOpts);
             } catch (error) {
                 if (pluginIsolationBundle?.shouldCleanupIsolation) {
                     await cleanupExecutionRunIsolationBundle(pluginIsolationBundle);
                 }
                 await connectedServicesEnv?.cleanup();
+                await providerLaunch?.cleanupOnExit?.();
+                if (providerLaunch && error instanceof Error) {
+                    const sanitized = new Error(
+                        providerLaunch.sanitizeDiagnosticText(error.message),
+                    ) as Error & { code?: string };
+                    sanitized.name = error.name;
+                    if ('code' in error && typeof error.code === 'string') {
+                        sanitized.code = error.code;
+                    }
+                    throw sanitized;
+                }
                 throw error;
             }
 
@@ -217,9 +367,15 @@ function createEngineExecutionRunRuntimeShellConfig(opts: Readonly<{
                 : runtimeWithIdentity;
             // Connected-services release runs at run end for EVERY retention policy: it
             // unregisters the run's runtime-registry targets and triggers daemon-side cleanup.
-            return connectedServicesEnv
-                ? withExecutionRunHostRuntimeCleanup(withPluginIsolationCleanup, connectedServicesEnv.cleanup)
+            const withProviderCleanup = providerLaunch?.cleanupOnExit
+                ? withExecutionRunHostRuntimeCleanup(
+                    withPluginIsolationCleanup,
+                    providerLaunch.cleanupOnExit,
+                )
                 : withPluginIsolationCleanup;
+            return connectedServicesEnv
+                ? withExecutionRunHostRuntimeCleanup(withProviderCleanup, connectedServicesEnv.cleanup)
+                : withProviderCleanup;
         })();
         return await resolvedBackendPromise;
     };
@@ -235,7 +391,9 @@ export function createExecutionRunRuntime(opts: Readonly<{
     backendId: string;
     backendTarget?: BackendTargetRefV2Input;
     modelId?: string;
+    modelSelection?: ProviderBoundModelRef;
     sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1;
+    causalPermissionAuthority?: SessionInputCausalPermissionAuthorityV1;
     permissionMode: string;
     accountSettings?: Readonly<Record<string, unknown>> | null;
     connectedServices?: ConnectedServiceBindingsV1 | null;
@@ -245,6 +403,8 @@ export function createExecutionRunRuntime(opts: Readonly<{
     engineRegistry?: ResolvedCliEngineRegistry;
     parentSessionStateTarget?: ExecutionRunSessionStateTarget | null;
     onConnectedServicesRegistration?: (registration: ExecutionRunConnectedServicesLaunchV1) => void | Promise<void>;
+    machineId?: string;
+    resolveProvidersFeatureEnabled?: () => boolean | Promise<boolean>;
 }>): ExecutionRunHostRuntime {
     const resolvedBackendTarget = resolveExecutionRunCompatBackendTarget(opts.backendTarget);
     const backendId = String(opts.backendId ?? '').trim();
@@ -282,8 +442,14 @@ export function createExecutionRunRuntime(opts: Readonly<{
             ...(runtimeBackendTarget ? { backendTarget: runtimeBackendTarget } : {}),
             backendSourceKind: resolvedBackendTarget?.canonical.sourceKind ?? 'built_in',
             modelId: opts.modelId,
+            ...(opts.modelSelection
+                ? { modelSelection: opts.modelSelection }
+                : {}),
             ...(opts.sessionConfigOptionOverrides
                 ? { sessionConfigOptionOverrides: opts.sessionConfigOptionOverrides }
+                : {}),
+            ...(opts.causalPermissionAuthority
+                ? { causalPermissionAuthority: opts.causalPermissionAuthority }
                 : {}),
             permissionMode: opts.permissionMode,
             accountSettings,
@@ -297,6 +463,13 @@ export function createExecutionRunRuntime(opts: Readonly<{
             parentSessionStateTarget: opts.parentSessionStateTarget ?? null,
             ...(opts.onConnectedServicesRegistration
                 ? { onConnectedServicesRegistration: opts.onConnectedServicesRegistration }
+                : {}),
+            ...(opts.machineId ? { machineId: opts.machineId } : {}),
+            ...(opts.resolveProvidersFeatureEnabled
+                ? {
+                    resolveProvidersFeatureEnabled:
+                        opts.resolveProvidersFeatureEnabled,
+                }
                 : {}),
         });
     return createLazyExecutionRunHostRuntime(runtimeShellConfig);

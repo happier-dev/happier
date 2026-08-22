@@ -1,8 +1,24 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { SessionTurnMutationV1 } from '@happier-dev/protocol';
+import {
+    AgentSessionRuntimeEventV1Schema,
+    type AgentSessionRuntimeEventV1,
+    type SessionTurnMutationV1,
+} from '@happier-dev/protocol';
 
 import { createSessionTurnLifecycle } from './lifecycle';
+
+let nextRuntimeEventSequence = 0;
+
+function canonicalRuntimeEvent(input: Readonly<Record<string, unknown>>): AgentSessionRuntimeEventV1 {
+    return AgentSessionRuntimeEventV1Schema.parse({
+        sequence: ++nextRuntimeEventSequence,
+        ...input,
+        ...(input.kind === 'turn-start' && input.startedBy === undefined
+            ? { startedBy: 'host' }
+            : {}),
+    });
+}
 
 describe('createSessionTurnLifecycle', () => {
     it('records exact begin marker custody before publishing the server begin mutation', async () => {
@@ -22,12 +38,12 @@ describe('createSessionTurnLifecycle', () => {
             onAcceptedTurnLifecycle,
         });
 
-        lifecycle.observeRuntimeEvent({
+        lifecycle.observeRuntimeEvent(canonicalRuntimeEvent({
             kind: 'turn-start',
             sessionId: 'session-1',
             emittedAtMs: 100,
             turnId: 'turn-1',
-        });
+        }));
         await vi.waitFor(() => expect(onAcceptedTurnLifecycle).toHaveBeenCalledOnce());
         expect(enqueueSessionTurnMutation).not.toHaveBeenCalled();
 
@@ -58,18 +74,18 @@ describe('createSessionTurnLifecycle', () => {
             onAcceptedTurnLifecycle,
         });
 
-        lifecycle.observeRuntimeEvent({
+        lifecycle.observeRuntimeEvent(canonicalRuntimeEvent({
             kind: 'turn-start',
             sessionId: 'session-1',
             emittedAtMs: 100,
             turnId: 'turn-1',
-        });
-        lifecycle.observeRuntimeEvent({
+        }));
+        lifecycle.observeRuntimeEvent(canonicalRuntimeEvent({
             kind: 'turn-complete',
             sessionId: 'session-1',
             emittedAtMs: 200,
             turnId: 'turn-1',
-        });
+        }));
         await lifecycle.drainAcceptedLifecycle();
 
         expect(onAcceptedTurnLifecycle).toHaveBeenCalledTimes(1);
@@ -96,18 +112,18 @@ describe('createSessionTurnLifecycle', () => {
             },
         });
 
-        lifecycle.observeRuntimeEvent({
+        lifecycle.observeRuntimeEvent(canonicalRuntimeEvent({
             kind: 'turn-start',
             sessionId: 'session-1',
             emittedAtMs: 100,
             turnId: 'turn-1',
-        });
-        lifecycle.observeRuntimeEvent({
+        }));
+        lifecycle.observeRuntimeEvent(canonicalRuntimeEvent({
             kind: 'turn-complete',
             sessionId: 'session-1',
             emittedAtMs: 200,
             turnId: 'turn-1',
-        });
+        }));
         await vi.waitFor(() => expect(observed).toEqual(['task_started:turn-1']));
 
         releaseBeginNotification();
@@ -117,6 +133,44 @@ describe('createSessionTurnLifecycle', () => {
                 'assistant_message_end:turn-1',
             ]);
         });
+    });
+
+    it('publishes a terminal admission override as failed without duplicating a follow-up mutation', async () => {
+        const mutations: SessionTurnMutationV1[] = [];
+        const onAcceptedTurnLifecycle = vi.fn();
+        const lifecycle = createSessionTurnLifecycle({
+            session: {
+                sessionId: 'session-1',
+                enqueueSessionTurnMutation: async (mutation) => {
+                    mutations.push(mutation);
+                    return mutation.action === 'complete'
+                        ? { terminalStatusOverride: 'failed' as const }
+                        : undefined;
+                },
+            },
+            onAcceptedTurnLifecycle,
+        });
+
+        lifecycle.observeRuntimeEvent(canonicalRuntimeEvent({
+            kind: 'turn-start',
+            sessionId: 'session-1',
+            emittedAtMs: 100,
+            turnId: 'turn-admission-failed',
+        }));
+        lifecycle.observeRuntimeEvent(canonicalRuntimeEvent({
+            kind: 'turn-complete',
+            sessionId: 'session-1',
+            emittedAtMs: 200,
+            turnId: 'turn-admission-failed',
+        }));
+        await lifecycle.drainAcceptedLifecycle();
+
+        expect(onAcceptedTurnLifecycle).toHaveBeenLastCalledWith({
+            event: 'assistant_message_end',
+            turnId: 'turn-admission-failed',
+            terminalStatus: 'failed',
+        });
+        expect(mutations.map((mutation) => mutation.action)).toEqual(['begin', 'complete']);
     });
 
     it('retries rejected exact begin publication and drains the retained obligation before cleanup', async () => {
@@ -138,12 +192,12 @@ describe('createSessionTurnLifecycle', () => {
             onAcceptedTurnLifecycle,
         });
 
-        lifecycle.observeRuntimeEvent({
+        lifecycle.observeRuntimeEvent(canonicalRuntimeEvent({
             kind: 'turn-start',
             sessionId: 'session-1',
             emittedAtMs: 100,
             turnId: 'turn-1',
-        });
+        }));
 
         await vi.waitFor(() => expect(onAcceptedTurnLifecycle).toHaveBeenCalledTimes(2));
         let drained = false;
@@ -158,7 +212,7 @@ describe('createSessionTurnLifecycle', () => {
         expect(drained).toBe(true);
     });
 
-    it('authors no broad terminal when session-ended has no active exact turn', () => {
+    it('authors no broad terminal when runtime-ended has no active exact turn', () => {
         const mutations: SessionTurnMutationV1[] = [];
         const lifecycle = createSessionTurnLifecycle({
             session: {
@@ -169,16 +223,18 @@ describe('createSessionTurnLifecycle', () => {
             },
         });
 
-        lifecycle.observeRuntimeEvent({
-            kind: 'session-ended',
+        lifecycle.observeRuntimeEvent(canonicalRuntimeEvent({
+            kind: 'runtime-ended',
             sessionId: 'session-1',
             emittedAtMs: 100,
-        });
+            cause: 'providerEnded',
+            retryable: false,
+        }));
 
         expect(mutations).toEqual([]);
     });
 
-    it('authors no broad terminal when session-ended clears an active runtime turn', () => {
+    it('authors no broad terminal when runtime-ended clears an active runtime turn', () => {
         const mutations: SessionTurnMutationV1[] = [];
         const lifecycle = createSessionTurnLifecycle({
             session: {
@@ -189,17 +245,19 @@ describe('createSessionTurnLifecycle', () => {
             },
         });
 
-        lifecycle.observeRuntimeEvent({
+        lifecycle.observeRuntimeEvent(canonicalRuntimeEvent({
             kind: 'turn-start',
             sessionId: 'session-1',
             emittedAtMs: 100,
             turnId: 'turn-1',
-        });
-        lifecycle.observeRuntimeEvent({
-            kind: 'session-ended',
+        }));
+        lifecycle.observeRuntimeEvent(canonicalRuntimeEvent({
+            kind: 'runtime-ended',
             sessionId: 'session-1',
             emittedAtMs: 200,
-        });
+            cause: 'providerEnded',
+            retryable: false,
+        }));
 
         expect(mutations.map((mutation) => mutation.action)).toEqual(['begin']);
         expect(lifecycle.hasActiveTurn()).toBe(false);
@@ -217,54 +275,54 @@ describe('createSessionTurnLifecycle', () => {
             },
         });
 
-        lifecycle.observeRuntimeEvent({
+        lifecycle.observeRuntimeEvent(canonicalRuntimeEvent({
             kind: 'turn-progress',
             sessionId: 'session-1',
             emittedAtMs: 90,
             turnId: 'turn-1',
-        });
-        lifecycle.observeRuntimeEvent({
+        }));
+        lifecycle.observeRuntimeEvent(canonicalRuntimeEvent({
             kind: 'turn-start',
             sessionId: 'session-1',
             emittedAtMs: 100,
             turnId: 'turn-1',
             agentTurnId: 'provider-turn-1',
-        });
-        lifecycle.observeRuntimeEvent({
+        }));
+        lifecycle.observeRuntimeEvent(canonicalRuntimeEvent({
             kind: 'turn-progress',
             sessionId: 'session-1',
             emittedAtMs: 250,
             turnId: 'turn-1',
             agentTurnId: 'provider-turn-1',
-        });
-        lifecycle.observeRuntimeEvent({
+        }));
+        lifecycle.observeRuntimeEvent(canonicalRuntimeEvent({
             kind: 'turn-progress',
             sessionId: 'session-1',
             emittedAtMs: 260,
             turnId: 'turn-1',
             agentTurnId: 'provider-turn-1',
-        });
-        lifecycle.observeRuntimeEvent({
+        }));
+        lifecycle.observeRuntimeEvent(canonicalRuntimeEvent({
             kind: 'turn-progress',
             sessionId: 'session-1',
             emittedAtMs: 60_251,
             turnId: 'turn-1',
             agentTurnId: 'provider-turn-1',
-        });
-        lifecycle.observeRuntimeEvent({
+        }));
+        lifecycle.observeRuntimeEvent(canonicalRuntimeEvent({
             kind: 'turn-complete',
             sessionId: 'session-1',
             emittedAtMs: 60_300,
             turnId: 'turn-1',
             agentTurnId: 'provider-turn-1',
-        });
-        lifecycle.observeRuntimeEvent({
+        }));
+        lifecycle.observeRuntimeEvent(canonicalRuntimeEvent({
             kind: 'turn-progress',
             sessionId: 'session-1',
             emittedAtMs: 60_350,
             turnId: 'turn-1',
             agentTurnId: 'provider-turn-1',
-        });
+        }));
 
         expect(mutations.map((mutation) => mutation.action)).toEqual(['begin', 'touch_active', 'touch_active', 'complete']);
         expect(mutations[1]).toMatchObject({
@@ -294,19 +352,19 @@ describe('createSessionTurnLifecycle', () => {
             },
         });
 
-        lifecycle.observeRuntimeEvent({
+        lifecycle.observeRuntimeEvent(canonicalRuntimeEvent({
             kind: 'turn-start',
             sessionId: 'session-1',
             emittedAtMs: 100,
             turnId: 'turn-1',
-        });
+        }));
 
-        expect(() => lifecycle.observeRuntimeEvent({
+        expect(() => lifecycle.observeRuntimeEvent(canonicalRuntimeEvent({
             kind: 'turn-complete',
             sessionId: 'session-1',
             emittedAtMs: 200,
             turnId: 'turn-1',
-        })).not.toThrow();
+        }))).not.toThrow();
 
         expect(lifecycle.hasActiveTurn()).toBe(false);
     });
@@ -323,25 +381,25 @@ describe('createSessionTurnLifecycle', () => {
             },
         });
 
-        lifecycle.observeRuntimeEvent({
+        lifecycle.observeRuntimeEvent(canonicalRuntimeEvent({
             kind: 'turn-start',
             sessionId: 'session-1',
             emittedAtMs: 100,
             turnId: 'turn-1',
-        });
-        lifecycle.observeRuntimeEvent({
+        }));
+        lifecycle.observeRuntimeEvent(canonicalRuntimeEvent({
             kind: 'turn-complete',
             sessionId: 'session-1',
             emittedAtMs: 200,
             turnId: 'turn-1',
-        });
+        }));
         await Promise.resolve();
 
         expect(enqueueSessionTurnMutation).toHaveBeenCalledTimes(2);
         expect(lifecycle.hasActiveTurn()).toBe(false);
     });
 
-    it('marks a persisted rollback-applied affected turn rather than the restored target turn', () => {
+    it('leaves canonical rollback-boundary persistence to the native session owner', async () => {
         const mutations: SessionTurnMutationV1[] = [];
         const lifecycle = createSessionTurnLifecycle({
             agentId: 'codex',
@@ -353,180 +411,29 @@ describe('createSessionTurnLifecycle', () => {
             },
         });
 
-        lifecycle.observeRuntimeEvent({
+        lifecycle.observeRuntimeEvent(canonicalRuntimeEvent({
             kind: 'turn-start',
             sessionId: 'session-1',
             emittedAtMs: 100,
-            turnId: 'target-turn',
-        });
-        lifecycle.observeRuntimeEvent({
-            kind: 'turn-rollback-applied',
+            turnId: 'turn-1',
+        }));
+        lifecycle.observeRuntimeEvent(canonicalRuntimeEvent({
+            kind: 'turn-rollback-boundary',
             sessionId: 'session-1',
             emittedAtMs: 120,
-            turnId: 'rolled-turn',
-            restoredToTurnId: 'target-turn',
-            agentTurnId: 'provider-rolled',
-        });
-
-        expect(mutations.at(-1)).toMatchObject({
-            action: 'mark_rolled_back',
-            turnId: 'rolled-turn',
-            restoredToTurnId: 'target-turn',
-            agentTurnId: 'provider-rolled',
-        });
-    });
-
-    it('does not reopen rollback eligibility when a late boundary follows an applied rollback', async () => {
-        const mutations: SessionTurnMutationV1[] = [];
-        const lifecycle = createSessionTurnLifecycle({
-            agentId: 'grok',
-            session: {
-                sessionId: 'session-1',
-                enqueueSessionTurnMutation: (mutation) => {
-                    mutations.push(mutation);
-                },
-            },
-        });
-
-        lifecycle.observeRuntimeEvent({
-            kind: 'turn-start',
-            sessionId: 'session-1',
-            emittedAtMs: 100,
-            turnId: 'rolled-turn',
-        });
-        lifecycle.observeRuntimeEvent({
-            kind: 'turn-rollback-boundary-observed',
-            sessionId: 'session-1',
-            emittedAtMs: 110,
-            turnId: 'rolled-turn',
-            providerCheckpoint: { promptIndex: 4 },
-        });
-        lifecycle.observeRuntimeEvent({
+            turnId: 'turn-1',
+            agentTurnId: 'provider-turn-1',
+            providerCheckpoint: { kind: 'codex_checkpoint', turn: 1 },
+        }));
+        lifecycle.observeRuntimeEvent(canonicalRuntimeEvent({
             kind: 'turn-complete',
-            sessionId: 'session-1',
-            emittedAtMs: 120,
-            turnId: 'rolled-turn',
-        });
-        lifecycle.observeRuntimeEvent({
-            kind: 'turn-rollback-applied',
             sessionId: 'session-1',
             emittedAtMs: 130,
-            turnId: 'rolled-turn',
-            restoredToTurnId: 'rolled-turn',
-        });
-        lifecycle.observeRuntimeEvent({
-            kind: 'turn-rollback-boundary-observed',
-            sessionId: 'session-1',
-            emittedAtMs: 140,
-            turnId: 'rolled-turn',
-            providerCheckpoint: { promptIndex: 4 },
-        });
-        await Promise.resolve();
-
-        expect(mutations.map((mutation) => mutation.action)).toEqual([
-            'begin',
-            'complete',
-            'mark_rolled_back',
-        ]);
-    });
-
-    it('persists an exact checkpoint only for its matching known turn', async () => {
-        const mutations: SessionTurnMutationV1[] = [];
-        const lifecycle = createSessionTurnLifecycle({
-            agentId: 'grok',
-            session: {
-                sessionId: 'session-history',
-                enqueueSessionTurnMutation: async (mutation) => {
-                    mutations.push(mutation);
-                },
-            },
-            onAcceptedTurnLifecycle: async () => undefined,
-        });
-
-        lifecycle.observeRuntimeEvent({
-            kind: 'turn-rollback-boundary-observed',
-            sessionId: 'session-history',
-            emittedAtMs: 90,
-            turnId: 'unknown-turn',
-            providerCheckpoint: { kind: 'grok_prompt_index', promptIndex: 41 },
-        });
-        lifecycle.observeRuntimeEvent({
-            kind: 'turn-start',
-            sessionId: 'session-history',
-            emittedAtMs: 100,
-            turnId: 'turn-42',
-        });
-        lifecycle.observeRuntimeEvent({
-            kind: 'turn-rollback-boundary-observed',
-            sessionId: 'session-history',
-            emittedAtMs: 110,
-            turnId: 'turn-42',
-            startUserMessageSeq: 7,
-            providerCheckpoint: { kind: 'grok_prompt_index', promptIndex: 42 },
-        });
-        lifecycle.observeRuntimeEvent({
-            kind: 'turn-complete',
-            sessionId: 'session-history',
-            emittedAtMs: 120,
-            turnId: 'turn-42',
-        });
+            turnId: 'turn-1',
+            agentTurnId: 'provider-turn-1',
+        }));
         await lifecycle.drainAcceptedLifecycle();
 
-        expect(mutations.filter((mutation) => (
-            mutation.action === 'mark_rollback_eligible'
-        ))).toEqual([
-            expect.objectContaining({
-                action: 'mark_rollback_eligible',
-                turnId: 'turn-42',
-                transcriptAnchors: {
-                    startUserMessageSeq: 7,
-                    providerCheckpoint: {
-                        kind: 'grok_prompt_index',
-                        promptIndex: 42,
-                    },
-                },
-            }),
-        ]);
-    });
-
-    it('publishes rollback eligibility only after its matching turn completes', async () => {
-        const actions: SessionTurnMutationV1['action'][] = [];
-        const lifecycle = createSessionTurnLifecycle({
-            agentId: 'grok',
-            session: {
-                sessionId: 'session-history-order',
-                enqueueSessionTurnMutation: async (mutation) => {
-                    actions.push(mutation.action);
-                },
-            },
-            onAcceptedTurnLifecycle: async () => undefined,
-        });
-
-        lifecycle.observeRuntimeEvent({
-            kind: 'turn-start',
-            sessionId: 'session-history-order',
-            emittedAtMs: 100,
-            turnId: 'turn-1',
-        });
-        lifecycle.observeRuntimeEvent({
-            kind: 'turn-rollback-boundary-observed',
-            sessionId: 'session-history-order',
-            emittedAtMs: 200,
-            turnId: 'turn-1',
-            startUserMessageSeq: 7,
-            providerCheckpoint: { kind: 'grok_prompt_index', promptIndex: 1 },
-        });
-        await lifecycle.drainAcceptedLifecycle();
-        expect(actions).toEqual(['begin']);
-
-        lifecycle.observeRuntimeEvent({
-            kind: 'turn-complete',
-            sessionId: 'session-history-order',
-            emittedAtMs: 200,
-            turnId: 'turn-1',
-        });
-        await lifecycle.drainAcceptedLifecycle();
-
-        expect(actions).toEqual(['begin', 'complete', 'mark_rollback_eligible']);
+        expect(mutations.map((mutation) => mutation.action)).toEqual(['begin', 'complete']);
     });
 });

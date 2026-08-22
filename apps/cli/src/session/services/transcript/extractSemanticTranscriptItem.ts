@@ -77,7 +77,7 @@ function shapeRawPayload(value: unknown, maxPayloadChars: number | undefined): R
 export function extractSemanticTranscriptItem(params: Readonly<{
   row: TranscriptRawRow;
   index: number;
-  ctx: Readonly<{ encryptionKey: Uint8Array; encryptionVariant: 'legacy' | 'dataKey' }>;
+  ctx: Readonly<{ encryptionKey: Uint8Array; encryptionVariant: 'legacy' | 'dataKey' }> | null;
   options: ExtractionOptions;
   sequenceState?: TranscriptHistoryNormalizationSequenceState;
 }>): SemanticTranscriptExtraction {

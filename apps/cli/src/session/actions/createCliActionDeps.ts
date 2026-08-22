@@ -1,23 +1,45 @@
 import { homedir } from 'node:os';
+import { randomUUID } from 'node:crypto';
 
 import {
   AcpConfigOptionOverridesV1Schema,
+  buildAcpConfigOptionOverridesV1,
+  AccountSettingMutationV1Schema,
   BackendTargetRefV2Schema,
   DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1,
+  derivePluginSessionInputLocalIdV1,
+  MemorySearchResultV1Schema,
+  MemoryWindowV1Schema,
   buildBackendTargetKeyV2,
   getActionSpec,
   RuntimeDescriptorV1Schema,
+  PromptExternalLinksV1Schema,
+  exportPromptLibraryArtifact,
+  installPromptRegistryItemInLibrary,
+  updatePromptBundleInLibrary,
+  updatePromptDocInLibrary,
   SessionAgentSpawnPolicyV1Schema,
   SessionMcpSelectionV1Schema,
   SessionModelSelectionV1Schema,
   SessionModelSelectionResolutionError,
+  SessionCreationCorrespondenceV1Schema,
+  SessionCreationTargetPreparationResultV1Schema,
+  SessionCreationDirectoryApprovalV1Schema,
+  SessionAuthoringTerminalV1Schema,
+  normalizeSessionCreationOrganizationPlacementV1,
+  isSessionCreationCorrespondenceConflictSpawnErrorDetail,
+  isSessionCreationOrganizationInvalidSpawnErrorDetail,
+  supportsMachineOperationProtocolCapabilityV1,
   ProviderConnectionIdSchema,
+  readLinkedExternalSessionV1FromMetadata,
   resolveExplicitSessionSpawnMachineTarget,
   resolveSessionModelSelectionInputRefV1,
   mergeSpawnConfigOptionAliases,
+  parseBackendTargetKeyV2,
   readBackendTargetRefV2,
   readRuntimeDescriptorV1FromMetadata,
   resolveActionBackendTargetSelection,
+  withExecutionRunStartFailureDetails,
   type ConnectedServiceBindingsV1,
   type SessionAgentSpawnPolicyV1,
   type SpawnConfigOptionValue,
@@ -28,13 +50,25 @@ import {
   type ActionExecutorDeps,
   type ActionSurfaces,
   type BackendTargetRefV2,
+  type ScmDiffSummaryGenerateInput,
+  type PromptRegistryFetchedItemV1,
+  type SessionSpawnNewInputV2,
+  type SessionSpawnNewResultV1,
+  type SessionCreationDirectoryApprovalV1,
+  type SessionCreationTargetPreparationRequestV1,
+  type SessionCreationTargetPreparationResultV1,
+  type AgentExecutionTargetV1,
+  type ActionCaller,
 } from '@happier-dev/protocol';
+import type { PromptAssetAdapter } from '@happier-dev/plugin-sdk/resources';
 import {
   assertNonEscalatingPermissionMode,
   resolveNearestPermissionModeAtOrBelow,
   resolvePermissionPrivilegeOrdinal,
 } from '@happier-dev/protocol/actions/permissionPrivilege';
 import { SpawnSessionTerminalSchema } from '@/rpc/handlers/spawnSessionOptionsContract';
+import { SPAWN_SESSION_ERROR_CODES } from '@/session/shared/spawnSessionContract';
+import { createStableSpawnNonce } from '@/session/shared/spawnNonce';
 import {
   AGENT_IDS,
   DEFAULT_AGENT_ID,
@@ -45,10 +79,18 @@ import {
   type PermissionIntent,
 } from '@happier-dev/agents';
 import { configuration } from '@/configuration';
+import { isAuthenticationError } from '@/api/client/httpStatusError';
+import { readMachineOperationProtocolCapabilitiesV1 } from '@/api/machine/machineOperationProtocolCapabilities';
 import { getPreferredHostName } from '@/daemon/machine/metadata';
 import { createCliApprovalsArtifactStore } from '@/session/actions/approvals/artifactStore';
-import { readSettings, type Credentials } from '@/persistence';
-import { createSpawnedSession } from '@/session/services/createSpawnedSession';
+import { readSettings, type StoredCredentials } from '@/persistence';
+import {
+  createSpawnedSession,
+  type DirectSpawnedSessionTransport,
+  type ReplaySeededSessionCreationV1,
+} from '@/session/services/createSpawnedSession';
+import { buildReplaySeededSpawnRecipe } from '@/session/replay/buildReplaySeededSpawnRecipe';
+import { resolveReplaySourceContextAuthority } from '@/session/replay/resolveReplaySourceContextAuthority';
 import {
   resolveSessionSpawnConnectedServicesDefaultsPayload,
 } from '@/session/services/spawnConnectedServicesDefaults';
@@ -57,28 +99,38 @@ import { getSessionTranscript } from '@/session/services/getSessionTranscript';
 import { getSessionStatus } from '@/session/services/getSessionStatus';
 import { listSessions } from '@/session/services/listSessions';
 import { requestSessionStop } from '@/session/services/requestSessionStop';
-import { sendSessionMessage } from '@/session/services/sendSessionMessage';
+import {
+  sendSessionMessage,
+} from '@/session/services/sendSessionMessage';
+import {
+  buildSessionSpawnInitialInputAdmissionV1,
+  buildPluginSessionInputAdmissionV1,
+} from '@/session/services/sessionInputAdmissionIdentity';
+import { readAgentCatalogSnapshot } from '@/agent/catalog/snapshot';
 import { setSessionArchivedState } from '@/session/services/setSessionArchivedState';
 import { setSessionModel } from '@/session/services/setSessionModel';
 import { setSessionMode } from '@/session/services/setSessionMode';
 import { setSessionPermissionMode } from '@/session/services/setSessionPermissionMode';
 import { setSessionTitle } from '@/session/services/setSessionTitle';
 import { waitForSessionIdle } from '@/session/services/waitForSessionIdle';
+import { requestInactiveSessionResume } from '@/session/services/requestInactiveSessionResume';
+import { resolveSessionMachineWorkspacePath } from '@/session/machineControlLocality';
+import { resolveCurrentSessionCapabilityBinding } from '@/session/presentation/currentSessionUiBindings';
 
 import type {
-  SessionEncryptionContext,
-  SessionStoredContentEncryptionMode,
+  SessionStoredContentCryptoContext,
 } from '@/session/transport/encryption/sessionEncryptionContext';
 import {
-  resolveSessionEncryptionContextFromCredentials,
-  resolveSessionStoredContentEncryptionMode,
-} from '@/session/transport/encryption/sessionEncryptionContext';
-import {
+  cancelExecutionRunStream,
+  ensureExecutionRun,
+  ensureOrStartExecutionRun,
   executeExecutionRunAction,
   getExecutionRun,
   listExecutionRuns,
+  readExecutionRunStream,
   sendExecutionRunMessage,
   startExecutionRun,
+  startExecutionRunStream,
   stopExecutionRun,
   waitForExecutionRun,
 } from '@/session/services/executionRuns';
@@ -90,25 +142,33 @@ import {
 import { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
 import { fetchSessionById, fetchSessionByIdCompat, type RawSessionRecord } from '@/session/transport/http/sessionsHttp';
 import { callSessionRpc } from '@/session/transport/rpc/sessionRpc';
-import { callMachineRpc } from '@/session/transport/rpc/machineRpc';
+import {
+  callMachineRpc,
+  readMachineRpcRequestDisposition,
+} from '@/session/transport/rpc/machineRpc';
 import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
-import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
+import {
+  isRpcMethodNotAvailableError,
+  isRpcMethodNotFoundError,
+  readRpcErrorCode,
+} from '@happier-dev/protocol/rpcErrors';
 import { routeSessionCatalogControl } from '@/session/catalogControls/sessionCatalogControlRouter';
 import { routeSessionGoalControl } from '@/session/goalControls/sessionGoalControlRouter';
 import {
   normalizeUsageLimitRecoveryOperationResult,
 } from '@/session/usageLimitRecoveryControls/sessionUsageLimitRecoveryOperationResult';
 import { executePluginDevLoopAction } from '@/plugins/devLoop/actions';
+import { executePluginSettingsAdministrationAction } from '@/plugins/settings/administration';
 import { getSessionHostBridge } from '@/agent/runtime/bridges/session/SessionHostBridge';
 import {
   isConcreteBackendTargetCompatId,
 } from '@/session/backendTargets/compat/customAcp';
-import {
-  resolveBackendTargetFromSessionMetadata,
-  resolveExplicitBackendTargetFromSessionMetadata,
-} from '@/session/backendTargets/resolveBackendTargetFromSessionMetadata';
+import { resolveBackendTargetFromSessionMetadata } from '@/session/backendTargets/resolveBackendTargetFromSessionMetadata';
 import { resolveSessionAgentSpawnInheritedOverridesFromMetadata } from '@/session/fork/resolveForkInheritedOverridesFromMetadata';
 import { createCliActionInventoryDeps } from './cliActionDeps/createCliActionInventoryDeps';
+import {
+  createRemoteDevSessionSpawnApprovalReplayNormalizer,
+} from './approvals/normalizeRemoteDevSessionSpawnApprovalReplay';
 import {
   readSessionAgentState,
   readSessionMetadata,
@@ -116,14 +176,107 @@ import {
 import {
   HostSubagentStoreError,
   hostSubagentStore,
+  type HostSubagentActor,
 } from '@/session/subagents/hostSubagentStore';
 import {
   resolveUsageLimitRecoveryEnabled,
   usageLimitRecoveryDisabledResult,
 } from '@/features/usageLimitRecoveryFeatureGate';
+import { createPromptAssetAdapterRegistry } from '@/prompts/assets/createPromptAssetAdapterRegistry';
+import {
+  deletePromptAsset,
+  discoverPromptAssets,
+  writePromptAsset,
+} from '@/prompts/assets/actions';
+import { createPromptRegistryAdapterRegistry } from '@/prompts/registries/createPromptRegistryAdapterRegistry';
+import {
+  fetchPromptRegistryItem,
+  installPromptRegistryItem,
+  scanPromptRegistrySource,
+} from '@/prompts/registries/actions';
+import { createPluginPermissionGrantActionExecutor } from '@/plugins/runtime/lifecycle/permissions/pluginPermissionGrantActionExecutor';
+import { createPluginWebhookActionExecutor } from '@/plugins/runtime/webhooks/pluginWebhookActionExecutor';
+import { createAutomationConversationActionExecutor } from '@/plugins/runtime/automations/automationConversationActionExecutor';
+import {
+  createAutomationEventActionExecutor,
+  type ResolveAutomationEventAdoptedDefinitionSetV1,
+} from '@/plugins/runtime/automations/automationEventActionExecutor';
+import type {
+  RevalidatePluginActionCallerImmutableGeneration,
+  RevalidatePluginActionCallerMaterialization,
+} from '@/plugins/runtime/invocation/services/actionCaller';
+import { executeScmActionOperation } from '@/scm/actions/executeScmActionOperation';
+import { executeScmDiffSummaryAction } from '@/scm/actions/executeScmDiffSummaryAction';
+import { createCliReviewCommentActionExecutorFromCredentials } from '@/agent/reviews/comments/executor';
+import { executePluginExternalSessionAction } from './externalSessions/pluginExternalSessionActionExecutor';
+import type {
+  ExternalSessionPluginAdmissionOwner,
+} from './externalSessions/pluginExternalSessionAdmissionOwner';
+import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
+import {
+  updateAccountSettingsV2WithRetry,
+  type AccountSettingsMutationResult,
+} from '@/settings/accountSettings/updateAccountSettingsV2WithRetry';
 
 function notSupported(): never {
   throw new Error('action_not_supported_in_cli');
+}
+
+type PromptExternalLinkPersistenceSettlement =
+  | Readonly<{
+    status: 'applied' | 'satisfied' | 'unchanged';
+    version: number;
+  }>
+  | Readonly<{
+    status: 'conflict';
+    currentVersion: number;
+  }>
+  | Readonly<{
+    status: 'outcomeUnknown';
+    lastKnownVersion: number;
+  }>
+  | Readonly<{
+    status: 'cancelled';
+    submitted: false;
+  }>
+  | Readonly<{
+    status: 'locked';
+    reason: 'encryptionMaterialUnavailable' | 'modeMismatch' | 'contentUnreadable';
+  }>
+  | Readonly<{
+    status: 'invalid';
+    reason: 'unknownKey' | 'invalidValue' | 'duplicateKey' | 'tooLarge' | 'tooDeep';
+  }>
+  | Readonly<{
+    status: 'unavailable';
+    retryable: boolean;
+  }>;
+
+/**
+ * The action response reports the independent Settings settlement without
+ * ever exposing the Account Settings document that produced it.
+ */
+function projectPromptExternalLinkPersistenceSettlement(
+  result: AccountSettingsMutationResult,
+): PromptExternalLinkPersistenceSettlement {
+  switch (result.status) {
+    case 'applied':
+    case 'satisfied':
+    case 'unchanged':
+      return Object.freeze({ status: result.status, version: result.version });
+    case 'conflict':
+      return Object.freeze({ status: result.status, currentVersion: result.currentVersion });
+    case 'outcomeUnknown':
+      return Object.freeze({ status: result.status, lastKnownVersion: result.lastKnownVersion });
+    case 'cancelled':
+      return Object.freeze({ status: result.status, submitted: result.submitted });
+    case 'locked':
+      return Object.freeze({ status: result.status, reason: result.reason });
+    case 'invalid':
+      return Object.freeze({ status: result.status, reason: result.reason });
+    case 'unavailable':
+      return Object.freeze({ status: result.status, retryable: result.retryable });
+  }
 }
 
 function serializeHostSubagentStoreError(error: unknown): Readonly<{ ok: false; errorCode: string; error: string }> {
@@ -133,8 +286,70 @@ function serializeHostSubagentStoreError(error: unknown): Readonly<{ ok: false; 
   throw error;
 }
 
+function deriveHostSubagentActor(caller: ActionCaller): HostSubagentActor {
+  if (caller.kind !== 'plugin' || !caller.contributionLocalId?.trim()) {
+    return { kind: 'externalRpc' };
+  }
+  return {
+    kind: 'plugin',
+    pluginId: caller.pluginId,
+    agentId: caller.contributionLocalId,
+  };
+}
+
 function normalizeStringValue(value: unknown): string | null {
   return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
+}
+
+function executionRunActionFailure(
+  code: string,
+  message?: string,
+  details?: unknown,
+): Readonly<{ ok: false; errorCode: string; error: string; details?: unknown }> {
+  return {
+    ok: false,
+    errorCode: code,
+    error: message ?? code,
+    ...(details !== undefined ? { details } : {}),
+  };
+}
+
+function readRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+function isExecutionRunActionAbort(error: unknown, signal?: AbortSignal): boolean {
+  return signal?.aborted === true || readRecord(error).name === 'AbortError';
+}
+
+function hasPossiblyAcceptedSpawnNonce(error: unknown): boolean {
+  const details = readRecord(readRecord(error).details);
+  return typeof details.spawnNonce === 'string' && details.spawnNonce.trim().length > 0;
+}
+
+/**
+ * The Action surface consumes only the protocol-owned terminal detail, never
+ * daemon/server wording. Direct daemon-control failures carry it at
+ * `details.errorDetail`; the awaiter path nests the original response once.
+ */
+function hasSessionCreationOrganizationInvalidDetail(error: unknown): boolean {
+  const details = readRecord(readRecord(error).details);
+  return isSessionCreationOrganizationInvalidSpawnErrorDetail(
+    details.errorDetail,
+  ) || isSessionCreationOrganizationInvalidSpawnErrorDetail(
+    readRecord(details.spawnResponse).errorDetail,
+  );
+}
+
+function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean {
+  const details = readRecord(readRecord(error).details);
+  return isSessionCreationCorrespondenceConflictSpawnErrorDetail(
+    details.errorDetail,
+  ) || isSessionCreationCorrespondenceConflictSpawnErrorDetail(
+    readRecord(details.spawnResponse).errorDetail,
+  );
 }
 
 function readResumePromptMode(value: unknown): SessionUsageLimitRecoveryResumePromptModeV1 | undefined {
@@ -160,6 +375,15 @@ export type CancelInactiveSessionUsageLimitRecoveryCheck = (input: Readonly<{
   runtimeAuthRecoveryAttemptId?: string;
 }>) => Promise<void> | void;
 
+/**
+ * Reads the current record from the inactive usage-limit recovery lifecycle owner so an
+ * in-flight readiness probe can be fenced against a cancellation, exhaustion or replacement
+ * that landed while it was running.
+ */
+export type ReadInactiveSessionUsageLimitRecovery = (input: Readonly<{
+  sessionId: string;
+}>) => SessionUsageLimitRecoveryV1 | null;
+
 export type CancelConnectedServiceRuntimeAuthRecovery = (input: Readonly<{
   sessionId: string;
   attemptId: string;
@@ -168,6 +392,20 @@ export type CancelConnectedServiceRuntimeAuthRecovery = (input: Readonly<{
 export type RetryTemporaryThrottleNow = (input: Readonly<{
   sessionId: string;
 }>) => Promise<unknown> | unknown;
+
+/**
+ * Host-private exact-daemon path used only after the public V2 Action owner
+ * has admitted an already server-stamped request. It replaces transport, not
+ * Session creation policy, normalization, or lifecycle ownership.
+ */
+export type SessionSpawnDirectTargetTransport = Readonly<{
+  machineId: string;
+  prepare: (
+    request: SessionCreationTargetPreparationRequestV1,
+    options?: Readonly<{ signal?: AbortSignal }>,
+  ) => Promise<SessionCreationTargetPreparationResultV1>;
+  spawnedSession: DirectSpawnedSessionTransport;
+}>;
 
 type CurrentMachineControlIdentity = Readonly<{
   machineId: string | null;
@@ -324,7 +562,7 @@ function applyPermissionCeiling(params: Readonly<{
 
 async function resolveSpawnConnectedServicesDefaultPayload(params: Readonly<{
   backendTarget: NonNullable<ReturnType<typeof readBackendTargetRefV2>>;
-  credentials: Credentials;
+  credentials: StoredCredentials;
 }>): Promise<Readonly<{
   connectedServices: ConnectedServiceBindingsV1;
   connectedServicesUpdatedAt: number;
@@ -351,11 +589,9 @@ function permissionRequestNotFoundResult(sessionId: string) {
 
 function isKnownCompletedRequestId(params: Readonly<{
   rawSession: Readonly<{ agentState?: unknown }>;
-  mode: SessionStoredContentEncryptionMode;
-  ctx: SessionEncryptionContext;
   requestId: string;
   kind: PendingAgentRequestKind;
-}>): boolean {
+}> & SessionStoredContentCryptoContext): boolean {
   const agentState = readSessionAgentState(params);
   const completedRequests = agentState?.completedRequests;
   if (!completedRequests || typeof completedRequests !== 'object' || Array.isArray(completedRequests)) {
@@ -374,10 +610,8 @@ function isKnownCompletedRequestId(params: Readonly<{
 
 export function createCliActionDeps(params: Readonly<{
   token: string;
-  credentials?: Credentials;
+  credentials?: StoredCredentials;
   sessionId: string;
-  ctx: SessionEncryptionContext;
-  mode?: SessionStoredContentEncryptionMode;
   rawSession?: Readonly<{
     metadata?: unknown;
     path?: unknown;
@@ -387,21 +621,62 @@ export function createCliActionDeps(params: Readonly<{
   getCallerPermissionMode?: (() => string | null | undefined) | null;
   getCurrentSessionBackendTarget?: (() => BackendTargetRefV2 | null | undefined) | null;
   happyHomeDir?: string;
+  readRegisteredPromptAssetAdapters?: () => ReadonlyMap<string, PromptAssetAdapter>;
+  resolveAutomationEventAdoptedDefinitionSet?: ResolveAutomationEventAdoptedDefinitionSetV1;
+  revalidatePluginActionCallerMaterialization?: RevalidatePluginActionCallerMaterialization;
+  revalidatePluginActionCallerImmutableGeneration?: RevalidatePluginActionCallerImmutableGeneration;
   isUsageLimitRecoveryEnabled?: (() => Promise<boolean> | boolean) | null;
-}>): ActionExecutorDeps {
+  externalSessionPluginAdmissionOwner?: ExternalSessionPluginAdmissionOwner;
+  machineAdmissionTransport?: NonNullable<
+    Parameters<typeof sendSessionMessage>[0]['machineAdmissionTransport']
+  >;
+  sessionSpawnDirectTargetTransport?: SessionSpawnDirectTargetTransport;
+}> & SessionStoredContentCryptoContext): ActionExecutorDeps {
   const inventoryDeps = createCliActionInventoryDeps(params);
   const approvalsStore = params.credentials ? createCliApprovalsArtifactStore({ credentials: params.credentials }) : null;
-  let currentSessionMetadata = readSessionMetadata({
-    rawSession: params.rawSession,
-    mode: params.mode,
-    ctx: params.ctx,
+  const pluginPermissionGrantAction = params.credentials
+    ? createPluginPermissionGrantActionExecutor({ credentials: params.credentials })
+    : null;
+  const pluginWebhookAction = params.credentials
+    ? createPluginWebhookActionExecutor({
+      credentials: params.credentials,
+      ...(params.revalidatePluginActionCallerMaterialization
+        ? { revalidateCallerMaterialization: params.revalidatePluginActionCallerMaterialization }
+        : {}),
+    })
+    : null;
+  const automationConversationAction = params.credentials
+    ? createAutomationConversationActionExecutor({ credentials: params.credentials })
+    : null;
+  const automationEventAction = params.credentials && params.resolveAutomationEventAdoptedDefinitionSet
+    ? createAutomationEventActionExecutor({
+      credentials: params.credentials,
+      resolveAdoptedDefinitionSet: params.resolveAutomationEventAdoptedDefinitionSet,
+      ...(params.revalidatePluginActionCallerMaterialization
+        ? { revalidateCallerMaterialization: params.revalidatePluginActionCallerMaterialization }
+        : {}),
+      ...(params.revalidatePluginActionCallerImmutableGeneration
+        ? { revalidateCallerImmutableGeneration: params.revalidatePluginActionCallerImmutableGeneration }
+        : {}),
+    })
+    : null;
+  const reviewCommentAction = params.credentials
+    ? createCliReviewCommentActionExecutorFromCredentials({ credentials: params.credentials })
+    : null;
+  const promptAssetAdapterRegistry = createPromptAssetAdapterRegistry({
+    ...(params.readRegisteredPromptAssetAdapters
+      ? { readRegisteredAdapters: params.readRegisteredPromptAssetAdapters }
+      : {}),
   });
-  type ResolvedSessionTransport = Readonly<{
-    sessionId: string;
-    rawSession: RawSessionRecord;
-    ctx: SessionEncryptionContext;
-    mode: SessionStoredContentEncryptionMode;
-  }>;
+  const promptRegistryAdapterRegistry = createPromptRegistryAdapterRegistry();
+  let currentSessionMetadata = readSessionMetadata({
+    ...params,
+    rawSession: params.rawSession,
+  });
+  type ResolvedSessionTransport = Extract<
+    Awaited<ReturnType<typeof resolveSessionTransportContext>>,
+    Readonly<{ ok: true }>
+  >;
   type LifecycleHookSessionContext = Readonly<{
     machineId?: string;
     cwd?: string;
@@ -417,9 +692,8 @@ export function createCliActionDeps(params: Readonly<{
     try {
       const rawSession = await fetchSessionById({ token: params.token, sessionId: params.sessionId });
       currentSessionMetadata = readSessionMetadata({
+        ...params,
         rawSession,
-        mode: params.mode,
-        ctx: params.ctx,
       });
       return currentSessionMetadata;
     } catch {
@@ -482,13 +756,118 @@ export function createCliActionDeps(params: Readonly<{
     return await currentMachineControlIdentityPromise;
   };
 
-  const resolveTransportForSession = async (idOrPrefix: string): Promise<Readonly<{
+  const resolveSessionSpawnAgentTarget = (agentTarget: AgentExecutionTargetV1) => {
+    const catalog = readAgentCatalogSnapshot();
+    const agentContribution = [...catalog.agentDefinitionsById.values()].find(
+      (candidate) => candidate.identity?.pluginId === agentTarget.identity.pluginId
+        && candidate.identity.localId === agentTarget.identity.localId,
+    );
+    if (!agentContribution) return null;
+
+    try {
+      return {
+        agentId: agentContribution.id,
+        backendTarget: readBackendTargetRefV2({
+          kind: 'backend',
+          backendId: agentContribution.id,
+          sourceKind: 'built_in',
+        }),
+      };
+    } catch {
+      return null;
+    }
+  };
+
+  const resolveSessionSpawnAgentInventorySelection: NonNullable<
+    ActionExecutorDeps['resolveSessionSpawnAgentInventorySelection']
+  > = ({ agentTarget }) => {
+    const resolvedTarget = resolveSessionSpawnAgentTarget(agentTarget);
+    return resolvedTarget
+      ? {
+          agentId: resolvedTarget.agentId,
+          backendTargetKey: buildBackendTargetKeyV2(resolvedTarget.backendTarget),
+        }
+      : null;
+  };
+
+  const normalizeSessionSpawnNewLegacyApprovalReplay =
+    createRemoteDevSessionSpawnApprovalReplayNormalizer({
+      readAgentDefinitions: () => readAgentCatalogSnapshot().agentDefinitionsById.values(),
+      readLocalMachineIdentity: async () => {
+        const current = await readCurrentMachineControlIdentity();
+        return { machineId: current.machineId, host: current.host };
+      },
+    });
+
+  const requireLocalPromptActionMachine = async (machineId: string): Promise<Readonly<{
     ok: true;
-    sessionId: string;
-    rawSession: any;
-    ctx: SessionEncryptionContext;
-    mode: SessionStoredContentEncryptionMode;
   }> | Readonly<{
+    ok: false;
+    errorCode: 'machine_not_found';
+    error: 'machine_not_found';
+  }>> => {
+    const current = await readCurrentMachineControlIdentity();
+    return current.machineId === machineId
+      ? { ok: true }
+      : { ok: false, errorCode: 'machine_not_found', error: 'machine_not_found' };
+  };
+
+  const readPromptExternalLinks = async (): Promise<
+    | Readonly<{ status: 'valid'; value: ReturnType<typeof PromptExternalLinksV1Schema.parse> }>
+    | Readonly<{ status: 'invalid' }>
+    | ReturnType<typeof notSupported>
+  > => {
+    if (!params.credentials) return notSupported();
+    const context = await bootstrapAccountSettingsContext({
+      credentials: params.credentials,
+      mode: 'blocking',
+      refresh: 'force',
+    });
+    const persisted = context.rawSettings ?? context.settings;
+    if (!Object.hasOwn(persisted, 'promptExternalLinksV1')) {
+      return { status: 'valid', value: { v: 1, links: [] } };
+    }
+    const parsed = PromptExternalLinksV1Schema.safeParse(persisted.promptExternalLinksV1);
+    return parsed.success
+      ? { status: 'valid', value: parsed.data }
+      : { status: 'invalid' };
+  };
+
+  const persistPromptExternalLink = async (
+    nextLinks: ReturnType<typeof PromptExternalLinksV1Schema.parse> | undefined,
+    sourceWasInvalid: boolean,
+    signal?: AbortSignal,
+  ): Promise<PromptExternalLinkPersistenceSettlement | undefined> => {
+    const nextLink = nextLinks?.links.at(-1);
+    if (!nextLink) return undefined;
+    if (sourceWasInvalid) {
+      return Object.freeze({ status: 'invalid', reason: 'invalidValue' });
+    }
+    if (!params.credentials) {
+      return Object.freeze({ status: 'unavailable' as const, retryable: false });
+    }
+    try {
+      const mutation = AccountSettingMutationV1Schema.parse({
+        operations: [{
+          op: 'set',
+          key: 'promptExternalLinksV1',
+          value: nextLinks,
+        }],
+      });
+      const result = await updateAccountSettingsV2WithRetry({
+        credentials: params.credentials,
+        signal,
+        mutation,
+      });
+      return projectPromptExternalLinkPersistenceSettlement(result);
+    } catch {
+      // The artifact operation has already succeeded. Preserve that success
+      // and report only the independent link-persistence settlement.
+      return Object.freeze({ status: 'unavailable' as const, retryable: false });
+    }
+  };
+
+  const resolveTransportForSession = async (idOrPrefix: string): Promise<ResolvedSessionTransport | Readonly<{
     ok: false;
     code: string;
     candidates?: string[];
@@ -502,7 +881,7 @@ export function createCliActionDeps(params: Readonly<{
       return { ok: false, code: 'session_not_found' };
     }
     const cachedTransport = sessionTransportCache.get(normalized);
-    if (cachedTransport) return { ok: true, ...cachedTransport };
+    if (cachedTransport) return cachedTransport;
 
     const resolved = await resolveSessionTransportContext({ credentials: params.credentials, idOrPrefix: normalized });
     if (!resolved.ok) {
@@ -513,22 +892,187 @@ export function createCliActionDeps(params: Readonly<{
       };
     }
 
-    const cached = {
-      sessionId: resolved.sessionId,
-      rawSession: resolved.rawSession,
-      ctx: resolved.ctx,
-      mode: resolved.mode,
-    } as const;
+    const cached: ResolvedSessionTransport = resolved;
     sessionTransportCache.set(resolved.sessionId, cached);
     // If the input is already a full id, also cache by that literal.
     sessionTransportCache.set(normalized, cached);
-    return { ok: true, ...cached };
+    return cached;
+  };
+
+  const resumeInactiveSessionTransport = async (input: Readonly<{
+    transport: ResolvedSessionTransport;
+    localId: string;
+    signal?: AbortSignal;
+    waitForReady?: boolean;
+  }>) => {
+    if (input.transport.rawSession.active === true) {
+      return { ok: true } as const;
+    }
+    if (!params.credentials) {
+      return {
+        ok: false,
+        code: 'unsupported',
+        message: 'Inactive session resume requires authentication',
+      } as const;
+    }
+    const metadata = readSessionMetadata({
+      ...input.transport,
+      rawSession: input.transport.rawSession,
+    }) ?? {};
+    return await requestInactiveSessionResume({
+      credentials: params.credentials,
+      sessionId: input.transport.sessionId,
+      localId: input.localId,
+      rawSession: input.transport.rawSession,
+      metadata,
+      ...(input.signal ? { signal: input.signal } : {}),
+      ...(input.waitForReady === true ? { waitForReady: true } : {}),
+    });
+  };
+
+  type ExecutionRunActionTransportOptions = Readonly<{
+    serverId?: string | null;
+    originSessionId?: string | null;
+    targetMachineId?: string | null;
+    exactMachineId?: string | null;
+    signal?: AbortSignal;
+  }>;
+  type ExecutionRunMachineTarget =
+    | Readonly<{ ok: true; machineId: string }>
+    | Readonly<{ ok: false; errorCode: 'execution_run_target_not_selected' | 'execution_run_target_unavailable' }>;
+
+  /**
+   * Scope selection is authoritative before this point. This only resolves the
+   * already-selected Session's daemon (or the caller's current device outside
+   * a Session); it never scans, falls back, or accepts a machine id from Action
+   * input.
+   */
+  const resolveExecutionRunMachineTarget = async (
+    sessionId: string | null,
+    opts?: ExecutionRunActionTransportOptions,
+  ): Promise<ExecutionRunMachineTarget> => {
+    const preflightMachineId = normalizeStringValue(opts?.exactMachineId);
+    if (preflightMachineId) return { ok: true, machineId: preflightMachineId };
+
+    // A bound host admits this target before Action dispatch. It is neither
+    // mutable Action input nor a fallback candidate: V2 capability preflight
+    // must interrogate this exact daemon before the resulting exactMachineId
+    // pins every later control.
+    const admittedMachineId = normalizeStringValue(opts?.targetMachineId);
+    if (admittedMachineId) return { ok: true, machineId: admittedMachineId };
+
+    const originSessionId = normalizeStringValue(opts?.originSessionId);
+    const ownSessionId = params.sessionId !== 'cli-global' && params.sessionId !== 'plugin-global'
+      ? normalizeStringValue(params.sessionId)
+      : null;
+    const targetSessionId = sessionId ?? originSessionId ?? ownSessionId;
+
+    if (targetSessionId) {
+      const transport = await resolveTransportForSession(targetSessionId);
+      if (!transport.ok) return { ok: false, errorCode: 'execution_run_target_unavailable' };
+      const metadata = readSessionMetadata({ ...transport, rawSession: transport.rawSession });
+      const machineId = normalizeStringValue(transport.rawSession.machineId)
+        ?? normalizeStringValue(metadata?.machineId);
+      return machineId
+        ? { ok: true, machineId }
+        : { ok: false, errorCode: 'execution_run_target_unavailable' };
+    }
+
+    const local = await readCurrentMachineControlIdentity();
+    return local.machineId
+      ? { ok: true, machineId: local.machineId }
+      : { ok: false, errorCode: 'execution_run_target_not_selected' };
+  };
+
+  const callDetachedExecutionRunRpc = async (
+    sessionId: string | null,
+    method: string,
+    request: unknown,
+    opts?: ExecutionRunActionTransportOptions,
+  ): Promise<unknown> => {
+    const isStart = method === SESSION_RPC_METHODS.EXECUTION_RUN_START;
+    const failure = (code: string, runCreation: 'noRunCreated' | 'outcomeUnknown', message?: string) => (
+      executionRunActionFailure(
+        code,
+        message,
+        isStart ? withExecutionRunStartFailureDetails(undefined, runCreation) : undefined,
+      )
+    );
+    if (!params.credentials) {
+      return failure('not_authenticated', 'noRunCreated');
+    }
+    const target = await resolveExecutionRunMachineTarget(sessionId, opts);
+    if (!target.ok) return failure(target.errorCode, 'noRunCreated');
+    try {
+      return await callMachineRpc({
+        credentials: params.credentials,
+        machineId: target.machineId,
+        method,
+        request,
+        ...(opts?.signal ? { signal: opts.signal } : {}),
+      });
+    } catch (error) {
+      const runCreation = readMachineRpcRequestDisposition(error) === 'notSent'
+        ? 'noRunCreated'
+        : 'outcomeUnknown';
+      if (isExecutionRunActionAbort(error, opts?.signal)) {
+        return failure('cancelled', runCreation);
+      }
+      return failure('execution_run_target_unavailable', runCreation);
+    }
+  };
+
+  const readExecutionRunProtocolV2 = async (
+    sessionId: string | null,
+    opts?: ExecutionRunActionTransportOptions,
+  ): Promise<
+    | Readonly<{ ok: true; exactMachineId: string }>
+    | Readonly<{ ok: false; errorCode: string; error: string }>
+  > => {
+    if (!params.credentials) {
+      return executionRunActionFailure('not_authenticated');
+    }
+    if (opts?.signal?.aborted) {
+      return executionRunActionFailure('cancelled');
+    }
+    const target = await resolveExecutionRunMachineTarget(sessionId, opts);
+    if (!target.ok) return executionRunActionFailure(target.errorCode);
+    try {
+      const response = await callMachineRpc({
+        credentials: params.credentials,
+        machineId: target.machineId,
+        method: RPC_METHODS.CAPABILITIES_DETECT,
+        request: { requests: [{ id: 'tool.executionRuns' }] },
+        ...(opts?.signal ? { signal: opts.signal } : {}),
+      });
+      const result = readRecord(readRecord(response).results)['tool.executionRuns'];
+      const data = readRecord(readRecord(result).data);
+      const features = readRecord(data.features);
+      if (
+        readRecord(result).ok !== true
+        || data.protocolVersion !== 2
+        || features.detachedScope !== true
+        || features.startAndWait !== true
+      ) {
+        return executionRunActionFailure('execution_run_protocol_unsupported');
+      }
+      return { ok: true, exactMachineId: target.machineId };
+    } catch (error) {
+      if (isExecutionRunActionAbort(error, opts?.signal)) {
+        return executionRunActionFailure('cancelled');
+      }
+      if (isRpcMethodNotAvailableError(error) || isRpcMethodNotFoundError(error)) {
+        return executionRunActionFailure('execution_run_protocol_unsupported');
+      }
+      return executionRunActionFailure('execution_run_target_unavailable');
+    }
   };
 
   const callSessionRpcForTransport = async (
     transport: ResolvedSessionTransport,
     methodSuffix: string,
     request: unknown,
+    signal?: AbortSignal,
   ): Promise<unknown> => {
     if (!params.credentials) {
       return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
@@ -536,12 +1080,12 @@ export function createCliActionDeps(params: Readonly<{
 
     try {
       return await callSessionRpc({
+        ...transport,
         token: params.credentials.token,
         sessionId: transport.sessionId,
-        ctx: transport.ctx,
-        mode: transport.mode,
         method: `${transport.sessionId}:${methodSuffix}`,
         request,
+        ...(signal ? { signal } : {}),
       });
     } catch (error) {
       const errorCode = readRpcErrorCode(error) ?? 'session_rpc_failed';
@@ -591,9 +1135,8 @@ export function createCliActionDeps(params: Readonly<{
       const transport = await resolveTransportForSession(event.happySessionId);
       if (!transport.ok) return {};
       const metadata = readSessionMetadata({
+        ...transport,
         rawSession: transport.rawSession,
-        mode: transport.mode,
-        ctx: transport.ctx,
       });
       return normalizeLifecycleHookSessionContext({
         machineId: normalizeStringValue(transport.rawSession.machineId) ?? metadata?.machineId,
@@ -634,6 +1177,7 @@ export function createCliActionDeps(params: Readonly<{
     sessionId: string,
     method: string,
     request: unknown,
+    signal?: AbortSignal,
   ): Promise<unknown> => {
     if (!params.credentials) {
       return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
@@ -642,7 +1186,7 @@ export function createCliActionDeps(params: Readonly<{
     if (!transport.ok) {
       return { ok: false, errorCode: transport.code, error: transport.code, ...(transport.candidates ? { candidates: transport.candidates } : {}) };
     }
-    return await callSessionRpcForTransport(transport, method, request);
+    return await callSessionRpcForTransport(transport, method, request, signal);
   };
 
   const isUsageLimitRecoveryEnabled = async (): Promise<boolean> => {
@@ -677,12 +1221,12 @@ export function createCliActionDeps(params: Readonly<{
     }
 
     const metadata = readSessionMetadata({
+      ...transport,
       rawSession: transport.rawSession,
-      mode: transport.mode,
-      ctx: transport.ctx,
     });
     const currentMachineIdentity = await readCurrentMachineControlIdentity();
     return await routeSessionGoalControl({
+      ...transport,
       token: params.credentials.token,
       credentials: params.credentials,
       sessionId: transport.sessionId,
@@ -691,8 +1235,6 @@ export function createCliActionDeps(params: Readonly<{
       currentMachineId: currentMachineIdentity.machineId,
       currentMachineHost: currentMachineIdentity.host,
       currentMachineHomeDir: currentMachineIdentity.homeDir,
-      ctx: transport.ctx,
-      mode: transport.mode,
       operation,
       ...(operation === 'set' ? { request } : {}),
       callLiveSessionRpc: async () => await callSessionRpcForTransport(
@@ -726,9 +1268,8 @@ export function createCliActionDeps(params: Readonly<{
     }
 
     const metadata = readSessionMetadata({
+      ...transport,
       rawSession: transport.rawSession,
-      mode: transport.mode,
-      ctx: transport.ctx,
     });
     const currentMachineIdentity = await readCurrentMachineControlIdentity();
     const method = operation === 'vendorPlugins'
@@ -738,6 +1279,7 @@ export function createCliActionDeps(params: Readonly<{
       ...(typeof request.cwd === 'string' && request.cwd.trim().length > 0 ? { cwd: request.cwd.trim() } : {}),
     };
     return await routeSessionCatalogControl({
+      ...transport,
       token: params.credentials.token,
       credentials: params.credentials,
       sessionId: transport.sessionId,
@@ -746,8 +1288,6 @@ export function createCliActionDeps(params: Readonly<{
       currentMachineId: currentMachineIdentity.machineId,
       currentMachineHost: currentMachineIdentity.host,
       currentMachineHomeDir: currentMachineIdentity.homeDir,
-      ctx: transport.ctx,
-      mode: transport.mode,
       operation,
       ...('cwd' in rpcRequest ? { cwd: rpcRequest.cwd } : {}),
       callLiveSessionRpc: async () => await callSessionRpcForTransport(
@@ -783,9 +1323,8 @@ export function createCliActionDeps(params: Readonly<{
     }
 
     const metadata = readSessionMetadata({
+      ...transport,
       rawSession: transport.rawSession,
-      mode: transport.mode,
-      ctx: transport.ctx,
     });
     if (transport.rawSession.active === true) {
       return normalizeUsageLimitRecoveryOperationResult(await callSessionRpcForTransport(
@@ -842,587 +1381,1244 @@ export function createCliActionDeps(params: Readonly<{
     }
   };
 
+  const executeSessionBoundScmAction: NonNullable<ActionExecutorDeps['scmActionExecute']> = async ({
+    actionId,
+    input,
+    context,
+    executeCanonicalAction,
+  }) => {
+    if (!params.credentials) {
+      return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
+    }
+    const sessionId = normalizeStringValue(context.defaultSessionId);
+    if (!sessionId) {
+      return { ok: false, errorCode: 'session_not_selected', error: 'session_not_selected' };
+    }
+    const transport = await resolveTransportForSession(sessionId);
+    if (!transport.ok) {
+      return { ok: false, errorCode: transport.code, error: transport.code };
+    }
+
+    const metadata = readSessionMetadata({
+      ...transport,
+      rawSession: transport.rawSession,
+    });
+    const persistedWorkingDirectory = normalizeStringValue(transport.rawSession.path)
+      ?? normalizeStringValue(metadata?.path);
+    if (!persistedWorkingDirectory) {
+      return {
+        ok: false,
+        errorCode: 'scm_action_worktree_unavailable',
+        error: 'scm_action_worktree_unavailable',
+      };
+    }
+
+    const currentMachine = await readCurrentMachineControlIdentity();
+    const workingDirectory = metadata
+      ? resolveSessionMachineWorkspacePath({
+          metadata,
+          currentMachineId: currentMachine.machineId,
+          candidatePath: persistedWorkingDirectory,
+        }) ?? persistedWorkingDirectory
+      : persistedWorkingDirectory;
+    const sessionMachineId = normalizeStringValue(transport.rawSession.machineId)
+      ?? normalizeStringValue(metadata?.machineId);
+    const sessionHost = normalizeStringValue(transport.rawSession.host)
+      ?? normalizeStringValue(metadata?.host);
+    const machineMismatch = Boolean(
+      sessionMachineId
+      && currentMachine.machineId
+      && sessionMachineId !== currentMachine.machineId,
+    );
+    const hostMismatch = Boolean(
+      !sessionMachineId
+      && sessionHost
+      && currentMachine.host
+      && sessionHost !== currentMachine.host,
+    );
+    if (machineMismatch || hostMismatch) {
+      return {
+        ok: false,
+        errorCode: 'scm_action_session_not_local',
+        error: 'scm_action_session_not_local',
+      };
+    }
+
+    const inputRecord = input && typeof input === 'object' && !Array.isArray(input)
+      ? input as Readonly<Record<string, unknown>>
+      : {};
+    const sessionBoundInput = actionId === 'scm.repository.clone'
+      ? inputRecord
+      : actionId === 'scm.pullRequest.prepareWorktree'
+        ? { ...inputRecord, cwd: workingDirectory, sourcePath: workingDirectory }
+        : { ...inputRecord, cwd: workingDirectory };
+    const backendTarget = (() => {
+      if (actionId !== 'scm.diffSummary.generate') return null;
+      const selector = sessionBoundInput.modelSelector;
+      const selectorRecord = selector && typeof selector === 'object' && !Array.isArray(selector)
+        ? selector as Readonly<Record<string, unknown>>
+        : {};
+      const targetKey = normalizeStringValue(selectorRecord.backendTargetKey);
+      if (targetKey) {
+        try {
+          return parseBackendTargetKeyV2(targetKey);
+        } catch {
+          return null;
+        }
+      }
+      return resolveBackendTargetFromSessionMetadata(metadata);
+    })();
+
+    return await executeScmActionOperation({
+      actionId,
+      input: sessionBoundInput,
+      workingDirectory,
+      accessPolicy: { kind: 'restrictedRoots', roots: [workingDirectory] },
+      ...(context.signal ? { signal: context.signal } : {}),
+      executeDiffSummary: async ({ request }) => await executeScmDiffSummaryAction({
+        request: request as ScmDiffSummaryGenerateInput,
+        backendTarget,
+        executeCanonicalAction,
+      }),
+    });
+  };
+
+  type SessionSpawnTargetPreparation =
+    | Readonly<{
+        ok: true;
+        preparedTarget: Extract<
+          SessionCreationTargetPreparationResultV1,
+          Readonly<{ ok: true }>
+        >;
+      }>
+    | Readonly<{
+        ok: false;
+        result: Extract<SessionSpawnNewResultV1, Readonly<{ type: 'error' }>>;
+      }>;
+
+  /**
+   * One exact-target bridge to the daemon-owned preparation RPC. Both the
+   * Action approval probe and the eventual V2 spawn consume this owner; no
+   * caller resolves a remote path or synthesizes its directory state.
+   */
+  const prepareSessionSpawnTarget = async (input: Readonly<{
+    executionTarget: Readonly<{ serverId: string; machineId: string }>;
+    directory: string;
+    checkoutCreationDraft?: SessionCreationTargetPreparationRequestV1['checkoutCreationDraft'];
+    signal?: AbortSignal;
+  }>): Promise<SessionSpawnTargetPreparation> => {
+    if (!params.credentials) {
+      return {
+        ok: false,
+        result: { type: 'error', code: 'permission_denied', retryable: false },
+      };
+    }
+    if (input.signal?.aborted) {
+      return {
+        ok: false,
+        result: { type: 'error', code: 'cancelled', retryable: true },
+      };
+    }
+
+    const directTargetTransport = params.sessionSpawnDirectTargetTransport;
+    if (
+      directTargetTransport
+      && directTargetTransport.machineId !== input.executionTarget.machineId
+    ) {
+      return {
+        ok: false,
+        result: { type: 'error', code: 'target_unavailable', retryable: false },
+      };
+    }
+
+    let rawPreparedTarget: unknown;
+    try {
+      rawPreparedTarget = directTargetTransport
+        ? await directTargetTransport.prepare(
+          {
+            directory: input.directory,
+            ...(input.checkoutCreationDraft !== undefined
+              ? { checkoutCreationDraft: input.checkoutCreationDraft }
+              : {}),
+          },
+          input.signal ? { signal: input.signal } : undefined,
+        )
+        : await callMachineRpc({
+          credentials: params.credentials,
+          machineId: input.executionTarget.machineId,
+          method: RPC_METHODS.DAEMON_SESSION_CREATION_PREPARE,
+          request: {
+            directory: input.directory,
+            ...(input.checkoutCreationDraft !== undefined
+              ? { checkoutCreationDraft: input.checkoutCreationDraft }
+              : {}),
+          },
+          ...(input.signal ? { signal: input.signal } : {}),
+        });
+    } catch (error) {
+      if (input.signal?.aborted) {
+        return {
+          ok: false,
+          result: { type: 'error', code: 'cancelled', retryable: true },
+        };
+      }
+      if (isRpcMethodNotAvailableError(error) || isRpcMethodNotFoundError(error)) {
+        return {
+          ok: false,
+          result: { type: 'error', code: 'incompatible_target', retryable: false },
+        };
+      }
+      if (isAuthenticationError(error)) {
+        return {
+          ok: false,
+          result: { type: 'error', code: 'permission_denied', retryable: false },
+        };
+      }
+      return {
+        ok: false,
+        result: { type: 'error', code: 'machine_offline', retryable: true },
+      };
+    }
+
+    const preparedTarget = SessionCreationTargetPreparationResultV1Schema.safeParse(rawPreparedTarget);
+    if (!preparedTarget.success) {
+      return {
+        ok: false,
+        result: { type: 'error', code: 'incompatible_target', retryable: false },
+      };
+    }
+    if (!preparedTarget.data.ok) {
+      if (preparedTarget.data.code === 'invalid_directory') {
+        return {
+          ok: false,
+          result: { type: 'error', code: 'invalid_input', retryable: false },
+        };
+      }
+      if (preparedTarget.data.code === 'checkout_unavailable') {
+        return {
+          ok: false,
+          result: { type: 'error', code: 'incompatible_target', retryable: false },
+        };
+      }
+      return {
+        ok: false,
+        result: { type: 'error', code: 'spawn_failed', retryable: true },
+      };
+    }
+    return { ok: true, preparedTarget: preparedTarget.data };
+  };
+
   return {
-    executionRunStart: async (sessionId, request) => {
+    normalizeSessionSpawnNewLegacyApprovalReplay,
+    resolveSessionSpawnAgentInventorySelection,
+    scmActionExecute: executeSessionBoundScmAction,
+    executionRunCheckProtocolV2: async (sessionId, requirement, opts) => {
+      if (!requirement.detachedScope && !requirement.startAndWait) {
+        return { ok: true };
+      }
+      return await readExecutionRunProtocolV2(sessionId, opts);
+    },
+    executionRunStart: async (sessionId, request, opts) => {
+      if (sessionId === null) {
+        return await callDetachedExecutionRunRpc(
+          sessionId,
+          SESSION_RPC_METHODS.EXECUTION_RUN_START,
+          request,
+          opts,
+        );
+      }
       const transport = await resolveTransportForSession(sessionId);
       if (!transport.ok) {
-        return { ok: false, code: transport.code, ...(transport.candidates ? { candidates: transport.candidates } : {}) };
+        return {
+          ok: false,
+          code: transport.code,
+          ...(transport.candidates ? { candidates: transport.candidates } : {}),
+          details: withExecutionRunStartFailureDetails(undefined, 'noRunCreated'),
+        };
+      }
+      const resumed = await resumeInactiveSessionTransport({
+        transport,
+        localId: `execution.run.start:${randomUUID()}`,
+        ...(opts?.signal ? { signal: opts.signal } : {}),
+        waitForReady: true,
+      });
+      if (!resumed.ok) {
+        return {
+          ok: false,
+          code: 'execution_run_target_unavailable',
+          message: resumed.message,
+          details: withExecutionRunStartFailureDetails(undefined, 'noRunCreated'),
+        };
       }
       return await startExecutionRun({
+        ...transport,
         token: params.token,
         sessionId: transport.sessionId,
-        mode: transport.mode,
-        ctx: transport.ctx,
         request,
+        ...(opts?.signal ? { signal: opts.signal } : {}),
       });
     },
-    executionRunList: async (sessionId, request) => {
+    executionRunList: async (sessionId, request, opts) => {
+      if (sessionId === null) {
+        return await callDetachedExecutionRunRpc(
+          sessionId,
+          SESSION_RPC_METHODS.EXECUTION_RUN_LIST,
+          request,
+          opts,
+        );
+      }
       const transport = await resolveTransportForSession(sessionId);
       if (!transport.ok) {
         return { ok: false, code: transport.code, ...(transport.candidates ? { candidates: transport.candidates } : {}) };
       }
       return await listExecutionRuns({
+        ...transport,
         token: params.token,
         sessionId: transport.sessionId,
-        mode: transport.mode,
-        ctx: transport.ctx,
         request,
         skipLiveRpc: transport.rawSession.active === false,
+        ...(opts?.signal ? { signal: opts.signal } : {}),
       });
     },
-    executionRunGet: async (sessionId, request) => {
+    executionRunGet: async (sessionId, request, opts) => {
+      if (sessionId === null) {
+        return await callDetachedExecutionRunRpc(
+          sessionId,
+          SESSION_RPC_METHODS.EXECUTION_RUN_GET,
+          request,
+          opts,
+        );
+      }
       const transport = await resolveTransportForSession(sessionId);
       if (!transport.ok) {
         return { ok: false, code: transport.code, ...(transport.candidates ? { candidates: transport.candidates } : {}) };
       }
       return await getExecutionRun({
+        ...transport,
         token: params.token,
         sessionId: transport.sessionId,
-        mode: transport.mode,
-        ctx: transport.ctx,
         request,
+        ...(opts?.signal ? { signal: opts.signal } : {}),
       });
     },
-    executionRunSend: async (sessionId, request) => {
+    executionRunSend: async (sessionId, request, opts) => {
+      if (sessionId === null) {
+        return await callDetachedExecutionRunRpc(
+          sessionId,
+          SESSION_RPC_METHODS.EXECUTION_RUN_SEND,
+          request,
+          opts,
+        );
+      }
       const transport = await resolveTransportForSession(sessionId);
       if (!transport.ok) {
         return { ok: false, code: transport.code, ...(transport.candidates ? { candidates: transport.candidates } : {}) };
       }
       return await sendExecutionRunMessage({
+        ...transport,
         token: params.token,
         sessionId: transport.sessionId,
-        mode: transport.mode,
-        ctx: transport.ctx,
         request,
+        ...(opts?.signal ? { signal: opts.signal } : {}),
       });
     },
-    executionRunStop: async (sessionId, request) => {
+    executionRunEnsure: async (sessionId, request, opts) => {
+      if (sessionId === null) {
+        return await callDetachedExecutionRunRpc(
+          sessionId,
+          SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE,
+          request,
+          opts,
+        );
+      }
+      const transport = await resolveTransportForSession(sessionId);
+      if (!transport.ok) {
+        return { ok: false, code: transport.code, ...(transport.candidates ? { details: transport.candidates } : {}) };
+      }
+      return await ensureExecutionRun({
+        ...transport,
+        token: params.token,
+        sessionId: transport.sessionId,
+        request,
+        ...(opts?.signal ? { signal: opts.signal } : {}),
+      });
+    },
+    executionRunEnsureOrStart: async (sessionId, request, opts) => {
+      if (sessionId === null) {
+        return await callDetachedExecutionRunRpc(
+          sessionId,
+          SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START,
+          request,
+          opts,
+        );
+      }
+      const transport = await resolveTransportForSession(sessionId);
+      if (!transport.ok) {
+        return { ok: false, code: transport.code, ...(transport.candidates ? { details: transport.candidates } : {}) };
+      }
+      return await ensureOrStartExecutionRun({
+        ...transport,
+        token: params.token,
+        sessionId: transport.sessionId,
+        request,
+        ...(opts?.signal ? { signal: opts.signal } : {}),
+      });
+    },
+    executionRunStreamStart: async (sessionId, request, opts) => {
+      if (sessionId === null) {
+        return await callDetachedExecutionRunRpc(
+          sessionId,
+          SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_START,
+          request,
+          opts,
+        );
+      }
+      const transport = await resolveTransportForSession(sessionId);
+      if (!transport.ok) {
+        return { ok: false, code: transport.code, ...(transport.candidates ? { details: transport.candidates } : {}) };
+      }
+      return await startExecutionRunStream({
+        ...transport,
+        token: params.token,
+        sessionId: transport.sessionId,
+        request,
+        ...(opts?.signal ? { signal: opts.signal } : {}),
+      });
+    },
+    executionRunStreamRead: async (sessionId, request, opts) => {
+      if (sessionId === null) {
+        return await callDetachedExecutionRunRpc(
+          sessionId,
+          SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_READ,
+          request,
+          opts,
+        );
+      }
+      const transport = await resolveTransportForSession(sessionId);
+      if (!transport.ok) {
+        return { ok: false, code: transport.code, ...(transport.candidates ? { details: transport.candidates } : {}) };
+      }
+      return await readExecutionRunStream({
+        ...transport,
+        token: params.token,
+        sessionId: transport.sessionId,
+        request,
+        ...(opts?.signal ? { signal: opts.signal } : {}),
+      });
+    },
+    executionRunStreamCancel: async (sessionId, request, opts) => {
+      if (sessionId === null) {
+        return await callDetachedExecutionRunRpc(
+          sessionId,
+          SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_CANCEL,
+          request,
+          opts,
+        );
+      }
+      const transport = await resolveTransportForSession(sessionId);
+      if (!transport.ok) {
+        return { ok: false, code: transport.code, ...(transport.candidates ? { details: transport.candidates } : {}) };
+      }
+      return await cancelExecutionRunStream({
+        ...transport,
+        token: params.token,
+        sessionId: transport.sessionId,
+        request,
+        ...(opts?.signal ? { signal: opts.signal } : {}),
+      });
+    },
+    executionRunStop: async (sessionId, request, opts) => {
+      if (sessionId === null) {
+        return await callDetachedExecutionRunRpc(
+          sessionId,
+          SESSION_RPC_METHODS.EXECUTION_RUN_STOP,
+          request,
+          opts,
+        );
+      }
       const transport = await resolveTransportForSession(sessionId);
       if (!transport.ok) {
         return { ok: false, code: transport.code, ...(transport.candidates ? { candidates: transport.candidates } : {}) };
       }
       return await stopExecutionRun({
+        ...transport,
         token: params.token,
         sessionId: transport.sessionId,
-        mode: transport.mode,
-        ctx: transport.ctx,
         request,
+        ...(opts?.signal ? { signal: opts.signal } : {}),
       });
     },
-    executionRunAction: async (sessionId, request) => {
+    executionRunAction: async (sessionId, request, opts) => {
+      if (sessionId === null) {
+        return await callDetachedExecutionRunRpc(
+          sessionId,
+          SESSION_RPC_METHODS.EXECUTION_RUN_ACTION,
+          request,
+          opts,
+        );
+      }
       const transport = await resolveTransportForSession(sessionId);
       if (!transport.ok) {
         return { ok: false, code: transport.code, ...(transport.candidates ? { candidates: transport.candidates } : {}) };
       }
       return await executeExecutionRunAction({
+        ...transport,
         token: params.token,
         sessionId: transport.sessionId,
-        mode: transport.mode,
-        ctx: transport.ctx,
         request,
+        ...(opts?.signal ? { signal: opts.signal } : {}),
       });
     },
-    executionRunWait: async (sessionId, request) => {
+    executionRunWait: async (sessionId, request, opts) => {
+      const pollIntervalMs = normalizeExecutionRunWaitPollIntervalMs(
+        (request as any)?.pollIntervalMs,
+        normalizeExecutionRunWaitPollIntervalMs(process.env.HAPPIER_SESSION_RUN_WAIT_POLL_INTERVAL_MS),
+      );
+      if (sessionId === null) {
+        return await waitForExecutionRun({
+          runId: String((request as any)?.runId ?? ''),
+          timeoutMs: normalizeExecutionRunWaitTimeoutMs((request as any)?.timeoutSeconds),
+          pollIntervalMs,
+          ...(opts?.signal ? { signal: opts.signal } : {}),
+          readRun: async (getRequest) => {
+            const result = await callDetachedExecutionRunRpc(
+              sessionId,
+              SESSION_RPC_METHODS.EXECUTION_RUN_GET,
+              getRequest,
+              opts,
+            );
+            const record = readRecord(result);
+            if (record.ok === false) {
+              const code = normalizeStringValue(record.errorCode) ?? 'execution_run_target_unavailable';
+              return {
+                ok: false,
+                code,
+                ...(normalizeStringValue(record.error) ? { message: normalizeStringValue(record.error)! } : {}),
+              };
+            }
+            return { ok: true, data: result };
+          },
+        });
+      }
       const transport = await resolveTransportForSession(sessionId);
       if (!transport.ok) {
         return { ok: false, code: transport.code, ...(transport.candidates ? { candidates: transport.candidates } : {}) };
       }
 
-      const pollIntervalMs = normalizeExecutionRunWaitPollIntervalMs(
-        (request as any)?.pollIntervalMs,
-        normalizeExecutionRunWaitPollIntervalMs(process.env.HAPPIER_SESSION_RUN_WAIT_POLL_INTERVAL_MS),
-      );
-
       return await waitForExecutionRun({
+        ...transport,
         token: params.token,
         sessionId: transport.sessionId,
-        mode: transport.mode,
-        ctx: transport.ctx,
         runId: String((request as any)?.runId ?? ''),
         timeoutMs: normalizeExecutionRunWaitTimeoutMs((request as any)?.timeoutSeconds),
         pollIntervalMs,
+        ...(opts?.signal ? { signal: opts.signal } : {}),
       });
     },
     reviewStartInline: async ({ sessionId, input }) => {
       return await callResolvedSessionRpc(sessionId, SESSION_RPC_METHODS.SESSION_REVIEW_START_INLINE, input);
     },
+    ...(reviewCommentAction
+      ? {
+        reviewCommentAction: async ({ actionId, input, reviewCommentPrincipal, signal }) =>
+          await reviewCommentAction(actionId, input, {
+            ...(reviewCommentPrincipal ? { principal: reviewCommentPrincipal } : {}),
+            ...(signal ? { signal } : {}),
+          }),
+      }
+      : {}),
 
-    daemonMemorySearch: async () => notSupported(),
-    daemonMemoryGetWindow: async () => notSupported(),
-    daemonMemoryEnsureUpToDate: async () => notSupported(),
+    daemonMemorySearch: async ({ machineId, query }) => {
+      if (!params.credentials) return notSupported();
+      return MemorySearchResultV1Schema.parse(await callMachineRpc({
+        credentials: params.credentials,
+        machineId,
+        method: RPC_METHODS.DAEMON_MEMORY_SEARCH,
+        request: query,
+      }));
+    },
+    daemonMemoryGetWindow: async ({ machineId, sessionId, seqFrom, seqTo }) => {
+      if (!params.credentials) return notSupported();
+      return MemoryWindowV1Schema.parse(await callMachineRpc({
+        credentials: params.credentials,
+        machineId,
+        method: RPC_METHODS.DAEMON_MEMORY_GET_WINDOW,
+        request: { v: 1, sessionId, seqFrom, seqTo },
+      }));
+    },
+    daemonMemoryEnsureUpToDate: async ({ machineId, sessionId }) => {
+      if (!params.credentials) return notSupported();
+      return await callMachineRpc({
+        credentials: params.credentials,
+        machineId,
+        method: RPC_METHODS.DAEMON_MEMORY_ENSURE_UP_TO_DATE,
+        request: sessionId ? { sessionId } : {},
+      });
+    },
+    daemonPromptAssetsDiscover: async ({ request, signal }) => await discoverPromptAssets({
+      registry: promptAssetAdapterRegistry,
+      request,
+      ...(signal ? { signal } : {}),
+    }),
+    daemonPromptAssetsDelete: async ({ request, signal }) => await deletePromptAsset({
+      registry: promptAssetAdapterRegistry,
+      request,
+      ...(signal ? { signal } : {}),
+    }),
+    daemonPromptRegistryScanSource: async ({ request }) => await scanPromptRegistrySource({
+      registry: promptRegistryAdapterRegistry,
+      request,
+    }),
+    daemonPromptRegistryInstall: async ({ request, signal }) => await installPromptRegistryItem({
+      registry: promptRegistryAdapterRegistry,
+      assetRegistry: promptAssetAdapterRegistry,
+      request,
+      ...(signal ? { signal } : {}),
+    }),
+    promptDocUpdate: async ({ signal, ...request }) => {
+      if (!approvalsStore) return notSupported();
+      return await updatePromptDocInLibrary({
+        store: approvalsStore.promptLibraryStore,
+        request,
+        ...(signal ? { signal } : {}),
+      });
+    },
+    promptBundleUpdate: async ({ signal, ...request }) => {
+      if (!approvalsStore) return notSupported();
+      return await updatePromptBundleInLibrary({
+        store: approvalsStore.promptLibraryStore,
+        request,
+        ...(signal ? { signal } : {}),
+      });
+    },
+    promptAssetExport: async ({ signal, ...request }) => {
+      if (!approvalsStore) return notSupported();
+      const localMachine = await requireLocalPromptActionMachine(request.machineId);
+      if (!localMachine.ok) return localMachine;
+      const promptExternalLinks = await readPromptExternalLinks();
+      if ('ok' in promptExternalLinks && promptExternalLinks.ok === false) return promptExternalLinks;
+      const result = await exportPromptLibraryArtifact({
+        store: approvalsStore.promptLibraryStore,
+        write: async ({ request: writeRequest, signal: writeSignal }) => await writePromptAsset({
+          registry: promptAssetAdapterRegistry,
+          request: writeRequest,
+          ...(writeSignal ? { signal: writeSignal } : {}),
+        }),
+        request: {
+          ...request,
+          workspacePath: request.directory ?? null,
+          targetInput: request.targetPath ?? request.targetName ?? '',
+          promptExternalLinks: promptExternalLinks.status === 'valid'
+            ? promptExternalLinks.value
+            : { v: 1, links: [] },
+        },
+        randomId: randomUUID,
+        ...(signal ? { signal } : {}),
+      });
+      if (!result.ok) return result;
+      const externalLinkPersistence = await persistPromptExternalLink(
+        result.nextPromptExternalLinks,
+        promptExternalLinks.status === 'invalid',
+        signal,
+      );
+      return {
+        ...result,
+        ...(externalLinkPersistence ? { externalLinkPersistence } : {}),
+      };
+    },
+    promptRegistryInstall: async ({ signal, ...request }) => {
+      if (!approvalsStore) return notSupported();
+      const localMachine = await requireLocalPromptActionMachine(request.machineId);
+      if (!localMachine.ok) return localMachine;
+      let fetchedItem: PromptRegistryFetchedItemV1 | null = null;
+      const promptExternalLinks = await readPromptExternalLinks();
+      if ('ok' in promptExternalLinks && promptExternalLinks.ok === false) return promptExternalLinks;
+      const result = await installPromptRegistryItemInLibrary({
+        store: approvalsStore.promptLibraryStore,
+        fetchItem: async ({ sourceId, itemId, configuredSources, signal: fetchSignal }) => {
+          const fetched = await fetchPromptRegistryItem({
+            registry: promptRegistryAdapterRegistry,
+            sourceId,
+            itemId,
+            configuredSources,
+            ...(fetchSignal ? { signal: fetchSignal } : {}),
+          });
+          if (fetched.ok) fetchedItem = fetched.item;
+          return fetched;
+        },
+        install: async ({ request: installRequest, signal: installSignal }) => await installPromptRegistryItem({
+          registry: promptRegistryAdapterRegistry,
+          assetRegistry: promptAssetAdapterRegistry,
+          request: installRequest,
+          ...(fetchedItem ? { fetchedItem } : {}),
+          ...(installSignal ? { signal: installSignal } : {}),
+        }),
+        request: {
+          ...request,
+          promptExternalLinks: promptExternalLinks.status === 'valid'
+            ? promptExternalLinks.value
+            : { v: 1, links: [] },
+        },
+        randomId: randomUUID,
+        ...(signal ? { signal } : {}),
+      });
+      if (!result.ok) return result;
+      const externalLinkPersistence = await persistPromptExternalLink(
+        result.nextPromptExternalLinks,
+        promptExternalLinks.status === 'invalid',
+        signal,
+      );
+      return {
+        ...result,
+        ...(externalLinkPersistence ? { externalLinkPersistence } : {}),
+      };
+    },
 
-    sessionOpen: async () => notSupported(),
-    sessionFork: async () => notSupported(),
-    sessionRollback: async () => notSupported(),
+    sessionOpen: async ({ sessionId, actionRequestId, signal }) => {
+      if (!params.credentials) return notSupported();
+      const transport = await resolveTransportForSession(sessionId);
+      if (!transport.ok) {
+        return { ok: false, errorCode: transport.code, error: transport.code };
+      }
+      if (transport.rawSession.active === true) {
+        return { ok: true, status: 'opened', sessionId: transport.sessionId };
+      }
+      const localId = normalizeStringValue(actionRequestId) ?? `session.open:${transport.sessionId}`;
+      const resumed = await resumeInactiveSessionTransport({
+        transport,
+        localId,
+        ...(signal ? { signal } : {}),
+      });
+      return resumed.ok
+        ? { ok: true, status: 'opened', sessionId: transport.sessionId }
+        : { ok: false, errorCode: resumed.code, error: resumed.message };
+    },
+    sessionFork: async ({ sessionId, signal }) => {
+      if (!params.credentials) return notSupported();
+      const transport = await resolveTransportForSession(sessionId);
+      if (!transport.ok) {
+        return { ok: false, errorCode: transport.code, error: transport.code };
+      }
+      const metadata = readSessionMetadata({ ...transport, rawSession: transport.rawSession });
+      const machineId = normalizeStringValue(transport.rawSession.machineId)
+        ?? normalizeStringValue(metadata?.machineId);
+      if (!machineId) {
+        return { ok: false, errorCode: 'machine_not_found', error: 'machine_not_found' };
+      }
+      return await callMachineRpc({
+        credentials: params.credentials,
+        machineId,
+        method: RPC_METHODS.SESSION_FORK,
+        request: { parentSessionId: transport.sessionId, forkPoint: { type: 'latest' } },
+        ...(signal ? { signal } : {}),
+      });
+    },
+    sessionContinueWithReplay: async (args) => {
+      if (!params.credentials) return notSupported();
+      const machineId = (await readCurrentMachineControlIdentity()).machineId;
+      if (!machineId) {
+        return { ok: false, errorCode: 'machine_not_found', error: 'machine_not_found' };
+      }
+      const { signal, ...request } = args;
+      return await callMachineRpc({
+        credentials: params.credentials,
+        machineId,
+        method: RPC_METHODS.SESSION_CONTINUE_WITH_REPLAY,
+        request,
+        ...(signal ? { signal } : {}),
+      });
+    },
+    sessionRollback: async ({ sessionId, target, signal }) => await callResolvedSessionRpc(
+      sessionId,
+      SESSION_RPC_METHODS.SESSION_ROLLBACK,
+      { sessionId, ...(target ? { target } : {}) },
+      signal,
+    ),
+    checkpointCodeRollback: async ({ request, signal }) => await callResolvedSessionRpc(
+      request.sessionId,
+      SESSION_RPC_METHODS.SESSION_CHECKPOINT_CODE_ROLLBACK,
+      request,
+      signal,
+    ),
+    sessionCheckpoint: async ({ request, signal }) => await callResolvedSessionRpc(
+      request.sessionId,
+      SESSION_RPC_METHODS.SESSION_CHECKPOINT,
+      request,
+      signal,
+    ),
+    sessionRestore: async ({ request, signal }) => await callResolvedSessionRpc(
+      request.sessionId,
+      SESSION_RPC_METHODS.SESSION_RESTORE,
+      request,
+      signal,
+    ),
+    sessionHandoffStart: async ({
+      sessionId,
+      targetMachineId,
+      targetSessionStorageMode,
+      workspaceTransfer,
+      signal,
+    }) => {
+      if (!params.credentials) return notSupported();
+      const transport = await resolveTransportForSession(sessionId);
+      if (!transport.ok) {
+        return { ok: false, errorCode: transport.code, error: transport.code };
+      }
+      const metadata = readSessionMetadata({ ...transport, rawSession: transport.rawSession }) ?? {};
+      const sourceMachineId = normalizeStringValue(transport.rawSession.machineId)
+        ?? normalizeStringValue(metadata.machineId);
+      if (!sourceMachineId) {
+        return { ok: false, errorCode: 'machine_not_found', error: 'machine_not_found' };
+      }
+      return await callMachineRpc({
+        credentials: params.credentials,
+        machineId: sourceMachineId,
+        method: RPC_METHODS.DAEMON_SESSION_HANDOFF_START,
+        request: {
+          sessionId: transport.sessionId,
+          sourceMachineId,
+          targetMachineId,
+          sessionStorageMode: readLinkedExternalSessionV1FromMetadata(metadata) ? 'direct' : 'persisted',
+          ...(targetSessionStorageMode ? { targetSessionStorageMode } : {}),
+          preferredTransportStrategies: ['direct_peer', 'server_routed_stream'],
+          ...(workspaceTransfer ? { workspaceTransfer } : {}),
+        },
+        ...(signal ? { signal } : {}),
+      });
+    },
+    sessionSpawnNewDirectoryApprovalPreflight: async ({ input, signal }) => {
+      if (!params.credentials) {
+        return {
+          type: 'error' as const,
+          result: { type: 'error' as const, code: 'permission_denied' as const, retryable: false },
+        };
+      }
+      if (signal?.aborted) {
+        return {
+          type: 'error' as const,
+          result: { type: 'error' as const, code: 'cancelled' as const, retryable: true },
+        };
+      }
+      const activeServerId = String(configuration.activeServerId ?? '').trim();
+      if (!activeServerId || input.executionTarget.serverId !== activeServerId) {
+        return {
+          type: 'error' as const,
+          result: { type: 'error' as const, code: 'target_unavailable' as const, retryable: false },
+        };
+      }
+      if (input.checkoutCreationDraft) {
+        // A worktree is materialized by the SCM owner, not by the raw
+        // directory-creation authorization path.
+        return { type: 'not_required' as const };
+      }
+
+      const preparation = await prepareSessionSpawnTarget({
+        executionTarget: input.executionTarget,
+        directory: input.directory,
+        ...(signal ? { signal } : {}),
+      });
+      if (!preparation.ok) {
+        return { type: 'error' as const, result: preparation.result };
+      }
+      if (!preparation.preparedTarget.directoryCreationRequired) {
+        return { type: 'not_required' as const };
+      }
+      const approval: SessionCreationDirectoryApprovalV1 = {
+        v: 1,
+        executionTarget: input.executionTarget,
+        directory: preparation.preparedTarget.directory,
+      };
+      return { type: 'approval_required' as const, approval };
+    },
     sessionSpawnNew: async ({
-      tag,
-      agentId,
-      modelId,
-      providerConnectionId,
-      modelUpdatedAt,
-      backendTargetKey,
-      backendTarget: requestedBackendTarget,
-      title,
-      path,
-      directory: directoryAlias,
-      host,
-      machineId,
-      serverId,
-      initialMessage,
-      initialPrompt,
-      permissionMode,
-      permissionModeUpdatedAt,
-      agentModeId,
-      agentModeUpdatedAt,
-      sessionConfigOptionOverrides,
-      configOptions,
+      executionTarget,
+      directory,
+      organizationPlacement,
+      agentTarget,
+      modelSelection,
       profileId,
-      environmentVariables,
+      permissionMode,
+      agentModeId,
+      configuration: configurationSnapshot,
       connectedServices,
-      connectedServicesUpdatedAt,
       mcpSelection,
       transcriptStorage,
       terminal,
-      windowsRemoteSessionLaunchMode,
-      windowsRemoteSessionConsole,
-      windowsTerminalWindowName,
-      runtimeDescriptorV1,
+      checkoutCreationDraft,
+      title,
+      initialMessage,
+      agentSessionStartupInstructionsV1,
+      sessionCreationTag,
+      sourceContext,
+      legacyMetadataLabel,
+      actionCaller,
       callerSurface,
-      callerPermissionMode,
-      sessionAgentSpawnPolicyV1,
       actionRequestId,
       resumeActionRequest,
-    }) => {
+      sessionCreationDirectoryApproval,
+      signal,
+    }): Promise<SessionSpawnNewResultV1> => {
       if (!params.credentials) {
-        notSupported();
+        return { type: 'error', code: 'permission_denied', retryable: false };
+      }
+      if (signal?.aborted) {
+        return { type: 'error', code: 'cancelled', retryable: true };
       }
 
-      const sessionAgentCaller = isSessionAgentSurface(callerSurface);
-      const spawnPolicy = sessionAgentCaller
-        ? normalizeSessionAgentSpawnPolicy(sessionAgentSpawnPolicyV1)
-        : null;
-      if (spawnPolicy) {
-        const deniedField = resolveSpawnPolicyDeniedField({
-          policy: spawnPolicy,
-          input: {
-            path,
-            directory: directoryAlias,
-            host,
-            machineId,
-            serverId,
-            agentId,
-            backendTargetKey,
-            backendTarget: requestedBackendTarget,
-            modelId,
-            providerConnectionId,
-            permissionMode,
-            agentModeId,
-            sessionConfigOptionOverrides,
-            configOptions,
-            profileId,
-            environmentVariables,
-            connectedServices,
-            mcpSelection,
-            transcriptStorage,
-            runtimeDescriptorV1,
-          },
-        });
-        if (deniedField) {
-          return {
-            type: 'error',
-            errorCode: 'spawn_policy_denied',
-            errorMessage: 'spawn_policy_denied',
-            field: deniedField,
-            surface: 'agent',
-          };
-        }
+      const activeServerId = String(configuration.activeServerId ?? '').trim();
+      if (!activeServerId || executionTarget.serverId !== activeServerId) {
+        return { type: 'error', code: 'target_unavailable', retryable: false };
       }
-
-      const requestedHost = typeof host === 'string' ? host.trim() : '';
-      const explicitMachineId = typeof machineId === 'string' ? machineId.trim() : '';
-      const currentMachineId = await resolveCurrentSessionValue('machineId');
-      let resolvedMachineId = currentMachineId;
-
-      if (explicitMachineId) {
-        const requestedServerId = typeof serverId === 'string' ? serverId.trim() : '';
-        const activeServerId = String(configuration.activeServerId ?? '').trim();
-        if (requestedServerId && requestedServerId !== activeServerId) {
-          return { type: 'error', errorCode: 'invalid_parameters', errorMessage: 'invalid_parameters' };
-        }
-
-        const currentMachineIdentity = await readCurrentMachineControlIdentity();
-        const explicitTarget = resolveExplicitSessionSpawnMachineTarget({
-          machineId: explicitMachineId,
-          host: requestedHost,
-          machines: currentMachineIdentity.machineId
-            ? [{ machineId: currentMachineIdentity.machineId, host: currentMachineIdentity.host }]
-            : [],
-        });
-        if (explicitTarget.kind !== 'resolved') {
-          return { type: 'error', errorCode: 'invalid_parameters', errorMessage: 'invalid_parameters' };
-        }
-        resolvedMachineId = explicitTarget.machineId;
-      } else if (requestedHost) {
-        const currentHost = await resolveCurrentSessionValue('host');
-        if (!currentHost || requestedHost !== currentHost || !currentMachineId) {
-          return { type: 'error', errorCode: 'host_not_found', errorMessage: 'host_not_found', host: requestedHost };
-        }
+      const normalizedActionRequestId = normalizeStringValue(actionRequestId);
+      if (resumeActionRequest === true && !normalizedActionRequestId) {
+        return { type: 'error', code: 'invalid_input', retryable: false };
       }
+      const spawnNonce = normalizedActionRequestId
+        ? createStableSpawnNonce('session.spawn_new.action', { actionRequestId: normalizedActionRequestId })
+        : undefined;
 
-      const explicitDirectory = typeof path === 'string' && path.trim().length > 0
-        ? path.trim()
-        : typeof directoryAlias === 'string' && directoryAlias.trim().length > 0
-          ? directoryAlias.trim()
-          : '';
-      const directory = explicitDirectory
-        ? explicitDirectory
-        : explicitMachineId && explicitMachineId !== currentMachineId
-          ? null
-          : await resolveCurrentSessionValue('path');
-      if (!directory) {
-        return { type: 'error', errorCode: 'spawn_target_missing', errorMessage: 'spawn_target_missing' };
+      const directTargetTransport = params.sessionSpawnDirectTargetTransport;
+      if (
+        directTargetTransport
+        && directTargetTransport.machineId !== executionTarget.machineId
+      ) {
+        return { type: 'error', code: 'target_unavailable', retryable: false };
       }
-
-      const rawBackendTargetKey = typeof backendTargetKey === 'string' ? backendTargetKey.trim() : '';
-      const normalizedAgentId = typeof agentId === 'string' ? agentId.trim() : '';
-      const canonicalAgentId = normalizedAgentId ? resolveCanonicalAgentIdFromFlavor(normalizedAgentId) : null;
-      const normalizedTag = typeof tag === 'string' ? tag.trim() : '';
-      const normalizedTitle = typeof title === 'string' ? title.trim() : '';
-      const normalizedInitialMessage = typeof initialMessage === 'string' && initialMessage.trim().length > 0
-        ? initialMessage.trim()
-        : typeof initialPrompt === 'string' && initialPrompt.trim().length > 0
-          ? initialPrompt.trim()
-          : '';
-      const currentMetadata = await readCurrentSessionMetadata();
-      const explicitRuntimeDescriptorV1 = (() => {
-        if (runtimeDescriptorV1 === undefined) return undefined;
-        const parsed = RuntimeDescriptorV1Schema.safeParse(runtimeDescriptorV1);
-        return parsed.success ? parsed.data : undefined;
-      })();
-      if (runtimeDescriptorV1 !== undefined && explicitRuntimeDescriptorV1 === undefined) {
-        return { type: 'error', errorCode: 'invalid_parameters', errorMessage: 'invalid_parameters' };
-      }
-      const hasExplicitBackendTargetInput = requestedBackendTarget != null
-        || rawBackendTargetKey.length > 0
-        || normalizedAgentId.length > 0;
-      const inheritedRuntimeDescriptorV1 = (() => {
-        if (runtimeDescriptorV1 !== undefined || hasExplicitBackendTargetInput) return undefined;
-        const inherited = readRuntimeDescriptorV1FromMetadata(currentMetadata) ?? undefined;
-        if (!inherited) return undefined;
-        return resolveActionBackendTargetSelection({ runtimeDescriptorV1: inherited }).ok
-          ? inherited
-          : undefined;
-      })();
-      const normalizedRuntimeDescriptorV1 = explicitRuntimeDescriptorV1 ?? inheritedRuntimeDescriptorV1;
-      const explicitBackendTarget = (() => {
-        if (requestedBackendTarget == null) return { ok: true as const, value: null };
-        const parsed = BackendTargetRefV2Schema.safeParse(requestedBackendTarget);
-        return parsed.success ? { ok: true as const, value: parsed.data } : { ok: false as const };
-      })();
-      if (!explicitBackendTarget.ok) {
-        return { type: 'error', errorCode: 'invalid_parameters', errorMessage: 'invalid_parameters' };
-      }
-
-      const resolvedExplicitTargetSelection = resolveActionBackendTargetSelection({
-        ...(canonicalAgentId || normalizedAgentId
-          ? { agentId: canonicalAgentId ?? normalizedAgentId }
-          : {}),
-        ...(rawBackendTargetKey ? { backendTargetKey: rawBackendTargetKey } : {}),
-        ...(explicitBackendTarget.value ? { backendTarget: explicitBackendTarget.value } : {}),
-        ...(explicitRuntimeDescriptorV1 ? { runtimeDescriptorV1: explicitRuntimeDescriptorV1 } : {}),
-      });
-      if (!resolvedExplicitTargetSelection.ok) {
-        return { type: 'error', errorCode: 'invalid_parameters', errorMessage: 'invalid_parameters' };
-      }
-
-      const backendTarget = (() => {
-        if (resolvedExplicitTargetSelection.selection.canonicalBackendTarget) {
-          return resolvedExplicitTargetSelection.selection.canonicalBackendTarget;
-        }
-        if (normalizedAgentId) {
-          if (!canonicalAgentId) return null;
-          return readBackendTargetRefV2({
-            kind: 'backend',
-            backendId: canonicalAgentId,
-            sourceKind: 'built_in',
+      if (!directTargetTransport) {
+        let targetCapabilityProjection: Awaited<ReturnType<typeof readMachineOperationProtocolCapabilitiesV1>>;
+        try {
+          targetCapabilityProjection = await readMachineOperationProtocolCapabilitiesV1({
+            credentials: params.credentials,
+            machineId: executionTarget.machineId,
+            ...(signal ? { signal } : {}),
           });
-        }
-        const explicitRuntimeDescriptorProviderId = explicitRuntimeDescriptorV1?.agentId;
-        if (explicitRuntimeDescriptorProviderId && isConcreteBackendTargetCompatId(explicitRuntimeDescriptorProviderId)) {
-          try {
-            return readBackendTargetRefV2({
-              kind: 'backend',
-              backendId: explicitRuntimeDescriptorProviderId,
-              sourceKind: 'built_in',
-            });
-          } catch {
-            return null;
+        } catch (error) {
+          const spawnMayHaveBeenAccepted = hasPossiblyAcceptedSpawnNonce(error);
+          if (signal?.aborted) {
+            if (spawnMayHaveBeenAccepted) {
+              return {
+                type: 'pending',
+                retryWithSameCreationKey: true,
+                outcome: 'unknown',
+              };
+            }
+            return { type: 'error', code: 'cancelled', retryable: true };
           }
+          if (isAuthenticationError(error)) {
+            return { type: 'error', code: 'permission_denied', retryable: false };
+          }
+          return { type: 'error', code: 'machine_offline', retryable: true };
         }
-        const currentSessionBackendTarget = params.getCurrentSessionBackendTarget?.() ?? null;
-        if (currentSessionBackendTarget) {
-          return currentSessionBackendTarget;
+        if (
+          !targetCapabilityProjection
+          || !supportsMachineOperationProtocolCapabilityV1(
+            targetCapabilityProjection.capabilities,
+            'sessionSpawn',
+          )
+        ) {
+          return { type: 'error', code: 'incompatible_target', retryable: false };
         }
-        const metadataBackendTarget = resolveBackendTargetFromSessionMetadata(currentMetadata);
-        if (metadataBackendTarget) {
-          return metadataBackendTarget;
-        }
-        return readBackendTargetRefV2({
-          kind: 'backend',
-          backendId: DEFAULT_AGENT_ID,
-          sourceKind: 'built_in',
-        });
-      })();
-      if (!backendTarget) {
-        return { type: 'error', errorCode: 'invalid_parameters', errorMessage: 'invalid_parameters' };
-      }
-      if (backendTarget.sourceKind === 'built_in' && normalizedAgentId && !AGENT_IDS.includes(normalizedAgentId as AgentId)) {
-        return { type: 'error', errorCode: 'agent_not_found', errorMessage: 'agent_not_found' };
-      }
-      const hookBackendTarget = buildBackendTargetKeyV2(backendTarget);
-      const inheritedMetadataBackendTarget = params.getCurrentSessionBackendTarget?.()
-        ?? resolveExplicitBackendTargetFromSessionMetadata(currentMetadata);
-      let inheritedSpawn: ReturnType<typeof resolveSessionAgentSpawnInheritedOverridesFromMetadata>['spawn'];
-      try {
-        inheritedSpawn = resolveSessionAgentSpawnInheritedOverridesFromMetadata(
-          currentMetadata,
-          inheritedMetadataBackendTarget,
-        ).spawn;
-      } catch (error) {
-        if (error instanceof SessionModelSelectionResolutionError) {
-          return { type: 'error', errorCode: 'invalid_parameters', errorMessage: error.code };
-        }
-        throw error;
       }
 
-      const resolvedConnectedServices = connectedServices !== undefined
-        ? connectedServices
-        : inheritedSpawn.connectedServices;
-      const connectedServicesDefaults = resolvedConnectedServices === undefined
+      const resolvedAgentTarget = resolveSessionSpawnAgentTarget(agentTarget);
+      if (!resolvedAgentTarget) {
+        return { type: 'error', code: 'target_unavailable', retryable: false };
+      }
+      const { backendTarget } = resolvedAgentTarget;
+      const connectedServicesDefaults = connectedServices === undefined
         ? await resolveSpawnConnectedServicesDefaultPayload({
             credentials: params.credentials,
             backendTarget,
           })
         : null;
-      const resolvedCallerPermissionMode = sessionAgentCaller
-        ? applyPermissionCeiling({
-            callerMode: await resolveCallerPermissionMode(callerPermissionMode),
-            permissionCeiling: spawnPolicy?.permissionCeiling ?? null,
+      if (signal?.aborted) {
+        return { type: 'error', code: 'cancelled', retryable: true };
+      }
+      const resolvedConnectedServices = connectedServices
+        ?? connectedServicesDefaults?.connectedServices;
+      const resolvedConnectedServicesUpdatedAt = connectedServicesDefaults?.connectedServicesUpdatedAt;
+      const normalizedPlacement =
+        normalizeSessionCreationOrganizationPlacementV1(organizationPlacement);
+      const normalizedTerminal = terminal === undefined
+        ? undefined
+        : SessionAuthoringTerminalV1Schema.safeParse(terminal);
+      if (normalizedTerminal !== undefined && !normalizedTerminal.success) {
+        return { type: 'error', code: 'invalid_input', retryable: false };
+      }
+      const spawnTerminal = normalizedTerminal === undefined
+        ? undefined
+        : SpawnSessionTerminalSchema.safeParse(normalizedTerminal.data);
+      if (spawnTerminal !== undefined && !spawnTerminal.success) {
+        return { type: 'error', code: 'invalid_input', retryable: false };
+      }
+      const windowsTerminal = normalizedTerminal?.data.windows;
+      const normalizedConfigurationOverrides = configurationSnapshot
+        ? buildAcpConfigOptionOverridesV1({
+            updatedAt: Math.max(
+              configurationSnapshot.mode.updatedAtMs,
+              configurationSnapshot.model.updatedAtMs,
+              configurationSnapshot.permissionIntent.updatedAtMs,
+              ...Object.values(configurationSnapshot.options).map((entry) => entry.updatedAtMs),
+            ),
+            overrides: Object.fromEntries(
+              Object.entries(configurationSnapshot.options).map(([key, entry]) => [
+                key,
+                { updatedAt: entry.updatedAtMs, value: entry.value },
+              ]),
+            ),
           })
-        : 'yolo';
-      const permissionDecision = sessionAgentCaller
-        ? (typeof permissionMode === 'string' && permissionMode.trim().length > 0
-            ? assertNonEscalatingPermissionMode({
-                requestedMode: permissionMode,
-                callerMode: resolvedCallerPermissionMode,
-              })
-            : resolveNearestPermissionModeAtOrBelow({
-                requestedMode: undefined,
-                callerMode: resolvedCallerPermissionMode,
-                supportedModes: ['plan', 'read-only', 'default', 'safe-yolo', 'yolo'],
-              }))
-        : (typeof permissionMode === 'string' && permissionMode.trim().length > 0
-            ? assertNonEscalatingPermissionMode({
-                requestedMode: permissionMode,
-                callerMode: 'yolo',
-              })
-            : inheritedSpawn.permissionMode
-              ? assertNonEscalatingPermissionMode({
-                  requestedMode: inheritedSpawn.permissionMode,
-                  callerMode: 'yolo',
-                })
-              : null);
-      if (permissionDecision?.ok === false) {
-        return permissionEscalationSpawnResult({
-          callerSurface,
-          decision: permissionDecision,
-        });
-      }
-      const normalizedPermissionMode = permissionDecision?.ok === true
-        ? permissionDecision.normalizedMode
         : undefined;
-      const normalizedPermissionModeUpdatedAt = typeof permissionModeUpdatedAt === 'number'
-        ? permissionModeUpdatedAt
-        : permissionMode === undefined && inheritedSpawn.permissionMode === normalizedPermissionMode
-          ? inheritedSpawn.permissionModeUpdatedAt
-          : undefined;
-      const resolvedAgentTargetKey = buildBackendTargetKeyV2(backendTarget);
-      const parsedProviderConnectionId = providerConnectionId === undefined || providerConnectionId === null
-        ? { success: true as const, data: null }
-        : ProviderConnectionIdSchema.safeParse(providerConnectionId);
-      if (!parsedProviderConnectionId.success) {
-        return { type: 'error', errorCode: 'invalid_parameters', errorMessage: 'invalid_parameters' };
+      const resolvedModelSelection = modelSelection
+        ?? (configurationSnapshot?.model.value
+          ? SessionModelSelectionV1Schema.parse({
+              v: 1,
+              updatedAt: configurationSnapshot.model.updatedAtMs,
+              ref: {
+                agentTargetKey: buildBackendTargetKeyV2(backendTarget),
+                providerConnectionId: null,
+                modelId: configurationSnapshot.model.value,
+              },
+            })
+          : undefined);
+      const requestedPermissionMode = permissionMode
+        ?? configurationSnapshot?.permissionIntent.value
+        ?? undefined;
+      const resolvedPermissionMode = requestedPermissionMode
+        ? parsePermissionIntentAlias(requestedPermissionMode)
+        : undefined;
+      if (requestedPermissionMode && !resolvedPermissionMode) {
+        return { type: 'error', code: 'invalid_input', retryable: false };
       }
-      const explicitModelId = typeof modelId === 'string' ? modelId.trim() : '';
-      if (providerConnectionId !== undefined && !explicitModelId) {
-        return { type: 'error', errorCode: 'invalid_parameters', errorMessage: 'invalid_parameters' };
-      }
-      const resolvedModelSelection: SessionModelSelectionV1 | undefined = (() => {
-        if (modelId === undefined) {
-          const inherited = inheritedSpawn.modelSelection;
-          return inherited?.ref.agentTargetKey === resolvedAgentTargetKey ? inherited : undefined;
-        }
-        const ref = resolveSessionModelSelectionInputRefV1({
-          agentTargetKey: resolvedAgentTargetKey,
-          providerConnectionId: parsedProviderConnectionId.data,
-          modelId: explicitModelId,
-        });
-        if (ref === null) return undefined;
-        return SessionModelSelectionV1Schema.parse({
-          v: 1,
-          updatedAt: typeof modelUpdatedAt === 'number' && Number.isFinite(modelUpdatedAt)
-            ? modelUpdatedAt
-            : Date.now(),
-          ref,
-        });
-      })();
-      const resolvedAgentModeId = typeof agentModeId === 'string'
-        ? agentModeId
-        : agentModeId === undefined
-          ? inheritedSpawn.agentModeId
-          : undefined;
-      const resolvedAgentModeUpdatedAt = typeof agentModeUpdatedAt === 'number'
-        ? agentModeUpdatedAt
-        : agentModeId === undefined
-          ? inheritedSpawn.agentModeUpdatedAt
-          : undefined;
-      const resolvedProfileId = typeof profileId === 'string'
-        ? profileId
-        : profileId === undefined
-          ? inheritedSpawn.profileId
-          : undefined;
-      const normalizedEnvironmentVariables = readStringRecord(environmentVariables);
-      const normalizedSessionConfigOptionOverrides = (() => {
-        const value = sessionConfigOptionOverrides === undefined
-          ? inheritedSpawn.sessionConfigOptionOverrides
-          : sessionConfigOptionOverrides;
-        const parsed = value === undefined ? null : AcpConfigOptionOverridesV1Schema.safeParse(value);
-        const parsedConfigOptions = readConfigOptionsRecord(configOptions);
-        return mergeSpawnConfigOptionAliases({
-          sessionConfigOptionOverrides: parsed?.success ? parsed.data : undefined,
-          configOptions: parsedConfigOptions,
-        });
-      })();
-      const normalizedMcpSelection = (() => {
-        const value = mcpSelection === undefined ? inheritedSpawn.mcpSelection : mcpSelection;
-        if (value === undefined) return undefined;
-        const parsed = SessionMcpSelectionV1Schema.safeParse(value);
-        return parsed.success ? parsed.data : undefined;
-      })();
-      const normalizedTerminal = (() => {
-        if (terminal === undefined) return undefined;
-        const parsed = SpawnSessionTerminalSchema.safeParse(terminal);
-        return parsed.success ? parsed.data : undefined;
-      })();
-
-      const normalizedActionRequestId = typeof actionRequestId === 'string' && actionRequestId.trim().length > 0
-        ? actionRequestId.trim()
+      const resolvedAgentModeId = agentModeId
+        ?? configurationSnapshot?.mode.value
+        ?? undefined;
+      const startupInstructionsMarker = agentSessionStartupInstructionsV1
+        ? {
+            v: agentSessionStartupInstructionsV1.v,
+            id: agentSessionStartupInstructionsV1.id,
+            revision: agentSessionStartupInstructionsV1.revision,
+          }
         : null;
-      const spawnNonce = normalizedActionRequestId
-        ? `session.spawn_new:${params.sessionId}:${normalizedActionRequestId}`
-        : null;
-      const resumeOnly = Boolean(
-        spawnNonce
-        && (resumeActionRequest === true || ambiguousSpawnActionRequestIds.has(spawnNonce)),
+      const targetPreparation = await prepareSessionSpawnTarget({
+        executionTarget,
+        directory,
+        ...(checkoutCreationDraft !== undefined ? { checkoutCreationDraft } : {}),
+        ...(signal ? { signal } : {}),
+      });
+      if (!targetPreparation.ok) return targetPreparation.result;
+      const preparedTarget = targetPreparation.preparedTarget;
+      const directoryApproval = SessionCreationDirectoryApprovalV1Schema.safeParse(
+        sessionCreationDirectoryApproval,
       );
-      if (spawnNonce && !resumeOnly) ambiguousSpawnActionRequestIds.add(spawnNonce);
-
-      let created: Awaited<ReturnType<typeof createSpawnedSession>>;
-      try {
-        created = await createSpawnedSession({
-          credentials: params.credentials,
-          directory,
-          ...(resolvedMachineId ? { machineId: resolvedMachineId } : {}),
-          backendTarget,
-          ...(connectedServicesDefaults ?? {}),
-          ...(resolvedConnectedServices !== undefined ? { connectedServices: resolvedConnectedServices } : {}),
-          ...(typeof connectedServicesUpdatedAt === 'number'
-            ? { connectedServicesUpdatedAt }
-            : connectedServices === undefined && typeof inheritedSpawn.connectedServicesUpdatedAt === 'number'
-              ? { connectedServicesUpdatedAt: inheritedSpawn.connectedServicesUpdatedAt }
-              : {}),
-          ...(normalizedTag ? { tag: normalizedTag } : {}),
-          ...(normalizedTitle ? { title: normalizedTitle } : {}),
-          ...(normalizedInitialMessage ? { initialMessage: normalizedInitialMessage } : {}),
-          ...(resolvedModelSelection ? { modelSelection: resolvedModelSelection } : {}),
-          ...(normalizedPermissionMode ? { permissionMode: normalizedPermissionMode } : {}),
-          ...(typeof normalizedPermissionModeUpdatedAt === 'number' ? { permissionModeUpdatedAt: normalizedPermissionModeUpdatedAt } : {}),
-          ...(typeof resolvedAgentModeId === 'string' ? { agentModeId: resolvedAgentModeId } : {}),
-          ...(typeof resolvedAgentModeUpdatedAt === 'number' ? { agentModeUpdatedAt: resolvedAgentModeUpdatedAt } : {}),
-          ...(normalizedSessionConfigOptionOverrides ? { sessionConfigOptionOverrides: normalizedSessionConfigOptionOverrides } : {}),
-          ...(typeof resolvedProfileId === 'string' ? { profileId: resolvedProfileId } : {}),
-          ...(normalizedEnvironmentVariables ? { environmentVariables: normalizedEnvironmentVariables } : {}),
-          ...(normalizedMcpSelection ? { mcpSelection: normalizedMcpSelection } : {}),
-          ...(transcriptStorage === 'persisted' || transcriptStorage === 'direct' ? { transcriptStorage } : {}),
-          ...(normalizedTerminal ? { terminal: normalizedTerminal } : {}),
-          ...(windowsRemoteSessionLaunchMode !== undefined ? { windowsRemoteSessionLaunchMode } : {}),
-          ...(windowsRemoteSessionConsole !== undefined ? { windowsRemoteSessionConsole } : {}),
-          ...(typeof windowsTerminalWindowName === 'string' ? { windowsTerminalWindowName } : {}),
-          ...(normalizedRuntimeDescriptorV1 ? { runtimeDescriptorV1: normalizedRuntimeDescriptorV1 } : {}),
-          ...(spawnNonce ? { spawnNonce } : {}),
-          ...(resumeOnly ? { resumeOnly: true } : {}),
-        });
-      } catch (error) {
-        const details = error && typeof error === 'object'
-          ? (error as { details?: unknown }).details
-          : null;
-        const ambiguousNonce = details && typeof details === 'object'
-          && typeof (details as { spawnNonce?: unknown }).spawnNonce === 'string'
-          ? (details as { spawnNonce: string }).spawnNonce
-          : null;
-        if (spawnNonce && ambiguousNonce !== spawnNonce) ambiguousSpawnActionRequestIds.delete(spawnNonce);
-        throw error;
+      if (
+        preparedTarget.directoryCreationRequired
+        && (
+          !directoryApproval.success
+          || directoryApproval.data.executionTarget.serverId !== executionTarget.serverId
+          || directoryApproval.data.executionTarget.machineId !== executionTarget.machineId
+          || directoryApproval.data.directory !== preparedTarget.directory
+        )
+      ) {
+        return { type: 'error', code: 'permission_denied', retryable: false };
       }
-      if (spawnNonce) ambiguousSpawnActionRequestIds.delete(spawnNonce);
-
-      const isConfiguredBackendTarget = backendTarget.sourceKind === 'configured'
-        || Boolean(backendTarget.configuredBackendId);
-      const backendTargetAgentId = isConfiguredBackendTarget
-        ? null
-        : resolveCanonicalAgentIdFromFlavor(backendTarget.backendId);
-      const lifecycleAgentId = normalizedRuntimeDescriptorV1?.agentId
-        ?? canonicalAgentId
-        ?? backendTargetAgentId;
-      if (lifecycleAgentId) {
+      const normalizedDirectory = preparedTarget.directory;
+      const correspondence = SessionCreationCorrespondenceV1Schema.parse({
+        v: 1,
+        sessionCreationTag,
+        recipe: {
+          execution: {
+            machineId: executionTarget.machineId,
+            directory: normalizedDirectory,
+          },
+          organization: normalizedPlacement,
+          agentTarget,
+          modelSelection: resolvedModelSelection ?? null,
+          profileId: profileId ?? null,
+          requestedPermissionMode: resolvedPermissionMode ?? null,
+          agentModeId: resolvedAgentModeId ?? null,
+          configuration: configurationSnapshot ?? null,
+          connectedServices: resolvedConnectedServices ?? null,
+          mcpSelection: mcpSelection ?? null,
+          transcriptStorage: transcriptStorage ?? null,
+          terminal: normalizedTerminal?.data ?? null,
+          agentSessionStartupInstructionsMarkerV1: startupInstructionsMarker,
+          checkout: preparedTarget.checkout,
+        },
+      });
+      // A source recipe is required semantics, not a hint: it is resolved to an
+      // exact cutoff before any Session row exists, and a failure creates no
+      // child so the authoring draft and its chip stay intact.
+      let replaySeededCreation: ReplaySeededSessionCreationV1 | undefined;
+      if (sourceContext) {
+        let sourceAuthority: Awaited<ReturnType<typeof resolveReplaySourceContextAuthority>>;
         try {
-          await dispatchSessionLifecycleHookEvent({
-            eventId: 'session.spawned',
-            happySessionId: created.sessionId,
-            backendTarget: hookBackendTarget,
-            exactSessionContext: {
-              ...(resolvedMachineId ? { machineId: resolvedMachineId } : {}),
-              cwd: directory,
-            },
-            payload: {
-              sessionId: created.sessionId,
-              agentId: lifecycleAgentId,
-              runtimeTarget: backendTarget,
-              cwd: directory,
-              ...(requestedHost ? { host: requestedHost } : {}),
-              ...(normalizedTag ? { tag: normalizedTag } : {}),
-              ...(resolvedModelSelection ? { modelId: resolvedModelSelection.ref.modelId } : {}),
-              ...(normalizedInitialMessage ? { initialMessage: normalizedInitialMessage } : {}),
-              ...(resolvedMachineId ? { machineId: resolvedMachineId } : {}),
-            },
+          sourceAuthority = await resolveReplaySourceContextAuthority({
+            credentials: params.credentials,
+            sourceSessionId: sourceContext.sourceSessionId,
           });
-        } catch {
-          // Hook dispatch is best-effort so a misbehaving plugin cannot break session creation.
+        } catch (error) {
+          return isAuthenticationError(error)
+            ? { type: 'error', code: 'permission_denied', retryable: false }
+            : { type: 'error', code: 'spawn_failed', retryable: true };
         }
+        if (sourceAuthority.status !== 'owned') {
+          return sourceAuthority.status === 'not_owned'
+            ? { type: 'error', code: 'permission_denied', retryable: false }
+            : { type: 'error', code: 'spawn_failed', retryable: true };
+        }
+        const recipeResult = await buildReplaySeededSpawnRecipe({
+          credentials: params.credentials,
+          cwd: normalizedDirectory,
+          source: {
+            sourceSessionId: sourceContext.sourceSessionId,
+            forkPoint: sourceContext.forkPoint,
+          },
+          agentHintAgentId: resolvedAgentTarget.agentId,
+          // Source-local media survives only when the source and selected child
+          // target are proven to be the same exact machine and this process is
+          // directly preparing that target. A replacement relation or a direct
+          // transport alone does not make an old workspace path usable.
+          mediaContinuityUsableOnCreatingMachine:
+            Boolean(directTargetTransport)
+            && sourceAuthority.sourceMachineId === executionTarget.machineId,
+        });
+        if (!recipeResult.ok) {
+          // The two recipe failures — an unhydratable source and an empty seed —
+          // are not distinguishable at this owner, and neither created a child.
+          // Report the retryable form so a transient source read does not strand
+          // an otherwise valid authoring attempt.
+          return { type: 'error', code: 'spawn_failed', retryable: true };
+        }
+        replaySeededCreation = {
+          tag: sessionCreationTag,
+          flavor: resolvedAgentTarget.agentId,
+          metadata: {
+            ...recipeResult.recipe.metadata,
+            sessionCreationCorrespondenceV1: correspondence,
+          },
+          sourceRecipe: {
+            sourceSessionId: sourceContext.sourceSessionId,
+            cutoffSeqInclusive: recipeResult.recipe.cutoffSeqInclusive,
+          },
+        };
       }
-
-      return {
-        type: 'success',
-        sessionId: created.sessionId,
-        created: created.created,
-        session: created.session,
-      };
+      try {
+        const created = await createSpawnedSession({
+          credentials: params.credentials,
+          directory: normalizedDirectory,
+          machineId: executionTarget.machineId,
+          backendTarget,
+          sessionCreationTag,
+          ...(replaySeededCreation ? { replaySeededCreation } : {}),
+          approvedNewDirectoryCreation: preparedTarget.directoryCreationRequired,
+          ...(legacyMetadataLabel ? { legacyMetadataLabel } : {}),
+          sessionCreationCorrespondence: correspondence,
+          organizationPlacement: normalizedPlacement,
+          ...(resolvedModelSelection ? { modelSelection: resolvedModelSelection } : {}),
+          ...(profileId ? { profileId } : {}),
+          ...(resolvedPermissionMode ? { permissionMode: resolvedPermissionMode } : {}),
+          ...(resolvedAgentModeId ? { agentModeId: resolvedAgentModeId } : {}),
+          ...(normalizedConfigurationOverrides
+            ? { sessionConfigOptionOverrides: normalizedConfigurationOverrides }
+            : {}),
+          ...(resolvedConnectedServices ? { connectedServices: resolvedConnectedServices } : {}),
+          ...(resolvedConnectedServicesUpdatedAt !== undefined
+            ? { connectedServicesUpdatedAt: resolvedConnectedServicesUpdatedAt }
+            : {}),
+          ...(mcpSelection ? { mcpSelection } : {}),
+          ...(transcriptStorage ? { transcriptStorage } : {}),
+          ...(spawnTerminal?.data ? { terminal: spawnTerminal.data } : {}),
+          ...(windowsTerminal?.launchMode
+            ? { windowsRemoteSessionLaunchMode: windowsTerminal.launchMode }
+            : {}),
+          ...(windowsTerminal?.console
+            ? { windowsRemoteSessionConsole: windowsTerminal.console }
+            : {}),
+          ...(windowsTerminal?.windowName
+            ? { windowsTerminalWindowName: windowsTerminal.windowName }
+            : {}),
+          ...(configurationSnapshot?.providerSessionResume
+            ? { resume: configurationSnapshot.providerSessionResume.providerSessionId }
+            : {}),
+          ...(title ? { initialTitle: title } : {}),
+          ...(initialMessage ? { initialMessage } : {}),
+          ...(initialMessage
+            ? {
+                buildInitialInputAdmission: (sessionId: string) =>
+                  buildSessionSpawnInitialInputAdmissionV1({
+                    actionCaller,
+                    callerSurface,
+                    sessionId,
+                    sessionCreationTag,
+                  }),
+              }
+            : {}),
+          ...(params.machineAdmissionTransport
+            ? { machineAdmissionTransport: params.machineAdmissionTransport }
+            : {}),
+          ...(directTargetTransport
+            ? { directTransport: directTargetTransport.spawnedSession }
+            : {}),
+          ...(agentSessionStartupInstructionsV1
+            ? { agentSessionStartupInstructionsV1 }
+            : {}),
+          ...(spawnNonce ? { spawnNonce } : {}),
+          ...(resumeActionRequest === true ? { resumeOnly: true } : {}),
+          ...(signal ? { signal } : {}),
+        });
+        return {
+          type: 'success',
+          disposition: created.disposition,
+          sessionId: created.sessionId,
+          executionTarget,
+          organizationPlacement: created.organizationPlacement,
+          initialInput: created.initialInput,
+        };
+      } catch (error) {
+        const code = error && typeof error === 'object'
+          && typeof (error as { code?: unknown }).code === 'string'
+          ? (error as { code: string }).code
+          : '';
+        if (isAuthenticationError(error)) {
+          return { type: 'error', code: 'permission_denied', retryable: false };
+        }
+        if (hasSessionCreationOrganizationInvalidDetail(error)) {
+          return { type: 'error', code: 'organization_invalid', retryable: false };
+        }
+        if (code === SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST) {
+          return { type: 'error', code: 'invalid_input', retryable: false };
+        }
+        if (code === 'creation_conflict' || hasSessionCreationCorrespondenceConflictDetail(error)) {
+          return { type: 'error', code: 'creation_conflict', retryable: false };
+        }
+        if (
+          code === SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT
+          || code === 'MACHINE_RPC_TIMEOUT'
+        ) {
+          return {
+            type: 'pending',
+            retryWithSameCreationKey: true,
+            outcome: 'unknown',
+          };
+        }
+        if (signal?.aborted) {
+          return { type: 'error', code: 'cancelled', retryable: true };
+        }
+        if (code === SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE) {
+          return { type: 'error', code: 'incompatible_target', retryable: false };
+        }
+        return { type: 'error', code: 'spawn_failed', retryable: true };
+      }
     },
-    sessionSpawnPicker: async () => notSupported(),
     ...(approvalsStore ?? {}),
     ...inventoryDeps,
     sessionSendMessage: async ({
       sessionId,
       message,
+      requestedAction,
+      actionCaller,
+      idempotencyKey,
+      source,
       wait,
       timeoutSeconds,
       permissionModeOverride,
@@ -1430,9 +2626,19 @@ export function createCliActionDeps(params: Readonly<{
       providerConnectionId,
       callerSurface,
       callerPermissionMode,
+      signal,
     }) => {
+      const pluginCaller = actionCaller?.kind === 'plugin' ? actionCaller : null;
+      if (pluginCaller && typeof permissionModeOverride === 'string' && permissionModeOverride.trim().length > 0) {
+        return {
+          status: 'rejected' as const,
+          code: 'session_input_invalid' as const,
+        };
+      }
       if (!params.credentials) {
-        return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
+        return pluginCaller
+          ? { status: 'rejected' as const, code: 'session_input_unauthorized' as const }
+          : { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
       }
 
       const normalizedWait = typeof wait === 'boolean' ? wait : false;
@@ -1481,42 +2687,100 @@ export function createCliActionDeps(params: Readonly<{
             modelId: normalizedModelOverride,
           };
 
-      const res = await sendSessionMessage({
+      if (
+        pluginCaller
+        && (
+          typeof pluginCaller.contributionLocalId !== 'string'
+          || typeof idempotencyKey !== 'string'
+        )
+      ) {
+        return {
+          status: 'rejected' as const,
+          code: 'session_input_untrusted_assertion' as const,
+        };
+      }
+      const pluginLocalId = pluginCaller
+        ? derivePluginSessionInputLocalIdV1({
+            caller: pluginCaller,
+            sessionId,
+            idempotencyKey: idempotencyKey!,
+          })
+        : undefined;
+      const pluginInputAdmission = pluginCaller
+        ? buildPluginSessionInputAdmissionV1({
+            caller: pluginCaller,
+            surface: callerSurface,
+            ...(source ? { source } : {}),
+          })
+        : undefined;
+
+      const dispatchMessageHook = async (canonicalSessionId: string, source: 'plugin' | 'user') => {
+        try {
+          await dispatchSessionLifecycleHookEvent({
+            eventId: 'session.message.send',
+            happySessionId: canonicalSessionId,
+            payload: {
+              sessionId: canonicalSessionId,
+              text: String(message ?? ''),
+              source,
+            },
+          });
+        } catch {
+          // Hook dispatch is best-effort so a misbehaving plugin cannot break message send.
+        }
+      };
+
+      if (pluginCaller && pluginLocalId && pluginInputAdmission) {
+        const protectedResult = await sendSessionMessage({
+          credentials: params.credentials,
+          idOrPrefix: sessionId,
+          message: String(message ?? ''),
+          requestedAction,
+          wait: normalizedWait,
+          timeoutMs: normalizedTimeoutSeconds * 1000,
+          localId: pluginLocalId,
+          inputAdmission: pluginInputAdmission,
+          ...(params.machineAdmissionTransport
+            ? { machineAdmissionTransport: params.machineAdmissionTransport }
+            : {}),
+          ...(modelSelectionInput ? { modelSelectionInput } : {}),
+          ...(signal ? { signal } : {}),
+        });
+        if (!protectedResult.ok) return protectedResult.admissionResult;
+        const canonicalSessionId = typeof protectedResult.sessionId === 'string'
+          && protectedResult.sessionId.trim().length > 0
+          ? protectedResult.sessionId
+          : sessionId;
+        await dispatchMessageHook(canonicalSessionId, 'plugin');
+        return protectedResult.admissionResult;
+      }
+
+      const result = await sendSessionMessage({
         credentials: params.credentials,
         idOrPrefix: sessionId,
         message: String(message ?? ''),
+        requestedAction,
         wait: normalizedWait,
         timeoutMs: normalizedTimeoutSeconds * 1000,
         ...(normalizedPermissionModeOverride ? { permissionModeOverride: normalizedPermissionModeOverride } : {}),
         ...(modelSelectionInput ? { modelSelectionInput } : {}),
+        ...(signal ? { signal } : {}),
       });
-      if (!res.ok) {
+      if (!result.ok) {
         return {
           ok: false,
-          errorCode: res.code,
-          error: res.code,
-          ...(res.candidates ? { candidates: res.candidates } : {}),
-          ...(res.message ? { message: res.message } : {}),
-          ...(res.providerError ? { details: res.providerError } : {}),
+          errorCode: result.code,
+          error: result.code,
+          ...(result.candidates ? { candidates: result.candidates } : {}),
+          ...(result.message ? { message: result.message } : {}),
+          ...(result.providerError ? { details: result.providerError } : {}),
         };
       }
-      const canonicalSessionId = typeof res.sessionId === 'string' && res.sessionId.trim().length > 0
-        ? res.sessionId
+      const canonicalSessionId = typeof result.sessionId === 'string' && result.sessionId.trim().length > 0
+        ? result.sessionId
         : sessionId;
-      try {
-        await dispatchSessionLifecycleHookEvent({
-          eventId: 'session.message.send',
-          happySessionId: canonicalSessionId,
-          payload: {
-            sessionId: canonicalSessionId,
-            text: String(message ?? ''),
-            source: callerSurface === 'agent' ? 'plugin' : 'user',
-          },
-        });
-      } catch {
-        // Hook dispatch is best-effort so a misbehaving plugin cannot break message send.
-      }
-      return res;
+      await dispatchMessageHook(canonicalSessionId, 'user');
+      return result;
     },
 
     sessionStop: async ({ sessionId }) => {
@@ -1779,6 +3043,8 @@ export function createCliActionDeps(params: Readonly<{
 
     sessionTranscriptGet: async ({
       sessionId,
+      projection,
+      callerPluginId,
       limit,
       cursor,
       direction,
@@ -1793,6 +3059,7 @@ export function createCliActionDeps(params: Readonly<{
       includeStructuredPayload,
       maxCharsPerMessage,
       maxRawPayloadChars,
+      signal,
     }) => {
       if (!params.credentials) {
         return { ok: false, errorCode: 'not_authenticated', errorMessage: 'not_authenticated' };
@@ -1800,6 +3067,8 @@ export function createCliActionDeps(params: Readonly<{
       return await getSessionTranscript({
         credentials: params.credentials,
         idOrPrefix: sessionId,
+        ...(projection ? { projection } : {}),
+        ...(callerPluginId ? { callerPluginId } : {}),
         ...(typeof limit === 'number' ? { limit } : {}),
         ...(cursor !== undefined ? { cursor } : {}),
         ...(direction ? { direction } : {}),
@@ -1814,6 +3083,7 @@ export function createCliActionDeps(params: Readonly<{
         ...(typeof includeStructuredPayload === 'boolean' ? { includeStructuredPayload } : {}),
         ...(maxCharsPerMessage !== undefined ? { maxCharsPerMessage } : {}),
         ...(maxRawPayloadChars !== undefined ? { maxRawPayloadChars } : {}),
+        ...(signal ? { signal } : {}),
       });
     },
 
@@ -1870,6 +3140,149 @@ export function createCliActionDeps(params: Readonly<{
 	      });
 	    },
 
+    sessionPermissionRemoteAction: async (args) => {
+      const rejectUnavailable = (
+        code: 'canceled' | 'mediationStateUnavailable' | 'ownerMachineUnavailable',
+      ) => args.actionId === 'session.permission.remote.pending.list'
+        ? { ok: false as const, errorCode: code, error: code }
+        : args.actionId === 'session.permission.remote.grants.list'
+          ? { ok: false as const, errorCode: code, error: code }
+        : { status: 'rejected' as const, code };
+
+      if (args.signal?.aborted) {
+        return rejectUnavailable('canceled');
+      }
+
+      // The existing current-session binding is the only live owner lookup.
+      // Do not fall back to the Action deps' construction session, a registry,
+      // or a Session RPC: a remote decision must reach the exact active owner.
+      const binding = resolveCurrentSessionCapabilityBinding(args.input.sessionId);
+      if (!binding) {
+        return rejectUnavailable('ownerMachineUnavailable');
+      }
+      const bindingIsStillCurrent = (): boolean => {
+        if (args.signal?.aborted || binding.signal.aborted) return false;
+        try {
+          if (binding.isCurrent() !== true) return false;
+        } catch {
+          return false;
+        }
+        return resolveCurrentSessionCapabilityBinding(args.input.sessionId)?.scopeId === binding.scopeId;
+      };
+      if (!bindingIsStillCurrent()) {
+        return rejectUnavailable('ownerMachineUnavailable');
+      }
+
+      const permissionHandler = binding.permissionHandler;
+      if (!permissionHandler) {
+        return rejectUnavailable('mediationStateUnavailable');
+      }
+
+      if (args.actionId === 'session.permission.remote.pending.list') {
+        if (args.caller.kind !== 'plugin') {
+          return rejectUnavailable('mediationStateUnavailable');
+        }
+        const list = permissionHandler.listMediatedPendingRequests;
+        if (typeof list !== 'function') {
+          return rejectUnavailable('mediationStateUnavailable');
+        }
+        const result = list.call(permissionHandler, {
+          mediatorPluginId: args.caller.pluginId,
+          sourceRef: args.input.sourceRef,
+          sourceRevisionOrEpoch: args.input.sourceRevisionOrEpoch,
+        });
+        if (args.signal?.aborted) {
+          return rejectUnavailable('canceled');
+        }
+        return bindingIsStillCurrent()
+          ? result
+          : rejectUnavailable('ownerMachineUnavailable');
+      }
+
+      if (args.actionId === 'session.permission.remote.respond') {
+        if (args.caller.kind !== 'plugin') {
+          return rejectUnavailable('mediationStateUnavailable');
+        }
+        const contributionLocalId = args.caller.contributionLocalId;
+        if (!contributionLocalId?.trim()) {
+          return rejectUnavailable('mediationStateUnavailable');
+        }
+        const respond = permissionHandler.respondToMediatedPendingPermission;
+        if (typeof respond !== 'function') {
+          return rejectUnavailable('mediationStateUnavailable');
+        }
+        const result = await respond.call(permissionHandler, {
+          sessionId: args.input.sessionId,
+          turnId: args.input.turnId,
+          requestId: args.input.requestId,
+          sourceRef: args.input.sourceRef,
+          sourceRevisionOrEpoch: args.input.sourceRevisionOrEpoch,
+          idempotencyKey: args.input.idempotencyKey,
+          actor: args.input.actor,
+          decision: args.input.decision,
+          scope: args.input.scope,
+          mediator: {
+            pluginId: args.caller.pluginId,
+            contributionLocalId,
+          },
+          ...(args.signal ? { signal: args.signal } : {}),
+        });
+        if (args.signal?.aborted) {
+          return rejectUnavailable('canceled');
+        }
+        return bindingIsStillCurrent()
+          ? result
+          : rejectUnavailable('ownerMachineUnavailable');
+      }
+
+      const viewer = args.caller.kind === 'plugin'
+        ? { kind: 'mediatorPlugin' as const, pluginId: args.caller.pluginId }
+        : args.caller.kind === 'host'
+          ? { kind: 'host' as const }
+          : null;
+      if (!viewer) {
+        return rejectUnavailable('mediationStateUnavailable');
+      }
+
+      if (args.actionId === 'session.permission.remote.grants.list') {
+        const listGrants = permissionHandler.listMediatedPermissionGrants;
+        if (typeof listGrants !== 'function') {
+          return rejectUnavailable('mediationStateUnavailable');
+        }
+        const result = await listGrants.call(permissionHandler, {
+          viewer,
+          limit: args.input.limit,
+          ...(args.input.cursor !== undefined ? { cursor: args.input.cursor } : {}),
+          ...(args.signal ? { signal: args.signal } : {}),
+        });
+        if (args.signal?.aborted) {
+          return rejectUnavailable('canceled');
+        }
+        if (!bindingIsStillCurrent()) {
+          return rejectUnavailable('ownerMachineUnavailable');
+        }
+        return result ?? rejectUnavailable('mediationStateUnavailable');
+      }
+
+      const revoke = permissionHandler.revokeMediatedPermissionGrant;
+      if (typeof revoke !== 'function') {
+        return rejectUnavailable('mediationStateUnavailable');
+      }
+      const result = await revoke.call(permissionHandler, {
+        turnId: args.input.turnId,
+        requestId: args.input.requestId,
+        grantId: args.input.grantId,
+        caller: viewer,
+        ...(args.signal ? { signal: args.signal } : {}),
+      });
+      if (args.signal?.aborted) {
+        return rejectUnavailable('canceled');
+      }
+      return bindingIsStillCurrent()
+        ? result
+        : rejectUnavailable('ownerMachineUnavailable');
+    },
+
     sessionPermissionRespond: async ({
       sessionId,
       decision,
@@ -1877,6 +3290,7 @@ export function createCliActionDeps(params: Readonly<{
       allowedTools,
       updatedPermissions,
       execPolicyAmendment,
+      signal,
     }) => {
       if (!params.credentials) {
         return { ok: false, errorCode: 'not_authenticated', errorMessage: 'not_authenticated' };
@@ -1896,16 +3310,6 @@ export function createCliActionDeps(params: Readonly<{
           ...(transport.candidates ? { candidates: transport.candidates } : {}),
         };
       }
-      if (isKnownCompletedRequestId({
-        rawSession: transport.rawSession,
-        mode: transport.mode,
-        ctx: transport.ctx,
-        requestId: reqId,
-        kind: 'permission',
-      })) {
-        return permissionRequestNotFoundResult(transport.sessionId);
-      }
-
       const approved = decision === 'allow';
       const legacyDecision =
         !approved
@@ -1915,10 +3319,9 @@ export function createCliActionDeps(params: Readonly<{
             : undefined;
       try {
         return await callSessionRpc({
+          ...transport,
           token: params.credentials.token,
           sessionId: transport.sessionId,
-          ctx: transport.ctx,
-          mode: transport.mode,
           method: `${transport.sessionId}:session.permission.respond`,
           request: {
             id: reqId,
@@ -1928,6 +3331,7 @@ export function createCliActionDeps(params: Readonly<{
             ...(typeof updatedPermissions !== 'undefined' ? { updatedPermissions } : {}),
             ...(typeof execPolicyAmendment !== 'undefined' ? { execPolicyAmendment } : {}),
           },
+          ...(signal ? { signal } : {}),
         });
       } catch (error) {
         return {
@@ -1947,6 +3351,7 @@ export function createCliActionDeps(params: Readonly<{
       updatedPermissions,
       allowedTools,
       execPolicyAmendment,
+      signal,
     }) => {
       if (!params.credentials) {
         return { ok: false, errorCode: 'not_authenticated', errorMessage: 'not_authenticated' };
@@ -1967,15 +3372,13 @@ export function createCliActionDeps(params: Readonly<{
         };
       }
       if (isKnownCompletedRequestId({
+        ...transport,
         rawSession: transport.rawSession,
-        mode: transport.mode,
-        ctx: transport.ctx,
         requestId: reqId,
         kind: 'user_action',
       })) {
         return permissionRequestNotFoundResult(transport.sessionId);
       }
-
       const normalizedAnswers = Object.create(null) as Record<string, readonly string[]>;
       for (const entry of Array.isArray(answers) ? answers : []) {
         const question = String(entry?.question ?? '');
@@ -1996,10 +3399,9 @@ export function createCliActionDeps(params: Readonly<{
             : 'approved';
       try {
         return await callSessionRpc({
+          ...transport,
           token: params.credentials.token,
           sessionId: transport.sessionId,
-          ctx: transport.ctx,
-          mode: transport.mode,
           method: `${transport.sessionId}:session.user_action.answer`,
           request: {
             id: reqId,
@@ -2012,6 +3414,7 @@ export function createCliActionDeps(params: Readonly<{
             ...(Array.isArray(allowedTools) ? { allowedTools } : {}),
             ...(typeof execPolicyAmendment !== 'undefined' ? { execPolicyAmendment } : {}),
           },
+          ...(signal ? { signal } : {}),
         });
       } catch (error) {
         return {
@@ -2152,10 +3555,10 @@ export function createCliActionDeps(params: Readonly<{
       }
     },
 
-    subagentsUpsert: async (input) => {
+    subagentsUpsert: async ({ input, caller }) => {
       try {
         return await hostSubagentStore.upsert({
-          actor: { kind: 'externalRpc' },
+          actor: deriveHostSubagentActor(caller),
           input,
         });
       } catch (error) {
@@ -2163,34 +3566,94 @@ export function createCliActionDeps(params: Readonly<{
       }
     },
 
-    subagentsUpdateStatus: async (args) => {
+    subagentsUpdateStatus: async ({ input, caller }) => {
       try {
         return await hostSubagentStore.updateStatus({
-          actor: { kind: 'externalRpc' },
-          ...args,
+          ...input,
+          actor: deriveHostSubagentActor(caller),
         });
       } catch (error) {
         return serializeHostSubagentStoreError(error);
       }
     },
 
-    subagentsComplete: async (args) => {
+    subagentsComplete: async ({ input, caller }) => {
       try {
         return await hostSubagentStore.complete({
-          actor: { kind: 'externalRpc' },
-          ...args,
+          ...input,
+          actor: deriveHostSubagentActor(caller),
         });
       } catch (error) {
         return serializeHostSubagentStoreError(error);
       }
     },
 
-    pluginsDevLoopAction: async ({ actionId, input }) => await executePluginDevLoopAction({
+    pluginsDevLoopAction: async ({ actionId, input, context }) => await executePluginDevLoopAction({
       actionId,
       input,
       happyHomeDir: params.happyHomeDir,
       workspaceRoot: await resolveCurrentSessionValue('path') ?? undefined,
+      context,
     }),
+
+    pluginSettingsAdministrationAction: async ({ actionId, input, context }) => (
+      await executePluginSettingsAdministrationAction({
+        actionId,
+        input,
+        happyHomeDir: params.happyHomeDir,
+        ...(context.actionCaller ? { actionCaller: context.actionCaller } : {}),
+        ...(context.signal ? { signal: context.signal } : {}),
+      })
+    ),
+
+    pluginPermissionGrantAction: async (args) => pluginPermissionGrantAction
+      ? await pluginPermissionGrantAction(args)
+      : { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' },
+
+    pluginWebhookAction: async (args) => pluginWebhookAction
+      ? await pluginWebhookAction(args)
+      : { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' },
+
+    ...(automationEventAction ? {
+      automationEventAction: async (args) => await automationEventAction(args),
+    } : {}),
+
+    automationConversationAction: async (args) => automationConversationAction
+      ? await automationConversationAction(args)
+      : { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' },
+
+    pluginSessionHookManagementAction: async (args) => {
+      const hookManagementAction =
+        params.externalSessionPluginAdmissionOwner?.hookManagementAction;
+      if (!hookManagementAction) {
+        return {
+          ok: false,
+          errorCode: 'unsupported_action',
+          error: `unsupported_action:${args.actionId}`,
+        };
+      }
+      const execution = await hookManagementAction(
+        args.actionId,
+        args.input,
+        {
+          surface: 'action',
+          ...(args.signal ? { signal: args.signal } : {}),
+        },
+      );
+      return execution.ok ? execution.result : execution;
+    },
+
+    externalSessionAction: async (args) => params.credentials
+      ? await executePluginExternalSessionAction(
+          { ...args, credentials: params.credentials },
+          params.externalSessionPluginAdmissionOwner?.materializeStart
+            ? {
+                materializeStart:
+                  params.externalSessionPluginAdmissionOwner.materializeStart,
+              }
+            : {},
+        )
+      : { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' },
 
     buildApprovalPreview: async ({ actionId, input, defaultPreview }) => {
       if (actionId === 'plugins.install') {

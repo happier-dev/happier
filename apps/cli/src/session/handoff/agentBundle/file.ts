@@ -8,6 +8,7 @@ import { createFileTransferPayloadSource } from '@/machines/transfer/transferPay
 
 import type { SessionHandoffAgentBundle } from '../types';
 import { parseCanonicalSessionHandoffAgentBundle } from './parse';
+import { projectSessionHandoffAgentBundleForPredecessor } from './schema';
 
 const SESSION_HANDOFF_PROVIDER_BUNDLE_DIRECTORY = join(tmpdir(), 'happier-session-handoff-provider-bundles');
 
@@ -17,7 +18,7 @@ export async function createSessionHandoffAgentBundlePayloadSource(
   const normalizedAgentBundle = parseCanonicalSessionHandoffAgentBundle(agentBundle);
   // Avoid double-buffering large provider bundles. `writeFile` accepts strings, so compute size/hash
   // from the canonical JSON string and let Node stream/encode it directly to disk.
-  const payloadJson = JSON.stringify(normalizedAgentBundle);
+  const payloadJson = JSON.stringify(projectSessionHandoffAgentBundleForPredecessor(normalizedAgentBundle));
   const sizeBytes = Buffer.byteLength(payloadJson, 'utf8');
   const manifestHash = `sha256:${createHash('sha256').update(payloadJson, 'utf8').digest('hex')}`;
 

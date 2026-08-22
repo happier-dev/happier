@@ -12,6 +12,7 @@ import type {
   ExternalSessionOperationSocketResponseV1,
   ExternalSessionMaterializationPublicationV1,
   ExternalSessionPriorStableStorageV1,
+  ExternalSessionTranscriptRawMessageV1,
   SessionMetadata,
 } from '@happier-dev/protocol';
 import {
@@ -26,6 +27,10 @@ import {
   createExternalSessionOperationPrivateStagingStore,
   type ExternalSessionOperationPrivateStagingStore,
 } from '@/session/external/staging/operationPrivateStaging';
+import {
+  stageExternalSessionHistoricalImportItem,
+} from '@/api/session/external/import/importExternalSessionTranscript';
+import { garbageCollectUncommittedSessionMedia } from '@/session/media/garbageCollect';
 
 import {
   createExternalSessionMaterializeActionExecutor as createExternalSessionMaterializeActionExecutorProduction,
@@ -33,11 +38,15 @@ import {
   ExternalSessionPersistedTakeoverPreflightError,
 } from './materializeAction';
 import {
-  externalSessionOperationIdForRequest,
+  acknowledgeExternalSessionOperationProgressProjection,
+  compactExternalSessionOperationRecordToCompletionReceipt,
+  listExternalSessionOperationRecords,
   readExternalSessionOperationRecord,
+  readExternalSessionOperationStoredEntry,
   writeExternalSessionOperationRecord,
 } from './operationRecordStore';
 import {
+  repairExternalSessionOperationProgressProjections,
   selectExternalSessionOperationProgressMetadata,
 } from './operationProgressPublisher';
 import {
@@ -136,6 +145,7 @@ function persistedTakeoverRequest() {
     },
     plan: 'takeover' as const,
     targetStorageMode: 'persisted' as const,
+    targetDirectory: '/local/selected/workspace',
     targetRuntimeMode: 'terminal' as const,
   };
 }
@@ -144,7 +154,7 @@ function persistedTakeoverValidatingRecord(): ExternalSessionOperationRecordV1 {
   const takeoverRequest = persistedTakeoverRequest();
   return {
     v: 1,
-    operationId: externalSessionOperationIdForRequest(takeoverRequest),
+    operationId: 'external-takeover:persisted-validating-fixture',
     revision: 0,
     request: takeoverRequest,
     status: 'awaiting_user_resume',
@@ -175,6 +185,100 @@ function persistedTakeoverValidatingRecord(): ExternalSessionOperationRecordV1 {
     },
     fence: { kind: 'none' },
     retryTargetPhase: 'validating',
+  };
+}
+
+function terminalMaterializeRecord(
+  status: 'completed' | 'discarded',
+): ExternalSessionOperationRecordV1 {
+  const materializeRequest = request();
+  return {
+    v: 1,
+    operationId: `external-materialize:terminal-${status}-fixture`,
+    revision: 1,
+    request: materializeRequest,
+    status,
+    phase: 'publishing',
+    timeline: resolveExternalSessionOperationTimelineV1(materializeRequest),
+    createdAtMs: 1,
+    updatedAtMs: 2,
+    priorStableStorage: { state: 'machine_only' },
+    currentStorageState: status === 'completed'
+      ? 'snapshot_complete'
+      : 'machine_only',
+    checkpoint: {
+      sourcePagesRead: 0,
+      stagedItemCount: 0,
+      importedItemCount: 0,
+      requiredItemFailures: {
+        total: 0,
+        record: 0,
+        media: 0,
+        conversion: 0,
+        diagnosticsTruncated: false,
+        diagnostics: [],
+      },
+      ...(status === 'completed'
+        ? {
+          acceptedThroughServerSeq: 0,
+          acknowledgedBatchId: 'terminal-materialize-fixture',
+        }
+        : {}),
+    },
+    bindings: { operationClaimId: 'terminal-materialize-claim' },
+    progressProjection: { acknowledgedRevision: null },
+    canonicalOwnerEvidence: { linkedSessionRevision: 1 },
+    fence: { kind: 'none' },
+    ...(status === 'completed'
+      ? {
+        publication: {
+          materializationPublicationId: 'terminal-materialize-publication',
+          materializedThroughSourceAt: 2,
+          publishedThroughServerSeq: 0,
+        },
+        terminalResult: { kind: 'completed' as const },
+      }
+      : { terminalResult: { kind: 'discarded' as const } }),
+  };
+}
+
+function cancelledInitialPartialMaterializeRecord(): ExternalSessionOperationRecordV1 {
+  const base = terminalMaterializeRecord('discarded');
+  return {
+    ...base,
+    operationId: 'external-materialize:cancelled-initial-partial-fixture',
+    request: {
+      ...base.request,
+      idempotencyKey: 'materialize-cancelled-initial-partial',
+    },
+    status: 'cancelled',
+    phase: 'importing',
+    currentStorageState: 'server_partial',
+    checkpoint: {
+      sourcePagesRead: 1,
+      stagedItemCount: 1,
+      importedItemCount: 1,
+      acceptedThroughServerSeq: 3,
+      acknowledgedBatchId: 'initial-partial-batch',
+      requiredItemFailures: {
+        total: 0,
+        record: 0,
+        media: 0,
+        conversion: 0,
+        diagnosticsTruncated: false,
+        diagnostics: [],
+      },
+    },
+    bindings: {
+      operationClaimId: 'initial-partial-claim',
+      historicalImportJobId: 'initial-partial-job',
+    },
+    fence: { kind: 'initial_server_partial', acceptedThroughServerSeq: 3 },
+    cancellation: {
+      requestedAtMs: 2,
+      requestedAtRevision: 0,
+    },
+    terminalResult: { kind: 'cancelled' },
   };
 }
 
@@ -212,14 +316,665 @@ afterEach(async () => {
 });
 
 describe('external session materialize action', () => {
+  it('persists mandatory plugin author intent on the canonical durable record', async () => {
+    const activeServerDir = await mkdtemp(join(
+      tmpdir(),
+      'happier-materialize-plugin-author-intent-',
+    ));
+    roots.push(activeServerDir);
+    const operationExclusion = createExternalSessionOperationExclusion({
+      activeServerDir,
+      ownerId: 'materialize-plugin-author-intent-owner',
+    });
+    const authorIntent = {
+      v: 1,
+      surface: 'plugin',
+      kind: 'materialize',
+      sessionId: request().sessionId,
+      targetStorageMode: 'external-linked',
+    } as const;
+    const executor = createExternalSessionMaterializeActionExecutor({
+      activeServerDir,
+      operationExclusion,
+      staging: createExternalSessionOperationPrivateStagingStore({
+        activeServerDir,
+        limits: {
+          perOperation: { maxItems: 20, maxBytes: 50_000 },
+          aggregate: { maxItems: 40, maxBytes: 100_000 },
+        },
+      }),
+      describeSource: async () => ({
+        capturedSource: {
+          sourceIdentity: 'source-identity-1',
+          sourceGeneration: request().source.sourceGeneration,
+          revision: 'revision-1',
+          boundary: 'boundary-1',
+        },
+        priorStableStorage: machineOnlyPriorStableStorage,
+        linkedSessionRevision: 1,
+      }),
+      readNewestFirstPages: async function* () {
+        throw new Error('publication failure must stop before import');
+      },
+      readFinalCatchUpPages: noFinalCatchUpPages,
+      sendHistoricalCommand: inspectOnlyCommandHandler(
+        machineOnlyPriorStableStorage,
+      ),
+      publishProgress: async () => {
+        throw new Error('withhold first publication');
+      },
+    });
+
+    const result = await executor.start(
+      { request: request() },
+      { authorIntent },
+    );
+    expect(result).toMatchObject({
+      ok: false,
+      error: { code: 'internal_error' },
+    });
+    const records = await listExternalSessionOperationRecords(activeServerDir);
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({ authorIntent });
+  });
+
+  it('releases a described source capture when admission fails before the page generator starts', async () => {
+    const activeServerDir = await mkdtemp(join(
+      tmpdir(),
+      'happier-materialize-source-capture-no-generator-',
+    ));
+    roots.push(activeServerDir);
+    const releaseSourceCapture = vi.fn();
+    const readNewestFirstPages = vi.fn();
+    const executor = createExternalSessionMaterializeActionExecutor({
+      activeServerDir,
+      operationExclusion: createExternalSessionOperationExclusion({
+        activeServerDir,
+        ownerId: 'materialize-source-capture-no-generator-owner',
+      }),
+      staging: createExternalSessionOperationPrivateStagingStore({
+        activeServerDir,
+        limits: {
+          perOperation: { maxItems: 20, maxBytes: 50_000 },
+          aggregate: { maxItems: 40, maxBytes: 100_000 },
+        },
+      }),
+      describeSource: async () => ({
+        capturedSource: {
+          sourceIdentity: 'source-identity-no-generator',
+          sourceGeneration: request().source.sourceGeneration,
+          revision: 'revision-no-generator',
+          boundary: 'boundary-no-generator',
+        },
+        linkedSessionRevision: 1,
+      }),
+      releaseSourceCapture,
+      readNewestFirstPages,
+      readFinalCatchUpPages: noFinalCatchUpPages,
+      sendHistoricalCommand: async () => {
+        throw new Error('injected admission inspection failure');
+      },
+    });
+
+    await expect(executor.start({ request: request() })).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'internal_error' },
+    });
+    expect(readNewestFirstPages).not.toHaveBeenCalled();
+    expect(releaseSourceCapture).toHaveBeenCalledOnce();
+    expect(releaseSourceCapture).toHaveBeenCalledWith(request());
+  });
+
+  it('fails a converged-owner wait error without reacquiring or starting effects', async () => {
+    const activeServerDir = await mkdtemp(join(
+      tmpdir(),
+      'happier-materialize-converged-wait-failure-',
+    ));
+    roots.push(activeServerDir);
+    const acquire = vi.fn().mockResolvedValue({
+      status: 'converged' as const,
+      active: {
+        schemaVersion: 1 as const,
+        claimId: 'unobservable-owner',
+        ownerId: 'prior-owner',
+        request: {
+          kind: 'materialize' as const,
+          sessionId: request().sessionId,
+          requestId: request().idempotencyKey,
+          sourceIdentity: JSON.stringify(request().source.qualifiedIdentity),
+          sourceGeneration: request().source.sourceGeneration,
+        },
+        acquiredAtMs: 1,
+        renewedAtMs: 1,
+        expiresAtMs: 2,
+      },
+      waitForRelease: async () => ({
+        status: 'failed' as const,
+        reason: 'watch_iteration_failed' as const,
+      }),
+    });
+    const effect = vi.fn();
+    const executor = createExternalSessionMaterializeActionExecutor({
+      activeServerDir,
+      operationExclusion: { acquire },
+      staging: createExternalSessionOperationPrivateStagingStore({
+        activeServerDir,
+        limits: {
+          perOperation: { maxItems: 20, maxBytes: 50_000 },
+          aggregate: { maxItems: 40, maxBytes: 100_000 },
+        },
+      }),
+      describeSource: async () => {
+        effect();
+        throw new Error('failed convergence wait must not start source effects');
+      },
+      readNewestFirstPages: async function* () {
+        effect();
+      },
+      readFinalCatchUpPages: noFinalCatchUpPages,
+      sendHistoricalCommand: async () => {
+        effect();
+        throw new Error('failed convergence wait must not start server effects');
+      },
+    });
+
+    await expect(executor.start({ request: request() })).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'internal_error' },
+    });
+    expect(acquire).toHaveBeenCalledOnce();
+    expect(effect).not.toHaveBeenCalled();
+  });
+
+  it('reacquires exclusion after a converged owner releases without a durable row', async () => {
+    const activeServerDir = await mkdtemp(join(
+      tmpdir(),
+      'happier-materialize-reacquire-after-empty-owner-',
+    ));
+    roots.push(activeServerDir);
+    const acquire = vi.fn()
+      .mockResolvedValueOnce({
+        status: 'converged' as const,
+        active: {
+          schemaVersion: 1 as const,
+          claimId: 'empty-prior-owner',
+          ownerId: 'prior-owner',
+          request: {
+            kind: 'materialize' as const,
+            sessionId: request().sessionId,
+            requestId: request().idempotencyKey,
+            sourceIdentity: JSON.stringify(request().source.qualifiedIdentity),
+            sourceGeneration: request().source.sourceGeneration,
+          },
+          acquiredAtMs: 1,
+          renewedAtMs: 1,
+          expiresAtMs: 2,
+        },
+        waitForRelease: async () => ({ status: 'ready' as const }),
+      })
+      .mockResolvedValueOnce({
+        status: 'conflict' as const,
+        reason: 'active_operation' as const,
+        active: null,
+      });
+    const effect = vi.fn();
+    const executor = createExternalSessionMaterializeActionExecutor({
+      activeServerDir,
+      operationExclusion: { acquire },
+      staging: createExternalSessionOperationPrivateStagingStore({
+        activeServerDir,
+        limits: {
+          perOperation: { maxItems: 20, maxBytes: 50_000 },
+          aggregate: { maxItems: 40, maxBytes: 100_000 },
+        },
+      }),
+      describeSource: async () => {
+        effect();
+        throw new Error('second exclusion conflict must stop source effects');
+      },
+      readNewestFirstPages: async function* () {
+        effect();
+      },
+      readFinalCatchUpPages: noFinalCatchUpPages,
+      sendHistoricalCommand: async () => {
+        effect();
+        throw new Error('second exclusion conflict must stop server effects');
+      },
+    });
+
+    await expect(executor.start({ request: request() })).resolves.toEqual({
+      ok: false,
+      error: {
+        code: 'operation_conflict',
+        message: 'Materialization conflicts with active_operation.',
+      },
+    });
+    expect(acquire).toHaveBeenCalledTimes(2);
+    expect(effect).not.toHaveBeenCalled();
+  });
+
+  it('fails receipt-backed exact-owner actions as invalid state without effects', async () => {
+    const activeServerDir = await mkdtemp(join(
+      tmpdir(),
+      'happier-materialize-compacted-receipt-actions-',
+    ));
+    roots.push(activeServerDir);
+    const operationExclusion = createExternalSessionOperationExclusion({
+      activeServerDir,
+      ownerId: 'materialize-compacted-receipt-actions',
+    });
+    const base = persistedTakeoverValidatingRecord();
+    const completedRequest = {
+      ...base.request,
+      targetStorageMode: 'external-linked' as const,
+    };
+    const completed = {
+      ...base,
+      operationId: 'external-materialize:completed-receipt-fixture',
+      request: completedRequest,
+      revision: 1,
+      status: 'completed' as const,
+      phase: 'finalizing' as const,
+      timeline: resolveExternalSessionOperationTimelineV1(completedRequest),
+      updatedAtMs: 25_000,
+      progressProjection: { acknowledgedRevision: null },
+      retryTargetPhase: undefined,
+      terminalResult: { kind: 'completed' as const },
+    } satisfies ExternalSessionOperationRecordV1;
+    await writeExternalSessionOperationRecord(activeServerDir, completed);
+    await acknowledgeExternalSessionOperationProgressProjection({
+      activeServerDir,
+      operationId: completed.operationId,
+      projectedRevision: completed.revision,
+    });
+    await expect(compactExternalSessionOperationRecordToCompletionReceipt({
+      activeServerDir,
+      operationId: completed.operationId,
+      expectedRevision: completed.revision,
+      stagingDisposition: 'not_applicable',
+    })).resolves.toMatchObject({ status: 'compacted' });
+    const effect = vi.fn();
+    const executor = createExternalSessionMaterializeActionExecutor({
+      activeServerDir,
+      operationExclusion,
+      staging: createExternalSessionOperationPrivateStagingStore({
+        activeServerDir,
+        limits: {
+          perOperation: { maxItems: 20, maxBytes: 50_000 },
+          aggregate: { maxItems: 40, maxBytes: 100_000 },
+        },
+      }),
+      describeSource: async () => {
+        effect();
+        throw new Error('receipt action must not describe its source');
+      },
+      readNewestFirstPages: async function* () {
+        effect();
+      },
+      readFinalCatchUpPages: noFinalCatchUpPages,
+      sendHistoricalCommand: async () => {
+        effect();
+        throw new Error('receipt action must not send a command');
+      },
+    });
+    const reference = {
+      sessionId: completed.request.sessionId,
+      operationId: completed.operationId,
+      revision: completed.revision,
+    };
+
+    for (const run of [
+      () => executor.status(reference),
+      () => executor.cancel(reference),
+      () => executor.resume(reference),
+      () => executor.retry(reference),
+      () => executor.resumePersistedTakeover(reference),
+      () => executor.discard(reference),
+    ]) {
+      await expect(run()).resolves.toMatchObject({
+        ok: false,
+        error: { code: 'invalid_state' },
+      });
+    }
+    expect(effect).not.toHaveBeenCalled();
+  });
+
+  it('fails closed for every materialize control action that targets a matching legacy server-scoped row', async () => {
+    const activeServerDir = await mkdtemp(join(
+      tmpdir(),
+      'happier-materialize-legacy-server-scoped-action-',
+    ));
+    roots.push(activeServerDir);
+    const legacy = terminalMaterializeRecord('completed');
+    const legacyPath = join(
+      activeServerDir,
+      'external-session-operations',
+      'records',
+      `${createHash('sha256').update(legacy.operationId, 'utf8').digest('hex')}.json`,
+    );
+    await mkdir(join(legacyPath, '..'), { recursive: true });
+    await writeFile(legacyPath, JSON.stringify(legacy), 'utf8');
+    const effect = vi.fn();
+    const executor = createExternalSessionMaterializeActionExecutor({
+      activeServerDir,
+      operationExclusion: { acquire: vi.fn() },
+      staging: createExternalSessionOperationPrivateStagingStore({
+        activeServerDir,
+        limits: {
+          perOperation: { maxItems: 20, maxBytes: 50_000 },
+          aggregate: { maxItems: 40, maxBytes: 100_000 },
+        },
+      }),
+      describeSource: async () => {
+        effect();
+        throw new Error('legacy operation must not describe its source');
+      },
+      readNewestFirstPages: async function* () {
+        effect();
+      },
+      readFinalCatchUpPages: noFinalCatchUpPages,
+      sendHistoricalCommand: async () => {
+        effect();
+        throw new Error('legacy operation must not send a command');
+      },
+    });
+    const reference = {
+      sessionId: legacy.request.sessionId,
+      operationId: legacy.operationId,
+      revision: legacy.revision,
+    };
+
+    for (const run of [
+      () => executor.status(reference),
+      () => executor.cancel(reference),
+      () => executor.resume(reference),
+      () => executor.retry(reference),
+      () => executor.resumePersistedTakeover(reference),
+      () => executor.discard(reference),
+    ]) {
+      await expect(run()).resolves.toMatchObject({
+        ok: false,
+        error: { code: 'source_unavailable' },
+      });
+    }
+    expect(effect).not.toHaveBeenCalled();
+  });
+
+  it('compacts acknowledged completed materialization after canonical staging reports missing', async () => {
+    const activeServerDir = await mkdtemp(join(
+      tmpdir(),
+      'happier-materialize-terminal-cleanup-compaction-',
+    ));
+    roots.push(activeServerDir);
+    const completedInput = terminalMaterializeRecord('completed');
+    await writeExternalSessionOperationRecord(activeServerDir, completedInput);
+    await acknowledgeExternalSessionOperationProgressProjection({
+      activeServerDir,
+      operationId: completedInput.operationId,
+      projectedRevision: completedInput.revision,
+    });
+    const executor = createExternalSessionMaterializeActionExecutor({
+      activeServerDir,
+      operationExclusion: { acquire: vi.fn() },
+      staging: createExternalSessionOperationPrivateStagingStore({
+        activeServerDir,
+        limits: {
+          perOperation: { maxItems: 20, maxBytes: 50_000 },
+          aggregate: { maxItems: 40, maxBytes: 100_000 },
+        },
+      }),
+      describeSource: vi.fn(),
+      readNewestFirstPages: async function* () {},
+      readFinalCatchUpPages: noFinalCatchUpPages,
+      sendHistoricalCommand: vi.fn(),
+    });
+
+    await expect(executor.cleanupTerminalStaging?.(
+      completedInput.operationId,
+    )).resolves.toBe('missing');
+    await expect(readExternalSessionOperationStoredEntry(
+      activeServerDir,
+      completedInput.operationId,
+    )).resolves.toMatchObject({ kind: 'completion_receipt' });
+  });
+
+  it('retains an acknowledged cancelled initial partial through immediate cleanup until exact server Discard discharges it', async () => {
+    const activeServerDir = await mkdtemp(join(
+      tmpdir(),
+      'happier-materialize-cancelled-initial-partial-cleanup-',
+    ));
+    roots.push(activeServerDir);
+    const operationExclusion = createExternalSessionOperationExclusion({
+      activeServerDir,
+      ownerId: 'materialize-cancelled-initial-partial-cleanup-owner',
+    });
+    const cancelledInput = cancelledInitialPartialMaterializeRecord();
+    await writeExternalSessionOperationRecord(activeServerDir, cancelledInput);
+    const cancelled =
+      await acknowledgeExternalSessionOperationProgressProjection({
+        activeServerDir,
+        operationId: cancelledInput.operationId,
+        projectedRevision: cancelledInput.revision,
+      });
+    const commands: ExternalSessionOperationSocketCommandV1[] = [];
+    const executor = createExternalSessionMaterializeActionExecutor({
+      activeServerDir,
+      operationExclusion,
+      staging: createExternalSessionOperationPrivateStagingStore({
+        activeServerDir,
+        limits: {
+          perOperation: { maxItems: 20, maxBytes: 50_000 },
+          aggregate: { maxItems: 40, maxBytes: 100_000 },
+        },
+      }),
+      describeSource: vi.fn(),
+      readNewestFirstPages: async function* () {},
+      readFinalCatchUpPages: noFinalCatchUpPages,
+      publishProgress: async ({ progress }) =>
+        await acknowledgeExternalSessionOperationProgressProjection({
+          activeServerDir,
+          operationId: progress.operationId,
+          projectedRevision: progress.revision,
+        }),
+      sendHistoricalCommand: async (command) => {
+        commands.push(command);
+        if (command.kind === 'discard') {
+          return {
+            v: 1,
+            kind: 'discarded',
+            claim: command.claim,
+            revision: command.expectedRevision,
+          };
+        }
+        throw new Error(`Unexpected historical import command: ${command.kind}`);
+      },
+    });
+
+    await expect(executor.cleanupTerminalStaging?.(
+      cancelled.operationId,
+    )).resolves.toBe('not_terminal');
+    await expect(readExternalSessionOperationStoredEntry(
+      activeServerDir,
+      cancelled.operationId,
+    )).resolves.toEqual({ kind: 'full_record', record: cancelled });
+
+    const discarded = await executor.discard({
+      sessionId: cancelled.request.sessionId,
+      operationId: cancelled.operationId,
+      revision: cancelled.revision,
+    });
+    if (!discarded.ok) {
+      throw new Error(`Expected server Discard to settle: ${JSON.stringify(discarded)}`);
+    }
+    expect(discarded).toMatchObject({
+      ok: true,
+      progress: {
+        status: 'discarded',
+        currentStorageState: 'machine_only',
+      },
+    });
+    expect(commands.map((command) => command.kind)).toEqual(['discard']);
+    await expect(readExternalSessionOperationStoredEntry(
+      activeServerDir,
+      cancelled.operationId,
+    )).resolves.toMatchObject({
+      kind: 'full_record',
+      record: {
+        status: 'discarded',
+        terminalResult: { kind: 'discarded' },
+      },
+    });
+  });
+
+  it('retains discarded materialization idempotency evidence after canonical staging cleanup', async () => {
+    const activeServerDir = await mkdtemp(join(
+      tmpdir(),
+      'happier-materialize-discarded-cleanup-full-record-',
+    ));
+    roots.push(activeServerDir);
+    const discarded = terminalMaterializeRecord('discarded');
+    await writeExternalSessionOperationRecord(activeServerDir, discarded);
+    await acknowledgeExternalSessionOperationProgressProjection({
+      activeServerDir,
+      operationId: discarded.operationId,
+      projectedRevision: discarded.revision,
+    });
+    const executor = createExternalSessionMaterializeActionExecutor({
+      activeServerDir,
+      operationExclusion: { acquire: vi.fn() },
+      staging: createExternalSessionOperationPrivateStagingStore({
+        activeServerDir,
+        limits: {
+          perOperation: { maxItems: 20, maxBytes: 50_000 },
+          aggregate: { maxItems: 40, maxBytes: 100_000 },
+        },
+      }),
+      describeSource: vi.fn(),
+      readNewestFirstPages: async function* () {},
+      readFinalCatchUpPages: noFinalCatchUpPages,
+      sendHistoricalCommand: vi.fn(),
+    });
+
+    await expect(executor.cleanupTerminalStaging?.(
+      discarded.operationId,
+    )).resolves.toBe('missing');
+    await expect(readExternalSessionOperationStoredEntry(
+      activeServerDir,
+      discarded.operationId,
+    )).resolves.toMatchObject({
+      kind: 'full_record',
+      record: {
+        request: { idempotencyKey: discarded.request.idempotencyKey },
+        status: 'discarded',
+        terminalResult: { kind: 'discarded' },
+      },
+    });
+  });
+
+  it('cancels Start behind passive repair without beginning a claim or source effect after release', async () => {
+    const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-materialize-start-barrier-cancel-'));
+    roots.push(activeServerDir);
+    const operationExclusion = createExternalSessionOperationExclusion({
+      activeServerDir,
+      ownerId: 'materialize-start-barrier-cancel',
+      claimMutationLockAcquisitionTimeoutMs: 10_000,
+    });
+    let signalRepairStarted!: () => void;
+    const repairStarted = new Promise<void>((resolve) => {
+      signalRepairStarted = resolve;
+    });
+    let releaseRepair!: () => void;
+    const repairRelease = new Promise<void>((resolve) => {
+      releaseRepair = resolve;
+    });
+    const repair = operationExclusion.withPassiveRepairClaimBarrier({
+      sessionId: request().sessionId,
+      operationClaimId: 'passive-repair-claim',
+    }, async () => {
+      signalRepairStarted();
+      await repairRelease;
+    });
+    await repairStarted;
+    const describeSource = vi.fn(async () => {
+      throw new Error('cancelled Start must not describe its source');
+    });
+    const executor = createExternalSessionMaterializeActionExecutor({
+      activeServerDir,
+      operationExclusion,
+      staging: createExternalSessionOperationPrivateStagingStore({
+        activeServerDir,
+        limits: {
+          perOperation: { maxItems: 20, maxBytes: 50_000 },
+          aggregate: { maxItems: 40, maxBytes: 100_000 },
+        },
+      }),
+      describeSource,
+      readNewestFirstPages: async function* () {
+        throw new Error('cancelled Start must not read source pages');
+      },
+      readFinalCatchUpPages: noFinalCatchUpPages,
+      sendHistoricalCommand: inspectOnlyCommandHandler(
+        machineOnlyPriorStableStorage,
+      ),
+    });
+    const controller = new AbortController();
+    const result = executor.start(
+      { request: request() },
+      { signal: controller.signal },
+    );
+    let cancellationAssertionTimer: NodeJS.Timeout | null = null;
+    try {
+      controller.abort();
+      await expect(Promise.race([
+        result,
+        new Promise((resolve) => {
+          cancellationAssertionTimer = setTimeout(
+            () => resolve('materialize_start_did_not_observe_cancellation'),
+            500,
+          );
+        }),
+      ])).resolves.toEqual({
+        ok: false,
+        error: {
+          code: 'internal_error',
+          message: 'Materialization failed.',
+        },
+      });
+      expect(describeSource).not.toHaveBeenCalled();
+    } finally {
+      if (cancellationAssertionTimer) {
+        clearTimeout(cancellationAssertionTimer);
+      }
+      releaseRepair();
+      await repair;
+      await result;
+    }
+
+    expect(describeSource).not.toHaveBeenCalled();
+    await expect(listExternalSessionOperationRecords(
+      activeServerDir,
+    )).resolves.toEqual([]);
+    const probe = await operationExclusion.acquire({
+      kind: 'materialize',
+      sessionId: request().sessionId,
+      requestId: 'post-cancellation-probe',
+      sourceIdentity: 'post-cancellation-probe',
+      sourceGeneration: 'post-cancellation-probe',
+    });
+    expect(probe.status).toBe('acquired');
+    if (probe.status === 'acquired') await probe.claim.release();
+  }, 3_000);
+
   it('returns internal_error without effects when the canonical record is corrupt', async () => {
     const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-materialize-action-'));
     roots.push(activeServerDir);
-    const operationId = externalSessionOperationIdForRequest(request());
+    const operationId = 'external-materialize:corrupt-record-fixture';
     const key = createHash('sha256').update(operationId, 'utf8').digest('hex');
     const recordsDir = join(
       activeServerDir,
       'external-session-operations',
+      'by-account',
+      `sub-${createHash('sha256').update('vitest', 'utf8').digest('hex').slice(0, 32)}`,
       'records',
     );
     await mkdir(recordsDir, { recursive: true });
@@ -261,7 +1016,7 @@ describe('external session materialize action', () => {
       ok: false,
       error: {
         code: 'internal_error',
-        message: 'Materialization operation record could not be read.',
+        message: 'Materialization operation inventory could not be read.',
       },
     });
     expect(acquire).not.toHaveBeenCalled();
@@ -307,13 +1062,12 @@ describe('external session materialize action', () => {
     expect(acquire).not.toHaveBeenCalled();
     expect(describeSource).not.toHaveBeenCalled();
     expect(publishProgress).not.toHaveBeenCalled();
-    await expect(readExternalSessionOperationRecord(
+    await expect(listExternalSessionOperationRecords(
       activeServerDir,
-      externalSessionOperationIdForRequest(request()),
-    )).resolves.toBeNull();
+    )).resolves.toEqual([hidden]);
   });
 
-  it('fails a conflicting shared selection before committing a new operation or beginning import effects', async () => {
+  it('rejects an unknown selected terminal before committing a new operation or beginning import effects', async () => {
     const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-materialize-action-'));
     roots.push(activeServerDir);
     const operationExclusion = createExternalSessionOperationExclusion({
@@ -330,7 +1084,8 @@ describe('external session materialize action', () => {
       priorStableStorage: { state: 'machine_only' as const },
       linkedSessionRevision: 1,
     }));
-    const validateProgressSelection = vi.fn(async () => {
+    const validateProgressSelection = vi.fn(async (input) => {
+      expect(input.priorTerminalRecords).toEqual([]);
       throw new Error('external_session_operation_projection_conflict');
     });
     const readNewestFirstPages = vi.fn(async function* () {
@@ -365,10 +1120,9 @@ describe('external session materialize action', () => {
     expect(validateProgressSelection).toHaveBeenCalledOnce();
     expect(readNewestFirstPages).not.toHaveBeenCalled();
     expect(publishProgress).not.toHaveBeenCalled();
-    await expect(readExternalSessionOperationRecord(
+    await expect(listExternalSessionOperationRecords(
       activeServerDir,
-      externalSessionOperationIdForRequest(request()),
-    )).resolves.toBeNull();
+    )).resolves.toEqual([]);
   });
 
   it('republishes the exact committed row when the same start retries after publication failure', async () => {
@@ -419,16 +1173,149 @@ describe('external session materialize action', () => {
       ok: false,
       error: { code: 'internal_error' },
     });
-    await expect(executor.start({ request: request() })).resolves.toMatchObject({
+    const retry = await executor.start({ request: request() });
+    await expect(retry).toMatchObject({
       ok: true,
       progress: {
-        operationId: externalSessionOperationIdForRequest(request()),
+        operationId: expect.stringMatching(/^external-materialize:/u),
         revision: 0,
       },
+    });
+    if (!retry.ok) throw new Error('Expected durable materialization replay.');
+    await expect(readExternalSessionOperationRecord(
+      activeServerDir,
+      retry.progress.operationId,
+    )).resolves.toMatchObject({
+      operationId: retry.progress.operationId,
+      request: request(),
     });
     expect(describeSource).toHaveBeenCalledOnce();
     expect(publishProgress).toHaveBeenCalledOnce();
     expect(convergeProgress).toHaveBeenCalledOnce();
+  });
+
+  it('preserves the committed completion when its terminal progress publication fails', async () => {
+    const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-materialize-terminal-publish-failure-'));
+    roots.push(activeServerDir);
+    const operationExclusion = createExternalSessionOperationExclusion({
+      activeServerDir,
+      ownerId: 'materialize-terminal-publish-failure-owner',
+    });
+    const publishProgress = vi.fn(async ({ progress }: Readonly<{
+      progress: ExternalSessionOperationProgressV1;
+    }>) => {
+      if (progress.status === 'completed') {
+        throw new Error('injected terminal progress publication failure');
+      }
+    });
+    const executor = createExternalSessionMaterializeActionExecutor({
+      activeServerDir,
+      operationExclusion,
+      staging: createExternalSessionOperationPrivateStagingStore({
+        activeServerDir,
+        limits: {
+          perOperation: { maxItems: 20, maxBytes: 50_000 },
+          aggregate: { maxItems: 40, maxBytes: 100_000 },
+        },
+      }),
+      describeSource: async () => ({
+        capturedSource: {
+          sourceIdentity: 'source-identity-terminal-publish-failure',
+          sourceGeneration: 'source-1',
+          revision: 'revision-1',
+          boundary: 'boundary-1',
+        },
+        priorStableStorage: machineOnlyPriorStableStorage,
+        linkedSessionRevision: 1,
+      }),
+      readNewestFirstPages: async function* () {
+        yield {
+          groupId: 'terminal-publish-failure-page',
+          items: [item('terminal-publish-failure')],
+          sourceRead: {
+            availability: 'reachable',
+            sourceIdentity: 'source-identity-terminal-publish-failure',
+            sourceGeneration: 'source-1',
+            revision: 'revision-1',
+            relationshipToCapture: 'same',
+            eof: true,
+          },
+        } as const;
+      },
+      readFinalCatchUpPages: noFinalCatchUpPages,
+      sendHistoricalCommand: async (command) => {
+        const authority = inspectAuthorityResponse(command, machineOnlyPriorStableStorage);
+        if (authority) return authority;
+        if (command.kind === 'begin') {
+          return {
+            v: 1,
+            kind: 'ready',
+            claim: command.claim,
+            revision: command.expectedRevision,
+            historicalImportJobId: 'job-terminal-publish-failure',
+            limits: { maxItems: 200, maxSerializedBytes: 524_288 },
+            priorStableStorage: machineOnlyPriorStableStorage,
+          };
+        }
+        if (command.kind === 'batch') {
+          return {
+            v: 1,
+            kind: 'batch_accepted',
+            claim: command.claim,
+            revision: command.expectedRevision,
+            batchId: command.batchId,
+            acceptedThroughServerSeq: 1,
+          };
+        }
+        if (command.kind === 'finalize') {
+          return {
+            v: 1,
+            kind: 'finalized',
+            claim: command.claim,
+            revision: command.expectedRevision,
+            acceptedThroughServerSeq: command.expectedAcceptedThroughServerSeq,
+            publication: {
+              materializationPublicationId: 'publication-terminal-publish-failure',
+              materializedThroughSourceAt: 100,
+              publishedThroughServerSeq: 1,
+            },
+          };
+        }
+        return {
+          v: 1,
+          kind: 'error',
+          errorCode: 'invalid_state',
+          message: `Unexpected command ${command.kind}.`,
+        };
+      },
+      publishProgress,
+    });
+
+    const result = await executor.start({
+      request: {
+        ...request(),
+        idempotencyKey: 'materialize-terminal-publish-failure',
+      },
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      progress: {
+        status: 'completed',
+        currentStorageState: 'snapshot_complete',
+      },
+    });
+    if (!result.ok) throw new Error('Expected authoritative completion.');
+    await expect(readExternalSessionOperationRecord(
+      activeServerDir,
+      result.progress.operationId,
+    )).resolves.toMatchObject({
+      status: 'completed',
+      terminalResult: { kind: 'completed' },
+    });
+    expect(publishProgress).toHaveBeenCalledWith(expect.objectContaining({
+      progress: expect.objectContaining({ status: 'completed' }),
+    }));
   });
 
   it('claims, stages newest-first pages, replays oldest-first, publishes, and never spawns', async () => {
@@ -511,6 +1398,7 @@ describe('external session materialize action', () => {
       }
       throw new Error(`unexpected command ${command.kind}`);
     });
+    const releaseSourceCapture = vi.fn();
     const executor = createExternalSessionMaterializeActionExecutor({
       activeServerDir,
       operationExclusion,
@@ -525,6 +1413,7 @@ describe('external session materialize action', () => {
         priorStableStorage: { state: 'machine_only' },
         linkedSessionRevision: 1,
       }),
+      releaseSourceCapture,
       readNewestFirstPages: async function* () {
         yield {
           groupId: 'newest-page',
@@ -644,7 +1533,7 @@ describe('external session materialize action', () => {
     expect(status).toMatchObject({ ok: true, progress: { status: 'completed' } });
     expect(sendHistoricalCommand).toHaveBeenCalledTimes(callsAfterCompletion);
 
-    const mismatchedSemanticRetry = await executor.start({
+    const sourceRewrittenRetry = await executor.start({
       request: {
         ...request(),
         source: {
@@ -653,11 +1542,16 @@ describe('external session materialize action', () => {
         },
       },
     });
-    expect(mismatchedSemanticRetry).toMatchObject({
-      ok: false,
-      error: { code: 'operation_conflict' },
+    expect(sourceRewrittenRetry).toMatchObject({
+      ok: true,
+      progress: {
+        operationId: result.progress.operationId,
+        status: 'completed',
+      },
     });
     expect(sendHistoricalCommand).toHaveBeenCalledTimes(callsAfterCompletion);
+    expect(releaseSourceCapture).toHaveBeenCalledOnce();
+    expect(releaseSourceCapture).toHaveBeenCalledWith(request());
   });
 
   it('recovers a durably completed final catch-up capture before replaying it after restart', async () => {
@@ -1108,6 +2002,85 @@ describe('external session materialize action', () => {
       .map(([command]) => command.kind)
       .filter((kind) => kind !== 'inspect'))
       .toEqual(['begin', 'resume']);
+  });
+
+  it('presents a declared staging-capacity error when durable page staging refuses the capture', async () => {
+    const activeServerDir = await mkdtemp(join(
+      tmpdir(),
+      'happier-materialize-staging-capacity-',
+    ));
+    roots.push(activeServerDir);
+    let secondPageRequested = false;
+    const executor = createExternalSessionMaterializeActionExecutor({
+      activeServerDir,
+      operationExclusion: createExternalSessionOperationExclusion({
+        activeServerDir,
+        ownerId: 'materialize-staging-capacity-owner',
+      }),
+      staging: createExternalSessionOperationPrivateStagingStore({
+        activeServerDir,
+        limits: {
+          perOperation: { maxItems: 1, maxBytes: 50_000 },
+          aggregate: { maxItems: 10, maxBytes: 100_000 },
+        },
+      }),
+      describeSource: async () => ({
+        capturedSource: {
+          sourceIdentity: 'source-identity-staging-capacity',
+          sourceGeneration: 'source-1',
+          revision: 'revision-1',
+          boundary: 'boundary-1',
+        },
+        priorStableStorage: machineOnlyPriorStableStorage,
+        linkedSessionRevision: 1,
+      }),
+      readNewestFirstPages: async function* () {
+        yield {
+          groupId: 'oversize-capacity-page',
+          items: [item('one'), item('two')],
+          sourceRead: {
+            availability: 'reachable',
+            sourceIdentity: 'source-identity-staging-capacity',
+            sourceGeneration: 'source-1',
+            revision: 'revision-1',
+            relationshipToCapture: 'same',
+            eof: true,
+          },
+        } as const;
+        secondPageRequested = true;
+        yield {
+          groupId: 'must-not-be-buffered-after-capacity-refusal',
+          items: [item('three')],
+          sourceRead: {
+            availability: 'reachable',
+            sourceIdentity: 'source-identity-staging-capacity',
+            sourceGeneration: 'source-1',
+            revision: 'revision-1',
+            relationshipToCapture: 'same',
+            eof: true,
+          },
+        } as const;
+      },
+      readFinalCatchUpPages: noFinalCatchUpPages,
+      sendHistoricalCommand: inspectOnlyCommandHandler(
+        machineOnlyPriorStableStorage,
+      ),
+    });
+
+    await expect(executor.start({
+      request: {
+        ...request(),
+        idempotencyKey: 'materialize-staging-capacity',
+      },
+    })).resolves.toMatchObject({
+      ok: true,
+      progress: {
+        status: 'awaiting_user_resume',
+        phase: 'staging',
+        error: { code: 'staging_capacity_exceeded', retryable: true },
+      },
+    });
+    expect(secondPageRequested).toBe(false);
   });
 
   it('revalidates and rebuilds only private capture on correction Resume, while an unchanged bad source remains blocked', async () => {
@@ -1838,6 +2811,16 @@ describe('external session materialize action', () => {
         perOperation: { maxItems: 100, maxBytes: 100_000 },
         aggregate: { maxItems: 200, maxBytes: 200_000 },
       },
+      persistence: {
+        writeJsonAtomic: async (path, value) => {
+          // Atomic replacement is covered by the staging owner suite; this case
+          // isolates the 32-round catch-up ceiling from full-suite filesystem load.
+          await writeFile(path, `${JSON.stringify(value)}\n`, {
+            encoding: 'utf8',
+            mode: 0o600,
+          });
+        },
+      },
     });
     let finalCatchUpRounds = 0;
     const commandKinds: string[] = [];
@@ -2363,7 +3346,11 @@ describe('external session materialize action', () => {
       const interrupted = await executor.start({ request: semanticRequest });
       expect(interrupted).toMatchObject({
         ok: true,
-        progress: { status: 'awaiting_user_resume', phase: 'importing' },
+        progress: {
+          status: 'awaiting_user_resume',
+          phase: 'importing',
+          error: { code: 'historical_import_failed', retryable: true },
+        },
       });
       if (!interrupted.ok) throw new Error('Expected interrupted operation claim.');
       const observedRevision = interrupted.progress.revision;
@@ -2905,13 +3892,13 @@ describe('external session materialize action', () => {
     const cleanupFailed = await executor.resume(operationReference(interrupted));
     expect(cleanupFailed).toMatchObject({
       ok: true,
-      progress: { status: 'awaiting_user_resume', phase: 'importing' },
+      progress: { status: 'completed', phase: 'publishing' },
     });
     expect(progressObservedDuringFailedCleanup).toMatchObject({
       ok: true,
-      progress: { status: 'running', phase: 'importing' },
+      progress: { status: 'completed', phase: 'publishing' },
     });
-    if (!cleanupFailed.ok) throw new Error('Expected recoverable cleanup failure.');
+    if (!cleanupFailed.ok) throw new Error('Expected durable completion despite cleanup failure.');
     if (removeStagingBeforeFailure) {
       await expect(
         durableStaging.readReplayState(cleanupFailed.progress.operationId),
@@ -2923,7 +3910,16 @@ describe('external session materialize action', () => {
     }
 
     const restarted = createExternalSessionMaterializeActionExecutor(dependencies);
-    const completed = await restarted.resume(operationReference(cleanupFailed));
+    await expect(repairExternalSessionOperationProgressProjections(
+      activeServerDir,
+      {
+        inspectOperationClaim: operationExclusion.inspectPassiveRepairClaim,
+        withOperationClaimBarrier:
+          operationExclusion.withPassiveRepairClaimBarrier,
+        cleanupTerminalStaging: restarted.cleanupTerminalStaging!,
+      },
+    )).resolves.toBe(0);
+    const completed = await restarted.status(operationReference(cleanupFailed));
     expect(completed).toMatchObject({
       ok: true,
       progress: {
@@ -3226,13 +4222,9 @@ describe('external session materialize action', () => {
     expect(readNewestFirstPages).toHaveBeenCalledTimes(readsBeforeRetry);
   });
 
-  it('cancels interrupted staging durably, marks private bytes discard-required, and discards them idempotently', async () => {
+  it('retains cancelled staging across restart until Discard writes a full discarded record and admits a successor', async () => {
     const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-materialize-cancel-'));
     roots.push(activeServerDir);
-    const operationExclusion = createExternalSessionOperationExclusion({
-      activeServerDir,
-      ownerId: 'materialize-cancel-owner',
-    });
     const staging = createExternalSessionOperationPrivateStagingStore({
       activeServerDir,
       limits: {
@@ -3243,44 +4235,45 @@ describe('external session materialize action', () => {
     const sendHistoricalCommand = vi.fn(
       inspectOnlyCommandHandler(machineOnlyPriorStableStorage),
     );
-    const cleanupStagedItems = vi.fn(async () => undefined);
-    const executor = createExternalSessionMaterializeActionExecutor({
-      activeServerDir,
-      operationExclusion,
-      staging,
-      cleanupStagedItems,
-      describeSource: async () => ({
-        capturedSource: {
-          sourceIdentity: 'source-identity-cancel',
-          sourceGeneration: 'source-1',
-          revision: 'revision-1',
-          boundary: 'boundary-1',
-        },
-        priorStableStorage: { state: 'machine_only' },
-        linkedSessionRevision: 1,
-      }),
-      readNewestFirstPages: async function* () {
-        yield {
-          groupId: 'captured-before-cancel',
-          items: [item('captured-before-cancel')],
-          sourceRead: {
-            availability: 'reachable',
+    let now = 500;
+    const createExecutor = (ownerId: string) =>
+      createExternalSessionMaterializeActionExecutor({
+        activeServerDir,
+        operationExclusion: createExternalSessionOperationExclusion({
+          activeServerDir,
+          ownerId,
+        }),
+        staging,
+        describeSource: async () => ({
+          capturedSource: {
             sourceIdentity: 'source-identity-cancel',
             sourceGeneration: 'source-1',
             revision: 'revision-1',
-            relationshipToCapture: 'same',
-            eof: false,
+            boundary: 'boundary-1',
           },
-        } as const;
-        throw new Error('interrupted before EOF');
-      },
-      readFinalCatchUpPages: noFinalCatchUpPages,
-      sendHistoricalCommand,
-      nowMs: (() => {
-        let value = 500;
-        return () => value++;
-      })(),
-    });
+          priorStableStorage: { state: 'machine_only' },
+          linkedSessionRevision: 1,
+        }),
+        readNewestFirstPages: async function* () {
+          yield {
+            groupId: 'captured-before-cancel',
+            items: [item('captured-before-cancel')],
+            sourceRead: {
+              availability: 'reachable',
+              sourceIdentity: 'source-identity-cancel',
+              sourceGeneration: 'source-1',
+              revision: 'revision-1',
+              relationshipToCapture: 'same',
+              eof: false,
+            },
+          } as const;
+          throw new Error('interrupted before EOF');
+        },
+        readFinalCatchUpPages: noFinalCatchUpPages,
+        sendHistoricalCommand,
+        nowMs: () => now++,
+      });
+    const executor = createExecutor('materialize-cancel-owner');
 
     const interrupted = await executor.start({
       request: { ...request(), idempotencyKey: 'materialize-cancel' },
@@ -3299,6 +4292,11 @@ describe('external session materialize action', () => {
       },
     });
     if (!cancelled.ok) throw new Error('Expected cancelled operation.');
+    await acknowledgeExternalSessionOperationProgressProjection({
+      activeServerDir,
+      operationId: cancelled.progress.operationId,
+      projectedRevision: cancelled.progress.revision,
+    });
     await expect(staging.readReplayState(cancelled.progress.operationId)).resolves.toMatchObject({
       status: 'discard_required',
     });
@@ -3309,23 +4307,33 @@ describe('external session materialize action', () => {
       error: { code: 'stale_revision' },
     });
 
-    const discarded = await executor.discard(operationReference(cancelled));
+    const restartedExecutor = createExecutor('materialize-cancel-restart-owner');
+    const discarded = await restartedExecutor.discard(operationReference(cancelled));
     expect(discarded).toMatchObject({
       ok: true,
-      progress: { status: 'cancelled' },
+      progress: { status: 'discarded' },
     });
-    if (!discarded.ok) throw new Error('Expected local discard result.');
+    if (!discarded.ok) throw new Error('Expected explicit discard to settle.');
     await expect(staging.readReplayState(discarded.progress.operationId)).resolves.toEqual({
       status: 'missing',
     });
-    expect(sendHistoricalCommand).toHaveBeenCalledOnce();
-    expect(sendHistoricalCommand.mock.calls[0]?.[0]).toMatchObject({ kind: 'inspect' });
-    expect(cleanupStagedItems).not.toHaveBeenCalled();
-
-    await expect(executor.discard(operationReference(discarded))).resolves.toMatchObject({
-      ok: true,
-      progress: { status: 'cancelled' },
+    await expect(readExternalSessionOperationStoredEntry(
+      activeServerDir,
+      cancelled.progress.operationId,
+    )).resolves.toMatchObject({
+      kind: 'full_record',
+      record: {
+        request: { idempotencyKey: 'materialize-cancel' },
+        status: 'discarded',
+        terminalResult: { kind: 'discarded' },
+      },
     });
+    const successor = await restartedExecutor.start({
+      request: { ...request(), idempotencyKey: 'materialize-cancel-successor' },
+    });
+    expect(successor).toMatchObject({ ok: true });
+    if (!successor.ok) throw new Error('Expected successor admission after explicit discard.');
+    expect(successor.progress.operationId).not.toBe(cancelled.progress.operationId);
   });
 
   it('cooperatively stops an active capture after durable cancel intent without beginning the next staging effect', async () => {
@@ -3430,13 +4438,6 @@ describe('external session materialize action', () => {
     await expect(staging.readReplayState(cancelled.progress.operationId)).resolves.toMatchObject({
       status: 'discard_required',
     });
-    const retainedGroups = [];
-    for await (const group of staging.streamReplayGroups(cancelled.progress.operationId)) {
-      retainedGroups.push(group);
-    }
-    expect(retainedGroups).toEqual([
-      expect.objectContaining({ groupId: 'first-page' }),
-    ]);
     expect(sendHistoricalCommand).toHaveBeenCalledOnce();
     expect(sendHistoricalCommand.mock.calls[0]?.[0]).toMatchObject({ kind: 'inspect' });
   });
@@ -3451,7 +4452,7 @@ describe('external session materialize action', () => {
       ...request(),
       idempotencyKey: 'materialize-restart-cancel',
     };
-    const operationId = externalSessionOperationIdForRequest(semanticRequest);
+    const operationId = 'external-materialize:restart-cancel-fixture';
     const interrupted = {
       v: 1 as const,
       operationId,
@@ -3541,6 +4542,130 @@ describe('external session materialize action', () => {
     expect(readNewestFirstPages).not.toHaveBeenCalled();
     expect(sendHistoricalCommand).not.toHaveBeenCalled();
     expect(publishProgress).toHaveBeenCalledOnce();
+  });
+
+  it('refuses update-import cancellation while the first staged page is ahead of the durable scalar checkpoint', async () => {
+    const activeServerDir = await mkdtemp(join(
+      tmpdir(),
+      'happier-materialize-update-first-page-cancel-',
+    ));
+    roots.push(activeServerDir);
+    const staging = createExternalSessionOperationPrivateStagingStore({
+      activeServerDir,
+      limits: {
+        perOperation: { maxItems: 20, maxBytes: 50_000 },
+        aggregate: { maxItems: 40, maxBytes: 100_000 },
+      },
+    });
+    const semanticRequest = {
+      ...request(),
+      idempotencyKey: 'materialize-update-first-page-cancel',
+    };
+    const operationId = 'external-materialize:update-first-page-cancel';
+    const capturedSource = {
+      sourceIdentity: 'source-identity-update-first-page-cancel',
+      sourceGeneration: 'source-1',
+      revision: 'revision-2',
+      boundary: 'boundary-2',
+    } as const;
+    const stagingReference = await staging.beginOperation({
+      operationId,
+      representation: 'content',
+      capturedSource,
+    });
+    if (stagingReference.status !== 'ready') {
+      throw new Error('Expected update staging admission.');
+    }
+    await staging.appendPageGroup({
+      operationId,
+      captureIndex: 0,
+      groupId: 'latent-first-page',
+      items: [item('latent-first-page')],
+      sourceRead: {
+        availability: 'reachable',
+        sourceIdentity: capturedSource.sourceIdentity,
+        sourceGeneration: capturedSource.sourceGeneration,
+        revision: capturedSource.revision,
+        relationshipToCapture: 'same',
+        eof: false,
+      },
+    });
+    const priorPublication = {
+      materializationPublicationId: 'prior-update-publication',
+      materializedThroughSourceAt: 1,
+      publishedThroughServerSeq: 10,
+    } as const;
+    const record: ExternalSessionOperationRecordV1 = {
+      v: 1,
+      operationId,
+      revision: 1,
+      request: semanticRequest,
+      status: 'running',
+      phase: 'staging',
+      timeline: resolveExternalSessionOperationTimelineV1(semanticRequest),
+      createdAtMs: 1,
+      updatedAtMs: 2,
+      priorStableStorage: snapshotCompletePriorStableStorage(priorPublication),
+      currentStorageState: 'snapshot_complete',
+      publication: priorPublication,
+      checkpoint: {
+        sourcePagesRead: 0,
+        stagedItemCount: 0,
+        importedItemCount: 0,
+        requiredItemFailures: {
+          total: 0,
+          record: 0,
+          media: 0,
+          conversion: 0,
+          diagnosticsTruncated: false,
+          diagnostics: [],
+        },
+      },
+      bindings: {
+        operationClaimId: 'released-update-first-page-claim',
+        privateStagingId: stagingReference.stagingReference,
+      },
+      progressProjection: { acknowledgedRevision: null },
+      canonicalOwnerEvidence: {
+        linkedSessionRevision: 1,
+        sourceSnapshotEvidenceRef: capturedSource.revision,
+      },
+      fence: { kind: 'none' },
+    };
+    await writeExternalSessionOperationRecord(activeServerDir, record);
+    const executor = createExternalSessionMaterializeActionExecutor({
+      activeServerDir,
+      operationExclusion: createExternalSessionOperationExclusion({
+        activeServerDir,
+        ownerId: 'materialize-update-first-page-cancel-owner',
+      }),
+      staging,
+      describeSource: vi.fn(),
+      readNewestFirstPages: async function* () {
+        throw new Error('cancel guard must not resume capture');
+      },
+      readFinalCatchUpPages: noFinalCatchUpPages,
+      sendHistoricalCommand: vi.fn(),
+    });
+
+    await expect(executor.cancel({
+      sessionId: semanticRequest.sessionId,
+      operationId,
+      revision: record.revision,
+    })).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'not_allowed' },
+    });
+    await expect(readExternalSessionOperationRecord(
+      activeServerDir,
+      operationId,
+    )).resolves.toEqual(record);
+    await expect(staging.readCaptureCheckpoint({ operationId })).resolves.toMatchObject({
+      status: 'ready',
+      captureState: 'capturing',
+      sourcePagesRead: 1,
+      stagedItemCount: 1,
+    });
   });
 
   it('reconciles an in-flight accepted batch before settling active Cancel as server_partial', async () => {
@@ -3710,22 +4835,38 @@ describe('external session materialize action', () => {
         aggregate: { maxItems: 40, maxBytes: 100_000 },
       },
     });
-    let failCleanup = true;
+    let recordObservedDuringDiscardCleanup:
+      | ExternalSessionOperationRecordV1
+      | null
+      | undefined;
     const staging: ExternalSessionOperationPrivateStagingStore = {
       ...durableStaging,
       async cleanupTerminalOperation(input) {
-        if (failCleanup) {
-          failCleanup = false;
-          throw new Error('injected discard cleanup I/O failure');
-        }
+        recordObservedDuringDiscardCleanup =
+          await readExternalSessionOperationRecord(
+            activeServerDir,
+            sourceChangedOperationId,
+          );
         return await durableStaging.cleanupTerminalOperation(input);
       },
     };
+    let failWorkspaceCleanup = true;
+    const garbageCollectWorkspaceMedia = vi.fn(async (
+      input: Parameters<typeof garbageCollectUncommittedSessionMedia>[0],
+    ) => {
+      if (failWorkspaceCleanup) {
+        failWorkspaceCleanup = false;
+        return null;
+      }
+      return await garbageCollectUncommittedSessionMedia(input);
+    });
+    let sourceChangedOperationId = '';
     const commands: ExternalSessionOperationSocketCommandV1[] = [];
     const executor = createExternalSessionMaterializeActionExecutor({
       activeServerDir,
       operationExclusion,
       staging,
+      garbageCollectWorkspaceMedia,
       describeSource: async () => ({
         capturedSource: {
           sourceIdentity: 'source-identity-discard-partial',
@@ -3882,25 +5023,56 @@ describe('external session materialize action', () => {
       },
     });
     if (!sourceChanged.ok) throw new Error('Expected source-fenced operation claim.');
+    sourceChangedOperationId = sourceChanged.progress.operationId;
 
-    await expect(executor.discard(operationReference(sourceChanged))).resolves.toMatchObject({
-      ok: false,
-      error: { code: 'internal_error' },
+    const mediaWorkingDirectory = await mkdtemp(join(
+      tmpdir(),
+      'happier-materialize-discard-media-owner-',
+    ));
+    roots.push(mediaWorkingDirectory);
+    const mediaDirectory = join(
+      mediaWorkingDirectory,
+      '.happier',
+      'uploads',
+      'generated',
+      'session-1',
+      'history',
+    );
+    await mkdir(mediaDirectory, { recursive: true });
+    const reusedMediaRelativePath = '.happier/uploads/generated/session-1/history/reused.png';
+    await writeFile(join(mediaWorkingDirectory, reusedMediaRelativePath), 'successor-reused');
+    await durableStaging.recordCreatedWorkspaceMedia({
+      operationId: sourceChangedOperationId,
+      media: [{
+        workingDirectory: mediaWorkingDirectory,
+        candidateWorkspaceRelativePath: reusedMediaRelativePath,
+      }],
     });
-    await expect(executor.status(operationReference(sourceChanged))).resolves.toMatchObject({
+
+    const firstDiscard = await executor.discard(operationReference(sourceChanged));
+    expect(firstDiscard).toMatchObject({
+      ok: true,
+      progress: { status: 'discarded' },
+    });
+    if (!firstDiscard.ok) throw new Error('Expected durable discard despite cleanup failure.');
+    await expect(readFile(join(mediaWorkingDirectory, reusedMediaRelativePath)))
+      .resolves.toEqual(Buffer.from('successor-reused'));
+    await expect(durableStaging.readCreatedWorkspaceMediaForCleanup({
+      operationId: sourceChangedOperationId,
+    })).resolves.toHaveLength(1);
+    await expect(executor.status(operationReference(firstDiscard))).resolves.toMatchObject({
       ok: true,
       progress: {
-        revision: sourceChanged.progress.revision,
-        status: 'awaiting_user_resume',
+        revision: firstDiscard.progress.revision,
+        status: 'discarded',
       },
     });
 
-    const cleanupStagedItems = vi.fn(async () => undefined);
     const restarted = createExternalSessionMaterializeActionExecutor({
       activeServerDir,
       operationExclusion,
       staging,
-      cleanupStagedItems,
+      garbageCollectWorkspaceMedia,
       describeSource: vi.fn(),
       readNewestFirstPages: vi.fn(),
       readFinalCatchUpPages: noFinalCatchUpPages,
@@ -3922,7 +5094,129 @@ describe('external session materialize action', () => {
         };
       },
     });
-    const discarded = await restarted.discard(operationReference(sourceChanged));
+    const successorTranscriptItem = {
+      ...item('successor-reused-row'),
+      content: {
+        t: 'plain' as const,
+        v: {
+          role: 'user',
+          media: [{ path: reusedMediaRelativePath }],
+        },
+      },
+    };
+    const successorExecutor = createExternalSessionMaterializeActionExecutor({
+      activeServerDir,
+      operationExclusion,
+      staging,
+      describeSource: async () => ({
+        capturedSource: {
+          sourceIdentity: 'source-identity-discard-partial',
+          sourceGeneration: 'source-1',
+          revision: 'revision-1',
+          boundary: 'boundary-1',
+        },
+        priorStableStorage: { state: 'machine_only' },
+        linkedSessionRevision: 1,
+      }),
+      readNewestFirstPages: async function* () {
+        yield {
+          groupId: 'successor-page',
+          items: [successorTranscriptItem],
+          sourceRead: {
+            availability: 'reachable',
+            sourceIdentity: 'source-identity-discard-partial',
+            sourceGeneration: 'source-1',
+            revision: 'revision-1',
+            relationshipToCapture: 'same',
+            eof: true,
+          },
+        } as const;
+      },
+      readFinalCatchUpPages: noFinalCatchUpPages,
+      createStagedItemPreparationPhase: async () => ({
+        prepareStagedItem: async () => ({
+          ok: true as const,
+          item: successorTranscriptItem,
+          workspaceMedia: [{
+            workingDirectory: mediaWorkingDirectory,
+            candidateWorkspaceRelativePath: reusedMediaRelativePath,
+          }],
+        }),
+      }),
+      sendHistoricalCommand: async (command) => {
+        const authority = inspectAuthorityResponse(command, machineOnlyPriorStableStorage);
+        if (authority) return authority;
+        if (command.kind === 'begin') {
+          return {
+            v: 1,
+            kind: 'ready',
+            claim: command.claim,
+            revision: command.expectedRevision,
+            historicalImportJobId: 'job-discard-partial-successor',
+            limits: { maxItems: 200, maxSerializedBytes: 524_288 },
+            priorStableStorage: machineOnlyPriorStableStorage,
+          };
+        }
+        if (command.kind === 'batch') {
+          return {
+            v: 1,
+            kind: 'batch_accepted',
+            claim: command.claim,
+            revision: command.expectedRevision,
+            batchId: command.batchId,
+            acceptedThroughServerSeq: command.items.length,
+          };
+        }
+        if (command.kind === 'finalize') {
+          return {
+            v: 1,
+            kind: 'finalized',
+            claim: command.claim,
+            revision: command.expectedRevision,
+            acceptedThroughServerSeq: command.expectedAcceptedThroughServerSeq,
+            publication: {
+              materializationPublicationId: 'publication-discard-partial-successor',
+              materializedThroughSourceAt: 200,
+              publishedThroughServerSeq: command.expectedAcceptedThroughServerSeq,
+            },
+          };
+        }
+        throw new Error(`Unexpected successor command: ${command.kind}`);
+      },
+    });
+    const successor = await successorExecutor.start({
+      request: {
+        ...request(),
+        idempotencyKey: 'materialize-discard-partial-successor',
+      },
+    });
+    expect(successor).toMatchObject({
+      ok: true,
+      progress: { status: 'completed' },
+    });
+    await expect(readFile(join(mediaWorkingDirectory, reusedMediaRelativePath)))
+      .resolves.toEqual(Buffer.from('successor-reused'));
+
+    await expect(repairExternalSessionOperationProgressProjections(
+      activeServerDir,
+      {
+        inspectOperationClaim: operationExclusion.inspectPassiveRepairClaim,
+        withOperationClaimBarrier: operationExclusion.withPassiveRepairClaimBarrier,
+        cleanupTerminalStaging: restarted.cleanupTerminalStaging!,
+      },
+    )).resolves.toBe(0);
+    expect(recordObservedDuringDiscardCleanup).toMatchObject({
+      operationId: sourceChanged.progress.operationId,
+      status: 'discarded',
+      terminalResult: { kind: 'discarded' },
+    });
+    await expect(readFile(join(mediaWorkingDirectory, reusedMediaRelativePath)))
+      .resolves.toEqual(Buffer.from('successor-reused'));
+    await expect(durableStaging.readCreatedWorkspaceMediaForCleanup({
+      operationId: sourceChangedOperationId,
+    })).resolves.toEqual([]);
+
+    const discarded = await restarted.discard(operationReference(firstDiscard));
     expect(discarded).toMatchObject({
       ok: true,
       progress: {
@@ -3937,21 +5231,14 @@ describe('external session materialize action', () => {
       },
     });
     if (!discarded.ok) throw new Error('Expected discarded operation.');
+    await expect(readFile(join(mediaWorkingDirectory, reusedMediaRelativePath)))
+      .resolves.toEqual(Buffer.from('successor-reused'));
     expect(commands.map((command) => command.kind)).toEqual([
       'begin',
       'batch',
       'batch',
       'discard',
-      'discard',
     ]);
-    expect(cleanupStagedItems).toHaveBeenCalledOnce();
-    expect(cleanupStagedItems).toHaveBeenCalledWith(
-      sourceChanged.progress.operationId,
-      expect.objectContaining({
-        sessionId: 'session-1',
-        idempotencyKey: 'materialize-discard-partial',
-      }),
-    );
     await expect(durableStaging.readReplayState(discarded.progress.operationId)).resolves.toEqual({
       status: 'missing',
     });
@@ -3987,9 +5274,68 @@ describe('external session materialize action', () => {
     const serverOrder: string[] = [];
     const commands: ExternalSessionOperationSocketCommandV1[] = [];
     const resumeFollowOnFailure = vi.fn(async () => undefined);
+    const takeoverWorkingDirectory = join(activeServerDir, 'current-workspace');
+    await mkdir(join(takeoverWorkingDirectory, 'images'), { recursive: true });
+    await writeFile(
+      join(takeoverWorkingDirectory, 'images', 'inside.png'),
+      Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lU6w9wAAAABJRU5ErkJggg==',
+        'base64',
+      ),
+    );
+    const historicalMediaItem: ExternalSessionTranscriptRawMessageV1 = {
+      id: 'takeover-history-media',
+      localId: 'takeover-history-media',
+      createdAtMs: 100,
+      raw: {
+        role: 'agent',
+        content: { type: 'output', data: 'historical media' },
+        meta: {
+          happier: {
+            kind: 'session_media.v1',
+            payload: {
+              media: [{
+                id: 'takeover-media-1',
+                role: 'output',
+                category: 'generated',
+                mediaKind: 'image',
+                mimeType: 'image/png',
+                name: 'inside.png',
+                path: 'images/inside.png',
+                sizeBytes: 68,
+                origin: { source: 'provider-generated', agentId: 'example' },
+              }],
+            },
+          },
+        },
+      },
+    };
     const preparePersistedTakeover = vi.fn(async () => ({
+      workingDirectory: takeoverWorkingDirectory,
       resumeFollowOnFailure,
     }));
+    const readNewestFirstPages = vi.fn(async function* (
+      _request: unknown,
+      workingDirectory?: string,
+    ) {
+      await stageExternalSessionHistoricalImportItem({
+        item: historicalMediaItem,
+        workingDirectory: workingDirectory ?? null,
+        sourceReadRoots: [],
+      });
+      yield {
+        groupId: 'takeover-page',
+        items: [item('takeover-history')],
+        sourceRead: {
+          availability: 'reachable' as const,
+          sourceIdentity: 'takeover-source-identity',
+          sourceGeneration: initial.request.source.sourceGeneration,
+          revision: 'takeover-source-revision-1',
+          relationshipToCapture: 'same' as const,
+          eof: true,
+        },
+      } as const;
+    });
     const executor = createExternalSessionMaterializeActionExecutor({
       activeServerDir,
       operationExclusion,
@@ -4005,20 +5351,7 @@ describe('external session materialize action', () => {
         priorStableStorage: { state: 'machine_only' },
         linkedSessionRevision: 1,
       }),
-      readNewestFirstPages: async function* () {
-        yield {
-          groupId: 'takeover-page',
-          items: [item('takeover-history')],
-          sourceRead: {
-            availability: 'reachable',
-            sourceIdentity: 'takeover-source-identity',
-            sourceGeneration: initial.request.source.sourceGeneration,
-            revision: 'takeover-source-revision-1',
-            relationshipToCapture: 'same',
-            eof: true,
-          },
-        } as const;
-      },
+      readNewestFirstPages,
       readFinalCatchUpPages: noFinalCatchUpPages,
       sendHistoricalCommand: async (command) => {
         const authority = inspectAuthorityResponse(command, machineOnlyPriorStableStorage);
@@ -4115,6 +5448,10 @@ describe('external session materialize action', () => {
         revision: initial.revision,
       }),
     );
+    expect(readNewestFirstPages).toHaveBeenCalledWith(
+      initial.request,
+      takeoverWorkingDirectory,
+    );
     expect(resumeFollowOnFailure).not.toHaveBeenCalled();
     await expect(readExternalSessionOperationRecord(
       activeServerDir,
@@ -4142,6 +5479,248 @@ describe('external session materialize action', () => {
     expect(resumeFollowOnFailure).not.toHaveBeenCalled();
     },
   );
+
+  it('reconstructs a persisted takeover crashed after the staging commit and resumes it exactly once', async () => {
+    const activeServerDir = await mkdtemp(join(
+      tmpdir(),
+      'happier-persisted-takeover-staging-crash-',
+    ));
+    roots.push(activeServerDir);
+    const operationExclusion = createExternalSessionOperationExclusion({
+      activeServerDir,
+      ownerId: 'persisted-takeover-staging-crash-owner',
+    });
+    const staging = createExternalSessionOperationPrivateStagingStore({
+      activeServerDir,
+      limits: {
+        perOperation: { maxItems: 20, maxBytes: 50_000 },
+        aggregate: { maxItems: 40, maxBytes: 100_000 },
+      },
+    });
+    const validating = persistedTakeoverValidatingRecord();
+    const capturedSource = {
+      sourceIdentity: 'takeover-staging-crash-source',
+      sourceGeneration: validating.request.source.sourceGeneration,
+      revision: validating.canonicalOwnerEvidence.sourceSnapshotEvidenceRef!,
+      boundary: 'takeover-staging-crash-boundary',
+    };
+    const staged = await staging.beginOperation({
+      operationId: validating.operationId,
+      representation: 'content',
+      capturedSource,
+    });
+    if (staged.status !== 'ready') {
+      throw new Error('Expected persisted takeover staging to be ready.');
+    }
+    const {
+      retryTargetPhase: _retryTargetPhase,
+      ...validatingWithoutRecovery
+    } = validating;
+    const crashed: ExternalSessionOperationRecordV1 = {
+      ...validatingWithoutRecovery,
+      revision: validating.revision + 1,
+      status: 'running',
+      phase: 'staging',
+      updatedAtMs: validating.updatedAtMs + 1,
+      bindings: {
+        ...validating.bindings,
+        privateStagingId: staged.stagingReference,
+      },
+    };
+    await writeExternalSessionOperationRecord(activeServerDir, crashed);
+
+    const preparePersistedTakeover = vi.fn(async () => ({
+      workingDirectory: '/workspace',
+      resumeFollowOnFailure: async () => undefined,
+    }));
+    const describeSource = vi.fn(async () => ({
+      capturedSource,
+      priorStableStorage: machineOnlyPriorStableStorage,
+      linkedSessionRevision: 1,
+    }));
+    const readNewestFirstPages = vi.fn(async function* () {
+      yield {
+        groupId: 'takeover-staging-crash-page',
+        items: [item('takeover-staging-crash')],
+        sourceRead: {
+          availability: 'reachable' as const,
+          sourceIdentity: capturedSource.sourceIdentity,
+          sourceGeneration: capturedSource.sourceGeneration,
+          revision: capturedSource.revision,
+          relationshipToCapture: 'same' as const,
+          eof: true,
+        },
+      } as const;
+    });
+    const commands: ExternalSessionOperationSocketCommandV1[] = [];
+    const sendHistoricalCommand = vi.fn(async (
+      command: ExternalSessionOperationSocketCommandV1,
+    ): Promise<ExternalSessionOperationSocketResponseV1> => {
+      commands.push(command);
+      const authority = inspectAuthorityResponse(
+        command,
+        machineOnlyPriorStableStorage,
+      );
+      if (authority) return authority;
+      if (command.kind === 'begin') {
+        return {
+          v: 1,
+          kind: 'ready',
+          claim: command.claim,
+          revision: command.expectedRevision,
+          historicalImportJobId: 'takeover-staging-crash-job',
+          limits: { maxItems: 200, maxSerializedBytes: 524_288 },
+          priorStableStorage: machineOnlyPriorStableStorage,
+        };
+      }
+      if (command.kind === 'batch') {
+        return {
+          v: 1,
+          kind: 'batch_accepted',
+          claim: command.claim,
+          revision: command.expectedRevision,
+          batchId: command.batchId,
+          acceptedThroughServerSeq: 1,
+        };
+      }
+      if (command.kind === 'finalize') {
+        return {
+          v: 1,
+          kind: 'finalized',
+          claim: command.claim,
+          revision: command.expectedRevision,
+          acceptedThroughServerSeq:
+            command.expectedAcceptedThroughServerSeq,
+          publication: {
+            materializationPublicationId:
+              'takeover-staging-crash-publication',
+            materializedThroughSourceAt: 10,
+            publishedThroughServerSeq: 1,
+          },
+        };
+      }
+      throw new Error(`Unexpected takeover command ${command.kind}.`);
+    });
+    const publish = vi.fn(async () => undefined);
+
+    await expect(repairExternalSessionOperationProgressProjections(
+      activeServerDir,
+      {
+        inspectOperationClaim: operationExclusion.inspectPassiveRepairClaim,
+        withOperationClaimBarrier:
+          operationExclusion.withPassiveRepairClaimBarrier,
+        readPresentation: async () => ({ kind: 'absent' }),
+        publish,
+        nowMs: () => 10,
+      },
+    )).resolves.toBe(1);
+
+    const repaired = await readExternalSessionOperationRecord(
+      activeServerDir,
+      crashed.operationId,
+    );
+    expect(repaired).toMatchObject({
+      operationId: crashed.operationId,
+      revision: crashed.revision + 1,
+      status: 'awaiting_user_resume',
+      phase: 'staging',
+      retryTargetPhase: 'staging',
+      bindings: { privateStagingId: staged.stagingReference },
+    });
+    expect(publish).toHaveBeenCalledOnce();
+    expect(preparePersistedTakeover).not.toHaveBeenCalled();
+    expect(describeSource).not.toHaveBeenCalled();
+    expect(readNewestFirstPages).not.toHaveBeenCalled();
+    expect(sendHistoricalCommand).not.toHaveBeenCalled();
+    if (!repaired) throw new Error('Expected repaired persisted takeover.');
+
+    const replacement = createExternalSessionMaterializeActionExecutor({
+      activeServerDir,
+      operationExclusion,
+      staging,
+      preparePersistedTakeover,
+      describeSource,
+      readNewestFirstPages,
+      readFinalCatchUpPages: noFinalCatchUpPages,
+      sendHistoricalCommand,
+    });
+    await expect(replacement.resumePersistedTakeover({
+      sessionId: crashed.request.sessionId,
+      operationId: crashed.operationId,
+      revision: crashed.revision,
+    })).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'stale_revision' },
+    });
+    expect(preparePersistedTakeover).not.toHaveBeenCalled();
+    expect(describeSource).not.toHaveBeenCalled();
+    expect(readNewestFirstPages).not.toHaveBeenCalled();
+    expect(sendHistoricalCommand).not.toHaveBeenCalled();
+
+    const continued = await replacement.resumePersistedTakeover({
+      sessionId: repaired.request.sessionId,
+      operationId: repaired.operationId,
+      revision: repaired.revision,
+    });
+    expect(continued).toMatchObject({
+      ok: true,
+      progress: {
+        operationId: crashed.operationId,
+        status: 'awaiting_user_resume',
+        phase: 'admitting',
+        retryTargetPhase: 'admitting',
+        checkpoint: {
+          stagedItemCount: 1,
+          importedItemCount: 1,
+          acceptedThroughServerSeq: 1,
+        },
+      },
+    });
+    expect(preparePersistedTakeover).toHaveBeenCalledOnce();
+    expect(describeSource).toHaveBeenCalledOnce();
+    expect(readNewestFirstPages).toHaveBeenCalledOnce();
+    expect(commands.map((command) => command.kind)).toEqual([
+      'inspect',
+      'begin',
+      'batch',
+      'finalize',
+    ]);
+    if (!continued.ok) throw new Error('Expected persisted takeover continuation.');
+    await expect(
+      staging.readReplayState(continued.progress.operationId),
+    ).resolves.toMatchObject({
+      status: 'ready',
+      acceptedThroughServerSeq: 1,
+      acknowledgedItemCount: 1,
+    });
+    await expect(staging.readCapturedSource({
+      operationId: continued.progress.operationId,
+    })).resolves.toEqual({
+      status: 'ready',
+      capturedSource,
+    });
+
+    const effectsAfterContinuation = {
+      prepare: preparePersistedTakeover.mock.calls.length,
+      describe: describeSource.mock.calls.length,
+      sourceReads: readNewestFirstPages.mock.calls.length,
+      commands: sendHistoricalCommand.mock.calls.length,
+    };
+    await expect(replacement.resumePersistedTakeover({
+      sessionId: repaired.request.sessionId,
+      operationId: repaired.operationId,
+      revision: repaired.revision,
+    })).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'stale_revision' },
+    });
+    expect({
+      prepare: preparePersistedTakeover.mock.calls.length,
+      describe: describeSource.mock.calls.length,
+      sourceReads: readNewestFirstPages.mock.calls.length,
+      commands: sendHistoricalCommand.mock.calls.length,
+    }).toEqual(effectsAfterContinuation);
+  });
 
   it('fails persisted takeover preflight without describing, importing, or mutating the durable operation', async () => {
     const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-takeover-preflight-'));
@@ -4224,6 +5803,7 @@ describe('external session materialize action', () => {
         },
       }),
       preparePersistedTakeover: async () => ({
+        workingDirectory: '/workspace',
         resumeFollowOnFailure: async () => undefined,
       }),
       describeSource: async () => ({
@@ -4333,7 +5913,7 @@ describe('external session materialize action', () => {
       revision: cancelled.progress.revision,
     })).resolves.toMatchObject({
       ok: true,
-      progress: { status: 'cancelled' },
+      progress: { status: 'discarded' },
     });
 
     const publishedDir = await mkdtemp(join(tmpdir(), 'happier-takeover-published-'));

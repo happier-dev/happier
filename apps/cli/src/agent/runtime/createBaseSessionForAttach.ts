@@ -39,7 +39,7 @@ export async function createBaseSessionForAttach(opts: Readonly<{
     if (snapshot?.metadataLayoutVersion !== SESSION_METADATA_LAYOUT_VERSION_V1) {
       return snapshot?.metadata ?? opts.metadata;
     }
-    if (!snapshot.ownerMetadata) {
+    if (!snapshot.ownerMetadata || !snapshot.ownerMetadataEnvelope) {
       throw new Error(
         `Cannot resume session ${existingSessionId}: missing owner metadata envelope`,
       );
@@ -70,7 +70,7 @@ export async function createBaseSessionForAttach(opts: Readonly<{
         ? {
           metadataLayoutVersion: SESSION_METADATA_LAYOUT_VERSION_V1,
           ownerMetadata: attach.snapshot.ownerMetadata,
-          ownerMetadataCiphertext: attach.snapshot.ownerMetadataCiphertext ?? null,
+          ownerMetadataEnvelope: attach.snapshot.ownerMetadataEnvelope ?? null,
         }
         : {}),
       metadataVersion,
@@ -91,7 +91,7 @@ export async function createBaseSessionForAttach(opts: Readonly<{
       ? {
         metadataLayoutVersion: SESSION_METADATA_LAYOUT_VERSION_V1,
         ownerMetadata: attach.snapshot.ownerMetadata,
-        ownerMetadataCiphertext: attach.snapshot.ownerMetadataCiphertext ?? null,
+        ownerMetadataEnvelope: attach.snapshot.ownerMetadataEnvelope ?? null,
       }
       : {}),
     metadataVersion,

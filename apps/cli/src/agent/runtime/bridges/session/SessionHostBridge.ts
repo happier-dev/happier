@@ -12,9 +12,10 @@ import { SessionStateCapabilitiesV1Schema } from '@happier-dev/protocol';
 import {
   resolveBackendEngineAdapterResolution,
   resolveBackendExecutionSurfaces,
+  resolveEngineBackendIdForCatalogAgent,
   type BackendExecutionSurfaces,
 } from '@/agent/runtime/registry/engineRegistry';
-import { createDaemonControlPluginLocalServicesRuntime } from '@/daemon/local/services/pluginBridgeClient';
+import { readAgentCatalogSnapshot } from '@/agent/catalog/snapshot';
 import { buildRuntimePublicationFromEngineResolution } from '@/agent/runtime/identity/buildRuntimePublicationFromEngineResolution';
 import type {
   ProviderMessageMetaEnricher,
@@ -42,7 +43,10 @@ import {
   type CanonicalizedExternalSessionSourceResult,
 } from './externalSessionSourceCanonicalization';
 import { emitBridgeLifecycleHookEventBestEffort } from '@/agent/runtime/bridges/_shared/emitBridgeLifecycleHookEventBestEffort';
-import type { SessionHostBridgeContract } from './sessionBridgeContract';
+import type {
+  CurrentCatalogAgentExecutionSurfaces,
+  SessionHostBridgeContract,
+} from './sessionBridgeContract';
 import type { ExternalSessionLinkIdentity } from '@/session/external/providerOps';
 import {
   isHostSessionRuntimePlan,
@@ -52,16 +56,22 @@ import {
 import { throwIfPluginRuntimeStartBlocked } from '@/agent/runtime/registry/throwIfPluginRuntimeStartBlocked';
 import { withHostSessionRuntimeIdentityPublication } from '@/agent/runtime/identity/publication/withHostSession';
 import {
-  tryCreateDaemonAgentRuntimeCarrier,
-  tryCreateDaemonAgentRuntimeTurnContributionsBridge,
-} from '@/agent/runtime/session/process/agentRuntimeDaemonBridgeClient';
+  HAPPIER_AGENT_RUNTIME_RUNNER_BOOTSTRAP_FILE_ENV_KEY,
+} from '@/agent/runtime/session/process/agentRuntimeRunnerProtocol';
 import {
-  HAPPIER_AGENT_RUNTIME_DAEMON_BRIDGE_TOKEN_FILE_ENV_KEY,
-} from '@/agent/runtime/session/process/agentRuntimeDaemonBridgeProtocol';
+  HAPPIER_AGENT_RUNTIME_DAEMON_SERVICE_AUTHORITY_FILE_ENV_KEY,
+} from '@/daemon/agentRuntime/sessionBridgeAuthorization';
+import {
+  createRunnerAgentSessionRuntimeBootstrap,
+} from '@/agent/runtime/session/process/runnerAgentSessionRuntimeSource';
+import { configuration } from '@/configuration';
+import { tryAcquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
+import { logger } from '@/ui/logger';
 
 type SessionHostRunOptions = Readonly<{
   beforeRuntimePlanCommit?: () => void | Promise<void>;
-  agentRuntimeDaemonBridgeTokenFilePath?: string;
+  agentRuntimeRunnerBootstrapFilePath?: string;
+  agentRuntimeDaemonServiceAuthorityFilePath?: string;
 }>;
 
 /**
@@ -79,37 +89,25 @@ export class SessionHostBridge implements SessionHostBridgeContract {
     );
   }
 
-  private injectForegroundDaemonTurnContributionsBridge(
-    plan: HostSessionRuntimePlan,
-    hostOptions?: SessionHostRunOptions,
-  ): HostSessionRuntimePlan {
-    const tokenFilePath =
-      hostOptions?.agentRuntimeDaemonBridgeTokenFilePath?.trim() ?? '';
-    if (!tokenFilePath) return plan;
-    const daemonTurnContributionsBridge =
-      tryCreateDaemonAgentRuntimeTurnContributionsBridge({
-        [HAPPIER_AGENT_RUNTIME_DAEMON_BRIDGE_TOKEN_FILE_ENV_KEY]:
-          tokenFilePath,
-      });
-    if (!daemonTurnContributionsBridge) {
-      throw new Error(
-        'Foreground Agent runtime turn-contributions capability is missing',
-      );
-    }
-    return {
-      ...plan,
-      deps: {
-        ...plan.deps,
-        sessionLoopLifecycleDeps: {
-          ...plan.deps?.sessionLoopLifecycleDeps,
-          daemonTurnContributionsBridge,
-        },
-      },
-    };
-  }
-
   async resolveExecutionSurfaces(backendId?: string | null): Promise<BackendExecutionSurfaces> {
     return await resolveBackendExecutionSurfaces(backendId);
+  }
+
+  async resolveCurrentExecutionSurfacesForCatalogAgent(
+    agentId: string,
+  ): Promise<CurrentCatalogAgentExecutionSurfaces | null> {
+    const initialSnapshot = readAgentCatalogSnapshot();
+    const backendId = resolveEngineBackendIdForCatalogAgent(initialSnapshot, agentId);
+    if (!backendId) return null;
+
+    const executionSurfaces = await this.resolveExecutionSurfaces(backendId);
+    const currentBackendId = resolveEngineBackendIdForCatalogAgent(
+      readAgentCatalogSnapshot(),
+      agentId,
+    );
+    if (currentBackendId !== backendId) return null;
+
+    return Object.freeze({ agentId, backendId, executionSurfaces });
   }
 
   async resolveOutboundTranscriptDispatchFacet(backendId?: string | null): Promise<Readonly<{
@@ -128,22 +126,21 @@ export class SessionHostBridge implements SessionHostBridgeContract {
     return facet ? { backendId: normalizedBackendId, facet } : null;
   }
 
-  private resolveEngineResolutionParams(
+  private async resolveEngineResolutionParams(
     backendId: string,
     params: unknown,
     hostOptions?: SessionHostRunOptions,
-  ): Parameters<typeof resolveBackendEngineAdapterResolution>[1] {
+  ): Promise<Parameters<typeof resolveBackendEngineAdapterResolution>[1]> {
     if (!params || typeof params !== 'object') {
       return undefined;
     }
     const record = params as Readonly<Record<string, unknown>>;
     const resolutionParams: {
       happyHomeDir?: string;
-      localServicesRuntime?: ReturnType<typeof createDaemonControlPluginLocalServicesRuntime>;
-      requireDaemonAgentRuntimeCarrier?: boolean;
-      nativeAgentRuntimeCarrier?: NonNullable<
-        ReturnType<typeof tryCreateDaemonAgentRuntimeCarrier>
-      >;
+      requireRunnerAgentSessionRuntimeSource?: boolean;
+      runnerAgentSessionRuntimeSource?: NonNullable<
+        Parameters<typeof resolveBackendEngineAdapterResolution>[1]
+      >['runnerAgentSessionRuntimeSource'];
     } = {};
 
     const happyHomeDir = record.happyHomeDir;
@@ -157,21 +154,40 @@ export class SessionHostBridge implements SessionHostBridgeContract {
     const startedBy = record.startedBy;
     const isDaemonStarted =
       typeof startedBy === 'string' && startedBy.trim() === 'daemon';
-    const foregroundTokenFilePath =
-      hostOptions?.agentRuntimeDaemonBridgeTokenFilePath?.trim() ?? '';
-    if (isDaemonStarted || foregroundTokenFilePath) {
-      resolutionParams.localServicesRuntime = createDaemonControlPluginLocalServicesRuntime();
-      resolutionParams.requireDaemonAgentRuntimeCarrier = true;
-      const carrier = tryCreateDaemonAgentRuntimeCarrier(
-        foregroundTokenFilePath
-          ? {
-              [HAPPIER_AGENT_RUNTIME_DAEMON_BRIDGE_TOKEN_FILE_ENV_KEY]:
-                foregroundTokenFilePath,
-            }
-          : process.env,
+    const foregroundBootstrapFilePath =
+      hostOptions?.agentRuntimeRunnerBootstrapFilePath?.trim() ?? '';
+    if (isDaemonStarted || foregroundBootstrapFilePath) {
+      resolutionParams.requireRunnerAgentSessionRuntimeSource = true;
+      const bootstrapFilePath = (
+        foregroundBootstrapFilePath
+        || String(
+          process.env[
+            HAPPIER_AGENT_RUNTIME_RUNNER_BOOTSTRAP_FILE_ENV_KEY
+          ] ?? '',
+        ).trim()
       );
-      if (carrier?.descriptor.backendId === backendId) {
-        resolutionParams.nativeAgentRuntimeCarrier = carrier;
+      const authorityFilePath = (
+        hostOptions?.agentRuntimeDaemonServiceAuthorityFilePath?.trim()
+        || String(
+          process.env[
+            HAPPIER_AGENT_RUNTIME_DAEMON_SERVICE_AUTHORITY_FILE_ENV_KEY
+          ] ?? '',
+        ).trim()
+      );
+      if (
+        bootstrapFilePath
+        && authorityFilePath
+        && resolutionParams.happyHomeDir
+      ) {
+        const source = await createRunnerAgentSessionRuntimeBootstrap({
+          happyHomeDir: resolutionParams.happyHomeDir,
+          publicReleaseRing: configuration.publicReleaseRing,
+          authorityFilePath,
+          bootstrapFilePath,
+        });
+        if (source?.identity.backendId === backendId) {
+          resolutionParams.runnerAgentSessionRuntimeSource = source;
+        }
       }
     }
 
@@ -217,7 +233,7 @@ export class SessionHostBridge implements SessionHostBridgeContract {
   ) {
     const resolution = await resolveBackendEngineAdapterResolution(
       backendId,
-      this.resolveEngineResolutionParams(backendId, params, hostOptions),
+      await this.resolveEngineResolutionParams(backendId, params, hostOptions),
     );
     if (!resolution) {
       throw new Error(`Unsupported session runtime backend: ${backendId}`);
@@ -239,17 +255,39 @@ export class SessionHostBridge implements SessionHostBridgeContract {
           },
         }
       : canonicalRuntime;
+    const publishHostRuntimeEvent: NonNullable<
+      HostSessionRuntimePlan['config']['publishHostRuntimeEvent']
+    > = (event) => {
+      const lease = tryAcquireAuthoritativePluginRuntimeRegistryLease();
+      if (!lease) {
+        resolution.publishHostEvent?.(event);
+        return;
+      }
+      try {
+        lease.registry.publishHostEvent?.(event);
+      } finally {
+        void lease.release().catch(() => {
+          logger.debug('[SessionHostBridge] Host Event registry lease release failed (non-fatal)', {
+            error: 'host_event_registry_lease_release_failed',
+          });
+        });
+      }
+    };
+    const planWithHostEvents = {
+      ...planWithSessionState,
+      config: {
+        ...planWithSessionState.config,
+        publishHostRuntimeEvent,
+      },
+    };
     const planWithIdentity = withHostSessionRuntimeIdentityPublication({
-      plan: planWithSessionState,
+      plan: planWithHostEvents,
       identity: buildRuntimePublicationFromEngineResolution(resolution, {
         descriptorSchemaId: 'happier.hostSessionRuntimeIdentity',
         includeExecutionRun: false,
       }),
     });
-    return this.injectForegroundDaemonTurnContributionsBridge(
-      planWithIdentity,
-      hostOptions,
-    );
+    return planWithIdentity;
   }
 
   async runSessionCommand(
@@ -275,11 +313,17 @@ export class SessionHostBridge implements SessionHostBridgeContract {
     });
   }
 
-  resolveSessionHandoffEligibility(params: Readonly<{
-    metadata: unknown;
-    accountSettings?: Record<string, unknown> | null;
-  }>): SessionHandoffEligibility {
-    return resolveSessionHandoffEligibility(params);
+  async resolveSessionHandoffEligibility(
+    params: Omit<
+      Parameters<typeof resolveSessionHandoffEligibility>[0],
+      'resolveCurrentExecutionSurfacesForAgent'
+    >,
+  ): Promise<SessionHandoffEligibility> {
+    return await resolveSessionHandoffEligibility({
+      ...params,
+      resolveCurrentExecutionSurfacesForAgent: (agentId) =>
+        this.resolveCurrentExecutionSurfacesForCatalogAgent(agentId),
+    });
   }
 
   resolveContinueWithReplayBackendTarget(params: Readonly<{

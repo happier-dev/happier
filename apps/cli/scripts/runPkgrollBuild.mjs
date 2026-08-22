@@ -11,7 +11,10 @@ import {
 import { createRequire } from 'node:module';
 import { dirname, join, relative, resolve } from 'node:path';
 
-import { DEFAULT_CLI_NODE_HEAP_LIMIT_MB, upsertMaxOldSpaceSize } from './withNodeHeapLimit.mjs';
+import {
+  DEFAULT_CLI_PKGROLL_NODE_HEAP_LIMIT_MB,
+  upsertMaxOldSpaceSize,
+} from './withNodeHeapLimit.mjs';
 
 const require = createRequire(import.meta.url);
 const DEFAULT_BUILD_OUTPUT_DIR = 'dist';
@@ -204,6 +207,10 @@ function rebasePkgrollInputPathToStage(inputPath, outputDir) {
   return normalized.slice(prefix.length);
 }
 
+function isDeclarationOutputPath(inputPath) {
+  return /\.d\.(?:c|m)?ts$/i.test(inputPath);
+}
+
 export function resolvePkgrollCliPath() {
   return require.resolve('pkgroll/dist/cli.mjs');
 }
@@ -242,7 +249,10 @@ function runPkgrollBuildInStage(options = {}) {
   const timeoutMs = resolvePkgrollTimeoutMs(env, options.timeoutMs);
   const childEnv = {
     ...env,
-    NODE_OPTIONS: upsertMaxOldSpaceSize(env.NODE_OPTIONS, DEFAULT_CLI_NODE_HEAP_LIMIT_MB),
+    NODE_OPTIONS: upsertMaxOldSpaceSize(
+      env.NODE_OPTIONS,
+      DEFAULT_CLI_PKGROLL_NODE_HEAP_LIMIT_MB,
+    ),
   };
   const read = options.readFileSync ?? readFileSync;
   const pkgrollCliPath = options.pkgrollCliPath ?? resolvePkgrollCliPath();
@@ -265,37 +275,42 @@ function runPkgrollBuildInStage(options = {}) {
   const physicalStagingDir = realpathSync.native(stagingDir);
   const stageManifestPath = join(physicalStagingDir, 'package.json');
   const srcdist = `${toSlashNormalizedRelativePath(physicalStagingDir, sourceDir)}:.`;
-  const pkgrollArgs = [pkgrollCliPath, '--packagejson=false', '--srcdist', srcdist];
-  for (const inputPath of inputPaths) {
-    pkgrollArgs.push('--input', inputPath);
-  }
+  const inputGroups = [
+    inputPaths.filter((inputPath) => !isDeclarationOutputPath(inputPath)),
+    inputPaths.filter(isDeclarationOutputPath),
+  ].filter((group) => group.length > 0);
 
-  let result;
   let manifestWritten = false;
   try {
     writeFileSync(stageManifestPath, stageManifestRaw, { encoding: 'utf8', flag: 'wx' });
     manifestWritten = true;
-    result = spawn(nodeExecutable, pkgrollArgs, {
-      cwd: physicalStagingDir,
-      env: childEnv,
-      stdio: ['ignore', 'inherit', 'inherit'],
-      timeout: timeoutMs,
-    });
+    for (const inputGroup of inputGroups) {
+      const pkgrollArgs = [pkgrollCliPath, '--packagejson=false', '--srcdist', srcdist];
+      for (const inputPath of inputGroup) {
+        pkgrollArgs.push('--input', inputPath);
+      }
+      const result = spawn(nodeExecutable, pkgrollArgs, {
+        cwd: physicalStagingDir,
+        env: childEnv,
+        stdio: ['ignore', 'inherit', 'inherit'],
+        timeout: timeoutMs,
+      });
+      if (result.error) {
+        const errorCode = typeof result.error?.code === 'string' ? result.error.code : '';
+        if (errorCode === 'ETIMEDOUT') {
+          throw new Error(`pkgroll timed out after ${timeoutMs}ms`);
+        }
+        throw result.error;
+      }
+      if (result.signal) {
+        throw new Error(`pkgroll terminated by signal ${result.signal}`);
+      }
+      if (result.status !== 0) {
+        throw new Error(`pkgroll exited without success (status=${result.status ?? 'null'})`);
+      }
+    }
   } finally {
     if (manifestWritten) rmSync(stageManifestPath, { force: true });
-  }
-  if (result.error) {
-    const errorCode = typeof result.error?.code === 'string' ? result.error.code : '';
-    if (errorCode === 'ETIMEDOUT') {
-      throw new Error(`pkgroll timed out after ${timeoutMs}ms`);
-    }
-    throw result.error;
-  }
-  if (result.signal) {
-    throw new Error(`pkgroll terminated by signal ${result.signal}`);
-  }
-  if (result.status !== 0) {
-    throw new Error(`pkgroll exited without success (status=${result.status ?? 'null'})`);
   }
   copyFirstPartyStaticAssets(packageRoot, outputDir);
 }

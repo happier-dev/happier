@@ -17,24 +17,6 @@ function matchesPrefixTokenBoundary(command: string, prefix: string): boolean {
 }
 
 /**
- * Strip a simple leading env-prelude like `FOO=bar BAR=baz ...` from a shell command.
- *
- * This intentionally does NOT try to implement full shell parsing. It's a UX-oriented helper
- * to reduce duplicate approvals for common env-var prefixes.
- *
- * Note: quoted assignment values (e.g. `FOO="bar baz" cmd`) are not supported and may be stripped
- * incorrectly. This is acceptable for this UX-oriented best-effort helper.
- */
-export function stripSimpleEnvPrelude(command: string): string {
-  const parts = command.trim().split(/\s+/);
-  let i = 0;
-  while (i < parts.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(parts[i])) {
-    i++;
-  }
-  return parts.slice(i).join(' ');
-}
-
-/**
  * Split a shell command into top-level segments by control operators (`&&`, `||`, `|`, `;`, `&`, newlines).
  *
  * This is a conservative parser:
@@ -137,18 +119,6 @@ type ShellAllowPattern =
   | { kind: 'exact'; value: string }
   | { kind: 'prefix'; value: string };
 
-function isSimpleUnsetOnlySegment(segment: string): boolean {
-  const raw = segment.trim();
-  if (!raw.startsWith('unset ')) return false;
-  const parts = raw.split(/\s+/).filter(Boolean);
-  if (parts[0] !== 'unset') return false;
-  if (parts.length < 2) return false;
-  for (const name of parts.slice(1)) {
-    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) return false;
-  }
-  return true;
-}
-
 function isSegmentAllowed(segment: string, patterns: ShellAllowPattern[]): boolean {
   const raw = segment.trim();
   if (!raw) return false;
@@ -159,12 +129,13 @@ function isSegmentAllowed(segment: string, patterns: ShellAllowPattern[]): boole
     }
   }
 
-  const effective = stripSimpleEnvPrelude(raw);
+  if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(raw)) return false;
+  const effective = raw;
   const firstWord = effective.split(/\s+/).filter(Boolean)[0] ?? '';
 
   for (const p of patterns) {
     if (p.kind !== 'prefix') continue;
-    const normalizedPrefix = stripSimpleEnvPrelude(p.value).trim();
+    const normalizedPrefix = p.value.trim();
     if (!normalizedPrefix) continue;
 
     // Command-name pattern: `git:*` should match `git ...` but not `github ...`.
@@ -194,37 +165,42 @@ export function isShellCommandAllowed(command: string, patterns: ShellAllowPatte
     if (p.kind === 'exact' && p.value === raw) return true;
   }
 
+  if (hasUnquotedRedirection(raw)) return false;
+
   const split = splitShellCommandTopLevelDetailed(raw);
   if (!split.ok) return false;
 
-  // Some provider runtimes prepend a simple `unset VAR VAR2; ...` prelude to scrub secrets.
-  // Treat those leading segments as an ignorable prelude so command-name allow rules work.
-  const items = [...split.items];
-  while (items.length > 0 && isSimpleUnsetOnlySegment(items[0].segment)) {
-    items.shift();
-  }
-
-  // If there are no operators, split.segments will be [raw] and this behaves like a normal match.
-  const SAFE_PIPE_FILTERS = new Set(['head', 'tail', 'wc', 'sort', 'uniq', 'cut', 'tr']);
-  const isSafePipeFilterSegment = (segment: string): boolean => {
-    const trimmed = segment.trim();
-    if (!trimmed) return false;
-    // Fail-closed on redirections: they can write files or read from unexpected sources.
-    if (trimmed.includes('>') || trimmed.includes('<')) return false;
-    const effective = stripSimpleEnvPrelude(trimmed);
-    const firstWord = effective.split(/\s+/).filter(Boolean)[0] ?? '';
-    return SAFE_PIPE_FILTERS.has(firstWord);
-  };
-
-  for (let i = 0; i < items.length; i++) {
-    const item = items[i];
-    if (i === 0) {
-      if (!isSegmentAllowed(item.segment, patterns)) return false;
-      continue;
-    }
-    if (item.opBefore === 'pipe' && isSafePipeFilterSegment(item.segment)) continue;
+  for (const item of split.items) {
     if (!isSegmentAllowed(item.segment, patterns)) return false;
   }
 
-  return items.length > 0;
+  return split.items.length > 0;
+}
+
+function hasUnquotedRedirection(command: string): boolean {
+  let inSingle = false;
+  let inDouble = false;
+  let escaped = false;
+
+  for (const ch of command) {
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (ch === '\\' && !inSingle) {
+      escaped = true;
+      continue;
+    }
+    if (ch === '\'' && !inDouble) {
+      inSingle = !inSingle;
+      continue;
+    }
+    if (ch === '"' && !inSingle) {
+      inDouble = !inDouble;
+      continue;
+    }
+    if (!inSingle && !inDouble && (ch === '<' || ch === '>')) return true;
+  }
+
+  return escaped || inSingle || inDouble;
 }

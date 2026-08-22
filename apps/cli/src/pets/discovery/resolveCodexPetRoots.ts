@@ -2,9 +2,8 @@ import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { configuration } from '@/configuration';
-import { homeEntries as resolveCodexHomeEntriesForExternalSessionsSource } from '@happier-dev/plugins-codex/agent/rollout/discovery/homeEntries';
-import { resolveConfiguredCodexHomePath } from '@happier-dev/plugins-codex/agent/rollout/discovery/homeEntries';
 import type { PetDiscoveryDiagnosticV1 } from '@happier-dev/protocol';
+import { requireCatalogEntry } from '@/agent/catalog/registry';
 
 import { createPetSourceKey } from './createPetSourceKey';
 
@@ -60,12 +59,18 @@ export async function resolveCodexPetRootsWithDiagnostics(input: Readonly<{
   maxConnectedServiceRoots?: number;
 }> = {}): Promise<ResolveCodexPetRootsResult> {
   const env = input.env ?? process.env;
+  const catalogEntry = requireCatalogEntry('codex');
+  const resolveHomePath = catalogEntry.resolvePetDiscoveryHomePath;
+  const resolveHomeEntries = catalogEntry.resolvePetDiscoveryHomeEntries;
+  if (!resolveHomePath || !resolveHomeEntries) {
+    throw new Error('Codex pet discovery contribution is unavailable');
+  }
   const roots: CodexPetRoot[] = [];
   const diagnostics: PetDiscoveryDiagnosticV1[] = [];
   let partial = false;
 
   if (input.includeUserCodexHome !== false) {
-    const codexHome = resolveConfiguredCodexHomePath(env);
+    const codexHome = resolveHomePath(env);
     roots.push({
       kind: 'detectedCodexHome',
       homeKind: 'user',
@@ -101,7 +106,7 @@ export async function resolveCodexPetRootsWithDiagnostics(input: Readonly<{
         addRootLimitDiagnostic(listed.rootPath);
         break;
       }
-      const entries = await resolveCodexHomeEntriesForExternalSessionsSource({
+      const entries = await resolveHomeEntries({
         source: {
           kind: 'codexHome',
           home: 'connectedService',
@@ -119,9 +124,9 @@ export async function resolveCodexPetRootsWithDiagnostics(input: Readonly<{
         roots.push({
           kind: 'detectedCodexHome',
           homeKind: 'connectedService',
-          homePath: entry.codexHome,
-          petsPath: join(entry.codexHome, 'pets'),
-          sourceKey: createPetSourceKey(['detectedCodexHome', 'connectedService', entry.codexHome]),
+          homePath: entry.homePath,
+          petsPath: join(entry.homePath, 'pets'),
+          sourceKey: createPetSourceKey(['detectedCodexHome', 'connectedService', entry.homePath]),
         });
         connectedServiceRootCount += 1;
       }

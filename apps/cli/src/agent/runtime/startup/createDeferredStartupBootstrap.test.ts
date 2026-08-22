@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { ApiClient } from '@/api/api';
-import type { ApiSessionClient } from '@/api/session/sessionClient';
+import type {
+  ApiSessionClient,
+  ApiSessionClientOptions,
+} from '@/api/session/sessionClient';
 import { createStartupMetadataOverrides } from '@/agent/runtime/createStartupMetadataOverrides';
 import { DeferredApiSessionClient } from './DeferredApiSessionClient';
 import { createDeferredStartupBootstrap } from './createDeferredStartupBootstrap';
@@ -193,6 +196,15 @@ describe('createDeferredStartupBootstrap', () => {
     const transformSessionInputBeforeCommit = vi.fn(async (
       payload: Record<string, unknown>,
     ) => payload);
+    const afterComposerAttachmentMessageAccepted = vi.fn(async () => undefined);
+    const machineAdmissionTransport = vi.fn(async (
+      request: Parameters<NonNullable<
+        ApiSessionClientOptions['machineAdmissionTransport']
+      >>[0],
+    ) => ({
+      status: 'accepted' as const,
+      localId: request.localId,
+    }));
     // Boundary fixture: this test only exercises push-sender propagation.
     const api = {
       push: () => pushSender,
@@ -239,6 +251,8 @@ describe('createDeferredStartupBootstrap', () => {
         initialMutation as never,
       ],
       transformSessionInputBeforeCommit,
+      afterComposerAttachmentMessageAccepted,
+      machineAdmissionTransport,
       deps: {
         initializeBackendApiContextFn: async () => ({
           api,
@@ -288,6 +302,8 @@ describe('createDeferredStartupBootstrap', () => {
         initialRegisteredSessionStateFieldMutations: [initialMutation],
         durableMutationDeliveryInitiallyActive: false,
         transformSessionInputBeforeCommit,
+        afterComposerAttachmentMessageAccepted,
+        machineAdmissionTransport,
       },
     );
     expect(order).toEqual(['prepare', 'attached', 'push']);
@@ -372,7 +388,15 @@ describe('createDeferredStartupBootstrap', () => {
     expect(bootstrap.session.getMetadataSnapshot?.()).toBeNull();
   });
 
-  it('keeps local startup alive and buffers a startup warning when background attach fails', async () => {
+  it('rejects startup instead of continuing without a durable Session', async () => {
+    const sessionUnavailable = Object.assign(
+      new Error('Unable to start without a durable Session'),
+      {
+        name: 'BackendRunSessionUnavailableError',
+        code: 'backend_run_session_unavailable' as const,
+      },
+    );
+    const onBackgroundStartFailure = vi.fn();
     const bootstrap = await createDeferredStartupBootstrap({
       credentials: { token: 't' } as never,
       startedBy: 'terminal',
@@ -401,6 +425,7 @@ describe('createDeferredStartupBootstrap', () => {
         state: { controlledByUser: false },
       }),
       uiLogPrefix: '[test]',
+      onBackgroundStartFailure,
       startupMetadataOverrides: createStartupMetadataOverrides({
         permissionMode: 'default',
         permissionModeUpdatedAt: 1,
@@ -416,45 +441,13 @@ describe('createDeferredStartupBootstrap', () => {
           machineId: 'machine-1',
         }),
         initializeBackendRunSessionFn: async () => {
-          throw new Error('background attach failed');
+          throw sessionUnavailable;
         },
       },
     });
 
-    await expect(bootstrap.start?.()).resolves.toBeUndefined();
-
-    const deliveredEvents: unknown[] = [];
-    await (bootstrap.session as unknown as DeferredApiSessionClient).attach({
-      sessionId: 'session-live',
-      rpcHandlerManager: {
-        registerHandler: vi.fn(),
-        invokeLocal: vi.fn(async () => ({})),
-      },
-      sendSessionEvent: (event: unknown) => {
-        deliveredEvents.push(event);
-      },
-      sendProviderMessage: vi.fn(),
-      sendAgentMessage: vi.fn(),
-      sendUserTextMessage: vi.fn(),
-      updateMetadata: vi.fn(),
-      updateAgentState: vi.fn(),
-      keepAlive: vi.fn(),
-      getMetadataSnapshot: vi.fn(() => null),
-      waitForMetadataUpdate: vi.fn(async () => false),
-      popPendingMessage: vi.fn(async () => false),
-      peekPendingMessageQueueV2Count: vi.fn(async () => 0),
-      discardPendingMessageQueueV2All: vi.fn(async () => 0),
-      discardCommittedMessageLocalIds: vi.fn(async () => 0),
-      sendSessionDeath: vi.fn(),
-      flush: vi.fn(async () => undefined),
-      close: vi.fn(async () => undefined),
-    } as unknown as Parameters<DeferredApiSessionClient['attach']>[0]);
-
-    expect(deliveredEvents).toContainEqual({
-      type: 'message',
-      message:
-        '[startup-background-error] Failed to initialize Happy session in the background. Local mode may continue, but remote sync/switching could be unavailable.',
-    });
+    await expect(bootstrap.start?.()).rejects.toBe(sessionUnavailable);
+    expect(onBackgroundStartFailure).toHaveBeenCalledExactlyOnceWith(sessionUnavailable);
   });
 
   it('propagates required session-authority preparation failure instead of continuing local readiness', async () => {

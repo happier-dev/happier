@@ -21,11 +21,14 @@ import type {
   AgentSessionSendResult,
   AgentSessionOpenRequest,
   AgentSessionHostServices,
+  AgentSessionModelsSnapshot,
+  AgentSessionModelsSource,
   AgentSessionRuntime,
   AgentSessionRuntimeEvent,
-} from '@happier-dev/plugin-sdk/agent-runtime';
-import type { PluginSessionMediaService } from '@happier-dev/plugin-sdk/runtime';
+} from '@happier-dev/plugin-sdk/agents/runtime';
+import type { SessionMediaService } from '@happier-dev/plugin-sdk/sessions';
 import type { JsonValue, PluginDiagnosticData } from '@happier-dev/plugin-sdk';
+import type { ContentBlock, PromptRequest } from '@agentclientprotocol/sdk';
 import {
   type AgentSessionPreAdmissionBuffer,
   type AgentSessionPreAdmissionBufferResult,
@@ -72,6 +75,7 @@ import {
   buildAcpPromptContentBlocks,
 } from './buildAcpPromptContentBlocks';
 import { createPublicAcpPreAcknowledgementBuffer } from './publicAcpPreAcknowledgementBuffer';
+import { createAcpToolUpdatePolicy } from './acpToolUpdatePolicy';
 
 type PublicAcpSystemToolGrant = Readonly<{
   toolId: string;
@@ -114,11 +118,53 @@ export type PublicAcpComposerDependencies = Readonly<{
   systemTools: PublicAcpSystemTools;
   managedDependencies?: PublicAcpManagedDependencies;
   interactions: PluginCurrentSessionInteractionsService;
-  media: PluginSessionMediaService;
+  media: SessionMediaService;
   models: AgentSessionHostServices['models'];
   resumeHistorySession?: AcpReplayHistorySessionClient;
   mcpServers?: Record<string, McpServerConfig>;
+  transformAgentChildLaunchEnvironment?: (
+    environment: Readonly<Record<string, string>>,
+  ) => Readonly<Record<string, string>>;
+  transformAgentRequest?: (
+    payload: Readonly<Record<string, unknown>>,
+    options: Readonly<{ signal: AbortSignal }>,
+  ) => Promise<Readonly<Record<string, unknown>>>;
 }>;
+
+function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isAcpContentBlock(value: unknown): value is ContentBlock {
+  if (!isRecord(value) || typeof value.type !== 'string') return false;
+  if (value.type === 'text') return typeof value.text === 'string';
+  if (value.type === 'image' || value.type === 'audio') {
+    return typeof value.data === 'string' && typeof value.mimeType === 'string';
+  }
+  if (value.type === 'resource_link') {
+    return typeof value.name === 'string' && typeof value.uri === 'string';
+  }
+  if (value.type !== 'resource' || !isRecord(value.resource)) return false;
+  return typeof value.resource.uri === 'string'
+    && (typeof value.resource.text === 'string' || typeof value.resource.blob === 'string');
+}
+
+function readAcpPromptRequest(value: unknown): PromptRequest | null {
+  if (
+    !isRecord(value)
+    || typeof value.sessionId !== 'string'
+    || value.sessionId.trim().length === 0
+    || !Array.isArray(value.prompt)
+    || !value.prompt.every(isAcpContentBlock)
+  ) return null;
+  const metadata = value._meta;
+  if (metadata !== undefined && metadata !== null && !isRecord(metadata)) return null;
+  return {
+    sessionId: value.sessionId,
+    prompt: [...value.prompt],
+    ...(metadata === undefined ? {} : { _meta: metadata }),
+  };
+}
 
 export type PublicAcpAwaitableAdapter = Readonly<{
   selectAuthMethod?: (
@@ -170,8 +216,6 @@ export type PublicAcpAwaitableAdapter = Readonly<{
   readForkProviderSessionId?: (response: JsonValue) => Promise<string | null>;
 }>;
 
-type PublicAcpModelsSource = Parameters<AgentSessionHostServices['models']['bind']>[0];
-type PublicAcpModelsSnapshot = ReturnType<PublicAcpModelsSource['read']>;
 type AgentAcpGeneratedMediaDescriptor = NonNullable<
   ReturnType<
     NonNullable<AgentAcpRuntimeDefinition['generatedMedia']>['projectTerminalOutput']
@@ -196,6 +240,8 @@ type ActiveTurn = {
   turnId: string;
   inputIds: AgentSessionSendRequest['inputIds'];
   delivery: 'newTurn' | 'followUp';
+  /** Immutable authority from the exact input that opened this turn. */
+  causalPermissionAuthority?: AgentSessionSendRequest['causalPermissionAuthority'];
   cancelCause: 'user' | 'hostShutdown' | 'sessionDispose' | 'runtimeRecovery' | null;
   submissionSettled: boolean;
   providerCheckpoint: JsonValue | null;
@@ -579,6 +625,9 @@ export async function createPublicAcpSessionFromAwaitableAdapter(
           : {}),
       })
     : new PublicAcpTransport(dependencies.agentId, launch.timeouts);
+  const toolUpdatePolicy = options.definition?.toolUpdates
+    ? createAcpToolUpdatePolicy(options.definition.toolUpdates)
+    : null;
   let sequence = 0;
   let disposed = false;
   let runtimeEnded = false;
@@ -602,9 +651,9 @@ export async function createPublicAcpSessionFromAwaitableAdapter(
   let backend: AcpBackend;
   let modelPublicationReady = false;
   let providerModelPublicationPending = false;
-  let modelSnapshot: PublicAcpModelsSnapshot = Object.freeze({ models: null });
-  const modelSubscribers = new Set<(snapshot: PublicAcpModelsSnapshot) => void>();
-  const modelSource: PublicAcpModelsSource = Object.freeze({
+  let modelSnapshot: AgentSessionModelsSnapshot = Object.freeze({ models: null });
+  const modelSubscribers = new Set<(snapshot: AgentSessionModelsSnapshot) => void>();
+  const modelSource: AgentSessionModelsSource = Object.freeze({
     read: () => modelSnapshot,
     subscribe(handler) {
       modelSubscribers.add(handler);
@@ -819,6 +868,8 @@ export async function createPublicAcpSessionFromAwaitableAdapter(
     resolveRequestId: (toolCallId) => activeTurn
       ? `acp:${JSON.stringify([activeTurn.turnId, toolCallId])}`
       : null,
+    resolveTurnId: () => activeTurn?.turnId ?? null,
+    resolveCausalPermissionAuthority: () => activeTurn?.causalPermissionAuthority ?? null,
   });
   const observePublishedTerminalToolResult: NonNullable<
     AcpBackendOptions['onPublishedTerminalToolResult']
@@ -919,6 +970,31 @@ export async function createPublicAcpSessionFromAwaitableAdapter(
     args: [...launch.args],
     env: { ...launch.env },
     unsetEnv: launch.unsetEnv,
+    ...(dependencies.transformAgentChildLaunchEnvironment
+      ? {
+          transformAgentChildLaunchEnvironment:
+            dependencies.transformAgentChildLaunchEnvironment,
+        }
+      : {}),
+    ...(dependencies.transformAgentRequest
+      ? {
+          transformPromptRequest: async (rawRequest, transformOptions) => {
+            const priorPayload = Object.freeze({
+              sessionId: request.sessionId,
+              agentId: dependencies.agentId,
+              runtimeFamily: 'acpSession' as const,
+              method: 'session/prompt',
+              request: rawRequest,
+              timestampMs: Date.now(),
+            });
+            const transformed = await dependencies.transformAgentRequest!(
+              priorPayload,
+              transformOptions,
+            );
+            return readAcpPromptRequest(transformed.request) ?? rawRequest;
+          },
+        }
+      : {}),
     ...(options.definition?.mcp.policy === 'pass_through' && dependencies.mcpServers
       ? { mcpServers: dependencies.mcpServers }
       : {}),
@@ -959,6 +1035,9 @@ export async function createPublicAcpSessionFromAwaitableAdapter(
               id: projected.id,
               name: projected.name,
               ...(projected.description === undefined ? {} : { description: projected.description }),
+              ...(projected.contextWindowTokens === undefined
+                ? {}
+                : { contextWindowTokens: projected.contextWindowTokens }),
               ...(projected.modelOptions
                 ? { modelOptions: projected.modelOptions.map((modelOption) => ({
                     ...modelOption,
@@ -967,6 +1046,17 @@ export async function createPublicAcpSessionFromAwaitableAdapter(
                 : {}),
             };
           },
+        }
+      : {}),
+    ...(options.definition?.usage?.projectPromptUsage
+      ? {
+          projectPromptUsage: ({ usage, promptResponse }: Readonly<{
+            usage: unknown;
+            promptResponse: unknown;
+          }>) => options.definition!.usage!.projectPromptUsage({
+            usage: AgentRuntimeJsonValueV1Schema.parse(usage),
+            promptResponse: AgentRuntimeJsonValueV1Schema.parse(promptResponse),
+          }),
         }
       : {}),
     ...(awaitableAdapter.projectModel
@@ -1004,6 +1094,9 @@ export async function createPublicAcpSessionFromAwaitableAdapter(
                   id: projected.id,
                   name: projected.name,
                   ...(projected.description === undefined ? {} : { description: projected.description }),
+                  ...(projected.contextWindowTokens === undefined
+                    ? {}
+                    : { contextWindowTokens: projected.contextWindowTokens }),
                   ...(projected.modelOptions
                     ? { modelOptions: projected.modelOptions.map((option) => ({
                         ...option,
@@ -1034,17 +1127,19 @@ export async function createPublicAcpSessionFromAwaitableAdapter(
           ),
         }
       : {}),
-    ...(awaitableAdapter.sanitizeToolUpdate || awaitableAdapter.resolveToolName
+    ...(toolUpdatePolicy || awaitableAdapter.sanitizeToolUpdate || awaitableAdapter.resolveToolName
       ? {
           prepareToolUpdate: async (
             update: Parameters<NonNullable<AcpBackendOptions['prepareToolUpdate']>>[0],
             context: Parameters<NonNullable<AcpBackendOptions['prepareToolUpdate']>>[1],
           ) => {
+            const admitted = toolUpdatePolicy ? toolUpdatePolicy.prepare(update) : update;
+            if (admitted === null) return null;
             const sanitized = awaitableAdapter.sanitizeToolUpdate
               ? await awaitableAdapter.sanitizeToolUpdate(
-                  AgentRuntimeJsonValueV1Schema.parse(update) as Readonly<Record<string, unknown>>,
+                  AgentRuntimeJsonValueV1Schema.parse(admitted) as Readonly<Record<string, unknown>>,
                 )
-              : update;
+              : admitted;
             if (!awaitableAdapter.resolveToolName) return sanitized;
             const toolCallId = typeof sanitized.toolCallId === 'string'
               ? sanitized.toolCallId
@@ -1324,8 +1419,28 @@ export async function createPublicAcpSessionFromAwaitableAdapter(
             retryable: true,
           };
         }
+        // A steer is a new admitted input. Install its exact carrier before the
+        // transport call, because ACP may request permission while that call is
+        // still awaiting its prompt acknowledgement. Earlier requests already
+        // hold their own copied context at the permission owner.
+        turn.causalPermissionAuthority = sendRequest.causalPermissionAuthority;
         try {
-          await backend.sendSteerPrompt(providerSessionId, sendRequest.input.text);
+          const providerSteer = options.definition?.delivery?.steer;
+          if (providerSteer) {
+            const extensionParams = AgentRuntimeJsonValueV1Schema.parse(providerSteer.buildParams({
+              providerSessionId,
+              inputIds: sendRequest.inputIds,
+              input: sendRequest.input,
+            }));
+            const response = AgentRuntimeJsonValueV1Schema.parse(
+              await backend.requestExtension(providerSteer.method, extensionParams),
+            );
+            if (!providerSteer.isAccepted(response)) {
+              throw new Error('ACP provider steer extension did not accept input');
+            }
+          } else {
+            await backend.sendSteerPrompt(providerSessionId, sendRequest.input.text);
+          }
         } catch (error) {
           publish({
             kind: 'input-custody-unknown',
@@ -1376,6 +1491,9 @@ export async function createPublicAcpSessionFromAwaitableAdapter(
         turnId: sendRequest.delivery.turnId,
         inputIds: sendRequest.inputIds,
         delivery: sendRequest.delivery.kind,
+        ...(sendRequest.causalPermissionAuthority
+          ? { causalPermissionAuthority: sendRequest.causalPermissionAuthority }
+          : {}),
         cancelCause: null,
         submissionSettled: false,
         providerCheckpoint: null,

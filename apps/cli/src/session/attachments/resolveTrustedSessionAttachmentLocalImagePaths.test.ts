@@ -76,4 +76,35 @@ describe('resolveTrustedSessionAttachmentLocalImagePaths', () => {
             },
         })).resolves.toEqual(new Set());
     });
+
+    it('verifies an image retained beside review metadata through the canonical attachment envelope reader', async () => {
+        const cwd = await createTempDir();
+        const uploadPath = '.happier/uploads/messages/message-1/screen.png';
+        const content = 'fake image bytes';
+        await mkdir(dirname(join(cwd, uploadPath)), { recursive: true });
+        await writeFile(join(cwd, uploadPath), content);
+
+        await expect(resolveTrustedSessionAttachmentLocalImagePaths({
+            cwd,
+            metadata: {
+                happier: {
+                    kind: 'review_comments.v1',
+                    payload: { comments: [] },
+                },
+                happierAttachments: {
+                    kind: 'attachments.v1',
+                    payload: {
+                        attachments: [
+                            {
+                                path: uploadPath,
+                                mimeType: 'image/png',
+                                sizeBytes: content.length,
+                                sha256: sha256(content),
+                            },
+                        ],
+                    },
+                },
+            },
+        })).resolves.toEqual(new Set([uploadPath]));
+    });
 });

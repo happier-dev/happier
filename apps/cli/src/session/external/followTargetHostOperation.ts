@@ -3,7 +3,8 @@ import { ExternalSessionsAgentIdSchema } from '@happier-dev/protocol';
 import { createAgentExternalSessionsExecutionSurface } from '@/agent/runtime/registry/agentExternalSessionsExecutionSurface';
 import { fetchAccountProfile } from '@/api/accountProfile';
 import { acquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
-import { readCredentials } from '@/persistence';
+import { configuration } from '@/configuration';
+import { readStoredCredentials } from '@/persistence';
 import {
     getActiveAccountSettingsSnapshot,
     resolveActiveAccountSettingsSnapshotRevision,
@@ -15,11 +16,12 @@ import {
     type ConfiguredExternalSessionSourceAccountProjection,
     type ConfiguredExternalSessionSourceAgentContribution,
 } from './configuredSourceMaterializer';
+import { invokeBoundedExternalSessionsOperation } from './agentExternalSessionsInvocation';
 import type {
     ExternalSessionFollowTargetHostOperation,
     ExternalSessionFollowTargetHostOperationRequest,
 } from './hostOperationOwner';
-import type { PluginExternalSessionsProviderOps } from './pluginExternalSessionsAdapter';
+import type { ExternalSessionFollowProviderOps } from './providerOps';
 import type { HostExternalSessionFollowTargetResolution } from './privateContract';
 
 type FollowTargetRuntimeContext = Readonly<{
@@ -27,7 +29,7 @@ type FollowTargetRuntimeContext = Readonly<{
     agentId: string;
     generationId: string;
     agent: ConfiguredExternalSessionSourceAgentContribution;
-    providerOps: PluginExternalSessionsProviderOps;
+    providerOps: ExternalSessionFollowProviderOps;
     retirementSignal: AbortSignal;
     isCurrent(): boolean;
     release(): Promise<void>;
@@ -42,6 +44,8 @@ type FollowTargetHostOperationDependencies = Readonly<{
         signal: AbortSignal,
     ): Promise<ConfiguredExternalSessionSourceAccountProjection>;
     readAccountRevision(): string;
+    readAgentSettings(): unknown;
+    readActiveServerId(): string | null;
 }>;
 
 function unavailable(code: string): HostExternalSessionFollowTargetResolution {
@@ -103,28 +107,18 @@ function createDefaultDependencies(): FollowTargetHostOperationDependencies {
             );
             if (
                 typeof executionSurface.validateSource !== 'function'
-                || typeof executionSurface.listCandidates !== 'function'
+                || typeof executionSurface.resolveLinkIdentity !== 'function'
                 || typeof executionSurface.pageTranscript !== 'function'
+                || typeof executionSurface.readAfterTranscript !== 'function'
             ) {
                 await registryLease.release();
                 return null;
             }
-            const providerOps: PluginExternalSessionsProviderOps = {
+            const providerOps: ExternalSessionFollowProviderOps = {
                 validateSource: executionSurface.validateSource,
-                listCandidates: executionSurface.listCandidates,
                 pageTranscript: executionSurface.pageTranscript,
-                ...(executionSurface.readAfterTranscript
-                    ? {
-                        readAfterTranscript:
-                            executionSurface.readAfterTranscript,
-                    }
-                    : {}),
-                ...(executionSurface.resolveLinkIdentity
-                    ? {
-                        resolveLinkIdentity:
-                            executionSurface.resolveLinkIdentity,
-                    }
-                    : {}),
+                readAfterTranscript: executionSurface.readAfterTranscript,
+                resolveLinkIdentity: executionSurface.resolveLinkIdentity,
             };
             return Object.freeze({
                 pluginId: runtimeLease.pluginId,
@@ -141,7 +135,7 @@ function createDefaultDependencies(): FollowTargetHostOperationDependencies {
             if (!configuredExternalSessionSourcesUseConnectedProfiles([agent])) {
                 return Object.freeze({ connectedServicesV2: [] });
             }
-            const credentials = await readCredentials().catch(() => null);
+            const credentials = await readStoredCredentials().catch(() => null);
             if (!credentials || signal.aborted) {
                 throw new Error('External-session account projection unavailable');
             }
@@ -154,6 +148,8 @@ function createDefaultDependencies(): FollowTargetHostOperationDependencies {
             resolveActiveAccountSettingsSnapshotRevision(
                 getActiveAccountSettingsSnapshot(),
             ),
+        readAgentSettings: () => getActiveAccountSettingsSnapshot()?.settings,
+        readActiveServerId: () => configuration.activeServerId,
     });
 }
 
@@ -176,78 +172,140 @@ export function createExternalSessionFollowTargetHostOperation(params: Readonly<
                         : 'plugin_external_follow_identity_mismatch',
                 );
             }
-            const context = await dependencies.acquireRuntimeContext(
-                request.contributionId,
-            );
-            if (!context) {
-                return unavailable('plugin_external_follow_identity_unavailable');
-            }
-            try {
-                if (
-                    context.pluginId !== request.pluginId
-                    || context.agentId !== request.contributionId
-                    || context.generationId !== request.generationId
-                    || dependencies.readAccountRevision() !== request.accountRevision
-                    || !requestIsCurrent(request, context)
-                ) {
-                    return unavailable('plugin_generation_retired');
-                }
-                const signal = AbortSignal.any([
-                    context.retirementSignal,
-                    ...(request.signal ? [request.signal] : []),
-                ]);
-                const account = await dependencies.readAccount(
-                    context.agent,
-                    signal,
-                );
-                if (
-                    dependencies.readAccountRevision() !== request.accountRevision
-                    || !requestIsCurrent(request, context)
-                ) {
-                    return unavailable(
-                        request.signal?.aborted
-                            ? 'plugin_operation_aborted'
-                            : 'plugin_generation_retired',
-                    );
-                }
-                const basis = Object.freeze({
-                    contributionGenerationId: request.generationId,
-                    accountSettingsRevision: request.accountRevision,
-                });
-                return await resolveConfiguredExternalSessionFollowTarget({
-                    agents: [context.agent],
-                    account,
-                    basis,
-                    readCurrentBasis: () => Object.freeze({
-                        contributionGenerationId: context.generationId,
-                        accountSettingsRevision: dependencies.readAccountRevision(),
-                    }),
-                    isCurrent: () => (
-                        dependencies.readAccountRevision()
-                            === request.accountRevision
-                        && requestIsCurrent(request, context)
-                    ),
-                    agentId: context.agentId,
-                    remoteSessionId: request.remoteSessionId,
-                    resolveProviderOps: async (agentId) => (
-                        agentId === context.agentId
-                            ? context.providerOps
-                            : null
-                    ),
-                    signal,
-                    retirementSignal: context.retirementSignal,
-                });
-            } catch {
+            if (request.providerOps && !request.agentContribution) {
                 return unavailable(
-                    request.signal?.aborted
-                        ? 'plugin_operation_aborted'
-                        : requestIsCurrent(request, context)
-                            ? 'plugin_external_follow_identity_unavailable'
-                            : 'plugin_generation_retired',
+                    'plugin_external_follow_identity_unavailable',
                 );
-            } finally {
-                await context.release().catch(() => undefined);
             }
+            const signal = request.signal ?? new AbortController().signal;
+            const outcome = await invokeBoundedExternalSessionsOperation({
+                signal,
+                // The runtime-context retirement signal is not available until
+                // acquisition completes. The admitted operation joins it before
+                // every context-owned await below.
+                retirementSignal: new AbortController().signal,
+                isCurrent: () => requestOwnerIsCurrent(request),
+                ...(request.admissionDeadlineAtMs === undefined
+                    ? {}
+                    : { deadlineAtMs: request.admissionDeadlineAtMs }),
+                operation: async (admissionSignal, deadlineAtMs) => {
+                    let context: FollowTargetRuntimeContext | null = null;
+                    try {
+                        context = request.providerOps && request.agentContribution
+                            ? Object.freeze({
+                                pluginId: request.pluginId,
+                                agentId: request.contributionId,
+                                generationId: request.generationId,
+                                agent: request.agentContribution,
+                                providerOps: request.providerOps,
+                                retirementSignal: signal,
+                                isCurrent: request.isCurrent,
+                                release: async () => undefined,
+                            })
+                            : await dependencies.acquireRuntimeContext(
+                                request.contributionId,
+                            );
+                        if (admissionSignal.aborted) {
+                            throw admissionSignal.reason;
+                        }
+                        if (!context) {
+                            return unavailable(
+                                'plugin_external_follow_identity_unavailable',
+                            );
+                        }
+                        const runtimeContext = context;
+                        if (
+                            runtimeContext.pluginId !== request.pluginId
+                            || runtimeContext.agentId !== request.contributionId
+                            || runtimeContext.generationId !== request.generationId
+                            || dependencies.readAccountRevision()
+                                !== request.accountRevision
+                            || !requestIsCurrent(request, runtimeContext)
+                        ) {
+                            return unavailable('plugin_generation_retired');
+                        }
+                        const operationSignal = AbortSignal.any([
+                            admissionSignal,
+                            runtimeContext.retirementSignal,
+                        ]);
+                        if (operationSignal.aborted) {
+                            throw operationSignal.reason;
+                        }
+                        const account = await dependencies.readAccount(
+                            runtimeContext.agent,
+                            operationSignal,
+                        );
+                        if (admissionSignal.aborted) {
+                            throw admissionSignal.reason;
+                        }
+                        if (
+                            dependencies.readAccountRevision()
+                                !== request.accountRevision
+                            || !requestIsCurrent(request, runtimeContext)
+                        ) {
+                            return unavailable(
+                                request.signal?.aborted
+                                    ? 'plugin_operation_aborted'
+                                    : 'plugin_generation_retired',
+                            );
+                        }
+                        const basis = Object.freeze({
+                            contributionGenerationId: request.generationId,
+                            accountSettingsRevision: request.accountRevision,
+                        });
+                        return await resolveConfiguredExternalSessionFollowTarget({
+                            agents: [runtimeContext.agent],
+                            account,
+                            agentSettings: dependencies.readAgentSettings(),
+                            activeServerId: dependencies.readActiveServerId(),
+                            basis,
+                            readCurrentBasis: () => Object.freeze({
+                                contributionGenerationId: runtimeContext.generationId,
+                                accountSettingsRevision:
+                                    dependencies.readAccountRevision(),
+                            }),
+                            isCurrent: () => (
+                                dependencies.readAccountRevision()
+                                    === request.accountRevision
+                                && requestIsCurrent(request, runtimeContext)
+                            ),
+                            agentId: runtimeContext.agentId,
+                            remoteSessionId: request.remoteSessionId,
+                            admissionDeadlineAtMs: deadlineAtMs,
+                            resolveProviderOps: async (agentId) => (
+                                agentId === runtimeContext.agentId
+                                    ? runtimeContext.providerOps
+                                    : null
+                            ),
+                            signal: operationSignal,
+                            retirementSignal: runtimeContext.retirementSignal,
+                        });
+                    } catch {
+                        return unavailable(
+                            request.signal?.aborted
+                                ? 'plugin_operation_aborted'
+                                : context && !requestIsCurrent(request, context)
+                                    ? 'plugin_generation_retired'
+                                    : 'plugin_external_follow_identity_unavailable',
+                        );
+                    } finally {
+                        if (context) {
+                            await context.release().catch(() => undefined);
+                        }
+                    }
+                },
+            });
+            if (outcome.status === 'fulfilled') return outcome.value;
+            if (outcome.status === 'retired') {
+                return unavailable('plugin_generation_retired');
+            }
+            if (outcome.status === 'cancelled') {
+                return unavailable('plugin_operation_aborted');
+            }
+            if (outcome.status === 'timeout') {
+                return unavailable('plugin_operation_deadline_exceeded');
+            }
+            return unavailable('plugin_external_follow_identity_unavailable');
         },
     });
 }

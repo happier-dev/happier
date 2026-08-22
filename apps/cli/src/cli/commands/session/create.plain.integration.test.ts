@@ -5,7 +5,7 @@ import { bindApiSessionSocketMock, createApiSessionSocketStub } from '@/testkit/
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 import { captureConsoleJsonOutput } from '@/testkit/logger/captureOutput';
-import { clearDaemonState, writeDaemonState } from '@/persistence';
+import { clearDaemonStateForTestTeardown, writeDaemonState } from '@/persistence';
 
 import { deriveBoxPublicKeyFromSeed } from '@happier-dev/protocol';
 
@@ -127,7 +127,7 @@ describe('happier session create plaintext sessions (integration)', () => {
   });
 
   afterEach(async () => {
-    await clearDaemonState();
+    await clearDaemonStateForTestTeardown();
     if (server) {
       await new Promise<void>((resolve, reject) => {
         server!.close((error) => (error ? reject(error) : resolve()));

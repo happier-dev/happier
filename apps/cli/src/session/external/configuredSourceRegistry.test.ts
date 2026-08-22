@@ -77,6 +77,7 @@ function sourceAgent(
 const sourceProjection = {
   agents: [
     sourceAgent('codex', [codexSourceDeclaration]),
+    sourceAgent('antigravity', [codexSourceDeclaration]),
     sourceAgent('claude', []),
   ],
 };
@@ -138,8 +139,9 @@ describe('configured external-session source registry', () => {
       sourceKey: 'codexHome:connectedService:openai-codex:group%3Aprimary-pool:',
       source: canonicalSource,
     }]);
-    expect(snapshot.resolve(entries[0]!.sourceKey, basis)).toBe(entries[0]);
+    expect(snapshot.resolve(entries[0]!.agentId, entries[0]!.sourceKey, basis)).toBe(entries[0]);
     expect(snapshot.resolve(
+      entries[0]!.agentId,
       'codexHome:connectedService:openai-codex:group:primary-pool:',
       basis,
     )).toBeNull();
@@ -149,7 +151,157 @@ describe('configured external-session source registry', () => {
     expect(Object.isFrozen(entries[0]!.source)).toBe(true);
   });
 
-  it('rejects malformed, provider-invalid, mismatched-agent, and duplicate canonical sources', async () => {
+  it('keeps every other Agent projecting when one Agent refuses its own configured source', async () => {
+    const source = {
+      kind: 'codexHome',
+      home: 'user',
+    } satisfies ExternalSessionsSource;
+    const healthy = providerOps(({ source: candidate }) => ({ ok: true, source: candidate }));
+
+    const snapshot = await buildConfiguredExternalSessionSourceSnapshot({
+      basis,
+      candidates: [
+        { agentId: 'codex', source },
+        { agentId: 'antigravity', source },
+      ],
+      resolveProviderOps: (agentId) => (agentId === 'codex'
+        ? providerOps(async () => {
+            throw new Error('codex home probe failed');
+          })
+        : healthy),
+    });
+
+    expect(snapshot.list(basis)).toEqual([{
+      agentId: 'antigravity',
+      sourceKey: 'codexHome:user:::',
+      source,
+    }]);
+    expect(snapshot.resolve('antigravity', 'codexHome:user:::', basis)).not.toBeNull();
+    expect(snapshot.resolve('codex', 'codexHome:user:::', basis)).toBeNull();
+    expect(snapshot.refusals).toEqual([{
+      agentId: 'codex',
+      code: 'provider_source_invalid',
+      message: expect.stringMatching(/agent 'codex'/i),
+    }]);
+    expect(Object.isFrozen(snapshot.refusals)).toBe(true);
+  });
+
+  it('still fails the whole snapshot closed on a host-owned integrity failure beside a healthy Agent', async () => {
+    const source = {
+      kind: 'codexHome',
+      home: 'user',
+    } satisfies ExternalSessionsSource;
+    const healthy = providerOps(({ source: candidate }) => ({ ok: true, source: candidate }));
+
+    // `source_undeclared` is decided by the host's own declaration index, and
+    // `duplicate_source_key` by the host's own persisted key identity. A partial
+    // snapshot built on either would publish an incomplete or order-dependent
+    // view of the user's configuration as if it were complete.
+    await expect(buildConfiguredExternalSessionSourceSnapshot({
+      basis,
+      candidates: [
+        { agentId: 'antigravity', source },
+        { agentId: 'codex', source: { kind: 'not-real' } },
+      ],
+      resolveProviderOps: () => healthy,
+    })).rejects.toMatchObject({ code: 'source_undeclared' });
+
+    await expect(buildConfiguredExternalSessionSourceSnapshot({
+      basis,
+      candidates: [
+        { agentId: 'antigravity', source },
+        { agentId: 'codex', source },
+        { agentId: 'codex', source: { ...source } },
+      ],
+      resolveProviderOps: () => healthy,
+    })).rejects.toMatchObject({ code: 'duplicate_source_key' });
+  });
+
+  it('scopes identical opaque source ids to their Agent contribution', async () => {
+    const source = {
+      kind: 'codexHome',
+      home: 'user',
+    } satisfies ExternalSessionsSource;
+    const snapshot = await buildConfiguredExternalSessionSourceSnapshot({
+      basis,
+      candidates: [
+        { agentId: 'codex', source },
+        { agentId: 'antigravity', source },
+      ],
+      resolveProviderOps: () => providerOps(({ source: candidate }) => ({
+        ok: true,
+        source: candidate,
+      })),
+    });
+
+    const entries = snapshot.list(basis);
+    expect(entries).toHaveLength(2);
+    expect(entries[0]!.sourceKey).toBe(entries[1]!.sourceKey);
+    expect(snapshot.resolve('codex', entries[0]!.sourceKey, basis)).toBe(entries[0]);
+    expect(snapshot.resolve('antigravity', entries[1]!.sourceKey, basis)).toBe(entries[1]);
+    expect(snapshot.resolve('claude', entries[0]!.sourceKey, basis)).toBeNull();
+  });
+
+  it.each([
+    ['empty', ''],
+    ['padded', ' padded-source-key '],
+    ['overlong', 'x'.repeat(2_001)],
+  ])('rejects a noncanonical %s opaque source key before snapshot publication', async (_name, sourceKey) => {
+    const source = {
+      kind: 'codexHome',
+      home: 'user',
+    } satisfies ExternalSessionsSource;
+    const projected = resolveExternalSessionSourceFromAgentProjection(
+      sourceProjection,
+      'codex',
+      source,
+    );
+    if (!projected.ok) throw new Error('Expected the fixture source to resolve');
+
+    const snapshot = await buildConfiguredExternalSessionSourceSnapshotWithProjection({
+      basis,
+      candidates: [{ agentId: 'codex', source }],
+      resolveProviderOps: () => providerOps(({ source: candidate }) => ({
+        ok: true,
+        source: candidate,
+      })),
+      resolveSource: () => ({
+        ...projected,
+        sourceKey,
+      }),
+    });
+    expect(snapshot.list(basis)).toEqual([]);
+    expect(snapshot.refusals).toEqual([{
+      agentId: 'codex',
+      code: 'malformed_canonical_source',
+      message: expect.stringMatching(/malformed canonical/i),
+    }]);
+  });
+
+  it('rejects a noncanonical Agent id before snapshot publication', async () => {
+    const source = {
+      kind: 'codexHome',
+      home: 'user',
+    } satisfies ExternalSessionsSource;
+    const projected = resolveExternalSessionSourceFromAgentProjection(
+      sourceProjection,
+      'codex',
+      source,
+    );
+    if (!projected.ok) throw new Error('Expected the fixture source to resolve');
+
+    await expect(buildConfiguredExternalSessionSourceSnapshotWithProjection({
+      basis,
+      candidates: [{ agentId: ' codex ', source }],
+      resolveProviderOps: () => providerOps(({ source: candidate }) => ({
+        ok: true,
+        source: candidate,
+      })),
+      resolveSource: () => projected,
+    })).rejects.toMatchObject({ code: 'malformed_source' });
+  });
+
+  it('fails closed on host-owned source integrity and refuses only the provider-rejected candidate', async () => {
     const valid = {
       kind: 'codexHome',
       home: 'user',
@@ -162,13 +314,18 @@ describe('configured external-session source registry', () => {
       resolveProviderOps: () => validOps,
     })).rejects.toMatchObject({ code: 'source_undeclared' });
 
-    const providerInvalid = buildConfiguredExternalSessionSourceSnapshot({
+    const providerInvalid = await buildConfiguredExternalSessionSourceSnapshot({
       basis,
       candidates: [{ agentId: 'codex', source: valid }],
       resolveProviderOps: () => providerOps(() => ({ ok: false, error: 'secret=/credentials/token' })),
     });
-    await expect(providerInvalid).rejects.toMatchObject({ code: 'provider_source_invalid' });
-    await expect(providerInvalid).rejects.not.toThrow(/secret|credentials|token/i);
+    expect(providerInvalid.list(basis)).toEqual([]);
+    expect(providerInvalid.refusals).toEqual([{
+      agentId: 'codex',
+      code: 'provider_source_invalid',
+      message: expect.stringMatching(/rejected by its provider/i),
+    }]);
+    expect(providerInvalid.refusals[0]!.message).not.toMatch(/secret|credentials|token/i);
 
     await expect(buildConfiguredExternalSessionSourceSnapshot({
       basis,
@@ -186,26 +343,38 @@ describe('configured external-session source registry', () => {
     })).rejects.toThrow(/duplicate/i);
   });
 
-  it('fails closed when provider ops are absent or return malformed canonical output', async () => {
+  it('refuses only the candidate whose Agent ops are absent or whose canonical output is malformed', async () => {
     const valid = {
       kind: 'codexHome',
       home: 'user',
     } satisfies ExternalSessionsSource;
 
-    await expect(buildConfiguredExternalSessionSourceSnapshot({
+    const opsAbsent = await buildConfiguredExternalSessionSourceSnapshot({
       basis,
       candidates: [{ agentId: 'codex', source: valid }],
       resolveProviderOps: () => null,
-    })).rejects.toThrow(/Agent operations/i);
+    });
+    expect(opsAbsent.list(basis)).toEqual([]);
+    expect(opsAbsent.refusals).toEqual([{
+      agentId: 'codex',
+      code: 'provider_ops_unavailable',
+      message: expect.stringMatching(/Agent operations/i),
+    }]);
 
-    await expect(buildConfiguredExternalSessionSourceSnapshot({
+    const malformedCanonical = await buildConfiguredExternalSessionSourceSnapshot({
       basis,
       candidates: [{ agentId: 'codex', source: valid }],
       resolveProviderOps: () => providerOps(() => ({
         ok: true,
         source: { kind: 'not-real' } as unknown as ExternalSessionsSource,
       })),
-    })).rejects.toThrow(/malformed canonical/i);
+    });
+    expect(malformedCanonical.list(basis)).toEqual([]);
+    expect(malformedCanonical.refusals).toEqual([{
+      agentId: 'codex',
+      code: 'malformed_canonical_source',
+      message: expect.stringMatching(/malformed canonical/i),
+    }]);
   });
 
   it('rejects retired contribution generations and account-settings drift on every read', async () => {
@@ -220,7 +389,7 @@ describe('configured external-session source registry', () => {
     });
 
     expect(() => snapshot.list({ ...basis, contributionGenerationId: 'registry:g2' })).toThrow(/retired/i);
-    expect(() => snapshot.resolve('codex:user:', {
+    expect(() => snapshot.resolve('codex', 'codex:user:', {
       ...basis,
       accountSettingsRevision: 'account:8',
     })).toThrow(/account settings/i);
@@ -273,7 +442,7 @@ describe('configured external-session source registry', () => {
       },
     });
 
-    const accessorResult = buildConfiguredExternalSessionSourceSnapshot({
+    const accessorResult = await buildConfiguredExternalSessionSourceSnapshot({
       basis,
       candidates: [{ agentId: 'codex', source }],
       resolveProviderOps: () => providerOps(() => ({
@@ -281,18 +450,20 @@ describe('configured external-session source registry', () => {
         source: accessorSource as ExternalSessionsSource,
       })),
     });
-    await expect(accessorResult).rejects.toMatchObject({ code: 'malformed_canonical_source' });
-    await expect(accessorResult).rejects.not.toThrow(/secret|credentials|token/i);
+    expect(accessorResult.list(basis)).toEqual([]);
+    expect(accessorResult.refusals[0]).toMatchObject({ code: 'malformed_canonical_source' });
+    expect(accessorResult.refusals[0]!.message).not.toMatch(/secret|credentials|token/i);
     expect(accessorReads).toBe(0);
 
-    const thrownResult = buildConfiguredExternalSessionSourceSnapshot({
+    const thrownResult = await buildConfiguredExternalSessionSourceSnapshot({
       basis,
       candidates: [{ agentId: 'codex', source }],
       resolveProviderOps: () => providerOps(async () => {
         throw new Error('secret=/credentials/token');
       }),
     });
-    await expect(thrownResult).rejects.toMatchObject({ code: 'provider_source_invalid' });
-    await expect(thrownResult).rejects.not.toThrow(/secret|credentials|token/i);
+    expect(thrownResult.list(basis)).toEqual([]);
+    expect(thrownResult.refusals[0]).toMatchObject({ code: 'provider_source_invalid' });
+    expect(thrownResult.refusals[0]!.message).not.toMatch(/secret|credentials|token/i);
   });
 });

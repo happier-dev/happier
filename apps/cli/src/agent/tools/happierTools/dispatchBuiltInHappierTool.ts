@@ -11,14 +11,13 @@ import {
   getActionSpecForSurface,
   resolveActionOptionsForSurface,
   searchActionSpecsForSurface,
+  type ResolveActionOptionsInput,
 } from './actionSpecDiscovery';
 import {
   actionExecuteToolInputSchema,
   changeTitleToolInputSchema,
   normalizeExecutionRunStartToolInput,
-  pluginsReloadToolInputSchema,
 } from './manualToolContracts';
-import { reloadTrustedLocalPluginTool } from './reloadTrustedLocalPluginTool';
 
 type DispatchDeps = Readonly<{
   changeTitle: (sessionId: string, title: string) => Promise<unknown>;
@@ -28,15 +27,7 @@ type DispatchDeps = Readonly<{
     defaultSessionId: string,
     options?: Readonly<{ approvalOrigin?: ApprovalRequestOriginV1 | null }>,
   ) => Promise<HappierBuiltInToolDispatchResult>;
-  reloadPlugin?: (pluginId: string) => Promise<HappierBuiltInToolDispatchResult>;
-  resolveActionOptions?: (args: Readonly<{
-    actionId: ActionId | null;
-    fieldPath: string | null;
-    optionsSourceId: string | null;
-    sessionId: string | null;
-    limit: number | null;
-    query: string | null;
-  }>) => Promise<
+  resolveActionOptions?: (args: ResolveActionOptionsInput) => Promise<
     | Readonly<{
         ok: true;
         result: Readonly<{
@@ -172,17 +163,6 @@ export async function dispatchBuiltInHappierTool(params: Readonly<{
     const parsed = changeTitleToolInputSchema.safeParse(params.args ?? {});
     if (!parsed.success) return err('invalid_action_input', 'Invalid title payload');
     return normalizeChangeTitleResult(await params.deps.changeTitle(params.sessionId, parsed.data.title));
-  }
-
-  if (params.toolName === 'plugins_reload') {
-    const parsed = pluginsReloadToolInputSchema.safeParse(params.args ?? {});
-    if (!parsed.success) return err('invalid_action_input', 'Invalid plugin reload payload');
-    if (params.deps.reloadPlugin) {
-      return await params.deps.reloadPlugin(parsed.data.pluginId);
-    }
-    return await reloadTrustedLocalPluginTool({
-      pluginId: parsed.data.pluginId,
-    });
   }
 
   if (params.toolName === 'action_spec_search') {

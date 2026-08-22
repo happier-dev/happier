@@ -22,7 +22,6 @@ export function getExecutionRunAvailableActionIds(
     structuredMeta: run.structuredMeta ?? null,
     controllerKind: controller?.kind ?? null,
   });
-  return run.status === 'succeeded'
-    ? actionIds
-    : actionIds.filter((actionId) => actionId !== 'reviews.comments.create');
+  return actionIds.filter((actionId) => actionId !== 'reviews.comments.create'
+    || (run.status === 'succeeded' && run.sessionId !== null));
 }

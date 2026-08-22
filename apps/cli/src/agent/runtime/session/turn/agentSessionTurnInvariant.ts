@@ -1,6 +1,8 @@
-import { AgentSessionRuntimeEventV1Schema } from '@happier-dev/protocol/runtime';
+import {
+    AgentSessionRuntimeEventSchema,
+    type AgentSessionRuntimeEvent,
+} from '@happier-dev/protocol/runtime';
 import type { PluginDiagnosticData } from '@happier-dev/plugin-sdk';
-import type { AgentSessionRuntimeEvent } from '@happier-dev/plugin-sdk/agent-runtime';
 
 type AgentSessionTurnInvariantDiagnosticCode =
     | 'agent_runtime_event_invalid'
@@ -118,6 +120,14 @@ export function createAgentSessionTurnInvariant(params: Readonly<{
         completed: boolean;
     }> | null = null;
     let providerSessionId: string | null = null;
+    /**
+     * The id is only half of what the runtime publishes. It knows its provider
+     * session id as soon as the session opens and the path of that session's log
+     * only once the conversation materializes, so the path can arrive only as a
+     * SAME-ID republish. Deduping on the id alone suppressed exactly that event,
+     * and the pair-aware metadata subscriber downstream never saw it.
+     */
+    let providerSessionNativeLogPath: string | null = null;
     let lastAcceptedSequence: number | null = null;
     let runtimeEnded = false;
 
@@ -150,7 +160,7 @@ export function createAgentSessionTurnInvariant(params: Readonly<{
 
     return Object.freeze({
         observe(input): AgentSessionTurnInvariantObservation {
-            const parsed = AgentSessionRuntimeEventV1Schema.safeParse(input);
+            const parsed = AgentSessionRuntimeEventSchema.safeParse(input);
             if (!parsed.success) {
                 const candidate = input && typeof input === 'object'
                     ? input as Readonly<{ kind?: unknown; sequence?: unknown; turnId?: unknown }>
@@ -174,8 +184,19 @@ export function createAgentSessionTurnInvariant(params: Readonly<{
                     || (providerSessionId && event.providerSessionId !== providerSessionId)) {
                     return reject('agent_runtime_provider_session_conflict', event);
                 }
-                if (providerSessionId === event.providerSessionId) return ignore(event);
+                // Dedupe on the matched PAIR, exactly as the metadata
+                // subscriber downstream does. Same id AND same log path is a
+                // genuine redundant republish; same id with a NEW path is the
+                // one event that gives a successor Agent somewhere to read.
+                const nativeSessionLogPath = event.nativeSessionLogPath ?? null;
+                if (
+                    providerSessionId === event.providerSessionId
+                    && providerSessionNativeLogPath === nativeSessionLogPath
+                ) {
+                    return ignore(event);
+                }
                 providerSessionId = event.providerSessionId;
+                providerSessionNativeLogPath = nativeSessionLogPath;
                 return accept(event);
             }
 

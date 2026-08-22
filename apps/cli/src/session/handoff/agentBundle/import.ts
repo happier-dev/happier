@@ -1,7 +1,7 @@
 import type { ImportedSessionHandoffBundle, SessionHandoffAgentBundle } from '../types';
 
 import { getSessionHostBridge } from '@/agent/runtime/bridges/session/SessionHostBridge';
-import { applySessionStateUpdatesToMetadata } from '@happier-dev/agents/session/state/metadataWriters';
+import { applyAgentAuthoredSessionStateUpdatesToMetadata } from '@/agent/runtime/state/agentAuthoredSessionStateUpdates';
 import {
   ExternalSessionsSourceSchema,
   readRuntimeDescriptorV1FromMetadata,
@@ -82,7 +82,11 @@ export async function importSessionHandoffAgentBundle(params: Readonly<{
     throw new Error(imported.message ?? `Session handoff import failed: ${imported.code}`);
   }
   const source = ExternalSessionsSourceSchema.parse(imported.value.source);
-  const metadataPatch = applySessionStateUpdatesToMetadata({}, imported.value.launch.sessionStateUpdates ?? []);
+  const metadataPatch = applyAgentAuthoredSessionStateUpdatesToMetadata(
+    {},
+    imported.value.launch.sessionStateUpdates ?? [],
+    'handoff.launch.sessionStateUpdates',
+  );
   const runtimeDescriptorV1 = readRuntimeDescriptorV1FromMetadata(metadataPatch) ?? undefined;
   const providerLaunch = imported.value.launch as typeof imported.value.launch & ProviderHandoffLaunchHints;
   const resumePlanOptions = asRecord(providerLaunch.resumePlanOptions);

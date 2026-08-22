@@ -6,6 +6,9 @@ import { join } from 'node:path';
 export function createAcpNdJsonStream(
   output: WritableStream<Uint8Array>,
   input: ReadableStream<Uint8Array>,
+  options?: Readonly<{
+    onMessageWritten?: (message: AnyMessage) => void;
+  }>,
 ): Stream {
   const textEncoder = new TextEncoder();
   const textDecoder = new TextDecoder();
@@ -64,6 +67,7 @@ export function createAcpNdJsonStream(
       const content = JSON.stringify(message) + '\n';
       messageCapture?.write(content);
       await getOutputWriter().write(textEncoder.encode(content));
+      options?.onMessageWritten?.(message);
     },
     async close() {
       const writer = getOutputWriter();

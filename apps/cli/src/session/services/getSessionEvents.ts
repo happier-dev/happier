@@ -1,4 +1,4 @@
-import type { Credentials } from '@/persistence';
+import type { StoredCredentials } from '@/persistence';
 
 import { fetchTranscriptSemanticPage, type FetchTranscriptSemanticPageResult } from './transcript/fetchTranscriptSemanticPage';
 import type {
@@ -40,7 +40,7 @@ function normalizeStoredRoles(value: readonly StoredTranscriptRole[] | undefined
 }
 
 export async function getSessionEvents(params: Readonly<{
-  credentials: Credentials;
+  credentials: StoredCredentials;
   idOrPrefix: string;
   limit?: number;
   cursor?: string | null;

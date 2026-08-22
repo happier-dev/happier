@@ -1,4 +1,9 @@
-import { redactBugReportSensitiveText, sanitizeBugReportUrl } from '@happier-dev/protocol';
+import {
+  isBaseCredentialDiagnosticKey,
+  redactBugReportSensitiveText,
+  sanitizeBugReportUrl,
+  splitSensitiveDiagnosticKeySegments,
+} from '@happier-dev/protocol';
 
 import type { DaemonLocallyPersistedState } from '@/persistence';
 import type { readSettings } from '@/persistence';
@@ -10,8 +15,17 @@ const OMIT_DIAGNOSTIC_KEY_NORMALIZED = new Set([
   'localenvironmentvariables',
 ]);
 
-const SENSITIVE_QUERY_KEY_FRAGMENT_PATTERN =
-  /(?:access[_-]?token|api[_-]?key|auth(?:orization)?|client[_-]?secret|cookie|credential|id[_-]?token|jwt|password|private[_-]?key|refresh[_-]?token|secret|session(?:id)?|token)/iu;
+const DOCTOR_CREDENTIAL_SEGMENTS = new Set([
+  'auth',
+  'authentication',
+  'credential',
+  'credentials',
+  'secret',
+]);
+
+const DOCTOR_CREDENTIAL_SUFFIXES = new Set([
+  'token',
+]);
 
 const URL_PATTERN = /\bhttps?:\/\/[^\s"'<>]+/giu;
 const ENV_ASSIGNMENT_PATTERN = /\b([A-Z_][A-Z0-9_]*)=("[^"]*"|'[^']*'|[^\s;,]+)/giu;
@@ -33,7 +47,12 @@ function normalizeDiagnosticKey(key: string): string {
 function isSensitiveDoctorDiagnosticKey(key: string): boolean {
   const normalized = normalizeDiagnosticKey(key);
   if (normalized === 'notsecret' || normalized === 'notauthentication') return false;
-  return SENSITIVE_QUERY_KEY_FRAGMENT_PATTERN.test(key) || SENSITIVE_QUERY_KEY_FRAGMENT_PATTERN.test(normalized);
+  if (isBaseCredentialDiagnosticKey(key)) return true;
+  const segments = splitSensitiveDiagnosticKeySegments(key);
+  return segments.some((segment) => DOCTOR_CREDENTIAL_SEGMENTS.has(segment))
+    || DOCTOR_CREDENTIAL_SUFFIXES.has(segments.at(-1) ?? '')
+    || (segments.length === 1 && segments[0] === 'session')
+    || segments.some((segment, index) => segment === 'session' && segments[index + 1] === 'id');
 }
 
 function shouldOmitDoctorDiagnosticKey(key: string): boolean {

@@ -428,6 +428,7 @@ async function bundleNonWorkspaceBundledDependencies({
       assertArtifactWorkspaceManifestSanitized({
         packageName,
         packagePath: snapshotPackagePath,
+        artifactNodeModulesRoot: resolve(snapshotRoot, 'node_modules'),
       });
       continue;
     }
@@ -487,7 +488,11 @@ async function bundleNonWorkspaceBundledDependencies({
   }
 }
 
-function assertArtifactWorkspaceManifestSanitized({ packageName, packagePath }) {
+function assertArtifactWorkspaceManifestSanitized({
+  packageName,
+  packagePath,
+  artifactNodeModulesRoot,
+}) {
   const packageJsonPath = resolve(packagePath, 'package.json');
   let rawPackageJson;
   try {
@@ -499,6 +504,45 @@ function assertArtifactWorkspaceManifestSanitized({ packageName, packagePath }) 
     );
   }
 
+  const isRecord = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
+  const isInternalWorkspacePackageName = (value) => {
+    if (typeof value !== 'string' || value.trim() !== value || !value.startsWith('@happier-dev/')) {
+      return false;
+    }
+    const packageSegments = value.split('/');
+    return (
+      packageSegments.length === 2
+      && packageSegments[1] !== ''
+      && packageSegments[1] !== '.'
+      && packageSegments[1] !== '..'
+      && !/[\\*?[\]{}]/u.test(packageSegments[1])
+    );
+  };
+  const hasPrepublicationAuthoringMarker = (rawManifest) => {
+    const publicSdkRelease = rawManifest?.happier?.publicSdkRelease;
+    return (
+      isRecord(rawManifest?.happier)
+      && Object.keys(rawManifest.happier).length === 1
+      && Object.prototype.hasOwnProperty.call(rawManifest.happier, 'publicSdkRelease')
+      && isRecord(publicSdkRelease)
+      && publicSdkRelease.posture === 'prepublish_hold'
+    );
+  };
+  const readFlatArtifactWorkspaceSiblingManifest = (dependencyName) => {
+    const siblingPackagePath = resolve(artifactNodeModulesRoot, ...dependencyName.split('/'));
+    const siblingPackageJsonPath = resolve(siblingPackagePath, 'package.json');
+    try {
+      const siblingPackageStats = lstatSync(siblingPackagePath);
+      if (!siblingPackageStats.isDirectory() || siblingPackageStats.isSymbolicLink()) return null;
+      const siblingManifest = JSON.parse(readFileSync(siblingPackageJsonPath, 'utf8'));
+      return isRecord(siblingManifest) && siblingManifest.name === dependencyName
+        ? siblingManifest
+        : null;
+    } catch {
+      return null;
+    }
+  };
+  const preservesPrepublicationAuthoringMetadata = hasPrepublicationAuthoringMarker(rawPackageJson);
   const violations = [];
   if (rawPackageJson?.name !== packageName) {
     violations.push(`name=${JSON.stringify(rawPackageJson?.name)}`);
@@ -506,20 +550,133 @@ function assertArtifactWorkspaceManifestSanitized({ packageName, packagePath }) 
   for (const forbiddenField of [
     'scripts',
     'devDependencies',
-    'files',
-    'bundledDependencies',
     'bundleDependencies',
+    ...(preservesPrepublicationAuthoringMetadata ? [] : ['files']),
+    ...(preservesPrepublicationAuthoringMetadata ? [] : ['bundledDependencies']),
   ]) {
     if (Object.prototype.hasOwnProperty.call(rawPackageJson ?? {}, forbiddenField)) {
       violations.push(forbiddenField);
     }
   }
+  if (preservesPrepublicationAuthoringMetadata && rawPackageJson?.files !== undefined) {
+    const declaredFiles = rawPackageJson.files;
+    const declaredFileNames = new Set();
+    let physicalPackagePath = '';
+    try {
+      physicalPackagePath = fs.realpathSync(packagePath);
+    } catch {
+      violations.push('files=unresolvable_package_root');
+    }
+
+    if (!Array.isArray(declaredFiles)) {
+      violations.push('files=invalid');
+    } else {
+      for (const rawDeclaredFile of declaredFiles) {
+        const declaredFile = typeof rawDeclaredFile === 'string' ? rawDeclaredFile : '';
+        const segments = declaredFile.split('/');
+        if (
+          typeof rawDeclaredFile !== 'string'
+          || !declaredFile
+          || declaredFile.trim() !== declaredFile
+          || declaredFile.includes('\\')
+          || path.isAbsolute(declaredFile)
+          || path.win32.isAbsolute(declaredFile)
+          || segments.some((segment) => !segment || segment === '.' || segment === '..')
+          || /[*?{}[\]]/u.test(declaredFile)
+          || declaredFileNames.has(declaredFile)
+        ) {
+          violations.push(`files=${JSON.stringify(rawDeclaredFile)}`);
+          continue;
+        }
+        declaredFileNames.add(declaredFile);
+        if (!physicalPackagePath) continue;
+
+        const declaredFilePath = resolve(packagePath, ...segments);
+        const lexicalRelativePath = path.relative(packagePath, declaredFilePath);
+        if (
+          lexicalRelativePath === '..'
+          || lexicalRelativePath.startsWith(`..${path.sep}`)
+          || path.isAbsolute(lexicalRelativePath)
+        ) {
+          violations.push(`files=${JSON.stringify(rawDeclaredFile)}`);
+          continue;
+        }
+        try {
+          const declaredFileStats = lstatSync(declaredFilePath);
+          if (declaredFileStats.isSymbolicLink() || (!declaredFileStats.isFile() && !declaredFileStats.isDirectory())) {
+            throw new Error('not a physical regular file or directory');
+          }
+          const physicalDeclaredFilePath = fs.realpathSync(declaredFilePath);
+          const physicalRelativePath = path.relative(physicalPackagePath, physicalDeclaredFilePath);
+          if (
+            physicalRelativePath === '..'
+            || physicalRelativePath.startsWith(`..${path.sep}`)
+            || path.isAbsolute(physicalRelativePath)
+          ) {
+            throw new Error('escapes the package root');
+          }
+        } catch {
+          violations.push(`files=${JSON.stringify(rawDeclaredFile)}=missing_or_uncontained`);
+        }
+      }
+    }
+  }
+  const declaredInternalDependencyNames = new Set();
   for (const dependencyField of ['dependencies', 'optionalDependencies']) {
-    const dependencyNames = Object.keys(rawPackageJson?.[dependencyField] ?? {});
-    const internalDependencyNames = dependencyNames.filter((dependencyName) =>
+    const declaredDependencies = rawPackageJson?.[dependencyField];
+    if (preservesPrepublicationAuthoringMetadata && declaredDependencies !== undefined) {
+      if (!isRecord(declaredDependencies)) {
+        violations.push(`${dependencyField}=invalid`);
+        continue;
+      }
+      for (const [dependencyName, dependencyVersion] of Object.entries(declaredDependencies)) {
+        if (typeof dependencyVersion !== 'string' || !dependencyVersion.trim()) {
+          violations.push(`${dependencyField}.${dependencyName}=invalid`);
+        }
+        if (dependencyName.startsWith('@happier-dev/')) {
+          if (!isInternalWorkspacePackageName(dependencyName)) {
+            violations.push(`${dependencyField}.${dependencyName}=invalid`);
+          } else {
+            declaredInternalDependencyNames.add(dependencyName);
+          }
+        }
+      }
+      continue;
+    }
+    const internalDependencyNames = Object.keys(declaredDependencies ?? {}).filter((dependencyName) =>
       dependencyName.startsWith('@happier-dev/'));
     if (internalDependencyNames.length > 0) {
       violations.push(`${dependencyField}=${internalDependencyNames.join(',')}`);
+    }
+  }
+  if (preservesPrepublicationAuthoringMetadata) {
+    const bundledDependencies = rawPackageJson?.bundledDependencies;
+    const declaredBundledDependencyNames = new Set();
+    if (!Array.isArray(bundledDependencies)) {
+      violations.push('bundledDependencies=invalid');
+    } else {
+      for (const rawDependencyName of bundledDependencies) {
+        const dependencyName = typeof rawDependencyName === 'string' ? rawDependencyName : '';
+        if (
+          !isInternalWorkspacePackageName(dependencyName)
+          || declaredBundledDependencyNames.has(dependencyName)
+          || !declaredInternalDependencyNames.has(dependencyName)
+        ) {
+          violations.push(`bundledDependencies=${JSON.stringify(rawDependencyName)}`);
+          continue;
+        }
+        declaredBundledDependencyNames.add(dependencyName);
+      }
+    }
+    for (const dependencyName of declaredInternalDependencyNames) {
+      const siblingManifest = readFlatArtifactWorkspaceSiblingManifest(dependencyName);
+      if (declaredBundledDependencyNames.has(dependencyName)) {
+        if (!siblingManifest) {
+          violations.push(`bundledDependencies.${dependencyName}=missing_flat_sibling`);
+        }
+      } else if (!siblingManifest || !hasPrepublicationAuthoringMarker(siblingManifest)) {
+        violations.push(`internalDependency.${dependencyName}=unclassified`);
+      }
     }
   }
   if (violations.length > 0) {

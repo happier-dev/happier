@@ -1,8 +1,11 @@
 import type { ApiClient } from '@/api/api'
 import type { ApiSessionClient } from '@/api/session/sessionClient'
-import type { AgentState, Metadata, Session } from '@/api/types'
+import type { AgentState, Metadata, SessionCreationOutcome } from '@/api/types'
 import type { SessionAttachMetadataIdentityPolicy } from '@happier-dev/protocol'
-import { setupOfflineReconnection } from '@/api/offline/setupOfflineReconnection'
+import { isSessionCreationPlacementError } from '@/api/session/sessionCreationPlacementError'
+import {
+  isSessionCreationCorrespondenceConflictError,
+} from '@/api/session/sessionCreationCorrespondenceConflictError'
 import { createBaseSessionForAttach } from '@/agent/runtime/createBaseSessionForAttach'
 import {
   applyStartupMetadataUpdateToSession,
@@ -18,16 +21,20 @@ import {
   persistTerminalAttachmentInfoIfNeeded,
   primeAgentStateForUi,
   reportSessionToDaemonIfRunning,
+  reportSessionStartupFailureToDaemonIfRunning,
   sendTerminalFallbackMessageIfNeeded,
 } from '@/agent/runtime/startupSideEffects'
+import { readSessionStartupSpawnNonceFromEnv } from '@/session/runtime/control/sessionControlEnvironment'
 import {
   clearPendingFirstInputFromEnv,
   readPendingFirstInputFromEnv,
 } from '@/daemon/spawn/pendingFirstInput'
+import { buildAgentRuntimeFirstInputAdmissionV1 } from '@/session/services/sessionInputAdmissionIdentity'
 
 export interface InitializeBackendRunSessionOptions {
   api: Pick<ApiClient, 'getOrCreateSession' | 'sessionSyncClient'>
   sessionTag: string
+  organizationPlacement?: import('@happier-dev/protocol').SessionOrganizationPlacementV1
   metadata: Metadata
   state: AgentState
   existingSessionId?: string
@@ -40,12 +47,6 @@ export interface InitializeBackendRunSessionOptions {
   }
   metadataKeysToUnsetOnAttach?: readonly string[]
   attachMetadataIdentityPolicy?: SessionAttachMetadataIdentityPolicy | null
-  /**
-   * Optional: forward offline reconnection status updates (e.g. "Reconnected!") to the caller's UX.
-   * When omitted, the offline reconnection utility uses console output.
-   */
-  offlineNotify?: (message: string) => void
-  allowOfflineStub?: boolean
   onSessionSwap?: (newSession: ApiSessionClient) => void | Promise<void>
   configureSessionClient?: (session: ApiSessionClient) => void
   onAttachMetadataSnapshotError?: (error: unknown) => void
@@ -53,6 +54,7 @@ export interface InitializeBackendRunSessionOptions {
   onAttachMetadataSnapshotReady?: (snapshot: unknown, session: ApiSessionClient) => void | Promise<void>
   startupSideEffectsOrder?: 'report-first' | 'persist-first'
   deferPendingFirstInputCommitUntilRuntimeReady?: boolean
+  requireDaemonAckOnAttach?: boolean
   signal?: AbortSignal
 }
 
@@ -66,17 +68,28 @@ export interface InitializeBackendRunSessionResult {
 
 type DaemonReportMode = 'await' | 'background'
 
+export class BackendRunSessionUnavailableError extends Error {
+  readonly code = 'backend_run_session_unavailable' as const
+
+  constructor() {
+    super('Unable to start the Agent because the Happier server did not create a durable Session. Check the connection and retry.')
+    this.name = 'BackendRunSessionUnavailableError'
+  }
+}
+
 const HANDOFF_ATTACH_METADATA_PUBLISH_WAIT_MS = 5_000
 const HANDOFF_ATTACH_METADATA_PUBLISH_MAX_ATTEMPTS = 3
 
 type InitializeBackendRunSessionDeps = {
   createBaseSessionForAttachFn?: typeof createBaseSessionForAttach
-  setupOfflineReconnectionFn?: typeof setupOfflineReconnection
   applyStartupMetadataUpdateToSessionFn?: typeof applyStartupMetadataUpdateToSession
   primeAgentStateForUiFn?: typeof primeAgentStateForUi
   reportSessionToDaemonIfRunningFn?: typeof reportSessionToDaemonIfRunning
+  reportSessionStartupFailureToDaemonIfRunningFn?: typeof reportSessionStartupFailureToDaemonIfRunning
   persistTerminalAttachmentInfoIfNeededFn?: typeof persistTerminalAttachmentInfoIfNeeded
-  sendTerminalFallbackMessageIfNeededFn?: typeof sendTerminalFallbackMessageIfNeeded
+  sendTerminalFallbackMessageIfNeededFn?: (
+    opts: Parameters<typeof sendTerminalFallbackMessageIfNeeded>[0],
+  ) => void | Promise<void>
   nowFn?: () => number
 }
 
@@ -154,10 +167,12 @@ export async function initializeBackendRunSession(
   deps: InitializeBackendRunSessionDeps = {},
 ): Promise<InitializeBackendRunSessionResult> {
   const createBaseSessionForAttachFn = deps.createBaseSessionForAttachFn ?? createBaseSessionForAttach
-  const setupOfflineReconnectionFn = deps.setupOfflineReconnectionFn ?? setupOfflineReconnection
   const applyStartupMetadataUpdateToSessionFn = deps.applyStartupMetadataUpdateToSessionFn ?? applyStartupMetadataUpdateToSession
   const primeAgentStateForUiFn = deps.primeAgentStateForUiFn ?? primeAgentStateForUi
   const reportSessionToDaemonIfRunningFn = deps.reportSessionToDaemonIfRunningFn ?? reportSessionToDaemonIfRunning
+  const reportSessionStartupFailureToDaemonIfRunningFn =
+    deps.reportSessionStartupFailureToDaemonIfRunningFn
+    ?? reportSessionStartupFailureToDaemonIfRunning
   const persistTerminalAttachmentInfoIfNeededFn = deps.persistTerminalAttachmentInfoIfNeededFn ?? persistTerminalAttachmentInfoIfNeeded
   const sendTerminalFallbackMessageIfNeededFn = deps.sendTerminalFallbackMessageIfNeededFn ?? sendTerminalFallbackMessageIfNeeded
   const nowFn = deps.nowFn ?? (() => Date.now())
@@ -174,6 +189,7 @@ export async function initializeBackendRunSession(
       text: pendingFirstInput.text,
       localId: pendingFirstInput.localId,
       meta: { source: 'ui', sentFrom: 'cli' },
+      inputAdmission: buildAgentRuntimeFirstInputAdmissionV1(),
     })
     pendingFirstInputCommitted = true
     clearPendingFirstInputFromEnv()
@@ -206,11 +222,13 @@ export async function initializeBackendRunSession(
     metadata: Metadata,
     mode: DaemonReportMode,
     requireDaemonAck: boolean,
+    sessionCreationOutcome?: SessionCreationOutcome,
   ): Promise<void> => {
     throwIfAborted()
     const reportPromise = reportSessionToDaemonIfRunningFn({
       sessionId,
       metadata,
+      ...(sessionCreationOutcome ? { sessionCreationOutcome } : {}),
       ...(requireDaemonAck ? { requireDaemonAck: true } : {}),
     })
     if (mode === 'background') {
@@ -225,24 +243,37 @@ export async function initializeBackendRunSession(
     metadata: Metadata,
     daemonReportMode: DaemonReportMode,
     requireDaemonAck: boolean,
+    sessionCreationOutcome?: SessionCreationOutcome,
   ): Promise<void> => {
     if (startupSideEffectsOrder === 'persist-first') {
       throwIfAborted()
       await persistTerminalAttachmentInfoIfNeededFn({ sessionId, terminal })
       throwIfAborted()
-      sendTerminalFallbackMessageIfNeededFn({ session: sessionToUse, terminal })
+      await sendTerminalFallbackMessageIfNeededFn({ session: sessionToUse, terminal })
       throwIfAborted()
-      await startDaemonReport(sessionId, metadata, daemonReportMode, requireDaemonAck)
+      await startDaemonReport(
+        sessionId,
+        metadata,
+        daemonReportMode,
+        requireDaemonAck,
+        sessionCreationOutcome,
+      )
       throwIfAborted()
       return
     }
 
     throwIfAborted()
-    await startDaemonReport(sessionId, metadata, daemonReportMode, requireDaemonAck)
+    await startDaemonReport(
+      sessionId,
+      metadata,
+      daemonReportMode,
+      requireDaemonAck,
+      sessionCreationOutcome,
+    )
     throwIfAborted()
     await persistTerminalAttachmentInfoIfNeededFn({ sessionId, terminal })
     throwIfAborted()
-    sendTerminalFallbackMessageIfNeededFn({ session: sessionToUse, terminal })
+    await sendTerminalFallbackMessageIfNeededFn({ session: sessionToUse, terminal })
     throwIfAborted()
   }
 
@@ -267,6 +298,7 @@ export async function initializeBackendRunSession(
       void disposeAttachedSession()
     }
     opts.signal?.addEventListener('abort', onAttachAbort, { once: true })
+    let attachCompleted = false
 
     try {
       throwIfAborted()
@@ -354,8 +386,17 @@ export async function initializeBackendRunSession(
       primeAgentStateForUiFn(session, opts.uiLogPrefix)
       await deferOrCommitPendingFirstInput(session)
       throwIfAborted()
-      await runStartupSideEffects(session, existingSessionId, daemonReportMetadata, 'background', false)
+      const requireDaemonAckOnAttach =
+        opts.requireDaemonAckOnAttach === true
+      await runStartupSideEffects(
+        session,
+        existingSessionId,
+        daemonReportMetadata,
+        requireDaemonAckOnAttach ? 'await' : 'background',
+        requireDaemonAckOnAttach,
+      )
 
+      attachCompleted = true
       return {
         session,
         reconnectionHandle: null,
@@ -365,26 +406,62 @@ export async function initializeBackendRunSession(
       }
     } finally {
       opts.signal?.removeEventListener('abort', onAttachAbort)
-      if (opts.signal?.aborted) {
+      if (!attachCompleted) {
         await disposeAttachedSession()
       }
     }
   }
 
   throwIfAborted()
-  const response = await opts.api.getOrCreateSession({
-    tag: opts.sessionTag,
-    metadata: opts.metadata,
-    state: opts.state,
-    ...(opts.signal ? { signal: opts.signal } : {}),
-  })
+  let response: Awaited<ReturnType<ApiClient['getOrCreateSession']>>
+  try {
+    response = await opts.api.getOrCreateSession({
+      tag: opts.sessionTag,
+      metadata: opts.metadata,
+      state: opts.state,
+      ...(opts.organizationPlacement
+        ? { organizationPlacement: opts.organizationPlacement }
+        : {}),
+      ...(opts.signal ? { signal: opts.signal } : {}),
+    })
+  } catch (error) {
+    const spawnNonce = readSessionStartupSpawnNonceFromEnv()
+    const errorDetail = isSessionCreationPlacementError(error)
+      ? {
+          kind: 'session_creation_organization_invalid' as const,
+          code: 'organization_invalid' as const,
+        }
+      : isSessionCreationCorrespondenceConflictError(error)
+        ? {
+            kind: 'session_creation_correspondence_conflict' as const,
+            code: 'creation_conflict' as const,
+          }
+        : null
+    if (
+      !opts.signal?.aborted
+      && opts.metadata.startedBy === 'daemon'
+      && spawnNonce
+      && errorDetail
+    ) {
+      try {
+        await reportSessionStartupFailureToDaemonIfRunningFn({
+          spawnNonce,
+          errorDetail,
+        })
+      } catch {
+        // An injected report seam must not mask the original exact server
+        // refusal or cause a second error owner.
+      }
+    }
+    throw error
+  }
   throwIfAborted()
 
-  if (!response && !opts.allowOfflineStub) {
-    throw new Error('Failed to create session')
+  if (!response) {
+    throw new BackendRunSessionUnavailableError()
   }
 
-  const reportedSessionId = response ? response.id : null
+  const reportedSessionId = response.id
   let ranStartupSideEffects = false
   const runStartupSideEffectsOnce = async (
     sessionToUse: ApiSessionClient,
@@ -393,58 +470,22 @@ export async function initializeBackendRunSession(
   ): Promise<void> => {
     if (ranStartupSideEffects) return
     ranStartupSideEffects = true
-    await runStartupSideEffects(sessionToUse, sessionId, opts.metadata, 'await', requireDaemonAck)
+    await runStartupSideEffects(
+      sessionToUse,
+      sessionId,
+      opts.metadata,
+      'await',
+      requireDaemonAck,
+      response.sessionCreationOutcome,
+    )
   }
 
-  const { session, reconnectionHandle } = setupOfflineReconnectionFn({
-    api: opts.api as ApiClient,
-    sessionTag: opts.sessionTag,
-    metadata: opts.metadata,
-    state: opts.state,
-    response: response as Session | null,
-    configureSessionClient: opts.configureSessionClient,
-    onNotify: opts.offlineNotify,
-    onSessionSwap: (newSession) => {
-      if (opts.signal?.aborted) {
-        void newSession.close().catch(() => undefined)
-        return
-      }
-      if (opts.onSessionSwap) {
-        try {
-          void Promise.resolve(opts.onSessionSwap(newSession)).catch(() => {})
-        } catch {
-          // Swallow hook failures; reconnection should continue.
-        }
-      }
-
-      // If startup began offline (no session id yet), rerun UI priming and startup side effects once the
-      // real session arrives. Do not do this for normal online starts (reportedSessionId is set).
-      if (reportedSessionId) return
-      if (ranStartupSideEffects) return
-      const nextId = String((newSession as any)?.sessionId ?? '').trim()
-      if (!nextId || nextId.startsWith('offline-')) return
-
-      primeAgentStateForUiFn(newSession, opts.uiLogPrefix)
-      if (opts.metadata.startedBy === 'daemon') {
-        void runStartupSideEffectsOnce(newSession, nextId, true)
-          .then(() => commitPendingFirstInput(newSession))
-          .catch(() => {})
-      } else {
-        void commitPendingFirstInput(newSession)
-          .then(() => runStartupSideEffectsOnce(newSession, nextId))
-          .catch(() => {})
-      }
-    },
-  })
+  const session = opts.api.sessionSyncClient(response)
+  opts.configureSessionClient?.(session)
 
   let acquiredResourceCleanupPromise: Promise<void> | null = null
   const disposeAcquiredResources = (): Promise<void> => {
     acquiredResourceCleanupPromise ??= (async () => {
-      try {
-        reconnectionHandle?.cancel()
-      } catch {
-        // Cancellation is best effort; the session close still fences local use.
-      }
       await session.close().catch(() => undefined)
     })()
     return acquiredResourceCleanupPromise
@@ -453,6 +494,7 @@ export async function initializeBackendRunSession(
     void disposeAcquiredResources()
   }
   opts.signal?.addEventListener('abort', onAcquiredResourceAbort, { once: true })
+  let initializationCompleted = false
 
   try {
     throwIfAborted()
@@ -469,16 +511,17 @@ export async function initializeBackendRunSession(
       }
     }
 
+    initializationCompleted = true
     return {
       session,
-      reconnectionHandle,
+      reconnectionHandle: null,
       reportedSessionId,
       attachedToExistingSession: false,
       commitPendingFirstInputAfterRuntimeReady,
     }
   } finally {
     opts.signal?.removeEventListener('abort', onAcquiredResourceAbort)
-    if (opts.signal?.aborted) {
+    if (!initializationCompleted) {
       await disposeAcquiredResources()
     }
   }

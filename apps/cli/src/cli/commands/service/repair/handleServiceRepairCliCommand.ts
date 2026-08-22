@@ -10,6 +10,7 @@ import type { DoctorSnapshot } from '@/ui/doctorSnapshot';
 import { formatReleaseChannel } from '@/ui/format/releaseChannel';
 import { bold, muted } from '@/ui/format/styles';
 import { configuration } from '@/configuration';
+import { writeJsonStdout } from '@/cli/output/jsonEnvelope';
 import { getServerProfile } from '@/server/serverProfiles';
 
 import { isInteractiveTerminal } from '../../server/commandUtilities';
@@ -41,6 +42,7 @@ function parseRepairInvocation(argv: readonly string[]): Readonly<{
   asJson: boolean;
   reportOnly: boolean;
   migrate: boolean;
+  pluginRecovery: boolean;
   mode: 'user' | 'system';
   modeExplicit: boolean;
   systemUser: string;
@@ -106,6 +108,7 @@ function parseRepairInvocation(argv: readonly string[]): Readonly<{
     asJson: argv.includes('--json'),
     reportOnly: argv.includes('--report-only'),
     migrate: argv.includes('--migrate'),
+    pluginRecovery: argv.includes('--plugin-recovery'),
     mode: mode ?? (String(process.env.HAPPIER_DAEMON_SERVICE_MODE ?? '').trim().toLowerCase() === 'system' ? 'system' : 'user'),
     modeExplicit: mode !== null,
     systemUser: systemUser || String(process.env.HAPPIER_DAEMON_SERVICE_SYSTEM_USER ?? '').trim(),
@@ -241,13 +244,49 @@ export async function handleServiceRepairCliCommand(params: Readonly<{
     plan,
     selectedReleaseChannelLabel: currentCliReleaseChannel,
   });
+  const pluginRecoveryCommand = `${report.currentCli.invoker} daemon start --plugin-recovery`;
+  if (parsed.pluginRecovery) {
+    if (parsed.asJson) {
+      await writeJsonStdout({
+        ok: true,
+        executed: false,
+        report,
+        schemaVersion: 2,
+        defaultFollowingMatchesSelectedReleaseChannel,
+        existingServices: plan.existingServices,
+        actions: plan.actions,
+        manualWarnings: plan.manualWarnings,
+        warning: ownershipWarningText,
+        pluginRecovery: {
+          command: pluginRecoveryCommand,
+          oneShot: true,
+          preservesInstalledService: true,
+        },
+        ...repairSnapshotJson,
+      }, { pretty: true });
+      return;
+    }
+
+    if (onMigration) printMigrationBanner({ report });
+    console.log([
+      ...renderDoctorRepairReport(report, { includeInteractiveFooter: parsed.reportOnly }),
+      '',
+      'Plugin recovery',
+      'This one-shot recovery does not modify the installed background service.',
+      'Stop any currently running daemon or background service first.',
+      'Start a temporary daemon with externally installed plugin activation skipped:',
+      `  ${pluginRecoveryCommand}`,
+      'Then disable, remove, or inspect the affected plugin and restart the daemon normally.',
+    ].join('\n'));
+    return;
+  }
   if (parsed.execute && targetServerId && targetServerId !== runtime.instanceId) {
     throw new Error('Target-scoped repair execution is only supported for the active server profile');
   }
 
   if (parsed.asJson) {
     if (!parsed.execute) {
-      console.log(JSON.stringify({
+      await writeJsonStdout({
         ok: true,
         executed: false,
         report,
@@ -258,7 +297,7 @@ export async function handleServiceRepairCliCommand(params: Readonly<{
         manualWarnings: plan.manualWarnings,
         warning: ownershipWarningText,
         ...repairSnapshotJson,
-      }, null, 2));
+      }, { pretty: true });
       return;
     }
 
@@ -274,7 +313,7 @@ export async function handleServiceRepairCliCommand(params: Readonly<{
       userHomeDir: runtime.userHomeDir,
       happierHomeDir: runtime.happierHomeDir,
     });
-    console.log(JSON.stringify({
+    await writeJsonStdout({
       ok: true,
       executed: true,
       report,
@@ -284,7 +323,7 @@ export async function handleServiceRepairCliCommand(params: Readonly<{
       manualWarnings: plan.manualWarnings,
       warning: ownershipWarningText,
       ...repairSnapshotJson,
-    }, null, 2));
+    }, { pretty: true });
     return;
   }
 

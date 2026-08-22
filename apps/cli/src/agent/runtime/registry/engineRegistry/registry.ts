@@ -10,6 +10,7 @@ import {
 import type { ResolveEngineRegistryParams } from './types';
 import {
     createPluginExecInstallablesRegistry,
+    projectEngineRuntimeContributionFromAgent,
     resolveEngineRuntimeContribution,
 } from './contributions';
 import {
@@ -17,11 +18,18 @@ import {
 } from './resolution';
 import { resolveAccountConfiguredAcpBackend } from './accountConfiguredAcp';
 import { activateAgentRuntimeContributionOnDemand } from '../activationDemand';
+import { readAgentExecutionRunCapabilities } from '@/plugins/projection/registry/agentContributionDefinition';
 
 export { createPluginExecInstallablesRegistry };
 
 type RuntimeRegistryHandle = Readonly<{
     registry: ResolvedExecutablePluginRuntimeRegistry;
+    resolveCurrentPluginMaterializationRef?: NonNullable<
+        ResolvedExecutablePluginRuntimeRegistry['resolveCurrentPluginMaterializationRef']
+    >;
+    resolveCurrentMediatorContributionMaterializationRef?: NonNullable<
+        ResolvedExecutablePluginRuntimeRegistry['resolveCurrentMediatorContributionMaterializationRef']
+    >;
     release: () => Promise<void>;
 }>;
 
@@ -29,8 +37,8 @@ function shouldUseAuthoritativeRuntimeLease(params?: ResolveEngineRegistryParams
     return !params?.happyHomeDir
         && !params?.contributes
         && !params?.runtimeRegistry
-        && !params?.requireDaemonAgentRuntimeCarrier
-        && !params?.nativeAgentRuntimeCarrier;
+        && !params?.requireRunnerAgentSessionRuntimeSource
+        && !params?.runnerAgentSessionRuntimeSource;
 }
 
 async function resolveDefaultContributionRegistry(
@@ -86,6 +94,10 @@ export async function resolveCliEngineRegistry(
         if (snapshotRuntimeRegistry) {
             return {
                 registry: snapshotRuntimeRegistry,
+                resolveCurrentPluginMaterializationRef:
+                    snapshotRuntimeRegistry.resolveCurrentPluginMaterializationRef,
+                resolveCurrentMediatorContributionMaterializationRef:
+                    snapshotRuntimeRegistry.resolveCurrentMediatorContributionMaterializationRef,
                 release: async () => {},
             };
         }
@@ -97,6 +109,19 @@ export async function resolveCliEngineRegistry(
 
     const registry = Object.freeze({
         contributions,
+        async resolveCurrentPluginGeneration(pluginId: string): Promise<string | null> {
+            const normalizedPluginId = pluginId.trim();
+            if (!normalizedPluginId) return null;
+            const runtimeRegistryHandle = await resolveRuntimeRegistry(normalizedPluginId);
+            try {
+                const current = runtimeRegistryHandle.registry
+                    .pluginFinalPolicyCurrentGenerationsById
+                    ?.get(normalizedPluginId) ?? null;
+                return current?.applied === true ? current.immutableGenerationId : null;
+            } finally {
+                await runtimeRegistryHandle.release();
+            }
+        },
         async resolveForBackendId(backendId: string): Promise<EngineAdapterResolution | null> {
             const existing = resolutionPromises.get(backendId);
             if (existing) {
@@ -104,30 +129,56 @@ export async function resolveCliEngineRegistry(
             }
             const resolutionPromise = (async (): Promise<EngineAdapterResolution | null> => {
                 let resolutionContributions = contributions;
-                let backend = resolveEngineRuntimeContribution(resolutionContributions, backendId);
+                const matchingRunnerSessionRuntimeSource =
+                    params?.runnerAgentSessionRuntimeSource?.identity.backendId
+                            === backendId
+                        ? params.runnerAgentSessionRuntimeSource
+                        : null;
+                let backend = matchingRunnerSessionRuntimeSource
+                    ? projectEngineRuntimeContributionFromAgent(
+                        matchingRunnerSessionRuntimeSource.agentContribution,
+                        backendId,
+                    )
+                    : resolveEngineRuntimeContribution(
+                        resolutionContributions,
+                        backendId,
+                    );
                 let runtimeRegistry: ResolvedExecutablePluginRuntimeRegistry | null = null;
                 let runtimeRegistryHandle: RuntimeRegistryHandle | null = null;
 
+                const hasMatchingRunnerSessionRuntimeSource =
+                    matchingRunnerSessionRuntimeSource !== null;
+                const agent = backend
+                    ? matchingRunnerSessionRuntimeSource?.agentContribution
+                        ?? resolutionContributions.agentDefinitionsById.get(
+                            backend.agentId,
+                        )
+                    : null;
+                const hasDaemonExecutionRunRuntime =
+                    readAgentExecutionRunCapabilities(
+                        agent?.richDefinition?.definition,
+                    ) !== null;
                 const requiresExecutablePluginRuntimeRegistry = Boolean(
                     backend
-                    && params?.nativeAgentRuntimeCarrier?.descriptor.backendId !== backend.id
+                    && !hasMatchingRunnerSessionRuntimeSource
                     && (
-                        params?.requireDaemonAgentRuntimeCarrier
-                        || backend.provenance === 'external'
+                        backend.provenance === 'external'
+                        || hasDaemonExecutionRunRuntime
+                        || params?.requireRunnerAgentSessionRuntimeSource
                         || backend.pluginId
                         || backend.daemonEntryPath
                         || backend.provenance === 'first_party'
                     ),
                 );
                 if (
-                    params?.requireDaemonAgentRuntimeCarrier
+                    params?.requireRunnerAgentSessionRuntimeSource
                     && backend
-                    && params.nativeAgentRuntimeCarrier?.descriptor.backendId !== backend.id
+                    && params.runnerAgentSessionRuntimeSource?.identity.backendId !== backend.id
                 ) {
                     const error = new Error(
-                        `Daemon-spawned native Agent backend '${backend.id}' is missing its runtime carrier`,
+                        `Daemon-spawned native Agent backend '${backend.id}' is missing its runner-local runtime source`,
                     ) as Error & { code: string };
-                    error.code = 'DAEMON_AGENT_RUNTIME_CARRIER_MISSING';
+                    error.code = 'RUNNER_AGENT_SESSION_RUNTIME_SOURCE_MISSING';
                     throw error;
                 }
 
@@ -136,10 +187,15 @@ export async function resolveCliEngineRegistry(
                         runtimeRegistryHandle = await resolveRuntimeRegistry(backend.pluginId ?? null);
                         runtimeRegistry = runtimeRegistryHandle.registry;
                         resolutionContributions = runtimeRegistry.contributes;
-                        backend = resolveEngineRuntimeContribution(
-                            resolutionContributions,
-                            backendId,
-                        );
+                        backend = matchingRunnerSessionRuntimeSource
+                            ? projectEngineRuntimeContributionFromAgent(
+                                matchingRunnerSessionRuntimeSource.agentContribution,
+                                backendId,
+                            )
+                            : resolveEngineRuntimeContribution(
+                                resolutionContributions,
+                                backendId,
+                            );
                         if (!backend) {
                             return await resolveAccountConfiguredAcpBackend(backendId);
                         }
@@ -150,10 +206,15 @@ export async function resolveCliEngineRegistry(
                             );
                         }
                         resolutionContributions = runtimeRegistry.contributes;
-                        backend = resolveEngineRuntimeContribution(
-                            resolutionContributions,
-                            backendId,
-                        );
+                        backend = matchingRunnerSessionRuntimeSource
+                            ? projectEngineRuntimeContributionFromAgent(
+                                matchingRunnerSessionRuntimeSource.agentContribution,
+                                backendId,
+                            )
+                            : resolveEngineRuntimeContribution(
+                                resolutionContributions,
+                                backendId,
+                            );
                     }
 
                     if (!backend) {
@@ -164,8 +225,22 @@ export async function resolveCliEngineRegistry(
                         backendId,
                         contributions: resolutionContributions,
                         runtimeRegistry,
+                        ...(runtimeRegistryHandle?.resolveCurrentPluginMaterializationRef
+                            ? {
+                                resolveCurrentPluginMaterializationRef:
+                                    runtimeRegistryHandle.resolveCurrentPluginMaterializationRef,
+                            }
+                            : {}),
+                        ...(runtimeRegistryHandle?.resolveCurrentMediatorContributionMaterializationRef
+                            ? {
+                                resolveCurrentMediatorContributionMaterializationRef:
+                                    runtimeRegistryHandle
+                                        .resolveCurrentMediatorContributionMaterializationRef,
+                            }
+                            : {}),
                         ...(params?.happyHomeDir ? { happyHomeDir: params.happyHomeDir } : {}),
-                        nativeAgentRuntimeCarrier: params?.nativeAgentRuntimeCarrier ?? null,
+                        runnerAgentSessionRuntimeSource:
+                            params?.runnerAgentSessionRuntimeSource ?? null,
                     });
                 } finally {
                     await runtimeRegistryHandle?.release();

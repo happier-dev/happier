@@ -23,6 +23,12 @@ import type {
 import type { ExternalSessionLinkIdentity } from '@/session/external/providerOps';
 import type { HostSessionRuntimePlan } from '@/agent/runtime/session/loop/lifecycle';
 
+export type CurrentCatalogAgentExecutionSurfaces = Readonly<{
+  agentId: string;
+  backendId: string;
+  executionSurfaces: BackendExecutionSurfaces;
+}>;
+
 /**
  * Canonical live session host-bridge surface. This is the concrete owner that superseded the
  * plan-only `AgentSessionRuntimeBridge` noun.
@@ -33,6 +39,9 @@ import type { HostSessionRuntimePlan } from '@/agent/runtime/session/loop/lifecy
  */
 export interface SessionHostBridgeContract {
   resolveExecutionSurfaces(backendId?: string | null): Promise<BackendExecutionSurfaces>;
+  resolveCurrentExecutionSurfacesForCatalogAgent(
+    agentId: string,
+  ): Promise<CurrentCatalogAgentExecutionSurfaces | null>;
   resolveOutboundTranscriptDispatchFacet(backendId?: string | null): Promise<Readonly<{
     backendId: string;
     facet: RuntimeOutboundTranscriptDispatchFacetV1;
@@ -51,10 +60,14 @@ export interface SessionHostBridgeContract {
       'resolveExecutionSurfaces'
     >,
   ): Promise<CliSessionAttachEligibility>;
-  resolveSessionHandoffEligibility(params: Readonly<{
-    metadata: unknown;
-    accountSettings?: Record<string, unknown> | null;
-  }>): SessionHandoffEligibility;
+  resolveSessionHandoffEligibility(
+    params: Omit<
+      Parameters<
+        (typeof import('@/session/handoff/resolveSessionHandoffEligibility'))['resolveSessionHandoffEligibility']
+      >[0],
+      'resolveCurrentExecutionSurfacesForAgent'
+    >,
+  ): Promise<SessionHandoffEligibility>;
   resolveContinueWithReplayBackendTarget(params: Readonly<{
     agent?: string;
     backendTarget?: BackendTargetRefV2Input | null;

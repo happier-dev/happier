@@ -3,8 +3,8 @@ import {
   type AgentSessionRealtimeHandle,
   type AgentSessionRealtimeLifecycleEvent,
   type AgentSessionRealtimeStopResult,
-} from '@happier-dev/plugin-sdk/experimental/agent-runtime/realtime';
-import { raceWithTimeout } from '@happier-dev/plugin-sdk/experimental/timeout';
+} from '@happier-dev/plugin-sdk/agents/runtime';
+import { raceWithTimeout } from '@happier-dev/plugin-sdk/async';
 import {
   AgentSessionRealtimeInspectRequestV1Schema,
   AgentSessionRealtimeStartRequestV1Schema,
@@ -12,14 +12,14 @@ import {
   AgentSessionRealtimeStopRequestV1Schema,
   AgentSessionRealtimeWatchRequestV1Schema,
   type PluginContributionIdentityV1,
-  type PluginVoiceProviderContributionV1,
+  type VoiceProviderContribution,
 } from '@happier-dev/protocol';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import type { RpcHandlerContext, RpcHandlerRegistrar } from '@/api/rpc/types';
 
 type ConversationDeclaration = Extract<
-  PluginVoiceProviderContributionV1,
+  VoiceProviderContribution,
   Readonly<{ kind: 'conversation' }>
 >;
 
@@ -157,24 +157,6 @@ function sanitizeTerminalEvent(
   });
 }
 
-function sameRef(
-  left: PluginContributionIdentityV1,
-  right: PluginContributionIdentityV1,
-): boolean {
-  return left.pluginId === right.pluginId && left.localId === right.localId;
-}
-
-function selectsRuntime(input: Readonly<{
-  provider: PluginContributionIdentityV1;
-  policyAgentRef: PluginContributionIdentityV1;
-  resolveDeclaration: ResolveDeclaration;
-}>): boolean {
-  const execution = input.resolveDeclaration(input.provider)?.execution;
-  return execution?.kind === 'experimental_agent_session_realtime'
-    && typeof execution.agent === 'object'
-    && sameRef(execution.agent, input.policyAgentRef);
-}
-
 function optionsFor(
   context?: RpcHandlerContext,
   ownedSignal?: AbortSignal,
@@ -246,8 +228,6 @@ export function registerAgentSessionRealtimeVoiceRpc(input: Readonly<{
   getHappierSessionId: () => string;
   ownerId: string;
   agentGeneration: string;
-  policyAgentRef: PluginContributionIdentityV1;
-  resolveDeclaration: ResolveDeclaration;
   isGenerationCurrent: (provider: PluginContributionIdentityV1) => boolean;
   resolveProviderGeneration: (
     provider: PluginContributionIdentityV1,
@@ -287,11 +267,6 @@ export function registerAgentSessionRealtimeVoiceRpc(input: Readonly<{
       return null;
     }
     if (!input.resolveProviderGeneration(provider)) return null;
-    if (!selectsRuntime({
-      provider,
-      policyAgentRef: input.policyAgentRef,
-      resolveDeclaration: input.resolveDeclaration,
-    })) return null;
     return input.resolveConversation({
       provider,
       runtime: input.runtime,

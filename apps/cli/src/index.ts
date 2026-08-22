@@ -20,11 +20,17 @@ import { resolveNpmPackageNameOverride } from '@happier-dev/cli-common/update';
 import { installAxiosProxySupport } from '@/utils/proxy/axiosProxy';
 import { ensureWindowsUtf8CodePage } from '@/utils/platform/windows/ensureWindowsUtf8CodePage';
 import { installConsoleWriteErrorGuards, shouldInstallConsoleWriteErrorGuards } from '@/utils/writeConsoleBestEffort';
+import { logger } from '@/ui/logger';
+import { applyStackSessionPriority } from '@/utils/process/applyStackSessionPriority';
 
 const isCliDistIntegrityProbe = process.env.HAPPIER_CLI_DIST_INTEGRITY_PROBE === '1';
 
 if (!isCliDistIntegrityProbe) {
+  // A pending Promise alone does not keep Node alive. Keep the CLI process
+  // referenced until async command dispatch (including install cleanup) settles.
+  const cliLifetimeKeepAlive = setInterval(() => undefined, 60_000);
   void (async () => {
+    applyStackSessionPriority();
     // Best-effort Windows console hardening for Unicode output (workaround for upstream reports of mojibake when
     // launching via npm-generated wrappers). Opt-out via HAPPIER_WINDOWS_UTF8_CODEPAGE=0.
     ensureWindowsUtf8CodePage();
@@ -58,10 +64,13 @@ if (!isCliDistIntegrityProbe) {
     const { args, terminalRuntime } = parseCliArgs(normalizedArgv);
     await dispatchCli({ args, terminalRuntime, rawArgv: process.argv });
   })().catch((error) => {
+    logger.fatal(error);
     console.error('Error:', error instanceof Error ? error.message : 'Unknown error');
     if (process.env.DEBUG) {
       console.error(error);
     }
     process.exitCode = 1;
+  }).finally(() => {
+    clearInterval(cliLifetimeKeepAlive);
   });
 }

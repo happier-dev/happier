@@ -217,11 +217,11 @@ describe('executeBoundedBackendRun', () => {
         ioMode: 'request_response',
       },
       controllers,
-      sendAcp: () => {},
+      sendAcp: async () => {},
       parentProvider: TEST_PRIMARY_BACKEND_ID,
       getNowMs: () => 1,
       boundedTimeoutMs: null,
-      finishRun: () => {},
+      finishRun: async () => {},
     });
 
     await withTimeout(externalAck, 250);
@@ -259,8 +259,8 @@ describe('executeBoundedBackendRun', () => {
         backendTarget: { kind: 'builtInAgent', agentId: TEST_PRIMARY_BACKEND_ID }, instructions: 'start',
         permissionMode: 'read_only', retentionPolicy: 'ephemeral', runClass: 'bounded', ioMode: 'request_response',
       },
-      controllers, sendAcp: () => {}, parentProvider: TEST_PRIMARY_BACKEND_ID, getNowMs: () => 1,
-      boundedTimeoutMs: null, finishRun: () => {},
+      controllers, sendAcp: async () => {}, parentProvider: TEST_PRIMARY_BACKEND_ID, getNowMs: () => 1,
+      boundedTimeoutMs: null, finishRun: async () => {},
     });
 
     await expect(withTimeout(externalAck, 250)).rejects.toThrow('Connected-service credentials changed');
@@ -337,11 +337,11 @@ describe('executeBoundedBackendRun', () => {
         ioMode: 'request_response',
       },
       controllers,
-      sendAcp: () => {},
+      sendAcp: async () => {},
       parentProvider: TEST_PRIMARY_BACKEND_ID,
       getNowMs: () => 1,
       boundedTimeoutMs: null,
-      finishRun: (() => {}) as FinishExecutionRun,
+      finishRun: async () => {},
     });
 
     await withTimeout(externalAck, 100);
@@ -416,11 +416,11 @@ describe('executeBoundedBackendRun', () => {
         ioMode: 'request_response',
       },
       controllers,
-      sendAcp: () => {},
+      sendAcp: async () => {},
       parentProvider: TEST_PRIMARY_BACKEND_ID,
       getNowMs: () => 1,
       boundedTimeoutMs: null,
-      finishRun: (() => {}) as FinishExecutionRun,
+      finishRun: async () => {},
     });
 
     await withTimeout(externalAck, 250);
@@ -524,11 +524,11 @@ describe('executeBoundedBackendRun', () => {
         ioMode: 'request_response',
       },
       controllers,
-      sendAcp: () => {},
+      sendAcp: async () => {},
       parentProvider: TEST_PRIMARY_BACKEND_ID,
       getNowMs: () => 1,
       boundedTimeoutMs: null,
-      finishRun: (() => {}) as FinishExecutionRun,
+      finishRun: async () => {},
     });
 
     await withTimeout(externalAck, 50);
@@ -627,11 +627,11 @@ describe('executeBoundedBackendRun', () => {
         ioMode: 'request_response',
       },
       controllers,
-      sendAcp: () => {},
+      sendAcp: async () => {},
       parentProvider: TEST_PRIMARY_BACKEND_ID,
       getNowMs: () => 1,
       boundedTimeoutMs: null,
-      finishRun: () => {},
+      finishRun: async () => {},
     });
 
     await withTimeout(externalAck, 250);
@@ -718,7 +718,7 @@ describe('executeBoundedBackendRun', () => {
         ioMode: 'request_response',
       },
       controllers,
-      sendAcp: () => {},
+      sendAcp: async () => {},
       parentProvider: 'pi',
       getNowMs: () => 1,
       boundedTimeoutMs: null,
@@ -846,7 +846,7 @@ describe('executeBoundedBackendRun', () => {
         ioMode: 'request_response',
       },
       controllers,
-      sendAcp: () => {},
+      sendAcp: async () => {},
       parentProvider: 'pi',
       getNowMs: () => 1,
       boundedTimeoutMs: null,
@@ -970,7 +970,7 @@ describe('executeBoundedBackendRun', () => {
         ioMode: 'request_response',
       },
       controllers,
-      sendAcp: () => {},
+      sendAcp: async () => {},
       parentProvider: TEST_RECOVERY_BACKEND_ID,
       getNowMs: () => 1,
       boundedTimeoutMs: null,
@@ -1056,7 +1056,7 @@ describe('executeBoundedBackendRun', () => {
         ioMode: 'request_response',
       },
       controllers: new Map([[runId, ctrl]]),
-      sendAcp: () => {},
+      sendAcp: async () => {},
       parentProvider: TEST_PRIMARY_BACKEND_ID,
       getNowMs: () => 1,
       boundedTimeoutMs: 600_000,
@@ -1153,7 +1153,7 @@ describe('executeBoundedBackendRun', () => {
         ioMode: 'request_response',
       },
       controllers: new Map([[runId, ctrl]]),
-      sendAcp: () => {},
+      sendAcp: async () => {},
       parentProvider: TEST_PRIMARY_BACKEND_ID,
       getNowMs: () => 1,
       boundedTimeoutMs: 10,
@@ -1245,7 +1245,7 @@ describe('executeBoundedBackendRun', () => {
         ioMode: 'request_response',
       },
       controllers,
-      sendAcp: () => {},
+      sendAcp: async () => {},
       parentProvider: 'pi',
       getNowMs: () => 1,
       boundedTimeoutMs: null,

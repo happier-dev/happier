@@ -1,9 +1,11 @@
 import {
   PLUGIN_SESSION_HOOK_MANAGEMENT_FEATURE_ID,
-  PLUGIN_SESSION_HOOK_STATUS_INVENTORY_DEFAULT_LIMIT,
   PluginSessionHookInstallInputV1Schema,
+  PluginSessionHookInstallActionInputV1Schema,
   PluginSessionHookInstallResponseV1Schema,
   PluginSessionHookInstallationMutationInputV1Schema,
+  PluginSessionHookInstallationMutationActionInputV1Schema,
+  PluginSessionHookStatusActionInputV1Schema,
   PluginSessionHookStatusInputV1Schema,
   PluginSessionHookStatusResponseV1Schema,
   PluginSessionHookToggleResponseV1Schema,
@@ -13,13 +15,16 @@ import {
   type PluginSessionHookInstallInputV1,
   type PluginSessionHookInstallResponseV1,
   type PluginSessionHookInstallationMutationInputV1,
-  type PluginSessionHookInstallationStatusV1,
   type PluginSessionHookStatusInputV1,
-  type PluginSessionHookStatusInventoryRowV1,
   type PluginSessionHookStatusResponseV1,
   type PluginSessionHookToggleResponseV1,
   type PluginSessionHookUninstallResponseV1,
 } from '@happier-dev/protocol';
+
+type PluginSessionHookManagementExecutionOptions = Readonly<{
+  surface?: 'rpc' | 'action';
+  signal?: AbortSignal;
+}>;
 
 export type PluginSessionHookManagementActionId =
   | 'plugins.sessionHooks.status.get'
@@ -31,18 +36,23 @@ export type PluginSessionHookManagementActionId =
 export type PluginSessionHookManagementHost = Readonly<{
   status(
     input: PluginSessionHookStatusInputV1,
+    options?: Readonly<{ signal?: AbortSignal }>,
   ): Promise<PluginSessionHookStatusResponseV1>;
   install(
     input: PluginSessionHookInstallInputV1,
+    options?: Readonly<{ signal?: AbortSignal }>,
   ): Promise<PluginSessionHookInstallResponseV1>;
   disable(
     input: PluginSessionHookInstallationMutationInputV1,
+    options?: Readonly<{ signal?: AbortSignal }>,
   ): Promise<PluginSessionHookToggleResponseV1>;
   enable(
     input: PluginSessionHookInstallationMutationInputV1,
+    options?: Readonly<{ signal?: AbortSignal }>,
   ): Promise<PluginSessionHookToggleResponseV1>;
   uninstall(
     input: PluginSessionHookInstallationMutationInputV1,
+    options?: Readonly<{ signal?: AbortSignal }>,
   ): Promise<PluginSessionHookUninstallResponseV1>;
 }>;
 
@@ -50,6 +60,7 @@ export type PluginSessionHookManagementActionExecutor = Readonly<{
   execute(
     actionId: PluginSessionHookManagementActionId,
     input: unknown,
+    options?: PluginSessionHookManagementExecutionOptions,
   ): Promise<ActionExecuteResult>;
 }>;
 
@@ -67,8 +78,6 @@ type ManagementFailure = Readonly<{
     retryable: boolean;
   }>;
 }>;
-
-const MAX_EXACT_AGENT_STATUS_PAGES = 50;
 
 function failure(
   code: ManagementFailure['diagnostic']['code'],
@@ -92,6 +101,14 @@ function invalidRequest(): ActionExecuteResult {
   };
 }
 
+function canceled(): ActionExecuteResult {
+  return {
+    ok: false,
+    errorCode: 'action_canceled',
+    error: 'action_canceled',
+  };
+}
+
 function isEnabledFeatureDecisionForMachine(
   decision: FeatureDecision,
   machineId: string,
@@ -104,35 +121,6 @@ function isEnabledFeatureDecisionForMachine(
     );
 }
 
-function hasInstallationId(
-  status: PluginSessionHookInstallationStatusV1,
-): status is PluginSessionHookInstallationStatusV1 & Readonly<{ installationId: string }> {
-  return 'installationId' in status && typeof status.installationId === 'string';
-}
-
-function isSameAgent(
-  left: PluginSessionHookInstallInputV1['agent'],
-  right: PluginSessionHookInstallInputV1['agent'],
-): boolean {
-  return left.pluginId === right.pluginId && left.localId === right.localId;
-}
-
-function validateExactAgentInventoryPage(
-  response: Extract<PluginSessionHookStatusResponseV1, { ok: true }>,
-  agent: PluginSessionHookInstallInputV1['agent'],
-): ManagementFailure | null {
-  if (response.diagnostics.length > 0) {
-    return failure(
-      'operation_failed',
-      response.diagnostics.some((diagnostic) => diagnostic.retryable),
-    );
-  }
-  if (response.rows.some((row) => !isSameAgent(row.agent, agent))) {
-    return failure('operation_failed', false);
-  }
-  return null;
-}
-
 export function createPluginSessionHookManagementActionExecutor(input: Readonly<{
   machineId: string;
   readFeatureDecision(): FeatureDecision;
@@ -140,64 +128,19 @@ export function createPluginSessionHookManagementActionExecutor(input: Readonly<
 }>): PluginSessionHookManagementActionExecutor {
   const readStatus = async (
     target: PluginSessionHookStatusInputV1,
+    signal?: AbortSignal,
   ): Promise<PluginSessionHookStatusResponseV1> => {
+    if (signal?.aborted) throw signal.reason ?? new Error('action_canceled');
     return PluginSessionHookStatusResponseV1Schema.parse(
-      await input.host.status(target),
+      await (signal
+        ? input.host.status(target, { signal })
+        : input.host.status(target)),
     );
   };
 
-  const readCompleteExactAgentInventory = async (
-    target: Pick<
-      PluginSessionHookInstallInputV1,
-      'machineId' | 'agent'
-    >,
-  ): Promise<
-    | Readonly<{ ok: true; rows: readonly PluginSessionHookStatusInventoryRowV1[] }>
-    | Readonly<{ ok: false; response: PluginSessionHookStatusResponseV1 }>
-  > => {
-    const rows: PluginSessionHookStatusInventoryRowV1[] = [];
-    const seenCursors = new Set<string>();
-    let cursor: string | undefined;
-
-    for (let page = 0; page < MAX_EXACT_AGENT_STATUS_PAGES; page += 1) {
-      const response = await readStatus({
-        machineId: target.machineId,
-        intent: 'passive_inventory',
-        agent: target.agent,
-        limit: PLUGIN_SESSION_HOOK_STATUS_INVENTORY_DEFAULT_LIMIT,
-        ...(cursor === undefined ? {} : { cursor }),
-      });
-      if (!response.ok) {
-        return { ok: false, response };
-      }
-
-      const pageFailure = validateExactAgentInventoryPage(response, target.agent);
-      if (pageFailure) {
-        return { ok: false, response: pageFailure };
-      }
-      rows.push(...response.rows);
-
-      if (response.nextCursor === null) {
-        return { ok: true, rows };
-      }
-      if (seenCursors.has(response.nextCursor)) {
-        return {
-          ok: false,
-          response: failure('operation_failed', false),
-        };
-      }
-      seenCursors.add(response.nextCursor);
-      cursor = response.nextCursor;
-    }
-
-    return {
-      ok: false,
-      response: failure('operation_failed', false),
-    };
-  };
-
   return {
-    async execute(actionId, rawInput) {
+    async execute(actionId, rawInput, options = {}) {
+      if (options.signal?.aborted) return canceled();
       let featureEnabled = false;
       try {
         featureEnabled = isEnabledFeatureDecisionForMachine(
@@ -212,89 +155,96 @@ export function createPluginSessionHookManagementActionExecutor(input: Readonly<
       }
 
       if (actionId === 'plugins.sessionHooks.status.get') {
-        const parsedInput = PluginSessionHookStatusInputV1Schema.safeParse(rawInput);
+        const parsedInput = options.surface === 'action'
+          ? PluginSessionHookStatusActionInputV1Schema.safeParse(rawInput)
+          : PluginSessionHookStatusInputV1Schema.safeParse(rawInput);
         if (!parsedInput.success) {
           return invalidRequest();
         }
-        if (parsedInput.data.machineId !== input.machineId) {
+        if ('machineId' in parsedInput.data && parsedInput.data.machineId !== input.machineId) {
           return result(failure('permission_denied', false));
         }
         try {
-          const current = await readStatus(parsedInput.data);
+          const current = await readStatus({
+            ...parsedInput.data,
+            machineId: input.machineId,
+          }, options.signal);
+          if (options.signal?.aborted) return canceled();
           return result(current);
         } catch {
+          if (options.signal?.aborted) return canceled();
           return result(failure('operation_failed', true));
         }
       }
 
       if (actionId === 'plugins.sessionHooks.install') {
-        const parsedInput = PluginSessionHookInstallInputV1Schema.safeParse(rawInput);
+        const parsedInput = options.surface === 'action'
+          ? PluginSessionHookInstallActionInputV1Schema.safeParse(rawInput)
+          : PluginSessionHookInstallInputV1Schema.safeParse(rawInput);
         if (!parsedInput.success) {
           return invalidRequest();
         }
-        if (parsedInput.data.machineId !== input.machineId) {
+        if ('machineId' in parsedInput.data && parsedInput.data.machineId !== input.machineId) {
           return result(failure('permission_denied', false));
         }
         try {
+          const target = { ...parsedInput.data, machineId: input.machineId };
           return result(PluginSessionHookInstallResponseV1Schema.parse(
-            await input.host.install(parsedInput.data),
+            await (options.signal
+              ? input.host.install(target, { signal: options.signal })
+              : input.host.install(target)),
           ));
         } catch {
+          if (options.signal?.aborted) return canceled();
           return result(failure('operation_failed', true));
         }
       }
 
-      const parsedInput = PluginSessionHookInstallationMutationInputV1Schema.safeParse(rawInput);
+      const parsedInput = options.surface === 'action'
+        ? PluginSessionHookInstallationMutationActionInputV1Schema.safeParse(rawInput)
+        : PluginSessionHookInstallationMutationInputV1Schema.safeParse(rawInput);
       if (!parsedInput.success) {
         return invalidRequest();
       }
-      if (parsedInput.data.machineId !== input.machineId) {
+      if ('machineId' in parsedInput.data && parsedInput.data.machineId !== input.machineId) {
         return result(failure('permission_denied', false));
       }
 
       try {
-        const mutationInput = parsedInput.data;
+        const mutationInput = { ...parsedInput.data, machineId: input.machineId };
         if (actionId === 'plugins.sessionHooks.enable') {
           return result(PluginSessionHookToggleResponseV1Schema.parse(
-            await input.host.enable(mutationInput),
+            await (options.signal
+              ? input.host.enable(mutationInput, { signal: options.signal })
+              : input.host.enable(mutationInput)),
           ));
         }
-        const current = await readCompleteExactAgentInventory({
-          machineId: mutationInput.machineId,
-          agent: mutationInput.agent,
-        });
-        if (!current.ok) {
-          return result(current.response);
-        }
-
-        const matches = current.rows.filter(
-          (row) => hasInstallationId(row.status)
-            && row.status.installationId === mutationInput.installationId,
-        );
-        if (matches.length !== 1) {
-          if (
-            matches.length === 0
-            && current.rows.some((row) => hasInstallationId(row.status))
-          ) {
-            return result(failure('installation_replaced', false));
-          }
-          return result(failure('operation_failed', false));
-        }
-        const currentStatus = matches[0]!.status;
-
+        /**
+         * Disable, enable and uninstall all settle at the host, which holds the
+         * per-installation mutation lock and resolves the durable custody record
+         * under it. Re-reading the passive inventory here would be a second,
+         * unlocked decision-maker for the same fact: it could only disagree with
+         * the authority that is about to run, and its page-level diagnostics —
+         * which describe OTHER unreadable records — vetoed mutations the host
+         * could safely complete, precisely when something was already wrong.
+         * Inventory diagnostics inform what the row LOOKS like, not what the user
+         * is allowed to do about it.
+         */
         if (actionId === 'plugins.sessionHooks.disable') {
-          if (currentStatus.state !== 'installed_enabled') {
-            return result(failure('operation_failed', false));
-          }
           return result(PluginSessionHookToggleResponseV1Schema.parse(
-            await input.host.disable(mutationInput),
+            await (options.signal
+              ? input.host.disable(mutationInput, { signal: options.signal })
+              : input.host.disable(mutationInput)),
           ));
         }
 
         return result(PluginSessionHookUninstallResponseV1Schema.parse(
-          await input.host.uninstall(mutationInput),
+          await (options.signal
+            ? input.host.uninstall(mutationInput, { signal: options.signal })
+            : input.host.uninstall(mutationInput)),
         ));
       } catch {
+        if (options.signal?.aborted) return canceled();
         return result(failure('operation_failed', true));
       }
     },

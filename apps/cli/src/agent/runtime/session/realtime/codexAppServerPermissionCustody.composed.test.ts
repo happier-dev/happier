@@ -2,8 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { createProviderEnforcedPermissionHandler } from '@/agent/permissions/providerEnforced/createHandler';
-import { createNativeAgentSessionServices } from '@/agent/runtime/registry/engineRegistry/nativeAgentSessionInteractions';
-import { createPluginInvocationUi } from '@/plugins/runtime/invocation/services/ui';
+import { createNativeAgentCurrentSessionUiServices } from '@/agent/runtime/registry/engineRegistry/nativeAgentSessionInteractions';
+import { createPluginInteractionsService } from '@/plugins/runtime/invocation/services/interactions';
 import { createMutableApiSessionClientFixture } from '@/testkit/backends/sessionFixtures';
 
 type AppServerRequestHandler = (
@@ -48,7 +48,7 @@ type RealtimeStartResult =
 type CodexAppServerOwners = Readonly<{
     registerInteractionHandlers(params: Readonly<{
         client: AppServerBoundaryClient;
-        ui: ReturnType<typeof createPluginInvocationUi>;
+        ui: ReturnType<typeof createPluginInteractionsService>;
         getThreadId(): string | null;
     }>): void;
     createRealtimeConversation(params: Readonly<{
@@ -184,9 +184,6 @@ describe('Codex global Voice permission custody composition', () => {
         'settles the hidden-session command effect one-or-zero times after End Voice: $label',
         async ({ response, appServerDecision, completedDecision }) => {
             const codex = await loadCodexAppServerOwners();
-            const sendAgentMessage = vi.fn();
-            const sendAgentMessageCommitted = vi.fn(async () => {});
-            const sendUserTextMessageCommitted = vi.fn(async () => {});
             const session = createMutableApiSessionClientFixture<Record<string, unknown>>({
                 sessionId: 'global-voice-session',
                 metadata: {
@@ -194,11 +191,6 @@ describe('Codex global Voice permission custody composition', () => {
                     voiceConversationScopeV1: { v: 1, kind: 'voice_home' },
                 },
                 agentState: { requests: {}, completedRequests: {} },
-                overrides: {
-                    sendAgentMessage,
-                    sendAgentMessageCommitted,
-                    sendUserTextMessageCommitted,
-                },
             });
             let abortCodingTurnCalls = 0;
             const permissionHandler = createProviderEnforcedPermissionHandler({
@@ -208,19 +200,21 @@ describe('Codex global Voice permission custody composition', () => {
                     abortCodingTurnCalls += 1;
                 },
             });
-            const sessionServices = createNativeAgentSessionServices({
+            const sessionLifetime = new AbortController();
+            const currentSessionUi = createNativeAgentCurrentSessionUiServices({
                 permissionHandler,
                 pluginId: 'happier.agent.codex',
                 contributionId: 'codex',
                 runtimeId: 'codex',
                 sessionId: session.sessionId,
                 generationId: 'codex-generation-1',
+                interactionDeadlineMs: 1_000,
                 isCurrent: () => true,
+                signal: sessionLifetime.signal,
             });
-            const sessionLifetime = new AbortController();
             const permissionRequestId = `post-end-${response.decision}`;
-            const ui = createPluginInvocationUi({
-                currentSession: sessionServices.sessions.current,
+            const ui = createPluginInteractionsService({
+                currentSession: currentSessionUi,
                 signal: sessionLifetime.signal,
                 isGenerationCurrent: () => true,
                 createOperationId: () => permissionRequestId,
@@ -401,9 +395,6 @@ describe('Codex global Voice permission custody composition', () => {
                 ([method]) => method === 'thread/realtime/stop',
             )).toHaveLength(1);
             expect(appServer.notify).not.toHaveBeenCalled();
-            expect(sendAgentMessage).not.toHaveBeenCalled();
-            expect(sendAgentMessageCommitted).not.toHaveBeenCalled();
-            expect(sendUserTextMessageCommitted).not.toHaveBeenCalled();
             expect(realtimeTerminalEvents).toEqual([{ kind: 'terminal', reason: 'stopped' }]);
             expect(session.__getMetadata()).toEqual({
                 systemSessionV1: { v: 1, key: 'voice_conversation', hidden: true },

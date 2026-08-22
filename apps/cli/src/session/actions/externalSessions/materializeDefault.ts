@@ -13,7 +13,6 @@ import {
 
 import {
   ExternalSessionHistoricalImportRequiredItemError,
-  cleanupExternalSessionHistoricalImportStagedMedia,
   prepareExternalSessionHistoricalImportItem,
   readExternalSessionHistoricalImportStagedItem,
   stageExternalSessionHistoricalImportItem,
@@ -23,7 +22,7 @@ import {
   loadLinkedExternalSession,
   type LoadedLinkedExternalSession,
 } from '@/api/session/external/takeover/loadLinkedExternalSession';
-import { readCredentials } from '@/persistence';
+import { readStoredCredentials } from '@/persistence';
 import type { ExternalSessionOperationExclusion } from '@/session/external/operationExclusion';
 import type {
   ExternalSessionTranscriptReadAfter,
@@ -33,12 +32,12 @@ import {
   createExternalSessionOperationPrivateStagingStore,
 } from '@/session/external/staging/operationPrivateStaging';
 import { garbageCollectUncommittedSessionMedia } from '@/session/media/garbageCollect';
+import { resolveSessionStoredContentEncryptionMode } from '@/session/transport/encryption/sessionEncryptionContext';
 
 import {
   createExternalSessionMaterializeActionExecutor,
   ExternalSessionMaterializeSourceInterruptionError,
   type ExternalSessionMaterializeActionExecutor,
-  type ExternalSessionMaterializePage,
 } from './materializeAction';
 import {
   assertExternalSessionOperationProgressCanBeSelected,
@@ -48,6 +47,7 @@ import {
 } from './operationProgressPublisher';
 import { readExternalSessionOperationRecord } from './operationRecordStore';
 import { resolveGenerationBoundExternalSessionFollowSurface } from './providerOpsResolution';
+import { preservesExternalSessionSourceIdentity } from '@/session/external/sourceIdentity';
 
 const MAX_CAPTURE_PAGES = 10_000;
 const CAPTURE_MAX_ITEMS = 200;
@@ -59,7 +59,18 @@ type MaterializeRequest =
     Extract<ExternalSessionOperationRecordV1['request'], { plan: 'takeover' }>
     & Readonly<{ targetStorageMode: 'persisted' }>
   );
-type MaterializeCredentials = NonNullable<Awaited<ReturnType<typeof readCredentials>>>;
+type MaterializeCredentials =
+  NonNullable<Awaited<ReturnType<typeof readStoredCredentials>>>;
+
+function resolveHistoricalImportWorkingDirectory(input: Readonly<{
+  request: MaterializeRequest;
+  linked: LoadedLinkedExternalSession;
+  persistedTakeoverWorkingDirectory?: string;
+}>): string | null {
+  return input.request.plan === 'takeover'
+    ? input.persistedTakeoverWorkingDirectory ?? null
+    : input.linked.sessionPath;
+}
 
 function sourceIdentity(linked: LoadedLinkedExternalSession): string {
   return JSON.stringify({
@@ -69,11 +80,90 @@ function sourceIdentity(linked: LoadedLinkedExternalSession): string {
   });
 }
 
+async function resolveMaterializeSourceReadRoots(input: Readonly<{
+  linked: LoadedLinkedExternalSession;
+  providerOps: Awaited<
+    ReturnType<typeof resolveGenerationBoundExternalSessionFollowSurface>
+  >['providerOps'];
+}>): Promise<readonly string[]> {
+  if (!input.providerOps.validateSource) return [];
+  const validated = await input.providerOps.validateSource({
+    source: input.linked.source,
+    env: process.env,
+  });
+  if (!validated.ok) {
+    throw new ExternalSessionMaterializeSourceInterruptionError(
+      'source_unavailable',
+      'External session source cannot provide current transcript-media evidence.',
+    );
+  }
+  if (
+    !preservesExternalSessionSourceIdentity(input.linked.source, validated.source)
+    || !preservesExternalSessionSourceIdentity(validated.source, input.linked.source)
+  ) {
+    throw new ExternalSessionMaterializeSourceInterruptionError(
+      'source_changed',
+      'External session source changed while resolving transcript-media evidence.',
+    );
+  }
+  return validated.transcriptMediaReadRoots ?? [];
+}
+
+function bytesEqual(left: Uint8Array, right: Uint8Array): boolean {
+  if (left.byteLength !== right.byteLength) return false;
+  return left.every((value, index) => value === right[index]);
+}
+
+function credentialsMatch(
+  left: MaterializeCredentials,
+  right: MaterializeCredentials,
+): boolean {
+  if (left.token !== right.token) return false;
+  if (left.encryption === null || right.encryption === null) {
+    return left.encryption === right.encryption;
+  }
+  if (left.encryption.type !== right.encryption.type) return false;
+  if (left.encryption.type === 'legacy' && right.encryption.type === 'legacy') {
+    return bytesEqual(left.encryption.secret, right.encryption.secret);
+  }
+  if (left.encryption.type === 'dataKey' && right.encryption.type === 'dataKey') {
+    return bytesEqual(left.encryption.publicKey, right.encryption.publicKey)
+      && bytesEqual(left.encryption.machineKey, right.encryption.machineKey);
+  }
+  return false;
+}
+
+function preparationAuthorityMatches(
+  snapshot: Readonly<{
+    credentials: MaterializeCredentials;
+    linked: LoadedLinkedExternalSession;
+  }>,
+  current: Readonly<{
+    credentials: MaterializeCredentials;
+    linked: LoadedLinkedExternalSession;
+  }>,
+): boolean {
+  const snapshotDataEncryptionKey =
+    typeof snapshot.linked.rawSession.dataEncryptionKey === 'string'
+      ? snapshot.linked.rawSession.dataEncryptionKey.trim() || null
+      : null;
+  const currentDataEncryptionKey =
+    typeof current.linked.rawSession.dataEncryptionKey === 'string'
+      ? current.linked.rawSession.dataEncryptionKey.trim() || null
+      : null;
+  return credentialsMatch(snapshot.credentials, current.credentials)
+    && sourceIdentity(snapshot.linked) === sourceIdentity(current.linked)
+    && snapshot.linked.sessionPath === current.linked.sessionPath
+    && resolveSessionStoredContentEncryptionMode(snapshot.linked.rawSession)
+      === resolveSessionStoredContentEncryptionMode(current.linked.rawSession)
+    && snapshotDataEncryptionKey === currentDataEncryptionKey;
+}
+
 async function loadCurrentLinked(request: MaterializeRequest): Promise<Readonly<{
   credentials: MaterializeCredentials;
   linked: LoadedLinkedExternalSession;
 }>> {
-  const credentials = await readCredentials();
+  const credentials = await readStoredCredentials();
   if (!credentials) {
     throw new ExternalSessionMaterializeSourceInterruptionError(
       'source_unavailable',
@@ -249,7 +339,7 @@ type MaterializeCaptureStart = Readonly<{
 
 async function stageRequiredHistoricalItems(input: Readonly<{
   transcriptItems: readonly ExternalSessionTranscriptRawMessageV1[];
-  linked: LoadedLinkedExternalSession;
+  workingDirectory: string | null;
   sourceReadRoots: readonly string[];
   sourceGeneration: string;
   sourcePageIndex: number;
@@ -270,7 +360,7 @@ async function stageRequiredHistoricalItems(input: Readonly<{
     try {
       items.push(await stageExternalSessionHistoricalImportItem({
         item: transcriptItem,
-        workingDirectory: input.linked.sessionPath,
+        workingDirectory: input.workingDirectory,
         sourceReadRoots: input.sourceReadRoots,
       }));
     } catch (error) {
@@ -336,82 +426,131 @@ export function createDefaultExternalSessionMaterializeActionExecutor(input: Rea
     activeServerDir: input.activeServerDir,
     operationExclusion: input.operationExclusion,
     staging,
-    cleanupStagedItems: async (operationId, request) => {
-      for await (const group of staging.streamAllGroupsForTerminalCleanup(operationId)) {
-        for (const value of group.items) {
+    createStagedItemPreparationPhase: async (
+      request,
+      mode,
+      persistedTakeoverWorkingDirectory,
+      operationId,
+    ) => {
+      const phaseSnapshot = await loadCurrentLinked(request);
+      return Object.freeze({
+        prepareStagedItem: async (value: unknown) => {
           const staged = readExternalSessionHistoricalImportStagedItem(value);
-          if (!staged) continue;
-          await cleanupExternalSessionHistoricalImportStagedMedia({
-            staged,
-            agentId: request.source.qualifiedIdentity.agent.localId,
-            remoteSessionId: request.source.remoteSessionId,
-            sessionId: request.sessionId,
-          });
-        }
-      }
-    },
-    prepareStagedItem: async (request, value, mode) => {
-      const staged = readExternalSessionHistoricalImportStagedItem(value);
-      if (!staged) return { ok: false, category: 'record' };
-      const current = await loadCurrentLinked(request);
-      const cleanupWorkspaceMediaPaths: string[] = [];
-      const workingDirectory = staged.mediaWorkingDirectory
-        ?? current.linked.sessionPath;
-      try {
-        if (mode === 'validate') {
-          return {
-            ok: true,
-            item: await validateExternalSessionHistoricalImportStagedItem({
-              staged,
-              linked: current.linked,
-              credentials: current.credentials,
-              sessionId: request.sessionId,
-            }),
-          };
-        }
-        const item = await prepareExternalSessionHistoricalImportItem({
-          item: staged.item,
-          linked: current.linked,
-          credentials: current.credentials,
-          sessionId: request.sessionId,
-          workingDirectory,
-          sourceReadRoots: [],
-          cleanupWorkspaceMediaPaths,
-        });
-        return {
-          ok: true,
-          item,
-          ...(workingDirectory && cleanupWorkspaceMediaPaths.length > 0
-            ? {
-              cleanup: async () => {
-                const cleaned = await garbageCollectUncommittedSessionMedia({
-                  workingDirectory,
-                  candidateWorkspaceRelativePaths: cleanupWorkspaceMediaPaths,
-                  reason: 'interrupted_ingestion',
-                });
-                if (cleaned === null) {
-                  throw new Error('historical_import_staged_media_cleanup_failed');
-                }
-              },
+          if (!staged) return { ok: false as const, category: 'record' as const };
+          const createdWorkspaceMediaPaths: string[] = [];
+          const persistedWorkspaceMediaPaths: string[] = [];
+          let ownershipRecorded = false;
+          const workingDirectory = request.plan === 'takeover'
+            ? persistedTakeoverWorkingDirectory ?? null
+            : staged.mediaWorkingDirectory ?? phaseSnapshot.linked.sessionPath;
+          try {
+            if (mode === 'validate') {
+              return {
+                ok: true as const,
+                item: await validateExternalSessionHistoricalImportStagedItem({
+                  staged,
+                  linked: phaseSnapshot.linked,
+                  credentials: phaseSnapshot.credentials,
+                  sessionId: request.sessionId,
+                }),
+              };
             }
-            : {}),
-        };
-      } catch (error) {
-        if (workingDirectory && cleanupWorkspaceMediaPaths.length > 0) {
-          const cleaned = await garbageCollectUncommittedSessionMedia({
-            workingDirectory,
-            candidateWorkspaceRelativePaths: cleanupWorkspaceMediaPaths,
-            reason: 'interrupted_ingestion',
-          });
-          if (cleaned === null) {
-            throw new Error('historical_import_staged_media_cleanup_failed');
+            const item = await prepareExternalSessionHistoricalImportItem({
+              item: staged.item,
+              linked: phaseSnapshot.linked,
+              credentials: phaseSnapshot.credentials,
+              sessionId: request.sessionId,
+              workingDirectory,
+              sourceReadRoots: [],
+              createdWorkspaceMediaPaths,
+              persistedWorkspaceMediaPaths,
+            });
+            const ownedWorkspaceMedia = workingDirectory
+              ? createdWorkspaceMediaPaths.map((candidateWorkspaceRelativePath) => ({
+                workingDirectory,
+                candidateWorkspaceRelativePath,
+              }))
+              : [];
+            const workspaceMedia = workingDirectory
+              ? [...new Set(persistedWorkspaceMediaPaths)].map(
+                (candidateWorkspaceRelativePath) => ({
+                  workingDirectory,
+                  candidateWorkspaceRelativePath,
+                }),
+              )
+              : [];
+            if (ownedWorkspaceMedia.length > 0) {
+              await staging.recordCreatedWorkspaceMedia({
+                operationId,
+                media: ownedWorkspaceMedia,
+              });
+              ownershipRecorded = true;
+            }
+            return {
+              ok: true as const,
+              item,
+              ...(workspaceMedia.length > 0 ? { workspaceMedia } : {}),
+              ...(workspaceMedia.length > 0
+                ? {
+                  cleanup: async () => {
+                    const owned = await staging.readCreatedWorkspaceMediaForCleanup({
+                      operationId,
+                      media: workspaceMedia,
+                    });
+                    if (owned.length === 0) return;
+                    const cleaned = await garbageCollectUncommittedSessionMedia({
+                      workingDirectory: owned[0]!.workingDirectory,
+                      candidateWorkspaceRelativePaths: owned.map(
+                        (entry) => entry.candidateWorkspaceRelativePath,
+                      ),
+                      reason: 'interrupted_ingestion',
+                    });
+                    if (cleaned === null) {
+                      throw new Error('historical_import_staged_media_cleanup_failed');
+                    }
+                    await staging.acknowledgeCreatedWorkspaceMediaCleanup({
+                      operationId,
+                      media: owned,
+                    });
+                  },
+                }
+                : {}),
+            };
+          } catch (error) {
+            if (
+              !ownershipRecorded
+              && workingDirectory
+              && createdWorkspaceMediaPaths.length > 0
+            ) {
+              const cleaned = await garbageCollectUncommittedSessionMedia({
+                workingDirectory,
+                candidateWorkspaceRelativePaths: createdWorkspaceMediaPaths,
+                reason: 'interrupted_ingestion',
+              });
+              if (cleaned === null) {
+                throw new Error('historical_import_staged_media_cleanup_failed');
+              }
+            }
+            if (error instanceof ExternalSessionHistoricalImportRequiredItemError) {
+              return { ok: false as const, category: error.category };
+            }
+            throw error;
           }
-        }
-        if (error instanceof ExternalSessionHistoricalImportRequiredItemError) {
-          return { ok: false, category: error.category };
-        }
-        throw error;
-      }
+        },
+        ...(mode === 'publish'
+          ? {
+            revalidateBeforeBatchEffect: async () => {
+              const current = await loadCurrentLinked(request);
+              if (!preparationAuthorityMatches(phaseSnapshot, current)) {
+                throw new ExternalSessionMaterializeSourceInterruptionError(
+                  'source_changed',
+                  'External session link or encryption authority changed before historical publication.',
+                );
+              }
+            },
+          }
+          : {}),
+      });
     },
     publishProgress: input.publishProgress ?? ((publishInput) =>
       publishExternalSessionOperationProgress({
@@ -422,6 +561,9 @@ export function createDefaultExternalSessionMaterializeActionExecutor(input: Rea
       await convergeExternalSessionOperationProgressProjection(
         input.activeServerDir,
         record,
+        {
+          allowSettledTerminalPredecessorReplacement: true,
+        },
       );
       const converged = await readExternalSessionOperationRecord(
         input.activeServerDir,
@@ -443,6 +585,7 @@ export function createDefaultExternalSessionMaterializeActionExecutor(input: Rea
         input.activeServerDir,
         priorTerminalRecords,
         {
+          sessionAdmissionLockHeld: true,
           publish: async (publishInput) =>
             await publishExternalSessionOperationProgress({
               ...publishInput,
@@ -466,6 +609,10 @@ export function createDefaultExternalSessionMaterializeActionExecutor(input: Rea
       if (!resolved.providerOps.pageTranscript) {
         throw new Error('external_session_transcript_page_unavailable');
       }
+      const sourceReadRoots = await resolveMaterializeSourceReadRoots({
+        linked,
+        providerOps: resolved.providerOps,
+      });
       const firstPage = await readTranscriptPage(() => resolved.providerOps.pageTranscript!({
         source: linked.source,
         remoteSessionId: linked.remoteSessionId,
@@ -477,10 +624,6 @@ export function createDefaultExternalSessionMaterializeActionExecutor(input: Rea
         throw new Error('external_session_transcript_capture_truncated');
       }
       const identity = sourceIdentity(linked);
-      const sourceReadRoots = await resolved.providerOps.resolveTranscriptMediaReadRoots?.({
-        source: linked.source,
-        remoteSessionId: linked.remoteSessionId,
-      }) ?? [];
       captureStarts.set(captureKey(request), {
         linked,
         resolved,
@@ -501,6 +644,9 @@ export function createDefaultExternalSessionMaterializeActionExecutor(input: Rea
           ? Number(session.metadataVersion)
           : 0,
       };
+    },
+    releaseSourceCapture: (request) => {
+      captureStarts.delete(captureKey(request));
     },
     revalidateSource: async (request, capturedSource, sourceSnapshotEvidenceRef) => {
       const current = await loadCurrentLinked(request);
@@ -568,11 +714,19 @@ export function createDefaultExternalSessionMaterializeActionExecutor(input: Rea
       }
       requireContinuousReadAfter(readAfter, sourceSnapshotEvidenceRef);
     },
-    readNewestFirstPages: async function* (request) {
+    readNewestFirstPages: async function* (
+      request,
+      persistedTakeoverWorkingDirectory,
+    ) {
       const key = captureKey(request);
       const capture = captureStarts.get(key);
       if (!capture) throw new Error('external_session_capture_boundary_unavailable');
       const { linked, resolved, sourceReadRoots } = capture;
+      const workingDirectory = resolveHistoricalImportWorkingDirectory({
+        request,
+        linked,
+        persistedTakeoverWorkingDirectory,
+      });
       if (!resolved.providerOps.pageTranscript || !resolved.providerOps.readAfterTranscript) {
         throw new Error('external_session_transcript_capture_unavailable');
       }
@@ -588,7 +742,7 @@ export function createDefaultExternalSessionMaterializeActionExecutor(input: Rea
             && page.tailCursor === capture.capturedTailCursor;
           const prepared = await stageRequiredHistoricalItems({
             transcriptItems: page.items,
-            linked,
+            workingDirectory,
             sourceReadRoots,
             sourceGeneration: request.source.sourceGeneration,
             sourcePageIndex: pageIndex,
@@ -682,7 +836,7 @@ export function createDefaultExternalSessionMaterializeActionExecutor(input: Rea
             }
             const prepared = await stageRequiredHistoricalItems({
               transcriptItems: appended.items,
-              linked,
+              workingDirectory,
               sourceReadRoots,
               sourceGeneration: request.source.sourceGeneration,
               sourcePageIndex: pageIndex + catchUpIndex + 1,
@@ -744,8 +898,17 @@ export function createDefaultExternalSessionMaterializeActionExecutor(input: Rea
         captureStarts.delete(key);
       }
     },
-    readFinalCatchUpPages: async function* (request, sourceSnapshotEvidenceRef) {
+    readFinalCatchUpPages: async function* (
+      request,
+      sourceSnapshotEvidenceRef,
+      persistedTakeoverWorkingDirectory,
+    ) {
       const current = await loadCurrentLinked(request);
+      const workingDirectory = resolveHistoricalImportWorkingDirectory({
+        request,
+        linked: current.linked,
+        persistedTakeoverWorkingDirectory,
+      });
       const identity = sourceIdentity(current.linked);
       const resolved = await resolveGenerationBoundExternalSessionFollowSurface(
         current.linked.agentId,
@@ -766,13 +929,12 @@ export function createDefaultExternalSessionMaterializeActionExecutor(input: Rea
           'External session transcript source cannot be revalidated before finalization.',
         );
       }
-      const sourceReadRoots = await resolved.providerOps.resolveTranscriptMediaReadRoots?.({
-        source: current.linked.source,
-        remoteSessionId: current.linked.remoteSessionId,
-      }) ?? [];
+      const sourceReadRoots = await resolveMaterializeSourceReadRoots({
+        linked: current.linked,
+        providerOps: resolved.providerOps,
+      });
 
       if (sourceSnapshotEvidenceRef.startsWith('empty:')) {
-        const buffered: ExternalSessionMaterializePage[] = [];
         let cursor: string | undefined;
         let page = await readTranscriptPage(() => resolved.providerOps.pageTranscript!({
           source: current.linked.source,
@@ -799,16 +961,21 @@ export function createDefaultExternalSessionMaterializeActionExecutor(input: Rea
           }
           const prepared = await stageRequiredHistoricalItems({
             transcriptItems: page.items,
-            linked: current.linked,
+            workingDirectory,
             sourceReadRoots,
             sourceGeneration: request.source.sourceGeneration,
             sourcePageIndex: pageIndex,
           });
-          buffered.push({
+          // The source walks newest-to-oldest here. Reserve an order below the
+          // acknowledged empty capture, with later (older) pages ordered first,
+          // so the staging owner can stream each page immediately and replay
+          // the extension chronologically without a whole-corpus reversal.
+          yield {
             groupId: `final-empty-catch-up:${pageIndex}:${createHash('sha256')
               .update(cursor ?? 'initial', 'utf8')
               .digest('hex')
               .slice(0, 16)}`,
+            replayOrder: -MAX_CAPTURE_PAGES + pageIndex,
             items: prepared.items,
             requiredItemFailures: prepared.requiredItemFailures,
             sourceRead: {
@@ -819,7 +986,7 @@ export function createDefaultExternalSessionMaterializeActionExecutor(input: Rea
               relationshipToCapture: 'appended',
               eof: false,
             },
-          });
+          };
           if (!page.hasMore) break;
           if (!page.nextCursor || seenCursors.has(page.nextCursor)) {
             throw new ExternalSessionMaterializeSourceInterruptionError(
@@ -861,9 +1028,6 @@ export function createDefaultExternalSessionMaterializeActionExecutor(input: Rea
             'source_changed',
             'External session source changed during final catch-up validation.',
           );
-        }
-        for (let index = buffered.length - 1; index >= 0; index -= 1) {
-          yield buffered[index]!;
         }
         yield {
           groupId: `final-empty-validation:${createHash('sha256')
@@ -931,7 +1095,7 @@ export function createDefaultExternalSessionMaterializeActionExecutor(input: Rea
         }
         const prepared = await stageRequiredHistoricalItems({
           transcriptItems: appended.items,
-          linked: current.linked,
+          workingDirectory,
           sourceReadRoots,
           sourceGeneration: request.source.sourceGeneration,
           sourcePageIndex: appendedPageCount,

@@ -44,6 +44,35 @@ describe('normalizeExecutionRunToolResult', () => {
     });
   });
 
+  it('keeps an accepted start successful when its nested shared waiter times out', () => {
+    expect(normalizeExecutionRunToolResult({
+      runId: 'run_wait_timeout_1',
+      callId: 'call_wait_timeout_1',
+      sidechainId: 'call_wait_timeout_1',
+      wait: { ok: false, code: 'timeout' },
+    })).toEqual({
+      ok: true,
+      result: {
+        runId: 'run_wait_timeout_1',
+        callId: 'call_wait_timeout_1',
+        sidechainId: 'call_wait_timeout_1',
+        wait: { ok: false, code: 'timeout' },
+      },
+    });
+  });
+
+  it('maps a standalone shared waiter timeout to a stable tool failure with its run id', () => {
+    expect(normalizeExecutionRunToolResult(
+      { ok: false, code: 'timeout' },
+      { runId: 'run_wait_timeout_1' },
+    )).toEqual({
+      ok: false,
+      errorCode: 'execution_run_wait_timeout',
+      error: 'Execution run wait timed out',
+      details: { runId: 'run_wait_timeout_1' },
+    });
+  });
+
   it('revalidates details so a structurally typed caller cannot project extra fields', () => {
     const callerDetails = {
       featureId: 'voice.agent' as const,

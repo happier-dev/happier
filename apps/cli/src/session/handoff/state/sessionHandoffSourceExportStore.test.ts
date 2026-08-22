@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 
 import { readWorkspaceReplicationManifestFromFile } from '@/session/handoff/workspaceReplication/workspaceReplicationAdapter/manifestFile';
 import type { SessionHandoffAgentBundle } from '../types';
+import { readSessionHandoffAgentBundleFile } from '../agentBundle/file';
 import { createSessionHandoffSourceExportStore } from './sessionHandoffSourceExportStore';
 
 describe('sessionHandoffSourceExportStore', () => {
@@ -69,7 +70,11 @@ describe('sessionHandoffSourceExportStore', () => {
       expect(provider.sizeBytes).toBe(providerStats.size);
       expect(provider.manifestHash.startsWith('sha256:')).toBe(true);
       const parsedProvider = JSON.parse(await readFile(provider.filePath, 'utf8'));
-      expect(parsedProvider).toMatchObject({ agentId: 'codex' });
+      expect(parsedProvider).toMatchObject({ providerId: 'codex' });
+      expect(parsedProvider).not.toHaveProperty('agentId');
+      await expect(readSessionHandoffAgentBundleFile(provider.filePath)).resolves.toMatchObject({
+        agentId: 'codex',
+      });
 
       const manifest = await store.writeWorkspaceReplicationManifestFile({
         handoffId,
@@ -119,7 +124,7 @@ describe('sessionHandoffSourceExportStore', () => {
       });
 
       await expect(readFile(written.filePath, 'utf8').then((raw) => JSON.parse(raw) as unknown)).resolves.toMatchObject({
-        agentId: 'opencode',
+        providerId: 'opencode',
         remoteSessionId: 'remote-session-1',
         providerOwnedField: {
           nested: true,

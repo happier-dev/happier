@@ -1,7 +1,5 @@
 import type { ExecutionRunController } from '@/agent/executionRuns/controllers/types';
-import { readBackendResumableChildSessionId } from '@/agent/executionRuns/controllers/types';
 import type { ExecutionRunState } from './executionRunTypes';
-import { areExecutionRunBackendTargetsEqual } from './backendTargets';
 import { writeExecutionRunMarker } from '@/daemon/executionRunRegistry';
 import { readBackendTargetRefV2 } from '@happier-dev/protocol';
 
@@ -29,7 +27,7 @@ export function enqueueExecutionRunMarkerWrite(args: Readonly<{
 export async function writeExecutionRunActivityMarker(args: Readonly<{
   runId: string;
   nowMs: number;
-  opts?: Readonly<{ force?: boolean; required?: boolean }>;
+  opts?: Readonly<{ force?: boolean }>;
   runs: Map<string, ExecutionRunState>;
   controllers: Map<string, ExecutionRunController>;
   enqueueMarkerWrite: (runId: string, write: () => Promise<void>) => Promise<void>;
@@ -53,36 +51,16 @@ export async function writeExecutionRunActivityMarker(args: Readonly<{
     sidechainId: run.sidechainId,
     intent: run.intent,
     backendTarget: readBackendTargetRefV2(run.backendTarget),
-    ...(run.display ? { display: run.display } : {}),
     permissionMode: run.permissionMode,
+    retentionPolicy: run.retentionPolicy,
     runClass: run.runClass,
     ioMode: run.ioMode,
-    retentionPolicy: run.retentionPolicy,
     status: run.status,
     startedAtMs: run.startedAtMs,
     updatedAtMs: args.nowMs,
     lastActivityAtMs: args.nowMs,
-    ...(typeof run.summary === 'string' && run.summary.trim().length > 0 ? { summary: run.summary } : {}),
     ...(run.error?.code ? { errorCode: run.error.code } : {}),
-    ...(run.launch?.connectedServicesRegistration
-      ? { executionRunConnectedServicesLaunchV1: run.launch.connectedServicesRegistration }
-      : {}),
-    resumeHandle: (() => {
-      const providerSessionId = readBackendResumableChildSessionId(args.controllers.get(args.runId) ?? null);
-      if (typeof providerSessionId === 'string' && providerSessionId.trim().length > 0) {
-        return { kind: 'provider_session.v1', backendTarget: readBackendTargetRefV2(run.backendTarget), providerSessionId };
-      }
-      return run.resumeHandle
-        && run.resumeHandle.kind === 'provider_session.v1'
-        && areExecutionRunBackendTargetsEqual(run.resumeHandle.backendTarget, run.backendTarget)
-        ? run.resumeHandle
-        : null;
-    })(),
   } as const;
   const write = args.enqueueMarkerWrite(args.runId, () => writeExecutionRunMarker(markerPayload));
-  if (args.opts?.required === true) {
-    await write;
-    return;
-  }
   await write.catch(() => {});
 }

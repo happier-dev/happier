@@ -85,10 +85,10 @@ vi.mock('@/terminal/prompts/promptSecret', () => ({
 }));
 
 vi.mock(
-  '@/agent/runtime/session/process/agentRuntimeDaemonBridgeClient',
+  '@/agent/runtime/session/process/foregroundAgentRuntimeAdmissionClient',
   async (importOriginal) => {
     const actual = await importOriginal<
-      typeof import('@/agent/runtime/session/process/agentRuntimeDaemonBridgeClient')
+      typeof import('@/agent/runtime/session/process/foregroundAgentRuntimeAdmissionClient')
     >();
     return {
       ...actual,
@@ -114,6 +114,7 @@ import {
 } from '@happier-dev/protocol';
 import type { Credentials } from '@/persistence';
 import type { CommandContext } from '@/cli/commandRegistry';
+import { logger } from '@/ui/logger';
 import type { AccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 import {
   serializeNativeForkSourceV1,
@@ -135,7 +136,9 @@ async function runBackendSessionCliCommand(
 
 async function resolveLateSessionCommandOptions(options: any): Promise<any> {
   if (typeof options.resolveLateEnvironment !== 'function') return options;
-  const late = await options.resolveLateEnvironment();
+  const late = await options.resolveLateEnvironment({
+    sessionId: 'canonical-session-test',
+  });
   const unsetEnvironmentVariables = [
     ...new Map([
       ...(options.unsetEnvironmentVariables ?? []),
@@ -185,7 +188,9 @@ beforeEach(() => {
     ok: true,
     capability: {
       attemptId: 'attempt-test',
-      tokenFilePath: '/private/foreground-token.json',
+      admissionFilePath: '/private/foreground-admission.json',
+      bootstrapFilePath: '/private/foreground-bootstrap.json',
+      authorityFilePath: '/private/foreground-authority.json',
       descriptor: {
         v: 1,
         pluginId: 'codex-plugin',
@@ -193,12 +198,6 @@ beforeEach(() => {
         agentId: 'codex',
         backendId: 'codex',
         generation: 'generation-1',
-        factoryControls: {
-          continuation: false,
-          goals: false,
-          catalog: false,
-          usageLimitRecovery: false,
-        },
       },
     },
     launchPolicy: {
@@ -244,7 +243,7 @@ describe('runBackendSessionCliCommand', () => {
     const credentials = { token: 'x' } as any;
 
     const authSpy = vi.spyOn(authModule, 'authAndSetupMachineIfNeeded').mockResolvedValue({ credentials } as any);
-    const readCredentialsSpy = vi.spyOn(persistenceModule, 'readCredentials').mockResolvedValue(credentials);
+    const readStoredCredentialsSpy = vi.spyOn(persistenceModule, 'readStoredCredentials').mockResolvedValue(credentials);
     vi.spyOn(persistenceModule, 'readSettings').mockResolvedValue({ machineId: 'machine-1' } as any);
     const bootstrapSpy = vi.spyOn(accountSettingsModule, 'bootstrapAccountSettingsContext').mockResolvedValue({
       source: 'none',
@@ -262,7 +261,7 @@ describe('runBackendSessionCliCommand', () => {
       agentIdForAccountSettings: 'codex' as any,
     });
 
-    expect(readCredentialsSpy).toHaveBeenCalled();
+    expect(readStoredCredentialsSpy).toHaveBeenCalled();
     expect(authSpy).not.toHaveBeenCalled();
     expect(bootstrapSpy).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -279,9 +278,19 @@ describe('runBackendSessionCliCommand', () => {
     expect(foregroundAdmissionMocks.admit).toHaveBeenCalledTimes(1);
   });
 
-  it('admits a plain foreground resume and threads its runtime carrier to the host bridge', async () => {
+  it('sends persisted terminal-resume Connected Services intent through foreground admission', async () => {
+    const connectedServices = {
+      v: 1 as const,
+      bindingsByServiceId: {
+        'openai-codex': {
+          source: 'connected' as const,
+          selection: 'profile' as const,
+          profileId: 'persisted-resume-account',
+        },
+      },
+    };
     const credentials = { token: 'x' } as Credentials;
-    vi.spyOn(persistenceModule, 'readCredentials').mockResolvedValue(
+    vi.spyOn(persistenceModule, 'readStoredCredentials').mockResolvedValue(
       credentials,
     );
     vi.spyOn(persistenceModule, 'readSettings').mockResolvedValue({
@@ -309,8 +318,10 @@ describe('runBackendSessionCliCommand', () => {
     await runBackendSessionCliCommand({
       context: {
         args: ['codex', '--resume', 'agent-session-1'],
+        rawArgv: ['happier', 'codex', '--resume', 'agent-session-1'],
         terminalRuntime: null,
-      } as CommandContext,
+        directSessionLaunch: { connectedServices },
+      },
       backendIdForSessionRuntime: 'codex',
       agentIdForAccountSettings: 'codex' as any,
     });
@@ -324,6 +335,8 @@ describe('runBackendSessionCliCommand', () => {
           backendId: 'codex',
           sourceKind: 'built_in',
         },
+        connectedServices,
+        vendorResumeId: 'agent-session-1',
       }),
       expect.any(Object),
     );
@@ -335,8 +348,10 @@ describe('runBackendSessionCliCommand', () => {
       }),
     );
     expect(runSessionCommandHostOptionsSpy).toHaveBeenCalledWith({
-      agentRuntimeDaemonBridgeTokenFilePath:
-        '/private/foreground-token.json',
+      agentRuntimeRunnerBootstrapFilePath:
+        '/private/foreground-bootstrap.json',
+      agentRuntimeDaemonServiceAuthorityFilePath:
+        '/private/foreground-authority.json',
     });
     expect(foregroundAdmissionMocks.claim).toHaveBeenCalledTimes(1);
     expect(foregroundAdmissionMocks.release).toHaveBeenCalledTimes(1);
@@ -344,7 +359,7 @@ describe('runBackendSessionCliCommand', () => {
 
   it('uses a runtime-authority Agent id without defaulting account-settings or deprecated-alias identities', async () => {
     const credentials = { token: 'x' } as Credentials;
-    vi.spyOn(persistenceModule, 'readCredentials').mockResolvedValue(
+    vi.spyOn(persistenceModule, 'readStoredCredentials').mockResolvedValue(
       credentials,
     );
     vi.spyOn(persistenceModule, 'readSettings').mockResolvedValue({
@@ -385,16 +400,18 @@ describe('runBackendSessionCliCommand', () => {
       expect.any(Object),
     );
     expect(runSessionCommandHostOptionsSpy).toHaveBeenCalledWith({
-      agentRuntimeDaemonBridgeTokenFilePath:
-        '/private/foreground-token.json',
+      agentRuntimeRunnerBootstrapFilePath:
+        '/private/foreground-bootstrap.json',
+      agentRuntimeDaemonServiceAuthorityFilePath:
+        '/private/foreground-authority.json',
     });
     expect(foregroundAdmissionMocks.claim).toHaveBeenCalledTimes(1);
     expect(foregroundAdmissionMocks.release).toHaveBeenCalledTimes(1);
   });
 
-  it('routes the configured Connected Services default through the generic direct-launch lifecycle', async () => {
+  it('resolves the configured Connected Services default before foreground admission and sends the legacy binding ingress', async () => {
     const credentials = { token: 'x' } as any;
-    vi.spyOn(persistenceModule, 'readCredentials').mockResolvedValue(credentials);
+    vi.spyOn(persistenceModule, 'readStoredCredentials').mockResolvedValue(credentials);
     vi.spyOn(persistenceModule, 'readSettings').mockResolvedValue({ machineId: 'machine-1' } as any);
     vi.spyOn(authModule, 'ensureMachineIdForCredentials').mockResolvedValue({ machineId: 'machine-1' } as any);
     vi.spyOn(accountSettingsModule, 'bootstrapAccountSettingsContext').mockResolvedValue({
@@ -420,17 +437,8 @@ describe('runBackendSessionCliCommand', () => {
       loadedAtMs: Date.now(),
       whenRefreshed: null,
     } as any);
-    const cleanup = vi.fn(async () => undefined);
-    const materialize = vi.fn(async () => ({
-      environment: { CONNECTED_SERVICE_TEST_TOKEN: 'selected' },
-      unsetEnvKeys: [],
-      cleanupOnFailure: cleanup,
-      cleanupOnExit: cleanup,
-    }));
     runSessionCommandSpy.mockImplementation(async (_backendId: string, options: any) => {
-      expect(options.environmentVariables).toMatchObject({
-        CONNECTED_SERVICE_TEST_TOKEN: 'selected',
-      });
+      await resolveLateSessionCommandOptions(options);
     });
 
     await runBackendSessionCliCommand({
@@ -441,10 +449,9 @@ describe('runBackendSessionCliCommand', () => {
       },
       backendIdForSessionRuntime: 'codex',
       agentIdForAccountSettings: 'codex' as any,
-      resolveDirectConnectedServiceEnvironmentFn: materialize,
     });
 
-    expect(materialize).toHaveBeenCalledWith(expect.objectContaining({
+    expect(foregroundAdmissionMocks.admit).toHaveBeenCalledWith(expect.objectContaining({
       agentId: 'codex',
       connectedServices: expect.objectContaining({
         v: 1,
@@ -456,13 +463,13 @@ describe('runBackendSessionCliCommand', () => {
           },
         }),
       }),
-    }));
-    expect(cleanup).toHaveBeenCalledTimes(1);
+    }), expect.any(Object));
+    expect(foregroundAdmissionMocks.release).toHaveBeenCalledTimes(1);
   });
 
   it('passes explicit terminal-mode intent from the CLI owner to the host session runtime', async () => {
     const credentials = { token: 'x' } as any;
-    vi.spyOn(persistenceModule, 'readCredentials').mockResolvedValue(credentials);
+    vi.spyOn(persistenceModule, 'readStoredCredentials').mockResolvedValue(credentials);
     vi.spyOn(persistenceModule, 'readSettings').mockResolvedValue({ machineId: 'machine-1' } as any);
     runSessionCommandSpy.mockResolvedValue(undefined);
 
@@ -491,7 +498,7 @@ describe('runBackendSessionCliCommand', () => {
         modelId: 'default',
       },
     });
-    vi.spyOn(persistenceModule, 'readCredentials').mockResolvedValue(credentials);
+    vi.spyOn(persistenceModule, 'readStoredCredentials').mockResolvedValue(credentials);
     vi.spyOn(persistenceModule, 'readSettings').mockResolvedValue({ machineId: 'machine-1' } as any);
     runSessionCommandSpy.mockResolvedValue(undefined);
 
@@ -526,7 +533,7 @@ describe('runBackendSessionCliCommand', () => {
         },
       },
     };
-    vi.spyOn(persistenceModule, 'readCredentials').mockResolvedValue(credentials);
+    vi.spyOn(persistenceModule, 'readStoredCredentials').mockResolvedValue(credentials);
     vi.spyOn(persistenceModule, 'readSettings').mockResolvedValue({ machineId: 'machine-1' } as any);
     runSessionCommandSpy.mockResolvedValue(undefined);
 
@@ -550,11 +557,38 @@ describe('runBackendSessionCliCommand', () => {
     }));
   });
 
+  it('passes a daemon-owned session creation tag into the host runtime without provider passthrough', async () => {
+    const credentials = { token: 'x' } as any;
+    const sessionCreationTag = 'create:v1:9Qf8pTqHIQxEYXv3sHohC0y7sD2pRqclZxY_V_GKcJ0';
+    vi.spyOn(persistenceModule, 'readStoredCredentials').mockResolvedValue(credentials);
+    vi.spyOn(persistenceModule, 'readSettings').mockResolvedValue({ machineId: 'machine-1' } as any);
+    runSessionCommandSpy.mockResolvedValue(undefined);
+
+    await runBackendSessionCliCommand({
+      context: {
+        args: [
+          'codex',
+          '--started-by',
+          'daemon',
+          '--session-creation-tag-v1',
+          sessionCreationTag,
+        ],
+        terminalRuntime: null,
+      } as any,
+      backendIdForSessionRuntime: 'codex',
+      agentIdForDeprecatedAliases: 'codex' as any,
+    });
+
+    expect(runSessionCommandSpy).toHaveBeenCalledWith('codex', expect.objectContaining({
+      sessionCreationTag,
+    }));
+  });
+
   it('self-migrates daemon-spawned runners out of the daemon service cgroup when the env gate is set', async () => {
     process.env.HAPPIER_DAEMON_SPAWN_SELF_MIGRATE_CGROUP = '1';
 
     const credentials = { token: 'x' } as any;
-    vi.spyOn(persistenceModule, 'readCredentials').mockResolvedValue(credentials);
+    vi.spyOn(persistenceModule, 'readStoredCredentials').mockResolvedValue(credentials);
     vi.spyOn(persistenceModule, 'readSettings').mockResolvedValue({ machineId: 'machine-1' } as any);
 
     runSessionCommandSpy.mockResolvedValue(undefined);
@@ -572,7 +606,7 @@ describe('runBackendSessionCliCommand', () => {
   it('uses the cached fast account settings snapshot without waiting for refresh', async () => {
     const credentials = { token: 'x' } as any;
 
-    vi.spyOn(persistenceModule, 'readCredentials').mockResolvedValue(credentials);
+    vi.spyOn(persistenceModule, 'readStoredCredentials').mockResolvedValue(credentials);
     vi.spyOn(persistenceModule, 'readSettings').mockResolvedValue({ machineId: 'machine-1' } as any);
 
     const cachedSettings = { schemaVersion: 6, marker: 'cached' } as any;
@@ -606,7 +640,7 @@ describe('runBackendSessionCliCommand', () => {
     const credentials = { token: 'x' } as any;
 
     const authSpy = vi.spyOn(authModule, 'authAndSetupMachineIfNeeded').mockResolvedValue({ credentials } as any);
-    vi.spyOn(persistenceModule, 'readCredentials').mockResolvedValue(credentials);
+    vi.spyOn(persistenceModule, 'readStoredCredentials').mockResolvedValue(credentials);
     vi.spyOn(persistenceModule, 'readSettings').mockResolvedValue({ machineId: 'machine-1' } as any);
     const bootstrapSpy = vi.spyOn(accountSettingsModule, 'bootstrapAccountSettingsContext').mockResolvedValue({
       source: 'none',
@@ -641,7 +675,7 @@ describe('runBackendSessionCliCommand', () => {
   it('forces refresh without blocking Codex terminal starts on fast account settings', async () => {
     const credentials = { token: 'x' } as any;
 
-    vi.spyOn(persistenceModule, 'readCredentials').mockResolvedValue(credentials);
+    vi.spyOn(persistenceModule, 'readStoredCredentials').mockResolvedValue(credentials);
     vi.spyOn(persistenceModule, 'readSettings').mockResolvedValue({ machineId: 'machine-1' } as any);
     const cachedSettings = { schemaVersion: 6, marker: 'cached' } as any;
     let refreshed = false;
@@ -677,7 +711,7 @@ describe('runBackendSessionCliCommand', () => {
   it('passes parsed provider-native arguments to provider extra option resolvers', async () => {
     const credentials = { token: 'x' } as any;
 
-    vi.spyOn(persistenceModule, 'readCredentials').mockResolvedValue(credentials);
+    vi.spyOn(persistenceModule, 'readStoredCredentials').mockResolvedValue(credentials);
     vi.spyOn(persistenceModule, 'readSettings').mockResolvedValue({ machineId: 'machine-1' } as any);
 
     runSessionCommandSpy.mockResolvedValue(undefined);
@@ -712,7 +746,7 @@ describe('runBackendSessionCliCommand', () => {
     const credentials = { token: makeJwtWithSub('acct-b') } as any;
 
     const authSpy = vi.spyOn(authModule, 'authAndSetupMachineIfNeeded').mockResolvedValue({ credentials } as any);
-    vi.spyOn(persistenceModule, 'readCredentials').mockResolvedValue(credentials);
+    vi.spyOn(persistenceModule, 'readStoredCredentials').mockResolvedValue(credentials);
     const ensureMachineSpy = vi.spyOn(authModule, 'ensureMachineIdForCredentials').mockResolvedValue({ machineId: 'machine-acct-b' } as any);
     vi.spyOn(accountSettingsModule, 'bootstrapAccountSettingsContext').mockResolvedValue({
       source: 'none',
@@ -737,7 +771,7 @@ describe('runBackendSessionCliCommand', () => {
   it('passes provider spawn extras from account settings into the backend run', async () => {
     const credentials = { token: 'x' } as any;
 
-    vi.spyOn(persistenceModule, 'readCredentials').mockResolvedValue(credentials);
+    vi.spyOn(persistenceModule, 'readStoredCredentials').mockResolvedValue(credentials);
     vi.spyOn(authModule, 'ensureMachineIdForCredentials').mockResolvedValue({ machineId: 'machine-1' } as any);
     vi.spyOn(accountSettingsModule, 'bootstrapAccountSettingsContext').mockResolvedValue({
       source: 'network',
@@ -766,7 +800,7 @@ describe('runBackendSessionCliCommand', () => {
   it('passes plugin-owned Kimi runtime preference environment into the backend run', async () => {
     const credentials = { token: 'x' } as any;
 
-    vi.spyOn(persistenceModule, 'readCredentials').mockResolvedValue(credentials);
+    vi.spyOn(persistenceModule, 'readStoredCredentials').mockResolvedValue(credentials);
     vi.spyOn(authModule, 'ensureMachineIdForCredentials').mockResolvedValue({ machineId: 'machine-1' } as any);
     vi.spyOn(accountSettingsModule, 'bootstrapAccountSettingsContext').mockResolvedValue({
       source: 'network',
@@ -797,7 +831,7 @@ describe('runBackendSessionCliCommand', () => {
   it('forwards canonical session-mode fields to the session bridge for direct CLI starts', async () => {
     const credentials = { token: 'x' } as any;
 
-    vi.spyOn(persistenceModule, 'readCredentials').mockResolvedValue(credentials);
+    vi.spyOn(persistenceModule, 'readStoredCredentials').mockResolvedValue(credentials);
     vi.spyOn(authModule, 'ensureMachineIdForCredentials').mockResolvedValue({ machineId: 'machine-1' } as any);
     vi.spyOn(accountSettingsModule, 'bootstrapAccountSettingsContext').mockResolvedValue({
       source: 'none',
@@ -831,7 +865,7 @@ describe('runBackendSessionCliCommand', () => {
   it('can force account settings loading without a built-in agent id', async () => {
     const credentials = { token: 'x' } as any;
 
-    vi.spyOn(persistenceModule, 'readCredentials').mockResolvedValue(credentials);
+    vi.spyOn(persistenceModule, 'readStoredCredentials').mockResolvedValue(credentials);
     vi.spyOn(authModule, 'ensureMachineIdForCredentials').mockResolvedValue({ machineId: 'machine-1' } as any);
     const bootstrapSpy = vi.spyOn(accountSettingsModule, 'bootstrapAccountSettingsContext').mockResolvedValue({
       source: 'network',
@@ -875,7 +909,7 @@ describe('runBackendSessionCliCommand', () => {
     try {
       const credentials = { token: 'x' } as any;
 
-      vi.spyOn(persistenceModule, 'readCredentials').mockResolvedValue(credentials);
+      vi.spyOn(persistenceModule, 'readStoredCredentials').mockResolvedValue(credentials);
       vi.spyOn(authModule, 'ensureMachineIdForCredentials').mockResolvedValue({ machineId: 'machine-1' } as any);
       vi.spyOn(accountSettingsModule, 'bootstrapAccountSettingsContext').mockResolvedValue({
         source: 'network',
@@ -909,7 +943,7 @@ describe('runBackendSessionCliCommand', () => {
   it('does not let provider spawn extras override core session start fields', async () => {
     const credentials = { token: 'x' } as any;
 
-    vi.spyOn(persistenceModule, 'readCredentials').mockResolvedValue(credentials);
+    vi.spyOn(persistenceModule, 'readStoredCredentials').mockResolvedValue(credentials);
     vi.spyOn(authModule, 'ensureMachineIdForCredentials').mockResolvedValue({ machineId: 'machine-1' } as any);
     vi.spyOn(accountSettingsModule, 'bootstrapAccountSettingsContext').mockResolvedValue({
       source: 'network',
@@ -945,7 +979,7 @@ describe('runBackendSessionCliCommand', () => {
     try {
       const credentials = { token: 'x' } as any;
 
-      vi.spyOn(persistenceModule, 'readCredentials').mockResolvedValue(credentials);
+      vi.spyOn(persistenceModule, 'readStoredCredentials').mockResolvedValue(credentials);
       vi.spyOn(authModule, 'ensureMachineIdForCredentials').mockResolvedValue({ machineId: 'machine-1' } as any);
       vi.spyOn(accountSettingsModule, 'bootstrapAccountSettingsContext').mockResolvedValue({
         source: 'network',
@@ -1001,7 +1035,7 @@ describe('runBackendSessionCliCommand', () => {
         terminalRuntime: null,
       };
 
-      vi.spyOn(persistenceModule, 'readCredentials').mockResolvedValue(credentials);
+      vi.spyOn(persistenceModule, 'readStoredCredentials').mockResolvedValue(credentials);
       vi.spyOn(authModule, 'ensureMachineIdForCredentials').mockResolvedValue({ machineId: 'machine-1' });
       vi.spyOn(accountSettingsModule, 'bootstrapAccountSettingsContext').mockResolvedValue(accountSettingsContext);
 
@@ -1039,7 +1073,7 @@ describe('runBackendSessionCliCommand', () => {
       encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
     };
 
-    vi.spyOn(persistenceModule, 'readCredentials').mockResolvedValue(credentials);
+    vi.spyOn(persistenceModule, 'readStoredCredentials').mockResolvedValue(credentials);
     vi.spyOn(persistenceModule, 'readSettings').mockResolvedValue({ machineId: 'machine-1' } as any);
     vi.spyOn(authModule, 'ensureMachineIdForCredentials').mockResolvedValue({ machineId: 'machine-1' } as any);
 
@@ -1067,7 +1101,9 @@ describe('runBackendSessionCliCommand', () => {
       ok: true,
       capability: {
         attemptId: 'attempt-test',
-        tokenFilePath: '/private/foreground-token.json',
+        admissionFilePath: '/private/foreground-admission.json',
+        bootstrapFilePath: '/private/foreground-bootstrap.json',
+        authorityFilePath: '/private/foreground-authority.json',
         descriptor: {
           v: 1,
           pluginId: 'codex-plugin',
@@ -1075,12 +1111,6 @@ describe('runBackendSessionCliCommand', () => {
           agentId: 'codex',
           backendId: 'codex',
           generation: 'generation-1',
-          factoryControls: {
-            continuation: false,
-            goals: false,
-            catalog: false,
-            usageLimitRecovery: false,
-          },
         },
       },
       launchPolicy: {
@@ -1175,7 +1205,7 @@ describe('runBackendSessionCliCommand', () => {
       updatedAt: 0,
       version: '1.0.0',
     });
-    vi.spyOn(persistenceModule, 'readCredentials').mockResolvedValue(
+    vi.spyOn(persistenceModule, 'readStoredCredentials').mockResolvedValue(
       credentials,
     );
     vi.spyOn(authModule, 'ensureMachineIdForCredentials').mockResolvedValue({
@@ -1283,7 +1313,7 @@ describe('runBackendSessionCliCommand', () => {
       updatedAt: 0,
       version: '1.0.0',
     });
-    vi.spyOn(persistenceModule, 'readCredentials').mockResolvedValue(credentials);
+    vi.spyOn(persistenceModule, 'readStoredCredentials').mockResolvedValue(credentials);
     vi.spyOn(persistenceModule, 'readSettings').mockResolvedValue({
       machineId: 'machine-1',
     } as any);
@@ -1305,7 +1335,9 @@ describe('runBackendSessionCliCommand', () => {
       ok: true,
       capability: {
         attemptId: 'attempt-test',
-        tokenFilePath: '/private/foreground-token.json',
+        admissionFilePath: '/private/foreground-admission.json',
+        bootstrapFilePath: '/private/foreground-bootstrap.json',
+        authorityFilePath: '/private/foreground-authority.json',
         descriptor: {
           v: 1,
           pluginId: 'codex-plugin',
@@ -1313,12 +1345,6 @@ describe('runBackendSessionCliCommand', () => {
           agentId: 'codex',
           backendId: 'codex',
           generation: 'generation-1',
-          factoryControls: {
-            continuation: false,
-            goals: false,
-            catalog: false,
-            usageLimitRecovery: false,
-          },
         },
       },
       launchPolicy: {
@@ -1330,8 +1356,6 @@ describe('runBackendSessionCliCommand', () => {
       ok: true,
       environment: {
         OPENAI_API_KEY: 'provider-key',
-        HAPPIER_AGENT_RUNTIME_DAEMON_BRIDGE_TOKEN_FILE:
-          '/private/foreground-token.json',
       },
       unsetEnvironmentVariableNames: ['CODEX_API_KEY'],
       sensitiveEnvironmentVariableNames: [],
@@ -1343,9 +1367,10 @@ describe('runBackendSessionCliCommand', () => {
           OPENAI_API_KEY: 'provider-key',
           KEEP_PROFILE: 'profile-value',
           HAPPIER_SESSION_PROFILE_ID: 'work',
-          HAPPIER_AGENT_RUNTIME_DAEMON_BRIDGE_TOKEN_FILE:
-            '/private/foreground-token.json',
         });
+        expect(options.environmentVariables).not.toHaveProperty(
+          'HAPPIER_AGENT_RUNTIME_DAEMON_BRIDGE_TOKEN_FILE',
+        );
         expect(options.unsetEnvironmentVariables).toContain(
           'CODEX_API_KEY',
         );
@@ -1377,7 +1402,7 @@ describe('runBackendSessionCliCommand', () => {
       encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
     };
 
-    vi.spyOn(persistenceModule, 'readCredentials').mockResolvedValue(credentials);
+    vi.spyOn(persistenceModule, 'readStoredCredentials').mockResolvedValue(credentials);
     vi.spyOn(persistenceModule, 'readSettings').mockResolvedValue({ machineId: 'machine-1' } as any);
     vi.spyOn(authModule, 'ensureMachineIdForCredentials').mockResolvedValue({ machineId: 'machine-1' } as any);
 
@@ -1441,7 +1466,7 @@ describe('runBackendSessionCliCommand', () => {
       encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
     };
 
-    vi.spyOn(persistenceModule, 'readCredentials').mockResolvedValue(credentials);
+    vi.spyOn(persistenceModule, 'readStoredCredentials').mockResolvedValue(credentials);
     vi.spyOn(persistenceModule, 'readSettings').mockResolvedValue({ machineId: 'machine-1' } as any);
     vi.spyOn(authModule, 'ensureMachineIdForCredentials').mockResolvedValue({ machineId: 'machine-1' } as any);
 
@@ -1498,7 +1523,7 @@ describe('runBackendSessionCliCommand', () => {
 
   it('applies an in-memory scoped environment without mutating the parent process', async () => {
     const credentials = { token: 'x' } as Credentials;
-    vi.spyOn(persistenceModule, 'readCredentials').mockResolvedValue(credentials);
+    vi.spyOn(persistenceModule, 'readStoredCredentials').mockResolvedValue(credentials);
     vi.spyOn(persistenceModule, 'readSettings').mockResolvedValue({ machineId: 'machine-1' } as any);
     const previous = process.env.PROVIDER_SCOPED_SECRET;
 
@@ -1523,15 +1548,14 @@ describe('runBackendSessionCliCommand', () => {
     });
   });
 
-  it('releases direct launch resources before a fatal command exit', async () => {
+  it('releases foreground admission before a fatal command exit', async () => {
     const credentials = { token: 'x' } as Credentials;
-    const cleanup = vi.fn(async () => undefined);
-    vi.spyOn(persistenceModule, 'readCredentials').mockResolvedValue(credentials);
+    vi.spyOn(persistenceModule, 'readStoredCredentials').mockResolvedValue(credentials);
     vi.spyOn(persistenceModule, 'readSettings').mockResolvedValue({ machineId: 'machine-1' } as any);
-    runSessionCommandSpy.mockRejectedValue(new Error('runtime failed after direct materialization'));
+    runSessionCommandSpy.mockRejectedValue(new Error('runtime failed after foreground admission'));
     let cleanedAtExit = false;
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
-      cleanedAtExit = cleanup.mock.calls.length === 1;
+      cleanedAtExit = foregroundAdmissionMocks.release.mock.calls.length === 1;
       throw new Error(`exit:${String(code)}`);
     }) as never);
 
@@ -1540,14 +1564,6 @@ describe('runBackendSessionCliCommand', () => {
         args: ['codex'],
         rawArgv: ['happier', 'codex'],
         terminalRuntime: null,
-        directSessionLaunch: {
-          connectedServices: null,
-          resolveConnectedServiceEnvironment: async () => ({
-            environment: { CONNECTED_SCOPED_KEY: 'value' },
-            cleanupOnFailure: cleanup,
-            cleanupOnExit: cleanup,
-          }),
-        },
       },
       backendIdForSessionRuntime: 'codex',
       agentIdForDeprecatedAliases: 'codex' as any,
@@ -1555,12 +1571,49 @@ describe('runBackendSessionCliCommand', () => {
 
     expect(exitSpy).toHaveBeenCalledWith(1);
     expect(cleanedAtExit).toBe(true);
-    expect(cleanup).toHaveBeenCalledTimes(1);
+    expect(foregroundAdmissionMocks.release).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports a daemon-started host rejection after session creation and before its webhook', async () => {
+    const credentials = { token: 'x' } as Credentials;
+    vi.spyOn(persistenceModule, 'readStoredCredentials').mockResolvedValue(credentials);
+    vi.spyOn(persistenceModule, 'readSettings').mockResolvedValue({ machineId: 'machine-1' } as any);
+    const startupError = Object.assign(
+      new Error('post-session startup failure'),
+      {
+        argv: ['--token', 'argv-secret-value'],
+        env: { OPENAI_API_KEY: 'env-secret-value' },
+      },
+    );
+    let sessionCreated = false;
+    const fatalSpy = vi.spyOn(logger, 'fatal').mockImplementation(() => undefined);
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    runSessionCommandSpy.mockImplementation(async () => {
+      sessionCreated = true;
+      throw startupError;
+    });
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
+      throw new Error(`exit:${String(code)}`);
+    }) as never);
+
+    await expect(runBackendSessionCliCommand({
+      context: {
+        args: ['codex', '--started-by', 'daemon'],
+        rawArgv: ['happier', 'codex', '--started-by', 'daemon'],
+        terminalRuntime: null,
+      },
+      backendIdForSessionRuntime: 'codex',
+      agentIdForDeprecatedAliases: 'codex',
+    })).rejects.toThrow('exit:1');
+
+    expect(sessionCreated).toBe(true);
+    expect(fatalSpy).toHaveBeenCalledWith(startupError);
+    expect(exitSpy).toHaveBeenCalledWith(1);
   });
 
   it('uses the terminal continuation exit code for a required continuation refusal', async () => {
     const credentials = { token: 'x' } as Credentials;
-    vi.spyOn(persistenceModule, 'readCredentials').mockResolvedValue(credentials);
+    vi.spyOn(persistenceModule, 'readStoredCredentials').mockResolvedValue(credentials);
     vi.spyOn(persistenceModule, 'readSettings').mockResolvedValue({ machineId: 'machine-1' } as any);
     const continuationError = new Error('Agent session continuation is unreachable.');
     continuationError.name = 'AgentSessionContinuationUnreachableError';
@@ -1593,7 +1646,7 @@ describe('runBackendSessionCliCommand', () => {
         modelId: 'vendor/model',
       },
     });
-    vi.spyOn(persistenceModule, 'readCredentials').mockResolvedValue(credentials);
+    vi.spyOn(persistenceModule, 'readStoredCredentials').mockResolvedValue(credentials);
     vi.spyOn(persistenceModule, 'readSettings').mockResolvedValue({ machineId: 'machine-1' } as any);
     vi.spyOn(authModule, 'ensureMachineIdForCredentials').mockResolvedValue({ machineId: 'machine-1' } as any);
     foregroundAdmissionMocks.admit.mockResolvedValueOnce({
@@ -1635,7 +1688,7 @@ describe('runBackendSessionCliCommand', () => {
     process.env.HAPPIER_CODEX_PATH = codexPath;
     spawnSyncSpy.mockReturnValue({ status: 0, signal: null, error: undefined } as any);
 
-    const readCredentialsSpy = vi.spyOn(persistenceModule, 'readCredentials').mockResolvedValue({ token: 'x' } as any);
+    const readStoredCredentialsSpy = vi.spyOn(persistenceModule, 'readStoredCredentials').mockResolvedValue({ token: 'x' } as any);
     const authSpy = vi.spyOn(authModule, 'authAndSetupMachineIfNeeded').mockResolvedValue({ credentials: { token: 'x' } } as any);
     const exitSpy = mockProcessExit();
     try {
@@ -1654,7 +1707,7 @@ describe('runBackendSessionCliCommand', () => {
         }),
       );
       expect(runSessionCommandSpy).not.toHaveBeenCalled();
-      expect(readCredentialsSpy).not.toHaveBeenCalled();
+      expect(readStoredCredentialsSpy).not.toHaveBeenCalled();
       expect(authSpy).not.toHaveBeenCalled();
       expect(exitSpy).toHaveBeenCalledWith(0);
     } finally {
@@ -1671,7 +1724,7 @@ describe('runBackendSessionCliCommand', () => {
     process.env.HAPPIER_CODEX_PATH = codexPath;
     spawnSyncSpy.mockReturnValue({ status: 0, signal: null, error: undefined } as any);
 
-    const readCredentialsSpy = vi.spyOn(persistenceModule, 'readCredentials').mockResolvedValue({ token: 'x' } as any);
+    const readStoredCredentialsSpy = vi.spyOn(persistenceModule, 'readStoredCredentials').mockResolvedValue({ token: 'x' } as any);
     const authSpy = vi.spyOn(authModule, 'authAndSetupMachineIfNeeded').mockResolvedValue({ credentials: { token: 'x' } } as any);
     const exitSpy = mockProcessExit();
     try {
@@ -1690,7 +1743,7 @@ describe('runBackendSessionCliCommand', () => {
         }),
       );
       expect(runSessionCommandSpy).not.toHaveBeenCalled();
-      expect(readCredentialsSpy).not.toHaveBeenCalled();
+      expect(readStoredCredentialsSpy).not.toHaveBeenCalled();
       expect(authSpy).not.toHaveBeenCalled();
       expect(exitSpy).toHaveBeenCalledWith(0);
     } finally {
@@ -1707,7 +1760,7 @@ describe('runBackendSessionCliCommand', () => {
     process.env.HAPPIER_OPENCODE_PATH = opencodePath;
     spawnSyncSpy.mockReturnValue({ status: 0, signal: null, error: undefined } as any);
 
-    const readCredentialsSpy = vi.spyOn(persistenceModule, 'readCredentials').mockResolvedValue({ token: 'x' } as any);
+    const readStoredCredentialsSpy = vi.spyOn(persistenceModule, 'readStoredCredentials').mockResolvedValue({ token: 'x' } as any);
     const authSpy = vi.spyOn(authModule, 'authAndSetupMachineIfNeeded').mockResolvedValue({ credentials: { token: 'x' } } as any);
     const exitSpy = mockProcessExit();
     try {
@@ -1727,7 +1780,7 @@ describe('runBackendSessionCliCommand', () => {
         }),
       );
       expect(runSessionCommandSpy).not.toHaveBeenCalled();
-      expect(readCredentialsSpy).not.toHaveBeenCalled();
+      expect(readStoredCredentialsSpy).not.toHaveBeenCalled();
       expect(authSpy).not.toHaveBeenCalled();
       expect(exitSpy).toHaveBeenCalledWith(0);
     } finally {

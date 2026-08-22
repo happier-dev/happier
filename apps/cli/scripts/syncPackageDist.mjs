@@ -1,7 +1,7 @@
 import { cpSync, existsSync, mkdirSync, renameSync, rmSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { withOptionalCliSharedDepsBuildLockSync } from './optionalWorkspaceBundleLock.mjs';
+import { withOptionalCliDistBuildLockSync } from './optionalWorkspaceBundleLock.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const WRITE_FS_OPTION_NAMES = ['cpSync', 'mkdirSync', 'renameSync', 'rmSync'];
@@ -52,7 +52,7 @@ export function syncPackageDist(options = {}) {
       skipped: true,
     };
   }
-  return withOptionalCliSharedDepsBuildLockSync(() => syncPackageDistUnlocked({ ...options, packageRoot }), {
+  return withOptionalCliDistBuildLockSync(() => syncPackageDistUnlocked({ ...options, packageRoot }), {
     startDir: packageRoot,
     repoRoot: options.repoRoot,
     lockPath: options.lockPath,

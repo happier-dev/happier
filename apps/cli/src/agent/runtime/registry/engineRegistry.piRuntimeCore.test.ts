@@ -32,7 +32,7 @@ function createTestCredentials(): Credentials {
 }
 
 describe('engineRegistry (pi runtimeCore)', () => {
-  it('opens and dispatches the bundled Pi native runtime through the production registry', async () => {
+  it('applies the exact initial model before dispatching the bundled Pi native runtime', async () => {
     await withTempDir('happier-pi-native-consumer-', async (directory) => {
       const capturePath = join(directory, 'pi-capture.json');
       const agentSource = `
@@ -42,9 +42,11 @@ describe('engineRegistry (pi runtimeCore)', () => {
         const decoder = new TextDecoder();
         let buffer = '';
         const commands = [];
+        const requests = [];
         const capture = () => writeFileSync(capturePath, JSON.stringify({
           args: process.argv.slice(2),
           commands,
+          requests,
         }));
         const send = (message) => process.stdout.write(JSON.stringify(message) + '\\n');
         capture();
@@ -57,8 +59,17 @@ describe('engineRegistry (pi runtimeCore)', () => {
             if (!line.trim()) continue;
             const request = JSON.parse(line);
             commands.push(request.type);
+            requests.push(request);
             capture();
-            if (request.type === 'get_state') {
+            if (request.type === 'set_model' && request.modelId === 'reject-initial-model') {
+              send({
+                type: 'response',
+                id: request.id,
+                command: request.type,
+                success: false,
+                error: 'model unavailable',
+              });
+            } else if (request.type === 'get_state') {
               send({
                 type: 'response',
                 id: request.id,
@@ -134,6 +145,15 @@ describe('engineRegistry (pi runtimeCore)', () => {
           directory,
           backendTarget: { kind: 'backend', backendId: PI_BACKEND_ID },
           permissionMode: 'safe-yolo',
+          modelSelection: {
+            v: 1,
+            updatedAt: 42,
+            ref: {
+              agentTargetKey: 'backend:pi',
+              providerConnectionId: null,
+              modelId: 'openai/gpt-5.4',
+            },
+          },
           isolation: { env: { HAPPIER_PI_THINKING_LEVEL: 'high' } },
         });
         const session = createMutableApiSessionClientFixture({
@@ -151,6 +171,7 @@ describe('engineRegistry (pi runtimeCore)', () => {
           directory,
           metadata: createTestMetadata({ path: directory }),
           machineId: 'machine-pi-native',
+          agentTargetKey: 'backend:pi',
           session,
           transcriptSession: session,
           messageBuffer: new MessageBuffer(),
@@ -162,6 +183,15 @@ describe('engineRegistry (pi runtimeCore)', () => {
           getPermissionMode: () => 'default',
           setThinking: () => undefined,
           memoryRecallGuidanceEnabled: false,
+          runnerProcessIdentity: null,
+          startupModelSelection: null,
+          runWithTerminalModelSelection: async (effect) => ({
+            status: 'completed',
+            value: await effect(null, async (localEffect) => ({
+              status: 'completed',
+              value: await localEffect(),
+            })),
+          }),
         } satisfies HostSessionRuntimeFactoryParams;
         const created = await plan.config.createSessionRuntime!(runtimeParams);
         const nativeControls = created.nativeRuntime as typeof created.nativeRuntime & Readonly<{
@@ -174,7 +204,9 @@ describe('engineRegistry (pi runtimeCore)', () => {
         const unsubscribe = created.operations.subscribeRuntimeEvents((event) => runtimeEvents.push(event));
 
         try {
-          await expect(readFileEventually(capturePath, { timeoutMs: 5_000 })).resolves.toContain('"commands":[]');
+          await expect(readFileEventually(capturePath, { timeoutMs: 5_000 })).resolves.toContain(
+            '"commands":["set_model"]',
+          );
           await expect(nativeControls.checkUsageLimitRecoveryNow({
             sessionId: 'untrusted-session-id',
             resumePromptMode: 'custom',
@@ -190,9 +222,15 @@ describe('engineRegistry (pi runtimeCore)', () => {
           const capture = JSON.parse(await readFileEventually(capturePath, { timeoutMs: 5_000 })) as {
             args: string[];
             commands: string[];
+            requests: Array<Readonly<Record<string, unknown>>>;
           };
           expect(capture.args).toEqual(expect.arrayContaining(['--mode', 'rpc']));
-          expect(capture.commands).toEqual(['get_state', 'prompt']);
+          expect(capture.commands).toEqual(['set_model', 'get_state', 'prompt']);
+          expect(capture.requests[0]).toEqual(expect.objectContaining({
+            type: 'set_model',
+            provider: 'openai',
+            modelId: 'gpt-5.4',
+          }));
           expect(runtimeEvents).toEqual(expect.arrayContaining([
             expect.objectContaining({
               kind: 'message-delta',
@@ -204,6 +242,48 @@ describe('engineRegistry (pi runtimeCore)', () => {
           unsubscribe();
           await created.operations.resetOrDisposeRuntime();
         }
+
+        const rejectedPlan = await resolution!.engineAdapter.runtimeCore.createSessionRuntime({
+          credentials: createTestCredentials(),
+          directory,
+          backendTarget: { kind: 'backend', backendId: PI_BACKEND_ID },
+          permissionMode: 'safe-yolo',
+          modelSelection: {
+            v: 1,
+            updatedAt: 43,
+            ref: {
+              agentTargetKey: 'backend:pi',
+              providerConnectionId: null,
+              modelId: 'openai/reject-initial-model',
+            },
+          },
+        });
+        const rejectedSession = createMutableApiSessionClientFixture({
+          overrides: {
+            sessionId: 'host-pi-native-rejected',
+            rpcHandlerManager: createRpcHandlerManager({
+              scopePrefix: 'session',
+              encryptionKey: new Uint8Array(32),
+              encryptionVariant: 'legacy',
+              encryptionMode: 'plain',
+            }),
+          },
+        });
+        await expect(rejectedPlan.config.createSessionRuntime!({
+          ...runtimeParams,
+          session: rejectedSession,
+          transcriptSession: rejectedSession,
+          permissionHandler: createProviderEnforcedPermissionHandler({
+            session: rejectedSession,
+            logPrefix: '[Pi native rejected initial model]',
+          }),
+        })).rejects.toThrow(
+          'Pi rejected its initial session configuration (pi_configuration_failed)',
+        );
+        const rejectedCapture = JSON.parse(
+          await readFileEventually(capturePath, { timeoutMs: 5_000 }),
+        ) as { commands: string[] };
+        expect(rejectedCapture.commands).toEqual(['set_model']);
       } finally {
         await runtimeRegistry?.dispose();
         envScope.restore();

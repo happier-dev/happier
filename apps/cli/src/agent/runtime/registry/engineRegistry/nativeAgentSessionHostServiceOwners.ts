@@ -1,9 +1,17 @@
 import { randomUUID } from 'node:crypto';
 
 import {
+    AgentToolExecuteAfterHookPayloadSchema,
+    AgentToolExecuteBeforeHookPayloadSchema,
     isFeatureId,
+    type PluginExecutionInterceptionCapability,
 } from '@happier-dev/protocol';
-import type { AgentSessionHostServices } from '@happier-dev/plugin-sdk/agent-runtime';
+import type { JsonValue } from '@happier-dev/plugin-sdk';
+import type {
+    AgentSessionHostServices,
+    AgentToolExecutionBeforeRequest,
+    AgentToolExecutionBeforeResult,
+} from '@happier-dev/plugin-sdk/agents/runtime';
 
 import type { HostSessionRuntimeFactoryParams } from '@/agent/runtime/session/loop/runHostSessionRuntime';
 import { resolveCliFeatureDecision } from '@/features/featureDecisionService';
@@ -14,7 +22,6 @@ import type {
 } from '@/mcp/runtimeTypes';
 import { resolvePluginStorePaths } from '@/plugins/store/paths';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
-import { createSessionScopedAuthServices } from '@/plugins/runtime/context/session/services/auth';
 import { createDefaultPluginTerminalHostService } from '@/plugins/runtime/context/terminalHost';
 import { createPluginTranscriptFileFollowService } from '@/plugins/runtime/context/transcripts/fileFollow';
 import { createTranscriptFileFollowPathGrantRegistry } from '@/plugins/runtime/context/transcripts/fileFollowGrants';
@@ -42,15 +49,40 @@ import {
     snapshotActivatedPluginRuntimeAuthority,
     type PluginRuntimeAuthoritySnapshotV1,
 } from '@/plugins/runtime/lifecycle/activation/runtimeAuthority';
+import {
+    interceptAgentToolExecutionThroughRuntimeRegistry,
+    observeAgentToolExecutionThroughRuntimeRegistry,
+} from '@/plugins/runtime/hooks/execution/dispatchExecutionInterceptionHooks';
+
+type NativeAgentToolExecutionOwner = Readonly<{
+    before(
+        request: AgentToolExecutionBeforeRequest,
+        options?: Readonly<{ signal?: AbortSignal }>,
+    ): Promise<AgentToolExecutionBeforeResult>;
+    observeAfter(request: Readonly<{
+        capability: PluginExecutionInterceptionCapability;
+        turnId: string;
+        callId: string;
+        name: string;
+        input: JsonValue;
+        outcome: Readonly<
+            | { status: 'succeeded'; result?: JsonValue }
+            | { status: 'failed'; code: string; message?: string }
+            | { status: 'cancelled' }
+            | { status: 'rejected'; code?: string; message?: string }
+        >;
+        timestampMs: number;
+    }>): Promise<void>;
+}>;
 
 export type NativeAgentSessionHostServiceOwners = Readonly<{
     features: Readonly<{ isEnabled(featureId: string): boolean }>;
     terminalHost?: AgentTerminalHostService;
     sessionHooks: HostSessionHooksOwner;
-    transcripts: AgentSessionHostServices['transcripts'];
+    transcripts: Pick<AgentSessionHostServices['transcripts'], 'fileFollow'>;
     accountUsage: NativeAgentAccountUsageService;
-    auth: ReturnType<typeof createSessionScopedAuthServices>;
     mcp: PluginMcpSessionResolver;
+    toolExecution: NativeAgentToolExecutionOwner;
     dispose(): Promise<void>;
 }>;
 
@@ -129,25 +161,31 @@ export function createNativeAgentSessionHostServiceOwners(params: Readonly<{
         readSessionId: () => params.sessionId,
         fileFollowPathGrants,
     });
-    const featureEnabledMemo = new Map<string, boolean>();
     const features = Object.freeze({
-        isEnabled(featureId: string): boolean {
-            const cached = featureEnabledMemo.get(featureId);
-            if (cached !== undefined) return cached;
-            const enabled = isFeatureId(featureId)
-                && resolveCliFeatureDecision({
-                    featureId,
-                    env: process.env,
-                }).state === 'enabled';
-            featureEnabledMemo.set(featureId, enabled);
-            return enabled;
+        // Decided at every read through the canonical CLI feature-decision owner.
+        // An unknown id is permanently unsupported, but a known id's decision is a
+        // property of the current environment and policy, not of this session
+        // runtime: caching the first answer would report a decision that was
+        // merely unavailable at open time as unavailable for the whole session.
+        isEnabled: (featureId: string): boolean => {
+            if (!isFeatureId(featureId)) return false;
+            // A server-represented feature is undecidable without the daemon's retained
+            // snapshot, so omitting it would report every such feature as permanently
+            // disabled to plugins. The resolved runtime carries the one daemon snapshot
+            // resolver; this reads it fresh so a later refresh is observed.
+            const serverSnapshot = params.runtimeRegistry?.resolveServerFeaturesSnapshot?.();
+            return resolveCliFeatureDecision({
+                featureId,
+                env: process.env,
+                ...(serverSnapshot ? { serverSnapshot } : {}),
+            }).state === 'enabled';
         },
     });
     const catalogEntry = params.runtimeRegistry?.contributes.catalogEntriesById[
         params.agent.id
     ];
     const terminalHost = declaresTerminalSurface(params.agent)
-        && authority.permissions.has('terminal.host.control')
+        && authority.capabilities.has('terminalHost')
         ? createDefaultPluginTerminalHostService({
             happyHomeDir: storePaths.happyHomeDir,
             hasCapability,
@@ -160,13 +198,6 @@ export function createNativeAgentSessionHostServiceOwners(params: Readonly<{
                 : {}),
         })
         : undefined;
-    const auth = createSessionScopedAuthServices({
-        readSessionId: async (signal) => {
-            signal?.throwIfAborted();
-            params.signal.throwIfAborted();
-            return params.sessionId;
-        },
-    });
     const resolveBaseMcpServers = (
         input: McpSessionResolutionInput,
     ) => {
@@ -219,6 +250,59 @@ export function createNativeAgentSessionHostServiceOwners(params: Readonly<{
     const mcp: PluginMcpSessionResolver = Object.freeze({
         resolveForSession: pluginMcp?.resolveForSession ?? (async (input) => resolveBaseMcpServers(input)),
     });
+    const toolExecution: NativeAgentToolExecutionOwner = Object.freeze({
+        async before(request, options) {
+            const payload = AgentToolExecuteBeforeHookPayloadSchema.parse({
+                agentId: params.identity.agentId,
+                runtimeFamily: 'hostSession',
+                capability: 'interceptable',
+                sessionId: params.sessionId,
+                ...(request.turnId ? { turnId: request.turnId } : {}),
+                tool: {
+                    callId: request.callId,
+                    name: request.name,
+                    input: request.input,
+                },
+                timestampMs: Date.now(),
+            });
+            if (!params.runtimeRegistry) {
+                return { status: 'continue', input: payload.tool.input };
+            }
+            const result = await interceptAgentToolExecutionThroughRuntimeRegistry({
+                runtimeRegistry: params.runtimeRegistry,
+                payload,
+                ...(options?.signal ? { signal: options.signal } : {}),
+            });
+            if (result.status !== 'continue') return result;
+            const transformed = AgentToolExecuteBeforeHookPayloadSchema.parse({
+                ...payload,
+                tool: { ...payload.tool, input: result.input },
+            });
+            return { status: 'continue', input: transformed.tool.input };
+        },
+        async observeAfter(request) {
+            if (!params.runtimeRegistry) return;
+            const payload = AgentToolExecuteAfterHookPayloadSchema.parse({
+                agentId: params.identity.agentId,
+                runtimeFamily: 'hostSession',
+                capability: request.capability,
+                caller: { kind: 'plugin', pluginId: params.identity.pluginId },
+                sessionId: params.sessionId,
+                turnId: request.turnId,
+                tool: {
+                    callId: request.callId,
+                    name: request.name,
+                    input: request.input,
+                },
+                outcome: request.outcome,
+                timestampMs: request.timestampMs,
+            });
+            await observeAgentToolExecutionThroughRuntimeRegistry({
+                runtimeRegistry: params.runtimeRegistry,
+                payload,
+            });
+        },
+    });
     const accountUsage = createNativeAgentAccountUsageService({
         sessionId: params.sessionId,
         session: params.hostRuntimeParams.session,
@@ -251,8 +335,8 @@ export function createNativeAgentSessionHostServiceOwners(params: Readonly<{
         sessionHooks,
         transcripts: Object.freeze({ fileFollow }),
         accountUsage,
-        auth,
         mcp,
+        toolExecution,
         dispose,
     });
 }

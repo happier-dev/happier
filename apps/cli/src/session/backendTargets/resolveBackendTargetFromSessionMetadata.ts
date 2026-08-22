@@ -1,7 +1,4 @@
-import {
-  inferAgentIdFromSessionMetadata,
-  resolveAgentIdFromSessionMetadata,
-} from '@happier-dev/agents';
+import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 import {
   readAcpConfiguredBackendV1FromMetadata,
   readBackendTargetRefV2,
@@ -54,20 +51,18 @@ function resolveBackendTargetFromSessionMetadataWithAgentId(
   return readBuiltInBackendTarget(agentId);
 }
 
-export function resolveExplicitBackendTargetFromSessionMetadata(
-  metadata: Record<string, unknown> | null | undefined,
-): BackendTargetRefV2 | null {
-  return resolveBackendTargetFromSessionMetadataWithAgentId(
-    metadata,
-    resolveAgentIdFromSessionMetadata(metadata),
-  );
-}
-
+/**
+ * The one backend target a Session's metadata declares, or `null`.
+ *
+ * There is no separate "explicit" reading any more: Agent identity is read once
+ * through `resolveAgentIdFromSessionMetadata`, which answers `null` for an
+ * unknown or ambiguous Session instead of naming the default Agent.
+ */
 export function resolveBackendTargetFromSessionMetadata(
   metadata: Record<string, unknown> | null | undefined,
 ): BackendTargetRefV2 | null {
   return resolveBackendTargetFromSessionMetadataWithAgentId(
     metadata,
-    inferAgentIdFromSessionMetadata(metadata),
+    resolveAgentIdFromSessionMetadata(metadata),
   );
 }

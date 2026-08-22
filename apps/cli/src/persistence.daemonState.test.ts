@@ -108,8 +108,8 @@ describe('readDaemonState', () => {
 
             const state = await readDaemonState();
             expect(state?.pid).toBe(321);
-            expect(existsSync(configuration.daemonStateFile)).toBe(true);
-            expect(JSON.parse(readFileSync(configuration.daemonStateFile, 'utf-8'))).toMatchObject({
+            expect(existsSync(configuration.daemonStateFile)).toBe(false);
+            expect(JSON.parse(readFileSync(legacyPath, 'utf-8'))).toMatchObject({
                 pid: 321,
                 controlToken: 'legacy-token-321',
             });
@@ -542,6 +542,138 @@ describe('daemon state canonicalization', () => {
 
             expect(tempWrites.length).toBeGreaterThanOrEqual(2);
             expect(tempWrites[tempWrites.length - 1]).not.toBe(tempWrites[tempWrites.length - 2]);
+        });
+    });
+});
+
+describe('daemon state lock-owner mutation', () => {
+    const envKeys = [
+        'HAPPIER_HOME_DIR',
+        'HAPPIER_ACTIVE_SERVER_ID',
+        'HAPPIER_PUBLIC_RELEASE_CHANNEL',
+    ] as const;
+    let envScope = createEnvKeyScope(envKeys);
+
+    afterEach(() => {
+        envScope.restore();
+        envScope = createEnvKeyScope(envKeys);
+        vi.resetModules();
+    });
+
+    it('preserves a successor publication and its adjacent artifacts during predecessor cleanup', async () => {
+        await withTempDir('happier-cli-daemon-state-successor-', async (homeDir) => {
+            vi.resetModules();
+            envScope.patch({
+                HAPPIER_HOME_DIR: homeDir,
+                HAPPIER_ACTIVE_SERVER_ID: 'cloud',
+                HAPPIER_PUBLIC_RELEASE_CHANNEL: 'dev',
+            });
+
+            const [{
+                configuration,
+            }, {
+                acquireDaemonLock,
+                clearDaemonStateForLockOwner,
+                releaseDaemonLock,
+                writeDaemonStateForLockOwner,
+            }] = await Promise.all([
+                import('./configuration'),
+                import('./persistence'),
+            ]);
+            const predecessor = {
+                pid: process.pid,
+                httpPort: 5111,
+                startedAt: 1_111,
+                startedWithCliVersion: '0.0.0-a',
+                runtimeId: 'shared-runtime',
+                controlToken: 'control-a',
+            };
+            const predecessorLock = await acquireDaemonLock();
+            expect(predecessorLock).not.toBeNull();
+            expect(writeDaemonStateForLockOwner(predecessorLock!, predecessor)).toBe(true);
+            await releaseDaemonLock(predecessorLock!);
+
+            const successorLock = await acquireDaemonLock();
+            expect(successorLock).not.toBeNull();
+            const successor = {
+                pid: process.pid,
+                httpPort: 5222,
+                startedAt: 2_222,
+                startedWithCliVersion: '0.0.0-b',
+                runtimeId: 'shared-runtime',
+                controlToken: 'control-b',
+            };
+            expect(writeDaemonStateForLockOwner(successorLock!, successor)).toBe(true);
+
+            const successorTempPath = `${configuration.daemonStateFile}.tmp-successor`;
+            const successorLegacyPath = join(configuration.activeServerDir, 'daemon.dev.state.json');
+            writeFileSync(successorTempPath, JSON.stringify(successor), 'utf-8');
+            writeFileSync(successorLegacyPath, JSON.stringify(successor), 'utf-8');
+
+            expect(clearDaemonStateForLockOwner(predecessorLock!, predecessor)).toBe(false);
+
+            expect(JSON.parse(readFileSync(configuration.daemonStateFile, 'utf-8'))).toMatchObject(successor);
+            expect(existsSync(successorTempPath)).toBe(true);
+            expect(existsSync(successorLegacyPath)).toBe(true);
+            await releaseDaemonLock(successorLock!);
+        });
+    });
+
+    it('removes the exact owner publication and token-bearing artifacts after heartbeat-only state changes', async () => {
+        await withTempDir('happier-cli-daemon-state-exact-owner-', async (homeDir) => {
+            vi.resetModules();
+            envScope.patch({
+                HAPPIER_HOME_DIR: homeDir,
+                HAPPIER_ACTIVE_SERVER_ID: 'cloud',
+            });
+
+            const [{
+                configuration,
+            }, {
+                acquireDaemonLock,
+                clearDaemonStateForLockOwner,
+                releaseDaemonLock,
+                writeDaemonStateForLockOwner,
+            }, {
+                resolveDaemonStateCandidatePaths,
+            }] = await Promise.all([
+                import('./configuration'),
+                import('./persistence'),
+                import('./daemon/ownership/daemonOwnershipPaths'),
+            ]);
+            const lockHandle = await acquireDaemonLock();
+            expect(lockHandle).not.toBeNull();
+            const owner = {
+                pid: process.pid,
+                httpPort: 5333,
+                startedAt: 3_333,
+                startedWithCliVersion: '0.0.0-owner',
+                runtimeId: 'runtime-owner',
+                controlToken: 'control-owner',
+            };
+            expect(writeDaemonStateForLockOwner(lockHandle!, {
+                ...owner,
+                lastHeartbeatAt: 4_444,
+            })).toBe(true);
+            const ownerTempPath = `${configuration.daemonStateFile}.tmp-owner`;
+            const ownerLegacyPaths = resolveDaemonStateCandidatePaths({
+                serverDir: dirname(configuration.daemonStateFile),
+                preferredRing: configuration.publicReleaseRing,
+            }).filter((candidatePath) => candidatePath !== configuration.daemonStateFile);
+            const ownerLegacyTempPaths = ownerLegacyPaths.map((legacyPath) => `${legacyPath}.tmp-owner`);
+            writeFileSync(ownerTempPath, JSON.stringify(owner), 'utf-8');
+            for (const artifactPath of [...ownerLegacyPaths, ...ownerLegacyTempPaths]) {
+                writeFileSync(artifactPath, JSON.stringify(owner), 'utf-8');
+            }
+
+            expect(clearDaemonStateForLockOwner(lockHandle!, owner)).toBe(true);
+
+            expect(existsSync(configuration.daemonStateFile)).toBe(false);
+            expect(existsSync(ownerTempPath)).toBe(false);
+            for (const artifactPath of [...ownerLegacyPaths, ...ownerLegacyTempPaths]) {
+                expect(existsSync(artifactPath)).toBe(false);
+            }
+            await releaseDaemonLock(lockHandle!);
         });
     });
 });

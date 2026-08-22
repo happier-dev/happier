@@ -270,7 +270,7 @@ describe('createHostRuntimeActivityProjection', () => {
     const subscribe = vi.fn(() => () => undefined);
     expect(resolveAgentRuntimeActivitySubscriber({
       applicability,
-      subscribeCanonicalAgentSessionEvents: subscribe,
+      subscribeAgentSessionRuntimeEvents: subscribe,
     })).toBeNull();
     expect(subscribe).not.toHaveBeenCalled();
   });
@@ -285,7 +285,7 @@ describe('createHostRuntimeActivityProjection', () => {
     const subscribe = vi.fn(() => () => undefined);
     expect(resolveAgentRuntimeActivitySubscriber({
       applicability: 'supported',
-      subscribeCanonicalAgentSessionEvents: subscribe,
+      subscribeAgentSessionRuntimeEvents: subscribe,
     })).toBe(subscribe);
   });
 });

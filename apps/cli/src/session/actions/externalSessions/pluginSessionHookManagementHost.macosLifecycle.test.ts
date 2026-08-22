@@ -14,7 +14,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type {
     AgentExternalSessionHooksContribution,
     AgentExternalSessionsContribution,
-} from '@happier-dev/plugin-sdk/experimental/sessions';
+} from '@happier-dev/plugin-sdk/sessions/external';
 
 import type { DetectCliSnapshot } from '@/capabilities/snapshots/cliSnapshot';
 import {
@@ -209,6 +209,12 @@ function createIngressRecorder() {
             return {
                 principalRef: input.principalRef,
                 token: input.token,
+            };
+        },
+        readPrincipal(principalRef) {
+            const state = principals.get(principalRef)?.state;
+            return {
+                state: state === 'active' ? 'enabled' : state ?? 'revoked',
             };
         },
         enable(principalRef) {

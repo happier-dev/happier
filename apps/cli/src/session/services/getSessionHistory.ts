@@ -1,4 +1,4 @@
-import type { Credentials } from '@/persistence';
+import type { StoredCredentials } from '@/persistence';
 
 import { getSessionEvents } from './getSessionEvents';
 import { fetchTranscriptSemanticPage } from './transcript/fetchTranscriptSemanticPage';
@@ -13,12 +13,12 @@ export type { RawHistoryRow } from './transcript/transcriptHistoryRows';
 export type GetSessionHistoryResult =
   | Readonly<{ ok: true; sessionId: string; format: 'compact'; messages: readonly CompactHistoryRow[] }>
   | Readonly<{ ok: true; sessionId: string; format: 'raw'; messages: readonly RawHistoryRow[] }>
-  | Readonly<{ ok: false; code: 'session_not_found' | 'session_id_ambiguous' | 'unsupported'; candidates?: string[] }>;
+  | Readonly<{ ok: false; code: 'session_not_found' | 'session_id_ambiguous' | 'session_lookup_timeout' | 'unsupported'; candidates?: string[] }>;
 
 export async function readRawSessionHistoryRows(params: Readonly<{
   token: string;
   sessionId: string;
-  ctx: Readonly<{ encryptionKey: Uint8Array; encryptionVariant: 'legacy' | 'dataKey' }>;
+  ctx: Readonly<{ encryptionKey: Uint8Array; encryptionVariant: 'legacy' | 'dataKey' }> | null;
   limit: number;
   includeMeta?: boolean;
   includeStructuredPayload?: boolean;
@@ -49,7 +49,7 @@ export async function readRawSessionHistoryRows(params: Readonly<{
 }
 
 export async function getSessionHistory(params: Readonly<{
-  credentials: Credentials;
+  credentials: StoredCredentials;
   idOrPrefix: string;
   limit: number;
   format: 'compact' | 'raw';
@@ -68,7 +68,13 @@ export async function getSessionHistory(params: Readonly<{
     if (!events.ok) {
       return {
         ok: false,
-        code: events.errorCode === 'session_id_ambiguous' ? 'session_id_ambiguous' : events.errorCode === 'session_not_found' ? 'session_not_found' : 'unsupported',
+        code: events.errorCode === 'session_id_ambiguous'
+          ? 'session_id_ambiguous'
+          : events.errorCode === 'session_not_found'
+            ? 'session_not_found'
+            : events.errorCode === 'session_lookup_timeout'
+              ? 'session_lookup_timeout'
+              : 'unsupported',
         ...(events.candidates ? { candidates: events.candidates } : {}),
       };
     }
@@ -98,7 +104,13 @@ export async function getSessionHistory(params: Readonly<{
   if (!events.ok) {
     return {
       ok: false,
-      code: events.errorCode === 'session_id_ambiguous' ? 'session_id_ambiguous' : events.errorCode === 'session_not_found' ? 'session_not_found' : 'unsupported',
+      code: events.errorCode === 'session_id_ambiguous'
+        ? 'session_id_ambiguous'
+        : events.errorCode === 'session_not_found'
+          ? 'session_not_found'
+          : events.errorCode === 'session_lookup_timeout'
+            ? 'session_lookup_timeout'
+            : 'unsupported',
       ...(events.candidates ? { candidates: events.candidates } : {}),
     };
   }

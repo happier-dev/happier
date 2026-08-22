@@ -1,14 +1,16 @@
 import {
+  PluginContributionIdentityV1Schema,
   buildCodingSessionPromptPlanBaseV1,
   buildPromptPlanDiagnosticsV1,
   buildPromptPlanV1,
+  buildQualifiedPluginContributionKey,
   renderPromptPlanV1,
   resolveCodingPromptBehaviorV1,
   type PromptBlockV1,
   type PromptPlanV1,
 } from '@happier-dev/protocol';
 
-import type { Credentials } from '@/persistence';
+import type { StoredCredentials } from '@/persistence';
 import { resolveCliMemoryRecallGuidanceEnabled } from '@/agent/prompts/library/resolveCliMemoryRecallGuidanceEnabled';
 import {
   resolveCliPromptStackSystemAppendBlocks,
@@ -21,6 +23,7 @@ type FetchPromptArtifactRecord = (artifactId: string) => Promise<PromptArtifactR
 export type { PromptArtifactRecord };
 
 type ToolPromptContribution = Readonly<{
+  pluginId?: string | null;
   id: string;
   name?: string | null;
   title?: string | null;
@@ -28,8 +31,21 @@ type ToolPromptContribution = Readonly<{
   promptGuidelines?: readonly string[] | null;
 }>;
 
+type AgentCompositionToolPromptContribution = ToolPromptContribution & Readonly<{
+  pluginId: string;
+}>;
+
+type AgentCompositionPromptArgs = Readonly<{
+  toolPromptContributions: readonly AgentCompositionToolPromptContribution[];
+  promptAssetBlocks: readonly PromptBlockV1[];
+  additionalInstructions: readonly Readonly<{
+    pluginId: string;
+    text: string;
+  }>[];
+}>;
+
 type ResolveEffectiveCodingPromptArgs = Readonly<{
-  credentials: Credentials;
+  credentials: StoredCredentials;
   settings: Record<string, unknown> | null | undefined;
   profileId: string | null | undefined;
   baseOverride?: string | null;
@@ -67,38 +83,155 @@ function resolveBasePromptSettingsForToolDelivery(params: Readonly<{
   };
 }
 
+function resolveToolPromptContributionText(
+  contribution: ToolPromptContribution,
+): string | null {
+  const snippet = typeof contribution.promptSnippet === 'string'
+    ? contribution.promptSnippet.trim()
+    : '';
+  const guidelines = (contribution.promptGuidelines ?? [])
+    .map((guideline) => guideline.trim())
+    .filter((guideline) => guideline.length > 0);
+  if (!snippet && guidelines.length === 0) {
+    return null;
+  }
+  const label = (typeof contribution.title === 'string' && contribution.title.trim())
+    || (typeof contribution.name === 'string' && contribution.name.trim())
+    || contribution.id;
+  return [
+    `Tool: ${label}`,
+    ...(snippet ? [snippet] : []),
+    ...(guidelines.length === 0 ? [] : [
+      'Guidelines:',
+      ...guidelines.map((guideline) => `- ${guideline}`),
+    ]),
+  ].join('\n');
+}
+
 function resolveToolPromptContributionBlocks(
   contributions: readonly ToolPromptContribution[] | undefined,
 ): readonly PromptBlockV1[] {
   const blocks: PromptBlockV1[] = [];
   for (const contribution of contributions ?? []) {
-    const snippet = typeof contribution.promptSnippet === 'string'
-      ? contribution.promptSnippet.trim()
-      : '';
-    const guidelines = (contribution.promptGuidelines ?? [])
-      .map((guideline) => guideline.trim())
-      .filter((guideline) => guideline.length > 0);
-    if (!snippet && guidelines.length === 0) {
-      continue;
-    }
-    const label = (typeof contribution.title === 'string' && contribution.title.trim())
-      || (typeof contribution.name === 'string' && contribution.name.trim())
-      || contribution.id;
-    const parts = [
-      `Tool: ${label}`,
-      ...(snippet ? [snippet] : []),
-      ...(guidelines.length === 0 ? [] : [
-        'Guidelines:',
-        ...guidelines.map((guideline) => `- ${guideline}`),
-      ]),
-    ];
+    const text = resolveToolPromptContributionText(contribution);
+    if (!text) continue;
     blocks.push({
       id: `plugin_tool_prompt.${blocks.length + 1}`,
       scope: 'user_prompt',
-      text: parts.join('\n'),
+      text,
     });
   }
   return Object.freeze(blocks);
+}
+
+type AgentCompositionContributionKind = 'prompt_asset' | 'tool' | 'instructions';
+
+function frameAgentCompositionPluginContent(params: Readonly<{
+  pluginId: string;
+  kind: AgentCompositionContributionKind;
+  contributionId?: string;
+  text: string;
+}>): string {
+  const lines = params.text
+    .replace(/\r\n?|\u2028|\u2029/gu, '\n')
+    .split('\n')
+    .map((line) => `| ${line}`);
+  return [
+    '<<<HAPPIER_PLUGIN_CONTRIBUTION>>>',
+    `plugin_id: ${JSON.stringify(params.pluginId)}`,
+    `kind: ${JSON.stringify(params.kind)}`,
+    ...(params.contributionId === undefined
+      ? []
+      : [`contribution_id: ${JSON.stringify(params.contributionId)}`]),
+    'content:',
+    ...lines,
+    '<<<END_HAPPIER_PLUGIN_CONTRIBUTION>>>',
+  ].join('\n');
+}
+
+function readAgentCompositionPromptAssetIdentity(
+  block: PromptBlockV1,
+): Readonly<{ pluginId: string; localId: string }> | null {
+  const prefix = 'plugin_prompt_asset.';
+  if (!block.id.startsWith(prefix)) return null;
+  const separatorIndex = block.id.indexOf('/', prefix.length);
+  if (separatorIndex <= prefix.length || separatorIndex === block.id.length - 1) return null;
+  const parsed = PluginContributionIdentityV1Schema.safeParse({
+    pluginId: block.id.slice(prefix.length, separatorIndex),
+    localId: block.id.slice(separatorIndex + 1),
+  });
+  if (!parsed.success) return null;
+  return buildQualifiedPluginContributionKey(parsed.data) === block.id.slice(prefix.length)
+    ? parsed.data
+    : null;
+}
+
+function resolveAgentCompositionPromptAssetBlocks(
+  blocks: readonly PromptBlockV1[],
+): readonly PromptBlockV1[] {
+  return Object.freeze(blocks.flatMap((block, index) => {
+    const identity = readAgentCompositionPromptAssetIdentity(block);
+    if (!identity) return [];
+    return [{
+      id: `agent_composition.prompt_asset.${index + 1}`,
+      scope: block.scope,
+      ...(block.enabled === undefined ? {} : { enabled: block.enabled }),
+      text: frameAgentCompositionPluginContent({
+        pluginId: identity.pluginId,
+        kind: 'prompt_asset',
+        contributionId: identity.localId,
+        text: block.text,
+      }),
+    } satisfies PromptBlockV1];
+  }));
+}
+
+function resolveAgentCompositionToolPromptBlocks(
+  contributions: readonly AgentCompositionToolPromptContribution[],
+): readonly PromptBlockV1[] {
+  const blocks: PromptBlockV1[] = [];
+  for (const contribution of contributions) {
+    const text = resolveToolPromptContributionText(contribution);
+    if (!text) continue;
+    blocks.push({
+      id: `agent_composition.tool.${blocks.length + 1}`,
+      scope: 'user_prompt',
+      text: frameAgentCompositionPluginContent({
+        pluginId: contribution.pluginId,
+        kind: 'tool',
+        contributionId: contribution.id,
+        text,
+      }),
+    });
+  }
+  return Object.freeze(blocks);
+}
+
+/**
+ * Renders only the accepted next-turn augmentation through the canonical
+ * coding prompt-plan owner. The caller appends this bounded text at the
+ * provider dispatch boundary; it never replaces the session base prompt.
+ */
+export function resolveAgentCompositionPromptText(
+  args: AgentCompositionPromptArgs,
+): string {
+  const instructionBlocks = args.additionalInstructions.map((instruction, index) => ({
+    id: `agent_composition.instruction.${index + 1}`,
+    scope: 'turn' as const,
+    text: frameAgentCompositionPluginContent({
+      pluginId: instruction.pluginId,
+      kind: 'instructions',
+      text: instruction.text,
+    }),
+  }));
+  return renderPromptPlanV1(buildPromptPlanV1({
+    modality: 'coding',
+    blocks: [
+      ...resolveAgentCompositionPromptAssetBlocks(args.promptAssetBlocks),
+      ...resolveAgentCompositionToolPromptBlocks(args.toolPromptContributions),
+      ...instructionBlocks,
+    ],
+  }));
 }
 
 export async function resolveEffectiveCodingPromptText(

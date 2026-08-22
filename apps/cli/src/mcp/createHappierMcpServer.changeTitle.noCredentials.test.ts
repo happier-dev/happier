@@ -9,6 +9,11 @@ describe('createHappierMcpServer (change_title without credentials)', () => {
         delete process.env.HAPPIER_ACTIONS_SETTINGS_V1;
     });
 
+    // `vi.resetModules()` plus the in-test dynamic import means this case pays the
+    // full cold transform of the `createHappierMcpServer` module graph. Measured
+    // here: ~19-25s of transform against ~1-4ms of actual `changeTitle` work, so
+    // the default 30s budget flakes whenever the machine is loaded. The budget
+    // covers module loading; it is not a tolerance for a slow product path.
     it('can change the current session title without user credentials', async () => {
         const updateMetadata = vi.fn();
         const captured: { deps?: any } = {};
@@ -29,7 +34,6 @@ describe('createHappierMcpServer (change_title without credentials)', () => {
             {
                 sessionId: 'sess_change_title_no_creds_2',
                 rpcHandlerManager: { invokeLocal: async () => ({}) },
-                sendProviderMessage: () => {},
                 updateMetadata,
             } as any,
             { credentials: null },
@@ -41,5 +45,5 @@ describe('createHappierMcpServer (change_title without credentials)', () => {
             title: 'New title',
         });
         expect(updateMetadata.mock.calls.length).toBeGreaterThanOrEqual(1);
-    });
+    }, 120_000);
 });

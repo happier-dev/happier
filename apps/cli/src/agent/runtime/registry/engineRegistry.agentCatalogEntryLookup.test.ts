@@ -98,7 +98,6 @@ describe('engineRegistry Agent catalog-entry lookup', () => {
             source: { kind: 'path' },
             pluginId: 'acme.plugin',
             manifestPath: '/plugins/acme/plugin.json',
-            manifestDigest: 'sha256:acme',
             daemonEntryPath: '/plugins/acme/daemon.mjs',
             definition: descriptor,
         } satisfies ResolvedInstallableContribution;
@@ -113,8 +112,7 @@ describe('engineRegistry Agent catalog-entry lookup', () => {
             owner: {
                 provenance: 'external_plugin',
                 pluginId: 'acme.plugin',
-                manifestDigest: 'sha256:acme',
-            },
+                },
             descriptor: {
                 key: 'acme-release-tool',
                 capabilityId: 'dep.acme-release-tool',

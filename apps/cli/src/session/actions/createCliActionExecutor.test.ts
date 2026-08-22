@@ -27,10 +27,9 @@ vi.mock('@/configuration', async () => {
 });
 
 const {
-  spawnDaemonSession,
-  resolveDaemonSpawnSessionByNonce,
   fetchSessionById,
   fetchSessionsPage,
+  lookupSessionsByTags,
   updateSessionMetadataWithRetry,
   sendSessionMessage,
   requestSessionStop,
@@ -44,10 +43,9 @@ const {
   executeExecutionRunAction,
   requestDaemonPluginActionExecution,
 } = vi.hoisted(() => ({
-  spawnDaemonSession: vi.fn(),
-  resolveDaemonSpawnSessionByNonce: vi.fn(),
   fetchSessionById: vi.fn(),
   fetchSessionsPage: vi.fn(),
+  lookupSessionsByTags: vi.fn(),
   updateSessionMetadataWithRetry: vi.fn(),
   sendSessionMessage: vi.fn(),
   requestSessionStop: vi.fn(),
@@ -70,19 +68,28 @@ const { validateStoredAuthTokenAgainstActiveServer } = vi.hoisted(() => ({
   validateStoredAuthTokenAgainstActiveServer: vi.fn(),
 }));
 
-vi.mock('@/daemon/controlClient', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/daemon/controlClient')>();
-  return {
-    ...actual,
-    spawnDaemonSession,
-    resolveDaemonSpawnSessionByNonce,
-    requestDaemonPluginActionExecution,
-  };
-});
+const { fetchAccountEncryptionCurrentness } = vi.hoisted(() => ({
+  fetchAccountEncryptionCurrentness: vi.fn(),
+}));
+
+const {
+  callMachineRpc,
+  spawnMachineSession,
+  resolveMachineSpawnSessionByNonce,
+  readMachineOperationProtocolCapabilitiesV1,
+} = vi.hoisted(() => ({
+  callMachineRpc: vi.fn(),
+  spawnMachineSession: vi.fn(),
+  resolveMachineSpawnSessionByNonce: vi.fn(),
+  readMachineOperationProtocolCapabilitiesV1: vi.fn(),
+}));
+
+vi.mock('@/daemon/controlClient', () => ({ requestDaemonPluginActionExecution }));
 
 vi.mock('@/session/transport/http/sessionsHttp', () => ({
   fetchSessionById,
   fetchSessionsPage,
+  lookupSessionsByTags,
 }));
 
 vi.mock('@/session/metadata/updateSessionMetadataWithRetry', () => ({
@@ -122,6 +129,14 @@ vi.mock('@/auth/validateStoredAuthTokenAgainstActiveServer', () => ({
   validateStoredAuthTokenAgainstActiveServer,
 }));
 
+vi.mock('@/api/client/connectedServiceCredentialApi', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/api/client/connectedServiceCredentialApi')>();
+  return {
+    ...actual,
+    fetchAccountEncryptionCurrentness,
+  };
+});
+
 const { callSessionRpc } = vi.hoisted(() => ({
   callSessionRpc: vi.fn(),
 }));
@@ -130,7 +145,17 @@ vi.mock('@/session/transport/rpc/sessionRpc', () => ({
   callSessionRpc,
 }));
 
+vi.mock('@/session/transport/rpc/machineRpc', () => ({
+  callMachineRpc,
+}));
+
+vi.mock('@/api/machine/machineOperationProtocolCapabilities', () => ({
+  readMachineOperationProtocolCapabilitiesV1,
+}));
+
 import { createCliActionExecutor } from './createCliActionExecutor';
+import { registerSessionSpawnNewRpcHandlers } from '@/rpc/handlers/sessionLifecycle';
+import type { RpcHandler, RpcHandlerRegistrar } from '@/api/rpc/types';
 import {
   accountSettingsParse,
   deriveBoxPublicKeyFromSeed,
@@ -138,7 +163,12 @@ import {
   sealEncryptedDataKeyEnvelopeV1,
   SPAWN_SESSION_ERROR_CODES,
   type ActionId,
+  createPlainSessionOwnerMetadataEnvelopeV1,
+  SessionCreationKeyV1Schema,
+  SessionOwnerMetadataV1Schema,
+  type SessionSpawnNewInputV2,
 } from '@happier-dev/protocol';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { createPluginStateStore } from '@/plugins/store/state.testkit';
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
 import { configuration } from '@/configuration';
@@ -235,8 +265,9 @@ async function writePluginActionFixture(rootDir: string): Promise<void> {
               description: 'Starts an Acme review workflow',
               scopes: ['global'],
               surfaces: ['cli'],
-              placement: 'commandPalette',
+              placementBindings: ['commandPalette'],
               dangerLevel: 'safe',
+              execution: { target: 'daemon' },
             },
           ],
         },
@@ -293,8 +324,9 @@ async function writeActivatedPluginActionFixture(rootDir: string): Promise<void>
               description: 'Starts an activated review workflow',
               scopes: ['global'],
               surfaces: ['cli'],
-              placement: 'commandPalette',
+              placementBindings: ['commandPalette'],
               dangerLevel: 'safe',
+              execution: { target: 'daemon' },
             },
           ],
         },
@@ -332,12 +364,9 @@ function createPlainExecutor(extra: Partial<Parameters<typeof createCliActionExe
       },
     },
     sessionId: 'sess-1',
-    mode: 'plain',
-    ctx: {
-      encryptionKey: new Uint8Array([1, 2, 3, 4]),
-      encryptionVariant: 'legacy',
-    },
     ...extra,
+    mode: 'plain',
+    ctx: null,
   });
 }
 
@@ -355,21 +384,109 @@ function createDataKeyExecutor(extra: Partial<Parameters<typeof createCliActionE
       },
     },
     sessionId: 'sess-1',
-    mode: 'plain',
-    ctx: {
-      encryptionKey: machineKey,
-      encryptionVariant: 'dataKey',
-    },
     ...extra,
+    mode: 'plain',
+    ctx: null,
+  });
+}
+
+const SESSION_SPAWN_AGENT_TARGETS = {
+  claude: {
+    kind: 'agent',
+    identity: { pluginId: 'happier.agent.claude', localId: 'claude' },
+  },
+  codex: {
+    kind: 'agent',
+    identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
+  },
+  opencode: {
+    kind: 'agent',
+    identity: { pluginId: 'happier.agent.opencode', localId: 'opencode' },
+  },
+  ohmypi: {
+    kind: 'agent',
+    identity: { pluginId: 'happier.agent.ohmypi', localId: 'ohmypi' },
+  },
+} as const satisfies Record<string, SessionSpawnNewInputV2['agentTarget']>;
+
+type MachineRpcCall = Readonly<{
+  method: string;
+  request: Record<string, unknown>;
+}>;
+
+let latestSessionSpawnRequest: Readonly<Record<string, unknown>> | null = null;
+
+function createSessionSpawnInput(
+  overrides: Partial<SessionSpawnNewInputV2> = {},
+): SessionSpawnNewInputV2 {
+  return {
+    creationKey: SessionCreationKeyV1Schema.parse('create-cli-action-executor-test'),
+    executionTarget: {
+      serverId: configuration.activeServerId,
+      machineId: 'machine-1',
+    },
+    directory: '/repo/current',
+    agentTarget: SESSION_SPAWN_AGENT_TARGETS.claude,
+    ...overrides,
+  };
+}
+
+function createSpawnedSessionRecord(sessionId: string) {
+  const spawnRequest = latestSessionSpawnRequest;
+  if (!spawnRequest) {
+    throw new Error('Expected a Session creation request before reading the spawned Session.');
+  }
+  const directory = typeof spawnRequest.directory === 'string'
+    ? spawnRequest.directory
+    : '/repo/current';
+  return {
+    id: sessionId,
+    createdAt: 1,
+    updatedAt: 2,
+    active: true,
+    activeAt: 2,
+    pendingCount: 0,
+    metadataVersion: 1,
+    encryptionMode: 'plain' as const,
+    metadataLayoutVersion: 1,
+    metadata: JSON.stringify({ v: 1 }),
+    ownerMetadata: createPlainSessionOwnerMetadataEnvelopeV1(
+      SessionOwnerMetadataV1Schema.parse({
+        v: 1,
+        workspace: { path: directory, host: 'leeroy-mbp' },
+        system: {
+          sessionCreationCorrespondenceV1: spawnRequest.sessionCreationCorrespondence,
+        },
+      }),
+    ),
+  };
+}
+
+function mockMachineSpawnSuccess(
+  sessionId: string,
+  disposition: 'created' | 'rejoined' = 'created',
+): void {
+  spawnMachineSession.mockResolvedValue({
+    success: true,
+    sessionId,
+    sessionCreationOutcome: {
+      disposition,
+      organizationPlacement: { folderId: null, tagIds: [] },
+    },
   });
 }
 
 describe('createCliActionExecutor', () => {
   beforeEach(() => {
-    spawnDaemonSession.mockReset();
-    resolveDaemonSpawnSessionByNonce.mockReset();
+    latestSessionSpawnRequest = null;
+    callMachineRpc.mockReset();
+    spawnMachineSession.mockReset();
+    resolveMachineSpawnSessionByNonce.mockReset();
+    readMachineOperationProtocolCapabilitiesV1.mockReset();
     fetchSessionById.mockReset();
     fetchSessionsPage.mockReset();
+    lookupSessionsByTags.mockReset();
+    lookupSessionsByTags.mockResolvedValue({ state: 'unavailable' });
     updateSessionMetadataWithRetry.mockReset();
     sendSessionMessage.mockReset();
     requestSessionStop.mockReset();
@@ -426,6 +543,62 @@ describe('createCliActionExecutor', () => {
     bootstrapAccountSettingsContext.mockReset();
     validateStoredAuthTokenAgainstActiveServer.mockReset();
     validateStoredAuthTokenAgainstActiveServer.mockResolvedValue({ state: 'valid', httpStatus: 200 });
+    fetchAccountEncryptionCurrentness.mockReset().mockResolvedValue({
+      mode: 'plain',
+      version: 1,
+      signingKeyFingerprint: null,
+      contentKeyFingerprint: null,
+      updatedAt: 1,
+    });
+    readMachineOperationProtocolCapabilitiesV1.mockResolvedValue({
+      capabilities: { sessionSpawn: { protocolVersions: [1] } },
+      revision: 1,
+    });
+    mockMachineSpawnSuccess('sess-new');
+    resolveMachineSpawnSessionByNonce.mockResolvedValue({ status: 'unsupported' });
+    callMachineRpc.mockImplementation(async (call: MachineRpcCall) => {
+      if (call.method === RPC_METHODS.DAEMON_SESSION_CREATION_PREPARE) {
+        return {
+          ok: true,
+          directory: typeof call.request.directory === 'string'
+            ? call.request.directory
+            : '/repo/current',
+          directoryCreationRequired: false,
+          checkout: null,
+        };
+      }
+      if (
+        call.method === RPC_METHODS.SPAWN_HAPPY_SESSION
+        || call.method === RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE
+      ) {
+        latestSessionSpawnRequest = call.request;
+        return await spawnMachineSession(call.request);
+      }
+      if (call.method === RPC_METHODS.DAEMON_SPAWN_SESSION_RESOLVE_BY_NONCE) {
+        const spawnNonce = typeof call.request.spawnNonce === 'string'
+          ? call.request.spawnNonce
+          : '';
+        return await resolveMachineSpawnSessionByNonce(spawnNonce);
+      }
+      throw new Error(`Unexpected machine RPC in Action executor test: ${call.method}`);
+    });
+    fetchSessionById.mockImplementation(async ({ sessionId }: { sessionId: string }) =>
+      createSpawnedSessionRecord(sessionId),
+    );
+    sendSessionMessage.mockImplementation(async ({
+      idOrPrefix,
+      localId,
+    }: Readonly<{ idOrPrefix?: unknown; localId?: unknown }>) => {
+      const sessionId = typeof idOrPrefix === 'string' ? idOrPrefix : 'sess-new';
+      const resolvedLocalId = typeof localId === 'string' ? localId : 'spawn-initial-input';
+      return {
+        ok: true,
+        sessionId,
+        localId: resolvedLocalId,
+        waited: false,
+        admissionResult: { status: 'accepted' as const, localId: resolvedLocalId },
+      };
+    });
     callSessionRpc.mockReset();
     mockAxiosGet.mockReset();
     mockAxiosPost.mockReset();
@@ -592,7 +765,6 @@ describe('createCliActionExecutor', () => {
           install: {
             mode: 'link',
             manifestVersion: '1.0.0',
-            manifestDigest: null,
             installedPath: null,
           },
           state: {
@@ -663,7 +835,6 @@ describe('createCliActionExecutor', () => {
           install: {
             mode: 'link',
             manifestVersion: '1.0.0',
-            manifestDigest: null,
             installedPath: null,
           },
           state: {
@@ -719,7 +890,6 @@ describe('createCliActionExecutor', () => {
           install: {
             mode: 'link',
             manifestVersion: '1.0.0',
-            manifestDigest: null,
             installedPath: null,
           },
           state: {
@@ -775,7 +945,6 @@ describe('createCliActionExecutor', () => {
           install: {
             mode: 'link',
             manifestVersion: '1.0.0',
-            manifestDigest: null,
             installedPath: null,
           },
           state: {
@@ -1015,6 +1184,7 @@ describe('createCliActionExecutor', () => {
       activeAt: 2,
       pendingCount: 0,
       metadataVersion: 1,
+      encryptionMode: 'plain',
       metadata: {
         sessionModesV1: {
           availableModes: [
@@ -1085,7 +1255,7 @@ describe('createCliActionExecutor', () => {
     });
   });
 
-  it('responds to permission requests via session RPC', async () => {
+  it('does not permit MCP to respond to permission requests', async () => {
     const executor = createPlainExecutor();
     fetchSessionsPage.mockResolvedValue({
       sessions: [{ id: 'sess-1', metadata: {} }],
@@ -1100,6 +1270,7 @@ describe('createCliActionExecutor', () => {
       activeAt: 2,
       pendingCount: 0,
       metadataVersion: 1,
+      encryptionMode: 'plain',
       metadata: {},
     });
     callSessionRpc.mockResolvedValue({ ok: true });
@@ -1110,13 +1281,17 @@ describe('createCliActionExecutor', () => {
       { surface: 'mcp', defaultSessionId: 'sess-1' },
     );
 
-    expect(result).toEqual({ ok: true, result: { ok: true } });
-    expect(callSessionRpc).toHaveBeenCalledWith(expect.objectContaining({
-      token: 'token',
-      sessionId: 'sess-1',
-      method: 'sess-1:session.permission.respond',
-      request: { id: 'perm-1', approved: true },
-    }));
+    expect(result).toEqual({
+      ok: false,
+      errorCode: 'action_disabled',
+      error: 'action_disabled',
+      details: expect.objectContaining({
+        actionId: 'session.permission.respond',
+        surface: 'mcp',
+        reason: 'unsupported_surface',
+      }),
+    });
+    expect(callSessionRpc).not.toHaveBeenCalled();
   });
 
   it('preserves legacy permission response semantics for canonical RPC permission denies and metadata', async () => {
@@ -1134,6 +1309,7 @@ describe('createCliActionExecutor', () => {
       activeAt: 2,
       pendingCount: 0,
       metadataVersion: 1,
+      encryptionMode: 'plain',
       metadata: {},
     });
     callSessionRpc.mockResolvedValue({ ok: true });
@@ -1180,6 +1356,7 @@ describe('createCliActionExecutor', () => {
       activeAt: 2,
       pendingCount: 0,
       metadataVersion: 1,
+      encryptionMode: 'plain',
       metadata: {},
     });
     callSessionRpc.mockResolvedValue({ ok: true });
@@ -1231,6 +1408,7 @@ describe('createCliActionExecutor', () => {
       activeAt: 2,
       pendingCount: 0,
       metadataVersion: 1,
+      encryptionMode: 'plain',
       metadata: {},
     });
     callSessionRpc.mockResolvedValue({ ok: true });
@@ -1337,188 +1515,217 @@ describe('createCliActionExecutor', () => {
     }));
   });
 
-  it('spawns a new session from the current session context on the CLI surface', async () => {
-    const executor = createPlainExecutor({
-      rawSession: {
-        metadata: {
-          machineId: 'machine-1',
-          path: '/repo/current',
-          host: 'leeroy-mbp',
-        },
-      },
-    });
-    spawnDaemonSession.mockResolvedValue({ success: true, sessionId: 'sess-new' });
-    fetchSessionById.mockResolvedValue({
-      id: 'sess-new',
-      createdAt: 1,
-      updatedAt: 2,
-      active: true,
-      activeAt: 2,
-      pendingCount: 0,
-      metadataVersion: 1,
-      metadata: {
-        path: '/repo/current',
-        host: 'leeroy-mbp',
-        tag: 'voice-qa',
-        summary: { text: 'Spawned session' },
-      },
-    });
-    updateSessionMetadataWithRetry.mockResolvedValue({
-      version: 2,
-      metadata: {
-        machineId: 'machine-1',
-        path: '/repo/current',
-        host: 'leeroy-mbp',
-        tag: 'voice-qa',
-      },
-    });
-    sendSessionMessage.mockResolvedValue({
-      ok: true,
-      sessionId: 'sess-new',
-      localId: 'local-1',
-      waited: false,
-    });
+  it('spawns a strict V2 Session request through the exact machine RPC owner', async () => {
+    const executor = createPlainExecutor();
+    mockMachineSpawnSuccess('sess-new');
 
     const result = await executor.execute(
       'session.spawn_new',
-      {
-        tag: 'voice-qa',
-        agentId: 'claude',
-        modelId: 'gpt-5',
-        initialMessage: 'Hello from CLI action',
-      },
-      { surface: 'cli', defaultSessionId: 'sess-1' },
-    );
-
-    expect(result.ok).toBe(true);
-    expect(spawnDaemonSession).toHaveBeenCalledWith(expect.objectContaining({
-      directory: '/repo/current',
-      machineId: 'machine-1',
-      backendTarget: { kind: 'backend', sourceKind: 'built_in', backendId: 'claude' },
-      modelSelection: {
-        v: 1,
-        updatedAt: expect.any(Number),
-        ref: { agentTargetKey: 'backend:claude', providerConnectionId: null, modelId: 'gpt-5' },
-      },
-      spawnNonce: expect.any(String),
-      pendingFirstInput: {
-        localId: expect.any(String),
-        text: 'Hello from CLI action',
-      },
-    }));
-    const firstSpawnRequest = spawnDaemonSession.mock.calls[0]?.[0];
-    expect(firstSpawnRequest?.pendingFirstInput?.localId).toBe(`spawn-first-turn:${firstSpawnRequest?.spawnNonce}`);
-    expect(firstSpawnRequest).not.toHaveProperty('initialPrompt');
-    expect(updateSessionMetadataWithRetry).toHaveBeenCalledWith(expect.objectContaining({
-      sessionId: 'sess-new',
-      token: 'token',
-    }));
-    expect(sendSessionMessage).not.toHaveBeenCalled();
-    expect(result).toMatchObject({
-      ok: true,
-      result: {
-        type: 'success',
-        sessionId: 'sess-new',
-        created: true,
-        session: {
-          id: 'sess-new',
-        },
-      },
-    });
-  });
-
-  it('spawns a new session for an explicit canonical opencode backend target key', async () => {
-    const executor = createPlainExecutor({
-      rawSession: {
-        metadata: {
-          machineId: 'machine-1',
-          path: '/repo/current',
-          host: 'leeroy-mbp',
-        },
-      },
-    });
-    spawnDaemonSession.mockResolvedValue({ success: true, sessionId: 'sess-opencode' });
-    fetchSessionById.mockResolvedValue({
-      id: 'sess-opencode',
-      createdAt: 1,
-      updatedAt: 2,
-      active: true,
-      activeAt: 2,
-      pendingCount: 0,
-      metadataVersion: 1,
-      metadata: {
-        path: '/repo/current',
-        host: 'leeroy-mbp',
-        summary: { text: 'Spawned OpenCode session' },
-      },
-    });
-    updateSessionMetadataWithRetry.mockResolvedValue({
-      version: 2,
-      metadata: {
-        machineId: 'machine-1',
-        path: '/repo/current',
-        host: 'leeroy-mbp',
-      },
-    });
-
-    const result = await executor.execute(
-      'session.spawn_new',
-      {
-        backendTargetKey: 'backend:opencode',
-        initialMessage: 'Hello from CLI action',
-      },
-      { surface: 'cli', defaultSessionId: 'sess-1' },
-    );
-
-    expect(result).toMatchObject({
-      ok: true,
-      result: {
-        type: 'success',
-        sessionId: 'sess-opencode',
-        created: true,
-      },
-    });
-    expect(spawnDaemonSession).toHaveBeenCalledWith(expect.objectContaining({
-      directory: '/repo/current',
-      machineId: 'machine-1',
-      backendTarget: { kind: 'backend', sourceKind: 'built_in', backendId: 'opencode' },
-      spawnNonce: expect.any(String),
-      pendingFirstInput: {
-        localId: expect.any(String),
-        text: 'Hello from CLI action',
-      },
-    }));
-    const opencodeSpawnRequest = spawnDaemonSession.mock.calls[0]?.[0];
-    expect(opencodeSpawnRequest?.pendingFirstInput?.localId).toBe(`spawn-first-turn:${opencodeSpawnRequest?.spawnNonce}`);
-    expect(opencodeSpawnRequest).not.toHaveProperty('initialPrompt');
-  });
-
-  it('forwards rich dev spawn fields from session.spawn_new to daemon spawn', async () => {
-    const executor = createPlainExecutor({
-      rawSession: {
-        metadata: {
-          machineId: 'machine-1',
-          path: '/repo/current',
-          host: 'leeroy-mbp',
-        },
-      },
-    });
-    const runtimeDescriptorV1 = {
-      v: 1,
-      agentId: 'codex',
-      agent: {
-        agentExtra: {
-          owner: 'happier',
-          schemaId: 'codex-runtime',
+      createSessionSpawnInput({
+        agentTarget: SESSION_SPAWN_AGENT_TARGETS.claude,
+        modelSelection: {
           v: 1,
+          updatedAt: 1710000000000,
+          ref: { agentTargetKey: 'backend:claude', providerConnectionId: null, modelId: 'gpt-5' },
         },
-        backendMode: 'appServer',
+        initialMessage: 'Hello from CLI action',
+      }),
+      { surface: 'cli', defaultSessionId: 'sess-1' },
+    );
+
+    expect(callMachineRpc).toHaveBeenCalledWith(expect.objectContaining({
+      machineId: 'machine-1',
+      method: RPC_METHODS.SPAWN_HAPPY_SESSION,
+      request: expect.objectContaining({
+        directory: '/repo/current',
+        machineId: 'machine-1',
+        backendTarget: { kind: 'backend', sourceKind: 'built_in', backendId: 'claude' },
+        modelSelection: {
+          v: 1,
+          updatedAt: 1710000000000,
+          ref: { agentTargetKey: 'backend:claude', providerConnectionId: null, modelId: 'gpt-5' },
+        },
+        spawnNonce: expect.any(String),
+      }),
+    }));
+    const firstSpawnCall = callMachineRpc.mock.calls.find(
+      ([call]) => call.method === RPC_METHODS.SPAWN_HAPPY_SESSION,
+    )?.[0] as MachineRpcCall | undefined;
+    expect(firstSpawnCall?.request).not.toHaveProperty('initialPrompt');
+    expect(sendSessionMessage).toHaveBeenCalledWith(expect.objectContaining({
+      idOrPrefix: 'sess-new',
+      message: 'Hello from CLI action',
+      localId: expect.stringMatching(/^plugin-input-v1:/),
+      inputAdmission: expect.any(Object),
+    }));
+    expect(updateSessionMetadataWithRetry).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      ok: true,
+      result: {
+        type: 'success',
+        disposition: 'created',
+        sessionId: 'sess-new',
+        executionTarget: {
+          serverId: configuration.activeServerId,
+          machineId: 'machine-1',
+        },
+        initialInput: {
+          status: 'accepted',
+          localId: expect.stringMatching(/^plugin-input-v1:/),
+        },
       },
-    } as const;
+    });
+  });
+
+  it('preserves V2 provider resume and Windows terminal intent through the canonical private spawn bridge', async () => {
+    const executor = createPlainExecutor();
+    mockMachineSpawnSuccess('sess-v2-resume-windows');
+
+    const result = await executor.execute(
+      'session.spawn_new',
+      {
+        ...createSessionSpawnInput(),
+        configuration: {
+          mode: { value: null, updatedAtMs: 1 },
+          model: { value: null, updatedAtMs: 1 },
+          permissionIntent: { value: null, updatedAtMs: 1 },
+          options: {},
+          providerSessionResume: {
+            kind: 'provider_session.v1',
+            providerSessionId: 'provider-session-1',
+          },
+        },
+        terminal: {
+          mode: 'windows_terminal',
+          windows: {
+            launchMode: 'windows_terminal',
+            console: 'visible',
+            windowName: 'Happier QA',
+          },
+        },
+      },
+      { surface: 'cli', defaultSessionId: 'sess-1' },
+    );
+
+    const spawnCall = callMachineRpc.mock.calls.find(
+      ([call]) => call.method === RPC_METHODS.SPAWN_HAPPY_SESSION,
+    )?.[0] as MachineRpcCall | undefined;
+    expect(spawnCall?.request).toMatchObject({
+      resume: 'provider-session-1',
+      terminal: { mode: 'windows_terminal' },
+      windowsRemoteSessionLaunchMode: 'windows_terminal',
+      windowsRemoteSessionConsole: 'visible',
+      windowsTerminalWindowName: 'Happier QA',
+    });
+    expect(result).toMatchObject({
+      ok: true,
+      result: { type: 'success', sessionId: 'sess-v2-resume-windows' },
+    });
+  });
+
+  it('keeps a public RPC accepted-pending spawn retryable without an action request id', async () => {
+    const executor = createPlainExecutor();
+    const controller = new AbortController();
+    const handlers = new Map<string, RpcHandler>();
+    const rpcHandlerManager: RpcHandlerRegistrar = {
+      registerHandler(method, handler) {
+        handlers.set(method, handler);
+      },
+    };
+    registerSessionSpawnNewRpcHandlers({
+      rpcHandlerManager,
+      actionExecutor: executor,
+    });
+    const handler = handlers.get(RPC_METHODS.SESSION_SPAWN_NEW);
+    expect(handler).toEqual(expect.any(Function));
+    if (!handler) return;
+
+    spawnMachineSession.mockResolvedValue({
+      success: true,
+      status: 'pending',
+      sessionIdStatus: 'pending',
+    });
+    resolveMachineSpawnSessionByNonce
+      .mockImplementationOnce(async () => await new Promise<never>((_resolve, reject) => {
+        controller.signal.addEventListener('abort', () => reject(controller.signal.reason), { once: true });
+      }))
+      .mockResolvedValueOnce({
+        status: 'success',
+        sessionId: 'sess-late-rpc-spawn',
+        sessionCreationOutcome: {
+          disposition: 'created',
+          organizationPlacement: { folderId: null, tagIds: [] },
+        },
+      });
+
+    const pending = handler(
+      createSessionSpawnInput({
+        creationKey: SessionCreationKeyV1Schema.parse('public-rpc-no-action-request-id'),
+      }),
+      { signal: controller.signal },
+    );
+    await vi.waitFor(() => expect(resolveMachineSpawnSessionByNonce).toHaveBeenCalledTimes(1));
+    controller.abort(new Error('public caller retired after accepted submission'));
+
+    await expect(pending).resolves.toEqual({
+      type: 'pending',
+      retryWithSameCreationKey: true,
+      outcome: 'unknown',
+    });
+    const spawnCall = callMachineRpc.mock.calls.find(
+      ([call]) => call.method === RPC_METHODS.SPAWN_HAPPY_SESSION,
+    )?.[0] as MachineRpcCall | undefined;
+    expect(spawnCall?.request.spawnNonce).toMatch(/^session\.spawn_new\.creation:/u);
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    expect(resolveMachineSpawnSessionByNonce).toHaveBeenCalledTimes(1);
+    expect(requestSessionStop).not.toHaveBeenCalled();
+  });
+
+  it('spawns a new session for an explicit qualified OpenCode Agent target', async () => {
+    const executor = createPlainExecutor();
+    mockMachineSpawnSuccess('sess-opencode');
+
+    const result = await executor.execute(
+      'session.spawn_new',
+      createSessionSpawnInput({
+        agentTarget: SESSION_SPAWN_AGENT_TARGETS.opencode,
+        initialMessage: 'Hello from CLI action',
+      }),
+      { surface: 'cli', defaultSessionId: 'sess-1' },
+    );
+
+    expect(result).toMatchObject({
+      ok: true,
+      result: {
+        type: 'success',
+        disposition: 'created',
+        sessionId: 'sess-opencode',
+      },
+    });
+    expect(callMachineRpc).toHaveBeenCalledWith(expect.objectContaining({
+      machineId: 'machine-1',
+      method: RPC_METHODS.SPAWN_HAPPY_SESSION,
+      request: expect.objectContaining({
+        directory: '/repo/current',
+        machineId: 'machine-1',
+        backendTarget: { kind: 'backend', sourceKind: 'built_in', backendId: 'opencode' },
+      }),
+    }));
+    expect(sendSessionMessage).toHaveBeenCalledWith(expect.objectContaining({
+      idOrPrefix: 'sess-opencode',
+      message: 'Hello from CLI action',
+      localId: expect.stringMatching(/^plugin-input-v1:/),
+    }));
+  });
+
+  it('forwards the supported V2 creation fields without reviving removed raw spawn fields', async () => {
+    const executor = createPlainExecutor();
     const mcpSelection = {
+      v: 1,
+      managedServersEnabled: true,
       forceIncludeServerIds: ['server-a'],
       forceExcludeServerIds: ['server-b'],
-    } as const;
+    } satisfies NonNullable<SessionSpawnNewInputV2['mcpSelection']>;
     const connectedServices = {
       v: 1,
       bindingsByServiceId: {
@@ -1529,70 +1736,52 @@ describe('createCliActionExecutor', () => {
         },
       },
     } as const;
-    const sessionConfigOptionOverrides = {
-      v: 1,
-      updatedAt: 1710000000000,
-      overrides: {
-        reasoning_effort: { updatedAt: 1710000000000, value: 'xhigh' },
-      },
-    } as const;
-    const configOptions = { ultracode: true } as const;
-    spawnDaemonSession.mockResolvedValue({ success: true, sessionId: 'sess-rich' });
-    fetchSessionById.mockResolvedValue({
-      id: 'sess-rich',
-      createdAt: 1,
-      updatedAt: 2,
-      active: true,
-      activeAt: 2,
-      pendingCount: 0,
-      metadataVersion: 1,
-      metadata: {
-        path: '/repo/rich',
-        host: 'leeroy-mbp',
-        summary: { text: 'Spawned rich session' },
-      },
-    });
+    mockMachineSpawnSuccess('sess-rich');
 
     const result = await executor.execute(
       'session.spawn_new',
-      {
+      createSessionSpawnInput({
         directory: '/repo/rich',
-        backendTargetKey: 'backend:codex',
-        initialPrompt: 'Hello rich session',
+        agentTarget: SESSION_SPAWN_AGENT_TARGETS.codex,
         permissionMode: 'safe-yolo',
-        permissionModeUpdatedAt: 1710000000001,
         agentModeId: 'plan',
-        agentModeUpdatedAt: 1710000000002,
-        modelId: 'gpt-5',
-        modelUpdatedAt: 1710000000003,
-        sessionConfigOptionOverrides,
-        configOptions,
+        modelSelection: {
+          v: 1,
+          updatedAt: 1710000000003,
+          ref: { agentTargetKey: 'backend:codex', providerConnectionId: null, modelId: 'gpt-5' },
+        },
+        configuration: {
+          mode: { value: 'plan', updatedAtMs: 1710000000002 },
+          model: { value: 'gpt-5', updatedAtMs: 1710000000003 },
+          permissionIntent: { value: 'safe-yolo', updatedAtMs: 1710000000001 },
+          options: {
+            reasoning_effort: { value: 'xhigh', updatedAtMs: 1710000000000 },
+            ultracode: { value: true, updatedAtMs: 1710000000004 },
+          },
+        },
         profileId: 'codex-profile',
-        environmentVariables: { FEATURE_FLAG: 'enabled' },
         connectedServices,
-        connectedServicesUpdatedAt: 1710000000004,
         mcpSelection,
         transcriptStorage: 'persisted',
-        runtimeDescriptorV1,
         terminal: { mode: 'tmux' },
-        windowsTerminalWindowName: 'Happier Test',
-      },
+        title: 'Happier Test',
+        initialMessage: 'Hello rich session',
+      }),
       { surface: 'cli', defaultSessionId: 'sess-1' },
     );
 
-    expect(result.ok).toBe(true);
-    expect(spawnDaemonSession).toHaveBeenCalledWith(expect.objectContaining({
+    expect(result).toMatchObject({
+      ok: true,
+      result: { type: 'success', sessionId: 'sess-rich', disposition: 'created' },
+    });
+    const richSpawnCall = callMachineRpc.mock.calls.find(
+      ([call]) => call.method === RPC_METHODS.SPAWN_HAPPY_SESSION,
+    )?.[0] as MachineRpcCall | undefined;
+    expect(richSpawnCall?.request).toMatchObject({
       directory: '/repo/rich',
-      spawnNonce: expect.any(String),
-      pendingFirstInput: {
-        localId: expect.any(String),
-        text: 'Hello rich session',
-      },
       backendTarget: { kind: 'backend', sourceKind: 'built_in', backendId: 'codex' },
       permissionMode: 'safe-yolo',
-      permissionModeUpdatedAt: 1710000000001,
       agentModeId: 'plan',
-      agentModeUpdatedAt: 1710000000002,
       modelSelection: {
         v: 1,
         updatedAt: 1710000000003,
@@ -1600,29 +1789,26 @@ describe('createCliActionExecutor', () => {
       },
       sessionConfigOptionOverrides: {
         v: 1,
-        updatedAt: expect.any(Number),
+        updatedAt: 1710000000004,
         overrides: {
           reasoning_effort: { updatedAt: 1710000000000, value: 'xhigh' },
-          ultracode: { updatedAt: expect.any(Number), value: true },
+          ultracode: { updatedAt: 1710000000004, value: true },
         },
       },
       profileId: 'codex-profile',
-      environmentVariables: { FEATURE_FLAG: 'enabled' },
       connectedServices,
-      connectedServicesUpdatedAt: 1710000000004,
-      mcpSelection: {
-        v: 1,
-        managedServersEnabled: true,
-        ...mcpSelection,
-      },
+      mcpSelection,
       transcriptStorage: 'persisted',
-      runtimeDescriptorV1,
       terminal: { mode: 'tmux' },
-      windowsTerminalWindowName: 'Happier Test',
+      initialTitle: 'Happier Test',
+    });
+    expect(richSpawnCall?.request).not.toHaveProperty('environmentVariables');
+    expect(richSpawnCall?.request).not.toHaveProperty('runtimeDescriptorV1');
+    expect(richSpawnCall?.request).not.toHaveProperty('windowsTerminalWindowName');
+    expect(sendSessionMessage).toHaveBeenCalledWith(expect.objectContaining({
+      idOrPrefix: 'sess-rich',
+      message: 'Hello rich session',
     }));
-    const richSpawnRequest = spawnDaemonSession.mock.calls[0]?.[0];
-    expect(richSpawnRequest?.pendingFirstInput?.localId).toBe(`spawn-first-turn:${richSpawnRequest?.spawnNonce}`);
-    expect(richSpawnRequest).not.toHaveProperty('initialPrompt');
   });
 
   it('rejects session-agent session.permission_mode.set escalation before transport dispatch', async () => {
@@ -1660,65 +1846,34 @@ describe('createCliActionExecutor', () => {
     expect(callSessionRpc).not.toHaveBeenCalled();
   });
 
-  it('blocks session.spawn_new before daemon spawn when the active server rejects stored auth', async () => {
-    const executor = createPlainExecutor({
-      rawSession: {
-        metadata: {
-          machineId: 'machine-1',
-          path: '/repo/current',
-          host: 'leeroy-mbp',
-        },
-      },
-    });
+  it('blocks strict V2 session.spawn_new before exact-machine dispatch when the active server rejects stored auth', async () => {
+    const executor = createPlainExecutor();
     validateStoredAuthTokenAgainstActiveServer.mockResolvedValueOnce({
       state: 'invalid',
       httpStatus: 401,
       reasonCode: 'not_authenticated',
     });
-    spawnDaemonSession.mockResolvedValue({ success: true, sessionId: 'sess-new' });
-    fetchSessionById.mockResolvedValue({
-      id: 'sess-new',
-      createdAt: 1,
-      updatedAt: 2,
-      active: true,
-      activeAt: 2,
-      pendingCount: 0,
-      metadataVersion: 1,
-      metadata: {
-        path: '/repo/current',
-        host: 'leeroy-mbp',
-        summary: { text: 'Spawned session' },
-      },
-    });
 
     const result = await executor.execute(
       'session.spawn_new',
-      {
-        agentId: 'opencode',
+      createSessionSpawnInput({
+        agentTarget: SESSION_SPAWN_AGENT_TARGETS.opencode,
         initialMessage: 'Hello from CLI action',
-      },
+      }),
       { surface: 'cli', defaultSessionId: 'sess-1' },
     );
 
     expect(result).toMatchObject({
-      ok: false,
-      errorCode: 'not_authenticated',
+      ok: true,
+      result: { type: 'error', code: 'permission_denied', retryable: false },
     });
     expect(validateStoredAuthTokenAgainstActiveServer).toHaveBeenCalledWith('token');
-    expect(spawnDaemonSession).not.toHaveBeenCalled();
+    expect(spawnMachineSession).not.toHaveBeenCalled();
     expect(fetchSessionById).not.toHaveBeenCalled();
   });
 
-  it('spawns a new session from the current session context with account connected-service defaults', async () => {
-    const executor = createPlainExecutor({
-      rawSession: {
-        metadata: {
-          machineId: 'machine-1',
-          path: '/repo/current',
-          host: 'leeroy-mbp',
-        },
-      },
-    });
+  it('preserves account connected-service defaults for a strict V2 Session request', async () => {
+    const executor = createPlainExecutor();
     bootstrapAccountSettingsContext.mockResolvedValueOnce({
       source: 'network',
       settings: accountSettingsParse({
@@ -1743,51 +1898,23 @@ describe('createCliActionExecutor', () => {
       settingsSecretsReadKeys: [],
       whenRefreshed: null,
     });
-    spawnDaemonSession.mockResolvedValue({ success: true, sessionId: 'sess-new' });
-    fetchSessionById.mockResolvedValue({
-      id: 'sess-new',
-      createdAt: 1,
-      updatedAt: 2,
-      active: true,
-      activeAt: 2,
-      pendingCount: 0,
-      metadataVersion: 1,
-      metadata: {
-        path: '/repo/current',
-        host: 'leeroy-mbp',
-        tag: 'voice-qa',
-        summary: { text: 'Spawned session' },
-      },
-    });
-    updateSessionMetadataWithRetry.mockResolvedValue({
-      version: 2,
-      metadata: {
-        machineId: 'machine-1',
-        path: '/repo/current',
-        host: 'leeroy-mbp',
-        tag: 'voice-qa',
-      },
-    });
-    sendSessionMessage.mockResolvedValue({
-      ok: true,
-      sessionId: 'sess-new',
-      localId: 'local-1',
-      waited: false,
-    });
+    mockMachineSpawnSuccess('sess-new');
 
     const result = await executor.execute(
       'session.spawn_new',
-      {
-        tag: 'voice-qa',
-        agentId: 'claude',
-        modelId: 'gpt-5',
+      createSessionSpawnInput({
+        agentTarget: SESSION_SPAWN_AGENT_TARGETS.claude,
+        modelSelection: {
+          v: 1,
+          updatedAt: 1710000000000,
+          ref: { agentTargetKey: 'backend:claude', providerConnectionId: null, modelId: 'gpt-5' },
+        },
         initialMessage: 'Hello from CLI action',
-      },
+      }),
       { surface: 'cli', defaultSessionId: 'sess-1' },
     );
 
-    expect(result.ok).toBe(true);
-    expect(spawnDaemonSession).toHaveBeenCalledWith(expect.objectContaining({
+    expect(spawnMachineSession).toHaveBeenCalledWith(expect.objectContaining({
       directory: '/repo/current',
       machineId: 'machine-1',
       backendTarget: { kind: 'backend', sourceKind: 'built_in', backendId: 'claude' },
@@ -1797,10 +1924,6 @@ describe('createCliActionExecutor', () => {
         ref: { agentTargetKey: 'backend:claude', providerConnectionId: null, modelId: 'gpt-5' },
       },
       spawnNonce: expect.any(String),
-      pendingFirstInput: {
-        localId: expect.any(String),
-        text: 'Hello from CLI action',
-      },
       connectedServices: {
         v: 1,
         bindingsByServiceId: {
@@ -1812,150 +1935,93 @@ describe('createCliActionExecutor', () => {
           anthropic: { source: 'native' },
         },
       },
-      connectedServicesUpdatedAt: expect.any(Number),
     }));
-    const connectedServicesSpawnRequest = spawnDaemonSession.mock.calls[0]?.[0];
-    expect(connectedServicesSpawnRequest?.pendingFirstInput?.localId).toBe(
-      `spawn-first-turn:${connectedServicesSpawnRequest?.spawnNonce}`,
-    );
-    expect(connectedServicesSpawnRequest).not.toHaveProperty('initialPrompt');
-    expect(updateSessionMetadataWithRetry).toHaveBeenCalledWith(expect.objectContaining({
-      sessionId: 'sess-new',
-      token: 'token',
-    }));
-    expect(sendSessionMessage).not.toHaveBeenCalled();
     expect(result).toMatchObject({
       ok: true,
       result: {
         type: 'success',
         sessionId: 'sess-new',
-        created: true,
-        session: {
-          id: 'sess-new',
-        },
+        disposition: 'created',
       },
     });
   });
 
-  it('fails closed for session.spawn_new when nonce recovery is unsupported instead of using row-scan heuristics', async () => {
-    const executor = createPlainExecutor({
-      rawSession: {
-        metadata: {
-          machineId: 'machine-1',
-          path: '/repo/current',
-          host: 'leeroy-mbp',
-        },
-      },
-    });
-    spawnDaemonSession.mockResolvedValue({
+  it('fails closed for a strict V2 session.spawn_new when nonce recovery is unsupported', async () => {
+    const executor = createPlainExecutor();
+    spawnMachineSession.mockResolvedValue({
       error: 'Request failed: /spawn-session, The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()',
     });
-    resolveDaemonSpawnSessionByNonce.mockResolvedValue({ status: 'unsupported' });
+    resolveMachineSpawnSessionByNonce.mockResolvedValue({ status: 'unsupported' });
     const result = await executor.execute(
       'session.spawn_new',
-      {
-        path: '/repo/current',
-        backendTargetKey: 'agent:codex',
-      },
+      createSessionSpawnInput({ agentTarget: SESSION_SPAWN_AGENT_TARGETS.codex }),
       { surface: 'cli', defaultSessionId: 'sess-1' },
     );
 
     expect(result).toMatchObject({
-      ok: false,
+      ok: true,
+      result: { type: 'error', code: 'spawn_failed', retryable: true },
     });
-    expect(resolveDaemonSpawnSessionByNonce).toHaveBeenCalledTimes(1);
-    expect(resolveDaemonSpawnSessionByNonce).toHaveBeenCalledWith(expect.stringMatching(/^[0-9a-f-]{36}$/i));
+    expect(resolveMachineSpawnSessionByNonce).toHaveBeenCalledTimes(1);
+    expect(resolveMachineSpawnSessionByNonce).toHaveBeenCalledWith(expect.any(String));
     expect(fetchSessionsPage).not.toHaveBeenCalled();
   });
 
-  it('resumes an ambiguous action request by stable identity without submitting a second spawn', async () => {
-    const executor = createPlainExecutor({
-      rawSession: { metadata: { machineId: 'machine-1', path: '/repo/current', host: 'leeroy-mbp' } },
-    });
-    spawnDaemonSession.mockResolvedValue({
+  it('resumes an ambiguous V2 action request by stable identity without submitting a second spawn', async () => {
+    const executor = createPlainExecutor();
+    spawnMachineSession.mockResolvedValue({
       error: 'Request failed: /spawn-session, The socket connection was closed unexpectedly',
     });
-    resolveDaemonSpawnSessionByNonce
+    resolveMachineSpawnSessionByNonce
       .mockResolvedValueOnce({ status: 'unsupported' })
-      .mockResolvedValueOnce({ status: 'success', sessionId: 'sess-resumed-attempt' });
-    fetchSessionById.mockResolvedValue({
-      id: 'sess-resumed-attempt',
-      createdAt: 1,
-      updatedAt: 2,
-      active: true,
-      activeAt: 2,
-      pendingCount: 0,
-      metadataVersion: 1,
-      metadata: { path: '/repo/current', host: 'leeroy-mbp' },
-    });
+      .mockResolvedValueOnce({
+        status: 'success',
+        sessionId: 'sess-resumed-attempt',
+        sessionCreationOutcome: {
+          disposition: 'created',
+          organizationPlacement: { folderId: null, tagIds: [] },
+        },
+      });
+    const input = createSessionSpawnInput({ agentTarget: SESSION_SPAWN_AGENT_TARGETS.codex });
     const context = {
       surface: 'cli' as const,
       defaultSessionId: 'sess-1',
       actionRequestId: 'attempt-1',
     };
 
-    await expect(executor.execute('session.spawn_new', {
-      path: '/repo/current',
-      backendTargetKey: 'agent:codex',
-    }, context)).resolves.toMatchObject({ ok: false });
-    await expect(executor.execute('session.spawn_new', {
-      path: '/repo/current',
-      backendTargetKey: 'agent:codex',
-    }, context)).resolves.toMatchObject({
+    await expect(executor.execute('session.spawn_new', input, context)).resolves.toMatchObject({
+      ok: true,
+      result: { type: 'error', code: 'spawn_failed' },
+    });
+    await expect(executor.execute('session.spawn_new', input, {
+      ...context,
+      resumeActionRequest: true,
+    })).resolves.toMatchObject({
       ok: true,
       result: { type: 'success', sessionId: 'sess-resumed-attempt' },
     });
 
-    expect(spawnDaemonSession).toHaveBeenCalledTimes(1);
-    expect(resolveDaemonSpawnSessionByNonce).toHaveBeenCalledTimes(2);
-    expect(resolveDaemonSpawnSessionByNonce).toHaveBeenCalledWith('session.spawn_new:sess-1:attempt-1');
+    expect(spawnMachineSession).toHaveBeenCalledTimes(1);
+    expect(resolveMachineSpawnSessionByNonce).toHaveBeenCalledTimes(2);
   });
 
-  it('recovers session.spawn_new via spawn nonce resolution before fallback row scans', async () => {
-    const executor = createPlainExecutor({
-      rawSession: {
-        metadata: {
-          machineId: 'machine-1',
-          path: '/repo/current',
-          host: 'leeroy-mbp',
-        },
-      },
-    });
-    spawnDaemonSession.mockResolvedValue({
+  it('recovers a strict V2 session.spawn_new via nonce resolution before fallback row scans', async () => {
+    const executor = createPlainExecutor();
+    spawnMachineSession.mockResolvedValue({
       error: 'Request failed: /spawn-session, The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()',
     });
-    resolveDaemonSpawnSessionByNonce.mockResolvedValue({
+    resolveMachineSpawnSessionByNonce.mockResolvedValue({
       status: 'success',
       sessionId: 'sess-recovered-nonce',
-    });
-    fetchSessionById.mockResolvedValue({
-      id: 'sess-recovered-nonce',
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-      active: true,
-      activeAt: Date.now(),
-      pendingCount: 0,
-      metadataVersion: 1,
-      metadata: {
-        path: '/repo/current',
-        host: 'leeroy-mbp',
-      },
-    });
-    updateSessionMetadataWithRetry.mockResolvedValue({
-      version: 1,
-      metadata: {
-        machineId: 'machine-1',
-        path: '/repo/current',
-        host: 'leeroy-mbp',
+      sessionCreationOutcome: {
+        disposition: 'created',
+        organizationPlacement: { folderId: null, tagIds: [] },
       },
     });
 
     const result = await executor.execute(
       'session.spawn_new',
-      {
-        path: '/repo/current',
-        backendTargetKey: 'agent:codex',
-      },
+      createSessionSpawnInput({ agentTarget: SESSION_SPAWN_AGENT_TARGETS.codex }),
       { surface: 'cli', defaultSessionId: 'sess-1' },
     );
 
@@ -1964,60 +2030,32 @@ describe('createCliActionExecutor', () => {
       result: {
         type: 'success',
         sessionId: 'sess-recovered-nonce',
-        created: true,
+        disposition: 'created',
       },
     });
-    expect(resolveDaemonSpawnSessionByNonce).toHaveBeenCalledTimes(1);
+    expect(resolveMachineSpawnSessionByNonce).toHaveBeenCalledTimes(1);
     expect(fetchSessionsPage).not.toHaveBeenCalled();
   });
 
-  it('recovers session.spawn_new when daemon reports a structured webhook timeout as pending', async () => {
-    const executor = createPlainExecutor({
-      rawSession: {
-        metadata: {
-          machineId: 'machine-1',
-          path: '/repo/current',
-          host: 'leeroy-mbp',
-        },
-      },
-    });
-    spawnDaemonSession.mockResolvedValue({
+  it('recovers strict V2 session.spawn_new when the machine reports a structured webhook timeout', async () => {
+    const executor = createPlainExecutor();
+    spawnMachineSession.mockResolvedValue({
       status: 'pending',
       errorCode: SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT,
       error: 'Timed out waiting for session webhook',
     });
-    resolveDaemonSpawnSessionByNonce.mockResolvedValue({
+    resolveMachineSpawnSessionByNonce.mockResolvedValue({
       status: 'success',
       sessionId: 'sess-recovered-timeout',
-    });
-    fetchSessionById.mockResolvedValue({
-      id: 'sess-recovered-timeout',
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-      active: true,
-      activeAt: Date.now(),
-      pendingCount: 0,
-      metadataVersion: 1,
-      metadata: {
-        path: '/repo/current',
-        host: 'leeroy-mbp',
-      },
-    });
-    updateSessionMetadataWithRetry.mockResolvedValue({
-      version: 1,
-      metadata: {
-        machineId: 'machine-1',
-        path: '/repo/current',
-        host: 'leeroy-mbp',
+      sessionCreationOutcome: {
+        disposition: 'created',
+        organizationPlacement: { folderId: null, tagIds: [] },
       },
     });
 
     const result = await executor.execute(
       'session.spawn_new',
-      {
-        path: '/repo/current',
-        backendTargetKey: 'agent:codex',
-      },
+      createSessionSpawnInput({ agentTarget: SESSION_SPAWN_AGENT_TARGETS.codex }),
       { surface: 'cli', defaultSessionId: 'sess-1' },
     );
 
@@ -2026,201 +2064,126 @@ describe('createCliActionExecutor', () => {
       result: {
         type: 'success',
         sessionId: 'sess-recovered-timeout',
-        created: true,
+        disposition: 'created',
       },
     });
-    expect(resolveDaemonSpawnSessionByNonce).toHaveBeenCalledTimes(1);
+    expect(resolveMachineSpawnSessionByNonce).toHaveBeenCalledTimes(1);
     expect(fetchSessionsPage).not.toHaveBeenCalled();
   });
 
-  it('preserves session.spawn_new child-exit failures instead of masking them with nonce recovery', async () => {
-    const executor = createPlainExecutor({
-      rawSession: {
-        metadata: {
-          machineId: 'machine-1',
-          path: '/repo/current',
-          host: 'leeroy-mbp',
-        },
-      },
-    });
-    spawnDaemonSession.mockResolvedValue({
+  it('preserves a strict V2 session.spawn_new child-exit failure instead of attempting nonce recovery', async () => {
+    const executor = createPlainExecutor();
+    spawnMachineSession.mockResolvedValue({
       error: 'Failed to spawn session: Child process exited before session webhook (pid=1234, code=null, signal=SIGKILL)',
       errorCode: SPAWN_SESSION_ERROR_CODES.CHILD_EXITED_BEFORE_WEBHOOK,
     });
-    resolveDaemonSpawnSessionByNonce.mockResolvedValue({
-      status: 'success',
-      sessionId: 'sess-recovered-webhook-exit',
-    });
-    fetchSessionById.mockResolvedValue({
-      id: 'sess-recovered-webhook-exit',
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-      active: true,
-      activeAt: Date.now(),
-      pendingCount: 0,
-      metadataVersion: 1,
-      metadata: {
-        path: '/repo/current',
-        host: 'leeroy-mbp',
-      },
-    });
-    updateSessionMetadataWithRetry.mockResolvedValue({
-      version: 1,
-      metadata: {
-        machineId: 'machine-1',
-        path: '/repo/current',
-        host: 'leeroy-mbp',
-      },
-    });
-
     const result = await executor.execute(
       'session.spawn_new',
-      {
-        path: '/repo/current',
-        backendTargetKey: 'agent:codex',
-      },
+      createSessionSpawnInput({ agentTarget: SESSION_SPAWN_AGENT_TARGETS.codex }),
       { surface: 'cli', defaultSessionId: 'sess-1' },
     );
 
     expect(result).toMatchObject({
-      ok: false,
-      error: expect.stringContaining('Child process exited before session webhook'),
+      ok: true,
+      result: { type: 'error', code: 'spawn_failed', retryable: true },
     });
     expect(JSON.stringify(result)).not.toContain('spawn_recovery_not_found');
     expect(JSON.stringify(result)).not.toContain('Deterministic spawn recovery');
-    expect(resolveDaemonSpawnSessionByNonce).not.toHaveBeenCalled();
+    expect(resolveMachineSpawnSessionByNonce).not.toHaveBeenCalled();
     expect(fetchSessionsPage).not.toHaveBeenCalled();
   });
 
-  it('preserves session.spawn_new spawn validation failures instead of masking them as daemon unavailable', async () => {
-    const executor = createPlainExecutor({
-      rawSession: {
-        metadata: {
-          machineId: 'machine-1',
-          path: '/repo/current',
-          host: 'leeroy-mbp',
-        },
-      },
-    });
-    spawnDaemonSession.mockResolvedValue({
+  it('does not reclassify strict V2 spawn validation failures as target incompatibility', async () => {
+    const executor = createPlainExecutor();
+    spawnMachineSession.mockResolvedValue({
       error: 'OhMyPi has no available models. Set provider API keys before starting a session.',
       errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
     });
 
     const result = await executor.execute(
       'session.spawn_new',
-      {
-        path: '/repo/current',
-        backendTargetKey: 'agent:ohMyPi',
-      },
+      createSessionSpawnInput({ agentTarget: SESSION_SPAWN_AGENT_TARGETS.ohmypi }),
       { surface: 'cli', defaultSessionId: 'sess-1' },
     );
 
     expect(result).toMatchObject({
-      ok: false,
-      errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
-      error: expect.stringContaining('OhMyPi has no available models'),
+      ok: true,
+      result: { type: 'error', code: 'spawn_failed', retryable: true },
     });
-    expect(JSON.stringify(result)).not.toContain(SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE);
+    expect(JSON.stringify(result)).not.toContain('incompatible_target');
     expect(JSON.stringify(result)).not.toContain('spawn_recovery_');
-    expect(resolveDaemonSpawnSessionByNonce).not.toHaveBeenCalled();
+    expect(resolveMachineSpawnSessionByNonce).not.toHaveBeenCalled();
     expect(fetchSessionsPage).not.toHaveBeenCalled();
   });
 
   it.each([
     'Daemon is not running, file is stale',
     'No daemon running, no state file found',
-  ])('preserves direct daemon-down spawn failures for %s', async (spawnError) => {
-    const executor = createPlainExecutor({
-      rawSession: {
-        metadata: {
-          machineId: 'machine-1',
-          path: '/repo/current',
-          host: 'leeroy-mbp',
-        },
-      },
-    });
-    spawnDaemonSession.mockResolvedValue({
+  ])('classifies direct exact-machine unavailability for %s', async (spawnError) => {
+    const executor = createPlainExecutor();
+    spawnMachineSession.mockResolvedValue({
       error: spawnError,
       errorCode: 'DAEMON_RPC_UNAVAILABLE',
     });
 
     const result = await executor.execute(
       'session.spawn_new',
-      {
-        path: '/repo/current',
-        backendTargetKey: 'agent:codex',
-      },
+      createSessionSpawnInput({ agentTarget: SESSION_SPAWN_AGENT_TARGETS.codex }),
       { surface: 'cli', defaultSessionId: 'sess-1' },
     );
 
-    expect(result.ok).toBe(false);
-    expect(JSON.stringify(result)).toContain(spawnError);
+    expect(result).toMatchObject({
+      ok: true,
+      result: { type: 'error', code: 'incompatible_target', retryable: false },
+    });
     expect(JSON.stringify(result)).not.toContain('spawn_recovery_');
-    expect(resolveDaemonSpawnSessionByNonce).not.toHaveBeenCalled();
+    expect(resolveMachineSpawnSessionByNonce).not.toHaveBeenCalled();
     expect(fetchSessionsPage).not.toHaveBeenCalled();
   });
 
-  it('preserves a thrown daemon-unavailable spawn code in the MCP action result envelope', async () => {
-    const executor = createPlainExecutor({
-      rawSession: {
-        metadata: {
-          machineId: 'machine-1',
-          path: '/repo/current',
-          host: 'leeroy-mbp',
-        },
-      },
-    });
-    spawnDaemonSession.mockRejectedValue(Object.assign(
+  it('projects a thrown exact-machine unavailable error through the V2 action result envelope', async () => {
+    const executor = createPlainExecutor();
+    spawnMachineSession.mockRejectedValue(Object.assign(
       new Error('Provider-bound session creation is unavailable'),
       { code: SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE },
     ));
 
     const result = await executor.execute(
       'session.spawn_new',
-      {
-        path: '/repo/current',
-        backendTargetKey: 'agent:codex',
-      },
+      createSessionSpawnInput({ agentTarget: SESSION_SPAWN_AGENT_TARGETS.codex }),
       { surface: 'mcp', defaultSessionId: 'sess-1' },
     );
 
-    expect(result).toEqual({
-      ok: false,
-      errorCode: SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE,
-      error: 'Provider-bound session creation is unavailable',
+    expect(result).toMatchObject({
+      ok: true,
+      result: {
+        type: 'error',
+        code: 'incompatible_target',
+        retryable: false,
+      },
     });
-    expect(JSON.stringify(result)).not.toContain('action_failed');
-    expect(resolveDaemonSpawnSessionByNonce).not.toHaveBeenCalled();
+    expect(resolveMachineSpawnSessionByNonce).not.toHaveBeenCalled();
     expect(fetchSessionsPage).not.toHaveBeenCalled();
   });
 
-  it('returns host_not_found when session.spawn_new targets a different host on the CLI surface', async () => {
-    const executor = createPlainExecutor({
-      rawSession: {
-        metadata: {
-          machineId: 'machine-1',
-          path: '/repo/current',
-          host: 'leeroy-mbp',
-        },
-      },
-    });
+  it('rejects a legacy host field at the strict V2 session.spawn_new boundary', async () => {
+    const executor = createPlainExecutor();
 
     const result = await executor.execute(
       'session.spawn_new',
       {
+        ...createSessionSpawnInput({ initialMessage: 'Hello' }),
         host: 'other-host',
-        initialMessage: 'Hello',
       },
       { surface: 'cli', defaultSessionId: 'sess-1' },
     );
 
     expect(result).toEqual({
       ok: false,
-      errorCode: 'host_not_found',
-      error: 'host_not_found',
+      errorCode: 'invalid_parameters',
+      error: 'invalid_parameters',
     });
-    expect(spawnDaemonSession).not.toHaveBeenCalled();
+    expect(spawnMachineSession).not.toHaveBeenCalled();
   });
 
   it('executes session.message.send via the existing sendSessionMessage service', async () => {
@@ -2312,6 +2275,7 @@ describe('createCliActionExecutor', () => {
     });
 
     mockAxiosPost.mockResolvedValueOnce({ status: 200, data: { id: 'artifact-1' } });
+    mockAxiosGet.mockResolvedValueOnce({ status: 200, data: { mode: 'e2ee' } });
 
     const executor = createDataKeyExecutor();
     sendSessionMessage.mockResolvedValueOnce({ ok: true, sessionId: 'sess-1', localId: 'local-1', waited: false });
@@ -2339,6 +2303,7 @@ describe('createCliActionExecutor', () => {
     });
 
     mockAxiosPost.mockResolvedValueOnce({ status: 200, data: { id: 'artifact-1' } });
+    mockAxiosGet.mockResolvedValueOnce({ status: 200, data: { mode: 'e2ee' } });
 
     const executor = createDataKeyExecutor();
     sendSessionMessage.mockResolvedValueOnce({ ok: true, sessionId: 'sess-1', localId: 'local-1', waited: false });
@@ -2389,7 +2354,7 @@ describe('createCliActionExecutor', () => {
       },
       sessionId: 'sess-1',
       mode: 'plain',
-      ctx: { encryptionKey: machineKey, encryptionVariant: 'dataKey' },
+      ctx: null,
     });
 
     await executor.execute(

@@ -20,7 +20,7 @@ export async function cmdMcpServersDetect(
   });
 
   if (opts.json) {
-    printJsonEnvelope({
+    await printJsonEnvelope({
       ok: true,
       kind: 'mcp_servers_detect',
       data: {

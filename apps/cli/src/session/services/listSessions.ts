@@ -1,12 +1,13 @@
 import type { VendorResumeEligibilityReasonCode } from '@happier-dev/agents';
 
-import type { Credentials } from '@/persistence';
+import type { StoredCredentials } from '@/persistence';
 import { summarizeSessionRow, type SessionSummary } from '@/cli/output/session/sessionSummary';
 import { buildCliSessionRowModel, type CliSessionRowModel } from '@/cli/output/session/buildCliSessionRowModel';
 import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 import { fetchSessionsPage } from '@/session/transport/http/sessionsHttp';
 import { getSessionTranscript } from './getSessionTranscript';
 import type { SemanticTranscriptItem } from './transcript/semanticTranscriptItem';
+import { fetchAccountEncryptionCurrentness } from '@/api/client/connectedServiceCredentialApi';
 
 const LIST_SESSION_PREVIEW_TEXT_LIMIT = 200;
 
@@ -50,7 +51,7 @@ function toLastMessagePreview(message: SemanticTranscriptItem | undefined): List
 }
 
 async function loadLastMessagePreview(params: Readonly<{
-  credentials: Credentials;
+  credentials: StoredCredentials;
   sessionId: string;
 }>): Promise<ListSessionsLastMessagePreview | undefined> {
   try {
@@ -69,7 +70,7 @@ async function loadLastMessagePreview(params: Readonly<{
 }
 
 export async function listSessions(params: Readonly<{
-  credentials: Credentials;
+  credentials: StoredCredentials;
   activeOnly: boolean;
   archivedOnly: boolean;
   includeSystem: boolean;
@@ -87,43 +88,62 @@ export async function listSessions(params: Readonly<{
     archivedOnly: params.archivedOnly,
   });
 
-  const accountSettingsContext = await bootstrapAccountSettingsContext({
-    credentials: params.credentials,
-    mode: 'fast',
-  });
+  const [accountSettingsContext, accountEncryptionCurrentness] = await Promise.all([
+    bootstrapAccountSettingsContext({
+      credentials: params.credentials,
+      mode: 'fast',
+    }),
+    fetchAccountEncryptionCurrentness({ token: params.credentials.token }),
+  ]);
   const rowModels = page.sessions
     .map((row) =>
       buildCliSessionRowModel({
         credentials: params.credentials,
+        accountEncryptionMode: accountEncryptionCurrentness.mode,
         rawSession: row,
         accountSettings: accountSettingsContext.settings,
       }))
     .filter((row) => params.includeSystem || row.isSystem !== true);
 
+  const activityAtBySessionId = new Map(page.sessions.map((row) => {
+    const meaningfulActivityAt = (row as { meaningfulActivityAt?: unknown }).meaningfulActivityAt;
+    return [
+      row.id,
+      typeof meaningfulActivityAt === 'number' && Number.isFinite(meaningfulActivityAt)
+        ? meaningfulActivityAt
+        : row.updatedAt,
+    ] as const;
+  }));
+
   const filteredRows = params.resumableOnly
-    ? rowModels.filter((row) => row.vendorResume.eligible === true && row.archivedAt === null && row.active !== true)
+    ? rowModels
+        .filter((row) => row.vendorResume.eligible === true && row.archivedAt === null && row.active !== true)
+        .sort((a, b) => {
+          const activityOrder = (activityAtBySessionId.get(b.id) ?? b.updatedAt)
+            - (activityAtBySessionId.get(a.id) ?? a.updatedAt);
+          if (activityOrder !== 0) return activityOrder;
+          return a.id < b.id ? 1 : a.id > b.id ? -1 : 0;
+        })
     : rowModels;
   const resultLimit = normalizeResultLimit(params.limit);
   const limitedRows = resultLimit === null ? filteredRows : filteredRows.slice(0, resultLimit);
 
-  const allowedSessionIds = new Set(limitedRows.map((row) => row.id));
-  const rowById = new Map(limitedRows.map((row) => [row.id, row] as const));
-  let sessions = page.sessions
-    .map((row) => summarizeSessionRow({ credentials: params.credentials, row }))
-    .filter((session) => params.includeSystem || session.isSystem !== true)
-    .filter((session) => allowedSessionIds.has(session.id))
-    .map((session) => {
-      const row = rowById.get(session.id);
-      if (!row) {
-        throw new Error(`Missing CLI row model for session ${session.id}`);
-      }
+  const rawRowById = new Map(page.sessions.map((row) => [row.id, row] as const));
+  let sessions = limitedRows.map((row) => {
+      const rawRow = rawRowById.get(row.id);
+      if (!rawRow) throw new Error(`Missing raw session row for ${row.id}`);
+      const session = summarizeSessionRow({
+        credentials: params.credentials,
+        accountEncryptionMode: accountEncryptionCurrentness.mode,
+        row: rawRow,
+      });
       return {
         ...session,
         agentId: row.agentId,
         vendorResumeEligible: row.vendorResume.eligible,
         ...(row.vendorResume.eligible ? {} : { vendorResumeReasonCode: row.vendorResume.reasonCode }),
       };
-    });
+  });
 
   if (params.includeLastMessagePreview === true) {
     const previews = await Promise.all(sessions.map(async (session) => [

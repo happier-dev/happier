@@ -17,13 +17,17 @@ import {
     resolveExternalLinkedTakeoverWriterSafety,
 } from '@/api/session/external/takeover/resolveExternalLinkedTakeoverWriterSafety';
 import { validateExternalMachineSource } from '@/api/session/external/security/validateExternalMachineSource';
-import { readCredentials } from '@/persistence';
+import { readStoredCredentials } from '@/persistence';
 
 import type { ExternalSessionActionContext } from './externalSessionActionContext';
 import {
     isExternalSessionHostedAdmissionAvailable,
 } from './importActivationFence';
-import { externalSessionsError, internalErrorResponse } from './responseErrors';
+import {
+    externalSessionsError,
+    internalErrorResponse,
+    mapExternalSessionProviderFailureToExternalSessionsError,
+} from './responseErrors';
 
 function mapExternalAgentSnapshotToLegacyActivity(
     snapshot: ExternalAgentObservationSnapshotV1 | null,
@@ -70,23 +74,6 @@ export async function executeExternalSessionStatusGetAction(
 ): Promise<ExternalSessionStatusGetResponse> {
     const parsed = ExternalSessionStatusGetRequestSchema.safeParse(raw);
     if (!parsed.success) return externalSessionsError('invalid_request') satisfies ExternalSessionStatusGetResponse;
-    let validatedSource: Awaited<ReturnType<typeof validateExternalMachineSource>>;
-    try {
-        validatedSource = await validateExternalMachineSource({
-            agentId: parsed.data.agentId,
-            source: parsed.data.source,
-            env: process.env,
-        });
-    } catch (error) {
-        return internalErrorResponse(
-            'external_session_status_get.validate_source',
-            error,
-            'external_session_status_get_failed',
-        ) satisfies ExternalSessionStatusGetResponse;
-    }
-    if (!validatedSource.ok) {
-        return externalSessionsError(validatedSource.errorCode ?? 'invalid_request', validatedSource.error) satisfies ExternalSessionStatusGetResponse;
-    }
     const requiresFreshTakeoverReadiness = parsed.data.takeoverReadiness === 'fresh';
     if (requiresFreshTakeoverReadiness) {
         context.takeoverReadiness.invalidate(parsed.data.sessionId);
@@ -95,19 +82,44 @@ export async function executeExternalSessionStatusGetAction(
     let cachedTakeoverReadiness: boolean | null = null;
     let canTakeOverPersist = true;
     try {
-        const credentials = await readCredentials().catch(() => null);
+        const credentials = await readStoredCredentials().catch(() => null);
         if (credentials) {
             const loaded = await loadLinkedExternalSession({
                 credentials,
                 sessionId: parsed.data.sessionId,
                 machineId: parsed.data.machineId,
+                expectedIdentity: {
+                    agentId: parsed.data.agentId,
+                    machineId: parsed.data.machineId,
+                    remoteSessionId: parsed.data.remoteSessionId,
+                    source: parsed.data.source,
+                },
             });
-            if (
-                loaded.ok
-                && loaded.session.agentId === parsed.data.agentId
-                && loaded.session.remoteSessionId === parsed.data.remoteSessionId
-                && loaded.session.source.kind === validatedSource.source.kind
-            ) {
+            if (loaded.ok) {
+                let validatedSource: Awaited<
+                    ReturnType<typeof validateExternalMachineSource>
+                >;
+                try {
+                    validatedSource = await validateExternalMachineSource({
+                        agentId: loaded.session.agentId,
+                        source: loaded.session.source,
+                        env: process.env,
+                    });
+                } catch (error) {
+                    const providerFailure = mapExternalSessionProviderFailureToExternalSessionsError(error);
+                    if (providerFailure) return providerFailure satisfies ExternalSessionStatusGetResponse;
+                    return internalErrorResponse(
+                        'external_session_status_get.validate_source',
+                        error,
+                        'external_session_status_get_failed',
+                    ) satisfies ExternalSessionStatusGetResponse;
+                }
+                if (!validatedSource.ok) {
+                    return externalSessionsError(
+                        validatedSource.errorCode ?? 'invalid_request',
+                        validatedSource.error,
+                    ) satisfies ExternalSessionStatusGetResponse;
+                }
                 linked = loaded.session;
             }
         }

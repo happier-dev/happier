@@ -23,7 +23,7 @@ describe('waitForSessionIdle', () => {
                 ok: true,
                 sessionId: 'sess-1',
                 mode: 'plain',
-                ctx: { encryptionKey: new Uint8Array(32).fill(1), encryptionVariant: 'dataKey' },
+                ctx: null,
                 rawSession: {
                     id: 'sess-1',
                     active: true,
@@ -105,7 +105,7 @@ describe('waitForSessionIdle', () => {
                 ok: true,
                 sessionId: 'sess-1',
                 mode: 'plain',
-                ctx: { encryptionKey: new Uint8Array(32).fill(1), encryptionVariant: 'dataKey' },
+                ctx: null,
                 rawSession: {
                     id: 'sess-1',
                     active: true,
@@ -163,7 +163,7 @@ describe('waitForSessionIdle', () => {
                 ok: true,
                 sessionId: 'sess-1',
                 mode: 'plain',
-                ctx: { encryptionKey: new Uint8Array(32).fill(1), encryptionVariant: 'dataKey' },
+                ctx: null,
                 rawSession: {
                     id: 'sess-1',
                     active: true,
@@ -218,7 +218,7 @@ describe('waitForSessionIdle', () => {
                 ok: true,
                 sessionId: 'sess-1',
                 mode: 'plain',
-                ctx: { encryptionKey: new Uint8Array(32).fill(1), encryptionVariant: 'dataKey' },
+                ctx: null,
                 rawSession: {
                     id: 'sess-1',
                     active: true,
@@ -258,6 +258,51 @@ describe('waitForSessionIdle', () => {
             initialTurnActivityRequiresTranscriptIdleEvidence: false,
             initialAgentStateSummary: { pendingRequestsCount: 0 },
             preferProjectionUpdates: true,
+        }));
+    });
+
+    it('forwards the snapshot AgentState alongside a projected pending-request count', async () => {
+        const fetchEncryptedTranscriptPageLatest = vi.fn(async () => []);
+        const fetchEncryptedTranscriptPageAfterSeq = vi.fn(async () => []);
+        const waitForIdleViaSocket = vi.fn(async () => ({ idle: true as const, observedAt: 123 }));
+        const controlledAgentState = '{"controlledByUser":true,"requests":{}}';
+
+        vi.doMock('@/api/session/fetchEncryptedTranscriptWindow', () => ({
+            fetchEncryptedTranscriptPageLatest,
+            fetchEncryptedTranscriptPageAfterSeq,
+        }));
+        vi.doMock('@/session/transport/socket/sessionSocketAgentState', () => ({
+            waitForIdleViaSocket,
+        }));
+        vi.doMock('./resolveSessionTransportContext', () => ({
+            resolveSessionTransportContext: vi.fn(async () => ({
+                ok: true,
+                sessionId: 'sess-1',
+                mode: 'plain',
+                ctx: null,
+                rawSession: {
+                    id: 'sess-1',
+                    active: true,
+                    agentState: controlledAgentState,
+                    latestTurnStatus: 'completed',
+                    pendingPermissionRequestCount: 0,
+                    pendingUserActionRequestCount: 0,
+                },
+            })),
+        }));
+
+        const { waitForSessionIdle } = await import('./waitForSessionIdle');
+        const machineKey = new Uint8Array(32).fill(1);
+
+        await waitForSessionIdle({
+            credentials: { token: 'token', encryption: { type: 'dataKey', publicKey: machineKey, machineKey } },
+            idOrPrefix: 'sess-1',
+            timeoutMs: 1_000,
+        });
+
+        expect(waitForIdleViaSocket).toHaveBeenCalledWith(expect.objectContaining({
+            initialAgentStateSummary: { pendingRequestsCount: 0 },
+            initialAgentStateCiphertextBase64: controlledAgentState,
         }));
     });
 });

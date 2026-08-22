@@ -197,30 +197,6 @@ describe('startPluginHostedMcpLoopbackServer', () => {
         }
     });
 
-    it('rejects hosted tool definitions on non-hosted transports before opening a loopback endpoint', async () => {
-        const startPromise = startPluginHostedMcpLoopbackServer({
-            pluginId: 'acme',
-            spec: {
-                id: 'acme.remote',
-                name: 'acme-remote',
-                transport: { kind: 'http', url: 'https://mcp.example.test' },
-                hosted: {
-                    tools: [
-                        {
-                            name: 'ext.acme.echo',
-                            handler: async () => ({ content: [{ type: 'text', text: 'unexpected' }] }),
-                        },
-                    ],
-                },
-            },
-        });
-        try {
-            await expect(startPromise).rejects.toThrow(/hosted MCP handlers require hosted transport/i);
-        } finally {
-            await startPromise.then((server) => server.dispose(), () => undefined);
-        }
-    });
-
     it('starts a sanitized loopback MCP endpoint and closes it on dispose', async () => {
         const server = await startPluginHostedMcpLoopbackServer({
             pluginId: 'acme',

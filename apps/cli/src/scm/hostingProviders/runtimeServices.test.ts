@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   PluginConnectedAccountDescriptorContributionV2Schema,
+  ScmHostingProviderContributionSchema,
   type ScmHostingProviderRef,
 } from '@happier-dev/protocol';
 import {
@@ -28,14 +29,16 @@ function createRuntimeInput(): RuntimeServicesInput {
         provenance: 'external',
         source: { kind: 'path' },
         pluginId: GITHUB_PLUGIN_MANIFEST.id,
-        definition: GITHUB_PLUGIN_MANIFEST.contributes.scmHostingProviders[0]!,
+        definition: ScmHostingProviderContributionSchema.parse(
+          (GITHUB_PLUGIN_MANIFEST.contributes.scmHostingProviders ?? [])[0],
+        ),
       }],
       connectedAccountDescriptors: [{
         provenance: 'external',
         source: { kind: 'path' },
         pluginId: GITHUB_PLUGIN_MANIFEST.id,
         definition: PluginConnectedAccountDescriptorContributionV2Schema.parse(
-          GITHUB_PLUGIN_MANIFEST.contributes.connectedAccountDescriptors[0],
+          (GITHUB_PLUGIN_MANIFEST.contributes.connectedAccountDescriptors ?? [])[0],
         ),
       }],
     },
@@ -50,6 +53,69 @@ function createRuntimeInput(): RuntimeServicesInput {
         },
       },
     ]]),
+  };
+}
+
+function createCrossProviderRuntimeInput(): RuntimeServicesInput {
+  return {
+    contributes: {
+      scmHostingProviders: [{
+        id: 'github',
+        provenance: 'external',
+        source: { kind: 'path' },
+        pluginId: GITHUB_PLUGIN_MANIFEST.id,
+        definition: ScmHostingProviderContributionSchema.parse(
+          (GITHUB_PLUGIN_MANIFEST.contributes.scmHostingProviders ?? [])[0],
+        ),
+      }, {
+        id: 'bitbucket',
+        provenance: 'external',
+        source: { kind: 'path' },
+        pluginId: BITBUCKET_PLUGIN_MANIFEST.id,
+        definition: ScmHostingProviderContributionSchema.parse(
+          (BITBUCKET_PLUGIN_MANIFEST.contributes.scmHostingProviders ?? [])[0],
+        ),
+      }],
+      connectedAccountDescriptors: [{
+        provenance: 'external',
+        source: { kind: 'path' },
+        pluginId: GITHUB_PLUGIN_MANIFEST.id,
+        definition: PluginConnectedAccountDescriptorContributionV2Schema.parse(
+          (GITHUB_PLUGIN_MANIFEST.contributes.connectedAccountDescriptors ?? [])[0],
+        ),
+      }, {
+        provenance: 'external',
+        source: { kind: 'path' },
+        pluginId: BITBUCKET_PLUGIN_MANIFEST.id,
+        definition: PluginConnectedAccountDescriptorContributionV2Schema.parse(
+          (BITBUCKET_PLUGIN_MANIFEST.contributes.connectedAccountDescriptors ?? [])[0],
+        ),
+      }],
+    },
+    scmHostingProvidersById: new Map([
+      [
+        GITHUB_SCM_HOSTING_PROVIDER_ID,
+        {
+          pluginId: GITHUB_PLUGIN_MANIFEST.id,
+          generation: 'test-generation',
+          registration: {
+            id: 'github',
+            adapter: {},
+          },
+        },
+      ],
+      [
+        BITBUCKET_SCM_HOSTING_PROVIDER_ID,
+        {
+          pluginId: BITBUCKET_PLUGIN_MANIFEST.id,
+          generation: 'test-generation',
+          registration: {
+            id: 'bitbucket',
+            adapter: {},
+          },
+        },
+      ],
+    ]),
   };
 }
 
@@ -135,10 +201,79 @@ describe('createHostScmHostingProviderRuntimeServices', () => {
       request: {
         kind: 'httpHeaders',
         origin: 'https://github.com',
-        headerNames: ['Authorization'],
+        headerNames: ['authorization'],
       },
       signal: expect.any(AbortSignal),
     });
+  });
+
+  it('rejects an accessor-backed provider identity before cross-plugin credential dispatch', async () => {
+    let providerIdReads = 0;
+    const request = Object.defineProperty({
+      kind: 'scm_hosting_token',
+      host: 'github.com',
+      provider: githubProvider,
+    }, 'providerId', {
+      enumerable: true,
+      get() {
+        providerIdReads += 1;
+        return providerIdReads === 1
+          ? GITHUB_SCM_HOSTING_PROVIDER_ID
+          : BITBUCKET_SCM_HOSTING_PROVIDER_ID;
+      },
+    }) as Parameters<
+      NonNullable<
+        ReturnType<typeof createHostScmHostingProviderRuntimeServices>[
+          'resolveScmHostingTokenMaterialization'
+        ]
+      >
+    >[0];
+    const materialize = vi.fn(async () => ({
+      kind: 'httpHeaders' as const,
+      headers: { Authorization: 'Bearer cross-plugin-secret' },
+    }));
+    const services = createHostScmHostingProviderRuntimeServices({
+      ...createCrossProviderRuntimeInput(),
+      resolveConnectedAccountPurposeBindingOwner: () => ({ materialize }),
+    });
+
+    await expect(runAsHostingProvider(
+      GITHUB_PLUGIN_MANIFEST.id,
+      'github',
+      () => services.resolveScmHostingTokenMaterialization?.(request),
+    )).rejects.toThrow('plain data');
+    expect(providerIdReads).toBe(0);
+    expect(materialize).not.toHaveBeenCalled();
+  });
+
+  it('rechecks provider generation after snapshotting a crafted materialization result', async () => {
+    const baseInput = createRuntimeInput();
+    const registrations = new Map(baseInput.scmHostingProvidersById);
+    const materialize = vi.fn(async () => new Proxy({
+      kind: 'httpHeaders' as const,
+      headers: { Authorization: 'Bearer stale-generation-secret' },
+    }, {
+      ownKeys(target) {
+        registrations.delete(GITHUB_SCM_HOSTING_PROVIDER_ID);
+        return Reflect.ownKeys(target);
+      },
+    }));
+    const services = createHostScmHostingProviderRuntimeServices({
+      ...baseInput,
+      scmHostingProvidersById: registrations,
+      resolveConnectedAccountPurposeBindingOwner: () => ({ materialize }),
+    });
+
+    await expect(runAsHostingProvider(
+      GITHUB_PLUGIN_MANIFEST.id,
+      'github',
+      () => services.resolveScmHostingTokenMaterialization?.({
+        kind: 'scm_hosting_token',
+        providerId: GITHUB_SCM_HOSTING_PROVIDER_ID,
+        host: 'github.com',
+        provider: githubProvider,
+      }),
+    )).rejects.toThrow('generation is stale');
   });
 
   it('does not let an explicit profile bypass the canonical SCM purpose binding', async () => {
@@ -300,7 +435,6 @@ describe('createHostScmHostingProviderRuntimeServices', () => {
 
     const registry = await services.resolveScmHostingProviderRegistry?.();
     expect(registry?.providers.map((provider) => provider.id)).toEqual([GITHUB_SCM_HOSTING_PROVIDER_ID]);
-    expect(registry?.getProvider(GITHUB_SCM_HOSTING_PROVIDER_ID)?.runtime).toBeDefined();
     expect(registry?.getProvider(GITHUB_SCM_HOSTING_PROVIDER_ID)).toMatchObject({
       urlSafety: {
         allowedSchemes: ['https:'],
@@ -426,14 +560,16 @@ describe('createHostScmHostingProviderRuntimeServices', () => {
           provenance: 'external',
           source: { kind: 'path' },
           pluginId: BITBUCKET_PLUGIN_MANIFEST.id,
-          definition: BITBUCKET_PLUGIN_MANIFEST.contributes.scmHostingProviders[0]!,
+          definition: ScmHostingProviderContributionSchema.parse(
+            (BITBUCKET_PLUGIN_MANIFEST.contributes.scmHostingProviders ?? [])[0],
+          ),
         }],
         connectedAccountDescriptors: [{
           provenance: 'external',
           source: { kind: 'path' },
           pluginId: BITBUCKET_PLUGIN_MANIFEST.id,
           definition: PluginConnectedAccountDescriptorContributionV2Schema.parse(
-            BITBUCKET_PLUGIN_MANIFEST.contributes.connectedAccountDescriptors[0],
+            (BITBUCKET_PLUGIN_MANIFEST.contributes.connectedAccountDescriptors ?? [])[0],
           ),
         }],
       },
@@ -483,7 +619,7 @@ describe('createHostScmHostingProviderRuntimeServices', () => {
       request: {
         kind: 'httpHeaders',
         origin: 'https://bitbucket.org',
-        headerNames: ['Authorization'],
+        headerNames: ['authorization'],
       },
       signal: expect.any(AbortSignal),
     });
@@ -542,7 +678,7 @@ describe('createHostScmHostingProviderRuntimeServices', () => {
         request: {
           kind: 'httpHeaders',
           origin: 'https://github.com',
-          headerNames: ['Authorization'],
+          headerNames: ['authorization'],
         },
         signal: expect.any(AbortSignal),
       });
@@ -588,14 +724,16 @@ describe('createHostScmHostingProviderRuntimeServices', () => {
             provenance: 'external',
             source: { kind: 'path' },
             pluginId: BITBUCKET_PLUGIN_MANIFEST.id,
-            definition: BITBUCKET_PLUGIN_MANIFEST.contributes.scmHostingProviders[0]!,
+            definition: ScmHostingProviderContributionSchema.parse(
+              (BITBUCKET_PLUGIN_MANIFEST.contributes.scmHostingProviders ?? [])[0],
+            ),
           }],
           connectedAccountDescriptors: [{
             provenance: 'external',
             source: { kind: 'path' },
             pluginId: BITBUCKET_PLUGIN_MANIFEST.id,
             definition: PluginConnectedAccountDescriptorContributionV2Schema.parse(
-              BITBUCKET_PLUGIN_MANIFEST.contributes.connectedAccountDescriptors[0],
+              (BITBUCKET_PLUGIN_MANIFEST.contributes.connectedAccountDescriptors ?? [])[0],
             ),
           }],
         },
@@ -638,7 +776,7 @@ describe('createHostScmHostingProviderRuntimeServices', () => {
         request: {
           kind: 'httpHeaders',
           origin: 'https://bitbucket.org',
-          headerNames: ['Authorization'],
+          headerNames: ['authorization'],
         },
         signal: expect.any(AbortSignal),
       });

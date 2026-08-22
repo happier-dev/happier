@@ -86,7 +86,14 @@ export async function enqueueDurableRegisteredSessionStateFieldWrite<F extends S
       deliveryClass: 'durable_required',
     };
   }
-  await params.enqueue(createDurableRegisteredSessionStateFieldWriteMutation({ ...params, deliveryClass }));
+  try {
+    await params.enqueue(createDurableRegisteredSessionStateFieldWriteMutation({ ...params, deliveryClass }));
+  } catch (error) {
+    if (error instanceof DurableRegisteredSessionStateFieldDeliveryUnavailableError) {
+      return error.result;
+    }
+    throw error;
+  }
   return { ok: true, version: 0 };
 }
 

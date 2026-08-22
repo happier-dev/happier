@@ -12,8 +12,6 @@ import type {
   HostSessionQuestionsResult as PluginSessionQuestionsResult,
 } from '@/agent/runtime/state/currentSessionUiTypes';
 import type { ApiSessionClient } from '@/api/session/sessionClient';
-import { ProviderEnforcedPermissionHandler } from '@/agent/permissions/providerEnforced/handler';
-import { createNativeAgentCurrentSessionUiServices } from '@/agent/runtime/registry/engineRegistry/nativeAgentSessionInteractions';
 
 import { createPublicAcpPermissionHandler } from './createPublicAcpPermissionHandler';
 
@@ -69,6 +67,10 @@ describe('createPublicAcpPermissionHandler', () => {
   it.each(['read-only', 'plan'] as const)(
     'preserves the host ACP filesystem effect through the composed native interaction path in %s mode',
     async (permissionMode) => {
+      const [{ ProviderEnforcedPermissionHandler }, { createNativeAgentCurrentSessionUiServices }] = await Promise.all([
+        import('@/agent/permissions/providerEnforced/handler'),
+        import('@/agent/runtime/registry/engineRegistry/nativeAgentSessionInteractions'),
+      ]);
       const hostPermissionHandler = new ProviderEnforcedPermissionHandler(
         new FakePermissionSession() as unknown as ApiSessionClient,
         { logPrefix: '[PublicAcpPermissionTest]' },
@@ -81,7 +83,9 @@ describe('createPublicAcpPermissionHandler', () => {
         runtimeId: 'test',
         sessionId: 'public-acp-permission-test',
         generationId: 'generation-1',
+        interactionDeadlineMs: 1_000,
         isCurrent: () => true,
+        signal: new AbortController().signal,
       });
       const handler = createPublicAcpPermissionHandler({
         interactions: currentSession.interactions,
@@ -102,10 +106,10 @@ describe('createPublicAcpPermissionHandler', () => {
 
   it('maps an approved session-scoped SVC10 result to ACP session approval', async () => {
     const request = vi.fn(async () => ({
+      requestId: 'interaction-1',
       kind: 'approval' as const,
       status: 'approved' as const,
-      effects: { persistApprovals: [{ scope: 'session' as const, toolName: 'Bash' }] as const },
-      rationale: 'approved by host',
+      persistence: 'session' as const,
     }));
     const signal = new AbortController().signal;
     const handler = createPublicAcpPermissionHandler({
@@ -116,19 +120,94 @@ describe('createPublicAcpPermissionHandler', () => {
 
     await expect(handler.handleToolCall('call-1', 'Bash', { command: 'pwd' })).resolves.toEqual({
       decision: 'approved_for_session',
-      rationale: 'approved by host',
     });
     expect(request).toHaveBeenCalledWith(expect.objectContaining({
-      requestId: 'turn-1:call-1',
-      allowedPersistenceScopes: ['session'],
+      kind: 'approval',
+      allowSessionPersistence: true,
     }), { signal: expect.any(AbortSignal) });
   });
 
-  it('fails closed before presentation for invalid JSON and for unsupported approval effects', async () => {
+  it('forwards the active turn causal authority unchanged to the canonical interaction owner', async () => {
     const request = vi.fn(async () => ({
+      requestId: 'interaction-causal',
       kind: 'approval' as const,
       status: 'approved' as const,
-      effects: { permissionModeId: 'dangerously-bypass' },
+      persistence: 'once' as const,
+    }));
+    const causalPermissionAuthority = Object.freeze({
+      kind: 'admittedSessionInputV1' as const,
+      admittedPermissionCeiling: 'read-only' as const,
+    });
+    const handler = createPublicAcpPermissionHandler({
+      interactions: interactions(request),
+      signal: new AbortController().signal,
+      resolveRequestId: (toolCallId) => `turn-1:${toolCallId}`,
+      resolveTurnId: () => 'turn-1',
+      resolveCausalPermissionAuthority: () => causalPermissionAuthority,
+    } as Parameters<typeof createPublicAcpPermissionHandler>[0] & Readonly<{
+      resolveCausalPermissionAuthority(toolCallId: string): typeof causalPermissionAuthority | null;
+    }>);
+
+    await expect(handler.handleToolCall('call-causal', 'Bash', { command: 'pwd' })).resolves.toEqual({
+      decision: 'approved',
+    });
+    expect(request).toHaveBeenCalledWith(expect.objectContaining({ kind: 'approval' }), {
+      signal: expect.any(AbortSignal),
+      permissionContext: { turnId: 'turn-1', causalPermissionAuthority },
+    });
+  });
+
+  it('fails closed before presentation when the current active turn has no causal authority', async () => {
+    const request = vi.fn(async () => ({
+      requestId: 'interaction-missing-causal',
+      kind: 'approval' as const,
+      status: 'approved' as const,
+      persistence: 'once' as const,
+    }));
+    const handler = createPublicAcpPermissionHandler({
+      interactions: interactions(request),
+      signal: new AbortController().signal,
+      resolveRequestId: (toolCallId) => `turn-1:${toolCallId}`,
+      resolveCausalPermissionAuthority: () => null,
+    });
+
+    await expect(handler.handleToolCall('call-missing-causal', 'Bash', { command: 'pwd' })).resolves.toEqual({
+      decision: 'abort',
+      rationale: 'ACP permission request causal authority is unavailable',
+    });
+    expect(request).not.toHaveBeenCalled();
+  });
+
+  it('fails closed before presentation when the active turn lacks its host identity', async () => {
+    const request = vi.fn(async () => ({
+      requestId: 'interaction-missing-turn',
+      kind: 'approval' as const,
+      status: 'approved' as const,
+      persistence: 'once' as const,
+    }));
+    const handler = createPublicAcpPermissionHandler({
+      interactions: interactions(request),
+      signal: new AbortController().signal,
+      resolveRequestId: (toolCallId) => `turn-1:${toolCallId}`,
+      resolveTurnId: () => null,
+      resolveCausalPermissionAuthority: () => ({
+        kind: 'admittedSessionInputV1',
+        admittedPermissionCeiling: 'read-only',
+      }),
+    });
+
+    await expect(handler.handleToolCall('call-missing-turn', 'Bash', { command: 'pwd' })).resolves.toEqual({
+      decision: 'abort',
+      rationale: 'ACP permission request turn custody is unavailable',
+    });
+    expect(request).not.toHaveBeenCalled();
+  });
+
+  it('fails closed before presentation for invalid JSON and maps unavailable presentation to abort', async () => {
+    const request = vi.fn(async () => ({
+      requestId: 'interaction-unavailable',
+      kind: 'approval' as const,
+      status: 'unavailable' as const,
     }));
     const handler = createPublicAcpPermissionHandler({
       interactions: interactions(request),
@@ -142,9 +221,8 @@ describe('createPublicAcpPermissionHandler', () => {
     });
     expect(request).not.toHaveBeenCalled();
 
-    await expect(handler.handleToolCall('call-effects', 'Bash', { command: 'pwd' })).resolves.toEqual({
+    await expect(handler.handleToolCall('call-unavailable', 'Bash', { command: 'pwd' })).resolves.toEqual({
       decision: 'abort',
-      rationale: 'The approval contains effects ACP cannot apply safely',
     });
   });
 

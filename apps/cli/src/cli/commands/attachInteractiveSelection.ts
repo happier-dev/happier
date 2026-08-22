@@ -1,10 +1,17 @@
-import { getAgentLocalControlCapability, type AgentId } from '@happier-dev/agents';
+import {
+  getAgentLocalControlCapability,
+  type AgentId,
+  type AttachSessionMetadataV1,
+} from '@happier-dev/agents';
 import { compareMachineHosts, type AccountSettings } from '@happier-dev/protocol';
 
 import { getSessionHostBridge } from '@/agent/runtime/bridges/session/SessionHostBridge';
 import { configuration } from '@/configuration';
-import type { Credentials } from '@/persistence';
-import { buildCliSessionRowModel } from '@/cli/output/session/buildCliSessionRowModel';
+import type { StoredCredentials } from '@/persistence';
+import {
+  buildCliSessionRowModel,
+  UNKNOWN_CLI_SESSION_AGENT_LABEL,
+} from '@/cli/output/session/buildCliSessionRowModel';
 import {
   explainAttachIneligibility,
   resolveDominantAttachIneligibilityCategory,
@@ -95,13 +102,14 @@ function shouldIncludeRowInSelector(input: Readonly<{
 }
 
 export async function buildAttachSelectionModel(params: Readonly<{
-  credentials: Credentials;
+  credentials: StoredCredentials;
   currentMachineId: string | null;
   currentMachineHost: string | null;
   fetchSessionsPageFn: FetchSessionsPageFn;
   readTerminalAttachmentInfoFn: ReadTerminalAttachmentInfoFn;
   isTmuxAvailableFn: IsTmuxAvailableFn;
   accountSettings?: AccountSettings | null;
+  accountEncryptionMode: 'plain' | 'e2ee';
 }>): Promise<AttachSelectionModel> {
   const sessionHostBridge = getSessionHostBridge();
   const page = await params.fetchSessionsPageFn({
@@ -112,9 +120,16 @@ export async function buildAttachSelectionModel(params: Readonly<{
   const tmuxAvailable = await params.isTmuxAvailableFn();
   const rows: SessionActionSelectorRow[] = [];
   const ineligibilityExplanations: AttachIneligibilityExplanation[] = [];
-  const remoteProviderMetadataBySessionId = new Map<string, { backendId: string; metadata: Record<string, unknown> }>();
+  const remoteProviderMetadataBySessionId = new Map<string, {
+    backendId: string;
+    metadata: AttachSessionMetadataV1;
+  }>();
   for (const rawSession of page.sessions) {
-    const rowModel = buildCliSessionRowModel({ credentials: params.credentials, rawSession });
+    const rowModel = buildCliSessionRowModel({
+      credentials: params.credentials,
+      rawSession,
+      accountEncryptionMode: params.accountEncryptionMode,
+    });
     if (rowModel.isSystem) continue;
 
     const localInfo = await params.readTerminalAttachmentInfoFn({
@@ -124,6 +139,7 @@ export async function buildAttachSelectionModel(params: Readonly<{
     const eligibility = sessionHostBridge.evaluateAttachEligibility({
       credentials: params.credentials,
       rawSession,
+      accountEncryptionMode: params.accountEncryptionMode,
       currentMachineId: params.currentMachineId,
       currentMachineHost: params.currentMachineHost,
       localAttachmentInfo: localInfo,
@@ -156,7 +172,7 @@ export async function buildAttachSelectionModel(params: Readonly<{
     if (isRemoteProviderAttach) {
       const backendId = resolveCliSessionAttachBackendId(resolvedEligibility.metadata);
       remoteProviderMetadataBySessionId.set(rowModel.id, {
-        backendId: backendId ?? rowModel.agentId,
+        backendId: backendId ?? rowModel.agentId ?? UNKNOWN_CLI_SESSION_AGENT_LABEL,
         metadata: resolvedEligibility.metadata,
       });
     }
@@ -172,7 +188,7 @@ export async function buildAttachSelectionModel(params: Readonly<{
 
     rows.push({
       sessionId: rowModel.id,
-      agentId: rowModel.agentId,
+      agentId: rowModel.agentId ?? UNKNOWN_CLI_SESSION_AGENT_LABEL,
       updatedAt: rowModel.updatedAt,
       title: [rowModel.tag, rowModel.title].filter((value) => typeof value === 'string' && value.trim().length > 0).join(' · '),
       path: rowModel.path ?? '',
@@ -209,14 +225,23 @@ export async function buildAttachSelectionModel(params: Readonly<{
         return { reachable: false, reason: 'Remote reachability probe is unavailable for this session.' };
       }
 
-      const providerAttachOps = (await sessionHostBridge.resolveExecutionSurfaces(remoteProvider.backendId)).attach;
-      if (!providerAttachOps?.probeReachability) {
+      const providerAttachSurface = (await sessionHostBridge.resolveExecutionSurfaces(remoteProvider.backendId)).attach;
+      if (!providerAttachSurface?.evaluateAvailability) {
         return { reachable: false, reason: 'Remote reachability probe is unavailable for this provider.' };
       }
 
-      return await providerAttachOps.probeReachability({
+      const availability = await providerAttachSurface.evaluateAvailability({
+        operation: 'attach',
+        sessionId,
         metadata: remoteProvider.metadata,
+        depth: 'live',
       });
+      return availability.available
+        ? { reachable: true }
+        : {
+            reachable: false,
+            reason: availability.safeMessage ?? 'Provider attach target is unreachable.',
+          };
     },
   };
 }

@@ -477,10 +477,66 @@ runPkgrollBuild({
       expect.any(Array),
       expect.objectContaining({
         env: expect.objectContaining({
-          NODE_OPTIONS: '--trace-warnings --max-old-space-size=8192',
+          NODE_OPTIONS: '--trace-warnings --max-old-space-size=12288',
         }),
       }),
     );
+  });
+
+  it('runs executable and declaration bundles in separate pkgroll processes', () => {
+    const dir = createTempDirSync('happier-cli-pkgroll-memory-boundaries-');
+    const packageJsonPath = join(dir, 'package.json');
+    const pkgrollCliPath = join(dir, 'pkgroll-cli.mjs');
+    writeFileSync(packageJsonPath, `${JSON.stringify({
+      main: './dist/index.cjs',
+      module: './dist/index.mjs',
+      types: './dist/index.d.cts',
+      exports: {
+        '.': {
+          import: {
+            types: './dist/index.d.mts',
+            default: './dist/index.mjs',
+          },
+          require: {
+            types: './dist/index.d.cts',
+            default: './dist/index.cjs',
+          },
+        },
+      },
+    }, null, 2)}\n`, 'utf8');
+    writeFileSync(pkgrollCliPath, '#!/usr/bin/env node\nconsole.log("pkgroll");\n', 'utf8');
+
+    const spawn = vi.fn(() => ({ status: 0 }));
+
+    runPkgrollBuild({
+      cwd: dir,
+      outputDir: 'dist.staging.memory-boundaries',
+      pkgrollCliPath,
+      spawn,
+    });
+
+    expect(spawn).toHaveBeenCalledTimes(2);
+    const invocations = spawn.mock.calls.map(([, args]) => args as string[]);
+    expect(invocations).toContainEqual([
+      pkgrollCliPath,
+      '--packagejson=false',
+      '--srcdist',
+      '../src:.',
+      '--input',
+      'index.cjs',
+      '--input',
+      'index.mjs',
+    ]);
+    expect(invocations).toContainEqual([
+      pkgrollCliPath,
+      '--packagejson=false',
+      '--srcdist',
+      '../src:.',
+      '--input',
+      'index.d.cts',
+      '--input',
+      'index.d.mts',
+    ]);
   });
 
   it('copies bundled first-party static assets into dist after pkgroll succeeds', () => {

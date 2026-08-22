@@ -163,9 +163,9 @@ describe('acquireDaemonLock', () => {
     await mkdir(dirname(configuration.daemonLockFile), { recursive: true });
     await writeFile(configuration.daemonLockFile, String(process.pid), 'utf8');
 
-    const { clearDaemonState } = await import('@/persistence');
+    const { clearDaemonStateForTestTeardown } = await import('@/persistence');
 
-    await clearDaemonState({ includeLockFile: false });
+    await clearDaemonStateForTestTeardown({ includeLockFile: false });
 
     expect(existsSync(configuration.daemonStateFile)).toBe(false);
     expect(existsSync(configuration.daemonLockFile)).toBe(true);
@@ -182,8 +182,8 @@ describe('acquireDaemonLock', () => {
     await mkdir(dirname(configuration.daemonLockFile), { recursive: true });
     await writeFile(configuration.daemonLockFile, String(process.pid), 'utf8');
 
-    const { clearDaemonState } = await import('@/persistence');
-    await clearDaemonState();
+    const { clearDaemonStateForTestTeardown } = await import('@/persistence');
+    await clearDaemonStateForTestTeardown();
 
     expect(existsSync(configuration.daemonStateFile)).toBe(false);
     expect(existsSync(configuration.daemonLockFile)).toBe(true);

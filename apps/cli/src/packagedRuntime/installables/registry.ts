@@ -4,7 +4,6 @@ import {
   type InstallableKey,
   type InstallablesRegistry,
 } from '@happier-dev/protocol';
-import { isCuratedFirstPartyInstallableOwner } from '@happier-dev/protocol/installables';
 
 import { getGitHubReleaseBinaryRuntimeInstallableAdapter } from './sourceAdapters/githubReleaseBinary';
 import { getManagedPypiWheelAssetRuntimeInstallableAdapter } from './sourceAdapters/pypiWheelAsset';
@@ -82,10 +81,10 @@ export async function getRuntimeInstallableAdapter(
   }
 
   if (descriptor.source.kind === 'managed_pypi_wheel_asset') {
-    if (!isCuratedFirstPartyInstallableOwner(contribution.owner)) {
-      throw new Error(`Installable source kind "managed_pypi_wheel_asset" for "${key}" is restricted to curated first-party contributions`);
-    }
-    const adapter = await getManagedPypiWheelAssetRuntimeInstallableAdapter(descriptor);
+    const adapter = await getManagedPypiWheelAssetRuntimeInstallableAdapter(
+      descriptor,
+      contribution.owner.ownerId,
+    );
     if (adapter) {
       return adapter;
     }

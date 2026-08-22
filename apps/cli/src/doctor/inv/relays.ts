@@ -35,10 +35,8 @@ function shouldIncludeRelay(entry: Readonly<{
 }
 
 export async function readDoctorRelays(): Promise<HappierRelays> {
-  const relays: HappierRelay[] = [];
-
-  for (const ring of RELAY_RINGS) {
-    for (const scope of RELAY_SCOPES) {
+  const entries = await Promise.all(
+    RELAY_RINGS.flatMap((ring) => RELAY_SCOPES.map(async (scope): Promise<HappierRelay | null> => {
       const status = await relayHostEngine.readStatus({
         target: { kind: 'local' },
         channel: ring,
@@ -56,11 +54,9 @@ export async function readDoctorRelays(): Promise<HappierRelays> {
         serviceEnabled: status.service.enabled,
       };
 
-      if (shouldIncludeRelay(entry)) {
-        relays.push(entry);
-      }
-    }
-  }
+      return shouldIncludeRelay(entry) ? entry : null;
+    })),
+  );
 
-  return { relays };
+  return { relays: entries.filter((entry): entry is HappierRelay => entry !== null) };
 }

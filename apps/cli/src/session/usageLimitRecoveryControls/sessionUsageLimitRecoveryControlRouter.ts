@@ -1,11 +1,9 @@
 import {
-  inferAgentIdFromSessionMetadata,
   resolveAgentIdFromFlavor,
-  type AgentId,
+  resolveAgentIdFromSessionMetadata,
 } from '@happier-dev/agents';
 import { writeSessionStateFieldToMetadata } from '@happier-dev/agents/session/state/metadataWriters';
 import {
-  isSameMachineLocality,
   SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY,
   SessionRuntimeIssueV1Schema,
   SessionUsageLimitRecoveryV1Schema,
@@ -16,11 +14,12 @@ import {
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
 
 import { resolveInactiveSessionUsageLimitRecoveryControls } from './catalogHooks';
-import type { Credentials } from '@/persistence';
-import type {
-  SessionEncryptionContext,
-  SessionStoredContentEncryptionMode,
-} from '@/session/transport/encryption/sessionEncryptionContext';
+import type { StoredCredentials } from '@/persistence';
+import {
+  resolveMachineControlLocalityProof,
+  resolveSessionMachineWorkspacePath,
+} from '@/session/machineControlLocality';
+import type { SessionStoredContentCryptoContext } from '@/session/transport/encryption/sessionEncryptionContext';
 import type { RawSessionRecord } from '@/session/transport/http/sessionsHttp';
 import type {
   ResolveSessionUsageLimitRecoveryControlAdapter,
@@ -32,6 +31,7 @@ import {
   USAGE_LIMIT_CHECK_NOW_RATE_LIMITED_CODE,
 } from './usageLimitCheckNowRateLimiter';
 import {
+  buildUsageLimitRecoveryOperationError,
   buildUsageLimitRecoveryOperationSuccess,
   normalizeUsageLimitRecoveryOperationResult,
 } from './sessionUsageLimitRecoveryOperationResult';
@@ -44,15 +44,13 @@ import { hasSameUsageLimitRecoveryIdentity } from './mergeUsageLimitRecoveryInte
 
 type RouteSessionUsageLimitRecoveryControlParams = Readonly<{
   token: string;
-  credentials?: Credentials;
+  credentials?: StoredCredentials;
   sessionId: string;
   rawSession: RawSessionRecord;
   metadata: Record<string, unknown> | null;
   currentMachineId: string | null;
   currentMachineHost?: string | null;
   currentMachineHomeDir?: string | null;
-  ctx: SessionEncryptionContext;
-  mode: SessionStoredContentEncryptionMode;
   callLiveSessionRpc: () => Promise<unknown>;
   stageUsageLimitRecoveryMutation: StageUsageLimitRecoveryMutation;
   resolveAdapter?: ResolveSessionUsageLimitRecoveryControlAdapter;
@@ -64,11 +62,22 @@ type RouteSessionUsageLimitRecoveryControlParams = Readonly<{
     rawSession: RawSessionRecord;
     metadata: Record<string, unknown>;
   }>) => Promise<boolean>;
+  /**
+   * Reads the current record from the recovery lifecycle owner (the daemon's inactive
+   * usage-limit recovery scheduler store). A readiness probe is a long network round trip,
+   * so the attempt it started under can be cancelled, exhausted or replaced while it runs:
+   * the route rechecks this immediately before every durable mutation and spawn effect so a
+   * terminal decision cannot be undone by a probe that is already stale.
+   */
+  readCurrentUsageLimitRecovery?: (input: Readonly<{ sessionId: string }>) =>
+    | SessionUsageLimitRecoveryV1
+    | null
+    | Promise<SessionUsageLimitRecoveryV1 | null>;
   resumePromptTierSources?: Readonly<{
     accountSettings?: unknown;
     loadGroupPolicy?: (selectedAuth: SessionUsageLimitRecoveryV1['selectedAuth'] | null) => Promise<unknown> | unknown;
   }>;
-}>;
+}> & SessionStoredContentCryptoContext;
 
 type RouteSessionUsageLimitRecoveryWaitResumeEnableParams =
   RouteSessionUsageLimitRecoveryControlParams & Readonly<{
@@ -157,24 +166,6 @@ function resolveSessionMachineHomeDir(
   return readString(metadata.homeDir) ?? resolveRawSessionString(rawSession, 'homeDir');
 }
 
-function isCurrentDaemonReplacementForSessionMachine(params: Readonly<{
-  metadata: Record<string, unknown>;
-  rawSession: RawSessionRecord;
-  currentMachineHost?: string | null;
-  currentMachineHomeDir?: string | null;
-}>): boolean {
-  const sessionHost = resolveSessionMachineHost(params.metadata, params.rawSession);
-  const currentHost = readString(params.currentMachineHost);
-  const currentHomeDir = readString(params.currentMachineHomeDir);
-  return isSameMachineLocality({
-    sessionHost,
-    sessionHomeDir: resolveSessionMachineHomeDir(params.metadata, params.rawSession),
-    currentHost,
-    currentHomeDir,
-    homeDir: currentHomeDir,
-  });
-}
-
 function shouldFallbackFromLiveSessionUsageLimitRpc(result: unknown): boolean {
   if (!result || typeof result !== 'object' || Array.isArray(result)) return false;
   const raw = result as Record<string, unknown>;
@@ -197,7 +188,7 @@ function buildAdapterParams(
   resumePromptMode?: SessionUsageLimitRecoveryResumePromptModeV1,
   issueFingerprint?: string,
 ): SessionUsageLimitRecoveryControlAdapterParams {
-  return {
+  const base = {
     token: params.token,
     ...(params.credentials ? { credentials: params.credentials } : {}),
     sessionId: params.sessionId,
@@ -205,12 +196,17 @@ function buildAdapterParams(
     metadata,
     currentMachineId: params.currentMachineId,
     sessionMachineId,
-    cwd: resolveRawSessionString(params.rawSession, 'path') ?? readString(metadata.path),
+    cwd: resolveSessionMachineWorkspacePath({
+      metadata,
+      currentMachineId: params.currentMachineId,
+      candidatePath: resolveRawSessionString(params.rawSession, 'path') ?? readString(metadata.path),
+    }),
     ...(issueFingerprint ? { issueFingerprint } : {}),
     ...(resumePromptMode ? { resumePromptMode } : {}),
-    ctx: params.ctx,
-    mode: params.mode,
-  };
+  } as const;
+  return params.mode === 'plain'
+    ? { ...base, mode: params.mode, ctx: params.ctx }
+    : { ...base, mode: params.mode, ctx: params.ctx };
 }
 
 function readMetadataResult(value: unknown): Record<string, unknown> | null {
@@ -254,6 +250,33 @@ async function persistAdapterMetadataResult(
     ...(result as Record<string, unknown>),
     metadata: persisted,
   };
+}
+
+/**
+ * Fences an in-flight recovery effect against the current lifecycle record. Returns the
+ * terminal outcome to report when the attempt the effect belongs to is no longer the current
+ * one, or `null` when the effect may proceed.
+ */
+async function resolveSupersededUsageLimitRecoveryEffect(
+  params: RouteSessionUsageLimitRecoveryControlParams,
+  intended: SessionUsageLimitRecoveryV1 | null,
+): Promise<ReturnType<typeof buildUsageLimitRecoveryOperationError> | null> {
+  if (!intended || !params.readCurrentUsageLimitRecovery) return null;
+  const current = await params.readCurrentUsageLimitRecovery({ sessionId: params.sessionId });
+  if (!current) return null;
+  if (!hasSameUsageLimitRecoveryIdentity(current, intended)) {
+    return buildUsageLimitRecoveryOperationError({
+      errorCode: 'session_usage_limit_recovery_control_issue_mismatch',
+      status: 'inactive',
+      sessionId: params.sessionId,
+    });
+  }
+  if (current.status !== 'cancelled' && current.status !== 'exhausted') return null;
+  return buildUsageLimitRecoveryOperationError({
+    errorCode: 'session_usage_limit_recovery_control_inactive',
+    status: current.status,
+    sessionId: params.sessionId,
+  });
 }
 
 function parseRecoveryIntent(metadata: Record<string, unknown>): SessionUsageLimitRecoveryV1 | null {
@@ -384,12 +407,12 @@ async function persistUsageLimitRecoveryMetadata(
   });
 }
 
-function ensureLocalInactiveControlContext(
+async function ensureLocalInactiveControlContext(
   params: RouteSessionUsageLimitRecoveryControlParams,
-): Readonly<
+): Promise<Readonly<
   | { ok: true; metadata: Record<string, unknown>; sessionMachineId: string }
   | { ok: false; result: ReturnType<typeof normalizeUsageLimitRecoveryOperationResult> }
-> {
+>> {
   const metadata = params.metadata;
   if (!metadata) {
     return {
@@ -414,12 +437,14 @@ function ensureLocalInactiveControlContext(
     };
   }
   if (
-    sessionMachineId !== currentMachineId
-    && !isCurrentDaemonReplacementForSessionMachine({
-      metadata,
-      rawSession: params.rawSession,
+    !await resolveMachineControlLocalityProof({
+      sessionMachineId,
+      currentMachineId,
+      sessionHost: resolveSessionMachineHost(metadata, params.rawSession),
+      sessionHomeDir: resolveSessionMachineHomeDir(metadata, params.rawSession),
       currentMachineHost: params.currentMachineHost,
       currentMachineHomeDir: params.currentMachineHomeDir,
+      credentials: { token: params.token },
     })
   ) {
     return {
@@ -443,7 +468,7 @@ export async function routeSessionUsageLimitRecoveryWaitResumeEnable(
     }
   }
 
-  const context = ensureLocalInactiveControlContext(params);
+  const context = await ensureLocalInactiveControlContext(params);
   if (!context.ok) return context.result;
 
   const nextIntent = await buildEnabledRecoveryIntent(params, context.metadata);
@@ -473,7 +498,7 @@ export async function routeSessionUsageLimitRecoveryWaitResumeCancel(
     }
   }
 
-  const context = ensureLocalInactiveControlContext(params);
+  const context = await ensureLocalInactiveControlContext(params);
   if (!context.ok) return context.result;
 
   const existing = parseRecoveryIntent(context.metadata);
@@ -544,7 +569,7 @@ export async function routeSessionUsageLimitRecoveryCheckNow(
     }
   }
 
-  const context = ensureLocalInactiveControlContext(params);
+  const context = await ensureLocalInactiveControlContext(params);
   if (!context.ok) return context.result;
   const existingPromptIntent = parseRecoveryIntent(context.metadata);
   const resumePromptMode = await resolveRoutedUsageLimitRecoveryResumePromptMode({
@@ -577,7 +602,7 @@ export async function routeSessionUsageLimitRecoveryCheckNow(
     : context.metadata;
 
   const adapterAgentId = resolveAgentIdFromFlavor(params.request?.agentId)
-    ?? inferAgentIdFromSessionMetadata(adapterMetadata);
+    ?? resolveAgentIdFromSessionMetadata(adapterMetadata);
   const adapter = await (params.resolveAdapter ?? resolveInactiveSessionUsageLimitRecoveryControls)(
     adapterAgentId,
   );
@@ -593,32 +618,38 @@ export async function routeSessionUsageLimitRecoveryCheckNow(
     return stableRateLimitedError(rateLimit.retryAfterMs, params.sessionId);
   }
 
-  const result = await persistAdapterMetadataResult(
+  const intendedIntent = parseRecoveryIntent(adapterMetadata);
+  const probeResult = await control(buildAdapterParams(
     params,
-    await control(buildAdapterParams(
-      params,
-      adapterMetadata,
-      context.sessionMachineId,
-      resumePromptMode,
-      requestIssueFingerprint ?? undefined,
-    )),
-  );
+    adapterMetadata,
+    context.sessionMachineId,
+    resumePromptMode,
+    requestIssueFingerprint ?? undefined,
+  ));
+  const supersededBeforePersist = await resolveSupersededUsageLimitRecoveryEffect(params, intendedIntent);
+  if (supersededBeforePersist) return supersededBeforePersist;
+
+  const result = await persistAdapterMetadataResult(params, probeResult);
   if (
     result
     && typeof result === 'object'
     && !Array.isArray(result)
     && readOkStatus(result) === 'ready'
     && resumePromptMode !== 'off'
-    && await params.resumeInactiveSessionWhenReady?.({
+    && params.resumeInactiveSessionWhenReady
+  ) {
+    const supersededBeforeResume = await resolveSupersededUsageLimitRecoveryEffect(params, intendedIntent);
+    if (supersededBeforeResume) return supersededBeforeResume;
+    if (await params.resumeInactiveSessionWhenReady({
       sessionId: params.sessionId,
       rawSession: params.rawSession,
       metadata: readMetadataResult(result) ?? context.metadata,
-    }) === true
-  ) {
-    return normalizeUsageLimitRecoveryOperationResult({
-      ...(result as Record<string, unknown>),
-      status: 'resumed',
-    }, { sessionId: params.sessionId });
+    }) === true) {
+      return normalizeUsageLimitRecoveryOperationResult({
+        ...(result as Record<string, unknown>),
+        status: 'resumed',
+      }, { sessionId: params.sessionId });
+    }
   }
   return normalizeUsageLimitRecoveryOperationResult(result, { sessionId: params.sessionId });
 }

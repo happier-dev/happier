@@ -2,7 +2,23 @@ import type {
   AgentCatalogEntry,
   CatalogAgentLookupId,
 } from './types';
+import type { ConnectedServiceId } from '@happier-dev/protocol';
 import { readAgentCatalogSnapshot } from './snapshot';
+
+/**
+ * The one catalog lookup failure contract. A caller must never substitute a
+ * bundled Agent when its requested installed Agent is absent.
+ */
+export class CatalogAgentNotInstalledError extends Error {
+  readonly code = 'agent_not_installed' as const;
+  readonly agentId: string;
+
+  constructor(agentId: string) {
+    super(`Agent '${agentId}' is not installed or unavailable in the current Agent catalog`);
+    this.name = 'CatalogAgentNotInstalledError';
+    this.agentId = agentId;
+  }
+}
 
 export function readCatalogEntriesSnapshot(): Record<string, AgentCatalogEntry> {
   const projectedEntries = readAgentCatalogSnapshot().catalogEntriesById as Record<string, AgentCatalogEntry>;
@@ -44,8 +60,35 @@ export const AGENTS: Record<string, AgentCatalogEntry> = new Proxy(AGENT_PROXY_T
   },
 });
 
+const NO_DECLARED_CONNECTED_SERVICE_IDS: readonly ConnectedServiceId[] = Object.freeze([]);
+
+/**
+ * Reads the current catalog entry without treating a missing external Agent as a
+ * built-in fallback. Callers that hold a registry lease should instead inspect
+ * that lease's entry directly.
+ */
+export function findCatalogEntry(agentId: string): AgentCatalogEntry | null {
+  return AGENTS[agentId] ?? null;
+}
+
+/**
+ * The executable Agent catalog is the sole owner of legacy Connected Service
+ * compatibility declarations. An absent entry has no declared services.
+ */
+export function readDeclaredCatalogConnectedServiceIds(
+  entry: Pick<AgentCatalogEntry, 'connectedServiceIds'> | null | undefined,
+): readonly ConnectedServiceId[] {
+  return entry?.connectedServiceIds ?? NO_DECLARED_CONNECTED_SERVICE_IDS;
+}
+
+export function resolveCatalogAgentConnectedServiceIds(
+  agentId: string,
+): readonly ConnectedServiceId[] {
+  return readDeclaredCatalogConnectedServiceIds(findCatalogEntry(agentId));
+}
+
 export function requireCatalogEntry(agentId: CatalogAgentLookupId): AgentCatalogEntry {
-  const entry = AGENTS[agentId];
-  if (!entry) throw new Error(`Missing catalog agent entry for ${agentId}`);
+  const entry = findCatalogEntry(agentId);
+  if (!entry) throw new CatalogAgentNotInstalledError(agentId);
   return entry;
 }

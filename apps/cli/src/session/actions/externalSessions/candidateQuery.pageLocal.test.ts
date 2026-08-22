@@ -13,8 +13,18 @@ import type { ExternalSessionCandidatesPage } from '@/session/external/providerO
 const indexReadMetrics = vi.hoisted(() => ({
     enabled: false,
     bytesRead: 0,
+    readFileBytes: 0,
     readFileCalls: 0,
     fileHandleReadCalls: 0,
+    bytesWritten: 0,
+    writeFileCalls: 0,
+    buildingCheckpointWrites: 0,
+    validationCheckpointWrites: 0,
+    completeIndexWrites: 0,
+    maximumCheckpointBytes: 0,
+    maximumCheckpointCandidates: 0,
+    peakObservedHeapUsed: 0,
+    peakObservedRss: 0,
     largeHashUpdates: 0,
     maximumHashUpdateBytes: 0,
     readObserver: null as null | ((bytes: Buffer) => void),
@@ -33,9 +43,54 @@ vi.mock('node:fs/promises', async () => {
             const value = await actual.readFile(...args);
             if (indexReadMetrics.enabled && isCandidateIndexPath(args[0])) {
                 indexReadMetrics.readFileCalls += 1;
-                indexReadMetrics.bytesRead += typeof value === 'string'
+                const bytes = typeof value === 'string'
                     ? Buffer.byteLength(value, 'utf8')
                     : value.byteLength;
+                indexReadMetrics.bytesRead += bytes;
+                indexReadMetrics.readFileBytes += bytes;
+            }
+            return value;
+        },
+        writeFile: async (...args: Parameters<typeof actual.writeFile>) => {
+            const value = await actual.writeFile(...args);
+            const path = String(args[0]);
+            if (
+                indexReadMetrics.enabled
+                && path.includes('external-sessions')
+                && path.includes('candidate-indexes')
+            ) {
+                const data = args[1];
+                if (typeof data !== 'string' && !ArrayBuffer.isView(data)) return value;
+                const bytes = typeof data === 'string'
+                    ? Buffer.byteLength(data, 'utf8')
+                    : data.byteLength;
+                const raw = typeof data === 'string'
+                    ? data
+                    : Buffer.from(data.buffer, data.byteOffset, data.byteLength).toString('utf8');
+                const candidatesMarker = raw.indexOf('"candidates"');
+                if (candidatesMarker < 0) return value;
+                const header = raw.slice(0, candidatesMarker);
+                const isBuilding = /"state"\s*:\s*"building"/.test(header);
+                const isComplete = /"state"\s*:\s*"complete"/.test(header);
+                if (!isBuilding && !isComplete) return value;
+                indexReadMetrics.bytesWritten += bytes;
+                indexReadMetrics.writeFileCalls += 1;
+                indexReadMetrics.maximumCheckpointBytes = Math.max(
+                    indexReadMetrics.maximumCheckpointBytes,
+                    bytes,
+                );
+                if (isComplete) indexReadMetrics.completeIndexWrites += 1;
+                else if (!/"validation"\s*:/.test(header)) indexReadMetrics.buildingCheckpointWrites += 1;
+                else indexReadMetrics.validationCheckpointWrites += 1;
+                const memory = process.memoryUsage();
+                indexReadMetrics.peakObservedHeapUsed = Math.max(
+                    indexReadMetrics.peakObservedHeapUsed,
+                    memory.heapUsed,
+                );
+                indexReadMetrics.peakObservedRss = Math.max(
+                    indexReadMetrics.peakObservedRss,
+                    memory.rss,
+                );
             }
             return value;
         },
@@ -137,8 +192,18 @@ function createBoundedCandidateSource(corpus: MutableCandidate[]) {
 
 function resetIndexReadMetrics(): void {
     indexReadMetrics.bytesRead = 0;
+    indexReadMetrics.readFileBytes = 0;
     indexReadMetrics.readFileCalls = 0;
     indexReadMetrics.fileHandleReadCalls = 0;
+    indexReadMetrics.bytesWritten = 0;
+    indexReadMetrics.writeFileCalls = 0;
+    indexReadMetrics.buildingCheckpointWrites = 0;
+    indexReadMetrics.validationCheckpointWrites = 0;
+    indexReadMetrics.completeIndexWrites = 0;
+    indexReadMetrics.maximumCheckpointBytes = 0;
+    indexReadMetrics.maximumCheckpointCandidates = 0;
+    indexReadMetrics.peakObservedHeapUsed = 0;
+    indexReadMetrics.peakObservedRss = 0;
     indexReadMetrics.largeHashUpdates = 0;
     indexReadMetrics.maximumHashUpdateBytes = 0;
 }
@@ -413,4 +478,180 @@ describe('External Sessions persisted candidate-index page locality', () => {
         });
         await expect(fsPromisesActual.readFile(indexPath)).resolves.toEqual(validBytes);
     });
+
+    it('rejects an oversized corrupt index without reading it into memory', async () => {
+        const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-candidate-oversized-index-'));
+        roots.push(activeServerDir);
+        const corpus: MutableCandidate[] = [{
+            remoteSessionId: 'session-001',
+            updatedAtMs: 1,
+            linkData: { projectId: 'project-a' },
+        }];
+        const listCandidates = createBoundedCandidateSource(corpus);
+        const query = () => executeExternalSessionCandidateQuery({
+            activeServerDir,
+            agentIdentity: { pluginId: 'happier.claude', localId: 'claude' },
+            source: { kind: 'claudeConfig', configDir: '/private/source' },
+            limit: 1,
+            listCandidates,
+        });
+
+        let published: Awaited<ReturnType<typeof query>> | null = null;
+        const nowSpy = vi.spyOn(performance, 'now').mockReturnValue(0);
+        try {
+            for (let rootCall = 0; rootCall < 10 && !published; rootCall += 1) {
+                const result = await query();
+                if (!result.preparation) published = result;
+            }
+        } finally {
+            nowSpy.mockRestore();
+        }
+        expect(published?.candidates).toHaveLength(1);
+
+        const indexPath = await findCandidateIndexPath(activeServerDir);
+        await fsPromisesActual.truncate(
+            indexPath,
+            (64 * 1024 * 1024) + (16 * 1024) + 1,
+        );
+
+        resetIndexReadMetrics();
+        indexReadMetrics.enabled = true;
+        try {
+            await expect(query()).resolves.toMatchObject({
+                candidates: [],
+                preparation: { kind: 'building_candidate_index' },
+            });
+        } finally {
+            indexReadMetrics.enabled = false;
+        }
+        expect(indexReadMetrics.readFileCalls).toBe(0);
+        expect(indexReadMetrics.fileHandleReadCalls).toBe(0);
+        expect(indexReadMetrics.readFileBytes).toBe(0);
+    });
 });
+
+describe.runIf(process.env.HAPPIER_RUN_EXTERNAL_SESSION_BENCHMARK === '1')(
+    'External Sessions sliced candidate-index checkpoint I/O benchmark',
+    () => {
+        let benchmarkRoot: string | null = null;
+
+        afterEach(async () => {
+            indexReadMetrics.enabled = false;
+            if (!benchmarkRoot) return;
+            await rm(benchmarkRoot, { recursive: true, force: true });
+            benchmarkRoot = null;
+        });
+
+        it('measures repeated full-state checkpoints across slow bounded 10,000-candidate slices', async () => {
+            benchmarkRoot = await mkdtemp(join(tmpdir(), 'happier-candidate-sliced-io-benchmark-'));
+            const activeServerDir = benchmarkRoot;
+            const corpus = Array.from({ length: 10_000 }, (_, index): MutableCandidate => ({
+                remoteSessionId: `session-${String(index).padStart(5, '0')}`,
+                updatedAtMs: index,
+                linkData: {
+                    projectId: `project-${String(Math.floor(index / 100)).padStart(3, '0')}`,
+                },
+            }));
+            const boundedSource = createBoundedCandidateSource(corpus);
+            const continuationDelayMs = 6;
+            let leafCalls = 0;
+            const listCandidates = async (request: Readonly<{ cursor?: string; limit: number }>) => {
+                leafCalls += 1;
+                if (request.cursor) await delay(continuationDelayMs);
+                return await boundedSource(request);
+            };
+            const query = () => executeExternalSessionCandidateQuery({
+                activeServerDir,
+                agentIdentity: { pluginId: 'happier.claude', localId: 'claude' },
+                source: { kind: 'claudeConfig', configDir: '/private/source' },
+                limit: 50,
+                listCandidates,
+            });
+
+            resetIndexReadMetrics();
+            const baselineMemory = process.memoryUsage();
+            indexReadMetrics.peakObservedHeapUsed = baselineMemory.heapUsed;
+            indexReadMetrics.peakObservedRss = baselineMemory.rss;
+            indexReadMetrics.enabled = true;
+            const startedAt = performance.now();
+            let rootCalls = 0;
+            let published: Awaited<ReturnType<typeof query>> | null = null;
+            try {
+                while (rootCalls < 100 && !published) {
+                    rootCalls += 1;
+                    const page = await query();
+                    const memory = process.memoryUsage();
+                    indexReadMetrics.peakObservedHeapUsed = Math.max(
+                        indexReadMetrics.peakObservedHeapUsed,
+                        memory.heapUsed,
+                    );
+                    indexReadMetrics.peakObservedRss = Math.max(
+                        indexReadMetrics.peakObservedRss,
+                        memory.rss,
+                    );
+                    if (!page.preparation) published = page;
+                }
+            } finally {
+                indexReadMetrics.enabled = false;
+            }
+            const elapsedMs = performance.now() - startedAt;
+            const indexPath = await findCandidateIndexPath(activeServerDir);
+            const finalIndexRaw = await fsPromisesActual.readFile(indexPath, 'utf8');
+            const finalIndex = JSON.parse(finalIndexRaw) as Readonly<{ candidateCount?: unknown }>;
+            const finalIndexBytes = Buffer.byteLength(finalIndexRaw, 'utf8');
+            if (typeof finalIndex.candidateCount === 'number') {
+                indexReadMetrics.maximumCheckpointCandidates = finalIndex.candidateCount;
+            }
+            const measurement = {
+                schema: 'external-candidate-index-sliced-io-j14-v1',
+                environment: {
+                    node: process.version,
+                    platform: process.platform,
+                    arch: process.arch,
+                    runner: 'vitest over the candidate-query owner with a deterministic 6ms continuation boundary',
+                },
+                corpus: {
+                    candidates: corpus.length,
+                    pageSize: 50,
+                    continuationDelayMs,
+                },
+                elapsedMs: Math.round(elapsedMs * 100) / 100,
+                rootCalls,
+                leafCalls,
+                fullStateReads: {
+                    count: indexReadMetrics.readFileCalls + indexReadMetrics.fileHandleReadCalls,
+                    bytes: indexReadMetrics.bytesRead,
+                    amplificationOverFinalIndex: Math.round(
+                        (indexReadMetrics.bytesRead / finalIndexBytes) * 100,
+                    ) / 100,
+                },
+                fullStateWrites: {
+                    count: indexReadMetrics.writeFileCalls,
+                    bytes: indexReadMetrics.bytesWritten,
+                    buildCheckpoints: indexReadMetrics.buildingCheckpointWrites,
+                    validationCheckpoints: indexReadMetrics.validationCheckpointWrites,
+                    completedIndexes: indexReadMetrics.completeIndexWrites,
+                    amplificationOverFinalIndex: Math.round(
+                        (indexReadMetrics.bytesWritten / finalIndexBytes) * 100,
+                    ) / 100,
+                },
+                observedPeakCandidateState: {
+                    checkpointCandidates: indexReadMetrics.maximumCheckpointCandidates,
+                    checkpointBytes: indexReadMetrics.maximumCheckpointBytes,
+                    heapDeltaBytes: indexReadMetrics.peakObservedHeapUsed - baselineMemory.heapUsed,
+                    rssDeltaBytes: indexReadMetrics.peakObservedRss - baselineMemory.rss,
+                },
+                finalIndexBytes,
+            };
+            process.stdout.write(`EXTERNAL_CANDIDATE_INDEX_SLICED_IO_J14 ${JSON.stringify(measurement)}\n`);
+
+            expect(published?.candidates).toHaveLength(50);
+            expect(published?.candidates[0]?.remoteSessionId).toBe('session-09999');
+            expect(rootCalls).toBeGreaterThan(6);
+            expect(indexReadMetrics.buildingCheckpointWrites).toBeGreaterThan(2);
+            expect(indexReadMetrics.validationCheckpointWrites).toBeGreaterThan(2);
+            expect(indexReadMetrics.completeIndexWrites).toBe(1);
+            expect(indexReadMetrics.maximumCheckpointCandidates).toBe(corpus.length);
+        }, 120_000);
+    },
+);

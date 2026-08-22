@@ -51,19 +51,22 @@ function command(params: Readonly<{
   actionId?: string;
   visibility?: 'default' | 'advanced';
   tmux?: 'inherit' | 'required' | 'forbidden';
+  provenance?: 'external' | 'first_party';
 }>): ResolvedCommandContribution {
+  const provenance = params.provenance ?? 'external';
   return {
-    provenance: 'external',
-    source: { kind: 'path' },
+    provenance,
+    source: { kind: provenance === 'first_party' ? 'bundled' : 'path' },
     pluginId: params.pluginId,
     manifestPath: `/plugins/${params.pluginId}/plugin.json`,
-    manifestDigest: `sha256:${params.pluginId}:${params.id}`,
-    sourceSpec: {
-      kind: 'path',
-      locator: `/plugins/${params.pluginId}`,
-      trustPolicy: 'local_trusted',
-      installPolicy: 'link',
-    },
+    ...(provenance === 'external' ? {
+      sourceSpec: {
+        kind: 'path' as const,
+        locator: `/plugins/${params.pluginId}`,
+        trustPolicy: 'local_trusted' as const,
+        installPolicy: 'link' as const,
+      },
+    } : {}),
     definition: {
       kindVersion: 1,
       id: params.id,
@@ -79,7 +82,6 @@ function command(params: Readonly<{
 
 function registry(commands: readonly ResolvedCommandContribution[]): ResolvedContributionRegistry {
   return {
-    generationId: 'registry:commands',
     uiViewsV2: [],
     uiRenderersV2: [],
     uiTranslationsV2: [],
@@ -103,6 +105,13 @@ describe('resolvePluginCommandProjection', () => {
   it('keeps exact qualified identity and deterministically fences reserved, invalid, and colliding paths', () => {
     const projection = resolvePluginCommandProjection({
       registry: registry([
+        command({
+          pluginId: 'happier.bundled.review',
+          id: 'inspect-local-command',
+          actionId: 'happier.bundled.review/execute-review-action',
+          path: ['review', 'inspect'],
+          provenance: 'first_party',
+        }),
         command({ pluginId: 'acme.notes', id: 'add', path: ['notes', 'add'] }),
         command({ pluginId: 'acme.notes', id: 'inspect', path: ['notes', 'inspect'], visibility: 'advanced' }),
         command({ pluginId: 'acme.reserved', id: 'call', path: ['plugins', 'call'] }),
@@ -113,7 +122,7 @@ describe('resolvePluginCommandProjection', () => {
       reservedRoots: new Set(['plugins', 'status']),
     });
 
-    expect(projection.roots).toEqual(['notes', 'shared']);
+    expect(projection.roots).toEqual(['notes', 'review', 'shared']);
     expect(projection.commands.map((entry) => ({
       qualifiedId: entry.qualifiedId,
       qualifiedActionId: entry.qualifiedActionId,
@@ -133,6 +142,12 @@ describe('resolvePluginCommandProjection', () => {
         status: 'available',
       },
       {
+        qualifiedId: 'happier.bundled.review/inspect-local-command',
+        qualifiedActionId: 'happier.bundled.review/execute-review-action',
+        path: ['review', 'inspect'],
+        status: 'available',
+      },
+      {
         qualifiedId: 'acme.alpha/dupe',
         qualifiedActionId: 'acme.alpha/run',
         path: ['shared', 'run'],
@@ -147,6 +162,7 @@ describe('resolvePluginCommandProjection', () => {
     ]);
     expect(projection.rootHelpEntries).toEqual([
       expect.objectContaining({ command: 'notes', rootHelpLabel: 'happier notes', allowTmux: true }),
+      expect.objectContaining({ command: 'review', rootHelpLabel: 'happier review', allowTmux: true }),
     ]);
     expect(projection.diagnostics.map((entry) => entry.code)).toEqual([
       'plugin_command_path_reserved',
@@ -340,7 +356,13 @@ describe('handlePluginCommandCliCommand help', () => {
 
 describe('plugin command host registry synchronization', () => {
   it('dispatches a supported command to the applied daemon without activating a CLI runtime', async () => {
-    const notes = command({ pluginId: 'acme.notes', id: 'add', path: ['notes', 'add'] });
+    const notes = command({
+      pluginId: 'happier.bundled.notes',
+      id: 'add-local-command',
+      actionId: 'happier.bundled.notes/execute-add-action',
+      path: ['notes', 'add'],
+      provenance: 'first_party',
+    });
     daemonCommandMock.ensure.mockClear();
     daemonCommandMock.execute.mockReset();
     daemonCommandMock.resolveRegistry.mockReset();
@@ -351,7 +373,11 @@ describe('plugin command host registry synchronization', () => {
       result: { ok: true, result: { stored: 'hello' } },
     });
     runtimeLeaseMock.acquire.mockRejectedValue(new Error('CLI runtime activation is forbidden'));
-    const output = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const output = vi.spyOn(process.stdout, 'write').mockImplementation(((_chunk, encoding, callback) => {
+      const completeWrite = typeof encoding === 'function' ? encoding : callback;
+      completeWrite?.(null);
+      return true;
+    }) as typeof process.stdout.write);
     const previousExitCode = process.exitCode;
     try {
       await handlePluginCommandCliCommand('notes', {
@@ -362,12 +388,15 @@ describe('plugin command host registry synchronization', () => {
 
       expect(daemonCommandMock.ensure).toHaveBeenCalledOnce();
       expect(daemonCommandMock.execute).toHaveBeenCalledWith({
-        actionId: 'acme.notes/run',
+        actionId: 'happier.bundled.notes/execute-add-action',
         input: { value: 'hello' },
         surface: 'cli',
       });
       expect(runtimeLeaseMock.acquire).not.toHaveBeenCalled();
-      expect(output).toHaveBeenCalledWith(expect.stringContaining('"kind":"plugin_command"'));
+      expect(output).toHaveBeenCalledWith(
+        expect.stringContaining('"kind":"plugin_command"'),
+        expect.any(Function),
+      );
     } finally {
       output.mockRestore();
       process.exitCode = previousExitCode;
@@ -379,7 +408,13 @@ describe('plugin command host registry synchronization', () => {
     daemonCommandMock.ensure.mockClear();
     daemonCommandMock.execute.mockReset();
     daemonCommandMock.resolveRegistry.mockReset();
-    const notes = command({ pluginId: 'acme.notes', id: 'add', path: ['notes', 'add'] });
+    const notes = command({
+      pluginId: 'happier.bundled.notes',
+      id: 'add-local-command',
+      actionId: 'happier.bundled.notes/execute-add-action',
+      path: ['notes', 'add'],
+      provenance: 'first_party',
+    });
 
     synchronizePluginCommandContributions(registry([notes]));
     const retained = findCommandDispatchDescriptor('notes');

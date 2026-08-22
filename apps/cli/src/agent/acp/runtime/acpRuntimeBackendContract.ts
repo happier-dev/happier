@@ -14,6 +14,7 @@ export type AcpRuntimeTurnOutcome =
     | { kind: 'timed_out'; capMs: number };
 
 export type AcpPromptSubmissionResult =
+    | { kind: 'accepted_by_transport_write' }
     | { kind: 'accepted_by_prompt_response' }
     | { kind: 'accepted_by_correlated_provider_effect' }
     | { kind: 'rejected_before_effect'; error: Error }

@@ -1,9 +1,9 @@
 import { resolve } from 'node:path';
 
 import {
-    runWithScmBackendRuntimeServices,
-    type ScmBackendRuntimeServices,
-} from '@happier-dev/plugin-sdk/experimental/scm/backend';
+    runWithBackendRuntimeServices as runWithScmBackendRuntimeServices,
+    type BackendRuntimeServices as ScmBackendRuntimeServices,
+} from '@happier-dev/plugin-sdk/scm/backend';
 
 import {
     aliasGitRepositoryCheckpoint,

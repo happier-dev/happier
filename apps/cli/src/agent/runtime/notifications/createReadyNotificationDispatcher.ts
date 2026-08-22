@@ -5,11 +5,14 @@ import type { TurnAssistantTextSnapshotStore } from '@/api/session/turns/assista
 
 import { getSessionNotificationTitle } from './sessionNotificationContext';
 import { resolveReadyNotificationAssistantText } from './resolveReadyNotificationAssistantText';
-import { sendReadyWithPushNotification } from './sendReadyWithPushNotification';
+import {
+  enqueueReadySessionEventCommitted,
+  sendReadyWithPushNotification,
+} from './sendReadyWithPushNotification';
 
 type ReadyNotificationSession = Readonly<{
   sessionId: string;
-  sendSessionEvent: (event: { type: 'ready' }) => void;
+  enqueueSessionEventCommitted: (event: { type: 'ready' }) => Promise<Readonly<{ persisted: boolean; delivered: boolean }>>;
   getMetadataSnapshot?: () => unknown;
   getTurnAssistantTextSnapshotStore?: () => TurnAssistantTextSnapshotStore;
 }>;
@@ -38,17 +41,17 @@ type IdleReadyNotificationDispatcherParams = ReadyNotificationDispatcherParams &
 
 export function createReadyNotificationDispatcher(
   params: ReadyNotificationDispatcherParams,
-): () => void {
-  return () => {
+): () => Promise<void> {
+  return async () => {
     if (!params.pushSender) {
-      params.session.sendSessionEvent({ type: 'ready' });
+      await enqueueReadySessionEventCommitted(params.session);
       return;
     }
 
     const sendReadyWithPushNotificationImpl =
       params.sendReadyWithPushNotificationFn ?? sendReadyWithPushNotification;
 
-    sendReadyWithPushNotificationImpl({
+    await sendReadyWithPushNotificationImpl({
       session: params.session,
       pushSender: params.pushSender,
       waitingForCommandLabel: params.waitingForCommandLabel,
@@ -74,12 +77,15 @@ export function createReadyNotificationDispatcher(
 
 export function createIdleReadyNotificationDispatcher(
   params: IdleReadyNotificationDispatcherParams,
-): () => void {
+): () => Promise<void> {
   const sendReady = createReadyNotificationDispatcher(params);
   let readySentForCurrentIdlePeriod = false;
   let lastWorkVersion = params.getWorkVersion?.();
+  let idleGeneration = 0;
 
-  return () => {
+  let readyDispatchInFlight: Promise<void> | null = null;
+
+  return async () => {
     const pending = params.getPending();
     const queueSize = params.getQueueSize();
     const shouldExit = params.shouldExit?.() === true;
@@ -88,10 +94,12 @@ export function createIdleReadyNotificationDispatcher(
     if (!Object.is(workVersion, lastWorkVersion)) {
       readySentForCurrentIdlePeriod = false;
       lastWorkVersion = workVersion;
+      idleGeneration += 1;
     }
 
     if (pending || queueSize > 0) {
       readySentForCurrentIdlePeriod = false;
+      idleGeneration += 1;
       return;
     }
 
@@ -99,15 +107,27 @@ export function createIdleReadyNotificationDispatcher(
       return;
     }
 
-    const emitted = emitReadyIfIdle({
+    if (readyDispatchInFlight) {
+      await readyDispatchInFlight;
+      return;
+    }
+
+    const dispatchGeneration = idleGeneration;
+    const dispatch = emitReadyIfIdle({
       pending,
       queueSize: () => queueSize,
       shouldExit,
       sendReady,
     });
-
-    if (emitted) {
-      readySentForCurrentIdlePeriod = true;
+    readyDispatchInFlight = dispatch.then((emitted) => {
+      if (emitted && dispatchGeneration === idleGeneration) {
+        readySentForCurrentIdlePeriod = true;
+      }
+    });
+    try {
+      await readyDispatchInFlight;
+    } finally {
+      readyDispatchInFlight = null;
     }
   };
 }

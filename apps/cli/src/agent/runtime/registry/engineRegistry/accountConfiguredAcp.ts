@@ -1,4 +1,4 @@
-import { readCredentials } from '@/persistence';
+import { readStoredCredentials } from '@/persistence';
 import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { readAcpCatalogSettingsFromAccountSettings } from '@/agent/acp/catalog/readAcpCatalogSettingsFromAccountSettings';
 import { materializeConfiguredAcpEnvironment } from '@/agent/acp/catalog/configured/materializeEnvironment';
@@ -29,7 +29,7 @@ export async function resolveAccountConfiguredAcpBackend(
     return null;
   }
 
-  const credentials = await readCredentials();
+  const credentials = await readStoredCredentials();
   if (!credentials) {
     throw new Error('Account-configured ACP backends require credentials to resolve launch environment');
   }

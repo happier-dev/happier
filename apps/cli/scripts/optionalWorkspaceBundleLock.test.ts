@@ -11,11 +11,11 @@ import {
 } from './optionalWorkspaceBundleLock.mjs';
 
 describe('optionalWorkspaceBundleLock', () => {
-  it('uses the canonical CLI dist build lock path', () => {
+  it('uses the canonical CLI shared-dependency publication lock path', () => {
     const repoRoot = join(tmpdir(), 'happier-lock-path');
 
     expect(resolveCliSharedDepsBuildLockPath(repoRoot)).toBe(
-      join(repoRoot, '.project', 'tmp', 'cli-dist-build.lock'),
+      join(repoRoot, '.project', 'tmp', 'cli-shared-deps.lock'),
     );
   });
 

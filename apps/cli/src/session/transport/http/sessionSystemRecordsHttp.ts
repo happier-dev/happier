@@ -1,15 +1,26 @@
+import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import axios from 'axios';
 
 import {
-  SessionSystemRecordLatestResponseSchema,
-  SessionSystemRecordLookupResponseSchema,
-  SessionSystemRecordPageResponseSchema,
-  SessionSystemRecordUpsertResponseSchema,
-  type SessionSystemRecord,
+  LegacyHostSessionSystemRecordLatestResponseSchema,
+  LegacyHostSessionSystemRecordLookupResponseSchema,
+  LegacyHostSessionSystemRecordPageResponseSchema as SessionSystemRecordPageResponseSchema,
+  LegacyHostSessionSystemRecordUpsertResponseSchema as SessionSystemRecordUpsertResponseSchema,
+  SESSION_SYSTEM_RECORDS_PLUGIN_ID_HEADER,
+  SessionSystemRecordDeleteResponseSchema,
+  SessionSystemRecordStoredPageResponseSchema,
+  SessionSystemRecordStoredReadResponseSchema,
+  SessionSystemRecordStoredUpsertResponseSchema,
+  type LegacyHostSessionSystemRecord,
+  type SessionSystemRecordAddress,
   type SessionSystemRecordContent,
+  type SessionSystemRecordDeleteRequest,
   type SessionSystemRecordKind,
+  type SessionSystemRecordListQuery,
   type SessionSystemRecordNamespace,
-  type SessionSystemRecordPageResponse,
+  type SessionSystemRecordStored,
+  type SessionSystemRecordStoredUpsertRequest,
+  type LegacyHostSessionSystemRecordPageResponse,
 } from '@happier-dev/protocol';
 
 import { createHttpStatusError, isAuthenticationStatus } from '@/api/client/httpStatusError';
@@ -17,7 +28,7 @@ import { configuration } from '@/configuration';
 import { resolveServerHttpBaseUrl } from './serverHttpBaseUrl';
 
 export type FetchSessionSystemRecordsPageResult = Readonly<{
-  records: SessionSystemRecord[];
+  records: LegacyHostSessionSystemRecord[];
   nextCursor: string | null;
   hasNext: boolean;
 }>;
@@ -44,10 +55,18 @@ function parseOrThrow<T>(schema: { safeParse: (value: unknown) => { success: boo
 
 function buildHeaders(token: string, extra?: Record<string, string>): Record<string, string> {
   return {
+    ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
     Authorization: `Bearer ${token}`,
     'Content-Type': 'application/json',
     ...(extra ?? {}),
   };
+}
+
+function buildV1PluginRecordHeaders(token: string, pluginId: string): Record<string, string> {
+  return buildHeaders(token, {
+    [SESSION_SYSTEM_RECORDS_PLUGIN_ID_HEADER]: pluginId,
+    'x-happier-session-system-records-protocol': '1',
+  });
 }
 
 function handleCommonStatus(status: number, route: string): void {
@@ -64,6 +83,168 @@ function handleCommonStatus(status: number, route: string): void {
   }
 }
 
+function throwV1PluginRecordStatus(status: number, data: unknown): never {
+  if (isAuthenticationStatus(status)) {
+    throwAuthenticationStatusError(status);
+  }
+  const payload = data && typeof data === 'object' && !Array.isArray(data)
+    ? data as Record<string, unknown>
+    : {};
+  const code = typeof payload.code === 'string'
+    ? payload.code
+    : 'plugin_session_record_transport_error';
+  const error = createHttpStatusError(status, 'Plugin Session system record request failed', code);
+  Object.assign(error, {
+    code,
+    ...(typeof payload.currentRevision === 'string' ? { currentRevision: payload.currentRevision } : {}),
+  });
+  throw error;
+}
+
+function canRetryLostMutationAcknowledgement(error: unknown, signal?: AbortSignal): boolean {
+  return !signal?.aborted
+    && axios.isAxiosError(error)
+    && !error.response
+    && error.code !== 'ERR_CANCELED';
+}
+
+function mutationOutcomeUnknownError(): Error & Readonly<{
+  code: 'plugin_session_record_outcome_unknown';
+  retryable: false;
+}> {
+  return Object.assign(
+    new Error('Session system record mutation acknowledgement was lost after an exact replay'),
+    {
+      code: 'plugin_session_record_outcome_unknown' as const,
+      retryable: false as const,
+    },
+  );
+}
+
+async function retryLostMutationAcknowledgement<T>(params: Readonly<{
+  signal?: AbortSignal;
+  send: () => Promise<T>;
+}>): Promise<T> {
+  try {
+    return await params.send();
+  } catch (firstError) {
+    if (!canRetryLostMutationAcknowledgement(firstError, params.signal)) throw firstError;
+  }
+  try {
+    return await params.send();
+  } catch (replayError) {
+    if (canRetryLostMutationAcknowledgement(replayError, params.signal)) {
+      throw mutationOutcomeUnknownError();
+    }
+    throw replayError;
+  }
+}
+
+function v1SystemRecordRoute(sessionId: string, suffix = ''): string {
+  return `/v2/sessions/${encodeSessionIdPathSegment(sessionId)}/system-records${suffix}`;
+}
+
+export async function listSessionSystemRecordsV1(params: Readonly<{
+  token: string;
+  sessionId: string;
+  pluginId: string;
+  query: SessionSystemRecordListQuery;
+  signal?: AbortSignal;
+}>): Promise<Readonly<{
+  records: readonly SessionSystemRecordStored[];
+  nextCursor: string | null;
+  hasNext: boolean;
+}>> {
+  const route = v1SystemRecordRoute(params.sessionId);
+  const response = await axios.get(`${resolveServerHttpBaseUrl()}${route}`, {
+    headers: buildV1PluginRecordHeaders(params.token, params.pluginId),
+    params: params.query,
+    timeout: configuration.sessionControlHttpTimeoutMs,
+    validateStatus: () => true,
+    ...(params.signal ? { signal: params.signal } : {}),
+  });
+  if (response.status !== 200) throwV1PluginRecordStatus(response.status, response.data);
+  return parseOrThrow(
+    SessionSystemRecordStoredPageResponseSchema,
+    response.data,
+    `Unexpected ${route} response shape`,
+  );
+}
+
+export async function readSessionSystemRecordV1(params: Readonly<{
+  token: string;
+  sessionId: string;
+  pluginId: string;
+  address: SessionSystemRecordAddress;
+  signal?: AbortSignal;
+}>): Promise<SessionSystemRecordStored | null> {
+  const route = v1SystemRecordRoute(params.sessionId, '/record');
+  const response = await axios.get(`${resolveServerHttpBaseUrl()}${route}`, {
+    headers: buildV1PluginRecordHeaders(params.token, params.pluginId),
+    params: params.address,
+    timeout: configuration.sessionControlHttpTimeoutMs,
+    validateStatus: () => true,
+    ...(params.signal ? { signal: params.signal } : {}),
+  });
+  if (response.status !== 200) throwV1PluginRecordStatus(response.status, response.data);
+  return parseOrThrow(
+    SessionSystemRecordStoredReadResponseSchema,
+    response.data,
+    `Unexpected ${route} response shape`,
+  ).record;
+}
+
+export async function upsertSessionSystemRecordV1(params: Readonly<{
+  token: string;
+  sessionId: string;
+  pluginId: string;
+  request: SessionSystemRecordStoredUpsertRequest;
+  signal?: AbortSignal;
+}>): Promise<SessionSystemRecordStored> {
+  const route = v1SystemRecordRoute(params.sessionId);
+  const response = await retryLostMutationAcknowledgement({
+    signal: params.signal,
+    send: async () => await axios.put(`${resolveServerHttpBaseUrl()}${route}`, params.request, {
+      headers: buildV1PluginRecordHeaders(params.token, params.pluginId),
+      timeout: configuration.sessionControlHttpTimeoutMs,
+      validateStatus: () => true,
+      ...(params.signal ? { signal: params.signal } : {}),
+    }),
+  });
+  if (response.status !== 200) throwV1PluginRecordStatus(response.status, response.data);
+  return parseOrThrow(
+    SessionSystemRecordStoredUpsertResponseSchema,
+    response.data,
+    `Unexpected ${route} response shape`,
+  ).record;
+}
+
+export async function deleteSessionSystemRecordV1(params: Readonly<{
+  token: string;
+  sessionId: string;
+  pluginId: string;
+  request: SessionSystemRecordDeleteRequest;
+  signal?: AbortSignal;
+}>): Promise<void> {
+  const route = v1SystemRecordRoute(params.sessionId, '/record');
+  const response = await retryLostMutationAcknowledgement({
+    signal: params.signal,
+    send: async () => await axios.delete(`${resolveServerHttpBaseUrl()}${route}`, {
+      headers: buildV1PluginRecordHeaders(params.token, params.pluginId),
+      data: params.request,
+      timeout: configuration.sessionControlHttpTimeoutMs,
+      validateStatus: () => true,
+      ...(params.signal ? { signal: params.signal } : {}),
+    }),
+  });
+  if (response.status !== 200) throwV1PluginRecordStatus(response.status, response.data);
+  parseOrThrow(
+    SessionSystemRecordDeleteResponseSchema,
+    response.data,
+    `Unexpected ${route} response shape`,
+  );
+}
+
 export async function upsertSessionSystemRecord(params: Readonly<{
   token: string;
   sessionId: string;
@@ -71,7 +252,7 @@ export async function upsertSessionSystemRecord(params: Readonly<{
   kind: SessionSystemRecordKind;
   localId: string;
   content: SessionSystemRecordContent;
-}>): Promise<SessionSystemRecord> {
+}>): Promise<LegacyHostSessionSystemRecord> {
   const serverUrl = resolveServerHttpBaseUrl();
   const encodedSessionId = encodeSessionIdPathSegment(params.sessionId);
   const route = `/v2/sessions/${params.sessionId}/system-records`;
@@ -81,7 +262,7 @@ export async function upsertSessionSystemRecord(params: Readonly<{
     localId: params.localId,
     content: params.content,
   }, {
-    headers: buildHeaders(params.token, { 'Idempotency-Key': params.localId }),
+    headers: buildHeaders(params.token),
     timeout: configuration.sessionControlHttpTimeoutMs,
     validateStatus: () => true,
   });
@@ -116,7 +297,7 @@ export async function fetchSessionSystemRecordsPage(params: Readonly<{
   });
 
   handleCommonStatus(response.status, route);
-  const parsed: SessionSystemRecordPageResponse = parseOrThrow(
+  const parsed: LegacyHostSessionSystemRecordPageResponse = parseOrThrow(
     SessionSystemRecordPageResponseSchema,
     response.data,
     `Unexpected ${route} response shape`,
@@ -133,7 +314,7 @@ export async function fetchLatestSessionSystemRecord(params: Readonly<{
   sessionId: string;
   namespace: SessionSystemRecordNamespace;
   kind: SessionSystemRecordKind;
-}>): Promise<SessionSystemRecord | null> {
+}>): Promise<LegacyHostSessionSystemRecord | null> {
   const serverUrl = resolveServerHttpBaseUrl();
   const encodedSessionId = encodeSessionIdPathSegment(params.sessionId);
   const route = `/v2/sessions/${params.sessionId}/system-records/latest`;
@@ -145,7 +326,7 @@ export async function fetchLatestSessionSystemRecord(params: Readonly<{
   });
 
   handleCommonStatus(response.status, route);
-  return parseOrThrow(SessionSystemRecordLatestResponseSchema, response.data, `Unexpected ${route} response shape`).record;
+  return parseOrThrow(LegacyHostSessionSystemRecordLatestResponseSchema, response.data, `Unexpected ${route} response shape`).record;
 }
 
 export async function fetchSessionSystemRecord(params: Readonly<{
@@ -153,7 +334,7 @@ export async function fetchSessionSystemRecord(params: Readonly<{
   sessionId: string;
   namespace: SessionSystemRecordNamespace;
   localId: string;
-}>): Promise<SessionSystemRecord | null> {
+}>): Promise<LegacyHostSessionSystemRecord | null> {
   const serverUrl = resolveServerHttpBaseUrl();
   const encodedSessionId = encodeSessionIdPathSegment(params.sessionId);
   const route = `/v2/sessions/${params.sessionId}/system-records/record`;
@@ -165,5 +346,5 @@ export async function fetchSessionSystemRecord(params: Readonly<{
   });
 
   handleCommonStatus(response.status, route);
-  return parseOrThrow(SessionSystemRecordLookupResponseSchema, response.data, `Unexpected ${route} response shape`).record;
+  return parseOrThrow(LegacyHostSessionSystemRecordLookupResponseSchema, response.data, `Unexpected ${route} response shape`).record;
 }

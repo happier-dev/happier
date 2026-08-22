@@ -8,16 +8,17 @@ import { McpServersSettingsV1Schema } from '@happier-dev/protocol';
 
 import type { McpCommandDeps } from '../deps';
 import { readRepeatedFlagValues } from '../argv';
+import { reportMcpServersAccountSettingsMutation } from './errors';
 
 export async function cmdMcpServersAdd(
   argv: string[],
   deps: McpCommandDeps,
   opts: Readonly<{ json: boolean }>,
 ): Promise<void> {
-  const credentials = await deps.readCredentials();
+  const credentials = await deps.readStoredCredentials();
   if (!credentials) {
     if (opts.json) {
-      printJsonEnvelope({ ok: false, kind: 'mcp_servers_add', error: { code: 'not_authenticated' } }, { exitCode: 1 });
+      await printJsonEnvelope({ ok: false, kind: 'mcp_servers_add', error: { code: 'not_authenticated' } }, { exitCode: 1 });
       return;
     }
     console.error(chalk.red('Error:'), 'Not authenticated. Run "happier auth login" first.');
@@ -36,38 +37,48 @@ export async function cmdMcpServersAdd(
 
   const id = deps.randomUUID();
   const now = deps.nowMs();
-
-  await deps.updateAccountSettingsV2WithRetry({
+  const context = await deps.bootstrapAccountSettingsContext({
     credentials,
-    mutate: (settings: Readonly<Record<string, unknown>>) => {
-      const current = readMcpServersSettingsFromAccountSettings(settings);
-      if (current.servers.some((s) => s.name === name)) {
-        throw new Error(`MCP server name already exists: ${name}`);
-      }
-      const next = McpServersSettingsV1Schema.parse({
-        ...current,
-        servers: [
-          ...current.servers,
-          {
-            id,
-            name,
-            transport: 'stdio',
-            stdio: { command, args },
-            env: {},
-            createdAt: now,
-            updatedAt: now,
-          },
-        ],
-      });
-      return { ...settings, mcpServersSettingsV1: next };
-    },
+    mode: 'blocking',
+    refresh: 'force',
+  });
+  const current = readMcpServersSettingsFromAccountSettings(
+    context.rawSettings ?? context.settings,
+  );
+  if (current.servers.some((server) => server.name === name)) {
+    throw new Error(`MCP server name already exists: ${name}`);
+  }
+  const next = McpServersSettingsV1Schema.parse({
+    ...current,
+    servers: [
+      ...current.servers,
+      {
+        id,
+        name,
+        transport: 'stdio',
+        stdio: { command, args },
+        env: {},
+        createdAt: now,
+        updatedAt: now,
+      },
+    ],
   });
 
+  const mutation = await deps.updateAccountSettingsV2WithRetry({
+    credentials,
+    mutation: {
+      operations: [{ op: 'set', key: 'mcpServersSettingsV1', value: next }],
+    },
+  });
+  if (!await reportMcpServersAccountSettingsMutation(mutation, {
+    kind: 'mcp_servers_add',
+    json: opts.json,
+  })) return;
+
   if (opts.json) {
-    printJsonEnvelope({ ok: true, kind: 'mcp_servers_add', data: { created: { id, name } } });
+    await printJsonEnvelope({ ok: true, kind: 'mcp_servers_add', data: { created: { id, name } } });
     return;
   }
 
   console.log(chalk.green('✓'), `MCP server added: ${name}`);
 }
-

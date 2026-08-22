@@ -16,6 +16,7 @@ import {
   type SessionEncryptionContext,
   type SessionStoredContentEncryptionMode,
 } from '@/session/transport/encryption/sessionEncryptionContext';
+import { AccountEncryptionMaterialUnavailableError } from '@/api/client/encryptionKey';
 
 export const MEMORY_SYSTEM_RECORD_NAMESPACE = SESSION_SYSTEM_RECORD_MEMORY_NAMESPACE satisfies SessionSystemRecordNamespace;
 
@@ -65,7 +66,7 @@ export function sealMemorySystemRecordPayload(params: Readonly<{
     return { t: 'plain', v: payload };
   }
   if (!params.ctx) {
-    throw new Error('Missing session encryption context for encrypted memory system record');
+    throw new AccountEncryptionMaterialUnavailableError();
   }
   return {
     t: 'encrypted',
@@ -75,19 +76,32 @@ export function sealMemorySystemRecordPayload(params: Readonly<{
 
 export function openMemorySystemRecordPayload(params: Readonly<{
   namespace?: SessionSystemRecordNamespace;
+  mode: SessionStoredContentEncryptionMode;
   kind: MemorySessionSystemRecordKind;
   content: SessionSystemRecordContent;
   ctx?: SessionEncryptionContext;
 }>): MemorySystemRecordPayload | null {
   if (params.namespace && params.namespace !== MEMORY_SYSTEM_RECORD_NAMESPACE) return null;
-  if (params.content.t === 'plain') {
+  if (params.mode === 'plain') {
+    if (params.content.t !== 'plain') {
+      throw new AccountEncryptionMaterialUnavailableError();
+    }
     return parseMemoryPayload(params.kind, params.content.v);
   }
-  if (!params.ctx) return null;
+  if (params.content.t !== 'encrypted') {
+    throw new AccountEncryptionMaterialUnavailableError();
+  }
+  if (!params.ctx) {
+    throw new AccountEncryptionMaterialUnavailableError();
+  }
   try {
     const decrypted = decryptSessionPayload({ ctx: params.ctx, ciphertextBase64: params.content.c });
-    return parseMemoryPayload(params.kind, decrypted);
+    const payload = parseMemoryPayload(params.kind, decrypted);
+    if (!payload) {
+      throw new AccountEncryptionMaterialUnavailableError();
+    }
+    return payload;
   } catch {
-    return null;
+    throw new AccountEncryptionMaterialUnavailableError();
   }
 }

@@ -1,18 +1,44 @@
 import {
+  readSessionMetadataRuntimeDescriptor,
   resolveAgentIdFromSessionMetadata,
-  type AgentId,
+  type AttachSessionMetadataV1,
 } from '@happier-dev/agents';
 import { compareMachineHosts } from '@happier-dev/protocol';
 
-import type { Credentials } from '@/persistence';
+import type { StoredCredentials } from '@/persistence';
+import type { AccountEncryptionCurrentnessResponse } from '@happier-dev/protocol';
 import type { TerminalAttachmentInfo } from '@/terminal/attachment/terminalAttachmentInfo';
 import { createTerminalAttachPlan, type TerminalAttachPlan } from '@/terminal/attachment/terminalAttachPlan';
 import type { Metadata } from '@/api/types';
 import { tryDecryptSessionOwnerMetadataView } from '@/session/transport/encryption/sessionEncryptionContext';
-import { projectAgentVisibleSessionMetadata } from '@/agent/runtime/sessionMetadataVisibility';
 import type { RawSessionListRow, RawSessionRecord } from '@/session/transport/http/sessionsHttp';
 import type { BackendExecutionSurfaces } from '@/agent/runtime/registry/engineRegistryTypes';
+import type { CatalogAgentId } from '@/agent/catalog/ids';
 import { resolveCliSessionAttachBackendId } from './resolveCliSessionAttachBackendId';
+
+function readString(value: unknown): string | undefined {
+  return typeof value === 'string' ? value : undefined;
+}
+
+function buildAttachSessionMetadata(metadata: Readonly<Record<string, unknown>>): AttachSessionMetadataV1 {
+  const openCodeRuntimeDescriptor = readSessionMetadataRuntimeDescriptor(metadata, 'opencode');
+  return Object.freeze({
+    ...(readString(metadata.path) !== undefined ? { path: readString(metadata.path) } : {}),
+    ...(readString(metadata.providerSessionId) !== undefined ? { providerSessionId: readString(metadata.providerSessionId) } : {}),
+    ...(openCodeRuntimeDescriptor?.providerSessionId
+      ? { opencodeSessionId: openCodeRuntimeDescriptor.providerSessionId }
+      : {}),
+    ...(openCodeRuntimeDescriptor?.backendMode
+      ? { opencodeBackendMode: openCodeRuntimeDescriptor.backendMode }
+      : {}),
+    ...(openCodeRuntimeDescriptor?.serverBaseUrl
+      ? { opencodeServerBaseUrl: openCodeRuntimeDescriptor.serverBaseUrl }
+      : {}),
+    ...(openCodeRuntimeDescriptor?.serverBaseUrl
+      ? { opencodeServerBaseUrlExplicit: openCodeRuntimeDescriptor.serverBaseUrlExplicit }
+      : {}),
+  });
+}
 
 export type CliSessionAttachEligibilityReasonCode =
   | 'archived'
@@ -29,15 +55,15 @@ export type CliSessionAttachEligibilityReasonCode =
 export type CliSessionAttachEligibility =
   | Readonly<{
       eligible: true;
-      agentId: AgentId;
+      agentId: CatalogAgentId;
       backendId: string;
       attachStrategy: 'provider_attach';
       attachScope: 'local' | 'remote';
-      metadata: Record<string, unknown>;
+      metadata: AttachSessionMetadataV1;
     }>
   | Readonly<{
       eligible: true;
-      agentId: AgentId | null;
+      agentId: CatalogAgentId | null;
       attachStrategy: 'terminal_host';
       attachScope: 'local';
       terminal: NonNullable<Metadata['terminal']>;
@@ -46,7 +72,7 @@ export type CliSessionAttachEligibility =
     }>
   | Readonly<{
       eligible: false;
-      agentId: AgentId | null;
+      agentId: CatalogAgentId | null;
       reasonCode: CliSessionAttachEligibilityReasonCode;
       reason: string;
       metadata: Record<string, unknown> | null;
@@ -55,6 +81,19 @@ export type CliSessionAttachEligibility =
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   return value as Record<string, unknown>;
+}
+
+function resolveProviderAttachScope(params: Readonly<{
+  currentMachineId: string | null;
+  sessionMachineId: string | null;
+  hasLocalAttachmentInfo: boolean;
+}>): 'local' | 'remote' {
+  if (params.hasLocalAttachmentInfo) return 'local';
+  return params.currentMachineId
+    && params.sessionMachineId
+    && params.currentMachineId === params.sessionMachineId
+    ? 'local'
+    : 'remote';
 }
 
 function resolveArchivedAt(rawSession: RawSessionListRow | RawSessionRecord): number | null {
@@ -79,7 +118,7 @@ function readHost(metadata: Record<string, unknown> | null): string | null {
   return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
 }
 
-function resolveAgentId(metadata: Record<string, unknown> | null): AgentId | null {
+function resolveAgentId(metadata: Record<string, unknown> | null): CatalogAgentId | null {
   return metadata ? resolveAgentIdFromSessionMetadata(metadata) : null;
 }
 
@@ -154,8 +193,9 @@ function buildTerminalAttachEligibility(params: Readonly<{
 }
 
 export async function evaluateCliSessionAttachEligibility(params: Readonly<{
-  credentials: Credentials;
+  credentials: StoredCredentials;
   rawSession: RawSessionListRow | RawSessionRecord;
+  accountEncryptionMode: AccountEncryptionCurrentnessResponse['mode'];
   currentMachineId: string | null;
   currentMachineHost?: string | null;
   localAttachmentInfo: TerminalAttachmentInfo | null;
@@ -185,6 +225,7 @@ export async function evaluateCliSessionAttachEligibility(params: Readonly<{
   const metadata = asRecord(tryDecryptSessionOwnerMetadataView({
     credentials: params.credentials,
     rawSession: params.rawSession,
+    accountEncryptionMode: params.accountEncryptionMode,
   }));
   const agentId = resolveAgentId(metadata);
 
@@ -207,8 +248,8 @@ export async function evaluateCliSessionAttachEligibility(params: Readonly<{
   const backendExecutionSurfaces = backendId
     ? await params.resolveExecutionSurfaces(backendId)
     : null;
-  const providerAttachOps = backendExecutionSurfaces?.attach ?? null;
-  if (providerAttachOps) {
+  const providerAttachSurface = backendExecutionSurfaces?.attach ?? null;
+  if (providerAttachSurface) {
     const providerBackendId = backendId;
     const catalogAgentId = agentId;
     if (!providerBackendId || !catalogAgentId || !sessionId) {
@@ -221,19 +262,22 @@ export async function evaluateCliSessionAttachEligibility(params: Readonly<{
       };
     }
 
-    const evaluation = await providerAttachOps.evaluateAvailability({
+    const attachMetadata = buildAttachSessionMetadata(metadata);
+    const availability = await providerAttachSurface.evaluateAvailability?.({
+      operation: 'attach',
       sessionId,
-      metadata: projectAgentVisibleSessionMetadata(metadata),
+      metadata: attachMetadata,
       currentMachineId: params.currentMachineId,
       sessionMachineId,
       hasLocalAttachmentInfo: params.localAttachmentInfo !== null,
+      depth: 'metadata',
     });
-    if (!evaluation.eligible) {
+    if (availability?.available === false) {
       return {
         eligible: false,
         agentId: catalogAgentId,
         reasonCode: 'provider_attach_unavailable',
-        reason: evaluation.reason,
+        reason: availability.safeMessage ?? 'Provider attach is not available for this session.',
         metadata,
       };
     }
@@ -243,8 +287,12 @@ export async function evaluateCliSessionAttachEligibility(params: Readonly<{
       agentId: catalogAgentId,
       backendId: providerBackendId,
       attachStrategy: 'provider_attach',
-      attachScope: evaluation.scope,
-      metadata: evaluation.metadata,
+      attachScope: resolveProviderAttachScope({
+        currentMachineId: params.currentMachineId,
+        sessionMachineId,
+        hasLocalAttachmentInfo: params.localAttachmentInfo !== null,
+      }),
+      metadata: attachMetadata,
     };
   }
 

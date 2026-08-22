@@ -1,20 +1,14 @@
 import type { HostSessionRuntimePlan } from '@/agent/runtime/session/loop/lifecycle';
-import type { RuntimeTurnOperations } from '@/agent/runtime/turns/runtimeTurnOperations';
+import type {
+  RuntimeTurnMessage,
+  RuntimeTurnOperations,
+} from '@/agent/runtime/turns/runtimeTurnOperations';
 import type { NormalizedRuntimeEventPublication } from '@/agent/runtime/events/createNormalizedRuntimeEventWriter';
 import { createNormalizedRuntimeEventPublicationHub } from '@/agent/runtime/events/createNormalizedRuntimeEventPublicationHub';
 import { resolveHostSessionRuntimeFactoryResult } from '@/agent/runtime/session/loop/factoryResult';
 import { applyRuntimeDescriptorSessionMetadata } from '@happier-dev/agents/session/state/metadataWriters';
-import {
-  type RuntimeEventV1,
-  type RuntimeDescriptorV1,
-} from '@happier-dev/protocol';
+import { type RuntimeDescriptorV1 } from '@happier-dev/protocol';
 import type { Metadata } from '@/api/types';
-
-function isRuntimeEvent(message: unknown): message is RuntimeEventV1 {
-  return Boolean(message)
-    && typeof message === 'object'
-    && typeof (message as Readonly<Record<string, unknown>>).kind === 'string';
-}
 
 function normalizeNonEmptyString(value: unknown): string | null {
   if (typeof value !== 'string') return null;
@@ -67,16 +61,12 @@ function wrapRuntimeTurnOperationsWithPublication(params: Readonly<{
   const readRespondToPermission = () => params.runtime.permissionCapability === 'responds'
     ? params.runtime.respondToPermission
     : undefined;
-  const hub = createNormalizedRuntimeEventPublicationHub<RuntimeEventV1>({
+  const hub = createNormalizedRuntimeEventPublicationHub<RuntimeTurnMessage>({
     identity: () => resolveRuntimeIdentityPublication({
       runtime: params.runtime,
       identity: params.identity,
     }),
-    subscribeUpstream: (handler) => params.runtime.subscribeRuntimeEvents((message) => {
-      if (isRuntimeEvent(message)) {
-        handler(message);
-      }
-    }),
+    subscribeUpstream: (handler) => params.runtime.subscribeRuntimeEvents(handler),
   });
 
   return Object.freeze({
@@ -167,6 +157,7 @@ export function withHostSessionRuntimeIdentityPublication(params: Readonly<{
           runtime,
           nativeRuntime,
           terminalRemoteModeLoop,
+          admittedProviderBindingHandoff,
         } = resolveHostSessionRuntimeFactoryResult(createdRuntime);
         return {
           operations: wrapRuntimeTurnOperationsWithPublication({
@@ -175,6 +166,9 @@ export function withHostSessionRuntimeIdentityPublication(params: Readonly<{
           }),
           nativeRuntime,
           terminalRemoteModeLoop,
+          ...(admittedProviderBindingHandoff
+            ? { admittedProviderBindingHandoff }
+            : {}),
         };
       },
     },

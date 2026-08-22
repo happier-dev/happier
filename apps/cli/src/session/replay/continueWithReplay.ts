@@ -1,17 +1,20 @@
 import { logger } from '@/ui/logger';
 import { configuration } from '@/configuration';
 import { isPermissionMode } from '@/api/types';
-import { readCredentials } from '@/persistence';
-import { createReplaySeededSession } from '@/session/replay/createReplaySeededSession';
+import { readStoredCredentials } from '@/persistence';
+import { buildReplaySeededSpawnRecipe } from '@/session/replay/buildReplaySeededSpawnRecipe';
 import { getSessionHostBridge } from '@/agent/runtime/bridges/session/SessionHostBridge';
-import { resolveReplaySeedDraft } from '@/session/replay/resolveReplaySeedDraft';
-import { archiveSessionByIdBestEffort } from '@/session/services/setSessionArchivedState';
+import { createSpawnedSession } from '@/session/services/createSpawnedSession';
 import { SPAWN_SESSION_ERROR_CODES, type SpawnSessionOptions, type SpawnSessionResult } from '@/session/shared/spawnSessionContract';
-import type { BackendTargetRefV2Input, LlmTaskRunnerConfigV1, SessionModelSelectionV1 } from '@happier-dev/protocol';
+import {
+    SpawnSessionErrorCodeSchema,
+    type BackendTargetRefV2Input,
+    type LlmTaskRunnerConfigV1,
+    type SessionModelSelectionV1,
+} from '@happier-dev/protocol';
 import { isAuthenticationError } from '@/api/client/httpStatusError';
 import {
     createStableSpawnNonce,
-    isAmbiguousSpawnSessionFailure,
     normalizeSpawnNonce,
 } from '@/session/shared/spawnNonce';
 
@@ -54,10 +57,6 @@ function parseEnvBoundedInt(
     return Math.min(bounds.max, Math.max(bounds.min, parsedValue));
 }
 
-async function archiveSessionBestEffort(token: string, sessionId: string): Promise<void> {
-    await archiveSessionByIdBestEffort({ token, sessionId });
-}
-
 export async function continueSessionWithReplay(
     params: ContinueSessionWithReplayParams,
     deps: ContinueSessionWithReplayDeps,
@@ -85,55 +84,50 @@ export async function continueSessionWithReplay(
     const maxTextCharsEnv = parseEnvBoundedInt('HAPPIER_REPLAY_MAX_TEXT_CHARS', { min: 1, max: 50_000 }, null);
     const maxTextChars = maxTextCharsEnv ?? undefined;
 
-    const credentials = await readCredentials().catch(() => null);
+    const credentials = await readStoredCredentials().catch(() => null);
     if (!credentials) {
         return {
             type: 'error',
-            errorCode: SPAWN_SESSION_ERROR_CODES.RESUME_MISSING_ENCRYPTION_KEY,
-            errorMessage: 'This daemon is not provisioned with dataKey credentials and cannot decrypt transcripts for replay.',
+            errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+            errorMessage: 'Not authenticated',
         };
     }
 
     const replayStrategy =
         (replay.strategy ?? 'recent_messages') === 'summary_plus_recent' ? 'summary_plus_recent' : 'recent_messages';
 
-    const resolvedSeed = await resolveReplaySeedDraft({
+    const recipeResult = await buildReplaySeededSpawnRecipe({
         credentials,
         cwd: directory,
         source: {
-            kind: 'fork_chain',
-            previousSessionId: replay.previousSessionId,
+            sourceSessionId: replay.previousSessionId,
+            forkPoint: { type: 'latest' },
         },
+        agentHintAgentId: resolvedBackend.agentHintAgentId,
         strategy: replayStrategy,
         recentMessagesCount: replay.recentMessagesCount ?? 250,
         maxSeedChars: typeof replay.maxSeedChars === 'number' ? replay.maxSeedChars : configuration.replaySeedMaxChars,
         candidateLimit: configuration.replaySeedCandidateLimit,
-        maxTextChars,
+        ...(typeof maxTextChars === 'number' ? { maxTextChars } : {}),
         summaryRunner: replay.summaryRunner ?? null,
-        deps: deps.runReplaySummaryForDialog ? { runReplaySummaryForDialog: deps.runReplaySummaryForDialog } : undefined,
+        ...(deps.runReplaySummaryForDialog
+            ? { deps: { runReplaySummaryForDialog: deps.runReplaySummaryForDialog } }
+            : {}),
     });
-    if (!resolvedSeed) {
+    if (!recipeResult.ok) {
         return {
             type: 'error',
-            errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
-            errorMessage: 'Unable to hydrate replay dialog from transcript.',
+            errorCode: recipeResult.errorCode,
+            errorMessage: recipeResult.errorMessage,
         };
     }
-
-    const seedDraft = resolvedSeed.seedDraft;
-    if (!seedDraft.trim()) {
-        return {
-            type: 'error',
-            errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
-            errorMessage: 'Replay seed draft is empty',
-        };
-    }
+    const recipe = recipeResult.recipe;
 
     const replaySpawnNonce = normalizeSpawnNonce(spawnNonce) ?? createStableSpawnNonce('session.continue_with_replay', {
         directory,
         backendTarget: resolvedBackend.backendTargetV2,
         previousSessionId: replay.previousSessionId,
-        sourceCutoffSeqInclusive: resolvedSeed.sourceCutoffSeqInclusive,
+        sourceCutoffSeqInclusive: recipe.cutoffSeqInclusive,
         strategy: replayStrategy,
         recentMessagesCount: replay.recentMessagesCount ?? 250,
         maxSeedChars: typeof replay.maxSeedChars === 'number' ? replay.maxSeedChars : configuration.replaySeedMaxChars,
@@ -148,86 +142,64 @@ export async function continueSessionWithReplay(
         backendTargetV2: resolvedBackend.backendTargetV2,
         approvedNewDirectoryCreation,
         previousSessionId: replay.previousSessionId,
-        dialogCount: resolvedSeed.dialog.length,
+        sourceCutoffSeqInclusive: recipe.cutoffSeqInclusive,
         strategy: replay.strategy ?? 'recent_messages',
         recentMessagesCount: replay.recentMessagesCount ?? 250,
     });
-
-    const nowMs = Date.now();
-    const created = await (async () => {
-        try {
-            return await createReplaySeededSession({
-                credentials,
-                directory,
-                flavor: resolvedBackend.replayFlavor,
-                tag: replaySpawnNonce,
-                metadata: {
-                    forkV1: {
-                        v: 1,
-                        parentSessionId: replay.previousSessionId,
-                        parentCutoffSeqInclusive: resolvedSeed.sourceCutoffSeqInclusive,
-                        createdAtMs: nowMs,
-                        strategy: 'replay',
-                        agentHint: { agentId: resolvedBackend.agentHintAgentId },
-                    },
-                    replaySeedV1: {
-                        v: 1,
-                        seedText: seedDraft,
-                        sourceSessionId: replay.previousSessionId,
-                        sourceCutoffSeqInclusive: resolvedSeed.sourceCutoffSeqInclusive,
-                        createdAtMs: nowMs,
-                    },
-                    ...(resolvedSeed.referencedSessionMediaWorkspacePaths.length > 0
-                        ? {
-                            sessionMediaContinuityV1: {
-                                v: 1,
-                                sourceSessionId: replay.previousSessionId,
-                                sourceCutoffSeqInclusive: resolvedSeed.sourceCutoffSeqInclusive,
-                                referencedWorkspacePaths: resolvedSeed.referencedSessionMediaWorkspacePaths,
-                            },
-                        }
-                        : {}),
-                },
-            });
-        } catch (error) {
-            if (isAuthenticationError(error)) throw error;
-            logger.debug('[SESSION REPLAY] Failed to create replay-seeded session', {
-                error: error instanceof Error ? error.message : String(error),
-            });
-            return null;
-        }
-    })();
-
-    if (!created) {
-        return {
-            type: 'error',
-            errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
-            errorMessage: 'Failed to create a new session for replay',
-        };
-    }
 
     const normalizedPermissionMode =
         typeof permissionMode === 'string' && isPermissionMode(permissionMode) ? permissionMode : undefined;
     const normalizedPermissionModeUpdatedAt =
         normalizedPermissionMode && typeof permissionModeUpdatedAt === 'number' ? permissionModeUpdatedAt : undefined;
 
-    const result = await deps.spawnSession({
-        directory,
-        backendTarget: resolvedBackend.backendTargetV2,
-        approvedNewDirectoryCreation,
-        spawnNonce: replaySpawnNonce,
-        existingSessionId: created.sessionId,
-        permissionMode: normalizedPermissionMode,
-        permissionModeUpdatedAt: normalizedPermissionModeUpdatedAt,
-        modelSelection,
-    } satisfies SpawnSessionOptions);
-
-    if (result.type === 'success') {
+    try {
+        // Row creation, create-or-rejoin settlement and orphan cleanup all
+        // belong to the canonical creator. This ingress contributes only its
+        // own durable retry identity and its legacy result shape.
+        const created = await createSpawnedSession({
+            credentials,
+            directory,
+            backendTarget: resolvedBackend.backendTargetV2,
+            spawnNonce: replaySpawnNonce,
+            ...(typeof approvedNewDirectoryCreation === 'boolean' ? { approvedNewDirectoryCreation } : {}),
+            ...(normalizedPermissionMode ? { permissionMode: normalizedPermissionMode } : {}),
+            ...(typeof normalizedPermissionModeUpdatedAt === 'number'
+                ? { permissionModeUpdatedAt: normalizedPermissionModeUpdatedAt }
+                : {}),
+            ...(modelSelection ? { modelSelection } : {}),
+            replaySeededCreation: {
+                tag: replaySpawnNonce,
+                flavor: resolvedBackend.replayFlavor,
+                metadata: recipe.metadata,
+                sourceRecipe: {
+                    sourceSessionId: replay.previousSessionId,
+                    cutoffSeqInclusive: recipe.cutoffSeqInclusive,
+                },
+            },
+            directTransport: {
+                spawn: async (request) => await deps.spawnSession({
+                    ...request,
+                    backendTarget: resolvedBackend.backendTargetV2,
+                } satisfies SpawnSessionOptions),
+                resolveSpawnSessionByNonce: async () => ({ status: 'unsupported' as const }),
+            },
+        });
         return { type: 'success', sessionId: created.sessionId };
+    } catch (error) {
+        if (isAuthenticationError(error)) throw error;
+        const candidateErrorCode = error && typeof error === 'object'
+            && typeof (error as { code?: unknown }).code === 'string'
+            && (error as { code: string }).code.trim().length > 0
+            ? (error as { code: string }).code
+            : null;
+        const parsedErrorCode = SpawnSessionErrorCodeSchema.safeParse(candidateErrorCode);
+        const errorCode = parsedErrorCode.success
+            ? parsedErrorCode.data
+            : SPAWN_SESSION_ERROR_CODES.UNEXPECTED;
+        const errorMessage = error instanceof Error && error.message.trim().length > 0
+            ? error.message
+            : 'Failed to create a new session for replay';
+        logger.debug('[SESSION REPLAY] Replay-seeded session creation failed', { errorCode, errorMessage });
+        return { type: 'error', errorCode, errorMessage };
     }
-
-    if (!isAmbiguousSpawnSessionFailure(result)) {
-        await archiveSessionBestEffort(credentials.token, created.sessionId);
-    }
-    return result;
 }

@@ -4,12 +4,15 @@ import type { ExecutionRunState } from './executionRunTypes';
 import type { ExecutionBudgetRegistry } from '@/daemon/executionBudget/ExecutionBudgetRegistry';
 import {
   convertBackendTargetRefV2ToV1,
+  type AcpConfigOptionOverridesV1,
   type BackendTargetRefV1,
   type ConnectedServiceBindingsV1,
+  type ProviderBoundModelRef,
 } from '@happier-dev/protocol';
 import { resumeBackendControllerForResumableRun } from './resumeBackendController';
 import type { ACPMessageData, ACPProvider } from '@/api/session/sessionMessageTypes';
 import type { StreamedTranscriptWriterSession } from '@/api/session/streamedTranscriptWriter';
+import type { ExecutionRunTranscriptPublisher } from './executionRunTranscriptPublisher';
 import {
   areExecutionRunBackendTargetsEqual,
   resolveExecutionRunBuiltInAgentId,
@@ -32,11 +35,13 @@ export async function ensureExecutionRun(args: Readonly<{
     backendTarget?: BackendTargetRefV1;
     permissionMode: string;
     modelId?: string;
+    modelSelection?: ProviderBoundModelRef;
+    sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1;
     accountSettings?: Readonly<Record<string, unknown>> | null;
     connectedServices?: ConnectedServiceBindingsV1 | null;
     start?: any;
   }) => ExecutionRunHostRuntime;
-  sendAcp: (provider: ACPProvider, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => void;
+  sendAcp: ExecutionRunTranscriptPublisher;
   parentProvider: ACPProvider;
   streamedTranscriptSession: StreamedTranscriptWriterSession | null;
   getPermissionRequestStore?: ExecutionRunPermissionRequestStoreProvider | null;
@@ -96,6 +101,11 @@ export async function ensureExecutionRun(args: Readonly<{
         contextSessionId: run.sessionId,
         chatModelId: config.chatModelId,
         commitModelId: config.commitModelId,
+        ...(config.chatModelSelection ? { chatModelSelection: config.chatModelSelection } : {}),
+        ...(config.commitModelSelection ? { commitModelSelection: config.commitModelSelection } : {}),
+        ...(run.launch?.sessionConfigOptionOverrides
+          ? { sessionConfigOptionOverrides: run.launch.sessionConfigOptionOverrides }
+          : {}),
         commitIsolation: config.commitIsolation,
         permissionIntent: config.permissionIntent,
         idleTtlSeconds: config.idleTtlSeconds,
@@ -106,12 +116,22 @@ export async function ensureExecutionRun(args: Readonly<{
         disabledActionIds: config.disabledActionIds,
         resumeHandle,
       }, {
-        createRuntime: ({ agentId, modelId, permissionIntent, start, connectedServices }) =>
+        createRuntime: ({
+          agentId,
+          modelId,
+          modelSelection,
+          sessionConfigOptionOverrides,
+          permissionIntent,
+          start,
+          connectedServices,
+        }) =>
           args.createRuntime({
             runId: args.runId,
             backendId: agentId,
             backendTarget: { kind: 'builtInAgent', agentId },
             modelId,
+            ...(modelSelection ? { modelSelection } : {}),
+            ...(sessionConfigOptionOverrides ? { sessionConfigOptionOverrides } : {}),
             permissionMode: permissionIntent,
             ...(start ? { start } : {}),
             ...(connectedServices !== undefined ? { connectedServices } : {}),

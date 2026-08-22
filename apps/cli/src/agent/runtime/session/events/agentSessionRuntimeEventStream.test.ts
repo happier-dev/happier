@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { AGENT_SESSION_RUNTIME_LIMITS_CANDIDATE_V1 } from '@happier-dev/protocol/runtime';
-import type { AgentSessionRuntimeEvent } from '@happier-dev/plugin-sdk/agent-runtime';
+import type { AgentSessionRuntimeEvent } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import {
   createAgentSessionRuntimeEventStream,

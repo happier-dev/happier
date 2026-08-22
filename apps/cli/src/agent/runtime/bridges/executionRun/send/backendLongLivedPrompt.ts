@@ -16,6 +16,9 @@ import { isAbortLikeError, normalizeExecutionRunSendDelivery, resolveInFlightDel
 import type { ExecutionRunHostRuntime } from '../executionRunHostRuntime';
 import type { ExecutionRunPermissionRequestStoreProvider } from '../executionRunPermissionResponseTarget';
 import type { ExecutionRunProfileContributionCatalog } from '@/agent/executionRuns/profiles/intentRegistry';
+import type { ExecutionRunTranscriptPublisher } from '../executionRunTranscriptPublisher';
+import { isExecutionRunTranscriptCustodyError } from '../executionRunTranscriptPublisher';
+import { settleExecutionRunController } from '../settleExecutionRunController';
 
 function readAbortRetryConfig(): { maxAttempts: number; delayMs: number } {
   const parseIntOr = (raw: unknown, fallback: number): number => {
@@ -71,7 +74,7 @@ export async function sendBackendLongLivedRun(args: Readonly<{
   maxTurns: number | null;
   getNowMs: () => number;
   finishRun: FinishExecutionRun;
-  sendAcp: (provider: ACPProvider, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => void;
+  sendAcp: ExecutionRunTranscriptPublisher;
   parentProvider: ACPProvider;
   streamedTranscriptSession: StreamedTranscriptWriterSession | null;
   getPermissionRequestStore?: ExecutionRunPermissionRequestStoreProvider | null;
@@ -210,7 +213,7 @@ export async function sendBackendLongLivedRun(args: Readonly<{
       const streamed =
         run.ioMode === 'streaming' && Boolean(ctrl2.streamWriter) && ctrl2.sidechainStreamBuffer.trim().length > 0;
       if (!streamed && rawText.length > 0) {
-        args.sendAcp(args.parentProvider, { type: 'message', message: rawText, sidechainId: run.sidechainId });
+        await args.sendAcp(args.parentProvider, { type: 'message', message: rawText, sidechainId: run.sidechainId });
       }
     } catch (e: any) {
       if (
@@ -242,36 +245,42 @@ export async function sendBackendLongLivedRun(args: Readonly<{
       const message = e instanceof Error ? e.message : 'Execution failed';
       await ctrl2.streamWriter?.flushAll({ reason: 'abort', interruptedReason: message });
       const finishedAtMs = args.getNowMs();
-      args.finishRun(
-        args.runId,
-        { status: 'failed', summary: message, finishedAtMs, error: { code: 'execution_run_failed', message } },
-        {
-          output: {
-            status: 'failed',
-            summary: message,
-            runId: run.runId,
-            callId: run.callId,
-            sidechainId: run.sidechainId,
-            finishedAtMs,
-            startedAtMs: run.startedAtMs,
-            error: { code: 'execution_run_failed', message },
+      let shouldSettleController = true;
+      try {
+        await args.finishRun(
+          args.runId,
+          { status: 'failed', summary: message, finishedAtMs, error: { code: 'execution_run_failed', message } },
+          {
+            output: {
+              status: 'failed',
+              summary: message,
+              runId: run.runId,
+              callId: run.callId,
+              sidechainId: run.sidechainId,
+              finishedAtMs,
+              startedAtMs: run.startedAtMs,
+              error: { code: 'execution_run_failed', message },
+            },
+            isError: true,
           },
-          isError: true,
-        },
-      );
-      try {
-        await ctrl2.backend.dispose();
-      } catch {
-        // ignore
-      }
-      try {
-        await ctrl2.terminalMarkerWritePromise;
-      } catch {
-        // ignore
-      }
-      ctrl2.resolveTerminal();
-      if (args.controllers.get(args.runId) === ctrl2) {
-        args.controllers.delete(args.runId);
+        );
+      } catch (finishError) {
+        // Completion is detached after the send ACK. finishRun has already made this typed
+        // failure observable in run state, so there is no waiting caller to reject. An error
+        // before that canonical transition remains exceptional and preserves the controller.
+        const terminalRun = args.runs.get(args.runId);
+        if (!isExecutionRunTranscriptCustodyError(finishError) && terminalRun?.status === 'running') {
+          shouldSettleController = false;
+          throw finishError;
+        }
+      } finally {
+        if (shouldSettleController) {
+          await settleExecutionRunController({
+            runId: args.runId,
+            controller: ctrl2,
+            controllers: args.controllers,
+          });
+        }
       }
     } finally {
       await args.writeActivityMarker(args.runId, args.getNowMs(), { force: true }).catch(() => {});
@@ -304,36 +313,30 @@ export async function sendBackendLongLivedRun(args: Readonly<{
     await args.writeActivityMarker(args.runId, args.getNowMs(), { force: true }).catch(() => {});
     const message = e instanceof Error ? e.message : 'Execution failed';
     const finishedAtMs = args.getNowMs();
-    args.finishRun(
-      args.runId,
-      { status: 'failed', summary: message, finishedAtMs, error: { code: 'execution_run_failed', message } },
-      {
-        output: {
-          status: 'failed',
-          summary: message,
-          runId: run.runId,
-          callId: run.callId,
-          sidechainId: run.sidechainId,
-          finishedAtMs,
-          startedAtMs: run.startedAtMs,
-          error: { code: 'execution_run_failed', message },
+    try {
+      await args.finishRun(
+        args.runId,
+        { status: 'failed', summary: message, finishedAtMs, error: { code: 'execution_run_failed', message } },
+        {
+          output: {
+            status: 'failed',
+            summary: message,
+            runId: run.runId,
+            callId: run.callId,
+            sidechainId: run.sidechainId,
+            finishedAtMs,
+            startedAtMs: run.startedAtMs,
+            error: { code: 'execution_run_failed', message },
+          },
+          isError: true,
         },
-        isError: true,
-      },
-    );
-    try {
-      await ctrl2.backend.dispose();
-    } catch {
-      // ignore
-    }
-    try {
-      await ctrl2.terminalMarkerWritePromise;
-    } catch {
-      // ignore
-    }
-    ctrl2.resolveTerminal();
-    if (args.controllers.get(args.runId) === ctrl2) {
-      args.controllers.delete(args.runId);
+      );
+    } finally {
+      await settleExecutionRunController({
+        runId: args.runId,
+        controller: ctrl2,
+        controllers: args.controllers,
+      });
     }
     return { ok: false, errorCode: 'execution_run_failed', error: message };
   }

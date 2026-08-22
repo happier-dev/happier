@@ -2,21 +2,15 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { CLAUDE_UNIFIED_TERMINAL_DIALOG_CHOICE_REQUEST_SOURCE } from '@happier-dev/agents';
+import { CLAUDE_UNIFIED_TERMINAL_DIALOG_CHOICE_REQUEST_SOURCE } from '@happier-dev/protocol/agents/claude';
 
 import { ProviderEnforcedPermissionHandler } from './handler';
 import { __resetToolTraceForTests } from '@/agent/tools/trace/toolTrace';
-
-class FakeRpcHandlerManager {
-  handlers = new Map<string, (payload: any) => any>();
-  registerHandler(name: string, handler: any) {
-    this.handlers.set(name, handler);
-  }
-}
+import { ServerBoundPermissionRpcHandlerManager } from '../testkit/serverBoundPermissionRpcHandlerManager';
 
 class FakeSession {
   sessionId = 'test-session-id';
-  rpcHandlerManager = new FakeRpcHandlerManager();
+  rpcHandlerManager = new ServerBoundPermissionRpcHandlerManager(this.sessionId);
   agentState: any = { requests: {}, completedRequests: {} };
   metadata: any = null;
 
@@ -34,6 +28,33 @@ class FakeSession {
   }
 }
 
+class DeferredUpdateSession extends FakeSession {
+  private deferredUpdate: Promise<void> | null = null;
+  private resolveDeferredUpdate: (() => void) | null = null;
+  private deferredUpdater: ((state: any) => any) | null = null;
+
+  deferNextUpdate(): void {
+    this.deferredUpdate = new Promise<void>((resolve) => {
+      this.resolveDeferredUpdate = resolve;
+    });
+  }
+
+  releaseNextUpdate(): void {
+    const update = this.deferredUpdater;
+    this.deferredUpdater = null;
+    if (update) this.agentState = update(this.agentState);
+    this.resolveDeferredUpdate?.();
+    this.resolveDeferredUpdate = null;
+    this.deferredUpdate = null;
+  }
+
+  override updateAgentState(updater: any) {
+    if (!this.deferredUpdate) return super.updateAgentState(updater);
+    this.deferredUpdater = updater;
+    return this.deferredUpdate;
+  }
+}
+
 async function settledState<T>(promise: Promise<T>): Promise<'pending' | 'fulfilled' | 'rejected'> {
   const pending = Symbol('pending');
   const result = await Promise.race([
@@ -44,10 +65,161 @@ async function settledState<T>(promise: Promise<T>): Promise<'pending' | 'fulfil
 }
 
 describe('ProviderEnforcedPermissionHandler always-auto-approve matching', () => {
+  it('keeps source-owned terminal-dialog trace redaction on the canonical Protocol policy seam', () => {
+    const baseHandlerSource = readFileSync(
+      new URL('../BasePermissionHandler.ts', import.meta.url),
+      'utf8',
+    );
+
+    expect(baseHandlerSource).toContain(
+      "import { CLAUDE_UNIFIED_TERMINAL_DIALOG_CHOICE_REQUEST_SOURCE } from '@happier-dev/protocol/agents/claude';",
+    );
+    expect(baseHandlerSource).not.toContain(
+      "import { CLAUDE_UNIFIED_TERMINAL_DIALOG_CHOICE_REQUEST_SOURCE } from '@happier-dev/plugin-sdk/agents';",
+    );
+  });
+
   afterEach(() => {
     delete process.env.HAPPIER_STACK_TOOL_TRACE;
     delete process.env.HAPPIER_STACK_TOOL_TRACE_FILE;
     __resetToolTraceForTests();
+  });
+
+  it('hard-denies an explicitly malformed causal permission authority', async () => {
+    const session = new FakeSession();
+    const handler = new ProviderEnforcedPermissionHandler(session as any, { logPrefix: '[Test]' });
+    handler.setPermissionMode('default');
+
+    await expect(handler.handleToolCall(
+      'malformed-causal-authority-provider',
+      'writeTextFile',
+      { path: '/tmp/x', content: 'hi' },
+      {
+        causalPermissionAuthority: {
+          kind: 'admittedSessionInputV1',
+          admittedPermissionCeiling: 'not-a-real-mode',
+        },
+      } as never,
+    )).resolves.toEqual({ decision: 'denied' });
+    expect(session.agentState.requests['malformed-causal-authority-provider']).toBeUndefined();
+    expect(session.agentState.completedRequests['malformed-causal-authority-provider']).toEqual(expect.objectContaining({
+      status: 'denied',
+      decision: 'denied',
+    }));
+  });
+
+  it('does not let a later mutable mode widening auto-approve a causally bounded provider request', () => {
+    const session = new FakeSession();
+    const handler = new ProviderEnforcedPermissionHandler(session as any, { logPrefix: '[Test]' });
+    handler.setPermissionMode('yolo');
+
+    expect(handler.getImmediateDecision(
+      'causal-ceiling-provider-1',
+      'Bash',
+      { command: 'echo hi' },
+      { causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'default' } } as any,
+    )).toBeNull();
+  });
+
+  it('does not persist or return a stale yolo Bash approval after host write policy narrows during its AgentState update', async () => {
+    const session = new DeferredUpdateSession();
+    const handler = new ProviderEnforcedPermissionHandler(session as any, { logPrefix: '[Test]' });
+    handler.setPermissionMode('yolo');
+    session.deferNextUpdate();
+
+    const result = handler.handleToolCall(
+      'direct-provider-auto-mode-currentness',
+      'Bash',
+      { command: 'echo hi' },
+      { origin: 'host_acp_fs_write' },
+    );
+    handler.setPermissionMode('read-only');
+    session.releaseNextUpdate();
+
+    await expect(result).resolves.toEqual({ decision: 'denied' });
+    expect(session.agentState.requests['direct-provider-auto-mode-currentness']).toBeUndefined();
+    expect(session.agentState.completedRequests['direct-provider-auto-mode-currentness']).toEqual(expect.objectContaining({
+      status: 'denied',
+      decision: 'denied',
+    }));
+    expect(session.agentState.completedRequests['direct-provider-auto-mode-currentness'].allowedTools).toBeUndefined();
+  });
+
+  it('keeps a failed automatic host-fs denial live and preserves that currentness for a restarted response', async () => {
+    const session = new FakeSession();
+    const handler = new ProviderEnforcedPermissionHandler(session as any, { logPrefix: '[Test]' });
+    let reloadedHandler: ProviderEnforcedPermissionHandler | null = null;
+
+    try {
+      const pending = handler.handleToolCall(
+        'provider-automatic-persistence-restart',
+        'Bash',
+        { command: 'echo hi' },
+        { origin: 'host_acp_fs_write' },
+      );
+      void pending.catch(() => undefined);
+      expect(session.agentState.requests['provider-automatic-persistence-restart']).toBeDefined();
+
+      session.updateAgentState = async () => {
+        throw new Error('updateAgentState failed');
+      };
+      handler.setPermissionMode('read-only');
+
+      expect(await settledState(pending)).toBe('pending');
+      expect(session.agentState.requests['provider-automatic-persistence-restart']).toBeDefined();
+      expect(session.agentState.completedRequests['provider-automatic-persistence-restart']).toBeUndefined();
+
+      session.updateAgentState = (updater: any) => {
+        session.agentState = updater(session.agentState);
+        return session.agentState;
+      };
+      reloadedHandler = new ProviderEnforcedPermissionHandler(session as any, { logPrefix: '[Reloaded]' });
+      reloadedHandler.setPermissionMode('read-only');
+
+      await session.rpcHandlerManager.handlers.get('permission')?.({
+        id: 'provider-automatic-persistence-restart',
+        approved: true,
+        decision: 'approved',
+      });
+
+      expect(session.agentState.completedRequests['provider-automatic-persistence-restart']).toEqual(
+        expect.objectContaining({
+          status: 'denied',
+          decision: 'denied',
+        }),
+      );
+    } finally {
+      session.updateAgentState = (updater: any) => {
+        session.agentState = updater(session.agentState);
+        return session.agentState;
+      };
+      await reloadedHandler?.reset();
+      await handler.reset();
+    }
+  });
+
+  it('keeps a causally bounded provider request pending when the mutable mode later widens', async () => {
+    const session = new FakeSession();
+    const handler = new ProviderEnforcedPermissionHandler(session as any, { logPrefix: '[Test]' });
+    handler.setPermissionMode('safe-yolo');
+
+    const pending = handler.handleToolCall(
+      'causal-pending-provider-1',
+      'Bash',
+      { command: 'echo hi' },
+      { causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'default' } },
+    );
+    expect(session.agentState.requests['causal-pending-provider-1']).toBeTruthy();
+
+    handler.setPermissionMode('yolo');
+
+    expect(session.agentState.requests['causal-pending-provider-1']).toBeTruthy();
+    await session.rpcHandlerManager.handlers.get('permission')?.({
+      id: 'causal-pending-provider-1',
+      approved: false,
+      decision: 'denied',
+    });
+    await expect(pending).resolves.toEqual({ decision: 'denied' });
   });
 
   it('auto-approves known safe tools but does not auto-approve substring collisions', async () => {
@@ -59,7 +231,14 @@ describe('ProviderEnforcedPermissionHandler always-auto-approve matching', () =>
     await expect(handler.handleToolCall('safe-3', 'happier_change_title', {})).resolves.toEqual({ decision: 'approved' });
     await expect(handler.handleToolCall('safe-4', 'mcp__happier__session_title_set', {})).resolves.toEqual({ decision: 'approved' });
     await expect(handler.handleToolCall('safe-5', 'happier_action_execute', { actionId: 'session.title.set' })).resolves.toEqual({ decision: 'approved' });
-    await expect(handler.handleToolCall('mcp__happier__change_title-1', 'other', {})).resolves.toEqual({ decision: 'approved' });
+    const idOnlyPending = handler.handleToolCall('mcp__happier__change_title-1', 'other', {});
+    expect(session.agentState.requests['mcp__happier__change_title-1']).toBeTruthy();
+    await session.rpcHandlerManager.handlers.get('permission')?.({
+      id: 'mcp__happier__change_title-1',
+      approved: false,
+      decision: 'denied',
+    });
+    await expect(idOnlyPending).resolves.toEqual({ decision: 'denied' });
 
     const executionRunPending = handler.handleToolCall('execution-run-1', 'mcp__happier__execution_run_start', {
       intent: 'delegate',
@@ -125,7 +304,6 @@ describe('ProviderEnforcedPermissionHandler always-auto-approve matching', () =>
     const handler = new ProviderEnforcedPermissionHandler(session as any, {
       logPrefix: '[Test]',
       alwaysAutoApproveToolNameIncludes: ['write_text_file'],
-      alwaysAutoApproveToolCallIdIncludes: ['custom-safe-write'],
     });
     const aliases = [
       'writeTextFile',
@@ -274,7 +452,7 @@ describe('ProviderEnforcedPermissionHandler always-auto-approve matching', () =>
     });
     await expect(pending).resolves.toEqual({
       decision: 'approved',
-      answers: { language: 'TypeScript' },
+      answers: { language: ['TypeScript'] },
     });
     expect(session.agentState.requests['ask-1']).toBeFalsy();
   });
@@ -371,9 +549,9 @@ describe('ProviderEnforcedPermissionHandler always-auto-approve matching', () =>
       id: 'plugin-second-request',
       approved: true,
       decision: 'approved',
-      answers: { language: 'Rust' },
+      answers: { language: ['Rust'] },
     });
-    await expect(second).resolves.toEqual({ decision: 'approved', answers: { language: 'Rust' } });
+    await expect(second).resolves.toEqual({ decision: 'approved', answers: { language: ['Rust'] } });
     expect(Object.keys(session.agentState.completedRequests).sort()).toEqual([
       'plugin-caller-aborted',
       'plugin-second-request',
@@ -457,6 +635,25 @@ describe('ProviderEnforcedPermissionHandler always-auto-approve matching', () =>
 
     await respond?.({ id: 'plugin-b-request', approved: false, decision: 'denied' });
     await expect(pluginB).resolves.toEqual({ decision: 'denied' });
+  });
+
+  it('reuses approved-for-session decisions across invocations of one stable plugin runtime owner', async () => {
+    const session = new FakeSession();
+    const handler = new ProviderEnforcedPermissionHandler(session as any, { logPrefix: '[Test]' });
+    const owner = { kind: 'plugin' as const, pluginId: 'acme.plugin', runtimeId: 'acme.plugin/actions/run' };
+    const input = { command: 'echo stable-owner' };
+
+    const firstInvocation = handler.handleToolCall('ordinary-invocation-one', 'Bash', input, { owner });
+    await session.rpcHandlerManager.handlers.get('permission')?.({
+      id: 'ordinary-invocation-one',
+      approved: true,
+      decision: 'approved_for_session',
+    });
+    await expect(firstInvocation).resolves.toEqual({ decision: 'approved_for_session' });
+
+    await expect(handler.handleToolCall('ordinary-invocation-two', 'Bash', input, { owner }))
+      .resolves.toEqual({ decision: 'approved_for_session' });
+    expect(session.agentState.requests['ordinary-invocation-two']).toBeUndefined();
   });
 
   it('does not let a rejected plugin duplicate mark an unowned request as plugin-owned', async () => {

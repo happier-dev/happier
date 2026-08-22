@@ -1,6 +1,5 @@
 import {
   getAgentAuthProbeConfig,
-  isAgentId,
   legacyCustomAcpCompat,
 } from '@happier-dev/agents';
 import type { CatalogAgentLookupId } from '@/agent/catalog/types';
@@ -50,11 +49,10 @@ async function detectCopilotAuthStatus(config: Readonly<{ envVars?: readonly str
 }
 
 export function createBuiltInCliAuthSpec(agentId: CatalogAgentLookupId): CliAuthSpec {
-  const config = isAgentId(agentId)
-    ? getAgentAuthProbeConfig(agentId)
-    : legacyCustomAcpCompat.isLegacyCustomAcpAgentId(agentId)
+  const config = getAgentAuthProbeConfig(agentId)
+    ?? (legacyCustomAcpCompat.isLegacyCustomAcpAgentId(agentId)
       ? legacyCustomAcpCompat.getLegacyCustomAcpAgentAuthProbeConfig()
-      : null;
+      : null);
   if (!config) {
     throw new Error(`Unsupported built-in CLI auth lookup id '${agentId}'`);
   }

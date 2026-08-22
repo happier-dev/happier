@@ -8,11 +8,16 @@ import {
 import { requestDaemonPluginActionExecution } from '@/daemon/controlClient';
 import type { PluginActionExecutionAttempt } from '@/plugins/projection/actions/execute';
 
+type GenerationBoundActionExecutorContext = ActionExecutorContext & Readonly<{
+  /** Host-stamped turn admission fence; never Action input or SDK surface. */
+  expectedContributorImmutableGenerationId?: string;
+}>;
+
 type ActionExecutorLike = Readonly<{
   execute: (
     actionId: ActionId,
     input: unknown,
-    context?: ActionExecutorContext,
+    context?: GenerationBoundActionExecutorContext,
   ) => Promise<ActionExecuteResult>;
 }>;
 
@@ -30,6 +35,7 @@ export function createDaemonPluginActionExecutor(params: Readonly<{
     input: unknown;
     surface: 'cli' | 'mcp' | 'agent';
     defaultSessionId?: string;
+    expectedContributorImmutableGenerationId?: string;
   }>) => Promise<PluginActionExecutionAttempt>;
 }>): ActionExecutorLike {
   const requestPluginActionExecution = params.requestPluginActionExecution
@@ -48,6 +54,13 @@ export function createDaemonPluginActionExecutor(params: Readonly<{
               : 'cli',
           ...(typeof context?.defaultSessionId === 'string'
             ? { defaultSessionId: context.defaultSessionId }
+            : {}),
+          ...(typeof context?.expectedContributorImmutableGenerationId === 'string'
+            && context.expectedContributorImmutableGenerationId.trim().length > 0
+            ? {
+                expectedContributorImmutableGenerationId:
+                  context.expectedContributorImmutableGenerationId.trim(),
+              }
             : {}),
         });
         if (attempt.matched) {

@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { readHookEventEnvelopeV1 } from '@happier-dev/protocol';
 
 import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
@@ -40,7 +39,6 @@ vi.mock('./engineRegistry/resolution', async (importOriginal) => ({
 }));
 
 function createContributionRegistry(
-    generationId: string,
     options?: Readonly<{ includePluginBackend?: boolean }>,
 ): ResolvedContributionRegistry {
     const agentDefinitionsById = new Map();
@@ -58,7 +56,6 @@ function createContributionRegistry(
         });
     }
     return {
-        generationId,
         agents: Object.freeze([]),
                 actions: Object.freeze([]),
         resources: Object.freeze([]),
@@ -72,7 +69,10 @@ function createContributionRegistry(
     };
 }
 
-function createRuntimeRegistry(contributes: ResolvedContributionRegistry): ResolvedExecutablePluginRuntimeRegistry {
+function createRuntimeRegistry(
+    contributes: ResolvedContributionRegistry,
+    currentGenerationsByPluginId?: ResolvedExecutablePluginRuntimeRegistry['pluginFinalPolicyCurrentGenerationsById'],
+): ResolvedExecutablePluginRuntimeRegistry {
     return {
         contributes,
         resolvePromptAssetBlocks: async () => [],
@@ -81,12 +81,12 @@ function createRuntimeRegistry(contributes: ResolvedContributionRegistry): Resol
         hookHandlersByHookId: new Map(),
         agentRuntimesByAgentId: new Map(),
         scmHostingProvidersById: new Map(),
-        networkAllowedUrlOriginsByPluginId: new Map(),
-        processSpawnAllowedPathsByPluginId: new Map(),
         pluginDiagnosticsByPluginId: Object.freeze({}),
+        ...(currentGenerationsByPluginId
+            ? { pluginFinalPolicyCurrentGenerationsById: currentGenerationsByPluginId }
+            : {}),
         addRuntimeDisposable: (_pluginId, disposable) => disposable,
-        createAgentInvocationServices: () => createUnavailablePluginServices(),
-        readHookEventEnvelopeV1,
+        createAgentInvocationServices: async () => createUnavailablePluginServices(),
         retireConsumers: () => {},
         dispose: async () => {},
     };
@@ -102,19 +102,19 @@ describe('resolveCliEngineRegistry runtime lease convergence', () => {
     });
 
     it('uses the authoritative plugin runtime lease for default contributions', async () => {
-        const authoritativeContributes = createContributionRegistry('authoritative-runtime');
+        const authoritativeContributes = createContributionRegistry();
         acquireAuthoritativePluginRuntimeRegistryLeaseMock.mockResolvedValue({
             registry: createRuntimeRegistry(authoritativeContributes),
             source: 'active',
             release: releaseLeaseMock,
         });
-        resolveMergedContributionRegistryMock.mockResolvedValue(createContributionRegistry('stale-merged'));
+        resolveMergedContributionRegistryMock.mockResolvedValue(createContributionRegistry());
         resolveExecutablePluginRuntimeRegistryMock.mockRejectedValue(new Error('direct executable registry must not be resolved'));
         releaseLeaseMock.mockResolvedValue(undefined);
 
         const registry = await resolveCliEngineRegistry();
 
-        expect(registry.contributions.generationId).toBe('authoritative-runtime');
+        expect(registry.contributions).toBe(authoritativeContributes);
         expect(acquireAuthoritativePluginRuntimeRegistryLeaseMock).toHaveBeenCalledTimes(1);
         expect(resolveMergedContributionRegistryMock).not.toHaveBeenCalled();
         expect(resolveExecutablePluginRuntimeRegistryMock).not.toHaveBeenCalled();
@@ -122,30 +122,36 @@ describe('resolveCliEngineRegistry runtime lease convergence', () => {
     });
 
     it('resolves a lazy backend through a fresh serving lease after releasing the discovery snapshot', async () => {
-        const generationAContributes = createContributionRegistry('generation-a', {
+        const generationAContributes = createContributionRegistry({
             includePluginBackend: true,
         });
-        const generationBContributes = createContributionRegistry('generation-b', {
+        const generationBContributes = createContributionRegistry({
             includePluginBackend: true,
         });
         const generationARegistry = createRuntimeRegistry(generationAContributes);
         const generationBRegistry = createRuntimeRegistry(generationBContributes);
         const resolvedAdapter = Object.freeze({
             backendId: 'acme.backend',
-            generationId: 'generation-b',
+            source: 'fresh-runtime-lease',
         });
         const releaseGenerationA = vi.fn(async () => undefined);
         const releaseGenerationB = vi.fn(async () => undefined);
+        const resolveCurrentPluginMaterializationRef = vi.fn(() => null);
+        const resolveCurrentMediatorContributionMaterializationRef = vi.fn(() => null);
 
         acquireAuthoritativePluginRuntimeRegistryLeaseMock
             .mockResolvedValueOnce({
                 registry: generationARegistry,
                 source: 'active',
+                resolveCurrentPluginMaterializationRef,
+                resolveCurrentMediatorContributionMaterializationRef,
                 release: releaseGenerationA,
             })
             .mockResolvedValueOnce({
                 registry: generationBRegistry,
                 source: 'active',
+                resolveCurrentPluginMaterializationRef,
+                resolveCurrentMediatorContributionMaterializationRef,
                 release: releaseGenerationB,
             });
         resolveEngineAdapterResolutionFromRegistryMock.mockResolvedValue(resolvedAdapter);
@@ -156,6 +162,8 @@ describe('resolveCliEngineRegistry runtime lease convergence', () => {
         expect(resolveEngineAdapterResolutionFromRegistryMock).toHaveBeenCalledWith(expect.objectContaining({
             contributions: generationBContributes,
             runtimeRegistry: generationBRegistry,
+            resolveCurrentPluginMaterializationRef,
+            resolveCurrentMediatorContributionMaterializationRef,
         }));
         expect(acquireAuthoritativePluginRuntimeRegistryLeaseMock).toHaveBeenCalledTimes(2);
         expect(releaseGenerationA).toHaveBeenCalledTimes(1);
@@ -163,10 +171,10 @@ describe('resolveCliEngineRegistry runtime lease convergence', () => {
     });
 
     it('does not revive a backend removed after the discovery snapshot was released', async () => {
-        const generationAContributes = createContributionRegistry('generation-a', {
+        const generationAContributes = createContributionRegistry({
             includePluginBackend: true,
         });
-        const generationBContributes = createContributionRegistry('generation-b');
+        const generationBContributes = createContributionRegistry();
         const releaseGenerationA = vi.fn(async () => undefined);
         const releaseGenerationB = vi.fn(async () => undefined);
 
@@ -188,5 +196,48 @@ describe('resolveCliEngineRegistry runtime lease convergence', () => {
         expect(resolveEngineAdapterResolutionFromRegistryMock).not.toHaveBeenCalled();
         expect(releaseGenerationA).toHaveBeenCalledTimes(1);
         expect(releaseGenerationB).toHaveBeenCalledTimes(1);
+    });
+
+    it('refreshes a plugin profile identity through the current runtime lifecycle owner', async () => {
+        const releaseDiscovery = vi.fn(async () => undefined);
+        const releaseCurrent = vi.fn(async () => undefined);
+        acquireAuthoritativePluginRuntimeRegistryLeaseMock
+            .mockResolvedValueOnce({
+                registry: createRuntimeRegistry(
+                    createContributionRegistry(),
+                    new Map([['acme.profile', {
+                        immutableGenerationId: 'immutable-discovery',
+                        desiredImmutableGenerationId: 'immutable-discovery',
+                        appliedImmutableGenerationId: 'immutable-discovery',
+                        distribution: 'archive',
+                        applied: true,
+                        selectedAccess: [],
+                    }]]),
+                ),
+                source: 'active',
+                release: releaseDiscovery,
+            })
+            .mockResolvedValueOnce({
+                registry: createRuntimeRegistry(
+                    createContributionRegistry(),
+                    new Map([['acme.profile', {
+                        immutableGenerationId: 'immutable-current',
+                        desiredImmutableGenerationId: 'immutable-current',
+                        appliedImmutableGenerationId: 'immutable-current',
+                        distribution: 'archive',
+                        applied: true,
+                        selectedAccess: [],
+                    }]]),
+                ),
+                source: 'active',
+                release: releaseCurrent,
+            });
+
+        const registry = await resolveCliEngineRegistry();
+
+        await expect(registry.resolveCurrentPluginGeneration('acme.profile'))
+            .resolves.toBe('immutable-current');
+        expect(releaseDiscovery).toHaveBeenCalledTimes(1);
+        expect(releaseCurrent).toHaveBeenCalledTimes(1);
     });
 });

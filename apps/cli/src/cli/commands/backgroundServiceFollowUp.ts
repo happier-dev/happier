@@ -1,16 +1,32 @@
+import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import axios from 'axios';
 import type { HappierService } from '@happier-dev/cli-common/happierRuntime';
 import { isAuthenticationError } from '@/api/client/httpStatusError';
 import { resolveLoopbackHttpUrl } from '@/api/client/loopbackUrl';
 import type { CliAuthState } from '@/capabilities/cliAuth/types';
 import { configuration } from '@/configuration';
-import { readCredentials, type Credentials } from '@/persistence';
-import type { DaemonServiceListEntry } from '@/daemon/service/cli';
+import { readStoredCredentials, type StoredCredentials } from '@/persistence';
+import { resolveDaemonServiceCliRuntimeFromEnv, type DaemonServiceListEntry } from '@/daemon/service/cli';
+import { resolveInstalledDaemonServiceInventoryForCurrentRelay } from '@/daemon/ownership/daemonServiceInventory';
+
+import { promptInput, runCliAction } from './server/commandUtilities';
 
 type BackgroundServiceFollowUpMode = 'user' | 'system';
 type ServerChangeCredentialState = 'authenticated' | 'authentication-required' | 'unknown';
 
 type BackgroundServiceInventoryEntry = HappierService | DaemonServiceListEntry;
+
+/**
+ * Child relay-selection commands set this only while `happier setup` owns the
+ * larger relay → auth → service sequence. Reconciliation still has one owner
+ * here; the child merely defers it until setup reaches the service step.
+ */
+export const DEFER_SERVER_SELECTION_FOLLOW_UP_ENV = 'HAPPIER_DEFER_SERVER_SELECTION_FOLLOW_UP';
+
+function shouldDeferServerSelectionFollowUp(): boolean {
+    const raw = String(process.env[DEFER_SERVER_SELECTION_FOLLOW_UP_ENV] ?? '').trim().toLowerCase();
+    return raw === '1' || raw === 'true' || raw === 'yes' || raw === 'on';
+}
 
 function isInstalledDefaultFollowingDaemonService(service: BackgroundServiceInventoryEntry): boolean {
     if ('serviceType' in service) {
@@ -35,7 +51,7 @@ function resolveBackgroundServiceMode(service: BackgroundServiceInventoryEntry):
 }
 
 async function readServerChangeCredentialState(
-    credentials: Credentials | null,
+    credentials: StoredCredentials | null,
     targetServerUrl: string,
 ): Promise<ServerChangeCredentialState> {
     if (!credentials) {
@@ -45,6 +61,7 @@ async function readServerChangeCredentialState(
     try {
         const response = await axios.get(`${resolveLoopbackHttpUrl(targetServerUrl).replace(/\/+$/, '')}/v1/account/profile`, {
             headers: {
+                ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
                 Authorization: `Bearer ${credentials.token}`,
                 'Content-Type': 'application/json',
             },
@@ -65,7 +82,7 @@ async function resolveServerChangeCredentialState(params: Readonly<{
         return 'authentication-required';
     }
 
-    const credentials = await readCredentials().catch(() => null);
+    const credentials = await readStoredCredentials().catch(() => null);
     return readServerChangeCredentialState(credentials, params.targetServerUrl);
 }
 
@@ -348,4 +365,38 @@ export async function runDefaultFollowingBackgroundServiceServerChangeFollowUp(p
             params.log(line);
         }
     }
+}
+
+/**
+ * Canonical reconciliation for "the active relay just changed".
+ *
+ * A default-following background service resolves the active relay once, at
+ * start. Every command that switches the active relay has to come back through
+ * here, or the daemon keeps talking to the relay it was started against while
+ * the CLI reports success against the new one.
+ */
+export async function runServerSelectionBackgroundServiceFollowUp(params: Readonly<{
+    interactive: boolean;
+    targetServerUrl: string;
+}>): Promise<void> {
+    if (shouldDeferServerSelectionFollowUp()) {
+        return;
+    }
+
+    const runtime = resolveDaemonServiceCliRuntimeFromEnv({ processEnv: process.env });
+    const services = await resolveInstalledDaemonServiceInventoryForCurrentRelay(runtime);
+    if (resolveInstalledDefaultFollowingDaemonServiceModes(services).length === 0) {
+        return;
+    }
+
+    const credentials = await readStoredCredentials().catch(() => null);
+    await runDefaultFollowingBackgroundServiceServerChangeFollowUp({
+        interactive: params.interactive,
+        promptInput,
+        runCliAction,
+        targetServerUrl: params.targetServerUrl,
+        authState: credentials ? 'logged_in' : 'logged_out',
+        log: console.log,
+        services,
+    });
 }

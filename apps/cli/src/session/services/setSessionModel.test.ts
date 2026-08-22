@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  sealSessionOwnerMetadataV1,
+  createPlainSessionOwnerMetadataEnvelopeV1,
   SessionOwnerMetadataV1Schema,
+  type SessionOwnerMetadataEnvelopeV1,
 } from '@happier-dev/protocol';
 
 const {
@@ -45,7 +46,7 @@ function transport(
   rawMetadata: Readonly<{
     metadata: string;
     metadataLayoutVersion: number;
-    ownerMetadata?: string;
+    ownerMetadata?: SessionOwnerMetadataEnvelopeV1;
     encryptionMode: 'plain' | 'e2ee';
   }> = {
     metadata: JSON.stringify(metadata),
@@ -56,17 +57,28 @@ function transport(
   return {
     ok: true as const,
     sessionId: 'sess-1',
+    accountEncryptionCurrentness: {
+      mode: rawMetadata.encryptionMode,
+      version: 1,
+      signingKeyFingerprint: null,
+      contentKeyFingerprint: null,
+      updatedAt: 1,
+    },
     rawSession: {
       id: 'sess-1',
       active,
       metadataVersion: 1,
       ...rawMetadata,
     },
-    mode: 'e2ee' as const,
-    ctx: {
-      encryptionKey: new Uint8Array([1, 2, 3, 4]),
-      encryptionVariant: 'legacy' as const,
-    },
+    ...(rawMetadata.encryptionMode === 'plain'
+      ? { mode: 'plain' as const, ctx: null }
+      : {
+          mode: 'e2ee' as const,
+          ctx: {
+            encryptionKey: new Uint8Array([1, 2, 3, 4]),
+            encryptionVariant: 'legacy' as const,
+          },
+        }),
   };
 }
 
@@ -252,11 +264,7 @@ describe('setSessionModel', () => {
           agentPresentation: { agentId: 'codex' },
         }),
         metadataLayoutVersion: 1,
-        ownerMetadata: sealSessionOwnerMetadataV1({
-          material: { type: 'legacy', secret: credentials.encryption.secret },
-          ownerMetadata,
-          randomBytes: (length) => new Uint8Array(length).fill(7),
-        }),
+        ownerMetadata: createPlainSessionOwnerMetadataEnvelopeV1(ownerMetadata),
         encryptionMode: 'plain',
       }));
       callSessionRpc.mockResolvedValue({
@@ -300,7 +308,10 @@ describe('setSessionModel', () => {
         agentPresentation: { agentId: 'codex' },
       }),
       metadataLayoutVersion: 1,
-      ownerMetadata: 'not-an-owner-envelope',
+      ownerMetadata: {
+        t: 'encrypted',
+        c: 'not-an-owner-envelope',
+      },
       encryptionMode: 'plain',
     }));
 
@@ -309,6 +320,22 @@ describe('setSessionModel', () => {
       idOrPrefix: 'sess-1',
       modelId: 'next-model',
     })).resolves.toEqual({ ok: false, code: 'unsupported' });
+    expect(callSessionRpc).not.toHaveBeenCalled();
+    expect(updateSessionMetadataWithRetry).not.toHaveBeenCalled();
+  });
+
+  it('preserves a session lookup timeout before resolving a model selection', async () => {
+    resolveSessionTransportContext.mockResolvedValue({
+      ok: false,
+      code: 'session_lookup_timeout',
+    });
+
+    await expect(setSessionModel({
+      credentials,
+      idOrPrefix: 'c123456789012345678901234',
+      modelId: 'next-model',
+    })).resolves.toEqual({ ok: false, code: 'session_lookup_timeout' });
+
     expect(callSessionRpc).not.toHaveBeenCalled();
     expect(updateSessionMetadataWithRetry).not.toHaveBeenCalled();
   });

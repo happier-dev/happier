@@ -1,71 +1,59 @@
+import {
+  AgentSessionRuntimeEventSchema,
+  type AgentSessionRuntimeEvent,
+} from '@happier-dev/protocol';
+
 import type {
   AgentId,
   TerminalLifecycleObservation,
   TerminalTurnAbortReason,
 } from './_types';
 
-type RuntimeLifecycleMessage = Readonly<{
-  type?: unknown;
-  id?: unknown;
-  reason?: unknown;
-  detail?: unknown;
-}>;
+type RuntimeTurnCancelledEvent = Extract<AgentSessionRuntimeEvent, { kind: 'turn-cancelled' }>;
 
-function readMessageRecord(message: unknown): RuntimeLifecycleMessage | null {
-  return message && typeof message === 'object' ? message as RuntimeLifecycleMessage : null;
+function mapAbortReason(event: RuntimeTurnCancelledEvent): TerminalTurnAbortReason {
+  return event.cause === 'user' ? 'user_interrupt' : 'other';
 }
 
-function readTurnId(value: unknown): string | null {
-  return typeof value === 'string' && value.trim().length > 0 ? value : null;
-}
-
-function readDetail(message: RuntimeLifecycleMessage): string | undefined {
-  const detail = typeof message.detail === 'string'
-    ? message.detail
-    : typeof message.reason === 'string'
-      ? message.reason
-      : '';
-  return detail.trim().length > 0 ? detail : undefined;
-}
-
-function mapAbortReason(message: RuntimeLifecycleMessage): TerminalTurnAbortReason {
-  const raw = `${typeof message.reason === 'string' ? message.reason : ''} ${typeof message.detail === 'string' ? message.detail : ''}`;
-  return /\b(interrupted|interrupt|user)\b/i.test(raw) ? 'user_interrupt' : 'other';
+function readCancellationDetail(event: RuntimeTurnCancelledEvent): string | undefined {
+  const message = event.diagnostic?.message?.trim();
+  return message && message.length > 0 ? message : undefined;
 }
 
 export function mapRuntimeMessageToTerminalLifecycleObservation(params: Readonly<{
   agentId: AgentId;
   message: unknown;
 }>): TerminalLifecycleObservation | null {
-  const message = readMessageRecord(params.message);
-  if (!message || typeof message.type !== 'string') return null;
-  const turnId = readTurnId(message.id);
+  const parsed = AgentSessionRuntimeEventSchema.safeParse(params.message);
+  if (!parsed.success) return null;
+  const event = parsed.data;
 
-  if (message.type === 'task_started') {
+  if (event.kind === 'turn-start') {
     return {
       type: 'prompt_submitted',
       agentId: params.agentId,
-      turnId,
+      turnId: event.turnId,
       source: 'lifecycle_event',
     };
   }
 
-  if (message.type === 'task_complete') {
+  if (event.kind === 'turn-complete') {
     return {
       type: 'turn_completed',
       agentId: params.agentId,
-      turnId,
+      turnId: event.turnId,
       source: 'lifecycle_event',
     };
   }
 
-  if (message.type === 'turn_aborted') {
+  if (event.kind === 'turn-cancelled') {
+    const detail = readCancellationDetail(event);
     return {
       type: 'turn_aborted',
       agentId: params.agentId,
-      turnId,
-      reason: mapAbortReason(message),
-      ...(readDetail(message) ? { detail: readDetail(message) } : {}),
+      turnId: event.turnId,
+      reason: mapAbortReason(event),
+      ...(detail ? { detail } : {}),
       source: 'lifecycle_event',
     };
   }

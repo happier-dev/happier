@@ -28,12 +28,9 @@ const {
 });
 
 vi.mock('@/persistence', () => ({
-  readCredentials: vi.fn(async () => ({
+  readStoredCredentials: vi.fn(async () => ({
     token: 'test-token',
-    encryption: {
-      type: 'legacy',
-      secret: new Uint8Array([1, 2, 3]),
-    },
+    encryption: null,
   })),
 }));
 
@@ -64,7 +61,7 @@ vi.mock('@/plugins/projection/registry/createResolvedContributionRegistry', () =
     agentDefinitionsById: new Map(),
     connectedAccountDescriptors: [
       {
-        pluginId: 'happier.scm.hosting.github',
+        pluginId: 'happier.scm.forge.github',
         provenance: 'first_party',
         source: { kind: 'bundled' },
         definition: {
@@ -111,7 +108,7 @@ vi.mock('@/plugins/projection/registry/createResolvedContributionRegistry', () =
 }));
 
 const GITHUB_SERVICE = Object.freeze({
-  pluginId: 'happier.scm.hosting.github',
+  pluginId: 'happier.scm.forge.github',
   localId: 'github-account',
 });
 const CODEX_SERVICE = Object.freeze({

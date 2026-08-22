@@ -13,9 +13,14 @@ import {
 import {
   REVIEW_SCM_SCOPE_INPUT_KEY,
   ReviewScmScopeV1Schema,
+  ExecutionRunVoiceAgentIntentInputV1Schema,
+  resolveScmPullRequestReviewScope,
   type AcpConfigOptionOverridesV1,
   type BackendTargetRefV1,
   type ConnectedServiceBindingsV1,
+  type ProviderBoundModelRef,
+  type SessionInputCausalPermissionAuthorityV1,
+  withExecutionRunStartFailureDetails,
 } from '@happier-dev/protocol';
 import type { ExecutionRunHostRuntime } from './executionRunHostRuntime';
 import type {
@@ -46,8 +51,10 @@ import type { ExecutionRunPermissionRequestStoreProvider } from './executionRunP
 import { resolveExecutionRunRuntimeSettings } from './runtimeSettings';
 import { permissionMode } from '@/agent/executionRuns/policy/permissionMode';
 import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
+import type { ExecutionRunTranscriptPublisher } from './executionRunTranscriptPublisher';
+import { settleExecutionRunController } from './settleExecutionRunController';
 
-type SendAcp = (provider: ACPProvider, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => void;
+type SendAcp = ExecutionRunTranscriptPublisher;
 
 type FinishRunNext = Omit<
   ExecutionRunState,
@@ -77,7 +84,7 @@ type FinishRun = (
   next: FinishRunNext,
   toolResult: { output: any; isError?: boolean; meta?: Record<string, unknown> },
   structuredMeta?: ExecutionRunStructuredMeta,
-) => void;
+) => Promise<void>;
 
 function normalizeVoiceAgentModelId(value: unknown): string {
   if (typeof value !== 'string') return '';
@@ -109,10 +116,24 @@ function readRecord(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
-function executionRunNotAllowed(message: string): Error & { code: string } {
-  const error = new Error(message) as Error & { code: string };
-  error.code = 'execution_run_not_allowed';
+function markExecutionRunStartFailure<T>(
+  error: T,
+  runCreation: 'noRunCreated' | 'outcomeUnknown',
+): T {
+  if (error && typeof error === 'object') {
+    const currentDetails = (error as { details?: unknown }).details;
+    Object.assign(error, {
+      details: withExecutionRunStartFailureDetails(currentDetails, runCreation),
+    });
+  }
   return error;
+}
+
+function executionRunNotAllowed(message: string): Error & { code: string; details: unknown } {
+  return markExecutionRunStartFailure(Object.assign(new Error(message), {
+    code: 'execution_run_not_allowed',
+    details: undefined as unknown,
+  }), 'noRunCreated');
 }
 
 /**
@@ -161,6 +182,20 @@ async function awaitBackendProvisionBounded<T>(
 function assertPreparedReviewRunStartAllowed(params: ExecutionRunManagerStartParams): void {
   if (params.intent !== 'review') return;
   const intentInput = readRecord(params.intentInput);
+
+  // A run that names a selected pull request is scoped by that pull request or
+  // by nothing. The profile has already re-derived `scmReviewScope` from this
+  // run's own directory by the time we get here, so a scope that arrived
+  // damaged — or was rebuilt without its observation — would otherwise start a
+  // review of whatever happens to be checked out and report it as a review of
+  // the pull request. Refuse instead: never read the worktree scope in its
+  // place, and never complete it from a locally resolved head.
+  if (resolveScmPullRequestReviewScope(intentInput).status === 'scope_malformed') {
+    throw executionRunNotAllowed(
+      'The selected pull request review scope is unreadable, so this review cannot be scoped to that pull request.',
+    );
+  }
+
   const parsedScope = ReviewScmScopeV1Schema.safeParse(intentInput?.[REVIEW_SCM_SCOPE_INPUT_KEY]);
   if (!parsedScope.success || parsedScope.data.status !== 'unsupported') return;
   if ((params.instructions ?? '').trim().length > 0) return;
@@ -194,7 +229,9 @@ export async function startExecutionRun(args: Readonly<{
     backendId: string;
     backendTarget?: BackendTargetRefV1;
     permissionMode: string;
+    causalPermissionAuthority?: SessionInputCausalPermissionAuthorityV1;
     modelId?: string;
+    modelSelection?: ProviderBoundModelRef;
     sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1;
     accountSettings?: Readonly<Record<string, unknown>> | null;
     connectedServices?: ConnectedServiceBindingsV1 | null;
@@ -223,8 +260,14 @@ export async function startExecutionRun(args: Readonly<{
   const profile = args.profileCatalog
     ? resolveExecutionRunIntentProfileFromCatalog(args.profileCatalog, args.params.intent, args.params.profileId)
     : resolveExecutionRunIntentProfile(args.params.intent);
-  const shouldMaterializeInTranscript = profile.transcriptMaterialization !== 'none';
-  const sendAcp = shouldMaterializeInTranscript ? args.sendAcp : (() => {});
+  if (args.params.sessionId === null && profile.supportsDetached !== true) {
+    throw executionRunNotAllowed(`Execution-run intent '${args.params.intent}' requires a Session scope`);
+  }
+  const shouldMaterializeInTranscript = args.params.sessionId !== null
+    && profile.transcriptMaterialization !== 'none';
+  const sendAcp: ExecutionRunTranscriptPublisher = shouldMaterializeInTranscript
+    ? args.sendAcp
+    : async () => {};
   const computeSidechainStreamText = createExecutionRunSidechainStreamText(profile);
 
   const runId = `run_${randomUUID()}`;
@@ -249,9 +292,9 @@ export async function startExecutionRun(args: Readonly<{
     ? args.budgetRegistry?.tryAcquireOneShotTask(runId, 'scm_commit_message') ?? true
     : args.budgetRegistry?.tryAcquireExecutionRun(runId, args.params.intent) ?? true;
   if (!acquiredBudget) {
-    const err = Object.assign(new Error('Execution run budget exceeded'), {
+    const err = markExecutionRunStartFailure(Object.assign(new Error('Execution run budget exceeded'), {
       code: 'execution_run_budget_exceeded',
-    });
+    }), 'noRunCreated');
     throw err;
   }
 
@@ -274,6 +317,9 @@ export async function startExecutionRun(args: Readonly<{
       : undefined;
   const launch = {
     ...(launchModelId ? { modelId: launchModelId } : {}),
+    ...(args.params.modelSelection
+      ? { modelSelection: args.params.modelSelection }
+      : {}),
     ...(args.params.sessionConfigOptionOverrides
       ? { sessionConfigOptionOverrides: args.params.sessionConfigOptionOverrides }
       : {}),
@@ -314,22 +360,20 @@ export async function startExecutionRun(args: Readonly<{
     callId,
     sidechainId,
     intent: args.params.intent,
-    backendTarget: args.params.backendTarget,
-    ...(args.params.display ? { display: args.params.display } : {}),
+    backendTarget: readBackendTargetRefV2(args.params.backendTarget),
     permissionMode: args.params.permissionMode,
+    retentionPolicy: args.params.retentionPolicy,
     runClass: args.params.runClass,
     ioMode: args.params.ioMode,
-    retentionPolicy: args.params.retentionPolicy,
     status: 'running',
     startedAtMs,
     updatedAtMs: startedAtMs,
-    resumeHandle: null,
   } as const;
   await args.enqueueMarkerWrite(runId, () => writeExecutionRunMarker(startMarkerPayload)).catch(() => {});
 
   // Materialize the run in transcript (tool-call).
   if (shouldMaterializeInTranscript) {
-    sendAcp(args.parentProvider, {
+    await sendAcp(args.parentProvider, {
       type: 'tool-call',
       callId,
       name: 'SubAgentRun',
@@ -353,7 +397,7 @@ export async function startExecutionRun(args: Readonly<{
   if (cachedScmDiffSummaryOutput) {
     const finishedAtMs = args.getNowMs();
     const status = cachedScmDiffSummaryOutput.success === true ? 'succeeded' : 'failed';
-    args.finishRun(
+    await args.finishRun(
       runId,
       {
         status,
@@ -390,6 +434,12 @@ export async function startExecutionRun(args: Readonly<{
 
       const chatModelId = normalizeVoiceAgentModelId(args.params.chatModelId);
       const commitModelId = normalizeVoiceAgentModelId(args.params.commitModelId);
+      const voiceIntentInput = ExecutionRunVoiceAgentIntentInputV1Schema.safeParse(args.params.intentInput ?? {});
+      if (!voiceIntentInput.success) {
+        throw new VoiceAgentError('VOICE_AGENT_START_FAILED', 'Invalid Voice Agent intent input');
+      }
+      const chatModelSelection = args.params.modelSelection;
+      const commitModelSelection = voiceIntentInput.data.commitModelSelection;
       const commitIsolation = args.params.commitIsolation === true;
       const idleTtlSeconds = typeof args.params.idleTtlSeconds === 'number' ? args.params.idleTtlSeconds : 600;
       const initialContextMode = args.params.initialContextMode === 'first_turn' ? 'first_turn' : 'bootstrap';
@@ -416,6 +466,11 @@ export async function startExecutionRun(args: Readonly<{
         contextSessionId: args.params.sessionId,
         chatModelId,
         commitModelId,
+        ...(chatModelSelection ? { chatModelSelection } : {}),
+        ...(commitModelSelection ? { commitModelSelection } : {}),
+        ...(args.params.sessionConfigOptionOverrides
+          ? { sessionConfigOptionOverrides: args.params.sessionConfigOptionOverrides }
+          : {}),
         commitIsolation,
         permissionIntent,
         idleTtlSeconds,
@@ -426,14 +481,27 @@ export async function startExecutionRun(args: Readonly<{
         ...(typeof bootstrapTimeoutMs === 'number' ? { bootstrapTimeoutMs } : {}),
         disabledActionIds,
       }, {
-        createRuntime: ({ agentId, modelId, permissionIntent, start, connectedServices }) => {
+        createRuntime: ({
+          agentId,
+          modelId,
+          modelSelection,
+          sessionConfigOptionOverrides,
+          permissionIntent,
+          start,
+          connectedServices,
+        }) => {
           try {
             return args.createRuntime({
               runId,
               backendId: agentId,
               backendTarget: { kind: 'builtInAgent', agentId },
               modelId,
+              ...(modelSelection ? { modelSelection } : {}),
+              ...(sessionConfigOptionOverrides ? { sessionConfigOptionOverrides } : {}),
               permissionMode: permissionIntent,
+              ...(args.params.causalPermissionAuthority
+                ? { causalPermissionAuthority: args.params.causalPermissionAuthority }
+                : {}),
               ...(start ? { start } : {}),
               ...(connectedServices !== undefined ? { connectedServices } : {}),
             });
@@ -459,6 +527,8 @@ export async function startExecutionRun(args: Readonly<{
             ...(profileId ? { profileId } : {}),
             chatModelId,
             commitModelId,
+            ...(chatModelSelection ? { chatModelSelection } : {}),
+            ...(commitModelSelection ? { commitModelSelection } : {}),
             commitIsolation,
             permissionIntent,
             idleTtlSeconds,
@@ -498,8 +568,14 @@ export async function startExecutionRun(args: Readonly<{
       backendId,
       backendTarget: args.params.backendTarget,
       permissionMode: args.params.permissionMode,
+      ...(args.params.causalPermissionAuthority
+        ? { causalPermissionAuthority: args.params.causalPermissionAuthority }
+        : {}),
       ...(typeof args.params.modelId === 'string' && args.params.modelId.trim().length > 0
         ? { modelId: args.params.modelId }
+        : {}),
+      ...(args.params.modelSelection
+        ? { modelSelection: args.params.modelSelection }
         : {}),
       ...(args.params.sessionConfigOptionOverrides
         ? { sessionConfigOptionOverrides: args.params.sessionConfigOptionOverrides }
@@ -615,19 +691,16 @@ export async function startExecutionRun(args: Readonly<{
 
           void args
             .executeBoundedRun({ runId, callId, sidechainId, startedAtMs, params: startParams })
-            .finally(() => {
-              // Ensure terminal promise resolves even if executeBoundedRun throws unexpectedly.
-              ctrl.resolveTerminal();
-              if (args.controllers.get(runId) === ctrl) {
-                args.controllers.delete(runId);
-              }
+            .finally(async () => {
+              // Converge with stop/disposal even if executeBoundedRun throws before its own settlement.
+              await settleExecutionRunController({ runId, controller: ctrl, controllers: args.controllers });
             });
         } catch (e: any) {
           const message = e instanceof Error ? e.message : 'Execution failed';
           const finishedAtMs = args.getNowMs();
           const code = e instanceof VoiceAgentError ? e.code : 'execution_run_failed';
           try {
-            args.finishRun(
+            await args.finishRun(
               runId,
               { status: 'failed', summary: message, finishedAtMs, error: { code, message } },
               {
@@ -649,15 +722,7 @@ export async function startExecutionRun(args: Readonly<{
           } catch {
             // best effort
           }
-          try {
-            await ctrl.backend.dispose();
-          } catch {
-            // best effort
-          }
-          ctrl.resolveTerminal();
-          if (args.controllers.get(runId) === ctrl) {
-            args.controllers.delete(runId);
-          }
+          await settleExecutionRunController({ runId, controller: ctrl, controllers: args.controllers });
         }
       })();
 
@@ -723,11 +788,14 @@ export async function startExecutionRun(args: Readonly<{
 
     return { runId, callId, sidechainId };
   } catch (e: any) {
+    if (!registeredController) {
+      args.budgetRegistry?.releaseExecutionRun(runId);
+    }
     const message = e instanceof Error ? e.message : 'Execution failed';
     const finishedAtMs = args.getNowMs();
     const code = e instanceof VoiceAgentError ? e.code : 'execution_run_failed';
     try {
-      args.finishRun(
+      await args.finishRun(
         runId,
         { status: 'failed', summary: message, finishedAtMs, error: { code, message } },
         {
@@ -751,15 +819,14 @@ export async function startExecutionRun(args: Readonly<{
     }
     const ctrl = registeredController;
     if (ctrl) {
-      try {
-        if (ctrl.kind === 'backend') await ctrl.backend.dispose();
-      } catch {
-        // best effort
+      if (ctrl.kind === 'voice_agent') {
+        try {
+          await args.voiceAgentManager.stop({ voiceAgentId: ctrl.voiceAgentId });
+        } catch {
+          // best effort
+        }
       }
-      ctrl.resolveTerminal();
-      if (args.controllers.get(runId) === ctrl) {
-        args.controllers.delete(runId);
-      }
+      await settleExecutionRunController({ runId, controller: ctrl, controllers: args.controllers });
     } else if (backendBeforeControllerRegistration) {
       try {
         await backendBeforeControllerRegistration.dispose();
@@ -767,6 +834,6 @@ export async function startExecutionRun(args: Readonly<{
         // best effort
       }
     }
-    throw e;
+    throw markExecutionRunStartFailure(e, 'outcomeUnknown');
   }
 }

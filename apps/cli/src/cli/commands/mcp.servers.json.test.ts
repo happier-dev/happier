@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { Credentials } from '@/persistence';
+import type { Credentials, TokenOnlyCredentials } from '@/persistence';
 import type { AccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 import { accountSettingsParse, McpServersSettingsV1Schema, type AccountSettings } from '@happier-dev/protocol';
 
@@ -15,8 +15,16 @@ function createCredentialsStub(): Credentials {
   };
 }
 
+function createTokenOnlyCredentialsStub(): TokenOnlyCredentials {
+  return {
+    token: 'plain-token',
+    encryption: null,
+  };
+}
+
 function createAccountSettingsContextStub(args: Readonly<{
   mcpServersSettingsV1: unknown;
+  secrets?: unknown;
   settingsVersion?: number;
   loadedAtMs?: number;
 }>): AccountSettingsContext {
@@ -25,6 +33,7 @@ function createAccountSettingsContextStub(args: Readonly<{
     settings: accountSettingsParse({
       schemaVersion: 2,
       mcpServersSettingsV1: args.mcpServersSettingsV1,
+      ...(args.secrets === undefined ? {} : { secrets: args.secrets }),
     }),
     settingsVersion: args.settingsVersion ?? 10,
     loadedAtMs: args.loadedAtMs ?? 1,
@@ -46,6 +55,28 @@ function createStoredAccountSettings(mcpServersSettingsV1: unknown): StoredAccou
   return accountSettingsParse({
     schemaVersion: 2,
     mcpServersSettingsV1,
+  });
+}
+
+function applyMcpServersSettingsMutation(
+  current: StoredAccountSettings,
+  params: Parameters<McpCommandDeps['updateAccountSettingsV2WithRetry']>[0],
+): StoredAccountSettings {
+  if (!params.mutation) {
+    throw new Error('Expected immutable MCP Settings mutation');
+  }
+  const [operation] = params.mutation.operations;
+  if (
+    params.mutation.operations.length !== 1
+    || !operation
+    || operation.op !== 'set'
+    || operation.key !== 'mcpServersSettingsV1'
+  ) {
+    throw new Error('Expected one MCP Servers Settings set operation');
+  }
+  return accountSettingsParse({
+    ...current,
+    mcpServersSettingsV1: operation.value,
   });
 }
 
@@ -103,7 +134,7 @@ describe.sequential('happier mcp servers --json', () => {
     });
 
     const { parsed, exitCode } = await runJsonMcpCommand(['servers', 'list', '--json'], {
-      readCredentials: async () => createCredentialsStub(),
+      readStoredCredentials: async () => createTokenOnlyCredentialsStub(),
       bootstrapAccountSettingsContext: async (args: unknown) => {
         bootstrapCalls.push(args);
         return createAccountSettingsContextStub({ mcpServersSettingsV1: mcpSettings });
@@ -146,12 +177,12 @@ describe.sequential('happier mcp servers --json', () => {
       'server.js',
       '--json',
     ], {
-      readCredentials: async () => createCredentialsStub(),
+      readStoredCredentials: async () => createTokenOnlyCredentialsStub(),
       randomUUID: () => 'srv-1',
       nowMs: () => 123,
-      updateAccountSettingsV2WithRetry: async ({ mutate }) => {
-        storedSettings = accountSettingsParse(mutate(storedSettings));
-        return { version: 11 };
+      updateAccountSettingsV2WithRetry: async (params) => {
+        storedSettings = applyMcpServersSettingsMutation(storedSettings, params);
+        return { status: 'applied' as const, version: 11, settings: storedSettings };
       },
     } satisfies Partial<McpCommandDeps>);
 
@@ -171,6 +202,37 @@ describe.sequential('happier mcp servers --json', () => {
       stdio: { command: 'node', args: ['server.js'] },
     });
     expect(exitCode).toBe(0);
+  });
+
+  it('preserves a failed MCP Settings mutation as a redacted JSON settlement', async () => {
+    const { parsed, exitCode } = await runJsonMcpCommand([
+      'servers',
+      'add',
+      '--name',
+      'example',
+      '--transport',
+      'stdio',
+      '--command',
+      'node',
+      '--json',
+    ], {
+      readStoredCredentials: async () => createTokenOnlyCredentialsStub(),
+      updateAccountSettingsV2WithRetry: async () => ({
+        status: 'conflict' as const,
+        currentVersion: 17,
+      }),
+    } satisfies Partial<McpCommandDeps>);
+
+    expect(parsed).toMatchObject({
+      ok: false,
+      kind: 'mcp_servers_add',
+      error: { code: 'account_settings_conflict' },
+    });
+    expect(readObject(parsed.error)?.settlement).toEqual({
+      status: 'conflict',
+      currentVersion: 17,
+    });
+    expect(exitCode).toBe(1);
   });
 
   it('prints a mcp_servers_bind JSON envelope and creates a binding', async () => {
@@ -201,12 +263,12 @@ describe.sequential('happier mcp servers --json', () => {
       '--all-machines',
       '--json',
     ], {
-      readCredentials: async () => createCredentialsStub(),
+      readStoredCredentials: async () => createCredentialsStub(),
       randomUUID: () => ids.shift() ?? 'bind-fallback',
       nowMs: () => 456,
-      updateAccountSettingsV2WithRetry: async ({ mutate }) => {
-        storedSettings = accountSettingsParse(mutate(storedSettings));
-        return { version: 12 };
+      updateAccountSettingsV2WithRetry: async (params) => {
+        storedSettings = applyMcpServersSettingsMutation(storedSettings, params);
+        return { status: 'applied' as const, version: 12, settings: storedSettings };
       },
     } satisfies Partial<McpCommandDeps>);
 
@@ -252,12 +314,12 @@ describe.sequential('happier mcp servers --json', () => {
       '--all-machines',
       '--json',
     ], {
-      readCredentials: async () => createCredentialsStub(),
+      readStoredCredentials: async () => createCredentialsStub(),
       randomUUID: () => 'bind-legacy-1',
       nowMs: () => 456,
-      updateAccountSettingsV2WithRetry: async ({ mutate }) => {
-        storedSettings = accountSettingsParse(mutate(storedSettings));
-        return { version: 12 };
+      updateAccountSettingsV2WithRetry: async (params) => {
+        storedSettings = applyMcpServersSettingsMutation(storedSettings, params);
+        return { status: 'applied' as const, version: 12, settings: storedSettings };
       },
     } satisfies Partial<McpCommandDeps>);
 
@@ -291,10 +353,10 @@ describe.sequential('happier mcp servers --json', () => {
       '--all-machines',
       '--json',
     ], {
-      readCredentials: async () => createCredentialsStub(),
-      updateAccountSettingsV2WithRetry: async ({ mutate }) => {
-        storedSettings = accountSettingsParse(mutate(storedSettings));
-        return { version: 12 };
+      readStoredCredentials: async () => createCredentialsStub(),
+      updateAccountSettingsV2WithRetry: async (params) => {
+        storedSettings = applyMcpServersSettingsMutation(storedSettings, params);
+        return { status: 'applied' as const, version: 12, settings: storedSettings };
       },
     } satisfies Partial<McpCommandDeps>);
 
@@ -341,10 +403,10 @@ describe.sequential('happier mcp servers --json', () => {
       'bind-1',
       '--json',
     ], {
-      readCredentials: async () => createCredentialsStub(),
-      updateAccountSettingsV2WithRetry: async ({ mutate }) => {
-        storedSettings = accountSettingsParse(mutate(storedSettings));
-        return { version: 13 };
+      readStoredCredentials: async () => createCredentialsStub(),
+      updateAccountSettingsV2WithRetry: async (params) => {
+        storedSettings = applyMcpServersSettingsMutation(storedSettings, params);
+        return { status: 'applied' as const, version: 13, settings: storedSettings };
       },
     } satisfies Partial<McpCommandDeps>);
 
@@ -373,10 +435,10 @@ describe.sequential('happier mcp servers --json', () => {
       'missing-binding',
       '--json',
     ], {
-      readCredentials: async () => createCredentialsStub(),
-      updateAccountSettingsV2WithRetry: async ({ mutate }) => {
-        storedSettings = accountSettingsParse(mutate(storedSettings));
-        return { version: 13 };
+      readStoredCredentials: async () => createCredentialsStub(),
+      updateAccountSettingsV2WithRetry: async (params) => {
+        storedSettings = applyMcpServersSettingsMutation(storedSettings, params);
+        return { status: 'applied' as const, version: 13, settings: storedSettings };
       },
     } satisfies Partial<McpCommandDeps>);
 
@@ -438,7 +500,7 @@ describe.sequential('happier mcp servers --json', () => {
           name: 'example',
           transport: 'stdio',
           stdio: { command: 'node', args: ['server.js'] },
-          env: { API_KEY: { t: 'literal', v: '${WAVE31_MCP_TOKEN}' } },
+          env: { API_KEY: { t: 'savedSecret', secretId: 'plain-secret' } },
           createdAt: 1,
           updatedAt: 1,
         },
@@ -464,12 +526,24 @@ describe.sequential('happier mcp servers --json', () => {
       '/tmp',
       '--json',
     ], {
-      readCredentials: async () => createCredentialsStub(),
+      readStoredCredentials: async () => createTokenOnlyCredentialsStub(),
       env: commandEnv,
       ensureMachineIdForCredentials: async () => ({ machineId: 'machine-1' }),
       bootstrapAccountSettingsContext: async (args: unknown) => {
         bootstrapCalls.push(args);
-        return createAccountSettingsContextStub({ mcpServersSettingsV1: mcpSettings });
+        return createAccountSettingsContextStub({
+          mcpServersSettingsV1: mcpSettings,
+          secrets: [
+            {
+              id: 'plain-secret',
+              name: 'Plain secret',
+              encryptedValue: {
+                _isSecretValue: true,
+                value: 'plain-secret-value',
+              },
+            },
+          ],
+        });
       },
       probeMcpStdioServerTools: async (params) => {
         capturedProbeBaseEnv = params.baseEnv ?? null;
@@ -488,8 +562,73 @@ describe.sequential('happier mcp servers --json', () => {
       expect.objectContaining({ mode: 'blocking', refresh: 'force' }),
     ]);
     expect(capturedProbeBaseEnv).toBe(commandEnv);
-    expect(capturedProbeConfigEnv).toEqual({ API_KEY: 'from-deps-env' });
+    expect(capturedProbeConfigEnv).toEqual({ API_KEY: 'plain-secret-value' });
     expect(exitCode).toBe(0);
+  });
+
+  it('does not probe a retained encrypted Settings secret with token-only credentials', async () => {
+    const probeMcpStdioServerTools = vi.fn(async () => [{ name: 'unexpected-tool' }]);
+    const mcpSettings = McpServersSettingsV1Schema.parse({
+      v: 1,
+      strictMode: true,
+      servers: [
+        {
+          id: 'srv-1',
+          name: 'example',
+          transport: 'stdio',
+          stdio: { command: 'node', args: ['server.js'] },
+          env: { API_KEY: { t: 'savedSecret', secretId: 'retained-secret' } },
+          createdAt: 1,
+          updatedAt: 1,
+        },
+      ],
+      bindings: [
+        {
+          id: 'bind-1',
+          serverId: 'srv-1',
+          enabled: true,
+          target: { t: 'allMachines' },
+          createdAt: 1,
+          updatedAt: 1,
+        },
+      ],
+    });
+
+    const { parsed, exitCode } = await runJsonMcpCommand([
+      'servers',
+      'test',
+      '--mcp-server',
+      'example',
+      '--dir',
+      '/tmp',
+      '--json',
+    ], {
+      readStoredCredentials: async () => createTokenOnlyCredentialsStub(),
+      ensureMachineIdForCredentials: async () => ({ machineId: 'machine-1' }),
+      bootstrapAccountSettingsContext: async () => createAccountSettingsContextStub({
+        mcpServersSettingsV1: mcpSettings,
+        secrets: [
+          {
+            id: 'retained-secret',
+            name: 'Retained encrypted secret',
+            encryptedValue: {
+              _isSecretValue: true,
+              encryptedValue: {
+                t: 'enc-v1',
+                c: 'AAAA',
+              },
+            },
+          },
+        ],
+      }),
+      probeMcpStdioServerTools,
+    } satisfies Partial<McpCommandDeps>);
+
+    expect(parsed.ok).toBe(false);
+    expect(parsed.kind).toBe('mcp_servers_test');
+    expect(parsed.error?.code).toBe('mcp_test_failed');
+    expect(probeMcpStdioServerTools).not.toHaveBeenCalled();
+    expect(exitCode).toBe(1);
   });
 
   it('redacts sensitive probe failures in the mcp_servers_test JSON envelope', async () => {
@@ -528,7 +667,7 @@ describe.sequential('happier mcp servers --json', () => {
       '/tmp',
       '--json',
     ], {
-      readCredentials: async () => createCredentialsStub(),
+      readStoredCredentials: async () => createCredentialsStub(),
       ensureMachineIdForCredentials: async () => ({ machineId: 'machine-1' }),
       bootstrapAccountSettingsContext: async () => createAccountSettingsContextStub({ mcpServersSettingsV1: mcpSettings }),
       probeMcpStdioServerTools: async () => {
@@ -545,7 +684,7 @@ describe.sequential('happier mcp servers --json', () => {
 
   it('prints a stable JSON error envelope for unknown groups', async () => {
     const { parsed, exitCode } = await runJsonMcpCommand(['wat', '--json'], {
-      readCredentials: async () => createCredentialsStub(),
+      readStoredCredentials: async () => createCredentialsStub(),
     } satisfies Partial<McpCommandDeps>);
 
     expect(parsed.ok).toBe(false);
@@ -556,7 +695,7 @@ describe.sequential('happier mcp servers --json', () => {
 
   it('prints a stable JSON error envelope for unknown servers subcommands', async () => {
     const { parsed, exitCode } = await runJsonMcpCommand(['servers', 'wat', '--json'], {
-      readCredentials: async () => createCredentialsStub(),
+      readStoredCredentials: async () => createCredentialsStub(),
     } satisfies Partial<McpCommandDeps>);
 
     expect(parsed.ok).toBe(false);

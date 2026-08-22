@@ -93,6 +93,52 @@ describe('callMcpToolWithResolvedTimeout', () => {
     );
   });
 
+  it('carries execution_run_start start-and-wait timeout through the MCP client while keeping immediate starts at the default', async () => {
+    process.env.HAPPIER_MCP_EXECUTION_RUN_WAIT_TIMEOUT_GRACE_MS = '45000';
+    reloadConfiguration();
+
+    const callTool = vi.fn().mockResolvedValue({ content: [] });
+    const client = { callTool } as unknown as Pick<Client, 'callTool'>;
+
+    await callMcpToolWithResolvedTimeout({
+      client,
+      toolName: 'execution_run_start',
+      args: { waitForCompletion: true, waitTimeoutSeconds: 120 },
+    });
+    await callMcpToolWithResolvedTimeout({
+      client,
+      toolName: 'execution_run_start',
+      args: { waitForCompletion: false },
+    });
+    await callMcpToolWithResolvedTimeout({
+      client,
+      toolName: 'mcp__happier__execution_run_start',
+      args: { waitForCompletion: true, waitTimeoutSeconds: 120 },
+    });
+
+    expect(callTool).toHaveBeenNthCalledWith(
+      1,
+      { name: 'execution_run_start', arguments: { waitForCompletion: true, waitTimeoutSeconds: 120 } },
+      undefined,
+      { timeout: 165_000 },
+    );
+    expect(callTool).toHaveBeenNthCalledWith(
+      2,
+      { name: 'execution_run_start', arguments: { waitForCompletion: false } },
+      undefined,
+      { timeout: DEFAULT_MCP_TOOL_CALL_TIMEOUT_MS },
+    );
+    expect(callTool).toHaveBeenNthCalledWith(
+      3,
+      {
+        name: 'mcp__happier__execution_run_start',
+        arguments: { waitForCompletion: true, waitTimeoutSeconds: 120 },
+      },
+      undefined,
+      { timeout: 165_000 },
+    );
+  });
+
   it('forwards the caller abort signal alongside the resolved timeout', async () => {
     const callTool = vi.fn().mockResolvedValue({ content: [] });
     const client = { callTool } as unknown as Pick<Client, 'callTool'>;

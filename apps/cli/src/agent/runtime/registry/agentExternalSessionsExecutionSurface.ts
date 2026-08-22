@@ -1,19 +1,24 @@
 import type {
-    AgentExternalSessionSource,
     AgentExternalSessionsContribution,
     AgentExternalSessionsResult,
-} from '@happier-dev/plugin-sdk/experimental/sessions';
+} from '@happier-dev/plugin-sdk/sessions/external';
+import type {
+    AgentExternalSessionSource,
+} from '@happier-dev/plugin-sdk/sessions/external';
 import {
+    AGENT_OWNED_SESSION_METADATA_KEYS_V1,
     PluginAgentExternalSessionLinkDataSchema,
-    readLinkedExternalSessionV1FromMetadata,
     readRuntimeDescriptorV1FromMetadata,
+    resolveLinkedExternalSessionMetadataV1,
     type ExternalSessionsSource,
     type PluginAgentExternalLinkedTakeoverWriterSafetyV1,
     type PluginAgentExternalSessionLinkData,
 } from '@happier-dev/protocol';
 import { AgentRuntimeJsonValueV1Schema } from '@happier-dev/protocol/runtime';
+import { getLegacyProviderSessionIdMetadataKeys } from '@happier-dev/agents';
 
 import {
+    type BoundedAgentExternalSessionsContribution,
     EXTERNAL_SESSIONS_INVOCATION_POLICY,
 } from '@/session/external/agentExternalSessionsInvocation';
 import {
@@ -24,6 +29,7 @@ import {
 function invocation(
     maxSerializedBytes: number,
     signal?: AbortSignal,
+    admissionDeadlineAtMs?: number,
 ): Readonly<{
     signal: AbortSignal;
     deadlineAtMs: number;
@@ -31,7 +37,10 @@ function invocation(
 }> {
     return {
         signal: signal ?? new AbortController().signal,
-        deadlineAtMs: Date.now() + EXTERNAL_SESSIONS_INVOCATION_POLICY.deadlineMs,
+        deadlineAtMs: Math.min(
+            Date.now() + EXTERNAL_SESSIONS_INVOCATION_POLICY.deadlineMs,
+            admissionDeadlineAtMs ?? Number.POSITIVE_INFINITY,
+        ),
         maxSerializedBytes,
     };
 }
@@ -91,10 +100,11 @@ function readLinkData(
     operation: keyof AgentExternalSessionsContribution,
 ): PluginAgentExternalSessionLinkData | undefined {
     if (!metadata) return undefined;
-    const linked = readLinkedExternalSessionV1FromMetadata(metadata);
-    if (Object.hasOwn(metadata, 'externalSessionV1') && !linked) {
+    const resolution = resolveLinkedExternalSessionMetadataV1(metadata);
+    if (!resolution.ok && resolution.error !== 'linked_session_not_found') {
         throw invalidInput(operation);
     }
+    const linked = resolution.ok ? resolution.linkedSession : null;
     const value = linked?.linkData ?? metadata.linkData;
     if (value === undefined) return undefined;
     const parsed = PluginAgentExternalSessionLinkDataSchema.safeParse(value);
@@ -102,29 +112,57 @@ function readLinkData(
     return parsed.data;
 }
 
+/**
+ * An Agent's `linkData` is an arbitrary vendor bag. Its keys collide with
+ * host-owned identity and custody fields that both the owner-metadata
+ * allow-list (`tag`, `path`, `host`, `machineId`, `flavor`, lifecycle, runtime,
+ * connected services) and `LinkedExternalSessionV1` (`agentId`, `machineId`,
+ * `remoteSessionId`, `source`, `linkedAtMs`) accept, so spreading the bag into
+ * either carrier would let a contribution re-write host state with values no
+ * schema can reject.
+ *
+ * The bag therefore travels verbatim on exactly one carrier —
+ * `externalSessionV1.linkData`, which every read path already uses — while
+ * session metadata receives only the Agent-owned native-session facts the
+ * protocol enumerates, minus the resume identity the host writes itself from
+ * the admitted remote session id. The runtime descriptor is deliberately
+ * absent too: the host re-applies the validated descriptor it resolved.
+ */
+const AGENT_CONTRIBUTABLE_SESSION_METADATA_KEYS = Object.freeze(
+    AGENT_OWNED_SESSION_METADATA_KEYS_V1.filter((key) =>
+        !getLegacyProviderSessionIdMetadataKeys().includes(key)),
+);
+
+function projectAgentOwnedLinkDataFacts(
+    linkData: PluginAgentExternalSessionLinkData,
+): Record<string, unknown> {
+    const projected: Record<string, unknown> = {};
+    for (const key of AGENT_CONTRIBUTABLE_SESSION_METADATA_KEYS) {
+        if (Object.hasOwn(linkData, key)) projected[key] = linkData[key];
+    }
+    return projected;
+}
+
 export function createAgentExternalSessionsExecutionSurface(
-    contribution: AgentExternalSessionsContribution,
+    contribution: BoundedAgentExternalSessionsContribution,
     externalLinkedTakeoverWriterSafety: PluginAgentExternalLinkedTakeoverWriterSafetyV1 = 'unsupported',
 ): ExternalSessionExecutionSurface {
     const surface: ExternalSessionExecutionSurface = {
         externalLinkedTakeoverWriterSafety,
         async validateSource(request) {
-            const result = await contribution.resolveSource({
+            const result = unwrap('resolveSource', await contribution.resolveSource({
                 source: toAgentSource(request.source, 'resolveSource'),
                 ...invocation(
                     EXTERNAL_SESSIONS_INVOCATION_POLICY.resolveSource.maxSerializedBytes,
                     request.signal,
                 ),
-            });
-            if (!result.ok) {
-                return {
-                    ok: false,
-                    error: result.message ?? `Agent External Sessions resolveSource failed (${result.code})`,
-                };
-            }
+            }));
             return {
                 ok: true,
-                source: toLegacySource(result.value.source),
+                source: toLegacySource(result.source),
+                ...(result.transcriptMediaReadRoots === undefined
+                    ? {}
+                    : { transcriptMediaReadRoots: result.transcriptMediaReadRoots }),
             };
         },
         async listCandidates(request) {
@@ -171,11 +209,11 @@ export function createAgentExternalSessionsExecutionSurface(
                 source: toLegacySource(result.source),
                 remoteSessionId: result.remoteSessionId,
                 runtimeDescriptor,
-                vendorMetadata: { ...result.linkData },
-                externalSessionMetadata: {
-                    ...result.linkData,
-                    linkData: result.linkData,
-                },
+                vendorMetadata: projectAgentOwnedLinkDataFacts(result.linkData),
+                externalSessionMetadata: { linkData: result.linkData },
+                ...(result.transcriptMediaReadRoots === undefined
+                    ? {}
+                    : { transcriptMediaReadRoots: result.transcriptMediaReadRoots }),
             };
         },
         async canonicalizeLinkedSession(request) {
@@ -195,11 +233,11 @@ export function createAgentExternalSessionsExecutionSurface(
                 source: toLegacySource(result.source),
                 remoteSessionId: result.remoteSessionId,
                 runtimeDescriptor,
-                vendorMetadata: { ...result.linkData },
-                externalSessionMetadata: {
-                    ...result.linkData,
-                    linkData: result.linkData,
-                },
+                vendorMetadata: projectAgentOwnedLinkDataFacts(result.linkData),
+                externalSessionMetadata: { linkData: result.linkData },
+                ...(result.transcriptMediaReadRoots === undefined
+                    ? {}
+                    : { transcriptMediaReadRoots: result.transcriptMediaReadRoots }),
             };
         },
         async pageTranscript(request) {
@@ -214,6 +252,7 @@ export function createAgentExternalSessionsExecutionSurface(
                         EXTERNAL_SESSIONS_INVOCATION_POLICY.pageTranscript.maxSerializedBytes,
                     ),
                     request.signal,
+                    request.deadlineAtMs,
                 ),
                 ...(request.cursor === undefined ? {} : { cursor: request.cursor }),
             }));
@@ -237,6 +276,7 @@ export function createAgentExternalSessionsExecutionSurface(
                         EXTERNAL_SESSIONS_INVOCATION_POLICY.readAfterTranscript.maxSerializedBytes,
                     ),
                     request.signal,
+                    request.deadlineAtMs,
                 ),
             }));
             return result.outcome === 'advanced'

@@ -123,10 +123,7 @@ describe('happier session run start (plaintext integration)', () => {
         {
           readCredentialsFn: async () => ({
             token: 'token_test',
-            encryption: {
-              type: 'legacy',
-              secret: new Uint8Array(32).fill(8),
-            },
+            encryption: null,
           }),
         },
       );

@@ -8,7 +8,6 @@ import type {
 import type {
   SessionStateUpdateV1,
   TranscriptSourcePage,
-  TranscriptSourceReadAfter,
 } from '@happier-dev/agents';
 
 export type ExternalSessionCandidatesPage = Readonly<{
@@ -42,30 +41,11 @@ export type ExternalSessionTranscriptReadAfter =
   | Readonly<{ outcome: 'source_unavailable' }>
   | Readonly<{ outcome: 'read_failed' }>;
 
-/**
- * Compatibility adapter for host transcript-source utilities that still use
- * the pre-E9 page carrier. The explicit outcome remains authoritative.
- */
-export function toLegacyTranscriptSourceReadAfter(
-  result: ExternalSessionTranscriptReadAfter,
-  currentCursor: string,
-): TranscriptSourceReadAfter<ExternalSessionTranscriptRawMessageV1> {
-  if (result.outcome === 'advanced') {
-    return {
-      items: [...result.items],
-      nextCursor: result.nextCursor,
-      truncated: false,
-    };
-  }
-  if (result.outcome === 'already_current') {
-    return { items: [], nextCursor: currentCursor, truncated: false };
-  }
-  return { items: [], nextCursor: null, truncated: true };
-}
-
 export type ExternalSessionLinkIdentity = Readonly<{
   remoteSessionId: string;
   source: ExternalSessionsSource;
+  /** Source-owned transient media evidence; never persisted in link metadata. */
+  transcriptMediaReadRoots?: readonly string[];
   runtimeDescriptor?: RuntimeDescriptorV1 | null;
   vendorMetadata?: Record<string, unknown>;
   externalSessionMetadata?: Record<string, unknown>;
@@ -73,7 +53,12 @@ export type ExternalSessionLinkIdentity = Readonly<{
 }>;
 
 export type ExternalSessionSourceValidationResult =
-  | Readonly<{ ok: true; source: ExternalSessionsSource }>
+  | Readonly<{
+    ok: true;
+    source: ExternalSessionsSource;
+    /** Source-owned transient media evidence; absent evidence grants no roots. */
+    transcriptMediaReadRoots?: readonly string[];
+  }>
   | Readonly<{ ok: false; error: string }>;
 
 export type ExternalSessionProviderOps = Readonly<{
@@ -103,6 +88,12 @@ export type ExternalSessionProviderOps = Readonly<{
     cursor?: string;
     maxBytes: number;
     maxItems: number;
+    /**
+     * Optional caller-owned absolute ceiling for a larger admission that spans
+     * several provider calls. The generation wrapper applies the earlier of
+     * this value and its ordinary per-call deadline.
+     */
+    deadlineAtMs?: number;
     allowProviderFallback?: boolean;
     signal?: AbortSignal;
   }>) => Promise<ExternalSessionTranscriptPage>;
@@ -112,13 +103,10 @@ export type ExternalSessionProviderOps = Readonly<{
     cursor: string;
     maxBytes: number;
     maxItems: number;
+    deadlineAtMs?: number;
     allowProviderFallback?: boolean;
     signal?: AbortSignal;
   }>) => Promise<ExternalSessionTranscriptReadAfter>;
-  resolveTranscriptMediaReadRoots?: (params: Readonly<{
-    source: ExternalSessionsSource;
-    remoteSessionId: string;
-  }>) => Promise<readonly string[]>;
   canonicalizeLinkedSession?: (params: Readonly<{
     metadata: Record<string, unknown>;
     remoteSessionId: string;
@@ -127,6 +115,7 @@ export type ExternalSessionProviderOps = Readonly<{
   }>) => Promise<Readonly<{
     remoteSessionId: string;
     source: ExternalSessionsSource;
+    transcriptMediaReadRoots?: readonly string[];
   }>>;
   resolveLinkIdentity?: (params: Readonly<{
     remoteSessionId: string;
@@ -161,3 +150,12 @@ export function isExternalSessionProviderFailureError(error: unknown): error is 
 }
 
 export type ExternalSessionExecutionSurface = Readonly<Partial<ExternalSessionProviderOps>>;
+
+/** Provider callbacks required by the canonical transcript-follow corridor. */
+export type ExternalSessionFollowProviderOps = Required<Pick<
+  ExternalSessionProviderOps,
+  | 'validateSource'
+  | 'resolveLinkIdentity'
+  | 'pageTranscript'
+  | 'readAfterTranscript'
+>>;

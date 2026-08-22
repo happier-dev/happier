@@ -13,7 +13,7 @@ vi.mock('./resolveSessionTransportContext', () => ({
   resolveSessionTransportContext,
 }));
 
-const credentials = { token: 'token', encryption: { type: 'legacy' as const, secret: new Uint8Array([1]) } };
+const credentials = { token: 'token', encryption: null } as const;
 
 describe('getSessionEvents', () => {
   beforeEach(() => {
@@ -28,7 +28,7 @@ describe('getSessionEvents', () => {
       sessionId: 'sess-1',
       rawSession: { id: 'sess-1' },
       mode: 'plain',
-      ctx: { encryptionKey: new Uint8Array([1]), encryptionVariant: 'legacy' },
+      ctx: null,
     });
     fetchEncryptedTranscriptMessagesPage.mockResolvedValueOnce({
       messages: [
@@ -80,7 +80,7 @@ describe('getSessionEvents', () => {
       sessionId: 'sess-1',
       rawSession: { id: 'sess-1' },
       mode: 'plain',
-      ctx: { encryptionKey: new Uint8Array([1]), encryptionVariant: 'legacy' },
+      ctx: null,
     });
     fetchEncryptedTranscriptMessagesPage.mockResolvedValueOnce({
       messages: [],

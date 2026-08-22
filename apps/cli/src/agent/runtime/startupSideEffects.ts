@@ -1,7 +1,10 @@
 import type { ApiSessionClient } from '@/api/session/sessionClient';
-import type { Metadata } from '@/api/types';
+import type { Metadata, SessionCreationOutcome } from '@/api/types';
 import { configuration } from '@/configuration';
-import { notifyDaemonSessionStarted } from '@/daemon/controlClient';
+import {
+    notifyDaemonSessionStarted,
+    notifyDaemonSessionStartupFailure,
+} from '@/daemon/controlClient';
 import {
     writeTerminalAttachmentInfo,
     writeTerminalHostAttachmentInfo,
@@ -13,15 +16,43 @@ import { buildTerminalFallbackMessage } from '@/terminal/attachment/terminalFall
 import { logger } from '@/ui/logger';
 import { updateAgentStateBestEffort } from '@/api/session/sessionWritesBestEffort';
 import { resolveDaemonStartedSessionReportRetryPolicy } from '@/daemon/spawn/sessionWebhookTimeoutPolicy';
+import type {
+    HostPrivatePersistedTakeoverAdmission,
+    PersistedTakeoverAdmissionPhase,
+} from '@/daemon/spawn/persistedTakeoverAdmission';
+import type { SessionMetadataPublisherPreconditionV1 } from '@happier-dev/protocol';
 
 type DaemonReportDeps = {
     notifyDaemonSessionStartedFn?: typeof notifyDaemonSessionStarted;
+    notifyDaemonSessionStartupFailureFn?: typeof notifyDaemonSessionStartupFailure;
     sleepFn?: (ms: number) => Promise<void>;
     nowFn?: () => number;
     retryTimeoutMs?: number;
     retryIntervalMs?: number;
     reportAttemptTimeoutMs?: number;
 };
+
+type InFlightDaemonSessionReport = {
+    latestMetadata: Metadata;
+    latestSessionCreationOutcome?: SessionCreationOutcome;
+    revision: number;
+    requireDaemonAck: boolean;
+    promise: Promise<void>;
+};
+
+const inFlightDaemonSessionReports = new Map<string, InFlightDaemonSessionReport>();
+
+function hasSameSessionCreationOutcome(
+    left: SessionCreationOutcome,
+    right: SessionCreationOutcome,
+): boolean {
+    return left.disposition === right.disposition
+        && left.organizationPlacement.folderId === right.organizationPlacement.folderId
+        && left.organizationPlacement.tagIds.length === right.organizationPlacement.tagIds.length
+        && left.organizationPlacement.tagIds.every(
+            (tagId, index) => tagId === right.organizationPlacement.tagIds[index],
+        );
+}
 
 export class PersistedTakeoverAdmissionError extends Error {
     readonly code: string;
@@ -36,15 +67,14 @@ export class PersistedTakeoverAdmissionError extends Error {
 type PersistedTakeoverPhaseReportOptions = Readonly<{
     sessionId: string;
     metadata: Metadata;
-    correlation: Readonly<{
-        operationId: string;
-        attemptId: string;
+    correlation: HostPrivatePersistedTakeoverAdmission & Readonly<{
+        publisherPrecondition: SessionMetadataPublisherPreconditionV1;
     }>;
 }>;
 
 async function reportPersistedTakeoverPhase(
     opts: PersistedTakeoverPhaseReportOptions,
-    phase: 'admit' | 'runtime_bound',
+    phase: PersistedTakeoverAdmissionPhase,
     deps: Pick<
     DaemonReportDeps,
     'notifyDaemonSessionStartedFn' | 'reportAttemptTimeoutMs'
@@ -100,6 +130,41 @@ export async function reportPersistedTakeoverRuntimeBound(
     > = {},
 ): Promise<void> {
     await reportPersistedTakeoverPhase(opts, 'runtime_bound', deps);
+}
+
+/**
+ * Gives the daemon's existing spawn waiter one bounded chance to receive the
+ * exact server creation refusal before this runner exits. A reporting failure
+ * is advisory and must never replace the server-authored terminal error.
+ */
+export async function reportSessionStartupFailureToDaemonIfRunning(
+    opts: Readonly<{
+        spawnNonce: string;
+        errorDetail: import('@happier-dev/protocol').SessionCreationTerminalSpawnErrorDetail;
+    }>,
+    deps: Pick<
+        DaemonReportDeps,
+        'notifyDaemonSessionStartupFailureFn' | 'reportAttemptTimeoutMs'
+    > = {},
+): Promise<void> {
+    const spawnNonce = opts.spawnNonce.trim();
+    if (!spawnNonce) return;
+    const notifyFn =
+        deps.notifyDaemonSessionStartupFailureFn
+        ?? notifyDaemonSessionStartupFailure;
+    try {
+        const result = await notifyFn({
+            spawnNonce,
+            errorDetail: opts.errorDetail,
+        }, {
+            timeoutMs: deps.reportAttemptTimeoutMs ?? 10_000,
+        });
+        if (result.status !== 'ok' || result.error) {
+            logger.debug('[START] Daemon did not acknowledge terminal startup failure report');
+        }
+    } catch {
+        logger.debug('[START] Terminal startup failure report was unavailable');
+    }
 }
 
 function isTransientDaemonReportError(error: string): boolean {
@@ -190,69 +255,82 @@ export async function persistTerminalAttachmentInfoIfNeeded(opts: {
     }
 }
 
-export function sendTerminalFallbackMessageIfNeeded(opts: {
+export async function sendTerminalFallbackMessageIfNeeded(opts: {
     session: ApiSessionClient;
     terminal: Metadata['terminal'] | undefined;
-}): void {
+}): Promise<void> {
     if (!opts.terminal) return;
     const fallbackMessage = buildTerminalFallbackMessage(opts.terminal);
     if (!fallbackMessage) return;
-    opts.session.sendSessionEvent({ type: 'message', message: fallbackMessage });
+    const admission = await opts.session.enqueueSessionEventCommitted({
+        type: 'message',
+        message: fallbackMessage,
+    });
+    if (!admission.persisted) {
+        throw new Error('Terminal fallback transcript notice was not durably admitted');
+    }
 }
 
-export async function reportSessionToDaemonIfRunning(opts: {
-    sessionId: string;
-    metadata: Metadata;
-    requireDaemonAck?: boolean;
-}, deps: DaemonReportDeps = {}): Promise<void> {
+async function runDaemonSessionReport(
+    sessionId: string,
+    state: InFlightDaemonSessionReport,
+    deps: DaemonReportDeps,
+): Promise<void> {
     const notifyFn = deps.notifyDaemonSessionStartedFn ?? notifyDaemonSessionStarted;
     const sleepFn = deps.sleepFn ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
     const nowFn = deps.nowFn ?? (() => Date.now());
-    const startedBy = String(opts.metadata?.startedBy ?? '').trim().toLowerCase();
-    const daemonAutostartEnabled = isTruthyEnvFlag(process.env.HAPPIER_SESSION_AUTOSTART_DAEMON);
-    const defaultRetryTimeoutMs =
-        startedBy === 'daemon'
-            ? 90_000
-            : daemonAutostartEnabled
-                ? 30_000
-                : 10_000;
-    const retryTimeoutMs =
-        deps.retryTimeoutMs ??
-        (startedBy === 'daemon'
-            ? resolveDaemonStartedSessionReportRetryPolicy(process.env).retryTimeoutMs
-            : resolveDaemonReportRetryValue(process.env.HAPPIER_DAEMON_REPORT_SESSION_RETRY_TIMEOUT_MS, defaultRetryTimeoutMs, {
-                min: 0,
-                max: 120_000,
-            }));
-    const retryIntervalMs =
-        deps.retryIntervalMs ??
-        (startedBy === 'daemon'
-            ? resolveDaemonStartedSessionReportRetryPolicy(process.env).retryIntervalMs
-            : resolveDaemonReportRetryValue(process.env.HAPPIER_DAEMON_REPORT_SESSION_RETRY_INTERVAL_MS, 250, {
-                min: 50,
-                max: 10_000,
-            }));
-    const defaultReportAttemptTimeoutMs = startedBy === 'daemon' ? 10_000 : 2_500;
-    const reportAttemptTimeoutMs =
-        deps.reportAttemptTimeoutMs ??
-        (startedBy === 'daemon'
-            ? resolveDaemonStartedSessionReportRetryPolicy(process.env).reportAttemptTimeoutMs
-            : resolveDaemonReportRetryValue(process.env.HAPPIER_DAEMON_REPORT_SESSION_HTTP_TIMEOUT_MS, defaultReportAttemptTimeoutMs, {
-                min: 100,
-                max: 30_000,
-            }));
-    const boundedAttemptTimeoutMs = Math.min(reportAttemptTimeoutMs, Math.max(100, retryTimeoutMs));
-
     const startedAt = nowFn();
     let attempt = 0;
     while (true) {
         attempt += 1;
+        const revision = state.revision;
+        const metadata = state.latestMetadata;
+        const sessionCreationOutcome = state.latestSessionCreationOutcome;
+        const startedBy = String(metadata?.startedBy ?? '').trim().toLowerCase();
+        const daemonAutostartEnabled = isTruthyEnvFlag(process.env.HAPPIER_SESSION_AUTOSTART_DAEMON);
+        const defaultRetryTimeoutMs =
+            startedBy === 'daemon'
+                ? 90_000
+                : daemonAutostartEnabled
+                    ? 30_000
+                    : 10_000;
+        const daemonStartedPolicy = startedBy === 'daemon'
+            ? resolveDaemonStartedSessionReportRetryPolicy(process.env)
+            : null;
+        const retryTimeoutMs =
+            deps.retryTimeoutMs ??
+            (daemonStartedPolicy?.retryTimeoutMs ?? resolveDaemonReportRetryValue(
+                process.env.HAPPIER_DAEMON_REPORT_SESSION_RETRY_TIMEOUT_MS,
+                defaultRetryTimeoutMs,
+                { min: 0, max: 120_000 },
+            ));
+        const retryIntervalMs =
+            deps.retryIntervalMs ??
+            (daemonStartedPolicy?.retryIntervalMs ?? resolveDaemonReportRetryValue(
+                process.env.HAPPIER_DAEMON_REPORT_SESSION_RETRY_INTERVAL_MS,
+                250,
+                { min: 50, max: 10_000 },
+            ));
+        const defaultReportAttemptTimeoutMs = startedBy === 'daemon' ? 10_000 : 2_500;
+        const reportAttemptTimeoutMs =
+            deps.reportAttemptTimeoutMs ??
+            (daemonStartedPolicy?.reportAttemptTimeoutMs ?? resolveDaemonReportRetryValue(
+                process.env.HAPPIER_DAEMON_REPORT_SESSION_HTTP_TIMEOUT_MS,
+                defaultReportAttemptTimeoutMs,
+                { min: 100, max: 30_000 },
+            ));
+        const boundedAttemptTimeoutMs = Math.min(reportAttemptTimeoutMs, Math.max(100, retryTimeoutMs));
+
         let failure: unknown = null;
         try {
-            logger.debug(`[START] Reporting session ${opts.sessionId} to daemon (attempt ${attempt})`);
-            const result = await notifyFn(opts.sessionId, opts.metadata, { timeoutMs: boundedAttemptTimeoutMs });
+            logger.debug(`[START] Reporting session ${sessionId} to daemon (attempt ${attempt})`);
+            const result = await notifyFn(sessionId, metadata, {
+                timeoutMs: boundedAttemptTimeoutMs,
+                ...(sessionCreationOutcome ? { sessionCreationOutcome } : {}),
+            });
             if (!result?.error) {
-                logger.debug(`[START] Reported session ${opts.sessionId} to daemon`);
+                if (state.revision !== revision) continue;
+                logger.debug(`[START] Reported session ${sessionId} to daemon`);
                 return;
             }
             failure = result.error;
@@ -263,11 +341,57 @@ export async function reportSessionToDaemonIfRunning(opts: {
         const timedOut = nowFn() - startedAt >= retryTimeoutMs;
         if (!isTransientDaemonReportError(message) || timedOut) {
             logger.debug('[START] Failed to report to daemon (may not be running):', failure);
-            if (opts.requireDaemonAck) {
+            if (state.requireDaemonAck) {
                 throw new Error(`Daemon session readiness was not acknowledged: ${message || 'unknown daemon report failure'}`);
             }
             return;
         }
         await sleepFn(retryIntervalMs);
     }
+}
+
+export function reportSessionToDaemonIfRunning(opts: {
+    sessionId: string;
+    metadata: Metadata;
+    sessionCreationOutcome?: SessionCreationOutcome;
+    requireDaemonAck?: boolean;
+}, deps: DaemonReportDeps = {}): Promise<void> {
+    const sessionId = opts.sessionId.trim();
+    const existing = inFlightDaemonSessionReports.get(sessionId);
+    if (existing) {
+        if (
+            opts.sessionCreationOutcome
+            && existing.latestSessionCreationOutcome
+            && !hasSameSessionCreationOutcome(
+                existing.latestSessionCreationOutcome,
+                opts.sessionCreationOutcome,
+            )
+        ) {
+            return Promise.reject(
+                new Error('Conflicting create-or-rejoin outcome for one daemon session report'),
+            );
+        }
+        existing.latestMetadata = opts.metadata;
+        existing.latestSessionCreationOutcome ??= opts.sessionCreationOutcome;
+        existing.revision += 1;
+        existing.requireDaemonAck ||= opts.requireDaemonAck === true;
+        return existing.promise;
+    }
+
+    const state: InFlightDaemonSessionReport = {
+        latestMetadata: opts.metadata,
+        ...(opts.sessionCreationOutcome
+            ? { latestSessionCreationOutcome: opts.sessionCreationOutcome }
+            : {}),
+        revision: 0,
+        requireDaemonAck: opts.requireDaemonAck === true,
+        promise: Promise.resolve(),
+    };
+    inFlightDaemonSessionReports.set(sessionId, state);
+    state.promise = runDaemonSessionReport(sessionId, state, deps).finally(() => {
+        if (inFlightDaemonSessionReports.get(sessionId) === state) {
+            inFlightDaemonSessionReports.delete(sessionId);
+        }
+    });
+    return state.promise;
 }

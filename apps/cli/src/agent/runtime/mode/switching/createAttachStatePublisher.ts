@@ -1,6 +1,6 @@
 import { getAgentLocalControlCapability, type AgentId } from '@happier-dev/agents';
 
-import type { Credentials } from '@/persistence';
+import type { StoredCredentials } from '@/persistence';
 import type { AgentState } from '@/api/types';
 import { createSessionScopedSocket } from '@/api/session/sockets';
 import { updateSessionAgentStateWithAck } from '@/api/session/stateUpdates';
@@ -14,9 +14,11 @@ import {
 import {
   resolveSessionEncryptionContextFromCredentials,
   resolveSessionStoredContentEncryptionMode,
+  type SessionStoredContentCryptoContext,
 } from '@/session/transport/encryption/sessionEncryptionContext';
 
 import { createAgentRuntimeSwitchState } from './createSwitchState';
+import type { AccountEncryptionCurrentnessResponse } from '@happier-dev/protocol';
 
 type RawSessionLike = Readonly<{
   metadata: string;
@@ -43,8 +45,9 @@ type SocketLike = Readonly<{
 export function createAgentAttachStatePublisher(params: Readonly<{
   agentId: AgentId;
   sessionId: string;
-  credentials: Credentials;
+  credentials: StoredCredentials;
   rawSession: RawSessionLike;
+  getAccountEncryptionCurrentness: () => Promise<AccountEncryptionCurrentnessResponse>;
   createSessionScopedSocketFn?: typeof createSessionScopedSocket;
   waitForSocketConnectFn?: typeof waitForSocketConnect;
   updateSessionAgentStateWithAckFn?:
@@ -58,11 +61,21 @@ export function createAgentAttachStatePublisher(params: Readonly<{
 
   const mode = resolveSessionStoredContentEncryptionMode(params.rawSession);
   const ctx = resolveSessionEncryptionContextFromCredentials(params.credentials, params.rawSession);
-  let currentTupleSnapshot: SessionMetadataTupleWriterSnapshot =
-    readSessionMetadataTupleWriterSnapshot({
-      credentials: params.credentials,
-      rawSession: params.rawSession,
-    });
+  const storedContentCrypto: SessionStoredContentCryptoContext =
+    mode === 'plain'
+      ? { mode: 'plain', ctx: null }
+      : ctx
+        ? { mode: 'e2ee', ctx }
+        : (() => {
+          throw Object.assign(
+            new Error('Owner session encryption material is unavailable'),
+            {
+              code: 'encryption_material_unavailable' as const,
+              retryable: false as const,
+            },
+          );
+        })();
+  let currentTupleSnapshot: SessionMetadataTupleWriterSnapshot | null = null;
 
   const updateAttachedState = (
     agentState: AgentState,
@@ -122,9 +135,13 @@ export function createAgentAttachStatePublisher(params: Readonly<{
           typeof updateSessionAgentStateWithAck
         >[0]['socket'],
         sessionId: params.sessionId,
-        sessionEncryptionMode: mode,
-        encryptionKey: ctx.encryptionKey,
-        encryptionVariant: ctx.encryptionVariant,
+        ...(storedContentCrypto.mode === 'plain'
+          ? { sessionEncryptionMode: 'plain' as const }
+          : {
+            sessionEncryptionMode: 'e2ee' as const,
+            encryptionKey: storedContentCrypto.ctx.encryptionKey,
+            encryptionVariant: storedContentCrypto.ctx.encryptionVariant,
+          }),
         getAgentState: () => currentAgentState,
         setAgentState: (agentState) => {
           currentAgentState = agentState;
@@ -167,6 +184,12 @@ export function createAgentAttachStatePublisher(params: Readonly<{
 
   return {
     publishAttached: async (attached) => {
+      const accountEncryptionCurrentness = await params.getAccountEncryptionCurrentness();
+      currentTupleSnapshot ??= readSessionMetadataTupleWriterSnapshot({
+        credentials: params.credentials,
+        rawSession: params.rawSession,
+        accountEncryptionCurrentness,
+      });
       currentTupleSnapshot = await (
         params.updateSessionMetadataEnvelopeTupleWithRetryFn
         ?? updateSessionMetadataEnvelopeTupleWithRetry
@@ -174,8 +197,8 @@ export function createAgentAttachStatePublisher(params: Readonly<{
         token: params.credentials.token,
         sessionId: params.sessionId,
         credentials: params.credentials,
-        mode,
-        ctx,
+        accountEncryptionCurrentness,
+        ...storedContentCrypto,
         initialSnapshot: currentTupleSnapshot,
         mutation: {
           kind: 'agentState',

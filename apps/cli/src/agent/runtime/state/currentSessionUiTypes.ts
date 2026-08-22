@@ -1,76 +1,58 @@
-import type { JsonValue, PluginDiagnosticData } from '@happier-dev/plugin-sdk';
-import type { PluginCurrentSessionService, PluginServices, PluginSessionsService } from '@happier-dev/plugin-sdk/runtime';
-import type { HostExternalSessionsService } from '@/session/external/privateContract';
+import type {
+    InteractionTransientApprovalAuthorRequestV1,
+    InteractionTransientApprovalResultV1,
+    InteractionTransientAuthorQuestionV1,
+    InteractionTransientAuthorRequestV1,
+    InteractionTransientChoiceSelectionV1,
+    InteractionTransientConfirmationAuthorRequestV1,
+    InteractionTransientConfirmationResultV1,
+    InteractionTransientQuestionAnswerV1,
+    InteractionTransientQuestionsAuthorRequestV1,
+    InteractionTransientQuestionsResultV1,
+    InteractionTransientRequesterV1,
+    InteractionTransientResultV1,
+    SessionInputCausalPermissionAuthorityV1,
+} from '@happier-dev/protocol';
+import type { CurrentSessionPresentationOwnerV1 } from '@happier-dev/protocol/sessions';
+import type { PluginDiagnosticData, PluginServices } from '@happier-dev/plugin-sdk';
+import type { PermissionRequestOwner } from '@/agent/permissions/permissionRequestOwner';
 
-export type HostSessionQuestion =
-    | Readonly<{ id: string; prompt: string; selection: 'text'; required?: boolean; presentation: { inputMode: 'singleLine' | 'multiLine'; placeholder?: string; initialValue?: string; whitespace: 'preserve' | 'trim'; allowEmpty: boolean } }>
-    | Readonly<{ id: string; prompt: string; selection: 'single' | 'multiple'; required?: boolean; choices: readonly [{ id: string; label: string; description?: string }, ...{ id: string; label: string; description?: string }[]]; allowCustom?: boolean }>;
-export type HostSessionChoiceAnswer =
-    | Readonly<{ kind: 'choice'; choiceId: string }>
-    | Readonly<{ kind: 'custom'; value: string }>;
-export type HostSessionTextPresentation = Extract<
-    HostSessionQuestion,
-    { selection: 'text' }
->['presentation'];
-export type HostSessionQuestionAnswer =
-    | Readonly<{ questionId: string; selection: 'text'; value: string }>
-    | Readonly<{ questionId: string; selection: 'single'; answer: { kind: 'choice'; choiceId: string } | { kind: 'custom'; value: string } }>
-    | Readonly<{ questionId: string; selection: 'multiple'; answers: readonly [{ kind: 'choice'; choiceId: string } | { kind: 'custom'; value: string }, ...({ kind: 'choice'; choiceId: string } | { kind: 'custom'; value: string })[]] }>;
-export type HostSessionPersistedApproval = Readonly<{
-    scope: 'session' | 'workspace' | 'account';
-    toolName?: string;
-}>;
-export type HostSessionApprovalEffects = Readonly<{
-    replaceInput?: JsonValue;
-    persistApprovals?: readonly [HostSessionPersistedApproval, ...HostSessionPersistedApproval[]];
-    permissionModeId?: string;
-    followUp?: Readonly<{ text: string; delivery: 'nextTurn' | 'followUp' }>;
-}>;
-export type HostSessionApprovalRequest = Readonly<{
-    kind: 'approval';
-    requestId: string;
-    title: string;
-    description?: string;
-    subject: { kind: 'tool'; name: string; input: JsonValue } | { kind: 'operation'; label: string; input?: JsonValue };
-    allowedPersistenceScopes?: readonly ['session' | 'workspace' | 'account', ...('session' | 'workspace' | 'account')[]];
-}>;
-export type HostSessionQuestionsRequest = Readonly<{
-    kind: 'questions';
-    requestId: string;
-    title?: string;
-    questions: readonly [HostSessionQuestion, ...HostSessionQuestion[]];
-}>;
-export type HostSessionConfirmationRequest = Readonly<{
-    kind: 'confirmation';
-    requestId: string;
-    title: string;
-    message: string;
-}>;
-export type HostSessionInteractionRequest =
-    | HostSessionApprovalRequest
-    | HostSessionQuestionsRequest
-    | HostSessionConfirmationRequest;
-export type HostSessionApprovalResult =
-    | Readonly<{ kind: 'approval'; status: 'approved'; effects?: HostSessionApprovalEffects; rationale?: string }>
-    | Readonly<{ kind: 'approval'; status: 'denied'; rationale?: string; diagnostic?: PluginDiagnosticData }>
-    | Readonly<{ kind: 'approval'; status: 'cancelled'; diagnostic?: PluginDiagnosticData }>
-    | Readonly<{ kind: 'approval'; status: 'unavailable'; diagnostic: PluginDiagnosticData }>;
-export type HostSessionQuestionsResult =
-    | Readonly<{ kind: 'questions'; status: 'answered'; answers: readonly HostSessionQuestionAnswer[] }>
-    | Readonly<{ kind: 'questions'; status: 'cancelled'; diagnostic?: PluginDiagnosticData }>
-    | Readonly<{ kind: 'questions'; status: 'unavailable'; diagnostic: PluginDiagnosticData }>;
-export type HostSessionConfirmationResult =
-    | Readonly<{ kind: 'confirmation'; status: 'answered'; confirmed: boolean }>
-    | Readonly<{ kind: 'confirmation'; status: 'cancelled'; diagnostic?: PluginDiagnosticData }>
-    | Readonly<{ kind: 'confirmation'; status: 'unavailable'; diagnostic: PluginDiagnosticData }>;
-export type HostSessionInteractionResult =
-    | HostSessionApprovalResult
-    | HostSessionQuestionsResult
-    | HostSessionConfirmationResult;
+/**
+ * Host-private aliases of the Protocol interaction contract. These retain the
+ * current-Session seam's names without introducing a second request/result
+ * vocabulary or an author-controlled request stamp.
+ */
+export type HostSessionQuestion = InteractionTransientAuthorQuestionV1;
+export type HostSessionChoiceAnswer = InteractionTransientChoiceSelectionV1;
+export type HostSessionQuestionAnswer = InteractionTransientQuestionAnswerV1;
+export type HostSessionApprovalRequest = InteractionTransientApprovalAuthorRequestV1;
+export type HostSessionQuestionsRequest = InteractionTransientQuestionsAuthorRequestV1;
+export type HostSessionConfirmationRequest = InteractionTransientConfirmationAuthorRequestV1;
+export type HostSessionInteractionRequest = InteractionTransientAuthorRequestV1;
+export type HostSessionApprovalResult = InteractionTransientApprovalResultV1;
+export type HostSessionQuestionsResult = InteractionTransientQuestionsResultV1;
+export type HostSessionConfirmationResult = InteractionTransientConfirmationResultV1;
+export type HostSessionInteractionResult = InteractionTransientResultV1;
+
+/**
+ * Requester facts are derived by the invocation owner, while the canonical
+ * current-Session owner adds request/session identity, timestamps, expiry,
+ * and all lifecycle settlement. The optional fallback is only host-originated
+ * caller attribution; the Native Agent adapter passes it to that same owner.
+ */
 export type HostSessionInteractionOptions = Readonly<{
     signal?: AbortSignal;
-    permissionContext?: Readonly<{ origin: 'host_acp_fs_write' }>;
+    requester?: InteractionTransientRequesterV1;
+    permissionContext?: Readonly<{
+        origin?: 'host_acp_fs_write';
+        owner?: PermissionRequestOwner;
+        /** Exact active turn, stamped by the invocation host rather than a plugin. */
+        turnId?: string | null;
+        /** Immutable authority carried from the exact admitted input, if any. */
+        causalPermissionAuthority?: SessionInputCausalPermissionAuthorityV1 | null;
+    }>;
 }>;
+
 export interface HostCurrentSessionInteractionsService {
     request(request: HostSessionApprovalRequest, options?: HostSessionInteractionOptions): Promise<HostSessionApprovalResult>;
     request(request: HostSessionQuestionsRequest, options?: HostSessionInteractionOptions): Promise<HostSessionQuestionsResult>;
@@ -82,11 +64,21 @@ export type HostSessionPresentationStatefulResult =
     | Readonly<{ status: 'conflict' | 'unavailable'; diagnostic: PluginDiagnosticData }>;
 export type HostSessionPresentationOneShotResult = HostSessionPresentationStatefulResult
     | Readonly<{ status: 'outcomeUnknown'; diagnostic: PluginDiagnosticData }>;
+
+/** Invocation facts are host-stamped before the session owner adds `sessionId`. */
+export type HostSessionPresentationOwner = Readonly<
+    Omit<CurrentSessionPresentationOwnerV1, 'sessionId'>
+>;
+
 export interface HostCurrentSessionPresentationService {
     notify(request: { operationId: string; message: string; severity: 'info' | 'warning' | 'error' }, options?: { signal?: AbortSignal }): Promise<HostSessionPresentationOneShotResult>;
-    setStatus(request: { operationId: string; key: string; text: string | null }, options?: { signal?: AbortSignal }): Promise<HostSessionPresentationStatefulResult>;
-    setWidget(request: { operationId: string; key: string; placement: 'beforeComposer' | 'afterComposer'; lines: readonly string[] | null }, options?: { signal?: AbortSignal }): Promise<HostSessionPresentationStatefulResult>;
-    setSurfaceTitle(request: { operationId: string; title: string | null }, options?: { signal?: AbortSignal }): Promise<HostSessionPresentationStatefulResult>;
+    setStatus(request: { operationId: string; key: string; text: string | null; owner: HostSessionPresentationOwner }, options?: { signal?: AbortSignal }): Promise<HostSessionPresentationStatefulResult>;
+    setWidget(request: { operationId: string; key: string; placement: 'beforeComposer' | 'afterComposer'; lines: readonly string[] | null; owner: HostSessionPresentationOwner }, options?: { signal?: AbortSignal }): Promise<HostSessionPresentationStatefulResult>;
+    /** Retirement cleanup removes every transient row owned by this exact invocation. */
+    purgeOwner(request: {
+        operationId: string;
+        owner: HostSessionPresentationOwner;
+    }): Promise<HostSessionPresentationStatefulResult>;
     replaceComposerText(request: { operationId: string; text: string }, options?: { signal?: AbortSignal }): Promise<HostSessionPresentationOneShotResult>;
 }
 
@@ -95,9 +87,4 @@ export type HostCurrentSessionUiServices = Readonly<{
     presentation?: HostCurrentSessionPresentationService;
 }>;
 
-export type HostPluginServices = Omit<PluginServices, 'sessions'> & Readonly<{
-    sessions: Omit<PluginSessionsService, 'current'> & Readonly<{
-        current: PluginCurrentSessionService & HostCurrentSessionUiServices;
-        external: HostExternalSessionsService;
-    }>;
-}>;
+export type HostPluginServices = PluginServices;

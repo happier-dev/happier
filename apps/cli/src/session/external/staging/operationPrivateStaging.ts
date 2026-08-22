@@ -1,9 +1,14 @@
 import { createHash } from 'node:crypto';
 import { chmod, mkdir, readFile, readdir, rm } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
+import { join, resolve as resolvePath } from 'node:path';
 
+import {
+    resolveExternalSessionOperationStagingDirectory,
+} from '@/session/actions/externalSessions/operationRecordStore';
+import { normalizeWorkspaceRelativeMediaPath } from '@/session/media/paths';
 import { withJsonOwnerFileLock } from '@/utils/fs/jsonOwnerFileLock';
 import { writeJsonAtomic as writeJsonAtomicDefault } from '@/utils/fs/writeJsonAtomic';
+import { resolveCanonicalAbsoluteChildPathComparisonIdentity } from '@/utils/path/expandHomeDirPath';
 
 export type ExternalSessionStagingJsonPrimitive = string | number | boolean | null;
 export type ExternalSessionStagingJsonValue =
@@ -72,6 +77,10 @@ type StagingPageReservation = Readonly<{
     contentSha256: string;
     sourceState: ExternalSessionStagingSourceReadState;
     sourceRevision?: string;
+    preparedReplay?: Readonly<{
+        serializedBytes: number;
+        contentSha256: string;
+    }>;
     state: 'reserved' | 'committed' | 'acknowledged';
     acceptedThroughServerSeq?: number;
 }>;
@@ -83,9 +92,22 @@ type StagingManifest = Readonly<{
     captureState: 'capturing' | 'complete';
     lifecycle: StagingLifecycle;
     groups: readonly StagingPageReservation[];
+    createdWorkspaceMedia: readonly ExternalSessionOperationOwnedWorkspaceMediaPath[];
+}>;
+
+export type ExternalSessionOperationOwnedWorkspaceMediaPath = Readonly<{
+    workingDirectory: string;
+    candidateWorkspaceRelativePath: string;
 }>;
 
 type StagingPageGroup = Readonly<{
+    schemaVersion: 1;
+    captureIndex: number;
+    groupId: string;
+    items: readonly ExternalSessionStagingJsonValue[];
+}>;
+
+type StagingPreparedReplayGroup = Readonly<{
     schemaVersion: 1;
     captureIndex: number;
     groupId: string;
@@ -97,6 +119,7 @@ export type ExternalSessionStagingReplayGroup = Readonly<{
     groupId: string;
     sourceState: ExternalSessionStagingSourceReadState;
     items: readonly ExternalSessionStagingJsonValue[];
+    preparedItems?: readonly ExternalSessionStagingJsonValue[];
 }>;
 
 export type ExternalSessionStagingReplayState =
@@ -157,6 +180,46 @@ export type ExternalSessionOperationPrivateStagingStore = Readonly<{
     streamAllGroupsForTerminalCleanup(
         operationId: string,
     ): AsyncIterable<ExternalSessionStagingReplayGroup>;
+    /**
+     * Atomically retain an exact E2EE publication payload before its first server effect.
+     * The receipt remains private to this operation staging and is never a second replay owner.
+     */
+    persistPreparedReplayGroup(input: Readonly<{
+        operationId: string;
+        groupId: string;
+        items: readonly unknown[];
+    }>): Promise<
+        | Readonly<{ status: 'stored' | 'already_stored' }>
+        | Readonly<{
+            status: 'refused';
+            reason: 'per_operation_byte_capacity' | 'aggregate_byte_capacity';
+        }>
+    >;
+    /** Remove a definitely-unpublished prepared receipt so the next attempt can prepare afresh. */
+    clearPreparedReplayGroup(input: Readonly<{
+        operationId: string;
+        groupId: string;
+    }>): Promise<void>;
+    recordCreatedWorkspaceMedia(input: Readonly<{
+        operationId: string;
+        media: readonly ExternalSessionOperationOwnedWorkspaceMediaPath[];
+    }>): Promise<void>;
+    transferDiscardedWorkspaceMediaOwnership(input: Readonly<{
+        operationId: string;
+        media: readonly ExternalSessionOperationOwnedWorkspaceMediaPath[];
+    }>): Promise<void>;
+    /**
+     * Resolve paths this operation may unlink. An exact receipt also owned by another
+     * operation is discharged from this operation and omitted from the result.
+     */
+    readCreatedWorkspaceMediaForCleanup(input: Readonly<{
+        operationId: string;
+        media?: readonly ExternalSessionOperationOwnedWorkspaceMediaPath[];
+    }>): Promise<readonly ExternalSessionOperationOwnedWorkspaceMediaPath[]>;
+    acknowledgeCreatedWorkspaceMediaCleanup(input: Readonly<{
+        operationId: string;
+        media: readonly ExternalSessionOperationOwnedWorkspaceMediaPath[];
+    }>): Promise<void>;
     appendPageGroup(input: Readonly<{
         operationId: string;
         captureIndex: number;
@@ -392,6 +455,23 @@ function serializePageGroup(group: StagingPageGroup): string {
     return JSON.stringify(group, null, 2);
 }
 
+function createPreparedReplayGroup(input: Readonly<{
+    captureIndex: number;
+    groupId: string;
+    items: readonly unknown[];
+}>): StagingPreparedReplayGroup {
+    return Object.freeze({
+        schemaVersion: 1,
+        captureIndex: readNonnegativeSafeInteger(input.captureIndex, 'captureIndex'),
+        groupId: readNonemptyString(input.groupId, 'groupId'),
+        items: Object.freeze(input.items.map((item) => normalizeJsonValue(item))),
+    });
+}
+
+function serializePreparedReplayGroup(group: StagingPreparedReplayGroup): string {
+    return JSON.stringify(group, null, 2);
+}
+
 export function measureExternalSessionStagingPageGroup(input: Readonly<{
     captureIndex: number;
     groupId: string;
@@ -407,9 +487,8 @@ export function measureExternalSessionStagingPageGroup(input: Readonly<{
     });
 }
 
-function resolveStagingPaths(activeServerDir: string, operationId: string): StagingPaths {
+function stagingPathsInRoot(rootDirectory: string, operationId: string): StagingPaths {
     const operationKey = createHash('sha256').update(operationId, 'utf8').digest('hex');
-    const rootDirectory = resolve(activeServerDir, 'external-session-operation-staging');
     const operationDirectory = join(rootDirectory, operationKey);
     return Object.freeze({
         rootDirectory,
@@ -419,8 +498,59 @@ function resolveStagingPaths(activeServerDir: string, operationId: string): Stag
     });
 }
 
+/**
+ * Staging and its capacity budget are bound to the same Account partition that
+ * owns the operation record, so retained work of one Account can never block or
+ * be read by another Account on the same daemon.
+ *
+ * The partition is the operation's captured Account scope: it is resolved once
+ * for an operation and reused for every later staging call on it, so staging
+ * never re-derives the current Account per page (an import writes thousands of
+ * pages). The captured root is released when the operation's staging is removed,
+ * and a fresh process resolves every partition again, so the durable contract —
+ * where staging lives, who may read it after a restart, and whose aggregate
+ * budget it consumes — is Account-partitioned unconditionally. The capture is
+ * process-local and deliberately outlives an Account switch for an operation
+ * already in flight; reaching staging at all requires the caller to have first
+ * resolved that operation's Account-scoped record.
+ */
+function createStagingPathResolver(activeServerDir: string): Readonly<{
+    forOperation(operationId: string): Promise<StagingPaths>;
+    release(operationId: string): void;
+}> {
+    const capturedRootByOperationId = new Map<string, Promise<string>>();
+    return Object.freeze({
+        async forOperation(operationId: string): Promise<StagingPaths> {
+            let capturedRoot = capturedRootByOperationId.get(operationId);
+            if (!capturedRoot) {
+                capturedRoot = resolveExternalSessionOperationStagingDirectory(
+                    activeServerDir,
+                    operationId,
+                ).then((directory) => resolvePath(directory));
+                capturedRootByOperationId.set(operationId, capturedRoot);
+            }
+            try {
+                return stagingPathsInRoot(await capturedRoot, operationId);
+            } catch (error) {
+                capturedRootByOperationId.delete(operationId);
+                throw error;
+            }
+        },
+        release(operationId: string): void {
+            capturedRootByOperationId.delete(operationId);
+        },
+    });
+}
+
 function resolvePageGroupPath(operationDirectory: string, captureIndex: number): string {
     return join(operationDirectory, `page-${String(captureIndex).padStart(12, '0')}.json`);
+}
+
+function resolvePreparedReplayGroupPath(
+    operationDirectory: string,
+    captureIndex: number,
+): string {
+    return join(operationDirectory, `prepared-${String(captureIndex).padStart(12, '0')}.json`);
 }
 
 async function tightenPrivateDirectory(path: string): Promise<void> {
@@ -473,6 +603,10 @@ function parseReservation(value: unknown): StagingPageReservation | null {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
     const record = value as Record<string, unknown>;
     const sourceState = parseSourceReadState(record.sourceState);
+    const preparedReplay = record.preparedReplay === undefined
+        ? undefined
+        : parsePreparedReplayReservation(record.preparedReplay);
+    if (preparedReplay === null) return null;
     const replayOrder = record.replayOrder === undefined
         ? record.captureIndex
         : record.replayOrder;
@@ -523,10 +657,31 @@ function parseReservation(value: unknown): StagingPageReservation | null {
         ...(record.sourceRevision === undefined
             ? {}
             : { sourceRevision: record.sourceRevision as string }),
+        ...(preparedReplay === undefined ? {} : { preparedReplay }),
         state: record.state,
         ...(record.state === 'acknowledged'
             ? { acceptedThroughServerSeq: record.acceptedThroughServerSeq as number }
             : {}),
+    });
+}
+
+function parsePreparedReplayReservation(value: unknown): Readonly<{
+    serializedBytes: number;
+    contentSha256: string;
+}> | null {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    const record = value as Record<string, unknown>;
+    if (
+        !Number.isSafeInteger(record.serializedBytes)
+        || (record.serializedBytes as number) < 0
+        || typeof record.contentSha256 !== 'string'
+        || !/^[a-f0-9]{64}$/.test(record.contentSha256)
+    ) {
+        return null;
+    }
+    return Object.freeze({
+        serializedBytes: record.serializedBytes as number,
+        contentSha256: record.contentSha256,
     });
 }
 
@@ -553,6 +708,25 @@ function parseManifest(value: unknown): StagingManifest | null {
     const groups = record.groups.map(parseReservation);
     if (groups.some((group) => !group)) return null;
     const parsedGroups = groups as StagingPageReservation[];
+    const createdWorkspaceMediaValue = record.createdWorkspaceMedia ?? [];
+    if (!Array.isArray(createdWorkspaceMediaValue)) return null;
+    const createdWorkspaceMedia: ExternalSessionOperationOwnedWorkspaceMediaPath[] = [];
+    for (const value of createdWorkspaceMediaValue) {
+        if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+        const media = value as Record<string, unknown>;
+        if (
+            typeof media.workingDirectory !== 'string'
+            || media.workingDirectory.trim().length === 0
+            || typeof media.candidateWorkspaceRelativePath !== 'string'
+            || media.candidateWorkspaceRelativePath.trim().length === 0
+        ) {
+            return null;
+        }
+        createdWorkspaceMedia.push(Object.freeze({
+            workingDirectory: media.workingDirectory,
+            candidateWorkspaceRelativePath: media.candidateWorkspaceRelativePath,
+        }));
+    }
     if (
         new Set(parsedGroups.map((group) => group.groupId)).size !== parsedGroups.length
         || new Set(parsedGroups.map((group) => group.captureIndex)).size !== parsedGroups.length
@@ -566,7 +740,41 @@ function parseManifest(value: unknown): StagingManifest | null {
         captureState: record.captureState,
         lifecycle,
         groups: Object.freeze(parsedGroups),
+        createdWorkspaceMedia: Object.freeze(createdWorkspaceMedia),
     });
+}
+
+function normalizeOwnedWorkspaceMediaPath(
+    value: ExternalSessionOperationOwnedWorkspaceMediaPath,
+): ExternalSessionOperationOwnedWorkspaceMediaPath {
+    return Object.freeze({
+        workingDirectory: readNonemptyString(value.workingDirectory, 'workingDirectory'),
+        candidateWorkspaceRelativePath: readNonemptyString(
+            value.candidateWorkspaceRelativePath,
+            'candidateWorkspaceRelativePath',
+        ),
+    });
+}
+
+function ownedWorkspaceMediaPathKey(
+    value: ExternalSessionOperationOwnedWorkspaceMediaPath,
+): string {
+    const relativePath = normalizeWorkspaceRelativeMediaPath(
+        value.candidateWorkspaceRelativePath,
+    );
+    const canonicalIdentity = relativePath === null
+        ? null
+        : resolveCanonicalAbsoluteChildPathComparisonIdentity(
+            value.workingDirectory,
+            relativePath,
+        );
+    return canonicalIdentity === null
+        ? JSON.stringify([
+            'raw',
+            value.workingDirectory,
+            value.candidateWorkspaceRelativePath,
+        ])
+        : JSON.stringify(['canonical', canonicalIdentity]);
 }
 
 async function readManifest(path: string): Promise<StagingManifest | null> {
@@ -640,6 +848,50 @@ async function readPageGroup(path: string): Promise<StagingPageGroup> {
     return page;
 }
 
+function parsePreparedReplayGroup(value: unknown): StagingPreparedReplayGroup | null {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    const record = value as Record<string, unknown>;
+    if (
+        record.schemaVersion !== 1
+        || !Number.isSafeInteger(record.captureIndex)
+        || (record.captureIndex as number) < 0
+        || typeof record.groupId !== 'string'
+        || !record.groupId.trim()
+        || !Array.isArray(record.items)
+    ) {
+        return null;
+    }
+    try {
+        return createPreparedReplayGroup({
+            captureIndex: record.captureIndex as number,
+            groupId: record.groupId,
+            items: record.items as ExternalSessionStagingJsonValue[],
+        });
+    } catch {
+        return null;
+    }
+}
+
+async function readPreparedReplayGroup(path: string): Promise<StagingPreparedReplayGroup> {
+    let value: unknown;
+    try {
+        value = JSON.parse(await readFile(path, 'utf8'));
+    } catch {
+        throw new ExternalSessionStagingError(
+            'external_session_staging_prepared_replay_unavailable',
+            'External session staging prepared replay is unavailable',
+        );
+    }
+    const prepared = parsePreparedReplayGroup(value);
+    if (!prepared) {
+        throw new ExternalSessionStagingError(
+            'external_session_staging_prepared_replay_corrupt',
+            'External session staging prepared replay is invalid',
+        );
+    }
+    return prepared;
+}
+
 function sumReservations(manifests: readonly StagingManifest[]): Readonly<{
     itemCount: number;
     serializedBytes: number;
@@ -649,7 +901,7 @@ function sumReservations(manifests: readonly StagingManifest[]): Readonly<{
     for (const manifest of manifests) {
         for (const group of manifest.groups) {
             itemCount += group.itemCount;
-            serializedBytes += group.serializedBytes;
+            serializedBytes += group.serializedBytes + (group.preparedReplay?.serializedBytes ?? 0);
         }
     }
     return Object.freeze({ itemCount, serializedBytes });
@@ -785,6 +1037,27 @@ function assertMatchingReservedGroup(
     }
 }
 
+function assertMatchingPreparedReplayGroup(
+    reservation: StagingPageReservation,
+    prepared: StagingPreparedReplayGroup,
+    serializedBytes: number,
+    contentSha256: string,
+): void {
+    if (
+        !reservation.preparedReplay
+        || reservation.captureIndex !== prepared.captureIndex
+        || reservation.groupId !== prepared.groupId
+        || reservation.itemCount !== prepared.items.length
+        || reservation.preparedReplay.serializedBytes !== serializedBytes
+        || reservation.preparedReplay.contentSha256 !== contentSha256
+    ) {
+        throw new ExternalSessionStagingError(
+            'external_session_staging_prepared_replay_conflict',
+            'External session staging prepared replay does not match its reservation',
+        );
+    }
+}
+
 export function createExternalSessionOperationPrivateStagingStore(input: Readonly<{
     activeServerDir: string;
     limits: ExternalSessionOperationPrivateStagingLimits;
@@ -804,12 +1077,16 @@ export function createExternalSessionOperationPrivateStagingStore(input: Readonl
         }),
     });
     const atomicWrite = input.persistence?.writeJsonAtomic ?? writeJsonAtomicDefault;
+    const stagingPaths = createStagingPathResolver(activeServerDir);
+    const resolveStagingPaths = async (
+        operationId: string,
+    ): Promise<StagingPaths> => await stagingPaths.forOperation(operationId);
 
     const withCapacityLock = async <T>(
         operationId: string,
         effect: (paths: StagingPaths) => Promise<T>,
     ): Promise<T> => {
-        const paths = resolveStagingPaths(activeServerDir, operationId);
+        const paths = await resolveStagingPaths(operationId);
         await tightenPrivateDirectory(paths.rootDirectory);
         return await withJsonOwnerFileLock({
             lockPath: paths.capacityLockPath,
@@ -855,6 +1132,7 @@ export function createExternalSessionOperationPrivateStagingStore(input: Readonl
                     captureState: 'capturing',
                     lifecycle: Object.freeze({ state: 'active' }),
                     groups: Object.freeze([]),
+                    createdWorkspaceMedia: Object.freeze([]),
                 });
                 await atomicWrite(paths.manifestPath, manifest);
                 return Object.freeze({
@@ -866,7 +1144,7 @@ export function createExternalSessionOperationPrivateStagingStore(input: Readonl
 
         async readCapturedSource(readInput) {
             const operationId = readNonemptyString(readInput.operationId, 'operationId');
-            const paths = resolveStagingPaths(activeServerDir, operationId);
+            const paths = await resolveStagingPaths(operationId);
             const manifest = await readManifest(paths.manifestPath);
             if (!manifest || manifest.operationId !== operationId) {
                 return Object.freeze({ status: 'missing' as const });
@@ -879,7 +1157,7 @@ export function createExternalSessionOperationPrivateStagingStore(input: Readonl
 
         async readCaptureCheckpoint(readInput) {
             const operationId = readNonemptyString(readInput.operationId, 'operationId');
-            const paths = resolveStagingPaths(activeServerDir, operationId);
+            const paths = await resolveStagingPaths(operationId);
             const manifest = await readManifest(paths.manifestPath);
             if (!manifest || manifest.operationId !== operationId) {
                 return Object.freeze({ status: 'missing' as const });
@@ -1053,13 +1331,13 @@ export function createExternalSessionOperationPrivateStagingStore(input: Readonl
 
         async readReplayState(operationIdInput) {
             const operationId = readNonemptyString(operationIdInput, 'operationId');
-            const paths = resolveStagingPaths(activeServerDir, operationId);
+            const paths = await resolveStagingPaths(operationId);
             return projectReplayState(await readManifest(paths.manifestPath), operationId);
         },
 
         async *streamReplayGroups(operationIdInput) {
             const operationId = readNonemptyString(operationIdInput, 'operationId');
-            const paths = resolveStagingPaths(activeServerDir, operationId);
+            const paths = await resolveStagingPaths(operationId);
             const manifest = await readManifest(paths.manifestPath);
             const state = projectReplayState(manifest, operationId);
             if (state.status === 'missing') {
@@ -1094,18 +1372,188 @@ export function createExternalSessionOperationPrivateStagingStore(input: Readonl
                     reservation.sourceRevision,
                     reservation.replayOrder,
                 );
+                const preparedItems = reservation.preparedReplay
+                    ? await (async () => {
+                        const prepared = await readPreparedReplayGroup(
+                            resolvePreparedReplayGroupPath(
+                                paths.operationDirectory,
+                                reservation.captureIndex,
+                            ),
+                        );
+                        const preparedSerializedBytes = new TextEncoder().encode(
+                            serializePreparedReplayGroup(prepared),
+                        ).byteLength;
+                        const preparedContentSha256 = createHash('sha256')
+                            .update(JSON.stringify(prepared), 'utf8')
+                            .digest('hex');
+                        assertMatchingPreparedReplayGroup(
+                            reservation,
+                            prepared,
+                            preparedSerializedBytes,
+                            preparedContentSha256,
+                        );
+                        return prepared.items;
+                    })()
+                    : undefined;
                 yield Object.freeze({
                     captureIndex: page.captureIndex,
                     groupId: page.groupId,
                     sourceState: reservation.sourceState,
                     items: page.items,
+                    ...(preparedItems === undefined ? {} : { preparedItems }),
                 });
             }
         },
 
+        async persistPreparedReplayGroup(persistInput) {
+            const operationId = readNonemptyString(persistInput.operationId, 'operationId');
+            const groupId = readNonemptyString(persistInput.groupId, 'groupId');
+            return await withCapacityLock(operationId, async (paths) => {
+                const manifest = await readManifest(paths.manifestPath);
+                if (!manifest || manifest.operationId !== operationId) {
+                    throw new ExternalSessionStagingError(
+                        'external_session_staging_not_found',
+                        'External session staging operation was not begun',
+                    );
+                }
+                assertOperationLifecycleAcceptsPage(manifest);
+                if (manifest.captureState !== 'complete') {
+                    throw new ExternalSessionStagingError(
+                        'external_session_staging_capture_incomplete',
+                        'External session staging cannot retain prepared replay before capture completes',
+                    );
+                }
+                const reservation = manifest.groups.find((group) => group.groupId === groupId);
+                if (!reservation || reservation.state !== 'committed') {
+                    throw new ExternalSessionStagingError(
+                        'external_session_staging_group_not_ready',
+                        'External session staging replay group is not ready for prepared replay',
+                    );
+                }
+                const page = await readPageGroup(
+                    resolvePageGroupPath(paths.operationDirectory, reservation.captureIndex),
+                );
+                const pageSerializedBytes = new TextEncoder().encode(serializePageGroup(page)).byteLength;
+                const pageContentSha256 = createHash('sha256')
+                    .update(JSON.stringify(page), 'utf8')
+                    .digest('hex');
+                assertMatchingReservedGroup(
+                    reservation,
+                    page,
+                    pageSerializedBytes,
+                    pageContentSha256,
+                    reservation.sourceState,
+                    reservation.sourceRevision,
+                    reservation.replayOrder,
+                );
+                const prepared = createPreparedReplayGroup({
+                    captureIndex: reservation.captureIndex,
+                    groupId,
+                    items: persistInput.items,
+                });
+                if (prepared.items.length !== reservation.itemCount) {
+                    throw new ExternalSessionStagingError(
+                        'external_session_staging_prepared_replay_conflict',
+                        'External session staging prepared replay item count does not match its page',
+                    );
+                }
+                const serializedBytes = new TextEncoder().encode(
+                    serializePreparedReplayGroup(prepared),
+                ).byteLength;
+                const contentSha256 = createHash('sha256')
+                    .update(JSON.stringify(prepared), 'utf8')
+                    .digest('hex');
+                if (reservation.preparedReplay) {
+                    const existing = await readPreparedReplayGroup(
+                        resolvePreparedReplayGroupPath(
+                            paths.operationDirectory,
+                            reservation.captureIndex,
+                        ),
+                    );
+                    const existingSerializedBytes = new TextEncoder().encode(
+                        serializePreparedReplayGroup(existing),
+                    ).byteLength;
+                    const existingContentSha256 = createHash('sha256')
+                        .update(JSON.stringify(existing), 'utf8')
+                        .digest('hex');
+                    assertMatchingPreparedReplayGroup(
+                        reservation,
+                        existing,
+                        existingSerializedBytes,
+                        existingContentSha256,
+                    );
+                    if (
+                        existingSerializedBytes !== serializedBytes
+                        || existingContentSha256 !== contentSha256
+                    ) {
+                        throw new ExternalSessionStagingError(
+                            'external_session_staging_prepared_replay_conflict',
+                            'External session staging prepared replay conflicts with its existing receipt',
+                        );
+                    }
+                    return Object.freeze({ status: 'already_stored' as const });
+                }
+
+                const operationTotals = sumReservations([manifest]);
+                if (operationTotals.serializedBytes + serializedBytes > limits.perOperation.maxBytes) {
+                    return Object.freeze({
+                        status: 'refused' as const,
+                        reason: 'per_operation_byte_capacity' as const,
+                    });
+                }
+                const aggregateTotals = sumReservations(await readAllManifests(paths.rootDirectory));
+                if (aggregateTotals.serializedBytes + serializedBytes > limits.aggregate.maxBytes) {
+                    return Object.freeze({
+                        status: 'refused' as const,
+                        reason: 'aggregate_byte_capacity' as const,
+                    });
+                }
+
+                await atomicWrite(
+                    resolvePreparedReplayGroupPath(paths.operationDirectory, reservation.captureIndex),
+                    prepared,
+                );
+                await atomicWrite(paths.manifestPath, Object.freeze({
+                    ...manifest,
+                    groups: Object.freeze(manifest.groups.map((group) => (
+                        group.groupId === groupId
+                            ? Object.freeze({
+                                ...group,
+                                preparedReplay: Object.freeze({ serializedBytes, contentSha256 }),
+                            })
+                            : group
+                    ))),
+                }));
+                return Object.freeze({ status: 'stored' as const });
+            });
+        },
+
+        async clearPreparedReplayGroup(clearInput) {
+            const operationId = readNonemptyString(clearInput.operationId, 'operationId');
+            const groupId = readNonemptyString(clearInput.groupId, 'groupId');
+            await withCapacityLock(operationId, async (paths) => {
+                const manifest = await readManifest(paths.manifestPath);
+                if (!manifest || manifest.operationId !== operationId) return;
+                const reservation = manifest.groups.find((group) => group.groupId === groupId);
+                if (!reservation?.preparedReplay) return;
+                await atomicWrite(paths.manifestPath, Object.freeze({
+                    ...manifest,
+                    groups: Object.freeze(manifest.groups.map((group) => {
+                        if (group.groupId !== groupId) return group;
+                        const { preparedReplay: _preparedReplay, ...withoutPreparedReplay } = group;
+                        return Object.freeze(withoutPreparedReplay);
+                    })),
+                }));
+                await rm(
+                    resolvePreparedReplayGroupPath(paths.operationDirectory, reservation.captureIndex),
+                    { force: true },
+                );
+            });
+        },
+
         async *streamAllGroupsForTerminalCleanup(operationIdInput) {
             const operationId = readNonemptyString(operationIdInput, 'operationId');
-            const paths = resolveStagingPaths(activeServerDir, operationId);
+            const paths = await resolveStagingPaths(operationId);
             const manifest = await readManifest(paths.manifestPath);
             const state = projectReplayState(manifest, operationId);
             if (state.status !== 'discard_required' || !manifest) {
@@ -1140,6 +1588,180 @@ export function createExternalSessionOperationPrivateStagingStore(input: Readonl
                     items: page.items,
                 });
             }
+        },
+
+        async recordCreatedWorkspaceMedia(recordInput) {
+            const operationId = readNonemptyString(recordInput.operationId, 'operationId');
+            const media = recordInput.media.map(normalizeOwnedWorkspaceMediaPath);
+            if (media.length === 0) return;
+            await withCapacityLock(operationId, async (paths) => {
+                const manifest = await readManifest(paths.manifestPath);
+                if (!manifest || manifest.operationId !== operationId) {
+                    throw new ExternalSessionStagingError(
+                        'external_session_staging_not_found',
+                        'External session staging operation was not begun',
+                    );
+                }
+                const existingKeys = new Set(
+                    manifest.createdWorkspaceMedia.map(ownedWorkspaceMediaPathKey),
+                );
+                const additions = media.filter((entry) => {
+                    const key = ownedWorkspaceMediaPathKey(entry);
+                    if (existingKeys.has(key)) return false;
+                    existingKeys.add(key);
+                    return true;
+                });
+                if (additions.length === 0) return;
+                await atomicWrite(paths.manifestPath, Object.freeze({
+                    ...manifest,
+                    createdWorkspaceMedia: Object.freeze([
+                        ...manifest.createdWorkspaceMedia,
+                        ...additions,
+                    ]),
+                }));
+            });
+        },
+
+        async transferDiscardedWorkspaceMediaOwnership(transferInput) {
+            const operationId = readNonemptyString(transferInput.operationId, 'operationId');
+            const media = transferInput.media.map(normalizeOwnedWorkspaceMediaPath);
+            if (media.length === 0) return;
+            await withCapacityLock(operationId, async (paths) => {
+                const current = await readManifest(paths.manifestPath);
+                if (!current || current.operationId !== operationId) {
+                    throw new ExternalSessionStagingError(
+                        'external_session_staging_not_found',
+                        'External session staging operation was not begun',
+                    );
+                }
+                if (current.lifecycle.state !== 'active') {
+                    throw new ExternalSessionStagingError(
+                        'external_session_staging_not_active',
+                        'External session staging can receive media ownership only while active',
+                    );
+                }
+
+                const manifests = await readAllManifests(paths.rootDirectory);
+                const requestedByKey = new Map(
+                    media.map((entry) => [ownedWorkspaceMediaPathKey(entry), entry]),
+                );
+                const transferableKeys = new Set<string>();
+                for (const key of requestedByKey.keys()) {
+                    const foreignOwners = manifests.filter((manifest) => (
+                        manifest.operationId !== operationId
+                        && manifest.createdWorkspaceMedia.some(
+                            (entry) => ownedWorkspaceMediaPathKey(entry) === key,
+                        )
+                    ));
+                    if (
+                        foreignOwners.length > 0
+                        && foreignOwners.every(
+                            (manifest) => manifest.lifecycle.state === 'discard_required',
+                        )
+                    ) {
+                        transferableKeys.add(key);
+                    }
+                }
+                if (transferableKeys.size === 0) return;
+
+                const existingKeys = new Set(
+                    current.createdWorkspaceMedia.map(ownedWorkspaceMediaPathKey),
+                );
+                const additions = [...transferableKeys]
+                    .filter((key) => !existingKeys.has(key))
+                    .map((key) => requestedByKey.get(key)!);
+                if (additions.length > 0) {
+                    await atomicWrite(paths.manifestPath, Object.freeze({
+                        ...current,
+                        createdWorkspaceMedia: Object.freeze([
+                            ...current.createdWorkspaceMedia,
+                            ...additions,
+                        ]),
+                    }));
+                }
+
+                // Publish successor authority before removing discarded predecessors. If a
+                // crash leaves duplicates, cleanup discharges one duplicate without unlinking.
+                for (const manifest of manifests) {
+                    if (
+                        manifest.operationId === operationId
+                        || manifest.lifecycle.state !== 'discard_required'
+                    ) {
+                        continue;
+                    }
+                    const nextMedia = manifest.createdWorkspaceMedia.filter(
+                        (entry) => !transferableKeys.has(ownedWorkspaceMediaPathKey(entry)),
+                    );
+                    if (nextMedia.length === manifest.createdWorkspaceMedia.length) continue;
+                    const ownerPaths = stagingPathsInRoot(
+                        paths.rootDirectory,
+                        manifest.operationId,
+                    );
+                    await atomicWrite(ownerPaths.manifestPath, Object.freeze({
+                        ...manifest,
+                        createdWorkspaceMedia: Object.freeze(nextMedia),
+                    }));
+                }
+            });
+        },
+
+        async readCreatedWorkspaceMediaForCleanup(readInput) {
+            const operationId = readNonemptyString(readInput.operationId, 'operationId');
+            const requested = readInput.media?.map(normalizeOwnedWorkspaceMediaPath);
+            return await withCapacityLock(operationId, async (paths) => {
+                const manifest = await readManifest(paths.manifestPath);
+                if (!manifest || manifest.operationId !== operationId) return Object.freeze([]);
+                const requestedKeys = requested
+                    ? new Set(requested.map(ownedWorkspaceMediaPathKey))
+                    : null;
+                const manifests = await readAllManifests(paths.rootDirectory);
+                const duplicateKeys = new Set<string>();
+                const eligible = manifest.createdWorkspaceMedia.filter((entry) => {
+                    const key = ownedWorkspaceMediaPathKey(entry);
+                    if (requestedKeys !== null && !requestedKeys.has(key)) return false;
+                    const duplicate = manifests.some((candidate) => (
+                        candidate.operationId !== operationId
+                        && candidate.createdWorkspaceMedia.some(
+                            (candidateEntry) => ownedWorkspaceMediaPathKey(candidateEntry) === key,
+                        )
+                    ));
+                    if (duplicate) duplicateKeys.add(key);
+                    return !duplicate;
+                });
+                if (duplicateKeys.size > 0) {
+                    await atomicWrite(paths.manifestPath, Object.freeze({
+                        ...manifest,
+                        createdWorkspaceMedia: Object.freeze(
+                            manifest.createdWorkspaceMedia.filter(
+                                (entry) => !duplicateKeys.has(ownedWorkspaceMediaPathKey(entry)),
+                            ),
+                        ),
+                    }));
+                }
+                return Object.freeze(eligible);
+            });
+        },
+
+        async acknowledgeCreatedWorkspaceMediaCleanup(acknowledgeInput) {
+            const operationId = readNonemptyString(acknowledgeInput.operationId, 'operationId');
+            const acknowledgedKeys = new Set(
+                acknowledgeInput.media
+                    .map(normalizeOwnedWorkspaceMediaPath)
+                    .map(ownedWorkspaceMediaPathKey),
+            );
+            if (acknowledgedKeys.size === 0) return;
+            await withCapacityLock(operationId, async (paths) => {
+                const manifest = await readManifest(paths.manifestPath);
+                if (!manifest || manifest.operationId !== operationId) return;
+                const nextMedia = manifest.createdWorkspaceMedia.filter(
+                    (entry) => !acknowledgedKeys.has(ownedWorkspaceMediaPathKey(entry)),
+                );
+                if (nextMedia.length === manifest.createdWorkspaceMedia.length) return;
+                await atomicWrite(paths.manifestPath, Object.freeze({
+                    ...manifest,
+                    createdWorkspaceMedia: Object.freeze(nextMedia),
+                }));
+            });
         },
 
         async completeCapture(completeInput) {
@@ -1267,6 +1889,10 @@ export function createExternalSessionOperationPrivateStagingStore(input: Readonl
                         resolvePageGroupPath(paths.operationDirectory, group.captureIndex),
                         { force: true },
                     );
+                    await rm(
+                        resolvePreparedReplayGroupPath(paths.operationDirectory, group.captureIndex),
+                        { force: true },
+                    );
                 }
                 await atomicWrite(paths.manifestPath, Object.freeze({
                     ...manifest,
@@ -1378,7 +2004,38 @@ export function createExternalSessionOperationPrivateStagingStore(input: Readonl
                 ) {
                     return Object.freeze({ status: 'not_ready' as const });
                 }
+                if (
+                    manifest.lifecycle.state === 'discard_required'
+                    && manifest.createdWorkspaceMedia.length > 0
+                ) {
+                    return Object.freeze({ status: 'not_ready' as const });
+                }
+                if (
+                    manifest.lifecycle.state !== 'discard_required'
+                    && manifest.createdWorkspaceMedia.length > 0
+                ) {
+                    const publishedKeys = new Set(
+                        manifest.createdWorkspaceMedia.map(ownedWorkspaceMediaPathKey),
+                    );
+                    const manifests = await readAllManifests(paths.rootDirectory);
+                    for (const candidate of manifests) {
+                        if (candidate.operationId === operationId) continue;
+                        const nextMedia = candidate.createdWorkspaceMedia.filter(
+                            (entry) => !publishedKeys.has(ownedWorkspaceMediaPathKey(entry)),
+                        );
+                        if (nextMedia.length === candidate.createdWorkspaceMedia.length) continue;
+                        const candidatePaths = stagingPathsInRoot(
+                            paths.rootDirectory,
+                            candidate.operationId,
+                        );
+                        await atomicWrite(candidatePaths.manifestPath, Object.freeze({
+                            ...candidate,
+                            createdWorkspaceMedia: Object.freeze(nextMedia),
+                        }));
+                    }
+                }
                 await rm(paths.operationDirectory, { recursive: true, force: true });
+                stagingPaths.release(operationId);
                 return Object.freeze({ status: 'completed' as const });
             });
         },

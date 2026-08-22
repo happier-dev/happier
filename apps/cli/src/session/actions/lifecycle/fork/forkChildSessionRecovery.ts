@@ -1,5 +1,5 @@
 import { isAuthenticationError } from '@/api/client/httpStatusError';
-import type { Credentials } from '@/persistence';
+import type { StoredCredentials } from '@/persistence';
 import { archiveSessionOnceInactive } from '@/session/services/archiveSessionOnceInactive';
 import { fetchSessionByIdCompat } from '@/session/transport/http/sessionsHttp';
 import { callMachineRpc } from '@/session/transport/rpc/machineRpc';
@@ -37,7 +37,7 @@ export async function fetchForkChildSessionOrThrow(params: Readonly<{
 
 export async function cleanupForkChildBestEffort(
     params: Readonly<{
-        credentials: Credentials;
+        credentials: StoredCredentials;
         fallbackStopSession: ForkStopSession;
         sessionId: string;
     }>,

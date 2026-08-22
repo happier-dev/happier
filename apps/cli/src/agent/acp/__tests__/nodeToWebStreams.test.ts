@@ -80,7 +80,7 @@ describe('nodeToWebStreams', () => {
         writer.releaseLock();
     });
 
-    it('treats stdin EPIPE error events as benign during write', async () => {
+    it('rejects an active stdin write on EPIPE so custody is not fabricated', async () => {
         let stdin: FakeStdin | null = null;
         stdin = new FakeStdin((_chunk, cb) => {
             queueMicrotask(() => {
@@ -94,7 +94,9 @@ describe('nodeToWebStreams', () => {
 
         const { writable } = nodeToWebStreams(stdin as any, stdout);
         const writer = writable.getWriter();
-        await expect(writer.write(new Uint8Array([1, 2, 3]))).resolves.toBeUndefined();
+        await expect(writer.write(new Uint8Array([1, 2, 3]))).rejects.toMatchObject({
+            code: 'EPIPE',
+        });
         writer.releaseLock();
     });
 

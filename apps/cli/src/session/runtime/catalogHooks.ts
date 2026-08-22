@@ -1,7 +1,6 @@
-import type { AgentId } from '@happier-dev/agents';
 import { isRuntimeCheckedExperimentalVendorResume } from '@happier-dev/agents';
 
-import { AGENTS, requireCatalogEntry } from '@/agent/catalog/registry';
+import { AGENTS } from '@/agent/catalog/registry';
 import { resolveCatalogAgentId } from '@/agent/catalog/resolution';
 import type {
   CatalogAgentId,
@@ -10,39 +9,36 @@ import type {
   VendorResumeSupportFn,
 } from '@/agent/catalog/types';
 
-const cachedVendorResumeSupportPromises = new Map<CatalogAgentId, Promise<VendorResumeSupportFn>>();
-
-export async function getVendorResumeSupport(agentId?: AgentId | null): Promise<VendorResumeSupportFn> {
+export async function getVendorResumeSupport(agentId?: CatalogAgentId | null): Promise<VendorResumeSupportFn> {
   const catalogId = resolveCatalogAgentId(agentId);
-  const existing = cachedVendorResumeSupportPromises.get(catalogId);
-  if (existing) return await existing;
-
-  const entry = requireCatalogEntry(catalogId);
-  const promise = (async () => {
-    if (entry.vendorResumeSupport === 'supported') {
-      return () => true;
-    }
-    if (entry.vendorResumeSupport === 'unsupported') {
-      return () => false;
-    }
-    if (entry.getVendorResumeSupport) {
-      return await entry.getVendorResumeSupport();
-    }
-    if (isRuntimeCheckedExperimentalVendorResume(catalogId)) {
-      return () => true;
-    }
+  // The active contribution registry may replace an installed Agent under the
+  // same id. Keep this read current rather than retaining an old hook by id.
+  const entry = catalogId ? AGENTS[catalogId] ?? null : null;
+  // An Agent that is absent from the current catalog supports nothing: vendor
+  // resume must fail closed rather than inherit the default Agent's support.
+  if (!catalogId || !entry) {
     return () => false;
-  })();
-
-  cachedVendorResumeSupportPromises.set(catalogId, promise);
-  return await promise;
+  }
+  if (entry.vendorResumeSupport === 'supported') {
+    return () => true;
+  }
+  if (entry.vendorResumeSupport === 'unsupported') {
+    return () => false;
+  }
+  if (entry.getVendorResumeSupport) {
+    return await entry.getVendorResumeSupport();
+  }
+  if (isRuntimeCheckedExperimentalVendorResume(catalogId)) {
+    return () => true;
+  }
+  return () => false;
 }
 
 export async function resolveProviderSessionRuntimePreferences(
-  agentId: AgentId | null | undefined,
+  agentId: CatalogAgentId | null | undefined,
   params: ProviderSessionRuntimePreferencesParams,
 ): Promise<ProviderSessionRuntimePreferences> {
   const catalogId = resolveCatalogAgentId(agentId);
-  const entry = AGENTS[catalogId];
+  const entry = catalogId ? AGENTS[catalogId] ?? null : null;
   return await (entry?.resolveSessionRuntimePreferences?.(params) ?? Promise.resolve({}));
 }

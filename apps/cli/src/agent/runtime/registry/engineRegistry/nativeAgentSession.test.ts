@@ -1,9 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
-import { writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { createJiti } from 'jiti';
 
 import type {
     AgentRuntime,
+    AgentRuntimeFactory,
     AgentSessionCatalogControl,
     AgentSessionContinuationControl,
     AgentSessionConversationRollbackControl,
@@ -11,19 +14,31 @@ import type {
     AgentSessionRuntimeContext,
     AgentSessionRuntime,
     AgentSessionRuntimeEvent,
-} from '@happier-dev/plugin-sdk/agent-runtime';
+} from '@happier-dev/plugin-sdk/agents/runtime';
 import {
     ProviderConnectionIdSchema,
     redactBugReportSensitiveText,
+    type AgentProviderRequirementsV1,
     type SessionTurnMutationV1,
 } from '@happier-dev/protocol';
+import {
+    AGENT_SESSION_RUNTIME_LIMITS_CANDIDATE_V1,
+    AgentSessionRuntimeEventSchema,
+} from '@happier-dev/protocol/runtime';
+import {
+    CURRENT_SESSION_PRESENTATION_AGENT_STATE_KEY,
+    CurrentSessionPresentationStateV1Schema,
+} from '@happier-dev/protocol/sessions';
 import type {
     TerminalControlPort,
     TerminalHostAdapter,
     TerminalHostHandle,
     TerminalInputInjectionResult,
 } from '@happier-dev/agents';
-import type { HostTerminalLaunchRequest } from '@/agent/runtime/session/terminal/contract';
+import {
+    HostTerminalModelSelectionBlockedError,
+    type HostTerminalLaunchRequest,
+} from '@/agent/runtime/session/terminal/contract';
 import type { Credentials } from '@/persistence';
 import type { AgentRuntimeRegistrationLease } from '@/plugins/runtime/lifecycle/contributions/targetAgents';
 import type {
@@ -36,43 +51,103 @@ import {
 } from '@/agent/runtime/registry/engineRegistryTypes';
 import { buildPluginSessionBindingInput } from '@/plugins/runtime/runtimeCore/plugin/sessionLaunch';
 import { createSessionTurnLifecycle } from '@/agent/runtime/session/turn/lifecycle';
+import { classifyPrimarySessionRuntimeIssue } from '@/agent/runtime/session/errors/classifyPrimarySessionRuntimeIssue';
 import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
 import { logger } from '@/ui/logger';
 import { writeAcpTestAgentScript } from '@/agent/acp/testkit/subprocessHarness';
 import { withTempDir } from '@/testkit/fs/tempDir';
 
 import {
+    createNativeAgentSessionHostServices,
     createNativeAgentSessionOperations,
     createNativeAgentRuntimeSessionPlan,
+    type NativeAgentNewTurnAdmissionWitness,
     type NativeAgentSessionHostServiceOwners,
 } from './nativeAgentSession';
 import { createNativeAgentSessionServices } from './nativeAgentSessionInteractions';
 import type { UsageObservation } from '@/usage/usageObservation';
 import { buildUsageEventIngestRequest } from '@/usage/buildUsageEventIngestRequest';
+import type { RuntimeTurnPromptMeta } from '@/agent/runtime/turns/runtimeTurnOperations';
 import { createPluginTerminalHostService } from '@/plugins/runtime/context/terminalHost';
+import type { SessionClientPort } from '@/api/session/sessionClientPort';
 import { resolveCurrentSessionUiBinding } from '@/session/presentation/currentSessionUiBindings';
 import {
     HAPPIER_PROVIDER_BINDING_LAUNCH_MATERIALIZATION_V1_ENV_KEY,
     serializeProviderBindingLaunchHandoffForEnv,
 } from '@/plugins/runtime/providerBindings/handoff';
 import { createUnavailablePluginServices } from '@/plugins/runtime/invocation/services/unavailable';
+import { createPluginInteractionsService } from '@/plugins/runtime/invocation/services/interactions';
 import { createStablePluginExecService } from '@/plugins/runtime/invocation/services/exec';
 import type { HostPluginServices } from '@/agent/runtime/state/currentSessionUiTypes';
+import type {
+    PluginProtocolClientHandle,
+} from '@happier-dev/plugin-sdk/exec/protocol-clients';
 import type { ExternalSessionHostOperationPort } from '@/session/external/hostOperationOwner';
+import type { HostExternalTranscriptFollowEvent } from '@/session/external/privateContract';
+import type { ResolvedSessionMcpServer } from '@/mcp/runtimeTypes';
+import {
+    createNativeAgentSessionEffectBoundaryError,
+} from './nativeAgentSessionBoundaryError';
+import { configuration as happierConfiguration } from '@/configuration';
+import * as providerBindingRuntimeDiagnosticRedaction from '@/plugins/runtime/providerBindings/runtimeDiagnosticRedaction';
 
-const daemonBridgeMocks = vi.hoisted(() => ({
-    abandonPreparedSession: vi.fn(async () => undefined),
-}));
+async function loadRealAgentRuntimeFactory(
+    relativeRepoPath: string,
+    exportName: string,
+): Promise<AgentRuntimeFactory> {
+    const loader = createJiti(import.meta.url, {
+        fsCache: false,
+        moduleCache: true,
+        interopDefault: false,
+    });
+    const module = await loader.import(resolve(
+        dirname(fileURLToPath(import.meta.url)),
+        '../../../../../../../',
+        relativeRepoPath,
+    )) as Readonly<Record<string, unknown>>;
+    const factory = module[exportName];
+    if (typeof factory !== 'function') {
+        throw new Error(
+            `Real Agent runtime factory export '${exportName}' is unavailable`,
+        );
+    }
+    return factory as AgentRuntimeFactory;
+}
 
-vi.mock('@/agent/runtime/session/process/agentRuntimeDaemonBridgeClient', async (importOriginal) => ({
-    ...await importOriginal<typeof import('@/agent/runtime/session/process/agentRuntimeDaemonBridgeClient')>(),
-    abandonDaemonAgentRuntimePreparedSession: daemonBridgeMocks.abandonPreparedSession,
-}));
+async function loadRealPluginFunction<T>(
+    relativeRepoPath: string,
+    exportName: string,
+): Promise<T> {
+    const loader = createJiti(import.meta.url, {
+        fsCache: false,
+        moduleCache: true,
+        interopDefault: false,
+    });
+    const module = await loader.import(resolve(
+        dirname(fileURLToPath(import.meta.url)),
+        '../../../../../../../',
+        relativeRepoPath,
+    )) as Readonly<Record<string, unknown>>;
+    const value = module[exportName];
+    if (typeof value !== 'function') {
+        throw new Error(`Real plugin function '${exportName}' is unavailable`);
+    }
+    return value as T;
+}
 
 const credentials: Credentials = {
     token: 'test-token',
     encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3]) },
 };
+
+function requireActiveTurnAdmissionWitnessReader(
+    reader: (() => NativeAgentNewTurnAdmissionWitness | null) | null,
+): () => NativeAgentNewTurnAdmissionWitness | null {
+    if (!reader) {
+        throw new Error('expected active-turn admission witness reader');
+    }
+    return reader;
+}
 
 type CommittedUserMessageSeqObserverFixture = {
     current: ((input: Readonly<{ localId: string; seq: number }>) => void) | null;
@@ -107,6 +182,128 @@ function providerBindingMetadata(connectionId: string, modelId: string) {
     };
 }
 
+function externalProviderBindingMetadata(
+    connectionId: string,
+    modelId: string,
+    agentTargetKey: `backend:${string}`,
+) {
+    return {
+        ...providerBindingMetadata(connectionId, modelId),
+        contributionKey: 'plugin.openrouter/openrouter',
+        adapterBindingKey: 'openrouter',
+        runtimeBindingBasis: {
+            v: 1 as const,
+            deployment: { kind: 'external' as const },
+            agentTargetKey,
+            connectionId: ProviderConnectionIdSchema.parse(connectionId),
+            contributionKey: 'plugin.openrouter/openrouter',
+            endpoint: {
+                endpointTemplateId: 'responses',
+                normalizedUrl: 'https://provider.example/v1',
+                protocol: 'openai-responses' as const,
+                publicHeaders: {},
+            },
+            runtimeCredentialTransport: null,
+            prepared: {
+                v: 1 as const,
+                materialization: 'engineConfig' as const,
+                adapterBindingKey: 'openrouter',
+            },
+            adapterVersion: 1,
+            credentialAuthorization: {
+                connectionSecurityFingerprint: 'connection-security-v1',
+                grantFingerprint: 'grant-v1',
+                selectedSecretBindingId: null,
+                selectedSecretRecordFingerprint: null,
+            },
+            agentSupport: {
+                acceptsProtocols: ['openai-responses' as const],
+                required: {},
+                credentialSupport: {
+                    supportsNoAuth: true,
+                    apiKeyTransports: [],
+                },
+                authIsolation: {
+                    suppressConnectedServiceIds: [],
+                    ownedEnvKeys: ['HAPPIER_CODEX_PROVIDER_API_KEY'],
+                },
+                materialization: 'engineConfig' as const,
+                applyPolicy: 'live' as const,
+                supportsFreeformModelIds: true,
+            },
+        },
+    };
+}
+
+function managedProviderBindingMetadata(
+    connectionId: string,
+    modelId: string,
+    agentTargetKey: `backend:${string}`,
+) {
+    const {
+        adapterBindingKey: _adapterBindingKey,
+        ...base
+    } = providerBindingMetadata(connectionId, modelId);
+    const purposeBindings = { v: 1 as const, bindings: [] };
+    return {
+        ...base,
+        contributionKey: 'acme.providers/gateway',
+        materialization: 'spawnEnv' as const,
+        managedPurposeBindings: purposeBindings,
+        runtimeBindingBasis: {
+            v: 1 as const,
+            deployment: {
+                kind: 'managedLocal' as const,
+                implementationIdentity: {
+                    pluginId: 'acme.providers',
+                    localId: 'gateway',
+                },
+                managedRuntime: {
+                    kind: 'managed' as const,
+                    dependencies: [],
+                    endpointTemplateIds: ['responses'],
+                    connectedAccounts: [],
+                    requestAuthUses: [],
+                },
+                purposeBindings,
+            },
+            agentTargetKey,
+            connectionId: ProviderConnectionIdSchema.parse(connectionId),
+            contributionKey: 'acme.providers/gateway',
+            endpoint: {
+                endpointTemplateId: 'responses',
+                protocol: 'openai-responses' as const,
+                publicHeaders: {},
+            },
+            runtimeCredentialTransport: null,
+            prepared: {
+                v: 1 as const,
+                materialization: 'spawnEnv' as const,
+            },
+            adapterVersion: 1,
+            credentialAuthorization: {
+                connectionSecurityFingerprint: 'connection-security-v1',
+                grantFingerprint: 'grant-v1',
+            },
+            agentSupport: {
+                acceptsProtocols: ['openai-responses' as const],
+                required: {},
+                credentialSupport: {
+                    supportsNoAuth: true,
+                    apiKeyTransports: [],
+                },
+                authIsolation: {
+                    suppressConnectedServiceIds: [],
+                    ownedEnvKeys: [],
+                },
+                materialization: 'spawnEnv' as const,
+                applyPolicy: 'restart_session' as const,
+                supportsFreeformModelIds: true,
+            },
+        },
+    };
+}
+
 function createNativeSessionClientTestPort(
     sessionId: string,
     overrides: Readonly<Record<string, unknown>> = {},
@@ -118,6 +315,12 @@ function createNativeSessionClientTestPort(
     };
     const handlers = new Map<string, (input: unknown) => unknown>();
     const metadataListeners = new Set<() => void>();
+    const updateMetadata = async (
+        updater: (state: Record<string, unknown>) => Record<string, unknown>,
+    ) => {
+        metadata = updater(metadata);
+        for (const listener of metadataListeners) listener();
+    };
     return {
         sessionId,
         rpcHandlerManager: {
@@ -127,10 +330,8 @@ function createNativeSessionClientTestPort(
         updateAgentState: async (updater: (state: Record<string, unknown>) => Record<string, unknown>) => {
             agentState = updater(agentState);
         },
-        updateMetadata: async (updater: (state: Record<string, unknown>) => Record<string, unknown>) => {
-            metadata = updater(metadata);
-            for (const listener of metadataListeners) listener();
-        },
+        updateMetadata,
+        updateMetadataAsCurrentPublisher: updateMetadata,
         getMetadataSnapshot: () => metadata,
         getAgentStateSnapshot: () => agentState,
         readSessionTurnsProjection: async () => null,
@@ -202,6 +403,9 @@ function createLease(agentId: string): AgentRuntimeRegistrationLease {
         hasPrimaryRuntime: true,
         isCurrent: () => true,
         retirementSignal: new AbortController().signal,
+        async createAgentRuntimeSurfaceInvocationContext() {
+            throw new Error('Session adapter fixture should not create an Agent runtime surface invocation context');
+        },
         createRuntime: async () => { throw new Error('not used by the session adapter'); },
     };
 }
@@ -238,12 +442,18 @@ function createSessionHostServiceOwners(): NativeAgentSessionHostServiceOwners {
             recordSnapshot: async () => ({ status: 'unavailable' as const, reason: 'daemon_unavailable' as const }),
             adoptProvisionalRecord: async () => ({ status: 'unavailable' as const, reason: 'daemon_unavailable' as const }),
         }),
-        auth: Object.freeze({
-            services: Object.freeze({
-                refreshRuntimeAuth: async () => ({ status: 'unavailable' as const, reason: 'test' }),
-            }),
-        }),
         mcp: Object.freeze({ resolveForSession: async () => Object.freeze([]) }),
+        toolExecution: Object.freeze({
+            before: async (
+                request: Parameters<
+                    NativeAgentSessionHostServiceOwners['toolExecution']['before']
+                >[0],
+            ) => ({
+                status: 'continue' as const,
+                input: request.input,
+            }),
+            observeAfter: async () => undefined,
+        }),
         dispose: async () => undefined,
     });
 }
@@ -288,7 +498,538 @@ function createWorkflowActivityHeadline() {
     } as const;
 }
 
+function createAgentActivityHeadline() {
+    return {
+        v: 1,
+        backendId: 'claude',
+        agentId: 'claude',
+        updatedAt: 124,
+        primaryEntryId: 'workflow_run:workflow-native-1',
+        activeEntries: [{
+            entryId: 'workflow_run:workflow-native-1',
+            kind: 'workflow_run',
+            title: 'Native workflow',
+            status: 'running',
+            updatedAt: 123,
+            runId: 'workflow-native-1',
+            recordRevision: '1',
+        }],
+    } as const;
+}
+
 describe('native Agent session host adapter', () => {
+    it('preflights declared startup instructions before provider open and commits custody only afterward', async () => {
+        const agentId = 'acme-startup-instructions';
+        const contributions = createExternalContributionFixtures(agentId);
+        const agent: ResolvedAgentContribution = {
+            ...contributions.agent,
+            richDefinition: {
+                ...contributions.agent.richDefinition,
+                definition: {
+                    ...contributions.agent.richDefinition.definition,
+                    capabilities: {
+                        ...contributions.agent.richDefinition.definition
+                            .capabilities,
+                        sessions: {
+                            ...contributions.agent.richDefinition.definition
+                                .capabilities.sessions,
+                            startupInstructions: { versions: [1] as const },
+                        },
+                    },
+                },
+            },
+        };
+        const startupInstructions = {
+            v: 1 as const,
+            id: 'happier.global_voice_agent',
+            revision: 7,
+            instructions: 'Use the project-specific startup instructions.',
+        };
+        const events: string[] = [];
+        const open = vi.fn(async (request) => {
+            events.push('provider-open');
+            expect(request).toMatchObject({
+                kind: 'create',
+                startupInstructions,
+            });
+            return {
+                send: async () => ({ status: 'admitted' as const }),
+                watch: () => ({ dispose: () => undefined }),
+                dispose: async () => undefined,
+            };
+        });
+        const attestSessionOpen = vi.fn(async (params) => {
+            events.push(`attest-${String(Reflect.get(params, 'phase'))}`);
+            expect(params.request).toMatchObject({
+                kind: 'create',
+                startupInstructions,
+            });
+            if (Reflect.get(params, 'phase') === 'prepare') {
+                expect(open).not.toHaveBeenCalled();
+            }
+        });
+        const plan = await createNativeAgentRuntimeSessionPlan({
+            createRuntime: async () => ({ sessions: { open } }),
+            authorizeNewTurn: async () => ({ status: 'admitted' as const }),
+            attestSessionOpen,
+            lease: createLease(agentId),
+            backend: contributions.backend,
+            agent,
+            createSessionHostServiceOwners: () =>
+                createSessionHostServiceOwners(),
+            sessionInput: buildPluginSessionBindingInput({
+                credentials,
+                directory: '/tmp/acme-startup-instructions',
+                agentSessionStartupInstructionsV1: startupInstructions,
+            }),
+        });
+        if (!plan.config.createSessionRuntime) {
+            throw new Error('expected a session runtime factory');
+        }
+
+        await plan.config.createSessionRuntime({
+            directory: '/tmp/acme-startup-instructions',
+            metadata: {},
+            machineId: 'machine-1',
+            session: createNativeSessionClientTestPort(
+                'session-startup-instructions',
+            ),
+            transcriptSession: {},
+            messageBuffer: {},
+            mcpServers: {},
+            permissionHandler: {},
+            getPermissionMode: () => 'default',
+            setThinking: () => undefined,
+            memoryRecallGuidanceEnabled: false,
+        } as never);
+
+        expect(events).toEqual([
+            'attest-prepare',
+            'provider-open',
+            'attest-commit',
+        ]);
+    });
+
+    it('keeps a rejected session-open prepare attestation pre-dispatch', async () => {
+        const agentId = 'acme-session-open-prepare-failure';
+        const contributions = createExternalContributionFixtures(agentId);
+        const prepareFailure = new Error('session-open prepare rejected');
+        const open = vi.fn(async () => ({
+            send: async () => ({ status: 'admitted' as const }),
+            watch: () => ({ dispose: () => undefined }),
+            dispose: async () => undefined,
+        }));
+        const attestSessionOpen = vi.fn(async (params) => {
+            expect(Reflect.get(params, 'phase')).toBe('prepare');
+            throw prepareFailure;
+        });
+        const plan = await createNativeAgentRuntimeSessionPlan({
+            createRuntime: async () => ({ sessions: { open } }),
+            authorizeNewTurn: async () => ({ status: 'admitted' as const }),
+            attestSessionOpen,
+            lease: createLease(agentId),
+            backend: contributions.backend,
+            agent: contributions.agent,
+            createSessionHostServiceOwners: () =>
+                createSessionHostServiceOwners(),
+            sessionInput: buildPluginSessionBindingInput({
+                credentials,
+                directory: '/tmp/acme-session-open-prepare-failure',
+            }),
+        });
+        if (!plan.config.createSessionRuntime) {
+            throw new Error('expected a session runtime factory');
+        }
+
+        await expect(plan.config.createSessionRuntime({
+            directory: '/tmp/acme-session-open-prepare-failure',
+            metadata: {},
+            machineId: 'machine-1',
+            session: createNativeSessionClientTestPort(
+                'session-open-prepare-failure',
+            ),
+            transcriptSession: {},
+            messageBuffer: {},
+            mcpServers: {},
+            permissionHandler: {},
+            getPermissionMode: () => 'default',
+            setThinking: () => undefined,
+            memoryRecallGuidanceEnabled: false,
+        } as never)).rejects.toThrow(prepareFailure);
+
+        expect(open).not.toHaveBeenCalled();
+        expect(attestSessionOpen).toHaveBeenCalledOnce();
+        expect(attestSessionOpen).toHaveBeenCalledWith(
+            expect.objectContaining({ phase: 'prepare' }),
+        );
+    });
+
+    it('constructs the runner-owned Agent runtime only after late request-auth materialization', async () => {
+        const agentId = 'acme-runner-owned-runtime';
+        const contributions = createExternalContributionFixtures(agentId);
+        const agent: ResolvedAgentContribution = {
+            ...contributions.agent,
+            richDefinition: {
+                ...contributions.agent.richDefinition,
+                definition: {
+                    ...contributions.agent.richDefinition.definition,
+                    capabilities: {
+                        ...contributions.agent.richDefinition.definition
+                            .capabilities,
+                        surfaces: ['terminal'],
+                    },
+                },
+            },
+        };
+        const events: string[] = [];
+        const activeTurnAdmissionWitnessReader: {
+            current:
+                (() => NativeAgentNewTurnAdmissionWitness | null)
+                | null;
+        } = { current: null };
+        const nativeEventListeners =
+            new Set<(event: AgentSessionRuntimeEvent) => void>();
+        const sessionDispose = vi.fn(async () => undefined);
+        let nativeSequence = 0;
+        const send = vi.fn<AgentSessionRuntime['send']>(async (request) => {
+            events.push('provider-send');
+            const inputId = request.inputIds[0];
+            if (!inputId) throw new Error('expected one input id');
+            for (const listener of nativeEventListeners) {
+                listener({
+                    sessionId:
+                        'session-runner-owned-runtime',
+                    sequence: ++nativeSequence,
+                    emittedAtMs: 1,
+                    kind: 'input-accepted',
+                    inputIds: [inputId],
+                    delivery: request.delivery,
+                });
+                listener({
+                    sessionId:
+                        'session-runner-owned-runtime',
+                    sequence: ++nativeSequence,
+                    emittedAtMs: 2,
+                    kind: 'turn-start',
+                    turnId: request.delivery.turnId,
+                    startedBy: 'host',
+                });
+            }
+            expect(activeTurnAdmissionWitnessReader.current?.()).toEqual({
+                inputId,
+                turnId: request.delivery.turnId,
+                userMessageSeq:
+                    inputId === 'input-runner-owned-runtime' ? 17 : 18,
+                userMessageSeqs: [],
+                ...(request.causalPermissionAuthority
+                    ? {
+                        causalPermissionAuthority:
+                            request.causalPermissionAuthority,
+                    }
+                    : {}),
+            });
+            return { status: 'admitted' as const };
+        });
+        const authorizeNewTurn = vi.fn(async () => {
+            events.push('daemon-admission');
+            return { status: 'admitted' as const };
+        });
+        const attestSessionOpen = vi.fn(async () => {
+            events.push('attest-open');
+        });
+        const resolveTerminalLaunch = vi.fn(() => ({
+            argv: ['--runner-local-terminal'],
+        }));
+        const open = vi.fn(async () => {
+            events.push('open');
+            return {
+                send,
+                watch(listener: (event: AgentSessionRuntimeEvent) => void) {
+                    nativeEventListeners.add(listener);
+                    return {
+                        dispose: () => {
+                            nativeEventListeners.delete(listener);
+                        },
+                    };
+                },
+                dispose: sessionDispose,
+            };
+        });
+        const createRunnerRuntime = vi.fn(async () => {
+            events.push('create-runtime');
+            return {
+                sessions: { open },
+                surfaces: {
+                    terminal: {
+                        resolveLaunch: resolveTerminalLaunch,
+                    },
+                },
+            } satisfies AgentRuntime;
+        });
+        const plan = await createNativeAgentRuntimeSessionPlan({
+            createRuntime: createRunnerRuntime,
+            authorizeNewTurn,
+            attestSessionOpen,
+            lease: createLease(agentId),
+            backend: contributions.backend,
+            agent,
+            createSessionHostServiceOwners: () =>
+                createSessionHostServiceOwners(),
+            createInvocationServices: async (input) => {
+                events.push('prepare-services');
+                activeTurnAdmissionWitnessReader.current =
+                    input.readActiveTurnAdmissionWitness;
+                return createUnavailablePluginServices();
+            },
+            sessionInput: buildPluginSessionBindingInput({
+                credentials,
+                directory: '/tmp/acme-runner-owned-runtime',
+                resolveLateEnvironment: async () => {
+                    events.push('request-auth');
+                    return {
+                        environmentVariables: {},
+                        unsetEnvironmentVariables: [],
+                        sensitiveEnvironmentVariableNames: [],
+                    };
+                },
+            }),
+        });
+        expect(createRunnerRuntime).not.toHaveBeenCalled();
+        if (!plan.config.createSessionRuntime) {
+            throw new Error('expected a session runtime factory');
+        }
+
+        const turnMutations: SessionTurnMutationV1[] = [];
+
+        const created = await plan.config.createSessionRuntime({
+            directory: '/tmp/acme-runner-owned-runtime',
+            metadata: {},
+            machineId: 'machine-1',
+            session: createNativeSessionClientTestPort('session-runner-owned-runtime', {
+                getLastObservedMessageSeq: () => 42,
+                enqueueSessionTurnMutation: async (mutation: SessionTurnMutationV1) => {
+                    turnMutations.push(mutation);
+                },
+            }),
+            transcriptSession: {},
+            messageBuffer: {},
+            messageQueue: new MessageQueue2<
+                { permissionMode: string },
+                { text: string }
+            >((mode) => mode.permissionMode),
+            mcpServers: {},
+            permissionHandler: {
+                cancelByPlugin: vi.fn(async () => undefined),
+            },
+            getPermissionMode: () => 'default',
+            setThinking: () => undefined,
+            memoryRecallGuidanceEnabled: false,
+        } as never);
+
+        expect(events).toEqual([
+            'request-auth',
+            'prepare-services',
+            'create-runtime',
+            'attest-open',
+            'open',
+            'attest-open',
+        ]);
+        expect(createRunnerRuntime).toHaveBeenCalledOnce();
+        expect(open).toHaveBeenCalledOnce();
+        expect(sessionDispose).not.toHaveBeenCalled();
+        expect(created.terminalRemoteModeLoop).not.toBeNull();
+        expect(resolveTerminalLaunch).not.toHaveBeenCalled();
+        const canonicalTerminalEvents: AgentSessionRuntimeEvent[] = [];
+        const unsubscribeCanonical = created.operations.subscribeRuntimeEvents((event) => {
+            if ('kind' in event && event.kind === 'turn-complete') canonicalTerminalEvents.push(event);
+        });
+
+        await created.operations.sendTurnPrompt('hello runner', {
+            turnId: 'turn-runner-owned-runtime',
+            localId: 'input-runner-owned-runtime',
+            userMessageSeq: 17,
+            causalPermissionAuthority: {
+                kind: 'admittedSessionInputV1',
+                admittedPermissionCeiling: 'read-only',
+            },
+        });
+        expect(events).toEqual([
+            'request-auth',
+            'prepare-services',
+            'create-runtime',
+            'attest-open',
+            'open',
+            'attest-open',
+            'daemon-admission',
+            'provider-send',
+        ]);
+        expect(authorizeNewTurn).toHaveBeenCalledWith(
+            {
+                inputId: 'input-runner-owned-runtime',
+                turnId: 'turn-runner-owned-runtime',
+                userMessageSeq: 17,
+                userMessageSeqs: [],
+                causalPermissionAuthority: {
+                    kind: 'admittedSessionInputV1',
+                    admittedPermissionCeiling: 'read-only',
+                },
+            },
+            { signal: expect.any(AbortSignal) },
+        );
+        expect(attestSessionOpen).toHaveBeenCalledWith({
+            phase: 'commit',
+            request: expect.objectContaining({
+                kind: 'create',
+                sessionId:
+                    'session-runner-owned-runtime',
+            }),
+            providerSessionId: null,
+            signal: expect.any(AbortSignal),
+        });
+        expect(activeTurnAdmissionWitnessReader.current?.()).toEqual({
+            inputId: 'input-runner-owned-runtime',
+            turnId: 'turn-runner-owned-runtime',
+            userMessageSeq: 17,
+            userMessageSeqs: [],
+            causalPermissionAuthority: {
+                kind: 'admittedSessionInputV1',
+                admittedPermissionCeiling: 'read-only',
+            },
+        });
+        for (const listener of nativeEventListeners) {
+            listener({
+                sessionId: 'session-runner-owned-runtime',
+                sequence: ++nativeSequence,
+                emittedAtMs: 3,
+                kind: 'turn-complete',
+                turnId: 'turn-runner-owned-runtime',
+            });
+        }
+        await vi.waitFor(() => {
+            expect(canonicalTerminalEvents).toHaveLength(1);
+        });
+        expect(turnMutations).toContainEqual(expect.objectContaining({
+            action: 'append_transcript_anchors',
+            turnId: 'turn-runner-owned-runtime',
+            transcriptAnchors: {
+                startUserMessageSeq: 17,
+                userMessageSeqs: [17],
+                startSeqInclusive: 17,
+                endSeqInclusive: 42,
+            },
+        }));
+        expect(activeTurnAdmissionWitnessReader.current?.()).toBeNull();
+
+        await created.operations.sendTurnPrompt('next runner turn', {
+            turnId: 'turn-runner-owned-runtime-next',
+            localId: 'input-runner-owned-runtime-next',
+            userMessageSeq: 18,
+        });
+        expect(activeTurnAdmissionWitnessReader.current?.()).toEqual({
+            inputId: 'input-runner-owned-runtime-next',
+            turnId: 'turn-runner-owned-runtime-next',
+            userMessageSeq: 18,
+            userMessageSeqs: [],
+        });
+        for (const listener of nativeEventListeners) {
+            listener({
+                sessionId: 'session-runner-owned-runtime',
+                sequence: ++nativeSequence,
+                emittedAtMs: 4,
+                kind: 'turn-complete',
+                turnId: 'turn-runner-owned-runtime',
+            });
+        }
+        expect(activeTurnAdmissionWitnessReader.current?.()).toEqual({
+            inputId: 'input-runner-owned-runtime-next',
+            turnId: 'turn-runner-owned-runtime-next',
+            userMessageSeq: 18,
+            userMessageSeqs: [],
+        });
+        for (const listener of nativeEventListeners) {
+            listener({
+                sessionId: 'session-runner-owned-runtime',
+                sequence: ++nativeSequence,
+                emittedAtMs: 5,
+                kind: 'turn-complete',
+                turnId: 'turn-runner-owned-runtime-next',
+            });
+        }
+        expect(activeTurnAdmissionWitnessReader.current?.()).toBeNull();
+        expect(sessionDispose).not.toHaveBeenCalled();
+
+        unsubscribeCanonical?.();
+        await created.operations.resetOrDisposeRuntime();
+        expect(sessionDispose).toHaveBeenCalledOnce();
+    });
+
+    it('retries only runner runtime-source retirement after session disposal succeeds', async () => {
+        const agentId = 'acme-runner-retirement-owner';
+        const contributions = createExternalContributionFixtures(agentId);
+        const retirementFailure = new Error(
+            'runner runtime-source retirement failed',
+        );
+        const retireRuntimeSource = vi.fn()
+            .mockRejectedValueOnce(retirementFailure)
+            .mockResolvedValueOnce(undefined);
+        const sessionDispose = vi.fn(async () => undefined);
+        const hostServicesDispose = vi.fn(async () => undefined);
+        const hostServices = Object.freeze({
+            ...createSessionHostServiceOwners(),
+            dispose: hostServicesDispose,
+        });
+        const plan = await createNativeAgentRuntimeSessionPlan({
+            runtime: {
+                sessions: {
+                    open: async () => ({
+                        send: vi.fn(async () => ({
+                            status: 'admitted' as const,
+                        })),
+                        watch: () => ({ dispose: () => undefined }),
+                        dispose: sessionDispose,
+                    }),
+                },
+            },
+            lease: createLease(agentId),
+            backend: contributions.backend,
+            agent: contributions.agent,
+            createSessionHostServiceOwners: () => hostServices,
+            retireRuntimeSource,
+            sessionInput: buildPluginSessionBindingInput({
+                credentials,
+                directory: '/tmp/acme-runner-retirement-owner',
+            }),
+        });
+        if (!plan.config.createSessionRuntime) {
+            throw new Error('expected a session runtime factory');
+        }
+        const created = await plan.config.createSessionRuntime({
+            directory: '/tmp/acme-runner-retirement-owner',
+            metadata: {},
+            machineId: 'machine-1',
+            session: createNativeSessionClientTestPort(
+                'session-runner-retirement-owner',
+            ),
+            transcriptSession: {},
+            messageBuffer: {},
+            mcpServers: {},
+            permissionHandler: {},
+            getPermissionMode: () => 'default',
+            setThinking: () => undefined,
+            memoryRecallGuidanceEnabled: false,
+        } as never);
+
+        await expect(created.operations.resetOrDisposeRuntime())
+            .rejects.toBe(retirementFailure);
+        await expect(created.operations.resetOrDisposeRuntime())
+            .resolves.toBeUndefined();
+        await expect(created.operations.resetOrDisposeRuntime())
+            .resolves.toBeUndefined();
+        expect(sessionDispose).toHaveBeenCalledOnce();
+        expect(hostServicesDispose).toHaveBeenCalledOnce();
+        expect(retireRuntimeSource).toHaveBeenCalledTimes(2);
+    });
+
     it('claims and redacts host-private late Profile environment immediately before native open', async () => {
         const agentId = 'acme-native-late-profile';
         const contributions = createExternalContributionFixtures(agentId);
@@ -460,10 +1201,16 @@ describe('native Agent session host adapter', () => {
         },
     );
 
-    it('disposes an opened late Provider session when binding metadata persistence fails', async () => {
+    it('returns a late Provider binding admission to the host without publishing metadata', async () => {
         const agentId = 'codex';
+        const agentTargetKey = `backend:${agentId}` as const;
         const externalContributions =
             createExternalContributionFixtures(agentId);
+        const metadata = externalProviderBindingMetadata(
+            'pc_late',
+            'late-model',
+            agentTargetKey,
+        );
         const contributions = {
             backend: {
                 ...externalContributions.backend,
@@ -476,6 +1223,14 @@ describe('native Agent session host adapter', () => {
                 provenance: 'first_party' as const,
                 source: { kind: 'bundled' as const },
                 pluginId: 'happier.agent.codex',
+                richDefinition: {
+                    ...externalContributions.agent.richDefinition,
+                    definition: {
+                        ...externalContributions.agent.richDefinition.definition,
+                        providerRequirements:
+                            metadata.runtimeBindingBasis.agentSupport,
+                    },
+                },
             },
         };
         const dispose = vi.fn(async () => undefined);
@@ -484,34 +1239,24 @@ describe('native Agent session host adapter', () => {
             watch: () => ({ dispose: () => undefined }),
             dispose,
         }));
-        const metadata = providerBindingMetadata(
-            'pc_late',
-            'late-model',
-        );
         const materialization = Object.freeze({
             v: 1 as const,
             kind: 'engineConfig' as const,
             engineConfig: Object.freeze({}),
         });
-        const persistedMetadata = {
-            path: '/tmp/acme-native-late-provider',
-            host: 'test',
-            homeDir: '/tmp',
-            happyHomeDir: '/tmp/.happier',
-            happyLibDir: '/tmp/.happier/lib',
-            happyToolsDir: '/tmp/.happier/tools',
-            providerBindingV1: providerBindingMetadata(
-                'pc_previous',
-                'previous-model',
-            ),
-        };
+        const updateMetadataAsCurrentPublisher = vi.fn(async () => {
+            throw Object.assign(
+                new Error('publisher superseded'),
+                {
+                    code: 'session_publisher_authority_lost',
+                    retryable: false,
+                },
+            );
+        });
         const session = createNativeSessionClientTestPort(
             'session-native-late-provider',
             {
-                getMetadataSnapshot: () => persistedMetadata,
-                updateMetadata: vi.fn(async () => {
-                    throw new Error('metadata persistence failed');
-                }),
+                updateMetadataAsCurrentPublisher,
             },
         );
         const plan = await createNativeAgentRuntimeSessionPlan({
@@ -562,13 +1307,10 @@ describe('native Agent session host adapter', () => {
             throw new Error('expected a session runtime factory');
         }
 
-        await expect(plan.config.createSessionRuntime({
+        const created = await plan.config.createSessionRuntime({
             directory: '/tmp/acme-native-late-provider',
             metadata: {
-                providerBindingV1: providerBindingMetadata(
-                    'pc_previous',
-                    'previous-model',
-                ),
+                providerBindingV1: metadata,
             },
             machineId: 'machine-1',
             session,
@@ -579,19 +1321,164 @@ describe('native Agent session host adapter', () => {
             getPermissionMode: () => 'default',
             setThinking: () => undefined,
             memoryRecallGuidanceEnabled: false,
-        } as never)).rejects.toThrow('metadata persistence failed');
+        } as never);
 
         expect(open).toHaveBeenCalledOnce();
-        expect(dispose).toHaveBeenCalledOnce();
-        expect(session.getMetadataSnapshot()).toMatchObject({
-            providerBindingV1: providerBindingMetadata(
-                'pc_previous',
-                'previous-model',
-            ),
+        expect(dispose).not.toHaveBeenCalled();
+        expect(updateMetadataAsCurrentPublisher).not.toHaveBeenCalled();
+        expect((created as Readonly<{
+            admittedProviderBindingHandoff?: unknown;
+        }>).admittedProviderBindingHandoff).toEqual({
+            v: 1,
+            materialization,
+            sessionBindingMetadata: metadata,
         });
     });
 
-    it('projects terminal follow through the bound daemon port when the carried child has no local External Session surface', async () => {
+    it('keeps late config-file materialization in persistent runner custody until Session disposal', async () => {
+        const agentId = 'codex';
+        const agentTargetKey = `backend:${agentId}` as const;
+        const externalContributions =
+            createExternalContributionFixtures(agentId);
+        const metadata = externalProviderBindingMetadata(
+            'pc_retained',
+            'retained-model',
+            agentTargetKey,
+        );
+        const contributions = {
+            backend: {
+                ...externalContributions.backend,
+                provenance: 'first_party' as const,
+                source: { kind: 'bundled' as const },
+                pluginId: 'happier.agent.codex',
+            },
+            agent: {
+                ...externalContributions.agent,
+                provenance: 'first_party' as const,
+                source: { kind: 'bundled' as const },
+                pluginId: 'happier.agent.codex',
+                richDefinition: {
+                    ...externalContributions.agent.richDefinition,
+                    definition: {
+                        ...externalContributions.agent.richDefinition.definition,
+                        providerRequirements:
+                            metadata.runtimeBindingBasis.agentSupport,
+                    },
+                },
+            },
+        };
+        const materializationBaseDir = join(
+            happierConfiguration.happyHomeDir,
+            'providers',
+            'materialized',
+        );
+        await mkdir(materializationBaseDir, { recursive: true, mode: 0o700 });
+        const materializationRoot = await mkdtemp(
+            join(materializationBaseDir, 'provider-binding-'),
+        );
+        await writeFile(join(materializationRoot, 'provider.json'), '{}');
+        const runnerRedactionClose = vi.fn();
+        const runnerRedaction = vi.spyOn(
+            providerBindingRuntimeDiagnosticRedaction,
+            'beginProviderBindingRuntimeDiagnosticRedaction',
+        ).mockReturnValue({ close: runnerRedactionClose });
+        try {
+            const generationController = new AbortController();
+            const sessionDispose = vi.fn(async () => undefined);
+            const plan = await createNativeAgentRuntimeSessionPlan({
+                runtime: {
+                    sessions: {
+                        open: vi.fn(async () => ({
+                            send: vi.fn(async () => ({ status: 'admitted' as const })),
+                            watch: () => ({ dispose: () => undefined }),
+                            dispose: sessionDispose,
+                        })),
+                    },
+                },
+                lease: {
+                    ...createLease(agentId),
+                    pluginId: 'happier.agent.codex',
+                },
+                generationSignal: generationController.signal,
+                backend: contributions.backend,
+                agent: contributions.agent,
+                createSessionHostServiceOwners: () =>
+                    createSessionHostServiceOwners(),
+                sessionInput: buildPluginSessionBindingInput({
+                    credentials,
+                    directory: '/tmp/acme-native-retained-provider',
+                    backendTarget: {
+                        kind: 'backend',
+                        backendId: 'codex',
+                    },
+                    modelSelection: {
+                        v: 1,
+                        updatedAt: 1,
+                        ref: {
+                            agentTargetKey: 'backend:codex',
+                            providerConnectionId: 'pc_retained',
+                            modelId: 'retained-model',
+                        },
+                    },
+                    resolveLateEnvironment: async () => ({
+                        environmentVariables: {
+                            [HAPPIER_PROVIDER_BINDING_LAUNCH_MATERIALIZATION_V1_ENV_KEY]:
+                                serializeProviderBindingLaunchHandoffForEnv({
+                                    v: 1,
+                                    kind: 'configFile',
+                                    rootPath: materializationRoot,
+                                    relativePaths: ['provider.json'],
+                                }, metadata),
+                        },
+                        unsetEnvironmentVariables: [],
+                        sensitiveEnvironmentVariableNames: [],
+                    }),
+                }),
+            });
+            if (!plan.config.createSessionRuntime) {
+                throw new Error('expected a session runtime factory');
+            }
+
+            const created = await plan.config.createSessionRuntime({
+                directory: '/tmp/acme-native-retained-provider',
+                metadata: { providerBindingV1: metadata },
+                machineId: 'machine-1',
+                session: createNativeSessionClientTestPort(
+                    'session-native-retained-provider',
+                ),
+                transcriptSession: {},
+                messageBuffer: {},
+                mcpServers: {},
+                permissionHandler: {},
+                getPermissionMode: () => 'default',
+                setThinking: () => undefined,
+                memoryRecallGuidanceEnabled: false,
+            } as never);
+
+            expect(await stat(materializationRoot)).toBeDefined();
+            generationController.abort(
+                new Error('hard-revoked retained generation'),
+            );
+            await vi.waitFor(() => {
+                expect(sessionDispose).toHaveBeenCalledOnce();
+                expect(runnerRedactionClose).toHaveBeenCalledOnce();
+            });
+            await expect(stat(materializationRoot)).rejects.toMatchObject({
+                code: 'ENOENT',
+            });
+            await created.operations.resetOrDisposeRuntime();
+            expect(sessionDispose).toHaveBeenCalledOnce();
+            expect(runnerRedactionClose).toHaveBeenCalledOnce();
+            await expect(stat(materializationRoot)).rejects.toMatchObject({
+                code: 'ENOENT',
+            });
+        } finally {
+            runnerRedaction.mockRestore();
+            await rm(materializationRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('routes declared configured terminal follow through the exact source and bound canonical host operation', async () => {
         const agentId = 'acme-native-terminal-agent';
         const base = createExternalContributionFixtures(agentId);
         const agent: ResolvedAgentContribution = {
@@ -604,6 +1491,7 @@ describe('native Agent session host adapter', () => {
                         externalSession: {
                             sources: [{
                                 sourceKind: 'terminal',
+                                terminalFollow: { userRowClassification: 'explicitV1' },
                                 schema: {
                                     fields: [
                                         {
@@ -640,16 +1528,28 @@ describe('native Agent session host adapter', () => {
             },
         };
         const disposeFollow = vi.fn(async () => undefined);
-        const executeProviderSessionFollow = vi.fn<
-            ExternalSessionHostOperationPort['executeProviderSessionFollow']
+        let activeTerminalFollowListener: (
+            event: HostExternalTranscriptFollowEvent,
+        ) => void | Promise<void> = () => {
+            throw new Error('terminal follow listener is unavailable');
+        };
+        const executeFollow = vi.fn<
+            ExternalSessionHostOperationPort['executeFollow']
         >(async (request) => {
+            activeTerminalFollowListener = request.listener;
             await request.listener({
                 kind: 'data',
                 items: [{
                     id: 'terminal-item-1',
                     timestampMs: 11,
                     kind: 'agent',
-                    data: { type: 'text', text: 'terminal output' },
+                    data: {
+                        role: 'agent',
+                        content: {
+                            type: 'message',
+                            message: 'terminal output',
+                        },
+                    },
                 }],
                 fromCursor: 'cursor-0',
                 nextCursor: 'cursor-1',
@@ -660,10 +1560,16 @@ describe('native Agent session host adapter', () => {
                 subscription: { dispose: disposeFollow },
             };
         });
+        const executeProviderSessionFollow = vi.fn<
+            ExternalSessionHostOperationPort['executeProviderSessionFollow']
+        >(async () => ({
+            status: 'following' as const,
+            startingCursor: 'wrong-provider-session-route',
+            subscription: { dispose: async () => undefined },
+        }));
         const retireExternalSessionHostOperations = vi.fn(async () => undefined);
         const bindExternalSessionHostOperations = vi.fn(() => ({
-            executeTakeover: vi.fn(),
-            executeFollow: vi.fn(),
+            executeFollow,
             executeProviderSessionFollow,
             retire: retireExternalSessionHostOperations,
         }));
@@ -684,13 +1590,40 @@ describe('native Agent session host adapter', () => {
                 dispose: vi.fn(),
             };
         });
-        const terminalLaunch = vi.fn(async (_request: HostTerminalLaunchRequest) => ({
+        let terminalPublisherCurrent = true;
+        const terminalProcessLaunch = vi.fn(async (_request: HostTerminalLaunchRequest) => ({
                 type: 'control_returned' as const,
                 reason: 'pending_input' as const,
         }));
+        const terminalLaunch = vi.fn(async (request: HostTerminalLaunchRequest) => {
+            const permitted = await request.runWithCurrentPublisherPermit(
+                async () => await terminalProcessLaunch(request),
+            );
+            if (permitted.status === 'blocked') {
+                throw new HostTerminalModelSelectionBlockedError();
+            }
+            return permitted.value;
+        });
+        const exactGValidateSource = vi.fn(async ({ source }) => ({ ok: true as const, source }));
+        const exactGListCandidates = vi.fn(async () => ({ candidates: [], nextCursor: null }));
+        const exactGResolveLinkIdentity = vi.fn(async ({ source, remoteSessionId }) => ({
+            source,
+            remoteSessionId,
+        }));
+        const exactGPageTranscript = vi.fn(async () => ({
+            items: [], nextCursor: null, tailCursor: null, hasMore: false, truncated: false,
+        }));
+        const exactGReadAfterTranscript = vi.fn(async () => ({ outcome: 'already_current' as const }));
         const executionSurfaces: BackendExecutionSurfaces = {
             ...createEmptyBackendExecutionSurfaces(),
             terminalRuntime: { launch: terminalLaunch },
+            externalSession: {
+                validateSource: exactGValidateSource,
+                listCandidates: exactGListCandidates,
+                resolveLinkIdentity: exactGResolveLinkIdentity,
+                pageTranscript: exactGPageTranscript,
+                readAfterTranscript: exactGReadAfterTranscript,
+            },
         };
         const plan = await createNativeAgentRuntimeSessionPlan({
             runtime: {
@@ -711,6 +1644,11 @@ describe('native Agent session host adapter', () => {
             sessionInput: buildPluginSessionBindingInput({
                 credentials,
                 directory: '/tmp/acme-native-terminal',
+                backendTarget: {
+                    kind: 'backend',
+                    backendId: agentId,
+                    sourceKind: 'built_in',
+                },
             }),
             createSessionHostServiceOwners: () => createSessionHostServiceOwners(),
         });
@@ -719,17 +1657,107 @@ describe('native Agent session host adapter', () => {
             { permissionMode: string },
             { text: string }
         >((mode) => mode.permissionMode);
-        const enqueueAgentMessageCommitted = vi.fn(async () => ({
+        const enqueueAgentMessageCommitted = vi.fn<NonNullable<SessionClientPort['enqueueAgentMessageCommitted']>>(async () => ({
             persisted: true,
             delivered: true,
         }));
         let currentSessionMetadata: Record<string, unknown> = {
             terminalRuntime: { promptInteractive: true },
+            modelSelectionIntentV1: {
+                v: 1,
+                updatedAt: 7,
+                selection: {
+                    agentTargetKey: `backend:${agentId}`,
+                    providerConnectionId: null,
+                    modelId: 'startup-native-model',
+                },
+            },
         };
+        type TerminalModelSelection = Readonly<{
+            agentTargetKey: string;
+            providerConnectionId: string | null;
+            modelId: string;
+        }> | null;
+        let terminalModelSelection: TerminalModelSelection = {
+            agentTargetKey: `backend:${agentId}`,
+            providerConnectionId: null,
+            modelId: 'startup-native-model',
+        };
+        let terminalModelSelectionBlocked = false;
+        let stableTerminalEffectActive = false;
+        let queuedTerminalModelSelection: TerminalModelSelection | undefined;
+        const requestTerminalModelTransition = (
+            selection: TerminalModelSelection,
+        ): void => {
+            if (stableTerminalEffectActive) {
+                queuedTerminalModelSelection = selection;
+                return;
+            }
+            terminalModelSelection = selection;
+        };
+        const runWithTerminalModelSelection = async <T>(
+            effect: (
+                selection: TerminalModelSelection,
+                runWithCurrentPublisherPermit: <U>(
+                    localEffect: () => Promise<U>,
+                ) => Promise<
+                    | Readonly<{ status: 'completed'; value: U }>
+                    | Readonly<{ status: 'blocked' }>
+                >,
+            ) => Promise<T>,
+        ): Promise<
+            | Readonly<{ status: 'completed'; value: T }>
+            | Readonly<{ status: 'blocked' }>
+        > => {
+            if (terminalModelSelectionBlocked || stableTerminalEffectActive) {
+                return { status: 'blocked' };
+            }
+            stableTerminalEffectActive = true;
+            const selection = terminalModelSelection;
+            try {
+                const runWithCurrentPublisherPermit = async <U>(
+                    localEffect: () => Promise<U>,
+                ): Promise<
+                    | Readonly<{ status: 'completed'; value: U }>
+                    | Readonly<{ status: 'blocked' }>
+                > => {
+                    if (!terminalPublisherCurrent) {
+                        return { status: 'blocked' };
+                    }
+                    return {
+                        status: 'completed',
+                        value: await localEffect(),
+                    };
+                };
+                return {
+                    status: 'completed',
+                    value: await effect(
+                        selection,
+                        runWithCurrentPublisherPermit,
+                    ),
+                };
+            } finally {
+                stableTerminalEffectActive = false;
+                if (queuedTerminalModelSelection !== undefined) {
+                    terminalModelSelection = queuedTerminalModelSelection;
+                    queuedTerminalModelSelection = undefined;
+                }
+            }
+        };
+        let committedBaselineFailure: Error | null = null;
         const sessionPort = createNativeSessionClientTestPort(
             'session-native-terminal',
             {
                 enqueueAgentMessageCommitted,
+                fetchCommittedTranscriptLocalIdBaseline: async () => {
+                    if (committedBaselineFailure) {
+                        throw committedBaselineFailure;
+                    }
+                    return {
+                        localIds: new Set<string>(),
+                        complete: true,
+                    };
+                },
                 getMetadataSnapshot: () => currentSessionMetadata,
             },
         );
@@ -737,6 +1765,7 @@ describe('native Agent session host adapter', () => {
             directory: '/tmp/acme-native-terminal',
             metadata: currentSessionMetadata,
             machineId: 'machine-1',
+            agentTargetKey: `backend:${agentId}`,
             session: sessionPort,
             transcriptSession: {},
             messageQueue,
@@ -746,6 +1775,16 @@ describe('native Agent session host adapter', () => {
             getPermissionMode: () => 'default',
             setThinking: () => undefined,
             memoryRecallGuidanceEnabled: false,
+            runnerProcessIdentity: {
+                pid: 123,
+                processStartTimeMs: 1_000,
+            },
+            startupModelSelection: {
+                agentTargetKey: `backend:${agentId}`,
+                providerConnectionId: null,
+                modelId: 'startup-native-model',
+            },
+            runWithTerminalModelSelection,
         } as never);
         expect(bindExternalSessionHostOperations).toHaveBeenCalledOnce();
 
@@ -784,6 +1823,16 @@ describe('native Agent session host adapter', () => {
                 sandbox: true,
             },
             providerSessionId: 'provider-terminal-stale',
+            model: 'raw-model-must-not-win',
+            modelSelectionIntentV1: {
+                v: 1,
+                updatedAt: 8,
+                selection: {
+                    agentTargetKey: `backend:${agentId}`,
+                    providerConnectionId: 'pc_next',
+                    modelId: 'proposed-model-must-not-win',
+                },
+            },
         };
         await expect(sessionPort.rpcHandlerManager.invokeLocal(
             'switch',
@@ -799,7 +1848,23 @@ describe('native Agent session host adapter', () => {
                     sandbox: true,
                 },
                 providerSessionId: 'provider-terminal-1',
+                model: 'raw-model-must-not-win',
+                modelSelectionIntentV1: {
+                    v: 1,
+                    updatedAt: 8,
+                    selection: {
+                        agentTargetKey: `backend:${agentId}`,
+                        providerConnectionId: 'pc_next',
+                        modelId: 'proposed-model-must-not-win',
+                    },
+                },
             },
+            modelSelection: {
+                agentTargetKey: `backend:${agentId}`,
+                providerConnectionId: null,
+                modelId: 'startup-native-model',
+            },
+            runWithCurrentPublisherPermit: expect.any(Function),
             signal: expect.any(AbortSignal),
             host: expect.objectContaining({
                 transcriptFollow: expect.objectContaining({
@@ -810,12 +1875,39 @@ describe('native Agent session host adapter', () => {
         }));
         expect(bindExternalSessionHostOperations).toHaveBeenCalledOnce();
         expect(bindExternalSessionHostOperations).toHaveBeenCalledWith('session-native-terminal');
-        expect(executeProviderSessionFollow).toHaveBeenCalledWith(expect.objectContaining({
-            agentId,
-            providerSessionId: 'provider-terminal-1',
-            options: { signal: expect.any(AbortSignal) },
+        expect(executeFollow).toHaveBeenCalledWith(expect.objectContaining({
+            ref: expect.objectContaining({
+                agentId,
+                remoteSessionId: 'provider-terminal-1',
+            }),
+            source: {
+                kind: 'terminal',
+                projectId: 'project-1',
+            },
+            options: expect.objectContaining({
+                admissionDeadlineAtMs: expect.any(Number),
+                initialReplay: true,
+                signal: expect.any(AbortSignal),
+            }),
             listener: expect.any(Function),
         }));
+        expect(executeProviderSessionFollow).not.toHaveBeenCalled();
+        expect(exactGResolveLinkIdentity).toHaveBeenCalledWith(expect.objectContaining({
+            remoteSessionId: 'provider-terminal-1',
+            source: {
+                kind: 'terminal',
+                projectId: 'project-1',
+            },
+        }));
+        expect(exactGValidateSource).toHaveBeenCalledWith({
+            source: {
+                kind: 'terminal',
+                projectId: 'project-1',
+            },
+        });
+        expect(exactGListCandidates).not.toHaveBeenCalled();
+        expect(exactGPageTranscript).not.toHaveBeenCalled();
+        expect(exactGReadAfterTranscript).not.toHaveBeenCalled();
         expect(enqueueAgentMessageCommitted).toHaveBeenCalledWith(
             agentId,
             { type: 'message', message: 'terminal output' },
@@ -829,19 +1921,508 @@ describe('native Agent session host adapter', () => {
         );
         expect(disposeFollow).toHaveBeenCalledOnce();
         expect(open).toHaveBeenCalledOnce();
+        const launchCountBeforeModelTransitionBlock =
+            terminalLaunch.mock.calls.length;
+        let releaseRacingFollow = (_result: {
+            status: 'following';
+            startingCursor: string;
+            subscription: { dispose(): void };
+        }): void => {
+            throw new Error('Racing follow promise was not initialized');
+        };
+        executeFollow.mockImplementationOnce(async () =>
+            await new Promise((resolve) => {
+                releaseRacingFollow = resolve;
+            }));
+        const racingTerminalLaunch =
+            modeLoop?.runTerminal({ entry: 'switch' });
+        await vi.waitFor(() => {
+            expect(executeFollow).toHaveBeenCalledTimes(2);
+        });
+        expect(stableTerminalEffectActive).toBe(true);
+        requestTerminalModelTransition({
+            agentTargetKey: `backend:${agentId}`,
+            providerConnectionId: 'pc_next',
+            modelId: 'provider-model-next',
+        });
+        expect(terminalModelSelection).toMatchObject({
+            modelId: 'startup-native-model',
+        });
+        releaseRacingFollow({
+            status: 'following',
+            startingCursor: 'cursor-racing',
+            subscription: { dispose() {} },
+        });
+        await expect(
+            racingTerminalLaunch,
+        ).resolves.toEqual({ type: 'switch' });
+        expect(terminalLaunch).toHaveBeenCalledTimes(
+            launchCountBeforeModelTransitionBlock + 1,
+        );
+        expect(terminalLaunch).toHaveBeenLastCalledWith(
+            expect.objectContaining({
+                modelSelection: {
+                    agentTargetKey: `backend:${agentId}`,
+                    providerConnectionId: null,
+                    modelId: 'startup-native-model',
+                },
+            }),
+        );
+        expect(terminalModelSelection).toMatchObject({
+            providerConnectionId: 'pc_next',
+            modelId: 'provider-model-next',
+        });
+
+        const launchCountBeforePublisherSuccessor =
+            terminalLaunch.mock.calls.length;
+        const processLaunchCountBeforePublisherSuccessor =
+            terminalProcessLaunch.mock.calls.length;
+        let releaseSuccessorRacingFollow = (_result: {
+            status: 'following';
+            startingCursor: string;
+            subscription: { dispose(): void };
+        }): void => {
+            throw new Error('Successor racing follow promise was not initialized');
+        };
+        executeFollow.mockImplementationOnce(async () =>
+            await new Promise((resolve) => {
+                releaseSuccessorRacingFollow = resolve;
+            }));
+        const publisherSuccessorRace =
+            modeLoop?.runTerminal({ entry: 'switch' });
+        await vi.waitFor(() => {
+            expect(executeFollow).toHaveBeenCalledTimes(3);
+        });
+        terminalPublisherCurrent = false;
+        releaseSuccessorRacingFollow({
+            status: 'following',
+            startingCursor: 'cursor-successor-racing',
+            subscription: { dispose() {} },
+        });
+        await expect(publisherSuccessorRace).rejects.toMatchObject({
+            name: 'HostTerminalModelSelectionBlockedError',
+            code: 'native_agent_terminal_model_selection_blocked',
+        } satisfies Partial<HostTerminalModelSelectionBlockedError>);
+        expect(terminalLaunch).toHaveBeenCalledTimes(
+            launchCountBeforePublisherSuccessor + 1,
+        );
+        expect(terminalProcessLaunch).toHaveBeenCalledTimes(
+            processLaunchCountBeforePublisherSuccessor,
+        );
+        terminalPublisherCurrent = true;
+
+        let releaseRacingProcessLaunch = (_result: {
+            type: 'control_returned';
+            reason: 'pending_input';
+        }): void => {
+            throw new Error('Racing terminal launch promise was not initialized');
+        };
+        terminalLaunch.mockImplementationOnce(async () =>
+            await new Promise((resolve) => {
+                releaseRacingProcessLaunch = resolve;
+            }));
+        const launchCountBeforeProcessResolution =
+            terminalLaunch.mock.calls.length;
+        const processResolutionRace =
+            modeLoop?.runTerminal({ entry: 'switch' });
+        await vi.waitFor(() => {
+            expect(terminalLaunch).toHaveBeenCalledTimes(
+                launchCountBeforeProcessResolution + 1,
+            );
+        });
+        expect(stableTerminalEffectActive).toBe(true);
+        requestTerminalModelTransition({
+            agentTargetKey: `backend:${agentId}`,
+            providerConnectionId: null,
+            modelId: 'native-model-after-terminal',
+        });
+        expect(terminalModelSelection).toMatchObject({
+            providerConnectionId: 'pc_next',
+            modelId: 'provider-model-next',
+        });
+        expect(terminalLaunch).toHaveBeenLastCalledWith(
+            expect.objectContaining({
+                modelSelection: {
+                    agentTargetKey: `backend:${agentId}`,
+                    providerConnectionId: 'pc_next',
+                    modelId: 'provider-model-next',
+                },
+            }),
+        );
+        releaseRacingProcessLaunch({
+            type: 'control_returned',
+            reason: 'pending_input',
+        });
+        await expect(processResolutionRace).resolves.toEqual({
+            type: 'switch',
+        });
+        expect(terminalModelSelection).toMatchObject({
+            providerConnectionId: null,
+            modelId: 'native-model-after-terminal',
+        });
+
+        let reportCompletedIterationFailure!: (error: Error) => void;
+        const completedIterationFailure = new Promise<Error>((resolve) => {
+            reportCompletedIterationFailure = resolve;
+        });
+        executeFollow.mockImplementationOnce(async (request) => {
+            activeTerminalFollowListener = request.listener;
+            return {
+                status: 'following' as const,
+                startingCursor: 'cursor-completed-iteration',
+                failure: completedIterationFailure,
+                subscription: { dispose: disposeFollow },
+            };
+        });
+        await expect(
+            modeLoop?.runTerminal({ entry: 'switch' }),
+        ).resolves.toEqual({ type: 'switch' });
+
+        let releaseReplacementTerminalLaunch = (): void => {
+            throw new Error('replacement terminal launch was not initialized');
+        };
+        let replacementTerminalSignal!: AbortSignal;
+        terminalLaunch.mockImplementationOnce(async (request) => {
+            if (!request.signal) {
+                throw new Error('replacement terminal signal is unavailable');
+            }
+            replacementTerminalSignal = request.signal;
+            return await new Promise((resolve) => {
+                releaseReplacementTerminalLaunch = () => resolve({
+                    type: 'control_returned' as const,
+                    reason: 'pending_input' as const,
+                });
+            });
+        });
+        const replacementTerminalRun =
+            modeLoop?.runTerminal({ entry: 'switch' });
+        await vi.waitFor(() => {
+            expect(replacementTerminalSignal).toBeDefined();
+        });
+
+        reportCompletedIterationFailure(Object.assign(
+            new Error('late completed-iteration follow failure'),
+            { code: 'plugin_external_follow_provider_failed' },
+        ));
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(replacementTerminalSignal.aborted).toBe(false);
+        releaseReplacementTerminalLaunch();
+        await expect(replacementTerminalRun).resolves.toEqual({
+            type: 'switch',
+        });
+
+        let resolveFailedFollowLaunchSignal!: (
+            signal: AbortSignal,
+        ) => void;
+        const failedFollowLaunchSignalPromise = new Promise<AbortSignal>(
+            (resolve) => {
+                resolveFailedFollowLaunchSignal = resolve;
+            },
+        );
+        let releaseFailedFollowLaunch = (): void => {
+            throw new Error('failed-follow terminal launch was not initialized');
+        };
+        terminalLaunch.mockImplementationOnce(async (request) => {
+            if (!request.signal) {
+                throw new Error('terminal launch signal is unavailable');
+            }
+            const requestSignal = request.signal;
+            resolveFailedFollowLaunchSignal(requestSignal);
+            return await new Promise((resolve) => {
+                releaseFailedFollowLaunch = () => resolve({
+                    type: 'control_returned' as const,
+                    reason: 'pending_input' as const,
+                });
+                requestSignal.addEventListener(
+                    'abort',
+                    releaseFailedFollowLaunch,
+                    { once: true },
+                );
+            });
+        });
+        const launchCountBeforeFollowFailure = terminalLaunch.mock.calls.length;
+        const disposeCountBeforeFollowFailure = disposeFollow.mock.calls.length;
+        const failedFollowRun = modeLoop?.runTerminal({ entry: 'switch' });
+        await vi.waitFor(() => {
+            expect(terminalLaunch).toHaveBeenCalledTimes(
+                launchCountBeforeFollowFailure + 1,
+            );
+        });
+        const failedFollowLaunchSignal =
+            await failedFollowLaunchSignalPromise;
+        await activeTerminalFollowListener({
+            kind: 'terminated',
+            reason: 'providerFailure',
+            cursor: 'cursor-1',
+            code: 'plugin_external_follow_provider_failed',
+        });
+        // ES-PEP-05: for an Agent that declares explicit terminal follow, the
+        // ready binding races terminal completion. A durable follow failure wins
+        // with a typed failure and stops the child, instead of leaving a live
+        // terminal whose rows no transcript owner is recording. (Previously this
+        // asserted the inverse: `aborted` false and the run resolving
+        // `{ type: 'switch' }`, i.e. follow detaching while the terminal ran on.)
+        await expect(failedFollowRun).rejects.toMatchObject({
+            name: 'HostTerminalTranscriptFollowAdmissionError',
+            followCode: 'plugin_external_follow_provider_failed',
+            phase: 'active',
+        });
+        expect(failedFollowLaunchSignal.aborted).toBe(true);
+        await vi.waitFor(() => {
+            expect(disposeFollow).toHaveBeenCalledTimes(
+                disposeCountBeforeFollowFailure + 1,
+            );
+        });
+        releaseFailedFollowLaunch();
+
+        const closeFailure = createNativeAgentSessionEffectBoundaryError(
+            'outcome_unknown_after_dispatch',
+        );
+        disposeFollow
+            .mockRejectedValueOnce(closeFailure)
+            .mockRejectedValueOnce(closeFailure);
+        const followCountBeforeCloseFailure =
+            executeFollow.mock.calls.length;
+        const launchCountBeforeCloseFailure = terminalLaunch.mock.calls.length;
+        await expect(
+            modeLoop?.runTerminal({ entry: 'switch' }),
+        ).resolves.toEqual({ type: 'switch' });
+        expect(executeFollow).toHaveBeenCalledTimes(
+            followCountBeforeCloseFailure + 1,
+        );
+        expect(terminalLaunch).toHaveBeenCalledTimes(
+            launchCountBeforeCloseFailure + 1,
+        );
+
+        await expect(
+            modeLoop?.runTerminal({ entry: 'switch' }),
+        ).resolves.toEqual({ type: 'switch' });
+        expect(executeFollow).toHaveBeenCalledTimes(
+            followCountBeforeCloseFailure + 2,
+        );
+        expect(terminalLaunch).toHaveBeenCalledTimes(
+            launchCountBeforeCloseFailure + 2,
+        );
+
+        await expect(
+            modeLoop?.runTerminal({ entry: 'switch' }),
+        ).resolves.toEqual({ type: 'switch' });
+        expect(executeFollow).toHaveBeenCalledTimes(
+            followCountBeforeCloseFailure + 3,
+        );
+        expect(terminalLaunch).toHaveBeenCalledTimes(
+            launchCountBeforeCloseFailure + 3,
+        );
+
+        const launchCountBeforeBlockedAdmission =
+            terminalLaunch.mock.calls.length;
+        const followCountBeforeBlockedAdmission =
+            executeFollow.mock.calls.length;
+        terminalModelSelectionBlocked = true;
+        await expect(
+            modeLoop?.runTerminal({ entry: 'switch' }),
+        ).rejects.toMatchObject({
+            name: 'HostTerminalModelSelectionBlockedError',
+            code: 'native_agent_terminal_model_selection_blocked',
+        } satisfies Partial<HostTerminalModelSelectionBlockedError>);
+        expect(terminalLaunch).toHaveBeenCalledTimes(
+            launchCountBeforeBlockedAdmission,
+        );
+        expect(executeFollow).toHaveBeenCalledTimes(
+            followCountBeforeBlockedAdmission,
+        );
+        terminalModelSelectionBlocked = false;
+        requestTerminalModelTransition({
+            agentTargetKey: `backend:${agentId}`,
+            providerConnectionId: null,
+            modelId: 'startup-native-model',
+        });
+        expect(terminalModelSelection).toEqual({
+                agentTargetKey: `backend:${agentId}`,
+                providerConnectionId: null,
+                modelId: 'startup-native-model',
+            },
+        );
+        let admitDelayedFollow!: () => void;
+        const delayedFollowAdmission = new Promise<void>((resolve) => {
+            admitDelayedFollow = resolve;
+        });
+        executeFollow.mockImplementationOnce(async () => {
+            await delayedFollowAdmission;
+            return {
+                status: 'following' as const,
+                startingCursor: 'cursor-delayed-admission',
+                subscription: { dispose: disposeFollow },
+            };
+        });
+        const launchCountBeforeDelayedAdmission = terminalLaunch.mock.calls.length;
+        const delayedAdmissionRun = modeLoop?.runTerminal({ entry: 'switch' });
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(terminalLaunch).toHaveBeenCalledTimes(
+            launchCountBeforeDelayedAdmission,
+        );
+        admitDelayedFollow();
+        await expect(delayedAdmissionRun).resolves.toEqual({ type: 'switch' });
+        expect(terminalLaunch).toHaveBeenCalledTimes(
+            launchCountBeforeDelayedAdmission + 1,
+        );
+
+        const launchCountBeforeBaselineFailure = terminalLaunch.mock.calls.length;
+        const processLaunchCountBeforeBaselineFailure =
+            terminalProcessLaunch.mock.calls.length;
+        const followCountBeforeBaselineFailure = executeFollow.mock.calls.length;
+        const transcriptCountBeforeBaselineFailure =
+            enqueueAgentMessageCommitted.mock.calls.length;
+        committedBaselineFailure = new Error('committed baseline unavailable');
+        // ES-PEP-03: baseline failure fails closed. It launches no terminal
+        // process, fetches no tail cursor, writes no transcript row, preserves
+        // the existing Session, and permits an explicit later retry. (Previously
+        // this asserted the inverse: the run resolving `{ type: 'switch' }` with
+        // `terminalLaunch` and `terminalProcessLaunch` each +1.)
+        await expect(
+            modeLoop?.runTerminal({ entry: 'initial' }),
+        ).rejects.toMatchObject({
+            name: 'HostTerminalTranscriptFollowAdmissionError',
+            followCode: 'plugin_external_follow_unavailable',
+            phase: 'bind',
+        });
+        expect(executeFollow).toHaveBeenCalledTimes(
+            followCountBeforeBaselineFailure,
+        );
+        expect(terminalLaunch).toHaveBeenCalledTimes(
+            launchCountBeforeBaselineFailure,
+        );
+        expect(terminalProcessLaunch).toHaveBeenCalledTimes(
+            processLaunchCountBeforeBaselineFailure,
+        );
+        expect(enqueueAgentMessageCommitted).toHaveBeenCalledTimes(
+            transcriptCountBeforeBaselineFailure,
+        );
+
+        // The explicit later retry the amendment requires: a fresh run rebinds
+        // and only then launches.
+        committedBaselineFailure = null;
+        await expect(
+            modeLoop?.runTerminal({ entry: 'initial' }),
+        ).resolves.toEqual({ type: 'switch' });
+        expect(executeFollow).toHaveBeenCalledTimes(
+            followCountBeforeBaselineFailure + 1,
+        );
+        expect(terminalLaunch).toHaveBeenCalledTimes(
+            launchCountBeforeBaselineFailure + 1,
+        );
+        expect(terminalProcessLaunch).toHaveBeenCalledTimes(
+            processLaunchCountBeforeBaselineFailure + 1,
+        );
+        expect(enqueueAgentMessageCommitted).toHaveBeenCalledTimes(
+            transcriptCountBeforeBaselineFailure + 1,
+        );
+
+        const launchCountBeforeInitialProjectionFailure =
+            terminalLaunch.mock.calls.length;
+        const processLaunchCountBeforeInitialProjectionFailure =
+            terminalProcessLaunch.mock.calls.length;
+        const followCountBeforeInitialProjectionFailure =
+            executeFollow.mock.calls.length;
+        const transcriptCountBeforeInitialProjectionFailure =
+            enqueueAgentMessageCommitted.mock.calls.length;
+        executeFollow.mockImplementationOnce(async (request) => {
+            activeTerminalFollowListener = request.listener;
+            await request.listener({
+                kind: 'data',
+                phase: 'initial_replay',
+                items: [{
+                    id: 'terminal-item-initial-replay-failure',
+                    timestampMs: 12,
+                    kind: 'agent',
+                    data: {
+                        role: 'agent',
+                        content: {
+                            type: 'message',
+                            message: 'initial replay output',
+                        },
+                    },
+                }],
+                fromCursor: 'cursor-initial-replay-0',
+                nextCursor: 'cursor-initial-replay-1',
+            });
+            return {
+                status: 'following' as const,
+                startingCursor: 'cursor-initial-replay-0',
+                subscription: { dispose: disposeFollow },
+            };
+        });
+        enqueueAgentMessageCommitted.mockResolvedValueOnce({
+            persisted: false,
+            delivered: false,
+        });
+        // ES-PEP-05 orders "complete bounded replay and durable transcript
+        // projection" before "launch terminal process", so a refused initial
+        // projection closes admission and creates no child. (Previously this
+        // asserted the run resolving `{ type: 'switch' }` with `terminalLaunch`
+        // and `terminalProcessLaunch` each +1.)
+        await expect(
+            modeLoop?.runTerminal({ entry: 'initial' }),
+        ).rejects.toMatchObject({
+            name: 'HostTerminalTranscriptFollowAdmissionError',
+            followCode: 'plugin_external_follow_acquisition_failed',
+            phase: 'bind',
+        });
+        expect(executeFollow).toHaveBeenCalledTimes(
+            followCountBeforeInitialProjectionFailure + 1,
+        );
+        expect(terminalLaunch).toHaveBeenCalledTimes(
+            launchCountBeforeInitialProjectionFailure,
+        );
+        expect(terminalProcessLaunch).toHaveBeenCalledTimes(
+            processLaunchCountBeforeInitialProjectionFailure,
+        );
+        expect(enqueueAgentMessageCommitted).toHaveBeenCalledTimes(
+            transcriptCountBeforeInitialProjectionFailure + 1,
+        );
+        expect(
+            enqueueAgentMessageCommitted.mock.calls[
+                transcriptCountBeforeInitialProjectionFailure
+            ]?.[2],
+        ).toEqual(expect.objectContaining({
+            admission: expect.objectContaining({
+                deadlineAtMs: expect.any(Number),
+                signal: expect.any(AbortSignal),
+            }),
+        }));
+
         const launchCountBeforeAuthorityRefusal =
             terminalLaunch.mock.calls.length;
+        const processLaunchCountBeforeAuthorityRefusal =
+            terminalProcessLaunch.mock.calls.length;
+        const followCountBeforeAuthorityRefusal = executeFollow.mock.calls.length;
         const transcriptCountBeforeAuthorityRefusal =
             enqueueAgentMessageCommitted.mock.calls.length;
-        executeProviderSessionFollow.mockResolvedValueOnce({
+        executeFollow.mockResolvedValueOnce({
             status: 'unavailable',
             code: 'plugin_external_follow_authority_unavailable',
         });
+        // ES-PEP-05: a typed follow-authority refusal is a pre-launch admission
+        // failure, so it creates no child. (Previously this asserted the run
+        // resolving `{ type: 'switch' }` with both launch counters +1.)
         await expect(
             modeLoop?.runTerminal({ entry: 'initial' }),
-        ).rejects.toThrow('plugin_external_follow_authority_unavailable');
+        ).rejects.toMatchObject({
+            name: 'HostTerminalTranscriptFollowAdmissionError',
+            followCode: 'plugin_external_follow_authority_unavailable',
+            phase: 'bind',
+        });
         expect(terminalLaunch).toHaveBeenCalledTimes(
             launchCountBeforeAuthorityRefusal,
+        );
+        expect(terminalProcessLaunch).toHaveBeenCalledTimes(
+            processLaunchCountBeforeAuthorityRefusal,
+        );
+        expect(executeFollow).toHaveBeenCalledTimes(
+            followCountBeforeAuthorityRefusal + 1,
         );
         expect(enqueueAgentMessageCommitted).toHaveBeenCalledTimes(
             transcriptCountBeforeAuthorityRefusal,
@@ -861,25 +2442,20 @@ describe('native Agent session host adapter', () => {
         expect(retireExternalSessionHostOperations).toHaveBeenCalledOnce();
     });
 
-    it('projects session-bound system records through the live session client and fences retired generations', async () => {
-        let current = true;
-        let systemRecords: AgentSessionRuntimeContext['session']['services']['systemRecords'] | undefined;
-        const payload = createWorkflowRunSystemRecordPayload();
-        const upsertSessionSystemRecord = vi.fn(async () => undefined);
-        const fetchSessionSystemRecord = vi.fn(async () => ({
-            id: 'record-native-1',
-            sessionId: 'session-native-system-records',
-            namespace: 'activity' as const,
-            kind: 'workflow_run.v1' as const,
-            localId: 'activity:workflow_run:v1:workflow-native-1',
-            content: { t: 'plain' as const, v: payload },
-            createdAt: '2026-07-01T00:00:00.000Z',
-            updatedAt: '2026-07-01T00:00:01.000Z',
-        }));
+    it('does not expose system-record authority in the public Agent session context', async () => {
+        let publicServices: AgentSessionRuntimeContext['session']['services'] | undefined;
+        let openArgumentCount: number | undefined;
+        let reflectedWorkflowRecordSymbols: readonly symbol[] = [];
         const runtime: AgentRuntime = {
             sessions: {
-                open: vi.fn(async (_request, context) => {
-                    systemRecords = context.session.services.systemRecords;
+                open: vi.fn(async function (_request, context) {
+                    openArgumentCount = arguments.length;
+                    publicServices = context.session.services;
+                    reflectedWorkflowRecordSymbols = Reflect.ownKeys(globalThis)
+                        .filter((key): key is symbol => (
+                            typeof key === 'symbol'
+                            && String(key).includes('workflowRunRecordPort')
+                        ));
                     return {
                         send: vi.fn(async () => ({ status: 'admitted' as const })),
                         watch: () => ({ dispose: () => undefined }),
@@ -908,7 +2484,7 @@ describe('native Agent session host adapter', () => {
         };
         const plan = await createNativeAgentRuntimeSessionPlan({
             runtime,
-            lease: { ...createLease(agentId), isCurrent: () => current },
+            lease: createLease(agentId),
             backend: contributions.backend,
             agent,
             sessionInput: buildPluginSessionBindingInput({
@@ -921,50 +2497,25 @@ describe('native Agent session host adapter', () => {
         if (!plan.config.createSessionRuntime) throw new Error('expected a session runtime factory');
         const created = await plan.config.createSessionRuntime({
             directory: '/tmp/acme-native-system-records', metadata: {}, machineId: 'machine-1',
-            session: createNativeSessionClientTestPort('session-native-system-records', {
-                upsertSessionSystemRecord,
-                fetchSessionSystemRecord,
-                getStoredContentEncryptionContext: () => ({ mode: 'plain' as const }),
-            }),
+            session: createNativeSessionClientTestPort('session-native-system-records'),
             transcriptSession: {}, messageBuffer: {}, mcpServers: {}, permissionHandler: {},
             getPermissionMode: () => 'default', setThinking: () => undefined,
             memoryRecallGuidanceEnabled: false,
         } as never);
 
-        expect(systemRecords).toBeDefined();
-        if (!systemRecords) return;
-        const request = {
-            namespace: 'activity' as const,
-            kind: 'workflow_run.v1' as const,
-            localId: 'activity:workflow_run:v1:workflow-native-1',
-            payload,
-        };
-        await expect(systemRecords.write(request)).resolves.toBeUndefined();
-        expect(upsertSessionSystemRecord).toHaveBeenCalledWith({
-            namespace: request.namespace,
-            kind: request.kind,
-            localId: request.localId,
-            content: { t: 'plain', v: payload },
-        });
-        await expect(systemRecords.read({
-            namespace: request.namespace,
-            localId: request.localId,
-        })).resolves.toEqual(request);
-
-        current = false;
-        await expect(systemRecords.write(request)).rejects.toThrow(/retired or unavailable/u);
-        await expect(systemRecords.read({
-            namespace: request.namespace,
-            localId: request.localId,
-        })).rejects.toThrow(/retired or unavailable/u);
-        expect(upsertSessionSystemRecord).toHaveBeenCalledTimes(1);
-        expect(fetchSessionSystemRecord).toHaveBeenCalledTimes(1);
+        expect(publicServices).toBeDefined();
+        if (!publicServices) throw new Error('expected public Agent session services');
+        expect(Reflect.ownKeys(publicServices)).not.toContain('systemRecords');
+        expect(Object.getOwnPropertyDescriptor(publicServices, 'systemRecords')).toBeUndefined();
+        expect(Reflect.get(publicServices, 'systemRecords')).toBeUndefined();
+        expect(openArgumentCount).toBe(2);
+        expect(reflectedWorkflowRecordSymbols).toEqual([]);
         await created.operations.resetOrDisposeRuntime();
     });
 
-    it('publishes only a validated compact workflow headline through the bound session and fences retired generations', async () => {
+    it('publishes only validated compact activity headlines through the bound session, in one write, and fences retired generations', async () => {
         type WorkflowActivityService = Readonly<{
-            publishHeadline(headline: unknown): Promise<void>;
+            publishHeadlines(bundle: unknown): Promise<void>;
         }>;
 
         let current = true;
@@ -1011,27 +2562,49 @@ describe('native Agent session host adapter', () => {
         expect(workflowActivity).toBeDefined();
         if (!workflowActivity) return;
         const headline = createWorkflowActivityHeadline();
-        await expect(workflowActivity.publishHeadline({
-            ...headline,
-            unapprovedDetail: { agents: ['must-not-persist'] },
-            activeRuns: headline.activeRuns.map((run) => ({
-                ...run,
-                phases: [{ title: 'must-not-persist' }],
-            })),
+        const agentActivity = createAgentActivityHeadline();
+        await expect(workflowActivity.publishHeadlines({
+            workflow: {
+                ...headline,
+                unapprovedDetail: { agents: ['must-not-persist'] },
+                activeRuns: headline.activeRuns.map((run) => ({
+                    ...run,
+                    phases: [{ title: 'must-not-persist' }],
+                })),
+            },
+            agentActivity: {
+                ...agentActivity,
+                unapprovedDetail: { transcript: ['must-not-persist'] },
+                activeEntries: agentActivity.activeEntries.map((entry) => ({
+                    ...entry,
+                    summary: 'must-not-persist',
+                })),
+            },
         })).resolves.toBeUndefined();
         expect(session.getMetadataSnapshot()).toMatchObject({
             path: '/tmp/test',
         });
         expect(session.getMetadataSnapshot().sessionWorkflowActivityHeadlineV1).toEqual(headline);
+        expect(session.getMetadataSnapshot().sessionAgentActivityHeadlineV1).toEqual(agentActivity);
         expect(JSON.stringify(session.getMetadataSnapshot())).not.toContain('must-not-persist');
-        expect(Object.keys(workflowActivity)).toEqual(['publishHeadline']);
+        expect(Object.keys(workflowActivity)).toEqual(['publishHeadlines']);
+        // BOTH keys landed in ONE metadata mutation: two writes would leave a window in which the
+        // two keys describe different worlds.
+        expect(updateMetadata).toHaveBeenCalledTimes(1);
 
-        await expect(workflowActivity.publishHeadline({
-            ...headline,
-            v: 2,
+        // Fail closed on the WHOLE bundle: a malformed half must not publish the other half, or the
+        // two keys stop describing the same snapshots.
+        await expect(workflowActivity.publishHeadlines({
+            workflow: { ...headline, v: 2 },
+            agentActivity,
+        })).rejects.toThrow();
+        await expect(workflowActivity.publishHeadlines({
+            workflow: headline,
+            agentActivity: { ...agentActivity, v: 2 },
         })).rejects.toThrow();
         expect(updateMetadata).toHaveBeenCalledTimes(1);
         expect(session.getMetadataSnapshot().sessionWorkflowActivityHeadlineV1).toEqual(headline);
+        expect(session.getMetadataSnapshot().sessionAgentActivityHeadlineV1).toEqual(agentActivity);
 
         current = true;
         updateMetadata.mockImplementationOnce(async (updater) => {
@@ -1039,12 +2612,17 @@ describe('native Agent session host adapter', () => {
             const beforeRetirement = session.getMetadataSnapshot();
             expect(updater(beforeRetirement)).toBe(beforeRetirement);
         });
-        await expect(workflowActivity.publishHeadline(headline)).rejects.toThrow(/retired or unavailable/u);
+        await expect(workflowActivity.publishHeadlines({ workflow: headline, agentActivity }))
+            .rejects.toMatchObject({
+                name: 'PluginError',
+                code: 'plugin_generation_stale',
+            });
         expect(updateMetadata).toHaveBeenCalledTimes(2);
         expect(session.getMetadataSnapshot().sessionWorkflowActivityHeadlineV1).toEqual(headline);
 
         current = false;
-        await expect(workflowActivity.publishHeadline(headline)).rejects.toThrow(/retired or unavailable/u);
+        await expect(workflowActivity.publishHeadlines({ workflow: headline, agentActivity }))
+            .rejects.toThrow(/retired or unavailable/u);
         expect(updateMetadata).toHaveBeenCalledTimes(2);
         await created.operations.resetOrDisposeRuntime();
     });
@@ -1097,7 +2675,7 @@ describe('native Agent session host adapter', () => {
             dispose: vi.fn(async () => undefined),
         };
         const terminalHost = createPluginTerminalHostService({
-            hasCapability: (capability) => capability === 'terminalHost' || capability === 'terminal.host.control',
+            hasCapability: (capability) => capability === 'terminalHost',
             resolveTerminalHost: () => ({ status: 'resolved', adapter, reason: 'tmux_available' }),
             resolveAgentCliLaunch: () => ({ command: '/usr/local/bin/acme-agent', args: [] }),
             disposeHost,
@@ -1272,6 +2850,16 @@ describe('native Agent session host adapter', () => {
 
     it('projects declared native direct facets and persists the pre-dispatch rollback range without an Agent-id branch', async () => {
         const emitter: { current: ((event: AgentSessionRuntimeEvent) => void) | null } = { current: null };
+        const sessionConnectedAccounts = Object.freeze([Object.freeze({
+            purpose: 'primary',
+            account: Object.freeze({
+                service: Object.freeze({
+                    pluginId: 'acme.connected-account',
+                    localId: 'credential',
+                }),
+                accountId: 'account-a',
+            }),
+        })]);
         let capturedRollbackRequest: Parameters<AgentSessionConversationRollbackControl['rollback']>[0] | null = null;
         let lastObservedMessageSeq = 11;
         const rollback = vi.fn<AgentSessionConversationRollbackControl['rollback']>(async (request) => {
@@ -1364,6 +2952,11 @@ describe('native Agent session host adapter', () => {
                 directory: '/tmp/acme-direct-controls-agent',
                 backendTarget: { kind: 'backend', backendId: agentId },
                 resume: 'provider-session-1',
+                resolveLateEnvironment: async () => Object.assign({
+                    environmentVariables: {},
+                    unsetEnvironmentVariables: [],
+                    sensitiveEnvironmentVariableNames: [],
+                }, { sessionConnectedAccounts }),
             }),
             createSessionHostServiceOwners: () => createSessionHostServiceOwners(),
         });
@@ -1391,7 +2984,11 @@ describe('native Agent session host adapter', () => {
         const created = await plan.config.createSessionRuntime({
             directory: '/tmp/acme-direct-controls-agent', metadata: {}, machineId: 'machine-1',
             session: hostSession, transcriptSession: {}, messageBuffer: {},
-            mcpServers: {}, permissionHandler: {}, getPermissionMode: () => 'default',
+            mcpServers: {},
+            permissionHandler: {
+                cancelByPlugin: vi.fn(async () => undefined),
+            },
+            getPermissionMode: () => 'default',
             setThinking: () => undefined, memoryRecallGuidanceEnabled: false,
         } as never);
         const mutations: SessionTurnMutationV1[] = [];
@@ -1519,7 +3116,11 @@ describe('native Agent session host adapter', () => {
             agentRollbackOrdinal: 4,
         });
         expect(getGoal).toHaveBeenCalledWith(expect.objectContaining({
-            session: expect.objectContaining({ id: 'session-direct-controls', activity: 'active' }),
+            session: expect.objectContaining({
+                id: 'session-direct-controls',
+                activity: 'active',
+                connectedAccounts: sessionConnectedAccounts,
+            }),
             goalSource: expect.any(Object),
         }), expect.objectContaining({ signal: expect.any(AbortSignal) }));
         expect(setGoal).toHaveBeenCalledWith({ objective: 'Ship direct facets', status: 'active', tokenBudget: 1000 }, expect.any(Object), expect.any(Object));
@@ -1625,12 +3226,6 @@ describe('native Agent session host adapter', () => {
         }`).not.toContain(secret);
         expect((propagated as Error).message).toContain('[REDACTED]');
         expect(open).not.toHaveBeenCalled();
-        expect(
-            daemonBridgeMocks.abandonPreparedSession,
-        ).toHaveBeenCalledWith(
-            expect.any(Object),
-            'session-continuation-late-rejection',
-        );
         expect(disposeHostServices).toHaveBeenCalledOnce();
         expect(redactBugReportSensitiveText(
             `value=${secret}`,
@@ -1639,6 +3234,16 @@ describe('native Agent session host adapter', () => {
 
     it('settles late launch environment before resume continuation verification and native open', async () => {
         const events: string[] = [];
+        const sessionConnectedAccounts = Object.freeze([Object.freeze({
+            purpose: 'primary',
+            account: Object.freeze({
+                service: Object.freeze({
+                    pluginId: 'acme.connected-account',
+                    localId: 'credential',
+                }),
+                accountId: 'account-a',
+            }),
+        })]);
         const verify = vi.fn<AgentSessionContinuationControl['verify']>(
             async () => {
                 events.push('verify');
@@ -1695,13 +3300,13 @@ describe('native Agent session host adapter', () => {
                 resume: 'provider-session-late-resume',
                 resolveLateEnvironment: async () => {
                     events.push('claim');
-                    return {
+                    return Object.assign({
                         environmentVariables: {
                             R490_LATE_ENVIRONMENT: 'settled-before-prepare',
                         },
                         unsetEnvironmentVariables: [],
                         sensitiveEnvironmentVariableNames: [],
-                    };
+                    }, { sessionConnectedAccounts });
                 },
             }),
             createSessionHostServiceOwners: () =>
@@ -1730,6 +3335,12 @@ describe('native Agent session host adapter', () => {
         expect(verify).toHaveBeenCalledOnce();
         expect(open).toHaveBeenCalledOnce();
         expect(verify.mock.calls[0]?.[0]).toEqual(open.mock.calls[0]?.[0]);
+        expect(verify.mock.calls[0]?.[1]).toMatchObject({
+            session: {
+                activity: 'inactive',
+                connectedAccounts: sessionConnectedAccounts,
+            },
+        });
         expect(open.mock.calls[0]?.[0]).toMatchObject({
             kind: 'resume',
             sessionId: 'session-continuation-late-environment',
@@ -1740,6 +3351,7 @@ describe('native Agent session host adapter', () => {
                     R490_LATE_ENVIRONMENT: 'settled-before-prepare',
                 },
             },
+            connectedAccounts: sessionConnectedAccounts,
         });
         await created?.operations.resetOrDisposeRuntime();
         expect(dispose).toHaveBeenCalledOnce();
@@ -1819,14 +3431,7 @@ describe('native Agent session host adapter', () => {
         await created?.operations.resetOrDisposeRuntime();
     });
 
-    it.each([
-        ['prepared-session abandonment', true, false],
-        ['runtime-scope cleanup', false, true],
-    ])('preserves required continuation refusal when %s fails', async (
-        _label,
-        abandonFails,
-        scopeCleanupFails,
-    ) => {
+    it('preserves required continuation refusal when runtime-scope cleanup fails', async () => {
         const verify = vi.fn<AgentSessionContinuationControl['verify']>(async () => ({
             status: 'unreachable' as const,
             diagnostic: { code: 'continuation_unreachable', severity: 'error' as const },
@@ -1837,10 +3442,7 @@ describe('native Agent session host adapter', () => {
             dispose: vi.fn(),
         }));
         const disposeHostServices = vi.fn(async () => {
-            if (scopeCleanupFails) throw new Error('injected runtime-scope cleanup failure');
-        });
-        daemonBridgeMocks.abandonPreparedSession.mockImplementationOnce(async () => {
-            if (abandonFails) throw new Error('injected prepared-session abandonment failure');
+            throw new Error('injected runtime-scope cleanup failure');
         });
         const agentId = 'acme-continuation-cleanup-agent';
         const contributions = createExternalContributionFixtures(agentId);
@@ -1899,10 +3501,6 @@ describe('native Agent session host adapter', () => {
             message: 'Agent session continuation is unreachable.',
         });
         expect(open).not.toHaveBeenCalled();
-        expect(daemonBridgeMocks.abandonPreparedSession).toHaveBeenCalledWith(
-            expect.any(Object),
-            'session-continuation-cleanup',
-        );
         expect(disposeHostServices).toHaveBeenCalledOnce();
     });
 
@@ -2026,6 +3624,101 @@ describe('native Agent session host adapter', () => {
         expect(session.dispose).toHaveBeenCalledTimes(1);
     });
 
+    it('stamps immutable native runtime presentation writes with the runtime invocation owner', async () => {
+        let context!: AgentSessionRuntimeContext;
+        const agentId = 'acme-native-presentation-owner';
+        const contributions = createExternalContributionFixtures(agentId);
+        const send = vi.fn(async () => ({ status: 'admitted' as const }));
+        const runtimeSession: AgentSessionRuntime = {
+            send,
+            watch: () => ({ dispose: () => undefined }),
+            dispose: vi.fn(async () => undefined),
+        };
+        const session = createNativeSessionClientTestPort(
+            'session-native-presentation-owner',
+        );
+        const plan = await createNativeAgentRuntimeSessionPlan({
+            runtime: {
+                sessions: {
+                    open: async (_request, runtimeContext) => {
+                        context = runtimeContext;
+                        return runtimeSession;
+                    },
+                },
+            },
+            lease: {
+                ...createLease(agentId),
+                immutableGenerationId: 'immutable-generation-native-presentation',
+            },
+            backend: contributions.backend,
+            agent: contributions.agent,
+            sessionInput: buildPluginSessionBindingInput({
+                credentials,
+                directory: `/tmp/${agentId}`,
+                backendTarget: { kind: 'backend', backendId: agentId },
+            }),
+            createSessionHostServiceOwners: () => createSessionHostServiceOwners(),
+        });
+        if (!plan.config.createSessionRuntime) {
+            throw new Error('expected a session runtime factory');
+        }
+
+        const created = await plan.config.createSessionRuntime({
+            directory: `/tmp/${agentId}`,
+            metadata: {},
+            machineId: 'machine-1',
+            session,
+            transcriptSession: {},
+            messageBuffer: {},
+            mcpServers: {},
+            permissionHandler: {},
+            getPermissionMode: () => 'default',
+            setThinking: () => undefined,
+            memoryRecallGuidanceEnabled: false,
+        } as never);
+
+        const presentation = context.ui;
+        if (!presentation) {
+            throw new Error('expected native session presentation service');
+        }
+        await expect(presentation.status.set('runtime', 'Ready')).resolves.toBeUndefined();
+        const presentationState = CurrentSessionPresentationStateV1Schema.parse(
+            session.getAgentStateSnapshot()[
+                CURRENT_SESSION_PRESENTATION_AGENT_STATE_KEY
+            ],
+        );
+        expect(presentationState).toMatchObject({
+            statuses: [
+                {
+                    localKey: 'runtime',
+                    text: 'Ready',
+                    owner: {
+                        pluginId: 'acme.agent-plugin',
+                        contributionId: agentId,
+                        generationId: 'immutable-generation-native-presentation',
+                        invocationId: expect.any(String),
+                        sessionId: 'session-native-presentation-owner',
+                    },
+                },
+            ],
+        });
+        const runtimeIncarnationId = presentationState.statuses[0]?.owner
+            .invocationId;
+        expect(runtimeIncarnationId).toEqual(expect.any(String));
+
+        await created.operations.sendTurnPrompt('continue', {
+            localId: 'native-presentation-owner-input',
+        });
+        expect(send).toHaveBeenCalledWith(expect.objectContaining({
+            delivery: {
+                kind: 'newTurn',
+                turnId: `native-turn-${runtimeIncarnationId}-1`,
+            },
+        }));
+
+        await created.operations.resetOrDisposeRuntime();
+    });
+
     it('keeps undeclared and unavailable native direct facets absent from the host control surface', async () => {
         const agentId = 'acme-no-direct-controls-agent';
         const contributions = createExternalContributionFixtures(agentId);
@@ -2087,6 +3780,88 @@ describe('native Agent session host adapter', () => {
         });
     });
 
+    it('fans canonical Agent events into Host Events once without coupling producer success', () => {
+        let observe!: (event: AgentSessionRuntimeEvent) => void;
+        const session: AgentSessionRuntime = {
+            send: vi.fn(async () => ({ status: 'admitted' as const })),
+            watch: (listener) => {
+                observe = listener;
+                return { dispose: () => undefined };
+            },
+            dispose: vi.fn(),
+        };
+        const publishHostEvent = vi.fn(() => {
+            throw new Error('listener-side host publication failure');
+        });
+        const runtime = createNativeAgentSessionOperations(
+            session,
+            'session-host-events',
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            [],
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            publishHostEvent,
+        );
+        runtime.subscribeRuntimeEvents(() => undefined);
+        const event = AgentSessionRuntimeEventSchema.parse({
+            sequence: 1,
+            sessionId: 'session-host-events',
+            emittedAtMs: 2,
+            kind: 'runtime-activity-snapshot',
+            state: 'idle',
+            activeCount: 0,
+        });
+
+        expect(() => observe(event)).not.toThrow();
+        expect(publishHostEvent).toHaveBeenCalledOnce();
+        expect(publishHostEvent).toHaveBeenCalledWith(event);
+
+        const centrallyPublishedEvent = AgentSessionRuntimeEventSchema.parse({
+            sequence: 2,
+            sessionId: 'session-host-events',
+            emittedAtMs: 3,
+            kind: 'context-compaction',
+            compactionId: 'compact-1',
+            phase: 'progress',
+            trigger: 'manual',
+        });
+        expect(() => observe(centrallyPublishedEvent)).not.toThrow();
+        expect(publishHostEvent).toHaveBeenCalledOnce();
+
+        const divergentCompactionEvent = AgentSessionRuntimeEventSchema.parse({
+            sequence: 3,
+            sessionId: 'session-host-events',
+            emittedAtMs: 4,
+            kind: 'context-compaction',
+            compactionId: 'compact-2',
+            phase: 'outcomeUnknown',
+            trigger: 'manual',
+            diagnostic: {
+                code: 'compaction_outcome_unknown',
+                severity: 'warning',
+            },
+        });
+        expect(() => observe(divergentCompactionEvent)).not.toThrow();
+        expect(publishHostEvent).toHaveBeenCalledTimes(2);
+        expect(publishHostEvent).toHaveBeenLastCalledWith(expect.objectContaining({
+            kind: 'context-compaction',
+            compactionId: 'compact-2',
+            phase: 'outcomeUnknown',
+            diagnostic: {
+                code: 'compaction_outcome_unknown',
+                severity: 'warning',
+            },
+        }));
+    });
+
     it('passes the exact host-private Provider binding through a live configuration update', async () => {
         const updateConfiguration = vi.fn<NonNullable<AgentSessionRuntime['updateConfiguration']>>(async () => ({
             status: 'applied' as const,
@@ -2131,7 +3906,7 @@ describe('native Agent session host adapter', () => {
         });
     });
 
-    it('projects the bounded VB4 launch and timestamped configuration snapshot into session open', async () => {
+    it('projects the bounded VB4 launch without host-owned QA instrumentation into session open', async () => {
         const updateConfiguration = vi.fn<NonNullable<AgentSessionRuntime['updateConfiguration']>>(async () => ({
             status: 'applied' as const,
             changed: ['mode'],
@@ -2168,8 +3943,16 @@ describe('native Agent session host adapter', () => {
                 environmentVariables: {
                     AUGMENT_SESSION_AUTH: 'host-authorized-auth',
                     KEEP_ME: 'yes',
+                    HAPPIER_STACK_TOOL_TRACE: '1',
+                    HAPPIER_STACK_TOOL_TRACE_DIR: '/tmp/tool-traces',
+                    HAPPIER_STACK_TOOL_TRACE_FILE: '/tmp/tool-trace.jsonl',
                 },
-                unsetEnvironmentVariables: ['DROP_ME'],
+                unsetEnvironmentVariables: [
+                    'DROP_ME',
+                    'HAPPIER_STACK_TOOL_TRACE',
+                    'HAPPIER_STACK_TOOL_TRACE_DIR',
+                    'HAPPIER_STACK_TOOL_TRACE_FILE',
+                ],
                 permissionMode: 'acceptEdits',
                 permissionModeUpdatedAt: 103,
                 sessionModeId: 'default',
@@ -2342,7 +4125,8 @@ describe('native Agent session host adapter', () => {
                 config: Object.freeze({}),
             }),
         });
-        const createInvocationServices = vi.fn(() => createUnavailablePluginServices());
+        const createInvocationServices =
+            vi.fn(async () => createUnavailablePluginServices());
         const plan = await createNativeAgentRuntimeSessionPlan({
             runtime,
             lease: createLease(agentId),
@@ -2412,6 +4196,545 @@ describe('native Agent session host adapter', () => {
             providerBindingActive: true,
         }));
 
+        await created.operations.resetOrDisposeRuntime();
+    });
+
+    it('registers custody before invocation services perform public Provider start and Agent create/open', async () => {
+        const agentId = 'acme-runner-bootstrap-agent';
+        const contributions = createExternalContributionFixtures(agentId);
+        const events: string[] = [];
+        const open = vi.fn<AgentSessionRuntimeFactory['open']>(async () => {
+            events.push('open');
+            return {
+                send: vi.fn(async () => ({ status: 'admitted' as const })),
+                watch: () => ({ dispose: () => undefined }),
+                dispose: vi.fn(),
+            };
+        });
+        const createRuntime = vi.fn(async () => {
+            events.push('create-runtime');
+            return {
+                sessions: { open },
+            } satisfies AgentRuntime;
+        });
+        const createInvocationServices =
+            vi.fn(async () => {
+                events.push('invocation-services');
+                return createUnavailablePluginServices();
+            });
+        const prepareManagedProviderBinding = vi.fn(async () => null);
+        const prepareRuntimeSource = vi.fn(async (input: Readonly<{
+            sessionId: string;
+            signal: AbortSignal;
+        }>) => {
+            expect(input.sessionId).toBe('session-runner-bootstrap');
+            expect(input.signal.aborted).toBe(false);
+            expect(events).toEqual(['late-environment']);
+            events.push('prepare-runtime-source');
+            expect(createRuntime).not.toHaveBeenCalled();
+            expect(createInvocationServices).not.toHaveBeenCalled();
+        });
+        const plan = await createNativeAgentRuntimeSessionPlan({
+            createRuntime,
+            identity: createLease(agentId),
+            backend: contributions.backend,
+            agent: contributions.agent,
+            prepareRuntimeSource,
+            prepareManagedProviderBinding,
+            managedServicesCustodyPort: {
+                dispatch: vi.fn(async () => ({
+                    v: 1 as const,
+                    kind: 'disposed' as const,
+                })),
+            },
+            authorizeNewTurn: vi.fn(async () => ({
+                status: 'admitted' as const,
+            })),
+            createInvocationServices,
+            createSessionHostServiceOwners: () =>
+                createSessionHostServiceOwners(),
+            sessionInput: buildPluginSessionBindingInput({
+                credentials,
+                directory: '/tmp/acme-runner-bootstrap-agent',
+                backendTarget: { kind: 'backend', backendId: agentId },
+                resolveLateEnvironment: async (
+                    { sessionId }: Readonly<{ sessionId: string }>,
+                ) => {
+                    expect(sessionId).toBe('session-runner-bootstrap');
+                    expect(events).toEqual([]);
+                    events.push('late-environment');
+                    return {
+                        environmentVariables: {
+                            FOREGROUND_READY: 'yes',
+                        },
+                        unsetEnvironmentVariables: [],
+                        sensitiveEnvironmentVariableNames: [],
+                    };
+                },
+            }),
+        });
+        expect(prepareRuntimeSource).not.toHaveBeenCalled();
+        expect(createRuntime).not.toHaveBeenCalled();
+        if (!plan.config.createSessionRuntime) {
+            throw new Error('expected a session runtime factory');
+        }
+
+        const session = createNativeSessionClientTestPort(
+            'session-runner-bootstrap',
+        );
+        const registerHandler =
+            session.rpcHandlerManager.registerHandler;
+        session.rpcHandlerManager.registerHandler = (
+            method: string,
+            handler: (input: unknown) => unknown,
+        ) => {
+            if (method === 'managedServices.custody.v1') {
+                events.push('custody-register');
+            }
+            return registerHandler(method, handler);
+        };
+        const created = await plan.config.createSessionRuntime({
+            directory: '/tmp/acme-runner-bootstrap-agent',
+            metadata: {},
+            machineId: 'machine-1',
+            session,
+            transcriptSession: {},
+            messageBuffer: {},
+            mcpServers: {},
+            permissionHandler: {},
+            getPermissionMode: () => 'default',
+            setThinking: () => undefined,
+            memoryRecallGuidanceEnabled: false,
+        } as never);
+
+        expect(prepareRuntimeSource).toHaveBeenCalledOnce();
+        expect(createInvocationServices).toHaveBeenCalledWith(
+            expect.objectContaining({
+                environment: {
+                    FOREGROUND_READY: 'yes',
+                },
+            }),
+        );
+        expect(prepareManagedProviderBinding).not.toHaveBeenCalled();
+        expect(createRuntime).toHaveBeenCalledOnce();
+        expect(open).toHaveBeenCalledOnce();
+        expect(events).toEqual([
+            'late-environment',
+            'prepare-runtime-source',
+            'custody-register',
+            'invocation-services',
+            'create-runtime',
+            'open',
+        ]);
+        await created.operations.resetOrDisposeRuntime();
+    });
+
+    it('defers runner-managed Provider materialization across a non-null late environment until custody preparation', async () => {
+        const agentId = 'acme-runner-late-provider-agent';
+        const contributions = createExternalContributionFixtures(agentId);
+        const metadata = managedProviderBindingMetadata(
+            'pc_public_late',
+            'provider-model-public-late',
+            `backend:${agentId}`,
+        );
+        const events: string[] = [];
+        const expectedFailure = new Error(
+            'fixture-managed-provider-prepare-stop',
+        );
+        const createRuntime = vi.fn(async () => ({
+            sessions: {
+                open: vi.fn(),
+            },
+        } satisfies AgentRuntime));
+        const createInvocationServices = vi.fn(async () =>
+            createUnavailablePluginServices()
+        );
+        const prepareManagedProviderBinding = vi.fn(async () => {
+            events.push('public-provider-prepare');
+            throw expectedFailure;
+        });
+        const plan = await createNativeAgentRuntimeSessionPlan({
+            createRuntime,
+            identity: createLease(agentId),
+            backend: contributions.backend,
+            agent: contributions.agent,
+            managedServicesCustodyPort: {
+                dispatch: vi.fn(async () => ({
+                    v: 1 as const,
+                    kind: 'disposed' as const,
+                })),
+            },
+            authorizeNewTurn: vi.fn(async () => ({
+                status: 'admitted' as const,
+            })),
+            prepareManagedProviderBinding,
+            createInvocationServices,
+            createSessionHostServiceOwners: () =>
+                createSessionHostServiceOwners(),
+            sessionInput: buildPluginSessionBindingInput({
+                credentials,
+                directory: '/tmp/acme-runner-late-provider-agent',
+                backendTarget: { kind: 'backend', backendId: agentId },
+                modelSelection: {
+                    v: 1,
+                    updatedAt: 102,
+                    ref: {
+                        agentTargetKey: `backend:${agentId}`,
+                        providerConnectionId: 'pc_public_late',
+                        modelId: 'provider-model-public-late',
+                    },
+                },
+                resolveLateEnvironment: async () => {
+                    events.push('late-environment');
+                    return {
+                        environmentVariables: {
+                            FOREGROUND_READY: 'yes',
+                        },
+                        unsetEnvironmentVariables: [],
+                        sensitiveEnvironmentVariableNames: [],
+                    };
+                },
+            }),
+        });
+        if (!plan.config.createSessionRuntime) {
+            throw new Error('expected a session runtime factory');
+        }
+        const session = createNativeSessionClientTestPort(
+            'session-runner-late-provider',
+        );
+        const registerHandler = session.rpcHandlerManager.registerHandler;
+        session.rpcHandlerManager.registerHandler = (method, handler) => {
+            if (method === 'managedServices.custody.v1') {
+                events.push('custody-register');
+            }
+            return registerHandler(method, handler);
+        };
+
+        await expect(plan.config.createSessionRuntime({
+            directory: '/tmp/acme-runner-late-provider-agent',
+            metadata: { providerBindingV1: metadata },
+            machineId: 'machine-1',
+            session,
+            transcriptSession: {},
+            messageBuffer: {},
+            mcpServers: {},
+            permissionHandler: {},
+            getPermissionMode: () => 'default',
+            setThinking: () => undefined,
+            memoryRecallGuidanceEnabled: false,
+        } as never)).rejects.toBe(expectedFailure);
+        expect(events).toEqual([
+            'late-environment',
+            'custody-register',
+            'public-provider-prepare',
+        ]);
+        expect(prepareManagedProviderBinding).toHaveBeenCalledOnce();
+        expect(createInvocationServices).not.toHaveBeenCalled();
+        expect(createRuntime).not.toHaveBeenCalled();
+    });
+
+    it('keeps the public managed Provider marker through one invocation and native sessions.open', async () => {
+        const placeholder =
+            'happier_runner_placeholder_AAAAAAAAAAAAAAAAAAAAAAAAAAA';
+        const credential = 'runner-owned-secret';
+        const agentId = 'acme-runner-public-provider-agent';
+        const metadata = managedProviderBindingMetadata(
+            'pc_public',
+            'provider-model-public',
+            `backend:${agentId}`,
+        );
+        const contributions = createExternalContributionFixtures(agentId);
+        const agent = {
+            ...contributions.agent,
+            richDefinition: {
+                ...contributions.agent.richDefinition,
+                definition: {
+                    ...contributions.agent.richDefinition.definition,
+                    providerRequirements: {
+                        acceptsProtocols: ['openai-responses'],
+                        required: {},
+                        credentialSupport: {
+                            supportsNoAuth: true,
+                            apiKeyTransports: [],
+                        },
+                        authIsolation: {
+                            suppressConnectedServiceIds: [],
+                            ownedEnvKeys: [],
+                        },
+                        materialization: 'spawnEnv',
+                        applyPolicy: 'restart_session',
+                        supportsFreeformModelIds: true,
+                    } satisfies AgentProviderRequirementsV1,
+                },
+            },
+        } satisfies ResolvedAgentContribution;
+        const events: string[] = [];
+        const transformAgentChildLaunchEnvironment = vi.fn(
+            (environment: Readonly<Record<string, string>>) =>
+                Object.freeze({
+                    ...environment,
+                    HAPPIER_PROVIDER_KEY:
+                        environment.HAPPIER_PROVIDER_KEY === placeholder
+                            ? credential
+                            : environment.HAPPIER_PROVIDER_KEY,
+                }),
+        );
+        const cleanup = vi.fn();
+        const prepareManagedProviderBinding = vi.fn(async () => {
+            events.push('public-provider-prepare');
+            return Object.freeze({
+                handoff: Object.freeze({
+                    v: 1 as const,
+                    materialization: Object.freeze({
+                        v: 1 as const,
+                        kind: 'spawnEnv' as const,
+                        env: Object.freeze([Object.freeze({
+                            name: 'HAPPIER_PROVIDER_KEY',
+                            value: placeholder,
+                            source: 'provider' as const,
+                        })]),
+                    }),
+                    sessionBindingMetadata: metadata,
+                }),
+                environmentOverlay: [Object.freeze({
+                    name: 'HAPPIER_PROVIDER_KEY',
+                    value: placeholder,
+                    source: 'provider' as const,
+                })],
+                additionalRedactionValues: Object.freeze([]),
+                transformAgentChildLaunchEnvironment,
+                cleanup,
+            });
+        });
+        const createInvocationServices = vi.fn(async (input) => {
+            events.push('invocation-services');
+            expect(input.environment.HAPPIER_PROVIDER_KEY)
+                .toBe(placeholder);
+            expect(JSON.stringify(input)).not.toContain(credential);
+            return createUnavailablePluginServices();
+        });
+        const open = vi.fn<AgentSessionRuntimeFactory['open']>(
+            async (request) => {
+                events.push('open');
+                expect(request.launchEnvironment?.values
+                    .HAPPIER_PROVIDER_KEY).toBe(placeholder);
+                expect(JSON.stringify(request)).not.toContain(credential);
+                return {
+                    send: vi.fn(async () => ({ status: 'admitted' as const })),
+                    watch: () => ({ dispose: () => undefined }),
+                    dispose: vi.fn(),
+                };
+            },
+        );
+        const createRuntime = vi.fn(async () => {
+            events.push('create-runtime');
+            return { sessions: { open } } satisfies AgentRuntime;
+        });
+        const plan = await createNativeAgentRuntimeSessionPlan({
+            createRuntime,
+            identity: createLease(agentId),
+            backend: contributions.backend,
+            agent,
+            managedServicesCustodyPort: {
+                dispatch: vi.fn(async () => ({
+                    v: 1 as const,
+                    kind: 'disposed' as const,
+                })),
+            },
+            authorizeNewTurn: vi.fn(async () => ({
+                status: 'admitted' as const,
+            })),
+            prepareManagedProviderBinding,
+            createInvocationServices,
+            createSessionHostServiceOwners: () =>
+                createSessionHostServiceOwners(),
+            sessionInput: buildPluginSessionBindingInput({
+                credentials,
+                directory: '/tmp/acme-runner-public-provider-agent',
+                backendTarget: { kind: 'backend', backendId: agentId },
+                modelSelection: {
+                    v: 1,
+                    updatedAt: 102,
+                    ref: {
+                        agentTargetKey: `backend:${agentId}`,
+                        providerConnectionId: 'pc_public',
+                        modelId: 'provider-model-public',
+                    },
+                },
+                resolveLateEnvironment: async () => ({
+                    environmentVariables: {},
+                    unsetEnvironmentVariables: [],
+                    sensitiveEnvironmentVariableNames: [],
+                }),
+            }),
+        });
+        if (!plan.config.createSessionRuntime) {
+            throw new Error('expected a session runtime factory');
+        }
+        const session = createNativeSessionClientTestPort(
+            'session-runner-public-provider',
+        );
+        const registerHandler = session.rpcHandlerManager.registerHandler;
+        session.rpcHandlerManager.registerHandler = (method, handler) => {
+            if (method === 'managedServices.custody.v1') {
+                events.push('custody-register');
+            }
+            return registerHandler(method, handler);
+        };
+        const created = await plan.config.createSessionRuntime({
+            directory: '/tmp/acme-runner-public-provider-agent',
+            metadata: { providerBindingV1: metadata },
+            machineId: 'machine-1',
+            session,
+            transcriptSession: {},
+            messageBuffer: {},
+            mcpServers: {},
+            permissionHandler: {},
+            getPermissionMode: () => 'default',
+            setThinking: () => undefined,
+            memoryRecallGuidanceEnabled: false,
+        } as never);
+
+        expect(events).toEqual([
+            'custody-register',
+            'public-provider-prepare',
+            'invocation-services',
+            'create-runtime',
+            'open',
+        ]);
+        expect(prepareManagedProviderBinding).toHaveBeenCalledOnce();
+        expect(createInvocationServices).toHaveBeenCalledOnce();
+        expect(transformAgentChildLaunchEnvironment).not.toHaveBeenCalled();
+        await created.operations.resetOrDisposeRuntime();
+        expect(cleanup).toHaveBeenCalledOnce();
+    });
+
+    it('keeps an authoritative external Provider handoff and never starts runner-managed Provider custody', async () => {
+        const agentId = 'acme-runner-direct-provider-agent';
+        const agentTargetKey = `backend:${agentId}` as const;
+        const contributions = createExternalContributionFixtures(agentId);
+        const metadata = externalProviderBindingMetadata(
+            'pc_direct',
+            'provider-model-direct',
+            agentTargetKey,
+        );
+        const agent = {
+            ...contributions.agent,
+            richDefinition: {
+                ...contributions.agent.richDefinition,
+                definition: {
+                    ...contributions.agent.richDefinition.definition,
+                    providerRequirements:
+                        metadata.runtimeBindingBasis.agentSupport,
+                },
+            },
+        } satisfies ResolvedAgentContribution;
+        const materialization = Object.freeze({
+            v: 1 as const,
+            kind: 'engineConfig' as const,
+            engineConfig: Object.freeze({
+                v: 1,
+                modelProvider:
+                    'happier_0123456789abcdef0123456789abcdef',
+                config: Object.freeze({}),
+            }),
+        });
+        const prepareManagedProviderBinding = vi.fn(async () => {
+            throw new Error(
+                'runner-managed Provider custody must not start',
+            );
+        });
+        const createInvocationServices = vi.fn(async (input) => {
+            expect(input.environment.HAPPIER_CODEX_PROVIDER_API_KEY)
+                .toBe('direct-provider-credential');
+            expect(input.providerBindingActive).toBe(true);
+            return createUnavailablePluginServices();
+        });
+        const open = vi.fn<AgentSessionRuntimeFactory['open']>(
+            async (request) => {
+                expect(request.launchEnvironment?.values
+                    .HAPPIER_CODEX_PROVIDER_API_KEY)
+                    .toBe('direct-provider-credential');
+                expect(request.providerBinding).toEqual({
+                    connectionId: 'pc_direct',
+                    model: {
+                        id: 'provider-model-direct',
+                        name: 'provider-model-direct',
+                    },
+                    materialization,
+                });
+                return {
+                    send: vi.fn(async () => ({
+                        status: 'admitted' as const,
+                    })),
+                    watch: () => ({ dispose: () => undefined }),
+                    dispose: vi.fn(),
+                };
+            },
+        );
+        const plan = await createNativeAgentRuntimeSessionPlan({
+            runtime: { sessions: { open } },
+            lease: createLease(agentId),
+            backend: contributions.backend,
+            agent,
+            prepareManagedProviderBinding,
+            createInvocationServices,
+            createSessionHostServiceOwners: () =>
+                createSessionHostServiceOwners(),
+            sessionInput: buildPluginSessionBindingInput({
+                credentials,
+                directory: '/tmp/acme-runner-direct-provider-agent',
+                backendTarget: {
+                    kind: 'backend',
+                    backendId: agentId,
+                },
+                modelSelection: {
+                    v: 1,
+                    updatedAt: 102,
+                    ref: {
+                        agentTargetKey,
+                        providerConnectionId: 'pc_direct',
+                        modelId: 'provider-model-direct',
+                    },
+                },
+                resolveLateEnvironment: async () => ({
+                    environmentVariables: {
+                        HAPPIER_CODEX_PROVIDER_API_KEY:
+                            'direct-provider-credential',
+                        [HAPPIER_PROVIDER_BINDING_LAUNCH_MATERIALIZATION_V1_ENV_KEY]:
+                            serializeProviderBindingLaunchHandoffForEnv(
+                                materialization,
+                                metadata,
+                            ),
+                    },
+                    unsetEnvironmentVariables: [],
+                    sensitiveEnvironmentVariableNames: [],
+                }),
+            }),
+        });
+        if (!plan.config.createSessionRuntime) {
+            throw new Error('expected a session runtime factory');
+        }
+
+        const created = await plan.config.createSessionRuntime({
+            directory: '/tmp/acme-runner-direct-provider-agent',
+            metadata: { providerBindingV1: metadata },
+            machineId: 'machine-1',
+            session: createNativeSessionClientTestPort(
+                'session-runner-direct-provider',
+            ),
+            transcriptSession: {},
+            messageBuffer: {},
+            mcpServers: {},
+            permissionHandler: {},
+            getPermissionMode: () => 'default',
+            setThinking: () => undefined,
+            memoryRecallGuidanceEnabled: false,
+        } as never);
+
+        expect(prepareManagedProviderBinding).not.toHaveBeenCalled();
+        expect(createInvocationServices).toHaveBeenCalledOnce();
+        expect(open).toHaveBeenCalledOnce();
         await created.operations.resetOrDisposeRuntime();
     });
 
@@ -2570,7 +4893,8 @@ describe('native Agent session host adapter', () => {
             watch: () => ({ dispose: () => undefined }),
             dispose: vi.fn(),
         }));
-        const createInvocationServices = vi.fn(() => createUnavailablePluginServices());
+        const createInvocationServices =
+            vi.fn(async () => createUnavailablePluginServices());
         const agentId = 'acme-attached-provider-mismatch-agent';
         const contributions = createExternalContributionFixtures(agentId);
         const materialization = Object.freeze({
@@ -2637,12 +4961,10 @@ describe('native Agent session host adapter', () => {
         expect(resolveCurrentSessionUiBinding('session-attached-provider-mismatch')).toBeNull();
     });
 
-    it('projects session-owned hook, transcript-follow, account-usage, auth, and MCP services with host identity and cancellation', async () => {
+    it('projects session-owned hook, transcript-follow, account-usage, and MCP services with host identity and cancellation', async () => {
         const generationAbortController = new AbortController();
-        const callerAbortController = new AbortController();
         const followCallerAbortController = new AbortController();
         let followedSignal: AbortSignal | undefined;
-        let authSignal: AbortSignal | undefined;
         const sessionHooks = {
             startServer: vi.fn(async () => ({
                 port: 4312,
@@ -2670,20 +4992,10 @@ describe('native Agent session host adapter', () => {
         };
         const accountUsage = {
             resolveSourceContext: vi.fn(async () => null),
-            recordSnapshot: vi.fn(async () => ({ status: 'recorded' as const, recordId: 'record-1' })),
+            recordSnapshot: vi.fn(async () => ({ status: 'recorded' as const })),
             adoptProvisionalRecord: vi.fn(async () => ({
                 status: 'adopted' as const,
-                fromRecordId: 'record-1',
-                toRecordId: 'record-2',
             })),
-        };
-        const auth = {
-            services: {
-                refreshRuntimeAuth: vi.fn(async (_request: unknown, options?: Readonly<{ signal?: AbortSignal }>) => {
-                    authSignal = options?.signal;
-                    return { status: 'refreshed' as const };
-                }),
-            },
         };
         const resolveForSession = vi.fn(async () => [{
             id: 'remote-tools',
@@ -2709,9 +5021,6 @@ describe('native Agent session host adapter', () => {
                 resolveSourceContext(input: Readonly<Record<string, unknown>>, options?: Readonly<{ signal?: AbortSignal }>): Promise<unknown>;
                 recordSnapshot(input: Readonly<Record<string, unknown>>, options?: Readonly<{ signal?: AbortSignal }>): Promise<unknown>;
                 adoptProvisionalRecord(input: Readonly<Record<string, unknown>>, options?: Readonly<{ signal?: AbortSignal }>): Promise<unknown>;
-            }>;
-            auth: Readonly<{
-                refreshRuntimeAuth(input: Readonly<Record<string, unknown>>, options?: Readonly<{ signal?: AbortSignal }>): Promise<unknown>;
             }>;
             mcp: Readonly<{
                 resolveServers(options?: Readonly<{ signal?: AbortSignal }>): Promise<readonly unknown[]>;
@@ -2746,14 +5055,18 @@ describe('native Agent session host adapter', () => {
                     await services.accountUsage.recordSnapshot({ snapshot: { providerId: 'anthropic' } });
                     await services.accountUsage.adoptProvisionalRecord({
                         adoption: {
-                            providerId: 'untrusted-provider',
                             fromRecordId: 'record-1',
                             toRecordId: 'record-2',
+                            stableRecordKey: {
+                                providerId: 'openai-codex',
+                                accountSubjectId: 'acct-1',
+                                subjectKind: 'account',
+                                quotaScope: 'account',
+                            },
+                            proof: { kind: 'provider_account_id_match' },
+                            observedAtMs: 1,
                         },
                     });
-                    await services.auth.refreshRuntimeAuth({
-                        serviceId: 'anthropic',
-                    }, { signal: callerAbortController.signal });
                     resolvedMcp = await services.mcp.resolveServers();
                     return {
                         send: vi.fn(async () => ({ status: 'admitted' as const })),
@@ -2782,7 +5095,6 @@ describe('native Agent session host adapter', () => {
                 sessionHooks,
                 transcripts: { fileFollow },
                 accountUsage,
-                auth,
                 mcp: { resolveForSession },
             }),
             generationSignal: generationAbortController.signal,
@@ -2822,11 +5134,7 @@ describe('native Agent session host adapter', () => {
         }), expect.objectContaining({ signal: expect.any(AbortSignal) }));
         expect(accountUsage.adoptProvisionalRecord).toHaveBeenCalledWith(expect.objectContaining({
             sessionId: 'session-services',
-            adoption: expect.objectContaining({ providerId: agentId }),
-        }), expect.objectContaining({ signal: expect.any(AbortSignal) }));
-        expect(auth.services.refreshRuntimeAuth).toHaveBeenCalledWith(expect.objectContaining({
-            agentId,
-            serviceId: 'anthropic',
+            adoption: expect.objectContaining({ providerId: 'openai-codex' }),
         }), expect.objectContaining({ signal: expect.any(AbortSignal) }));
         expect(resolveForSession).toHaveBeenCalledWith({
             sessionId: 'session-services',
@@ -2840,10 +5148,6 @@ describe('native Agent session host adapter', () => {
         expect(followedSignal).toBeDefined();
         expect(followedSignal).not.toBe(contextSignal);
         expect(followedSignal?.aborted).toBe(false);
-        expect(authSignal).toBeDefined();
-        expect(authSignal).not.toBe(callerAbortController.signal);
-        callerAbortController.abort(new Error('caller stopped'));
-        expect(authSignal?.aborted).toBe(true);
 
         const mcpCallerAbortController = new AbortController();
         mcpCallerAbortController.abort(new Error('MCP caller stopped'));
@@ -2902,9 +5206,64 @@ describe('native Agent session host adapter', () => {
         } as never);
 
         generationAbortController.abort(new Error('plugin generation retired'));
-        await expect(projectedMcp?.resolveServers()).rejects.toThrow('plugin generation retired');
+        await expect(projectedMcp?.resolveServers()).rejects.toMatchObject({
+            name: 'PluginError',
+            code: 'plugin_generation_stale',
+        });
         expect(resolveForSession).not.toHaveBeenCalled();
         await created.operations.resetOrDisposeRuntime();
+    });
+
+    it('rejects MCP resolution that settles after the exact session is no longer current', async () => {
+        let current = true;
+        let settleResolution!: (servers: readonly ResolvedSessionMcpServer[]) => void;
+        const resolveForSession = vi.fn(() => new Promise<readonly ResolvedSessionMcpServer[]>((resolve) => {
+            settleResolution = resolve;
+        }));
+        const services = createNativeAgentSessionHostServices({
+            owners: Object.freeze({
+                ...createSessionHostServiceOwners(),
+                mcp: Object.freeze({ resolveForSession }),
+            }),
+            agentId: 'acme-currentness-agent',
+            sessionId: 'currentness-session',
+            directory: '/tmp/acme-currentness-agent',
+            signal: new AbortController().signal,
+            isCurrent: () => current,
+            session: {
+                sessionId: 'currentness-session',
+                updateMetadata: async () => undefined,
+                enqueueAgentMessageCommitted: async () => undefined,
+            } as never,
+            publications: {
+                models: Object.freeze({}),
+                activeInput: Object.freeze({}),
+            } as never,
+            readToolExecutionCapability: () => null,
+        });
+
+        const pending = services.mcp.resolveServers();
+        await Promise.resolve();
+        expect(resolveForSession).toHaveBeenCalledWith({
+            sessionId: 'currentness-session',
+            directory: '/tmp/acme-currentness-agent',
+        });
+
+        current = false;
+        settleResolution([{
+            id: 'remote-tools',
+            name: 'Remote tools',
+            transport: { kind: 'http', url: 'https://mcp.example.test/tools' },
+            scope: {
+                sessionId: 'currentness-session',
+                directory: '/tmp/acme-currentness-agent',
+            },
+        }]);
+
+        await expect(pending).rejects.toMatchObject({
+            name: 'PluginError',
+            code: 'plugin_generation_stale',
+        });
     });
 
     it('publishes generated media once through the stable current-session service and fences stale generations', async () => {
@@ -2956,6 +5315,7 @@ describe('native Agent session host adapter', () => {
             } as never);
 
             if (!capturedContext.current) throw new Error('expected an Agent session context');
+            if (!capturedContext.current.services.sessions.current) throw new Error('expected the current Session handle');
             await writeFile(join(sourceRoot, 'generated.png'), 'generated');
             const source = await capturedContext.current.services.sessions.current.media.registerSourceRoot({
                 rootPath: sourceRoot,
@@ -2970,14 +5330,18 @@ describe('native Agent session host adapter', () => {
             await expect(source.publishGenerated({
                 localId: 'native-generated-stale',
                 path: join(sourceRoot, 'stale.png'),
-            })).rejects.toThrow('media_session_scope_forbidden');
+            })).rejects.toMatchObject({
+                code: 'plugin_session_media_scope_retired',
+            });
 
             current = true;
             await created.operations.resetOrDisposeRuntime();
             await expect(source.publishGenerated({
                 localId: 'native-generated-disposed',
                 path: join(sourceRoot, 'disposed.png'),
-            })).rejects.toThrow('media_source_root_revoked');
+            })).rejects.toMatchObject({
+                code: 'plugin_session_media_scope_retired',
+            });
             expect(sendAgentSessionMediaCommitted).toHaveBeenCalledTimes(1);
         });
     });
@@ -3162,7 +5526,7 @@ describe('native Agent session host adapter', () => {
         });
     });
 
-    it('composes a managed-dependency public ACP session through the mature subprocess boundary', async () => {
+    it('awaits PluginServices before opening the real Codex ACP factory', async () => {
         await withTempDir('happier-public-agent-acp-', async (directory) => {
             const scriptPath = writeAcpTestAgentScript({
                 dir: directory,
@@ -3193,17 +5557,22 @@ describe('native Agent session host adapter', () => {
             let composedSession: AgentSessionRuntime | null = null;
             const generationController = new AbortController();
             const invocationServices = createUnavailablePluginServices();
+            const events: string[] = [];
+            let finishPreparingServices: (() => void) | null = null;
+            const servicesPrepared = new Promise<void>((resolve) => {
+                finishPreparingServices = resolve;
+            });
             const exec = createStablePluginExecService({
                 allowedExecutables: [{
                     kind: 'managedDependency',
-                    id: 'fixture-acp',
+                    id: 'codex-acp',
                 }],
                 signal: generationController.signal,
                 isGenerationCurrent: () => !generationController.signal.aborted,
                 async resolveExecutable(executable) {
                     expect(executable).toEqual({
                         kind: 'managedDependency',
-                        id: 'fixture-acp',
+                        id: 'codex-acp',
                     });
                     return {
                         command: process.execPath,
@@ -3215,24 +5584,73 @@ describe('native Agent session host adapter', () => {
                     throw new Error('path resolution was not expected');
                 },
             });
-            const runtime: AgentRuntime = {
-                sessions: {
-                    open: async (request, context) => {
-                        composedSession = await context.protocols.acp.open(request, {
-                            transport: {
-                                kind: 'stdio',
-                                executable: { kind: 'managedDependency', id: 'fixture-acp' },
-                            },
-                        });
-                        return composedSession;
-                    },
+            const agentId = 'codex';
+            const createCodexAgentRuntime =
+                await loadRealAgentRuntimeFactory(
+                    'packages/plugins/codex/src/agent/runtime/engine.ts',
+                    'createCodexAgentRuntime',
+                );
+            const externalContributions =
+                createExternalContributionFixtures(agentId);
+            const contributions = {
+                backend: {
+                    ...externalContributions.backend,
+                    provenance: 'first_party',
+                    source: { kind: 'bundled' },
+                    pluginId: 'happier.agent.codex',
                 },
-            };
-            const agentId = 'acme-public-acp-agent';
-            const contributions = createExternalContributionFixtures(agentId);
+                agent: {
+                    ...externalContributions.agent,
+                    provenance: 'first_party',
+                    source: { kind: 'bundled' },
+                    richDefinition: {
+                        ...externalContributions.agent.richDefinition!,
+                        provenance: 'first_party',
+                    },
+                    pluginId: 'happier.agent.codex',
+                },
+            } satisfies Readonly<{
+                backend: ResolvedAgentRuntimeContribution;
+                agent: ResolvedAgentContribution;
+            }>;
+            const lease = {
+                ...createLease(agentId),
+                pluginId: 'happier.agent.codex',
+            } satisfies AgentRuntimeRegistrationLease;
             const plan = await createNativeAgentRuntimeSessionPlan({
-                runtime,
-                lease: createLease(agentId),
+                createRuntime: async ({ signal }) => {
+                    events.push('create-runtime');
+                    const runtime = await createCodexAgentRuntime({
+                        plugin: {
+                            id: 'happier.agent.codex',
+                            version: '0.0.0',
+                        },
+                        agent: { id: agentId },
+                        signal,
+                    });
+                    if (!runtime.sessions) {
+                        throw new Error(
+                            'Real Codex factory did not expose sessions',
+                        );
+                    }
+                    const sessions = runtime.sessions;
+                    return {
+                        ...runtime,
+                        sessions: {
+                            ...sessions,
+                            open: async (request, context) => {
+                                events.push('open');
+                                composedSession =
+                                    await sessions.open(request, context);
+                                return composedSession;
+                            },
+                        },
+                    };
+                },
+                authorizeNewTurn: async () => ({
+                    status: 'admitted' as const,
+                }),
+                lease,
                 backend: contributions.backend,
                 agent: contributions.agent,
                 createSessionHostServiceOwners: () => createSessionHostServiceOwners(),
@@ -3240,16 +5658,57 @@ describe('native Agent session host adapter', () => {
                     credentials,
                     directory,
                     backendTarget: { kind: 'backend', backendId: agentId },
+                    sessionConfigOptionOverrides: {
+                        v: 1,
+                        updatedAt: 1,
+                        overrides: {
+                            codexBackendMode: {
+                                value: 'acp',
+                                updatedAt: 1,
+                            },
+                        },
+                    },
                 }),
-                createInvocationServices: () => Object.freeze({
-                    ...invocationServices,
-                    exec,
-                }),
+                createInvocationServices: async () => {
+                    events.push('prepare-services');
+                    await servicesPrepared;
+                    events.push('services-ready');
+                    return Object.freeze({
+                        ...invocationServices,
+                        connectedAccounts: Object.freeze({
+                            ...invocationServices.connectedAccounts,
+                            getBinding: async () => null,
+                            watch: (
+                                _purpose: Parameters<
+                                    HostPluginServices[
+                                        'connectedAccounts'
+                                    ]['watch']
+                                >[0],
+                                listener: Parameters<
+                                    HostPluginServices[
+                                        'connectedAccounts'
+                                    ]['watch']
+                                >[1],
+                            ): ReturnType<
+                                HostPluginServices[
+                                    'connectedAccounts'
+                                ]['watch']
+                            > => {
+                                queueMicrotask(() => {
+                                    void listener({ kind: 'resync' });
+                                });
+                                return { dispose: () => undefined };
+                            },
+                        }),
+                        exec,
+                    });
+                },
                 generationSignal: generationController.signal,
             });
 
             if (!plan.config.createSessionRuntime) throw new Error('expected a session runtime factory');
-            const created = await plan.config.createSessionRuntime({
+            const createSession =
+                plan.config.createSessionRuntime({
                 directory,
                 metadata: {},
                 machineId: 'machine-1',
@@ -3262,7 +5721,26 @@ describe('native Agent session host adapter', () => {
                 setThinking: () => undefined,
                 memoryRecallGuidanceEnabled: false,
             } as never);
+            await vi.waitFor(() => {
+                expect(events).toEqual(['prepare-services']);
+            });
+            expect(composedSession).toBeNull();
+            const finishServices:
+                unknown = finishPreparingServices;
+            if (typeof finishServices !== 'function') {
+                throw new Error(
+                    'Expected PluginServices preparation release',
+                );
+            }
+            finishServices();
+            const created = await createSession;
 
+            expect(events).toEqual([
+                'prepare-services',
+                'services-ready',
+                'create-runtime',
+                'open',
+            ]);
             expect(releaseExecutable).not.toHaveBeenCalled();
             expect(composedSession).not.toBeNull();
             let timeoutId: ReturnType<typeof setTimeout> | null = null;
@@ -3285,6 +5763,267 @@ describe('native Agent session host adapter', () => {
             }
             expect(releaseExecutable).toHaveBeenCalledOnce();
         });
+    });
+
+    it('awaits PluginServices before opening the real Claude native factory and fails before either effect', async () => {
+        const directory = '/tmp/happier-real-claude-runner';
+        const events: string[] = [];
+        let finishPreparingServices: (() => void) | null = null;
+        const servicesPrepared = new Promise<void>((resolve) => {
+            finishPreparingServices = resolve;
+        });
+        const invocationServices = createUnavailablePluginServices();
+        const processExit = new Promise<never>(() => undefined);
+        const processHandle: PluginProtocolClientHandle<'jsonStream'> = {
+            client: {
+                async write() {},
+                subscribe() {
+                    return { dispose: () => undefined };
+                },
+                async dispose() {},
+            },
+            process: {
+                async write() {},
+                async closeStdin() {},
+                wait: () => processExit,
+                onOutput: () => ({ dispose: () => undefined }),
+                async dispose() {},
+            },
+            wait: () => processExit,
+            async dispose() {},
+        };
+        const agentId = 'claude';
+        const createClaudeAgentRuntime =
+            await loadRealAgentRuntimeFactory(
+                'packages/plugins/claude/src/agent/runtime/nativeRuntime.ts',
+                'createClaudeAgentRuntime',
+            );
+        const externalContributions =
+            createExternalContributionFixtures(agentId);
+        const contributions = {
+            backend: {
+                ...externalContributions.backend,
+                provenance: 'first_party',
+                source: { kind: 'bundled' },
+                pluginId: 'happier.agent.claude',
+            },
+            agent: {
+                ...externalContributions.agent,
+                provenance: 'first_party',
+                source: { kind: 'bundled' },
+                richDefinition: {
+                    ...externalContributions.agent.richDefinition!,
+                    provenance: 'first_party',
+                },
+                pluginId: 'happier.agent.claude',
+            },
+        } satisfies Readonly<{
+            backend: ResolvedAgentRuntimeContribution;
+            agent: ResolvedAgentContribution;
+        }>;
+        const lease = {
+            ...createLease(agentId),
+            pluginId: 'happier.agent.claude',
+        } satisfies AgentRuntimeRegistrationLease;
+        const createRuntime = vi.fn(async ({ signal }: Readonly<{
+            signal: AbortSignal;
+        }>) => {
+            events.push('create-runtime');
+            const runtime = await createClaudeAgentRuntime({
+                plugin: {
+                    id: 'happier.agent.claude',
+                    version: '0.0.0',
+                },
+                agent: { id: agentId },
+                signal,
+            });
+            if (!runtime.sessions) {
+                throw new Error(
+                    'Real Claude factory did not expose sessions',
+                );
+            }
+            const sessions = runtime.sessions;
+            return {
+                ...runtime,
+                sessions: {
+                    ...sessions,
+                    open: async (
+                        request: Parameters<
+                            NonNullable<AgentRuntime['sessions']>['open']
+                        >[0],
+                        context: Parameters<
+                            NonNullable<AgentRuntime['sessions']>['open']
+                        >[1],
+                    ) => {
+                        events.push('open');
+                        return await sessions.open(request, context);
+                    },
+                },
+            };
+        });
+        const buildPlan = async (
+            createInvocationServices:
+                Parameters<
+                    typeof createNativeAgentRuntimeSessionPlan
+                >[0]['createInvocationServices'],
+        ) => await createNativeAgentRuntimeSessionPlan({
+            createRuntime,
+            authorizeNewTurn: async () => ({
+                status: 'admitted' as const,
+            }),
+            lease,
+            backend: contributions.backend,
+            agent: contributions.agent,
+            createSessionHostServiceOwners: () =>
+                createSessionHostServiceOwners(),
+            sessionInput: buildPluginSessionBindingInput({
+                credentials,
+                directory,
+                backendTarget: {
+                    kind: 'backend',
+                    backendId: agentId,
+                },
+            }),
+            ...(createInvocationServices
+                ? { createInvocationServices }
+                : {}),
+        });
+        const plan = await buildPlan(async () => {
+            events.push('prepare-services');
+            await servicesPrepared;
+            events.push('services-ready');
+            return Object.freeze({
+                ...invocationServices,
+                settings: Object.freeze({
+                    ...invocationServices.settings,
+                    get: async () => null,
+                }),
+                connectedAccounts: Object.freeze({
+                    ...invocationServices.connectedAccounts,
+                    getBinding: async () => null,
+                    watch: (
+                        _purpose: Parameters<
+                            HostPluginServices[
+                                'connectedAccounts'
+                            ]['watch']
+                        >[0],
+                        listener: Parameters<
+                            HostPluginServices[
+                                'connectedAccounts'
+                            ]['watch']
+                        >[1],
+                    ): ReturnType<
+                        HostPluginServices[
+                            'connectedAccounts'
+                        ]['watch']
+                    > => {
+                        queueMicrotask(() => {
+                            void listener({ kind: 'resync' });
+                        });
+                        return { dispose: () => undefined };
+                    },
+                }),
+                exec: Object.freeze({
+                    ...invocationServices.exec,
+                    systemTools: Object.freeze({
+                        resolve: async () => Object.freeze({
+                            executable: Object.freeze({
+                                kind: 'systemTool' as const,
+                                id: 'claude-cli',
+                            }),
+                            executablePath: '/managed/claude',
+                        }),
+                    }),
+                    // Claude opens only JSON-stream here; keep the generic
+                    // protocol-client boundary cast inside this test fixture.
+                    clients: Object.freeze({
+                        spawn: async () => processHandle,
+                    }) as unknown as HostPluginServices['exec']['clients'],
+                }),
+            });
+        });
+        if (!plan.config.createSessionRuntime) {
+            throw new Error('expected a session runtime factory');
+        }
+        const createSession = plan.config.createSessionRuntime({
+            directory,
+            metadata: {},
+            machineId: 'machine-1',
+            session: createNativeSessionClientTestPort(
+                'host-session-claude',
+            ),
+            transcriptSession: {},
+            messageBuffer: {},
+            mcpServers: {},
+            permissionHandler: {},
+            getPermissionMode: () => 'default',
+            setThinking: () => undefined,
+            memoryRecallGuidanceEnabled: false,
+        } as never);
+        await vi.waitFor(() => {
+            expect(events).toEqual(['prepare-services']);
+        });
+        expect(createRuntime).not.toHaveBeenCalled();
+        const finishServices: unknown = finishPreparingServices;
+        if (typeof finishServices !== 'function') {
+            throw new Error(
+                'Expected PluginServices preparation release',
+            );
+        }
+        finishServices();
+        const created = await createSession;
+        expect(events).toEqual([
+            'prepare-services',
+            'services-ready',
+            'create-runtime',
+            'open',
+        ]);
+        await created.operations.resetOrDisposeRuntime();
+
+        const blockedCreateRuntime = vi.fn(createRuntime);
+        const blockedPlan = await createNativeAgentRuntimeSessionPlan({
+            createRuntime: blockedCreateRuntime,
+            authorizeNewTurn: async () => ({
+                status: 'admitted' as const,
+            }),
+            lease,
+            backend: contributions.backend,
+            agent: contributions.agent,
+            createSessionHostServiceOwners: () =>
+                createSessionHostServiceOwners(),
+            sessionInput: buildPluginSessionBindingInput({
+                credentials,
+                directory,
+                backendTarget: {
+                    kind: 'backend',
+                    backendId: agentId,
+                },
+            }),
+            createInvocationServices: async () => {
+                throw new Error('PluginServices preparation failed');
+            },
+        });
+        if (!blockedPlan.config.createSessionRuntime) {
+            throw new Error('expected a blocked session runtime factory');
+        }
+        await expect(
+            blockedPlan.config.createSessionRuntime({
+                directory,
+                metadata: {},
+                machineId: 'machine-1',
+                session: createNativeSessionClientTestPort(
+                    'host-session-claude-blocked',
+                ),
+                transcriptSession: {},
+                messageBuffer: {},
+                mcpServers: {},
+                permissionHandler: {},
+                getPermissionMode: () => 'default',
+                setThinking: () => undefined,
+                memoryRecallGuidanceEnabled: false,
+            } as never),
+        ).rejects.toThrow('PluginServices preparation failed');
+        expect(blockedCreateRuntime).not.toHaveBeenCalled();
     });
 
     it('rejects resume before invoking a create-only native Agent session contribution', async () => {
@@ -3347,12 +6086,38 @@ describe('native Agent session host adapter', () => {
         const contributions = createExternalContributionFixtures(agentId);
         const handleToolCall = vi.fn(async () => ({ decision: 'denied' as const }));
         const cancelByPlugin = vi.fn(async () => undefined);
+        const operationServices = createUnavailablePluginServices();
+        const currentGlobalExternalSessions = Object.freeze({
+            ...operationServices.sessions.external,
+        });
         const plan = await createNativeAgentRuntimeSessionPlan({
             runtime,
             lease: createLease(agentId),
             backend: contributions.backend,
             agent: contributions.agent,
             createSessionHostServiceOwners: () => createSessionHostServiceOwners(),
+            createInvocationServices: async (input) => {
+                const interactions = createPluginInteractionsService({
+                    currentSession: input.session.current,
+                    signal: input.signal,
+                    isGenerationCurrent: () => true,
+                });
+                return Object.freeze({
+                    ...operationServices,
+                    availability: (
+                        serviceId: Parameters<HostPluginServices['availability']>[0],
+                    ) => (
+                        serviceId === 'sessions' || serviceId === 'interactions'
+                            ? Object.freeze({ status: 'available' as const })
+                            : operationServices.availability(serviceId)
+                    ),
+                    sessions: Object.freeze({
+                        ...operationServices.sessions,
+                        external: currentGlobalExternalSessions,
+                    }),
+                    interactions,
+                });
+            },
             sessionInput: buildPluginSessionBindingInput({
                 credentials,
                 directory: '/tmp/acme-current-agent',
@@ -3397,39 +6162,40 @@ describe('native Agent session host adapter', () => {
         if (!capturedContext.current) throw new Error('expected an Agent session context');
         const hostServices = readHostServices(capturedContext.current);
         expect(capturedContext.current.services.availability('sessions')).toEqual({ status: 'available' });
-        expect(capturedContext.current.services.sessions.current.availability()).toEqual({ status: 'available' });
+        expect(capturedContext.current.services.availability('interactions')).toEqual({ status: 'unavailable' });
         expect(capturedContext.current.services.sessions.subagents.capabilities().observe).toEqual({
             status: 'unavailable',
-            code: 'plugin_subagent_durable_custody_unavailable',
+            code: 'plugin_subagent_durable_custody_unverified',
         });
         await expect(capturedContext.current.services.sessions.subagents.observe({
             observationId: 'worker-1',
             status: 'running',
-        })).rejects.toMatchObject({ code: 'plugin_subagent_durable_custody_unavailable' });
-        expect(hostServices.sessions.external.capabilities().list).toEqual({
-            status: 'unavailable',
-            code: 'plugin_external_list_unavailable',
-        });
-        await expect(capturedContext.current.ui.confirm(
-            'Continue with the operation?',
-            { title: 'Continue?' },
-        )).resolves.toBe(false);
-        expect(handleToolCall).toHaveBeenCalledWith(
-            expect.any(String),
-            'AgentConfirmation',
+        })).rejects.toMatchObject({ code: 'plugin_subagent_credentials_unavailable' });
+        const publicExternalSessions = hostServices.sessions.external as object;
+        expect(publicExternalSessions).toBe(currentGlobalExternalSessions);
+        expect(Reflect.ownKeys(publicExternalSessions).sort()).toEqual([
+            'attach',
+            'capabilities',
+            'followTranscript',
+            'list',
+            'readTranscript',
+            'takeover',
+        ]);
+        for (const methodName of Reflect.ownKeys(publicExternalSessions)) {
+            expect(Reflect.get(publicExternalSessions, methodName)).toEqual(expect.any(Function));
+        }
+        expect(hostServices.sessions.current).not.toBeNull();
+        expect(Reflect.get(publicExternalSessions, 'resolveFollowTarget')).toBeUndefined();
+        await expect(capturedContext.current.services.interactions.confirm(
             {
+                kind: 'confirmation',
                 title: 'Continue?',
                 message: 'Continue with the operation?',
             },
-            expect.objectContaining({
-                owner: { kind: 'plugin', pluginId: 'acme.agent-plugin', runtimeId: agentId },
-                signal: expect.any(AbortSignal),
-            }),
-        );
+        )).resolves.toMatchObject({ kind: 'confirmation', status: 'unavailable' });
+        expect(handleToolCall).not.toHaveBeenCalled();
         if (!created.nativeRuntime) throw new Error('expected the native session runtime');
-        const subscribeCanonical = created.nativeRuntime.subscribeCanonicalAgentSessionEvents;
-        if (!subscribeCanonical) throw new Error('expected canonical native session events');
-        subscribeCanonical(() => undefined);
+        created.nativeRuntime.subscribeRuntimeEvents(() => undefined);
         for (const listener of nativeEventListeners) {
             listener({
                 sequence: 1,
@@ -3534,7 +6300,7 @@ describe('native Agent session host adapter', () => {
         await created.operations.resetOrDisposeRuntime();
     });
 
-    it('composes qualified host takeover with list, transcript, and canonical host follow', async () => {
+    it('keeps the private External Sessions service out of the public Agent context', async () => {
         const capturedContext: { current: AgentSessionRuntimeContext | null } = { current: null };
         const session: AgentSessionRuntime = {
             send: vi.fn(async () => ({ status: 'admitted' as const })),
@@ -3555,10 +6321,6 @@ describe('native Agent session host adapter', () => {
             status: 'following' as const,
             startingCursor: 'tail-1',
             subscription: Object.freeze({ dispose: disposeFollow }),
-        }));
-        const executeTakeover = vi.fn(async () => ({
-            sessionId: 'linked-session-1',
-            status: 'takenOver' as const,
         }));
         const base = createExternalContributionFixtures(agentId);
         const agent: ResolvedAgentContribution = {
@@ -3618,7 +6380,6 @@ describe('native Agent session host adapter', () => {
                 bindSession: vi.fn(() => Object.freeze({
                     executeFollow,
                     executeProviderSessionFollow: executeFollow,
-                    executeTakeover,
                     retire: async () => undefined,
                 })),
             }),
@@ -3645,41 +6406,19 @@ describe('native Agent session host adapter', () => {
 
         if (!capturedContext.current) throw new Error('expected an Agent session context');
         const hostServices = readHostServices(capturedContext.current);
-        expect(hostServices.sessions.external.capabilities()).toMatchObject({
-            list: { status: 'available' },
-            transcript: { status: 'available' },
-            attach: { status: 'available' },
-            takeover: { status: 'available' },
-            follow: { status: 'available' },
-        });
-        const listed = await hostServices.sessions.external.list();
-        expect(listed).toMatchObject({
-            items: [expect.objectContaining({
-                ref: expect.objectContaining({ remoteSessionId: 'remote-1' }),
-                capabilities: ['attach', 'takeover', 'transcript', 'follow'],
-            })],
-        });
-        const listedRef = listed.items[0]?.ref;
-        if (!listedRef) throw new Error('expected configured external-session candidate');
-        await expect(hostServices.sessions.external.takeover(listedRef)).resolves.toEqual({
-            sessionId: 'linked-session-1',
-            status: 'takenOver',
-        });
-        expect(executeTakeover).toHaveBeenCalledWith(expect.objectContaining({
-            ref: listedRef,
-            source: { kind: 'syntheticFollowSource' },
-        }));
-        const follow = await hostServices.sessions.external.followTranscript({
-            ref: listedRef,
-            source: { kind: 'syntheticFollowSource' },
-        }, {}, vi.fn());
-        expect(follow).toMatchObject({ status: 'following', startingCursor: 'tail-1' });
-        if (follow.status === 'following') await follow.subscription.dispose();
-        expect(executeFollow).toHaveBeenCalledWith(expect.objectContaining({
-            ref: listedRef,
-            source: { kind: 'syntheticFollowSource' },
-        }));
-        expect(disposeFollow).toHaveBeenCalledOnce();
+        const publicExternalSessions = hostServices.sessions.external as object;
+        expect(Reflect.ownKeys(publicExternalSessions).sort()).toEqual([
+            'attach',
+            'capabilities',
+            'followTranscript',
+            'list',
+            'readTranscript',
+            'takeover',
+        ]);
+        expect(Reflect.get(publicExternalSessions, 'resolveFollowTarget')).toBeUndefined();
+        expect(Reflect.get(publicExternalSessions, 'followTranscript')).toEqual(expect.any(Function));
+        expect(executeFollow).not.toHaveBeenCalled();
+        expect(disposeFollow).not.toHaveBeenCalled();
     });
 
     it('exposes typed unavailability when no current-session interaction owner exists', async () => {
@@ -3690,19 +6429,20 @@ describe('native Agent session host adapter', () => {
             runtimeId: 'acme-agent',
             sessionId: 'session-1',
             generationId: 'generation-1',
+            isCurrent: () => true,
         });
 
         expect(services.availability('sessions')).toEqual(expect.objectContaining({ status: 'unavailable' }));
+        expect(services.availability('interactions')).toEqual({ status: 'unavailable' });
+        expect(services.sessions.current).toBeNull();
 
-        await expect(services.sessions.current.interactions.request({
-            kind: 'confirmation',
-            requestId: 'confirmation-unavailable',
+        await expect(services.interactions.requestApproval({
+            kind: 'approval',
             title: 'Continue?',
-            message: 'Continue?',
+            subject: { kind: 'tool', name: 'Continue', input: {} },
         })).resolves.toEqual(expect.objectContaining({
-            kind: 'confirmation',
+            kind: 'approval',
             status: 'unavailable',
-            diagnostic: expect.objectContaining({ code: 'agent_session_interaction_unavailable' }),
         }));
     });
 
@@ -3748,12 +6488,23 @@ describe('native Agent session host adapter', () => {
 
         await expect(runtime.sendTurnPrompt(
             'hello',
-            { localId: 'input-1', turnId: 'turn-1' },
+            {
+                localId: 'input-1',
+                turnId: 'turn-1',
+                causalPermissionAuthority: {
+                    kind: 'admittedSessionInputV1',
+                    admittedPermissionCeiling: 'read-only',
+                },
+            },
         )).resolves.toBeUndefined();
         expect(send).toHaveBeenCalledWith({
             inputIds: ['input-1'],
             input: { text: 'hello' },
             delivery: { kind: 'newTurn', turnId: 'turn-1' },
+            causalPermissionAuthority: {
+                kind: 'admittedSessionInputV1',
+                admittedPermissionCeiling: 'read-only',
+            },
         });
 
         for (const listener of listeners) {
@@ -3767,17 +6518,234 @@ describe('native Agent session host adapter', () => {
         }
         expect(runtime.readSessionIdentity()).toEqual({ sessionId: 'provider-session-1' });
         expect(events).toEqual([expect.objectContaining({
-            kind: 'session-id-publish',
-            publishedSessionId: 'provider-session-1',
+            kind: 'provider-session-id',
+            providerSessionId: 'provider-session-1',
         })]);
         unsubscribe();
         await runtime.resetOrDisposeRuntime('session_closed');
         expect(disposeRuntimeScope).toHaveBeenCalledOnce();
     });
 
-    it('projects only the safe native failure classification into the durable runtime issue', () => {
+    it('keeps the host active-turn authority independent when a native plugin mutates its send payload', async () => {
+        let readActiveTurnAdmissionWitness:
+            (() => NativeAgentNewTurnAdmissionWitness | null)
+            | null = null;
+        let observedHostAuthority: NativeAgentNewTurnAdmissionWitness['causalPermissionAuthority']
+            | null = null;
+        const session: AgentSessionRuntime = {
+            send: vi.fn(async (request) => {
+                if (!request.causalPermissionAuthority) {
+                    throw new Error('expected plugin-visible causal authority');
+                }
+                Object.assign(request.causalPermissionAuthority, {
+                    admittedPermissionCeiling: 'yolo' as const,
+                });
+                observedHostAuthority = readActiveTurnAdmissionWitness?.()
+                    ?.causalPermissionAuthority
+                    ?? null;
+                return { status: 'admitted' as const };
+            }),
+            watch() {
+                return { dispose: () => undefined };
+            },
+            dispose: vi.fn(),
+        };
+        const runtime = createNativeAgentSessionOperations(
+            session,
+            'session-causal-snapshot',
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            [],
+            undefined,
+            undefined,
+            undefined,
+            (reader) => {
+                readActiveTurnAdmissionWitness = reader;
+            },
+        );
+
+        await expect(runtime.sendTurnPrompt('hello', {
+            localId: 'input-causal-snapshot',
+            turnId: 'turn-causal-snapshot',
+            causalPermissionAuthority: {
+                kind: 'admittedSessionInputV1',
+                admittedPermissionCeiling: 'read-only',
+            },
+        })).resolves.toBeUndefined();
+
+        expect(observedHostAuthority).toEqual({
+            kind: 'admittedSessionInputV1',
+            admittedPermissionCeiling: 'read-only',
+        });
+        expect(Object.isFrozen(observedHostAuthority)).toBe(true);
+    });
+
+    it('replaces the host active-turn authority for steers without sharing plugin payloads or stale authority', async () => {
+        const listeners = new Set<(event: AgentSessionRuntimeEvent) => void>();
+        let readActiveTurnAdmissionWitness:
+            (() => NativeAgentNewTurnAdmissionWitness | null)
+            | null = null;
+        const observedHostWitnesses: Array<NativeAgentNewTurnAdmissionWitness | null> = [];
+        let sequence = 0;
+        const session: AgentSessionRuntime = {
+            send: vi.fn<AgentSessionRuntime['send']>(async (request) => {
+                if (request.delivery.kind === 'newTurn') {
+                    for (const listener of listeners) {
+                        listener({
+                            sequence: ++sequence,
+                            sessionId: 'session-causal-steer-snapshot',
+                            emittedAtMs: sequence,
+                            kind: 'input-accepted',
+                            inputIds: request.inputIds,
+                            delivery: request.delivery,
+                        });
+                        listener({
+                            sequence: ++sequence,
+                            sessionId: 'session-causal-steer-snapshot',
+                            emittedAtMs: sequence,
+                            kind: 'turn-start',
+                            turnId: request.delivery.turnId,
+                            startedBy: 'host',
+                        });
+                    }
+                } else if (request.input.text === 'rejected elevated steer') {
+                    return {
+                        status: 'unavailable' as const,
+                        diagnostic: { code: 'native_steer_unavailable', severity: 'warning' as const },
+                        retryable: true,
+                    };
+                } else {
+                    if (request.causalPermissionAuthority) {
+                        Object.assign(request.causalPermissionAuthority, {
+                            admittedPermissionCeiling: 'yolo' as const,
+                        });
+                        if (request.causalPermissionAuthority.sourceAuthority) {
+                            Object.assign(request.causalPermissionAuthority.sourceAuthority, {
+                                mediatorPluginId: 'happier.attacker',
+                            });
+                        }
+                    }
+                    observedHostWitnesses.push(readActiveTurnAdmissionWitness?.() ?? null);
+                }
+                return { status: 'admitted' as const };
+            }),
+            watch(listener) {
+                listeners.add(listener);
+                return { dispose: () => { listeners.delete(listener); } };
+            },
+            dispose: vi.fn(),
+        };
+        const runtime = createNativeAgentSessionOperations(
+            session,
+            'session-causal-steer-snapshot',
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            [],
+            undefined,
+            undefined,
+            undefined,
+            (reader) => {
+                readActiveTurnAdmissionWitness = reader;
+            },
+        );
+
+        await runtime.sendTurnPrompt('initial', {
+            localId: 'input-causal-steer-initial',
+            turnId: 'turn-causal-steer-snapshot',
+            causalPermissionAuthority: {
+                kind: 'admittedSessionInputV1',
+                admittedPermissionCeiling: 'yolo',
+            },
+        });
+        await runtime.steerInFlightTurn('narrowed steer', {
+            localId: 'input-causal-steer-narrowed',
+            causalPermissionAuthority: {
+                kind: 'admittedSessionInputV1',
+                admittedPermissionCeiling: 'read-only',
+                sourceAuthority: {
+                    kind: 'mediatedExternal',
+                    mediatorPluginId: 'happier.channels',
+                    sourceRef: 'binding-1',
+                    sourceRevisionOrEpoch: 'rev-1',
+                    admittedPermissionCeiling: 'read-only',
+                    remoteApprovalMaxScope: 'request',
+                },
+            },
+        });
+        await expect(runtime.steerInFlightTurn('rejected elevated steer', {
+            localId: 'input-causal-steer-rejected',
+            causalPermissionAuthority: {
+                kind: 'admittedSessionInputV1',
+                admittedPermissionCeiling: 'yolo',
+            },
+        })).rejects.toThrow("rejected steer with status 'unavailable'");
+        expect(requireActiveTurnAdmissionWitnessReader(
+            readActiveTurnAdmissionWitness,
+        )()).toEqual({
+            inputId: 'input-causal-steer-narrowed',
+            turnId: 'turn-causal-steer-snapshot',
+            userMessageSeq: null,
+            userMessageSeqs: [],
+            causalPermissionAuthority: {
+                kind: 'admittedSessionInputV1',
+                admittedPermissionCeiling: 'read-only',
+                sourceAuthority: {
+                    kind: 'mediatedExternal',
+                    mediatorPluginId: 'happier.channels',
+                    sourceRef: 'binding-1',
+                    sourceRevisionOrEpoch: 'rev-1',
+                    admittedPermissionCeiling: 'read-only',
+                    remoteApprovalMaxScope: 'request',
+                },
+            },
+        });
+        await runtime.steerInFlightTurn('legacy steer without authority', {
+            localId: 'input-causal-steer-legacy',
+        });
+
+        expect(observedHostWitnesses).toEqual([{
+            inputId: 'input-causal-steer-narrowed',
+            turnId: 'turn-causal-steer-snapshot',
+            userMessageSeq: null,
+            userMessageSeqs: [],
+            causalPermissionAuthority: {
+                kind: 'admittedSessionInputV1',
+                admittedPermissionCeiling: 'read-only',
+                sourceAuthority: {
+                    kind: 'mediatedExternal',
+                    mediatorPluginId: 'happier.channels',
+                    sourceRef: 'binding-1',
+                    sourceRevisionOrEpoch: 'rev-1',
+                    admittedPermissionCeiling: 'read-only',
+                    remoteApprovalMaxScope: 'request',
+                },
+            },
+        }, {
+            inputId: 'input-causal-steer-legacy',
+            turnId: 'turn-causal-steer-snapshot',
+            userMessageSeq: null,
+            userMessageSeqs: [],
+        }]);
+        expect(Object.isFrozen(observedHostWitnesses[0])).toBe(true);
+        expect(Object.isFrozen(observedHostWitnesses[0]?.causalPermissionAuthority)).toBe(true);
+        expect(Object.isFrozen(observedHostWitnesses[0]?.causalPermissionAuthority?.sourceAuthority)).toBe(true);
+    });
+
+    it('projects redacted native failure diagnostics into public Host Events and listeners', () => {
         const providerMessageSentinel = 'VOICE_PRIVATE_MESSAGE_SENTINEL: user transcript';
         const providerAdditionalDetailsSentinel = 'VOICE_PRIVATE_DETAILS_SENTINEL: startup instructions';
+        const spoofedAgentId = 'SPOOFED_NATIVE_DIAGNOSTIC_AGENT';
+        const spoofedAgentTurnId = 'SPOOFED_NATIVE_DIAGNOSTIC_TURN';
         const listeners = new Set<(event: AgentSessionRuntimeEvent) => void>();
         const session: AgentSessionRuntime = {
             send: vi.fn(async () => ({ status: 'admitted' as const })),
@@ -3787,7 +6755,24 @@ describe('native Agent session host adapter', () => {
             },
             dispose: vi.fn(),
         };
-        const runtime = createNativeAgentSessionOperations(session, 'session-privacy');
+        const hostEvents: unknown[] = [];
+        const runtime = createNativeAgentSessionOperations(
+            session,
+            'session-privacy',
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            [],
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            (event) => hostEvents.push(event),
+        );
         const events: unknown[] = [];
         runtime.subscribeRuntimeEvents((event) => events.push(event));
 
@@ -3802,6 +6787,7 @@ describe('native Agent session host adapter', () => {
             });
         }
         events.length = 0;
+        hostEvents.length = 0;
 
         for (const listener of listeners) {
             listener({
@@ -3814,7 +6800,12 @@ describe('native Agent session host adapter', () => {
                     code: 'codex_app_server_turn_failed',
                     severity: 'error',
                     message: 'Codex app-server turn failed.',
+                    remediation: { kind: 'retry' },
                     details: {
+                        v: 1,
+                        source: 'permission_blocked',
+                        agentId: spoofedAgentId,
+                        agentTurnId: spoofedAgentTurnId,
                         errorClass: 'CodexAppServerTurnFailure',
                         runtimeIssueSource: 'agent_session_error',
                         providerMessage: providerMessageSentinel,
@@ -3824,24 +6815,474 @@ describe('native Agent session host adapter', () => {
             });
         }
 
-        expect(events).toEqual([{
+        const expectedPublicEvents = [{
             sessionId: 'session-privacy',
             emittedAtMs: 7,
-            ordering: 2,
+            sequence: 2,
             kind: 'turn-failed',
             turnId: 'turn-private',
-            issue: {
-                v: 1,
-                scope: 'primary_session',
-                status: 'failed',
+            diagnostic: {
                 code: 'codex_app_server_turn_failed',
-                source: 'agent_session_error',
-                occurredAt: 7,
-                sanitizedPreview: 'Codex app-server turn failed.',
+                severity: 'error',
+                message: 'Codex app-server turn failed.',
+                remediation: { kind: 'retry' },
+                details: { v: 1, source: 'permission_blocked' },
             },
-        }]);
+        }];
+        expect(events).toEqual(expectedPublicEvents);
+        expect(hostEvents).toEqual(expectedPublicEvents);
         expect(JSON.stringify(events)).not.toContain(providerMessageSentinel);
         expect(JSON.stringify(events)).not.toContain(providerAdditionalDetailsSentinel);
+        expect(JSON.stringify(events)).not.toContain(spoofedAgentId);
+        expect(JSON.stringify(events)).not.toContain(spoofedAgentTurnId);
+        expect(JSON.stringify(hostEvents)).not.toContain(providerMessageSentinel);
+        expect(JSON.stringify(hostEvents)).not.toContain(providerAdditionalDetailsSentinel);
+        expect(JSON.stringify(hostEvents)).not.toContain(spoofedAgentId);
+        expect(JSON.stringify(hostEvents)).not.toContain(spoofedAgentTurnId);
+    });
+
+    it('preserves a native session auth diagnostic while stripping spoofed detail fields', () => {
+        const listeners = new Set<(event: AgentSessionRuntimeEvent) => void>();
+        const session: AgentSessionRuntime = {
+            send: vi.fn(async () => ({ status: 'admitted' as const })),
+            watch(listener) {
+                listeners.add(listener);
+                return { dispose: () => { listeners.delete(listener); } };
+            },
+            dispose: vi.fn(),
+        };
+        const runtime = createNativeAgentSessionOperations(session, 'session-auth-source');
+        const events: unknown[] = [];
+        runtime.subscribeRuntimeEvents((event) => events.push(event));
+
+        for (const listener of listeners) {
+            listener({
+                sequence: 1,
+                sessionId: 'session-auth-source',
+                emittedAtMs: 11,
+                kind: 'turn-start',
+                turnId: 'turn-auth-source',
+                startedBy: 'provider',
+            });
+        }
+        events.length = 0;
+
+        for (const listener of listeners) {
+            listener({
+                sequence: 2,
+                sessionId: 'session-auth-source',
+                emittedAtMs: 12,
+                kind: 'turn-failed',
+                turnId: 'turn-auth-source',
+                diagnostic: {
+                    code: 'native_provider_session_error',
+                    severity: 'error',
+                    message: 'Token refresh failed: 401',
+                    details: {
+                        v: 1,
+                        source: 'auth_error',
+                        agentId: 'SPOOFED_NATIVE_AUTH_AGENT',
+                    },
+                },
+            });
+        }
+
+        expect(events).toEqual([expect.objectContaining({
+            kind: 'turn-failed',
+            turnId: 'turn-auth-source',
+            diagnostic: {
+                code: 'native_provider_session_error',
+                severity: 'error',
+                message: 'Token refresh failed: 401',
+                details: {
+                    v: 1,
+                    source: 'auth_error',
+                },
+            },
+        })]);
+        expect(JSON.stringify(events)).not.toContain('SPOOFED_NATIVE_AUTH_AGENT');
+    });
+
+    it('preserves bounded native diagnostics while redacting private detail bags in public Host Events and listeners', async () => {
+        const providerMessageSentinel = 'NATIVE_PRIVATE_MESSAGE_SENTINEL: user transcript';
+        const providerAdditionalDetailsSentinel = 'NATIVE_PRIVATE_DETAILS_SENTINEL: startup instructions';
+        const spoofedAgentId = 'SPOOFED_NATIVE_DIAGNOSTIC_AGENT';
+        const spoofedAgentTurnId = 'SPOOFED_NATIVE_DIAGNOSTIC_TURN';
+        type RuntimeDiagnostic = Extract<
+            AgentSessionRuntimeEvent,
+            { kind: 'turn-failed' }
+        >['diagnostic'];
+
+        const privateDiagnostic = (params: Readonly<{
+            code: string;
+            severity: RuntimeDiagnostic['severity'];
+            message: string;
+            remediation: NonNullable<RuntimeDiagnostic['remediation']>;
+            source: string;
+        }>): RuntimeDiagnostic => ({
+            code: params.code,
+            severity: params.severity,
+            message: params.message,
+            remediation: params.remediation,
+            details: {
+                v: 1,
+                source: params.source,
+                providerMessage: providerMessageSentinel,
+                providerAdditionalDetails: providerAdditionalDetailsSentinel,
+                agentId: spoofedAgentId,
+                agentTurnId: spoofedAgentTurnId,
+            },
+        });
+        const createHarness = (sessionId: string) => {
+            const nativeListeners = new Set<(event: AgentSessionRuntimeEvent) => void>();
+            const session: AgentSessionRuntime = {
+                send: vi.fn(async () => ({ status: 'admitted' as const })),
+                watch(listener) {
+                    nativeListeners.add(listener);
+                    return { dispose: () => { nativeListeners.delete(listener); } };
+                },
+                dispose: vi.fn(),
+            };
+            const hostEvents: unknown[] = [];
+            const listenerEvents: unknown[] = [];
+            const runtime = createNativeAgentSessionOperations(
+                session,
+                sessionId,
+                undefined,
+                undefined,
+                undefined,
+                undefined,
+                undefined,
+                undefined,
+                undefined,
+                [],
+                undefined,
+                undefined,
+                undefined,
+                undefined,
+                (event) => hostEvents.push(event),
+            );
+            runtime.subscribeRuntimeEvents((event) => listenerEvents.push(event));
+            return {
+                runtime,
+                hostEvents,
+                listenerEvents,
+                publish(event: AgentSessionRuntimeEvent): void {
+                    for (const listener of nativeListeners) listener(event);
+                },
+                clear(): void {
+                    hostEvents.length = 0;
+                    listenerEvents.length = 0;
+                },
+            };
+        };
+        const readDiagnostic = (event: AgentSessionRuntimeEvent): RuntimeDiagnostic => {
+            switch (event.kind) {
+                case 'input-rejected':
+                case 'turn-failed':
+                    return event.diagnostic;
+                case 'input-custody-unknown':
+                case 'input-delivery-failed':
+                    return event.issue;
+                case 'turn-cancelled':
+                case 'runtime-ended':
+                    if (event.diagnostic) return event.diagnostic;
+                    break;
+                case 'context-compaction':
+                    if ('diagnostic' in event && event.diagnostic) return event.diagnostic;
+                    break;
+                default:
+                    break;
+            }
+            throw new Error(`expected a diagnostic-bearing event, received '${event.kind}'`);
+        };
+        const assertProjection = (
+            hostEvents: readonly unknown[],
+            listenerEvents: readonly unknown[],
+            expectedKind: string,
+            expected: RuntimeDiagnostic,
+            expectedSource: string | null,
+        ): void => {
+            expect(hostEvents).toEqual(listenerEvents);
+            expect(listenerEvents).toHaveLength(1);
+            const event = AgentSessionRuntimeEventSchema.parse(listenerEvents[0]);
+            expect(event.kind).toBe(expectedKind);
+            expect(readDiagnostic(event)).toEqual({
+                code: expected.code,
+                severity: expected.severity,
+                ...(expected.message !== undefined ? { message: expected.message } : {}),
+                ...(expected.remediation !== undefined ? { remediation: expected.remediation } : {}),
+                ...(expectedSource === null ? {} : { details: { v: 1, source: expectedSource } }),
+            });
+            const serialized = JSON.stringify({ hostEvents, listenerEvents });
+            expect(serialized).not.toContain(providerMessageSentinel);
+            expect(serialized).not.toContain(providerAdditionalDetailsSentinel);
+            expect(serialized).not.toContain(spoofedAgentId);
+            expect(serialized).not.toContain(spoofedAgentTurnId);
+        };
+
+        const rejectedDiagnostic = privateDiagnostic({
+            code: 'native_input_rejected',
+            severity: 'warning',
+            message: 'The native runtime rejected the input.',
+            remediation: { kind: 'retry' },
+            source: 'permission_blocked',
+        });
+        const rejected = createHarness('session-diagnostic-input-rejected');
+        await rejected.runtime.sendTurnPrompt('rejected input', {
+            localId: 'input-diagnostic-rejected',
+            turnId: 'turn-diagnostic-rejected',
+        });
+        rejected.clear();
+        rejected.publish({
+            sequence: 1,
+            sessionId: 'session-diagnostic-input-rejected',
+            emittedAtMs: 1,
+            kind: 'input-rejected',
+            inputIds: ['input-diagnostic-rejected'],
+            diagnostic: rejectedDiagnostic,
+            retryable: true,
+        });
+        assertProjection(
+            rejected.hostEvents,
+            rejected.listenerEvents,
+            'input-rejected',
+            rejectedDiagnostic,
+            'permission_blocked',
+        );
+
+        const custodyDiagnostic = privateDiagnostic({
+            code: 'native_outcome_unknown',
+            severity: 'warning',
+            message: 'The native runtime cannot confirm input custody.',
+            remediation: { kind: 'retry' },
+            source: 'unknown',
+        });
+        const custody = createHarness('session-diagnostic-input-custody');
+        await custody.runtime.sendTurnPrompt('uncertain input', {
+            localId: 'input-diagnostic-custody',
+            turnId: 'turn-diagnostic-custody',
+        });
+        custody.clear();
+        custody.publish({
+            sequence: 1,
+            sessionId: 'session-diagnostic-input-custody',
+            emittedAtMs: 1,
+            kind: 'input-custody-unknown',
+            inputIds: ['input-diagnostic-custody'],
+            issue: custodyDiagnostic,
+        });
+        assertProjection(
+            custody.hostEvents,
+            custody.listenerEvents,
+            'input-custody-unknown',
+            custodyDiagnostic,
+            'unknown',
+        );
+
+        const deliveryDiagnostic = privateDiagnostic({
+            code: 'native_delivery_failed',
+            severity: 'error',
+            message: 'The native runtime could not deliver the input.',
+            remediation: { kind: 'installDependency', dependencyId: 'native-runtime' },
+            source: 'dependency_failure',
+        });
+        const delivery = createHarness('session-diagnostic-input-delivery');
+        await delivery.runtime.sendTurnPrompt('failed delivery', {
+            localId: 'input-diagnostic-delivery',
+            turnId: 'turn-diagnostic-delivery',
+        });
+        delivery.clear();
+        delivery.publish({
+            sequence: 1,
+            sessionId: 'session-diagnostic-input-delivery',
+            emittedAtMs: 1,
+            kind: 'input-delivery-failed',
+            inputIds: ['input-diagnostic-delivery'],
+            delivery: { kind: 'newTurn', turnId: 'turn-diagnostic-delivery' },
+            issue: deliveryDiagnostic,
+            duplicateRisk: 'possible',
+        });
+        assertProjection(
+            delivery.hostEvents,
+            delivery.listenerEvents,
+            'input-delivery-failed',
+            deliveryDiagnostic,
+            'dependency_failure',
+        );
+
+        const failedDiagnostic = privateDiagnostic({
+            code: 'native_turn_failed',
+            severity: 'error',
+            message: 'The native turn failed.',
+            remediation: { kind: 'retry' },
+            source: 'agent_session_error',
+        });
+        const failed = createHarness('session-diagnostic-turn-failed');
+        failed.publish({
+            sequence: 1,
+            sessionId: 'session-diagnostic-turn-failed',
+            emittedAtMs: 1,
+            kind: 'turn-start',
+            turnId: 'turn-diagnostic-failed',
+            startedBy: 'provider',
+        });
+        failed.clear();
+        failed.publish({
+            sequence: 2,
+            sessionId: 'session-diagnostic-turn-failed',
+            emittedAtMs: 2,
+            kind: 'turn-failed',
+            turnId: 'turn-diagnostic-failed',
+            diagnostic: failedDiagnostic,
+        });
+        assertProjection(
+            failed.hostEvents,
+            failed.listenerEvents,
+            'turn-failed',
+            failedDiagnostic,
+            'agent_session_error',
+        );
+
+        const cancelledDiagnostic = privateDiagnostic({
+            code: 'native_turn_cancelled',
+            severity: 'warning',
+            message: 'The native turn was cancelled.',
+            remediation: { kind: 'openUrl', url: 'https://example.test/native-runtime/retry' },
+            source: 'stream_error',
+        });
+        const cancelled = createHarness('session-diagnostic-turn-cancelled');
+        cancelled.publish({
+            sequence: 1,
+            sessionId: 'session-diagnostic-turn-cancelled',
+            emittedAtMs: 1,
+            kind: 'turn-start',
+            turnId: 'turn-diagnostic-cancelled',
+            startedBy: 'provider',
+        });
+        cancelled.clear();
+        cancelled.publish({
+            sequence: 2,
+            sessionId: 'session-diagnostic-turn-cancelled',
+            emittedAtMs: 2,
+            kind: 'turn-cancelled',
+            turnId: 'turn-diagnostic-cancelled',
+            cause: 'providerCancelled',
+            diagnostic: cancelledDiagnostic,
+        });
+        assertProjection(
+            cancelled.hostEvents,
+            cancelled.listenerEvents,
+            'turn-cancelled',
+            cancelledDiagnostic,
+            'stream_error',
+        );
+
+        const runtimeEndedDiagnostic = privateDiagnostic({
+            code: 'pi_rpc_unexpected_exit',
+            severity: 'error',
+            message: 'The Pi RPC process exited unexpectedly.',
+            remediation: { kind: 'openSettings', path: 'agents.pi.runtime' },
+            source: 'agent_process_exit',
+        });
+        const runtimeEnded = createHarness('session-diagnostic-runtime-ended');
+        runtimeEnded.publish({
+            sequence: 1,
+            sessionId: 'session-diagnostic-runtime-ended',
+            emittedAtMs: 1,
+            kind: 'runtime-ended',
+            cause: 'processExited',
+            retryable: false,
+            diagnostic: runtimeEndedDiagnostic,
+        });
+        assertProjection(
+            runtimeEnded.hostEvents,
+            runtimeEnded.listenerEvents,
+            'runtime-ended',
+            runtimeEndedDiagnostic,
+            'agent_process_exit',
+        );
+
+        const compactionFailedDiagnostic = privateDiagnostic({
+            code: 'native_compaction_failed',
+            severity: 'error',
+            message: 'The native compaction failed.',
+            remediation: {
+                kind: 'selectAccount',
+                service: { pluginId: 'happier.agent.native', localId: 'native' },
+            },
+            source: 'agent_status_error',
+        });
+        const compactionFailed = createHarness('session-diagnostic-compaction-failed');
+        compactionFailed.publish({
+            sequence: 1,
+            sessionId: 'session-diagnostic-compaction-failed',
+            emittedAtMs: 1,
+            kind: 'context-compaction',
+            compactionId: 'compaction-diagnostic-failed',
+            phase: 'failed',
+            trigger: 'manual',
+            diagnostic: compactionFailedDiagnostic,
+        });
+        assertProjection(
+            compactionFailed.hostEvents,
+            compactionFailed.listenerEvents,
+            'context-compaction',
+            compactionFailedDiagnostic,
+            'agent_status_error',
+        );
+
+        const compactionCancelledDiagnostic = privateDiagnostic({
+            code: 'native_compaction_cancelled',
+            severity: 'info',
+            message: 'The native compaction was cancelled.',
+            remediation: { kind: 'retry' },
+            source: 'unbounded_private_source',
+        });
+        const compactionCancelled = createHarness('session-diagnostic-compaction-cancelled');
+        compactionCancelled.publish({
+            sequence: 1,
+            sessionId: 'session-diagnostic-compaction-cancelled',
+            emittedAtMs: 1,
+            kind: 'context-compaction',
+            compactionId: 'compaction-diagnostic-cancelled',
+            phase: 'cancelled',
+            trigger: 'manual',
+            diagnostic: compactionCancelledDiagnostic,
+        });
+        assertProjection(
+            compactionCancelled.hostEvents,
+            compactionCancelled.listenerEvents,
+            'context-compaction',
+            compactionCancelledDiagnostic,
+            null,
+        );
+
+        const compactionOutcomeUnknownDiagnostic = privateDiagnostic({
+            code: 'native_compaction_outcome_unknown',
+            severity: 'warning',
+            message: 'The native compaction outcome is unknown.',
+            remediation: { kind: 'openSettings', path: 'agents.native.compaction' },
+            source: 'unknown',
+        });
+        const compactionOutcomeUnknown = createHarness('session-diagnostic-compaction-outcome-unknown');
+        compactionOutcomeUnknown.publish({
+            sequence: 1,
+            sessionId: 'session-diagnostic-compaction-outcome-unknown',
+            emittedAtMs: 1,
+            kind: 'context-compaction',
+            compactionId: 'compaction-diagnostic-outcome-unknown',
+            phase: 'outcomeUnknown',
+            trigger: 'manual',
+            diagnostic: compactionOutcomeUnknownDiagnostic,
+        });
+        assertProjection(
+            compactionOutcomeUnknown.hostEvents,
+            compactionOutcomeUnknown.listenerEvents,
+            'context-compaction',
+            compactionOutcomeUnknownDiagnostic,
+            'unknown',
+        );
     });
 
     it('shares concurrent disposal completion while invoking native and host cleanup exactly once', async () => {
@@ -3916,6 +7357,7 @@ describe('native Agent session host adapter', () => {
         const bindActiveInput = () => activeInputService.bind({
             isTurnInFlight: () => true,
             canSteer: () => true,
+            canInterruptForPendingInput: () => false,
             onPromptQueued: queued,
             applyPermissionIntentDuringTurn,
             clearTerminalComposer,
@@ -3982,6 +7424,7 @@ describe('native Agent session host adapter', () => {
             supportsInFlightSteer(): boolean;
             isTurnInFlight(): boolean;
             canSteerPrompt(): boolean;
+            canInterruptForPendingInput(): boolean;
             notifyPromptQueuedDuringTurn(): void;
             applyConfigDeltaInFlight(delta: Readonly<{ permissionMode: string }>): Promise<unknown>;
             clearTerminalComposer(request: Readonly<{ sessionId: string; expectedStateAtMs?: number }>): Promise<unknown>;
@@ -3999,6 +7442,7 @@ describe('native Agent session host adapter', () => {
         expect(nativeRuntime.supportsInFlightSteer()).toBe(true);
         expect(nativeRuntime.isTurnInFlight()).toBe(true);
         expect(nativeRuntime.canSteerPrompt()).toBe(true);
+        expect(nativeRuntime.canInterruptForPendingInput()).toBe(false);
         nativeRuntime.notifyPromptQueuedDuringTurn();
         expect(queued).toHaveBeenCalledOnce();
         await expect(nativeRuntime.applyConfigDeltaInFlight({ permissionMode: 'safe-yolo' }))
@@ -4045,6 +7489,16 @@ describe('native Agent session host adapter', () => {
 
         activeInputBinding.dispose();
         expect(nativeRuntime.supportsInFlightSteer()).toBe(false);
+        activeInputBinding = activeInputService.bind({
+            isTurnInFlight: () => true,
+            canSteer: () => true,
+            onPromptQueued: queued,
+            applyPermissionIntentDuringTurn,
+            clearTerminalComposer,
+            interruptPendingInputAndRun,
+        });
+        expect(nativeRuntime.canInterruptForPendingInput()).toBe(true);
+        activeInputBinding.dispose();
         activeInputBinding = bindActiveInput();
         expect(nativeRuntime.supportsInFlightSteer()).toBe(true);
         await nativeRuntime.resetOrDisposeRuntime();
@@ -4077,8 +7531,8 @@ describe('native Agent session host adapter', () => {
         expect(watch).toHaveBeenCalledOnce();
         expect(runtime.readSessionIdentity()).toEqual({ sessionId: 'provider-session-buffered' });
         expect(events).toEqual([expect.objectContaining({
-            kind: 'session-id-publish',
-            publishedSessionId: 'provider-session-buffered',
+            kind: 'provider-session-id',
+            providerSessionId: 'provider-session-buffered',
         })]);
     });
 
@@ -4100,7 +7554,42 @@ describe('native Agent session host adapter', () => {
                 enqueueSessionTurnMutation: (mutation) => { mutations.push(mutation); },
             },
         });
-        const runtime = createNativeAgentSessionOperations(session, 'session-checkpoint');
+        const runtime = createNativeAgentSessionOperations(
+            session,
+            'session-checkpoint',
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            [],
+            {
+                onTurnTerminal: () => undefined,
+                onRollbackBoundary: ({ event, startUserMessageSeq }) => {
+                    mutations.push({
+                        v: 1,
+                        sessionId: 'session-checkpoint',
+                        mutationId: `test-rollback-${event.sequence}`,
+                        observedAt: event.emittedAtMs,
+                        agentId: 'codex',
+                        action: 'mark_rollback_eligible',
+                        turnId: event.turnId,
+                        ...(event.agentTurnId ? { agentTurnId: event.agentTurnId } : {}),
+                        ...(typeof event.agentRollbackOrdinal === 'number'
+                            ? { agentRollbackOrdinal: event.agentRollbackOrdinal }
+                            : {}),
+                        transcriptAnchors: {
+                            startUserMessageSeq,
+                            ...(event.providerCheckpoint !== undefined
+                                ? { providerCheckpoint: event.providerCheckpoint }
+                                : {}),
+                        },
+                    });
+                },
+            },
+        );
         runtime.subscribeRuntimeEvents((event) => {
             if (!('kind' in event)) return;
             lifecycle.observeRuntimeEvent(event);
@@ -4599,7 +8088,7 @@ describe('native Agent session host adapter', () => {
         },
     );
 
-    it('fences a native runtime-ended fact without durably ending the Happier session', async () => {
+    it('fences a native runtime-ended fact while preserving its safe issue for the next attempted turn', async () => {
         const listeners = new Set<(event: AgentSessionRuntimeEvent) => void>();
         const cancel = vi.fn<NonNullable<AgentSessionRuntime['cancel']>>(async (request) => ({
             status: 'requested',
@@ -4665,12 +8154,44 @@ describe('native Agent session host adapter', () => {
                 kind: 'runtime-ended',
                 cause: 'providerEnded',
                 retryable: false,
+                diagnostic: {
+                    code: 'pi_rpc_unexpected_exit',
+                    severity: 'error',
+                    message: 'Pi RPC process exited after authentication failed',
+                },
             });
         }
 
-        expect(eventKinds).toEqual(['turn-start', 'turn-complete']);
+        runtime.beginTurnLifecycle();
+        let nextTurnError: unknown;
+        try {
+            await runtime.sendTurnPrompt(
+                'retry after process exit',
+                { localId: 'queue-local-after-runtime-ended', turnId: 'turn-after-runtime-ended' },
+            );
+        } catch (error) {
+            nextTurnError = error;
+        }
+
+        expect(nextTurnError).toBeInstanceOf(Error);
+        expect(nextTurnError).toMatchObject({
+            message: expect.stringContaining('agent_session_error'),
+        });
+        expect((nextTurnError as Error).message).not.toContain('pi_rpc_unexpected_exit');
+        expect(classifyPrimarySessionRuntimeIssue({
+            cause: 'session_error',
+            error: nextTurnError,
+            occurredAt: 5,
+        })).toMatchObject({
+            source: 'agent_session_error',
+            occurredAt: 5,
+        });
+        await expect(runtime.waitForTurnCompletion({ timeoutMs: 25 }))
+            .rejects.toBe(nextTurnError);
+        expect(eventKinds).toEqual(['input-accepted', 'turn-start', 'turn-complete', 'runtime-ended']);
         expect(mutations.map((mutation) => mutation.action)).toEqual(['begin', 'complete']);
         expect(mutations).not.toContainEqual(expect.objectContaining({ action: 'end_session' }));
+        expect(session.send).toHaveBeenCalledTimes(1);
         await expect(runtime.cancelTurn()).resolves.toBeUndefined();
         expect(cancel).not.toHaveBeenCalled();
     });
@@ -4686,12 +8207,10 @@ describe('native Agent session host adapter', () => {
             dispose: vi.fn(),
         };
         const runtime = createNativeAgentSessionOperations(session, 'session-1');
-        const legacyEvents: Array<{ kind: string; turnId?: string }> = [];
         const canonicalEvents: Array<{ kind: string; turnId?: string }> = [];
         runtime.subscribeRuntimeEvents((event) => {
-            if ('kind' in event) legacyEvents.push(event);
+            if ('kind' in event) canonicalEvents.push(event);
         });
-        runtime.subscribeCanonicalAgentSessionEvents?.((event) => canonicalEvents.push(event));
         const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
 
         const publish = (event: AgentSessionRuntimeEvent): void => {
@@ -4838,19 +8357,94 @@ describe('native Agent session host adapter', () => {
                 ['turn-complete', 'turn-2'],
                 ['runtime-ended', undefined],
             ]);
-            expect(legacyEvents.map((event) => [event.kind, event.turnId])).toEqual([
-                ['session-id-publish', undefined],
-                ['turn-start', 'turn-1'],
-                ['message-delta', 'turn-1'],
-                ['turn-complete', 'turn-1'],
-                ['turn-start', 'turn-2'],
-                ['turn-complete', 'turn-2'],
-            ]);
             expect(runtime.readSessionIdentity()).toEqual({ sessionId: 'provider-session-1' });
             expect(warn).toHaveBeenCalledTimes(9);
         } finally {
             warn.mockRestore();
         }
+    });
+
+    it('observes canonical Agent tool results once with their correlated accepted input', async () => {
+        const listeners = new Set<(event: AgentSessionRuntimeEvent) => void>();
+        const session: AgentSessionRuntime = {
+            send: vi.fn(async () => ({ status: 'admitted' as const })),
+            watch(listener) {
+                listeners.add(listener);
+                return { dispose: () => { listeners.delete(listener); } };
+            },
+            dispose: vi.fn(),
+        };
+        const observeAfter = vi.fn(async () => undefined);
+        const runtime = createNativeAgentSessionOperations(
+            session,
+            'session-1',
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            { capability: 'observable', observeAfter },
+        );
+        runtime.subscribeRuntimeEvents(() => undefined);
+        const publish = (event: AgentSessionRuntimeEvent): void => {
+            for (const listener of listeners) listener(event);
+        };
+
+        publish({
+            sequence: 1,
+            sessionId: 'session-1',
+            emittedAtMs: 1,
+            kind: 'turn-start',
+            turnId: 'turn-1',
+            startedBy: 'provider',
+        });
+        publish({
+            sequence: 2,
+            sessionId: 'session-1',
+            emittedAtMs: 2,
+            kind: 'tool-call',
+            turnId: 'turn-1',
+            toolCallId: 'call-1',
+            toolName: 'Bash',
+            input: { command: 'pwd' },
+        });
+        publish({
+            sequence: 3,
+            sessionId: 'session-1',
+            emittedAtMs: 3,
+            kind: 'tool-result',
+            turnId: 'turn-1',
+            toolCallId: 'call-1',
+            output: { stdout: '/workspace' },
+        });
+        publish({
+            sequence: 4,
+            sessionId: 'session-1',
+            emittedAtMs: 4,
+            kind: 'tool-result',
+            turnId: 'turn-1',
+            toolCallId: 'call-1',
+            output: { stdout: 'duplicate' },
+        });
+
+        await vi.waitFor(() => expect(observeAfter).toHaveBeenCalledOnce());
+        expect(observeAfter).toHaveBeenCalledWith({
+            turnId: 'turn-1',
+            callId: 'call-1',
+            name: 'Bash',
+            input: { command: 'pwd' },
+            outcome: { status: 'succeeded', result: { stdout: '/workspace' } },
+            timestampMs: 3,
+        });
+        await runtime.resetOrDisposeRuntime('runtime_recovery');
     });
 
     it('cancels host-owned current-session interactions on every accepted native turn terminal', async () => {
@@ -4945,12 +8539,12 @@ describe('native Agent session host adapter', () => {
         };
         const runtime = createNativeAgentSessionOperations(session, 'session-1');
         const deliveryOutcomes: unknown[] = [];
-        const runtimeEvents: unknown[] = [];
         const canonicalEvents: AgentSessionRuntimeEvent[] = [];
         const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
         runtime.setOnPromptDeliveryOutcome?.((outcome) => deliveryOutcomes.push(outcome));
-        runtime.subscribeRuntimeEvents((event) => runtimeEvents.push(event));
-        runtime.subscribeCanonicalAgentSessionEvents?.((event) => canonicalEvents.push(event));
+        runtime.subscribeRuntimeEvents((event) => {
+            if ('kind' in event) canonicalEvents.push(event);
+        });
 
         await expect(runtime.sendTurnPrompt(
             'hello',
@@ -5027,7 +8621,6 @@ describe('native Agent session host adapter', () => {
             userMessageSeqs: [41],
             delivery: { kind: 'newTurn', turnId: 'turn-1' },
         }]);
-        expect(runtimeEvents).toEqual([]);
         expect(canonicalEvents).not.toContainEqual(expect.objectContaining({
             kind: 'input-accepted',
             delivery: { kind: 'newTurn', turnId: 'conflicting-turn' },
@@ -5209,8 +8802,11 @@ describe('native Agent session host adapter', () => {
         }]);
     });
 
-    it('keeps synchronous steer custody uncertainty authoritative when send returns unavailable', async () => {
+    it('restores the preceding steer witness when custody becomes unknown', async () => {
         const listeners = new Set<(event: AgentSessionRuntimeEvent) => void>();
+        let readActiveTurnAdmissionWitness:
+            (() => NativeAgentNewTurnAdmissionWitness | null)
+            | null = null;
         let sequence = 0;
         const send = vi.fn<AgentSessionRuntime['send']>(async (request) => {
             if (request.delivery.kind === 'newTurn') {
@@ -5258,18 +8854,57 @@ describe('native Agent session host adapter', () => {
             },
             dispose: vi.fn(),
         };
-        const runtime = createNativeAgentSessionOperations(session, 'session-1');
+        const runtime = createNativeAgentSessionOperations(
+            session,
+            'session-1',
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            [],
+            undefined,
+            undefined,
+            undefined,
+            (reader) => {
+                readActiveTurnAdmissionWitness = reader;
+            },
+        );
         const deliveryOutcomes: unknown[] = [];
         runtime.setOnPromptDeliveryOutcome?.((outcome) => deliveryOutcomes.push(outcome));
 
         await runtime.sendTurnPrompt(
             'start turn before steer',
-            { localId: 'queue-local-start', turnId: 'turn-steer-unknown' },
+            {
+                localId: 'queue-local-start',
+                turnId: 'turn-steer-unknown',
+                causalPermissionAuthority: {
+                    kind: 'admittedSessionInputV1',
+                    admittedPermissionCeiling: 'yolo',
+                },
+            },
         );
         await expect(runtime.steerInFlightTurn(
             'steer with unknown custody',
-            { localId: 'queue-local-steer-unknown' },
+            {
+                localId: 'queue-local-steer-unknown',
+                causalPermissionAuthority: {
+                    kind: 'admittedSessionInputV1',
+                    admittedPermissionCeiling: 'read-only',
+                },
+            },
         )).rejects.toThrow("rejected steer with status 'unavailable'");
+
+        expect(send.mock.calls[1]?.[0]).toMatchObject({
+            inputIds: ['queue-local-steer-unknown'],
+            delivery: { kind: 'steer', turnId: 'turn-steer-unknown' },
+            causalPermissionAuthority: {
+                kind: 'admittedSessionInputV1',
+                admittedPermissionCeiling: 'read-only',
+            },
+        });
 
         expect(deliveryOutcomes).toEqual([{
             type: 'input-accepted',
@@ -5282,6 +8917,124 @@ describe('native Agent session host adapter', () => {
             userMessageSeq: null,
             issue: { code: 'native_steer_outcome_unknown', severity: 'warning' },
         }]);
+        expect(requireActiveTurnAdmissionWitnessReader(
+            readActiveTurnAdmissionWitness,
+        )()).toEqual({
+            inputId: 'queue-local-start',
+            turnId: 'turn-steer-unknown',
+            userMessageSeq: null,
+            userMessageSeqs: [],
+            causalPermissionAuthority: {
+                kind: 'admittedSessionInputV1',
+                admittedPermissionCeiling: 'yolo',
+            },
+        });
+    });
+
+    it('restores the preceding steer witness when native send throws before custody can be observed', async () => {
+        const listeners = new Set<(event: AgentSessionRuntimeEvent) => void>();
+        let readActiveTurnAdmissionWitness:
+            (() => NativeAgentNewTurnAdmissionWitness | null)
+            | null = null;
+        let sequence = 0;
+        const send = vi.fn<AgentSessionRuntime['send']>(async (request) => {
+            if (request.delivery.kind === 'newTurn') {
+                for (const listener of listeners) {
+                    listener({
+                        sequence: ++sequence,
+                        sessionId: 'session-1',
+                        emittedAtMs: sequence,
+                        kind: 'input-accepted',
+                        inputIds: request.inputIds,
+                        delivery: request.delivery,
+                    });
+                    listener({
+                        sequence: ++sequence,
+                        sessionId: 'session-1',
+                        emittedAtMs: sequence,
+                        kind: 'turn-start',
+                        turnId: request.delivery.turnId,
+                        startedBy: 'host',
+                    });
+                }
+                return { status: 'admitted' };
+            }
+            throw new Error('native steer write lost');
+        });
+        const session: AgentSessionRuntime = {
+            send,
+            watch(listener) {
+                listeners.add(listener);
+                return { dispose: () => { listeners.delete(listener); } };
+            },
+            dispose: vi.fn(),
+        };
+        const runtime = createNativeAgentSessionOperations(
+            session,
+            'session-1',
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            [],
+            undefined,
+            undefined,
+            undefined,
+            (reader) => {
+                readActiveTurnAdmissionWitness = reader;
+            },
+        );
+        const deliveryOutcomes: unknown[] = [];
+        runtime.setOnPromptDeliveryOutcome?.((outcome) => deliveryOutcomes.push(outcome));
+
+        await runtime.sendTurnPrompt(
+            'start turn before failed steer',
+            {
+                localId: 'queue-local-steer-throw-start',
+                turnId: 'turn-steer-throw',
+                causalPermissionAuthority: {
+                    kind: 'admittedSessionInputV1',
+                    admittedPermissionCeiling: 'yolo',
+                },
+            },
+        );
+        await expect(runtime.steerInFlightTurn(
+            'steer whose write outcome is unknown',
+            {
+                localId: 'queue-local-steer-throw',
+                causalPermissionAuthority: {
+                    kind: 'admittedSessionInputV1',
+                    admittedPermissionCeiling: 'read-only',
+                },
+            },
+        )).rejects.toThrow('native steer write lost');
+
+        expect(deliveryOutcomes).toEqual([{
+            type: 'input-accepted',
+            localId: 'queue-local-steer-throw-start',
+            userMessageSeq: null,
+            delivery: { kind: 'newTurn', turnId: 'turn-steer-throw' },
+        }, {
+            type: 'input-custody-unknown',
+            localId: 'queue-local-steer-throw',
+            userMessageSeq: null,
+            issue: { code: 'native_send_outcome_unknown', severity: 'error' },
+        }]);
+        expect(requireActiveTurnAdmissionWitnessReader(
+            readActiveTurnAdmissionWitness,
+        )()).toEqual({
+            inputId: 'queue-local-steer-throw-start',
+            turnId: 'turn-steer-throw',
+            userMessageSeq: null,
+            userMessageSeqs: [],
+            causalPermissionAuthority: {
+                kind: 'admittedSessionInputV1',
+                admittedPermissionCeiling: 'yolo',
+            },
+        });
     });
 
     it('preserves native delivery-failed evidence and duplicate risk for the exact Queue localId', async () => {
@@ -5631,6 +9384,131 @@ describe('native Agent session host adapter', () => {
         expect(cancel).toHaveBeenCalledWith({ turnId: 'turn-pre-ack', reason: 'user' });
     });
 
+    it('publishes exact terminal pre-provider evidence when daemon admission is unavailable', async () => {
+        const send = vi.fn<AgentSessionRuntime['send']>(async () => ({
+            status: 'admitted',
+        }));
+        const runtime = createNativeAgentSessionOperations(
+            {
+                send,
+                watch: () => ({ dispose: () => undefined }),
+                dispose: vi.fn(),
+            },
+            'session-1',
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            [],
+            undefined,
+            undefined,
+            async () => {
+                throw createNativeAgentSessionEffectBoundaryError(
+                    'authority_unavailable_before_effect',
+                );
+            },
+        );
+        const deliveryOutcomes: unknown[] = [];
+        runtime.setOnPromptDeliveryOutcome?.((outcome) => {
+            deliveryOutcomes.push(outcome);
+        });
+
+        await expect(runtime.sendTurnPrompt(
+            'admit me',
+            {
+                localId: 'queue-local-admission-unavailable',
+                turnId: 'turn-admission-unavailable',
+                userMessageSeq: 42,
+                userMessageSeqs: [42],
+            },
+        )).rejects.toMatchObject({
+            kind: 'authority_unavailable_before_effect',
+        });
+
+        expect(deliveryOutcomes).toEqual([{
+            type: 'input-rejected-before-provider',
+            localId: 'queue-local-admission-unavailable',
+            userMessageSeq: 42,
+            userMessageSeqs: [42],
+            reason: 'provider_unavailable_before_acceptance',
+            diagnostic: {
+                code: 'daemon_turn_admission_unavailable',
+                severity: 'error',
+            },
+            retryable: true,
+            retireLocalCustodyAfterDurableBlock: true,
+        }]);
+        expect(send).not.toHaveBeenCalled();
+    });
+
+    it('aborts in-flight daemon admission and never crosses the Provider boundary after cancellation', async () => {
+        const send = vi.fn<AgentSessionRuntime['send']>(async () => ({
+            status: 'admitted',
+        }));
+        const cancel = vi.fn<NonNullable<AgentSessionRuntime['cancel']>>(
+            async (request) => ({
+                status: 'requested',
+                turnId: request.turnId,
+            }),
+        );
+        let admissionSignal: AbortSignal | null = null;
+        const authorizeNewTurn = vi.fn(
+            async (
+                _witness: NativeAgentNewTurnAdmissionWitness,
+                options: Readonly<{ signal: AbortSignal }>,
+            ) => {
+                admissionSignal = options.signal;
+                await new Promise<never>((_resolve, reject) => {
+                    options.signal.addEventListener(
+                        'abort',
+                        () => reject(options.signal.reason),
+                        { once: true },
+                    );
+                });
+                return { status: 'admitted' as const };
+            },
+        );
+        const runtime = createNativeAgentSessionOperations(
+            {
+                send,
+                cancel,
+                watch: () => ({ dispose: () => undefined }),
+                dispose: vi.fn(),
+            },
+            'session-1',
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            [],
+            undefined,
+            undefined,
+            authorizeNewTurn,
+        );
+        const sending = runtime.sendTurnPrompt(
+            'cancel during admission',
+            {
+                localId: 'queue-local-admission',
+                turnId: 'turn-admission',
+            },
+        );
+
+        await expect(runtime.cancelTurn()).resolves.toBeUndefined();
+        await expect(sending).rejects.toThrow(
+            'cancelled before admission',
+        );
+        expect((admissionSignal as AbortSignal | null)?.aborted)
+            .toBe(true);
+        expect(send).not.toHaveBeenCalled();
+        expect(cancel).not.toHaveBeenCalled();
+    });
+
     it('does not resurrect a synchronously terminal native turn after send resolves', async () => {
         const listeners = new Set<(event: AgentSessionRuntimeEvent) => void>();
         const send = vi.fn<AgentSessionRuntime['send']>(async (request) => {
@@ -5753,6 +9631,487 @@ describe('native Agent session host adapter', () => {
             providerSessionId: 'stale-provider-after-dispose',
         });
         expect(runtime.readSessionIdentity()).toEqual({ sessionId: null });
+    });
+
+    const rejectedStructuredInputCases = [
+        ['a non-JSON structured input value', { invalid: undefined }],
+        [
+            'a structured input value beyond the existing JSON aggregate limit',
+            {
+                payload: 'x'.repeat(
+                    AGENT_SESSION_RUNTIME_LIMITS_CANDIDATE_V1
+                        .p0MeasuredCandidates.jsonValueMaxJsonBytes,
+                ),
+            },
+        ],
+    ] as const;
+
+    it.each(rejectedStructuredInputCases)(
+        'rejects %s before native new-turn delivery instead of omitting it',
+        async (_description, structuredInput) => {
+            const send = vi.fn<AgentSessionRuntime['send']>(async () => ({ status: 'admitted' }));
+            const session: AgentSessionRuntime = {
+                send,
+                watch: () => ({ dispose: () => undefined }),
+                dispose: vi.fn(),
+            };
+            const runtime = createNativeAgentSessionOperations(session, 'session-1');
+
+            await expect(runtime.sendTurnPrompt(
+                'must not dispatch a silently dropped structured input',
+                {
+                    localId: 'queue-local-invalid-new-turn',
+                    turnId: 'turn-invalid-new-turn',
+                    structuredInput,
+                } as unknown as RuntimeTurnPromptMeta,
+            )).rejects.toThrow();
+
+            expect(send).not.toHaveBeenCalled();
+        },
+    );
+
+    it.each(rejectedStructuredInputCases)(
+        'rejects %s before native steer delivery instead of omitting it',
+        async (_description, structuredInput) => {
+            const send = vi.fn<AgentSessionRuntime['send']>(async () => ({ status: 'admitted' }));
+            const session: AgentSessionRuntime = {
+                send,
+                watch: () => ({ dispose: () => undefined }),
+                dispose: vi.fn(),
+            };
+            const runtime = createNativeAgentSessionOperations(session, 'session-1');
+
+            await runtime.sendTurnPrompt('start an active turn', {
+                localId: 'queue-local-valid-new-turn',
+                turnId: 'turn-valid-new-turn',
+            });
+            await expect(runtime.steerInFlightTurn(
+                'must not dispatch a silently dropped structured input',
+                {
+                    localId: 'queue-local-invalid-steer',
+                    structuredInput,
+                } as unknown as RuntimeTurnPromptMeta,
+            )).rejects.toThrow();
+
+            expect(send).toHaveBeenCalledOnce();
+        },
+    );
+});
+
+describe('native Agent terminal transcript follow admission (ES-PEP-03/ES-PEP-05)', () => {
+    type TerminalFollowHarness = Readonly<{
+        modeLoop: NonNullable<Awaited<ReturnType<
+            NonNullable<Awaited<ReturnType<typeof createNativeAgentRuntimeSessionPlan>>['config']['createSessionRuntime']>
+        >>['terminalRemoteModeLoop']>;
+        terminalLaunch: ReturnType<typeof vi.fn>;
+        executeProviderSessionFollow: ReturnType<typeof vi.fn>;
+    }>;
+
+    async function createTerminalFollowHarness(options: Readonly<{
+        agentId: string;
+        declaresTerminalFollow?: boolean;
+        loadCommittedBaseline?: () => Promise<Readonly<{
+            localIds: Set<string>;
+            complete: boolean;
+        }>>;
+        providerSessionFollow: (
+            request: Readonly<{
+                listener: (
+                    event: HostExternalTranscriptFollowEvent,
+                ) => void | Promise<void>;
+            }>,
+        ) => Promise<unknown>;
+        launch: (request: HostTerminalLaunchRequest) => Promise<unknown>;
+    }>): Promise<TerminalFollowHarness> {
+        const base = createExternalContributionFixtures(options.agentId);
+        // Without `declaresTerminalFollow` the fixture carries no
+        // `surfaces.externalSession` at all: the shape of every shipped Agent
+        // plugin today, none of which declares terminal follow. With it, the
+        // Agent carries the cold `terminalFollow.userRowClassification` opt-in
+        // that makes terminal follow a launch precondition (ES-PEP-03/05).
+        const agent = options.declaresTerminalFollow
+            ? {
+                ...base.agent,
+                richDefinition: {
+                    ...base.agent.richDefinition,
+                    definition: {
+                        ...base.agent.richDefinition.definition,
+                        surfaces: {
+                            externalSession: {
+                                sources: [{
+                                    sourceKind: 'terminal',
+                                    terminalFollow: {
+                                        userRowClassification: 'explicitV1',
+                                    },
+                                    schema: {
+                                        fields: [{
+                                            name: 'kind',
+                                            kind: 'literal',
+                                            value: 'terminal',
+                                        }],
+                                    },
+                                    key: {
+                                        segments: [{
+                                            kind: 'literal',
+                                            value: 'terminal',
+                                        }],
+                                    },
+                                }],
+                            },
+                        },
+                    },
+                },
+            } as typeof base.agent
+            : base.agent;
+        const executeProviderSessionFollow = vi.fn(options.providerSessionFollow);
+        const bindSession = vi.fn(() => ({
+            executeFollow: vi.fn(async () => ({
+                status: 'unavailable' as const,
+                code: 'plugin_external_follow_unavailable',
+            })),
+            executeProviderSessionFollow,
+            retire: async () => undefined,
+        }));
+        const open = vi.fn(async () => ({
+            send: vi.fn(async () => ({ status: 'admitted' as const })),
+            watch(listener: (event: AgentSessionRuntimeEvent) => void) {
+                listener({
+                    sequence: 1,
+                    sessionId: `session-${options.agentId}`,
+                    emittedAtMs: 1,
+                    kind: 'provider-session-id',
+                    providerSessionId: `provider-${options.agentId}`,
+                });
+                return { dispose: () => undefined };
+            },
+            dispose: vi.fn(),
+        }));
+        const terminalLaunch = vi.fn(options.launch);
+        const executionSurfaces: BackendExecutionSurfaces = {
+            ...createEmptyBackendExecutionSurfaces(),
+            terminalRuntime: { launch: terminalLaunch },
+        };
+        const plan = await createNativeAgentRuntimeSessionPlan({
+            runtime: {
+                sessions: { open },
+                surfaces: {
+                    terminal: { resolveLaunch: () => ({ argv: ['--terminal'] }) },
+                },
+            },
+            lease: createLease(options.agentId),
+            backend: base.backend,
+            agent,
+            executionSurfaces,
+            externalSessionHostOperations: { bindSession },
+            sessionInput: buildPluginSessionBindingInput({
+                credentials,
+                directory: `/tmp/${options.agentId}`,
+                backendTarget: {
+                    kind: 'backend',
+                    backendId: options.agentId,
+                    sourceKind: 'built_in',
+                },
+            }),
+            createSessionHostServiceOwners: () => createSessionHostServiceOwners(),
+        } as never);
+        if (!plan.config.createSessionRuntime) {
+            throw new Error('expected a session runtime factory');
+        }
+        const sessionMetadata: Record<string, unknown> = {
+            terminalRuntime: { promptInteractive: true },
+        };
+        const sessionPort = createNativeSessionClientTestPort(
+            `session-${options.agentId}`,
+            {
+                fetchCommittedTranscriptLocalIdBaseline:
+                    options.loadCommittedBaseline
+                    ?? (async () => ({
+                        localIds: new Set<string>(),
+                        complete: true,
+                    })),
+                getMetadataSnapshot: () => sessionMetadata,
+            },
+        );
+        const runWithTerminalModelSelection = async <T>(
+            effect: (
+                selection: null,
+                runWithCurrentPublisherPermit: <U>(
+                    localEffect: () => Promise<U>,
+                ) => Promise<
+                    | Readonly<{ status: 'completed'; value: U }>
+                    | Readonly<{ status: 'blocked' }>
+                >,
+            ) => Promise<T>,
+        ) => ({
+            status: 'completed' as const,
+            value: await effect(null, async (localEffect) => ({
+                status: 'completed' as const,
+                value: await localEffect(),
+            })),
+        });
+        const created = await plan.config.createSessionRuntime({
+            directory: `/tmp/${options.agentId}`,
+            metadata: sessionMetadata,
+            machineId: 'machine-1',
+            agentTargetKey: `backend:${options.agentId}`,
+            session: sessionPort,
+            transcriptSession: {},
+            messageQueue: new MessageQueue2<
+                { permissionMode: string },
+                { text: string }
+            >((mode) => mode.permissionMode),
+            messageBuffer: {},
+            mcpServers: {},
+            permissionHandler: {},
+            getPermissionMode: () => 'default',
+            setThinking: () => undefined,
+            memoryRecallGuidanceEnabled: false,
+            runWithTerminalModelSelection,
+        } as never);
+        const modeLoop = created.terminalRemoteModeLoop;
+        if (!modeLoop) throw new Error('expected a terminal remote mode loop');
+        created.operations.subscribeRuntimeEvents(() => undefined);
+        await vi.waitFor(() => expect(open).toHaveBeenCalled());
+        return { modeLoop, terminalLaunch, executeProviderSessionFollow };
+    }
+
+    it('launches the terminal for a non-declaring Agent when the follow bind reports typed unavailability', async () => {
+        const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
+        try {
+            const harness = await createTerminalFollowHarness({
+                agentId: 'acme-follow-unavailable-agent',
+                providerSessionFollow: async () => ({
+                    status: 'unavailable' as const,
+                    code: 'plugin_external_follow_unavailable',
+                }),
+                launch: async (request) => {
+                    const permitted = await request.runWithCurrentPublisherPermit(
+                        async () => ({
+                            type: 'control_returned' as const,
+                            reason: 'pending_input' as const,
+                        }),
+                    );
+                    if (permitted.status === 'blocked') {
+                        throw new HostTerminalModelSelectionBlockedError();
+                    }
+                    return permitted.value;
+                },
+            });
+
+            await expect(
+                harness.modeLoop.runTerminal({ entry: 'initial' }),
+            ).resolves.toEqual({ type: 'switch' });
+            expect(harness.executeProviderSessionFollow).toHaveBeenCalledOnce();
+            expect(harness.terminalLaunch).toHaveBeenCalledOnce();
+            expect(warn).toHaveBeenCalledWith(
+                expect.stringContaining('transcript follow'),
+                expect.objectContaining({
+                    code: 'plugin_external_follow_unavailable',
+                }),
+            );
+        } finally {
+            warn.mockRestore();
+        }
+    });
+
+    it('keeps a non-declaring Agent terminal running and disposes the binding when follow fails mid-run', async () => {
+        const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
+        try {
+            const disposeFollow = vi.fn(async () => undefined);
+            let reportFollowFailure!: (
+                event: HostExternalTranscriptFollowEvent,
+            ) => void | Promise<void>;
+            let releaseLaunch!: () => void;
+            const captured: { launchSignal: AbortSignal | null } = { launchSignal: null };
+            const harness = await createTerminalFollowHarness({
+                agentId: 'acme-follow-midrun-agent',
+                providerSessionFollow: async (request) => {
+                    reportFollowFailure = request.listener;
+                    return {
+                        status: 'following' as const,
+                        startingCursor: 'cursor-0',
+                        subscription: { dispose: disposeFollow },
+                    };
+                },
+                launch: async (request) => {
+                    captured.launchSignal = request.signal ?? null;
+                    return await new Promise((resolve) => {
+                        releaseLaunch = () => resolve({
+                            type: 'control_returned' as const,
+                            reason: 'pending_input' as const,
+                        });
+                    });
+                },
+            });
+
+            const run = harness.modeLoop.runTerminal({ entry: 'initial' });
+            await vi.waitFor(() => expect(harness.terminalLaunch).toHaveBeenCalledOnce());
+            await reportFollowFailure({
+                kind: 'terminated',
+                reason: 'providerFailure',
+                cursor: 'cursor-1',
+                code: 'plugin_external_follow_provider_failed',
+            });
+            await vi.waitFor(() => expect(disposeFollow).toHaveBeenCalled());
+            expect(captured.launchSignal?.aborted).toBe(false);
+            releaseLaunch();
+            await expect(run).resolves.toEqual({ type: 'switch' });
+            expect(warn).toHaveBeenCalledWith(
+                expect.stringContaining('transcript follow'),
+                expect.objectContaining({
+                    code: 'plugin_external_follow_provider_failed',
+                }),
+            );
+        } finally {
+            warn.mockRestore();
+        }
+    });
+
+    const followingProviderSession = async () => ({
+        status: 'following' as const,
+        startingCursor: 'cursor-0',
+        subscription: { dispose: async () => undefined },
+    });
+
+    it('creates no child when a declaring Agent\'s committed baseline load throws', async () => {
+        // ES-PEP-03: a thrown baseline load causes zero follow/tail/launch.
+        const harness = await createTerminalFollowHarness({
+            agentId: 'acme-follow-barrier-baseline-agent',
+            declaresTerminalFollow: true,
+            loadCommittedBaseline: async () => {
+                throw new Error('committed baseline unavailable');
+            },
+            providerSessionFollow: followingProviderSession,
+            launch: async () => ({
+                type: 'control_returned' as const,
+                reason: 'pending_input' as const,
+            }),
+        });
+
+        await expect(
+            harness.modeLoop.runTerminal({ entry: 'initial' }),
+        ).rejects.toMatchObject({
+            name: 'HostTerminalTranscriptFollowAdmissionError',
+            code: 'native_agent_terminal_transcript_follow_admission_failed',
+            followCode: 'plugin_external_follow_unavailable',
+            phase: 'bind',
+        });
+        expect(harness.executeProviderSessionFollow).not.toHaveBeenCalled();
+        expect(harness.terminalLaunch).not.toHaveBeenCalled();
+    });
+
+    it('creates no child when a declaring Agent\'s follow bind reports typed unavailability', async () => {
+        // ES-PEP-05: `launch()` cannot run before the follow binding is ready.
+        const harness = await createTerminalFollowHarness({
+            agentId: 'acme-follow-barrier-bind-agent',
+            declaresTerminalFollow: true,
+            providerSessionFollow: async () => ({
+                status: 'unavailable' as const,
+                code: 'plugin_external_follow_unavailable',
+            }),
+            launch: async () => ({
+                type: 'control_returned' as const,
+                reason: 'pending_input' as const,
+            }),
+        });
+
+        await expect(
+            harness.modeLoop.runTerminal({ entry: 'initial' }),
+        ).rejects.toMatchObject({
+            name: 'HostTerminalTranscriptFollowAdmissionError',
+            followCode: 'plugin_external_follow_unavailable',
+            phase: 'bind',
+        });
+        expect(harness.executeProviderSessionFollow).toHaveBeenCalledOnce();
+        expect(harness.terminalLaunch).not.toHaveBeenCalled();
+    });
+
+    it('permits an explicit fresh retry after a declaring Agent admission failure', async () => {
+        // ES-PEP-03: baseline failure "permits an explicit later retry".
+        let baselineFails = true;
+        const harness = await createTerminalFollowHarness({
+            agentId: 'acme-follow-barrier-retry-agent',
+            declaresTerminalFollow: true,
+            loadCommittedBaseline: async () => {
+                if (baselineFails) throw new Error('committed baseline unavailable');
+                return { localIds: new Set<string>(), complete: true };
+            },
+            providerSessionFollow: followingProviderSession,
+            launch: async () => ({
+                type: 'control_returned' as const,
+                reason: 'pending_input' as const,
+            }),
+        });
+
+        await expect(
+            harness.modeLoop.runTerminal({ entry: 'initial' }),
+        ).rejects.toMatchObject({ phase: 'bind' });
+        expect(harness.terminalLaunch).not.toHaveBeenCalled();
+
+        baselineFails = false;
+        await expect(
+            harness.modeLoop.runTerminal({ entry: 'initial' }),
+        ).resolves.toEqual({ type: 'switch' });
+        expect(harness.executeProviderSessionFollow).toHaveBeenCalledOnce();
+        expect(harness.terminalLaunch).toHaveBeenCalledOnce();
+    });
+
+    it('races terminal completion and wins with a typed failure when a declaring Agent follow fails mid-run', async () => {
+        // ES-PEP-05: "race terminal completion against binding failure".
+        let reportFollowFailure!: (
+            event: HostExternalTranscriptFollowEvent,
+        ) => void | Promise<void>;
+        const captured: { launchSignal: AbortSignal | null } = { launchSignal: null };
+        const harness = await createTerminalFollowHarness({
+            agentId: 'acme-follow-barrier-active-agent',
+            declaresTerminalFollow: true,
+            providerSessionFollow: async (request) => {
+                reportFollowFailure = request.listener;
+                return {
+                    status: 'following' as const,
+                    startingCursor: 'cursor-0',
+                    subscription: { dispose: async () => undefined },
+                };
+            },
+            launch: async (request) => {
+                captured.launchSignal = request.signal ?? null;
+                return await new Promise(() => undefined);
+            },
+        });
+
+        const run = harness.modeLoop.runTerminal({ entry: 'initial' });
+        await vi.waitFor(() => expect(harness.terminalLaunch).toHaveBeenCalledOnce());
+        await reportFollowFailure({
+            kind: 'terminated',
+            reason: 'providerFailure',
+            cursor: 'cursor-1',
+            code: 'plugin_external_follow_provider_failed',
+        });
+
+        await expect(run).rejects.toMatchObject({
+            name: 'HostTerminalTranscriptFollowAdmissionError',
+            followCode: 'plugin_external_follow_provider_failed',
+            phase: 'active',
+        });
+        // The race is only won if the child actually stops.
+        expect(captured.launchSignal?.aborted).toBe(true);
+    });
+
+    it('still fails the terminal run when the terminal launch itself fails', async () => {
+        const launchFailure = new Error('terminal spawn failed');
+        const harness = await createTerminalFollowHarness({
+            agentId: 'acme-follow-launch-failure-agent',
+            providerSessionFollow: async () => ({
+                status: 'unavailable' as const,
+                code: 'plugin_external_follow_unavailable',
+            }),
+            launch: async () => { throw launchFailure; },
+        });
+
+        await expect(
+            harness.modeLoop.runTerminal({ entry: 'initial' }),
+        ).rejects.toBe(launchFailure);
+        expect(harness.terminalLaunch).toHaveBeenCalledOnce();
     });
 });
 

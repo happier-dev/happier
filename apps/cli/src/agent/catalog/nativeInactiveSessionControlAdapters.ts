@@ -2,21 +2,21 @@ import { randomUUID } from 'node:crypto';
 
 import {
   readProviderSessionIdSessionState,
-  type AgentId,
 } from '@happier-dev/agents';
 import {
   type AgentSessionControlContext,
   type AgentSessionGoalMutation,
   type AgentSessionRuntimeFactory,
   type AgentSessionUsageLimitRecoveryResult,
-} from '@happier-dev/plugin-sdk/agent-runtime';
+} from '@happier-dev/plugin-sdk/agents/runtime';
 import { PluginError } from '@happier-dev/plugin-sdk';
-import type { PluginCurrentSessionWorkStatePublisher } from '@happier-dev/plugin-sdk/runtime';
+import type { WorkStatePublisher } from '@happier-dev/plugin-sdk/sessions/work-state';
 
 import type { Metadata } from '@/api/types';
+import type { CatalogAgentId } from '@/agent/catalog/ids';
 import { createNativeAgentSessionWorkStateService } from '@/agent/runtime/registry/engineRegistry/nativeAgentSessionWorkState';
 import { activateAgentRuntimeContributionOnDemand } from '@/agent/runtime/registry/activationDemand';
-import { createPluginInvocationUi } from '@/plugins/runtime/invocation/services/ui';
+import { createPluginInvocationPresentation } from '@/plugins/runtime/invocation/services/interactions';
 import {
   acquireAuthoritativePluginRuntimeRegistryLease,
 } from '@/plugins/runtime/reload/runtimeLease';
@@ -59,7 +59,7 @@ type NativeInvocationResolution =
       context: AgentSessionControlContext;
       factory: AgentSessionRuntimeFactory;
       metadata: () => Record<string, unknown>;
-      goalSource: PluginCurrentSessionWorkStatePublisher | null;
+      goalSource: WorkStatePublisher | null;
       isCurrent(): boolean;
       goalSet: Readonly<{
         fields: readonly ('objective' | 'status' | 'tokenBudget')[];
@@ -164,19 +164,19 @@ function hasNativeFacet(factory: AgentSessionRuntimeFactory, operation: NativeIn
   return factory.usageLimitRecovery !== undefined;
 }
 
-function buildControlContext(params: Readonly<{
+async function buildControlContext(params: Readonly<{
   registry: ResolvedExecutablePluginRuntimeRegistry;
   lease: AgentRuntimeRegistrationLease;
   adapterParams: InactiveControlAdapterParams;
   signal: AbortSignal;
-}>): Readonly<{
+}>): Promise<Readonly<{
   context: AgentSessionControlContext;
   metadata: () => Record<string, unknown>;
   workState: ReturnType<typeof createNativeAgentSessionWorkStateService>;
-}> {
+}>> {
   const cwd = params.adapterParams.cwd ?? process.cwd();
   const signal = params.signal;
-  const services = params.registry.createAgentInvocationServices({
+  const services = await params.registry.createAgentInvocationServices({
     pluginId: params.lease.pluginId,
     pluginVersion: params.lease.pluginVersion,
     agentId: params.lease.agentId,
@@ -219,7 +219,7 @@ function buildControlContext(params: Readonly<{
     surface: 'agent' as const,
     signal,
     services,
-    ui: createPluginInvocationUi({
+    ui: createPluginInvocationPresentation({
       currentSession: null,
       signal,
       isGenerationCurrent: params.lease.isCurrent,
@@ -251,7 +251,7 @@ function buildControlContext(params: Readonly<{
 }
 
 async function resolveNativeInvocation(params: Readonly<{
-  agentId: AgentId;
+  agentId: CatalogAgentId;
   adapterParams: InactiveControlAdapterParams;
   operation: NativeInactiveOperation;
   dependencies?: NativeInactiveSessionControlDependencies;
@@ -303,7 +303,7 @@ async function resolveNativeInvocation(params: Readonly<{
         release,
       };
     }
-    const built = buildControlContext({
+    const built = await buildControlContext({
       registry,
       lease,
       adapterParams: params.adapterParams,
@@ -335,7 +335,7 @@ async function resolveNativeInvocation(params: Readonly<{
 }
 
 async function invokeNative<T>(params: Readonly<{
-  agentId: AgentId;
+  agentId: CatalogAgentId;
   adapterParams: InactiveControlAdapterParams;
   operation: NativeInactiveOperation;
   dependencies?: NativeInactiveSessionControlDependencies;
@@ -412,7 +412,7 @@ function goalMutationIsDeclared(
 }
 
 export function createNativeInactiveGoalAdapter(params: Readonly<{
-  agentId: AgentId;
+  agentId: CatalogAgentId;
   native: Readonly<{ get: boolean; set: boolean; clear: boolean }>;
   dependencies?: NativeInactiveSessionControlDependencies;
 }>) {
@@ -503,7 +503,7 @@ export function createNativeInactiveGoalAdapter(params: Readonly<{
 }
 
 export function createNativeInactiveCatalogAdapter(params: Readonly<{
-  agentId: AgentId;
+  agentId: CatalogAgentId;
   native: Readonly<{ vendorPlugins: boolean; skills: boolean }>;
   dependencies?: NativeInactiveSessionControlDependencies;
 }>) {
@@ -593,7 +593,7 @@ export function createNativeInactiveCatalogAdapter(params: Readonly<{
 }
 
 export function createNativeInactiveUsageAdapter(params: Readonly<{
-  agentId: AgentId;
+  agentId: CatalogAgentId;
   backoffPolicy?: SessionUsageLimitRecoveryBackoffPolicy | null;
   native: Readonly<{ checkNow: boolean; consumeResetCredit: boolean }>;
   dependencies?: NativeInactiveSessionControlDependencies;

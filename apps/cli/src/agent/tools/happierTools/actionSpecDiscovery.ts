@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import {
+  actionSpecToActionDefinitionV1,
   findActionInputFieldHint,
   getActionSpecForCatalogSurface,
   isActionDiscoverableOnToolSurface,
@@ -7,7 +8,6 @@ import {
   resolveActionSurfaceAvailability,
   searchSerializedActionSpecs,
   serializeActionFieldOptions,
-  serializeActionSpec,
   type ActionId,
   type ActionsSettingsV1,
   type ResolvedActionOption,
@@ -71,21 +71,23 @@ function filterResolvedActionOptions(
   return limit === null ? filtered : filtered.slice(0, limit);
 }
 
-type ResolveActionOptions = (args: Readonly<{
+export type ResolveActionOptionsInput = Readonly<{
   actionId: ActionId | null;
   fieldPath: string | null;
   optionsSourceId: string | null;
   sessionId: string | null;
   limit: number | null;
   query: string | null;
-}>) => Promise<ActionSpecDiscoveryResult<ResolveActionOptionsPayload> | null>;
+}> & Readonly<Record<string, unknown>>;
+
+type ResolveActionOptions = (args: ResolveActionOptionsInput) => Promise<ActionSpecDiscoveryResult<ResolveActionOptionsPayload> | null>;
 
 type SearchActionSpecsPayload = Readonly<{
   actionSpecs: ReturnType<typeof searchSerializedActionSpecs>;
 }>;
 
 type GetActionSpecPayload = Readonly<{
-  actionSpec: ReturnType<typeof serializeActionSpec>;
+  actionSpec: ReturnType<typeof actionSpecToActionDefinitionV1>;
 }>;
 
 function actionDisabledResult(params: Readonly<{
@@ -161,7 +163,7 @@ export async function getActionSpecForSurface(
         actionsSettings: actionsSettings ?? null,
       });
     }
-    return { ok: true, result: { actionSpec: serializeActionSpec(spec) } };
+    return { ok: true, result: { actionSpec: actionSpecToActionDefinitionV1(spec) } };
   } catch {
     return { ok: false, errorCode: 'execution_run_invalid_action_input', error: 'Unknown action spec' };
   }
@@ -233,6 +235,7 @@ export async function resolveActionOptionsForSurface(
   let resolved: ActionSpecDiscoveryResult<ResolveActionOptionsPayload> | null;
   try {
     resolved = await resolveActionOptions({
+      ...parsed.data,
       actionId: resolvedActionId,
       fieldPath: resolvedFieldPath,
       optionsSourceId: resolvedOptionsSourceId,

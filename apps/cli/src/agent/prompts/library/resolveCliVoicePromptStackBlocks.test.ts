@@ -1,9 +1,14 @@
 import { describe, expect, it } from 'vitest';
 
-import { deriveBoxPublicKeyFromSeed, sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol';
+import {
+    ARTIFACT_PLAIN_DATA_KEY_MARKER,
+    deriveBoxPublicKeyFromSeed,
+    encodePlainArtifactStoredContent,
+    sealEncryptedDataKeyEnvelopeV1,
+} from '@happier-dev/protocol';
 
 import { encodeBase64, encryptWithDataKey } from '@/api/encryption';
-import type { Credentials } from '@/persistence';
+import type { Credentials, StoredCredentials } from '@/persistence';
 
 import { resolveCliVoicePromptStackBlocks } from './resolveCliVoicePromptStackBlocks';
 import type { PromptArtifactRecord } from './resolveCliPromptStackSystemAppendBlocks';
@@ -35,6 +40,49 @@ function createPromptDocArtifactRecord(params: Readonly<{
 }
 
 describe('resolveCliVoicePromptStackBlocks', () => {
+    it('resolves plaintext prompt artifacts with token-only credentials', async () => {
+        const credentials: StoredCredentials = {
+            token: 'token',
+            encryption: null,
+        };
+
+        const blocks = await resolveCliVoicePromptStackBlocks({
+            credentials,
+            settings: {
+                promptStacksV1: {
+                    v: 1,
+                    surfaces: {
+                        coding: [],
+                        voice: [
+                            {
+                                id: 'voice-entry',
+                                ref: { kind: 'doc', artifactId: 'v1' },
+                                enabled: true,
+                                placement: 'system_append',
+                                editPolicy: 'user_only',
+                            },
+                        ],
+                        profilesById: {},
+                    },
+                },
+            },
+            fetchPromptArtifactRecord: async (artifactId) => ({
+                id: artifactId,
+                body: encodePlainArtifactStoredContent({
+                    body: JSON.stringify({
+                        v: 1,
+                        markdown: 'Plain voice stack block',
+                        createdAtMs: 1,
+                        updatedAtMs: 1,
+                    }),
+                }),
+                dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+            }),
+        });
+
+        expect(blocks).toEqual(['Plain voice stack block']);
+    });
+
     it('resolves voice prompt-stack blocks from explicit account settings', async () => {
         const machineKey = new Uint8Array(32).fill(9);
         const publicKey = deriveBoxPublicKeyFromSeed(machineKey);

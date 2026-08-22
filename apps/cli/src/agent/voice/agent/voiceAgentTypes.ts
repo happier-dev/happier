@@ -1,6 +1,11 @@
 import type { CatalogAgentId as AgentId } from '@/agent/catalog/ids';
 import type { ExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';
-import type { VoiceAgentOutputEventV1, VoiceAssistantAction } from '@happier-dev/protocol';
+import type {
+  AcpConfigOptionOverridesV1,
+  ProviderBoundModelRef,
+  VoiceAgentOutputEventV1,
+  VoiceAssistantAction,
+} from '@happier-dev/protocol';
 import type { ExecutionRunResumeHandle } from '@happier-dev/protocol';
 import type { ConnectedServiceBindingsV1 } from '@happier-dev/protocol';
 import type { PermissionIntent } from '@happier-dev/agents';
@@ -18,6 +23,9 @@ export type VoiceAgentStartParams = Readonly<{
   contextSessionId?: string | null;
   chatModelId: string;
   commitModelId: string;
+  chatModelSelection?: ProviderBoundModelRef;
+  commitModelSelection?: ProviderBoundModelRef;
+  sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1;
   commitIsolation?: boolean;
   permissionIntent: PermissionIntent;
   idleTtlSeconds: number;
@@ -91,6 +99,8 @@ export class VoiceAgentError extends Error {
 export type BackendFactory = (opts: {
   agentId: AgentId;
   modelId: string;
+  modelSelection?: ProviderBoundModelRef;
+  sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1;
   permissionIntent: PermissionIntent;
   start?: Readonly<{ intent: 'voice_agent' }>;
   connectedServices?: ConnectedServiceBindingsV1 | null;
@@ -134,12 +144,16 @@ export type VoiceAgentInstance = {
   verbosity: Verbosity;
   chatModelId: string;
   commitModelId: string;
+  chatModelSelection?: ProviderBoundModelRef;
+  commitModelSelection?: ProviderBoundModelRef;
+  sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1;
   initialContext: string;
   connectedServices?: ConnectedServiceBindingsV1 | null;
   disabledActionIds: readonly string[];
   memoryRecallGuidanceEnabled: boolean;
   systemAppendBlocks: readonly string[];
-  bootstrapped: boolean;
+  chatSessionSeeded: boolean;
+  welcomed: boolean;
   history: VoiceAgentTurn[];
   lastUsedAt: number;
   idleTtlMs: number;

@@ -1,4 +1,12 @@
 import type { SessionHandoffAgentBundle } from '../types';
+import {
+  isBundledAgentId,
+  projectSessionMetadataForAgentHandoff,
+  resolveAgentIdFromSessionMetadata,
+} from '@happier-dev/agents';
+import {
+  resolveLinkedExternalSessionMetadataV1,
+} from '@happier-dev/protocol';
 
 import { getSessionHostBridge } from '@/agent/runtime/bridges/session/SessionHostBridge';
 
@@ -19,8 +27,18 @@ export async function exportSessionHandoffAgentBundle(params: Readonly<{
     throw new Error('Session metadata is unavailable');
   }
 
+  const agentMetadata = projectSessionMetadataForAgentHandoff(metadata);
+  const sessionAgentId = resolveAgentIdFromSessionMetadata(metadata);
   const bridge = getSessionHostBridge();
-  const eligibility = bridge.resolveSessionHandoffEligibility({ metadata });
+  const eligibility = await bridge.resolveSessionHandoffEligibility({
+    metadata: agentMetadata,
+    sourceMachineId: metadata.machineId,
+    externalSessionLinkResolution:
+      resolveLinkedExternalSessionMetadataV1(metadata),
+    ...(!isBundledAgentId(sessionAgentId ?? '') && sessionAgentId
+      ? { sessionAgentId }
+      : {}),
+  });
   if (!eligibility.eligible) {
     throw new Error(`Session is not eligible for handoff: ${eligibility.reasonCode}`);
   }
@@ -30,16 +48,22 @@ export async function exportSessionHandoffAgentBundle(params: Readonly<{
     throw new Error('Session path is unavailable for handoff');
   }
 
-  const providerOps = (await bridge.resolveExecutionSurfaces(eligibility.agentId)).handoff;
+  const currentExternalRuntime = eligibility.backendId
+    ? await bridge.resolveCurrentExecutionSurfacesForCatalogAgent(eligibility.agentId)
+    : null;
+  const providerOps = currentExternalRuntime
+    && currentExternalRuntime.agentId === eligibility.agentId
+    && currentExternalRuntime.backendId === eligibility.backendId
+    ? currentExternalRuntime.executionSurfaces.handoff
+    : eligibility.backendId
+      ? null
+      : isBundledAgentId(eligibility.agentId)
+        ? (await bridge.resolveExecutionSurfaces(eligibility.agentId)).handoff
+        : null;
   if (!providerOps) {
     throw new Error(`Unsupported handoff provider: ${eligibility.agentId}`);
   }
 
-  const {
-    externalSessionOperationV1: _ownerOperation,
-    externalSessionOperationPresentationV1: _operationPresentation,
-    ...agentMetadata
-  } = metadata;
   const agentBundle = await providerOps.exportBundle({
     sessionId: eligibility.vendorHandoffId,
     metadata: agentMetadata,

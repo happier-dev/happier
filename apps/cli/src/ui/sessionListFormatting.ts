@@ -1,12 +1,8 @@
-function normalizeEpochMs(value: number): number {
-  // Heuristic: tolerate seconds timestamps by converting to ms.
-  // (Seconds are ~1e9; ms are ~1e12+.)
-  return value < 10_000_000_000 ? value * 1000 : value;
-}
+import { parseTimestampMs } from '@happier-dev/plugin-sdk';
 
 export function formatSessionUpdatedAtForCli(updatedAt: number, nowMs: number): string {
-  const updatedAtMs = normalizeEpochMs(updatedAt);
-  if (!Number.isFinite(updatedAtMs) || updatedAtMs <= 0) return '';
+  const updatedAtMs = parseTimestampMs(updatedAt);
+  if (updatedAtMs === null || updatedAtMs <= 0) return '';
 
   // If the timestamp is implausibly old/new, prefer an absolute date.
   if (updatedAtMs < 1_000_000_000_000 || updatedAtMs > nowMs + 365 * 24 * 60 * 60_000) {
@@ -32,4 +28,3 @@ export function shortenSessionIdForCli(id: string): string {
   const trimmed = id.trim();
   return trimmed.length <= 12 ? trimmed : trimmed.slice(0, 12);
 }
-

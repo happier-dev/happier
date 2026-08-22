@@ -7,6 +7,7 @@ import { TransferEndpointCandidateSchema } from '@happier-dev/protocol';
 
 import type { SessionHandoffAgentBundle } from '../types';
 import { parseCanonicalSessionHandoffAgentBundle } from '../agentBundle/parse';
+import { projectSessionHandoffAgentBundleForPredecessor } from '../agentBundle/schema';
 import { buildSessionHandoffAgentBundleTransferId } from '../agentBundle/transferPublication';
 import {
   buildSessionHandoffWorkspaceManifestTransferId,
@@ -208,7 +209,7 @@ export function createSessionHandoffSourceExportStore(input: Readonly<{ activeSe
       await mkdir(directory, { recursive: true });
       const filePath = resolveAgentBundleFilePath(activeServerDir, handoffId);
       const normalized = parseCanonicalSessionHandoffAgentBundle(params.agentBundle);
-      await atomicWriteJson(filePath, normalized);
+      await atomicWriteJson(filePath, projectSessionHandoffAgentBundleForPredecessor(normalized));
       const stats = await stat(filePath);
       const manifestHash = await resolveTransferPayloadManifestHash({
         kind: 'file',

@@ -10,11 +10,11 @@ import {
     type SessionWorkStateV1,
 } from '@happier-dev/protocol';
 import type {
-    PluginCurrentSessionWorkStatePublisher,
-    PluginCurrentSessionWorkStateService,
-    PluginSessionWorkStateItem,
-    PluginSessionWorkStateTruncation,
-} from '@happier-dev/plugin-sdk/runtime';
+    WorkStatePublisher,
+    WorkStateService,
+    WorkStateItem,
+    WorkStateTruncation,
+} from '@happier-dev/plugin-sdk/sessions/work-state';
 
 import type { ApiSessionClient } from '@/api/session/sessionClient';
 import type { HostRuntimeLimitMeasurementRecorder } from '@/agent/runtime/state/runtimeLimitMeasurement';
@@ -74,7 +74,7 @@ function ownedItemPrefix(kind: SessionWorkStateItemKindV1, sourceFamily: string)
 }
 
 function normalizeTruncation(
-    truncation: PluginSessionWorkStateTruncation | undefined,
+    truncation: WorkStateTruncation | undefined,
 ): SessionWorkStateTruncationV1 | undefined {
     if (!truncation) return undefined;
     if (truncation.reason === 'itemLimit') {
@@ -90,7 +90,7 @@ function normalizeTruncation(
 }
 
 function normalizeItem(params: Readonly<{
-    item: PluginSessionWorkStateItem;
+    item: WorkStateItem;
     agentId: string;
     sourceFamily: string;
 }>): SessionWorkStateV1['items'][number] | null {
@@ -124,7 +124,7 @@ function normalizeItem(params: Readonly<{
 }
 
 function validateAndNormalizePublication(params: Readonly<{
-    request: Parameters<PluginCurrentSessionWorkStatePublisher['publish']>[0];
+    request: Parameters<WorkStatePublisher['publish']>[0];
     declaration: WorkStateSourceDeclaration;
     agentId: string;
     sourceFamily: string;
@@ -199,7 +199,7 @@ function buildAggregateTruncation(
     return { reason, ...(omittedCount === undefined ? {} : { omittedCount }) };
 }
 
-function unavailablePublisher(code: string): PluginCurrentSessionWorkStatePublisher {
+function unavailablePublisher(code: string): WorkStatePublisher {
     return Object.freeze({
         async publish() {
             return { status: 'unavailable' as const, diagnostic: diagnostic(code) };
@@ -216,9 +216,9 @@ export function createNativeAgentSessionWorkStateService(params: Readonly<{
     declarations: readonly WorkStateSourceDeclaration[];
     isCurrent: () => boolean;
     recordRuntimeLimitMeasurement?: HostRuntimeLimitMeasurementRecorder;
-}>): PluginCurrentSessionWorkStateService {
+}>): WorkStateService {
     const declarations = new Map(params.declarations.map((declaration) => [declaration.id, declaration]));
-    const publishers = new Map<string, PluginCurrentSessionWorkStatePublisher>();
+    const publishers = new Map<string, WorkStatePublisher>();
     let revisionOrdinal = 0;
 
     return Object.freeze({
@@ -240,13 +240,13 @@ export function createNativeAgentSessionWorkStateService(params: Readonly<{
                 revision: `${params.generationId}:0`,
                 queue: Promise.resolve(),
             };
-            const publisher: PluginCurrentSessionWorkStatePublisher = Object.freeze({
+            const publisher: WorkStatePublisher = Object.freeze({
                 publish(
-                    request: Parameters<PluginCurrentSessionWorkStatePublisher['publish']>[0],
-                    options?: Parameters<PluginCurrentSessionWorkStatePublisher['publish']>[1],
+                    request: Parameters<WorkStatePublisher['publish']>[0],
+                    options?: Parameters<WorkStatePublisher['publish']>[1],
                 ) {
-                    let resolveResult!: (result: Awaited<ReturnType<PluginCurrentSessionWorkStatePublisher['publish']>>) => void;
-                    const result = new Promise<Awaited<ReturnType<PluginCurrentSessionWorkStatePublisher['publish']>>>((resolve) => {
+                    let resolveResult!: (result: Awaited<ReturnType<WorkStatePublisher['publish']>>) => void;
+                    const result = new Promise<Awaited<ReturnType<WorkStatePublisher['publish']>>>((resolve) => {
                         resolveResult = resolve;
                     });
                     state.queue = state.queue.then(async () => {

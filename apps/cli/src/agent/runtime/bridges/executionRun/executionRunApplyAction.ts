@@ -49,12 +49,15 @@ export async function applyExecutionRunAction(args: Readonly<{
   controllers: ReadonlyMap<string, ExecutionRunController>;
   voiceAgentManager: VoiceAgentManager;
   startRun: (params: ExecutionRunManagerStartParams) => Promise<ExecutionRunStartResult>;
-  sendAcp: (provider: ACPProvider, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => void;
-  sendCommittedAcp?: (
+  enqueueCommittedAcp?: (
     provider: ACPProvider,
     body: ACPMessageData,
-    opts: { localId: string; meta?: Record<string, unknown> },
-  ) => Promise<void>;
+    opts: {
+      localId: string;
+      meta?: Record<string, unknown>;
+      provenance: Readonly<{ kind: 'non_dependent'; source: 'external' }>;
+    },
+  ) => Promise<Readonly<{ persisted: boolean; delivered: boolean }>>;
   parentProvider: ACPProvider;
   onVoiceAgentWelcomed?: (runId: string, welcomedEpoch: number) => Promise<void> | void;
   profileCatalog?: ExecutionRunProfileContributionCatalog;
@@ -220,6 +223,7 @@ export async function applyExecutionRunAction(args: Readonly<{
     const readCurrentCandidate = (): ReviewCommentHostActionCandidate | null => {
       const current = args.runs.get(args.runId);
       if (!current || current.status !== 'succeeded' || current.intent !== 'review') return null;
+      if (current.sessionId === null) return null;
       const profileId = typeof current.profileId === 'string' ? current.profileId.trim() : '';
       if (!profileId) return null;
       const descriptor = args.profileCatalog?.profileDescriptorsById.get(profileId) ?? null;
@@ -289,26 +293,32 @@ export async function applyExecutionRunAction(args: Readonly<{
     id: randomUUID(),
   };
 
-  if (args.sendCommittedAcp) {
-    try {
-      await args.sendCommittedAcp(args.parentProvider, toolResultBody, {
-        localId: randomUUID(),
-        ...(acted.updatedToolResultMeta ? { meta: acted.updatedToolResultMeta } : {}),
-      });
-    } catch {
-      args.sendAcp(
-        args.parentProvider,
-        toolResultBody,
-        acted.updatedToolResultMeta ? { meta: acted.updatedToolResultMeta } : undefined,
-      );
+  if (!args.enqueueCommittedAcp) {
+    return {
+      ok: false,
+      errorCode: 'execution_run_transcript_custody_unavailable',
+      error: 'Durable execution-run transcript custody is unavailable',
+    };
+  }
+  try {
+    const admission = await args.enqueueCommittedAcp(args.parentProvider, toolResultBody, {
+      localId: randomUUID(),
+      ...(acted.updatedToolResultMeta ? { meta: acted.updatedToolResultMeta } : {}),
+      provenance: { kind: 'non_dependent', source: 'external' },
+    });
+    if (!admission.persisted) {
+      return {
+        ok: false,
+        errorCode: 'execution_run_transcript_custody_unavailable',
+        error: 'Durable execution-run transcript custody is unavailable',
+      };
     }
-  } else {
-    // Re-emit a tool-result so the owning tool-call message can merge updated meta.
-    args.sendAcp(
-      args.parentProvider,
-      toolResultBody,
-      acted.updatedToolResultMeta ? { meta: acted.updatedToolResultMeta } : undefined,
-    );
+  } catch {
+    return {
+      ok: false,
+      errorCode: 'execution_run_transcript_custody_unavailable',
+      error: 'Durable execution-run transcript custody is unavailable',
+    };
   }
 
   return { ok: true, updatedToolResult: acted.updatedToolResultOutput ?? { ok: true } };

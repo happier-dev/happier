@@ -1,14 +1,13 @@
-import { randomBytes, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 
 import {
   SavedSecretSchema,
-  sealSecretsDeepV1,
   type AccountSettings,
 } from '@happier-dev/protocol';
 
 import { configuration } from '@/configuration';
-import { readCredentials } from '@/persistence';
+import { readStoredCredentials } from '@/persistence';
 import { resolveMergedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import {
   resolveProviderContributionRegistryView,
@@ -26,7 +25,6 @@ import {
   getActiveAccountSettingsSnapshot,
   type ActiveAccountSettingsSnapshot,
 } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
-import { deriveSettingsSecretsKeyForCredentials } from '@/settings/secrets/settingsSecretsKey';
 import { promptInput, promptSecretInput } from '@/terminal/prompts/promptInput';
 import { ensureMachineIdForCredentials } from '@/ui/auth';
 
@@ -91,7 +89,7 @@ export async function resolveProviderCliDependencies(): Promise<ProviderCliDepen
   if (providersFeature.decision.state !== 'enabled') {
     throw new ProviderCliError('provider_feature_disabled', 'Providers are disabled by server policy');
   }
-  const credentials = await readCredentials();
+  const credentials = await readStoredCredentials();
   if (!credentials) throw new ProviderCliError('authentication_required', 'Sign in before managing providers');
   const modelManagementDecision = resolveCliFeatureDecision({
     featureId: 'providers.localModelManagement',
@@ -187,15 +185,15 @@ export async function resolveProviderCliDependencies(): Promise<ProviderCliDepen
     createSavedSecret: async ({ name, value }) => {
       const id = `secret_${randomUUID()}`;
       const now = Date.now();
-      const sealed = sealSecretsDeepV1(SavedSecretSchema.parse({
+      const record = SavedSecretSchema.parse({
         id,
         name,
         kind: 'apiKey',
         encryptedValue: { _isSecretValue: true, value },
         createdAt: now,
         updatedAt: now,
-      }), deriveSettingsSecretsKeyForCredentials(credentials), (length) => new Uint8Array(randomBytes(length)));
-      return { id, record: sealed };
+      });
+      return { id, record };
     },
   };
 }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { RuntimeEventV1 } from '@happier-dev/protocol';
+import type { RuntimePublicationEvent } from '@/agent/runtime/turns/runtimeTurnOperations';
 
 import { createNormalizedRuntimeEventPublicationHub } from './createNormalizedRuntimeEventPublicationHub';
 
@@ -75,9 +75,9 @@ describe('createNormalizedRuntimeEventPublicationHub', () => {
     ]);
   });
 
-  it('normalizes RuntimeEvent descriptor updates into runtime descriptor publications', () => {
-    const upstream: { handler?: (message: RuntimeEventV1) => void } = {};
-    const hub = createNormalizedRuntimeEventPublicationHub<RuntimeEventV1>({
+  it('normalizes runtime descriptor publications from the dedicated publication seam', () => {
+    const upstream: { handler?: (message: RuntimePublicationEvent) => void } = {};
+    const hub = createNormalizedRuntimeEventPublicationHub<RuntimePublicationEvent>({
       identity: {
         runtimeDescriptor: null,
         runtimeCapabilities: null,
@@ -98,10 +98,9 @@ describe('createNormalizedRuntimeEventPublicationHub', () => {
     });
 
     upstream.handler?.({
-      kind: 'descriptor-update',
-      sessionId: 'session-1',
-      emittedAtMs: 1,
-      descriptor: {
+      type: 'event',
+      name: 'runtime.descriptor',
+      payload: {
         v: 1,
         agentId: 'antigravity',
         agent: {

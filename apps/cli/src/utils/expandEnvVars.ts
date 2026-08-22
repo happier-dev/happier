@@ -122,17 +122,17 @@ export function expandEnvironmentVariables(
 
             if (!isMissing) {
                 if (process.env.DEBUG) {
-                    logger.debug(`[EXPAND ENV] Expanded ${varName} from daemon env`);
+                    logger.debug('[EXPAND ENV] Expanded one referenced value from daemon environment');
                 }
 
                 if (resolvedValue === '' && !Object.prototype.hasOwnProperty.call(assignedEnv, varName)) {
-                    logger.warn(`[EXPAND ENV] WARNING: ${varName} is set but EMPTY in daemon environment`);
+                    logger.warn('[EXPAND ENV] Referenced daemon environment value is empty');
                 }
 
                 out += resolvedValue;
             } else if (defaultValue !== undefined) {
                 if (process.env.DEBUG) {
-                    logger.debug(`[EXPAND ENV] Using default value for ${varName}`);
+                    logger.debug('[EXPAND ENV] Used a default for one missing environment reference');
                 }
 
                 const expandedDefault = expandValue(defaultValue, depth + 1);
@@ -159,11 +159,9 @@ export function expandEnvironmentVariables(
     const warnOnUndefined = options?.warnOnUndefined ?? true;
     const uniqueUndefinedVars = Array.from(new Set(undefinedVars));
     if (warnOnUndefined && uniqueUndefinedVars.length > 0) {
-        logger.warn(`[EXPAND ENV] Undefined variables referenced in profile environment: ${uniqueUndefinedVars.join(', ')}`);
-        logger.warn(`[EXPAND ENV] Session may fail to authenticate. Set these in daemon environment before launching:`);
-        uniqueUndefinedVars.forEach(varName => {
-            logger.warn(`[EXPAND ENV]   ${varName}=<your-value>`);
-        });
+        logger.warn(
+            `[EXPAND ENV] Profile environment contains ${uniqueUndefinedVars.length} unresolved reference(s)`,
+        );
     }
 
     return expanded;

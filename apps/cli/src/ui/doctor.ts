@@ -7,7 +7,7 @@
 
 import chalk from 'chalk'
 import { configuration } from '@/configuration'
-import { readSettings, readCredentials } from '@/persistence'
+import { readSettings, readStoredCredentials } from '@/persistence'
 import { checkIfDaemonRunningAndCleanupStaleState } from '@/daemon/controlClient'
 import { findRunawayHappyProcesses, findAllHappyProcesses } from '@/daemon/doctor'
 import { readDaemonState } from '@/persistence'
@@ -209,7 +209,7 @@ export async function runDoctorCommand(filter?: 'all' | 'daemon'): Promise<void>
         // Authentication status
         console.log(chalk.bold('\n🔐 Authentication'));
         try {
-            const credentials = await readCredentials();
+            const credentials = await readStoredCredentials();
             if (credentials) {
                 console.log(chalk.green('✓ Authenticated (credentials found)'));
                 if (snapshot?.accountId) {

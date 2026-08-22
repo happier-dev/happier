@@ -8,8 +8,8 @@ vi.mock('@/daemon/executionRunRegistry', () => ({
 import { writeExecutionRunActivityMarker } from './activityMarkers';
 import type { ExecutionRunState } from './executionRunTypes';
 
-describe('writeExecutionRunActivityMarker connected-services launch fact', () => {
-  it('force-writes the immutable non-secret registration before a controller exists', async () => {
+describe('writeExecutionRunActivityMarker marker privacy', () => {
+  it('does not copy the in-memory connected-services registration into the marker', async () => {
     const registration = {
       v: 1 as const,
       runKey: 'run_1',
@@ -42,6 +42,7 @@ describe('writeExecutionRunActivityMarker connected-services launch fact', () =>
       launch: { connectedServicesRegistration: registration },
       status: 'running',
       startedAtMs: 10,
+      summary: 'raw model output must not enter the marker',
     };
 
     await writeExecutionRunActivityMarker({
@@ -53,13 +54,20 @@ describe('writeExecutionRunActivityMarker connected-services launch fact', () =>
       enqueueMarkerWrite: async (_runId, write) => await write(),
     });
 
-    expect(writeExecutionRunMarkerMock).toHaveBeenCalledWith(expect.objectContaining({
-      executionRunConnectedServicesLaunchV1: registration,
-    }));
-    expect(JSON.stringify(writeExecutionRunMarkerMock.mock.calls)).not.toContain('credential');
+    const marker = writeExecutionRunMarkerMock.mock.calls.at(-1)?.[0];
+    expect(marker).toMatchObject({
+      permissionMode: 'default',
+      retentionPolicy: 'resumable',
+      runClass: 'bounded',
+      ioMode: 'request_response',
+    });
+    expect(marker).not.toHaveProperty('executionRunConnectedServicesLaunchV1');
+    expect(marker).not.toHaveProperty('summary');
+    expect(JSON.stringify(marker)).not.toContain('/tmp/project');
+    expect(JSON.stringify(marker)).not.toContain('profile_1');
   });
 
-  it('propagates a required launch-fact publication failure', async () => {
+  it('keeps marker publication best-effort when an in-memory launch fact is registered', async () => {
     writeExecutionRunMarkerMock.mockRejectedValueOnce(new Error('marker disk unavailable'));
     const run = {
       runId: 'run_required',
@@ -94,10 +102,10 @@ describe('writeExecutionRunActivityMarker connected-services launch fact', () =>
     await expect(writeExecutionRunActivityMarker({
       runId: run.runId,
       nowMs: 20,
-      opts: { force: true, required: true },
+      opts: { force: true },
       runs: new Map([[run.runId, run]]),
       controllers: new Map(),
       enqueueMarkerWrite: async (_runId, write) => await write(),
-    })).rejects.toThrow('marker disk unavailable');
+    })).resolves.toBeUndefined();
   });
 });

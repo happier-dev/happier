@@ -1,9 +1,11 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
+import { createHash, randomBytes as nodeRandomBytes, randomUUID } from 'node:crypto';
 import axios, { type AxiosRequestConfig, type AxiosResponse } from 'axios';
 import tweetnacl from 'tweetnacl';
 
 import {
     createReviewCommentPrincipalSigningInputV1,
+    buildReviewCommentMutationEventEnvelopeV1,
     decodeBase64,
     REVIEW_COMMENT_PRINCIPAL_HEADER_V1,
     ReviewCommentActionIdV1Schema,
@@ -13,13 +15,16 @@ import {
     type ReviewCommentPrincipalHeaderV1,
     type ReviewCommentActionIdV1,
     type ReviewCommentPrincipalProofV1,
+    type AccountScopedCryptoMaterial,
     stringifyReviewCommentPrincipalCanonicalJsonV1,
 } from '@happier-dev/protocol';
 
 import { createHttpStatusError, isAuthenticationStatus } from '@/api/client/httpStatusError';
+import { createConnectedServiceCredentialApi } from '@/api/client/connectedServiceCredentialApi';
+import { decodeJwtPayload } from '@/cloud/decodeJwtPayload';
 import { configuration } from '@/configuration';
 import { readOrCreateInstallationIdentity } from '@/daemon/identity/store';
-import { readSettings, type Credentials } from '@/persistence';
+import { readSettings, type StoredCredentials } from '@/persistence';
 import type { RpcActionExecutor } from '@/rpc/handlers/_actionDispatchAdapter';
 import { resolveServerHttpBaseUrl } from '@/session/transport/http/serverHttpBaseUrl';
 
@@ -27,6 +32,8 @@ export type ReviewCommentActionExecutionOptions = Readonly<{
     signal?: AbortSignal;
     principal?: ReviewCommentPrincipalHeaderV1;
 }>;
+
+type ReviewCommentAccountEncryptionMode = 'plain' | 'e2ee' | 'unknown';
 
 export type ReviewCommentActionExecutor = (
     actionId: ReviewCommentActionIdV1,
@@ -55,6 +62,27 @@ function asRecord(value: unknown): JsonRecord {
         throw new Error('review_comment_action_input_record_required');
     }
     return value as JsonRecord;
+}
+
+function resolveAccountIdFromToken(token: string): string {
+    const payload = decodeJwtPayload(token);
+    const accountId = typeof payload?.sub === 'string' ? payload.sub.trim() : '';
+    if (!accountId) throw new Error('review_comment_account_identity_unavailable');
+    return accountId;
+}
+
+function resolveAccountScopedMaterial(credentials: StoredCredentials): AccountScopedCryptoMaterial | null {
+    if (!credentials.encryption) return null;
+    if (credentials.encryption.type === 'legacy') {
+        return { type: 'legacy', secret: credentials.encryption.secret };
+    }
+    return { type: 'dataKey', machineKey: credentials.encryption.machineKey };
+}
+
+function isReviewCommentMutationAction(
+    actionId: ReviewCommentActionIdV1,
+): actionId is Exclude<ReviewCommentActionIdV1, 'reviews.comments.list' | 'reviews.comments.get'> {
+    return actionId !== 'reviews.comments.list' && actionId !== 'reviews.comments.get';
 }
 
 function readRequiredString(input: JsonRecord, key: string): string {
@@ -257,7 +285,7 @@ function throwForReviewCommentHttpStatus(response: AxiosResponse<unknown>): neve
 }
 
 async function executeReviewCommentHttpRequest(params: Readonly<{
-    credentials: Credentials;
+    credentials: StoredCredentials;
     request: ReviewCommentHttpRequest;
     principalHeader?: string;
     signal?: AbortSignal;
@@ -265,6 +293,7 @@ async function executeReviewCommentHttpRequest(params: Readonly<{
     const url = `${resolveServerHttpBaseUrl()}${params.request.path}`;
     const config: AxiosRequestConfig = {
         headers: {
+            ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
             Authorization: `Bearer ${params.credentials.token}`,
             ...(params.principalHeader ? { [REVIEW_COMMENT_PRINCIPAL_HEADER_V1]: params.principalHeader } : {}),
         },
@@ -300,15 +329,54 @@ function readFailureMessage(error: unknown): string {
 
 export function createCliReviewCommentActionExecutorFromCredentials(
     params: Readonly<{
-        credentials: Credentials;
+        credentials: StoredCredentials;
         resolvePrincipalSigningContext?: () => Promise<ReviewCommentPrincipalSigningContext>;
         assertPrincipalCurrent?: (principal: ReviewCommentPrincipalHeaderV1) => void;
+        resolveAccountId?: (token: string) => string;
+        resolveAccountEncryptionMode?: () => Promise<ReviewCommentAccountEncryptionMode>;
+        randomBytes?: (length: number) => Uint8Array;
     }>,
 ): ReviewCommentActionExecutor {
+    const accountModeApi = params.resolveAccountEncryptionMode
+        ? null
+        : createConnectedServiceCredentialApi(params.credentials);
     return async (actionId, input, options) => {
         const parsedActionId = ReviewCommentActionIdV1Schema.parse(actionId);
         const parsedInput = asRecord(ReviewCommentActionInputSchemasV1[parsedActionId].parse(input));
-        const request = createReviewCommentHttpRequest(parsedActionId, parsedInput);
+        let requestInput = parsedInput;
+        if (isReviewCommentMutationAction(parsedActionId)) {
+            const accountId = (params.resolveAccountId ?? resolveAccountIdFromToken)(params.credentials.token);
+            const mode = await (params.resolveAccountEncryptionMode
+                ? params.resolveAccountEncryptionMode()
+                : accountModeApi!.getAccountEncryptionMode());
+            if (mode === 'unknown') {
+                throw new Error('review_comment_encryption_mode_unavailable');
+            }
+            const actor = options?.principal?.actor ?? { kind: 'user' as const, userId: accountId };
+            const material = resolveAccountScopedMaterial(params.credentials);
+            if (mode === 'e2ee' && !material) {
+                throw new Error('review_comment_encryption_material_unavailable');
+            }
+            const eventEnvelope = mode === 'plain'
+                ? buildReviewCommentMutationEventEnvelopeV1({
+                    accountId,
+                    actor,
+                    actionId: parsedActionId,
+                    input: parsedInput,
+                    mode: 'plain',
+                })
+                : buildReviewCommentMutationEventEnvelopeV1({
+                    accountId,
+                    actor,
+                    actionId: parsedActionId,
+                    input: parsedInput,
+                    mode: 'e2ee',
+                    material: material!,
+                    randomBytes: params.randomBytes ?? ((length) => nodeRandomBytes(length)),
+                });
+            requestInput = { ...parsedInput, eventEnvelope };
+        }
+        const request = createReviewCommentHttpRequest(parsedActionId, requestInput);
         const principalHeader = options?.principal
             ? await encodeReviewCommentPrincipalHeader({
                 principal: options.principal,
@@ -336,7 +404,7 @@ export function createCliReviewCommentActionExecutorFromCredentials(
 
 export function createCliReviewCommentRpcActionExecutorFromCredentials(
     params: Readonly<{
-        credentials: Credentials;
+        credentials: StoredCredentials;
         resolvePrincipalSigningContext?: () => Promise<ReviewCommentPrincipalSigningContext>;
         assertPrincipalCurrent?: (principal: ReviewCommentPrincipalHeaderV1) => void;
     }>,

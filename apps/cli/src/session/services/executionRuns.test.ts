@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BackendTargetRefV2Input } from '@happier-dev/protocol';
+import { markRpcRequestDisposition } from '@/session/transport/rpc/rpcRequestDisposition';
 
 const { callSessionRpc, listExecutionRunMarkers, readRawSessionHistoryRows } = vi.hoisted(() => ({
     callSessionRpc: vi.fn(),
@@ -165,6 +166,24 @@ describe('listExecutionRuns', () => {
         readRawSessionHistoryRows.mockReset();
     });
 
+    it('calls a plain Session RPC without encryption material', async () => {
+        callSessionRpc.mockResolvedValueOnce({ runs: [] });
+        listExecutionRunMarkers.mockResolvedValueOnce([]);
+
+        await listExecutionRuns({
+            token: 'token',
+            sessionId: 'sess-1',
+            mode: 'plain',
+            ctx: null,
+            request: {},
+        });
+
+        expect(callSessionRpc).toHaveBeenCalledWith(expect.objectContaining({
+            mode: 'plain',
+            ctx: null,
+        }));
+    });
+
     it('returns an invalid response error when a successful rpc list payload does not match the contract', async () => {
         callSessionRpc.mockResolvedValueOnce({
             runs: [{ runId: 'missing-required-fields' }],
@@ -174,6 +193,7 @@ describe('listExecutionRuns', () => {
         const result = await listExecutionRuns({
             token: 'token',
             sessionId: 'sess-1',
+            mode: 'e2ee',
             ctx: { encryptionKey: new Uint8Array([1, 2, 3, 4]), encryptionVariant: 'legacy' },
             request: {},
         });
@@ -197,6 +217,7 @@ describe('listExecutionRuns', () => {
         const result = await listExecutionRuns({
             token: 'token',
             sessionId: 'sess-1',
+            mode: 'e2ee',
             ctx: { encryptionKey: new Uint8Array([1, 2, 3, 4]), encryptionVariant: 'legacy' },
             request: { limit: 1 },
         });
@@ -221,6 +242,7 @@ describe('listExecutionRuns', () => {
         const result = await listExecutionRuns({
             token: 'token',
             sessionId: 'sess-1',
+            mode: 'e2ee',
             ctx: { encryptionKey: new Uint8Array([1, 2, 3, 4]), encryptionVariant: 'legacy' },
             request: { status: 'running', limit: 1 },
         });
@@ -243,6 +265,7 @@ describe('listExecutionRuns', () => {
         const result = await listExecutionRuns({
             token: 'token',
             sessionId: 'sess-1',
+            mode: 'e2ee',
             ctx: { encryptionKey: new Uint8Array([1, 2, 3, 4]), encryptionVariant: 'legacy' },
             request: { backendId: 'claude', limit: 1 },
         });
@@ -252,6 +275,30 @@ describe('listExecutionRuns', () => {
             data: {
                 runs: [createRun({ runId: 'run-marker-succeeded', status: 'succeeded', startedAtMs: 30 })],
             },
+        });
+    });
+
+    it('does not invent public execution-run policy for a partial historical marker', async () => {
+        callSessionRpc.mockRejectedValueOnce(new Error('RPC method not available'));
+        listExecutionRunMarkers.mockResolvedValueOnce([
+            {
+                ...createMarker({ runId: 'run-marker-partial', status: 'running', startedAtMs: 20 }),
+                permissionMode: undefined,
+            },
+        ]);
+        readRawSessionHistoryRows.mockResolvedValueOnce([]);
+
+        const result = await listExecutionRuns({
+            token: 'token',
+            sessionId: 'sess-1',
+            mode: 'e2ee',
+            ctx: { encryptionKey: new Uint8Array([1, 2, 3, 4]), encryptionVariant: 'legacy' },
+            request: {},
+        });
+
+        expect(result).toEqual({
+            ok: true,
+            data: { runs: [] },
         });
     });
 
@@ -275,6 +322,7 @@ describe('listExecutionRuns', () => {
         const result = await listExecutionRuns({
             token: 'token',
             sessionId: 'sess-1',
+            mode: 'e2ee',
             ctx: { encryptionKey: new Uint8Array([1, 2, 3, 4]), encryptionVariant: 'legacy' },
             request: { backendId: 'customAcp', limit: 1 },
         });
@@ -320,6 +368,7 @@ describe('listExecutionRuns', () => {
         const result = await listExecutionRuns({
             token: 'token',
             sessionId: 'sess-1',
+            mode: 'e2ee',
             ctx: { encryptionKey: new Uint8Array([1, 2, 3, 4]), encryptionVariant: 'legacy' },
             request: {},
         });
@@ -347,6 +396,7 @@ describe('listExecutionRuns', () => {
         const result = await getExecutionRun({
             token: 'token',
             sessionId: 'sess-1',
+            mode: 'e2ee',
             ctx: { encryptionKey: new Uint8Array([1, 2, 3, 4]), encryptionVariant: 'legacy' },
             request: { runId: 'run-marker-legacy-built-in-agent' },
         });
@@ -383,6 +433,7 @@ describe('listExecutionRuns', () => {
         const result = await listExecutionRuns({
             token: 'token',
             sessionId: 'sess-1',
+            mode: 'e2ee',
             ctx: { encryptionKey: new Uint8Array([1, 2, 3, 4]), encryptionVariant: 'legacy' },
             request: { backendId: 'review-bot', limit: 1 },
         });
@@ -438,6 +489,7 @@ describe('listExecutionRuns', () => {
         const result = await listExecutionRuns({
             token: 'token',
             sessionId: 'sess-1',
+            mode: 'e2ee',
             ctx: { encryptionKey: new Uint8Array([1, 2, 3, 4]), encryptionVariant: 'legacy' },
             request: { backendId: 'codex' },
         });
@@ -468,6 +520,7 @@ describe('listExecutionRuns', () => {
         const result = await listExecutionRuns({
             token: 'token',
             sessionId: 'sess-1',
+            mode: 'e2ee',
             ctx: { encryptionKey: new Uint8Array([1, 2, 3, 4]), encryptionVariant: 'legacy' },
             request: { status: 'succeeded' },
         });
@@ -495,7 +548,7 @@ describe('listExecutionRuns', () => {
         });
     });
 
-    it('returns an empty list when rpc is unavailable and no markers or transcript runs exist', async () => {
+    it('reports protocol unsupported when the rpc method is unavailable and bounded recovery finds no runs', async () => {
         callSessionRpc.mockRejectedValueOnce(new Error('RPC method not available'));
         listExecutionRunMarkers.mockResolvedValueOnce([]);
         readRawSessionHistoryRows.mockResolvedValueOnce([]);
@@ -503,15 +556,15 @@ describe('listExecutionRuns', () => {
         const result = await listExecutionRuns({
             token: 'token',
             sessionId: 'sess-1',
+            mode: 'e2ee',
             ctx: { encryptionKey: new Uint8Array([1, 2, 3, 4]), encryptionVariant: 'legacy' },
             request: {},
         });
 
         expect(result).toEqual({
-            ok: true,
-            data: {
-                runs: [],
-            },
+            ok: false,
+            code: 'execution_run_protocol_unsupported',
+            message: 'RPC method not available',
         });
     });
 
@@ -527,6 +580,7 @@ describe('listExecutionRuns', () => {
         const result = await listExecutionRuns({
             token: 'token',
             sessionId: 'sess-1',
+            mode: 'e2ee',
             ctx: { encryptionKey: new Uint8Array([1, 2, 3, 4]), encryptionVariant: 'legacy' },
             request: {},
             skipLiveRpc: true,
@@ -575,6 +629,7 @@ describe('listExecutionRuns', () => {
         const result = await listExecutionRuns({
             token: 'token',
             sessionId: 'sess-1',
+            mode: 'e2ee',
             ctx: { encryptionKey: new Uint8Array([1, 2, 3, 4]), encryptionVariant: 'legacy' },
             request: {},
         });
@@ -618,6 +673,7 @@ describe('listExecutionRuns', () => {
         const result = await listExecutionRuns({
             token: 'token',
             sessionId: 'sess-1',
+            mode: 'e2ee',
             ctx: { encryptionKey: new Uint8Array([1, 2, 3, 4]), encryptionVariant: 'legacy' },
             request: {},
         });
@@ -724,6 +780,7 @@ describe('listExecutionRuns', () => {
         const result = await listExecutionRuns({
             token: 'token',
             sessionId: 'sess-1',
+            mode: 'e2ee',
             ctx: { encryptionKey: new Uint8Array([1, 2, 3, 4]), encryptionVariant: 'legacy' },
             request: { status: 'succeeded' },
         });
@@ -763,6 +820,7 @@ describe('listExecutionRuns', () => {
         const result = await listExecutionRuns({
             token: 'token',
             sessionId: 'sess-1',
+            mode: 'e2ee',
             ctx: { encryptionKey: new Uint8Array([1, 2, 3, 4]), encryptionVariant: 'legacy' },
             request: {},
         });
@@ -774,7 +832,7 @@ describe('listExecutionRuns', () => {
         });
     });
 
-    it('preserves the original rpc transport error when transcript list fallback lookup fails', async () => {
+    it('reports target unavailable when the rpc target and transcript recovery are unavailable', async () => {
         callSessionRpc.mockRejectedValueOnce(new Error('Socket connect timeout'));
         listExecutionRunMarkers.mockResolvedValueOnce([]);
         readRawSessionHistoryRows.mockRejectedValueOnce(new Error('transcript fetch failed'));
@@ -782,13 +840,14 @@ describe('listExecutionRuns', () => {
         const result = await listExecutionRuns({
             token: 'token',
             sessionId: 'sess-1',
+            mode: 'e2ee',
             ctx: { encryptionKey: new Uint8Array([1, 2, 3, 4]), encryptionVariant: 'legacy' },
             request: {},
         });
 
         expect(result).toEqual({
             ok: false,
-            code: 'unknown_error',
+            code: 'execution_run_target_unavailable',
             message: 'Socket connect timeout',
         });
     });
@@ -940,6 +999,27 @@ describe('normalizeExecutionRunRpcPayload', () => {
             message: 'Voice feature disabled',
         });
     });
+
+    it.each([
+        ['notSent', 'noRunCreated'],
+        ['outcomeUnknown', 'outcomeUnknown'],
+    ] as const)('attaches %s transport evidence to a propagated start error as %s', async (disposition, runCreation) => {
+        callSessionRpc.mockRejectedValueOnce(markRpcRequestDisposition(
+            new Error('caller aborted'),
+            disposition,
+        ));
+
+        await expect(startExecutionRun({
+            token: 'token',
+            sessionId: 'sess-1',
+            mode: 'plain',
+            ctx: null,
+            request: {},
+        })).rejects.toMatchObject({
+            message: 'caller aborted',
+            details: { executionRunStart: { v: 1, runCreation } },
+        });
+    });
 });
 
 describe('startExecutionRun', () => {
@@ -947,7 +1027,7 @@ describe('startExecutionRun', () => {
         callSessionRpc.mockReset();
     });
 
-    it('carries typed feature blocker details across the session RPC service seam', async () => {
+    it('projects only strict start certainty across the session RPC service seam', async () => {
         callSessionRpc.mockResolvedValueOnce({
             ok: false,
             error: 'Voice feature disabled',
@@ -962,6 +1042,7 @@ describe('startExecutionRun', () => {
         const result = await startExecutionRun({
             token: 'token',
             sessionId: 'sess-1',
+            mode: 'e2ee',
             ctx: { encryptionKey: new Uint8Array([1, 2, 3, 4]), encryptionVariant: 'legacy' },
             request: {
                 intent: 'voice_agent',
@@ -979,10 +1060,61 @@ describe('startExecutionRun', () => {
             code: 'execution_run_not_allowed',
             message: 'Voice feature disabled',
             details: {
+                executionRunStart: { v: 1, runCreation: 'outcomeUnknown' },
+            },
+        });
+    });
+
+    it('projects only validated start certainty from start failures', async () => {
+        callSessionRpc.mockResolvedValueOnce({
+            ok: false,
+            error: 'Feature disabled',
+            errorCode: 'execution_run_not_allowed',
+            details: {
                 featureId: 'voice.agent',
                 blockedBy: 'dependency',
                 blockerCode: 'dependency_disabled',
+                executionRunStart: { v: 1, runCreation: 'noRunCreated' },
+                secret: 'must-not-cross-the-service-boundary',
             },
+        });
+
+        await expect(startExecutionRun({
+            token: 'token',
+            sessionId: 'sess-1',
+            mode: 'plain',
+            ctx: null,
+            request: {},
+        })).resolves.toEqual({
+            ok: false,
+            code: 'execution_run_not_allowed',
+            message: 'Feature disabled',
+            details: {
+                executionRunStart: { v: 1, runCreation: 'noRunCreated' },
+            },
+        });
+    });
+
+    it.each([
+        ['notSent', 'noRunCreated'],
+        ['outcomeUnknown', 'outcomeUnknown'],
+    ] as const)('maps a %s Session RPC transport failure to %s', async (disposition, runCreation) => {
+        callSessionRpc.mockRejectedValueOnce(markRpcRequestDisposition(
+            new Error('RPC method not available'),
+            disposition,
+        ));
+
+        await expect(startExecutionRun({
+            token: 'token',
+            sessionId: 'sess-1',
+            mode: 'plain',
+            ctx: null,
+            request: {},
+        })).resolves.toEqual({
+            ok: false,
+            code: 'execution_run_not_allowed',
+            message: 'Execution run start unavailable',
+            details: { executionRunStart: { v: 1, runCreation } },
         });
     });
 });
@@ -1003,6 +1135,7 @@ describe('getExecutionRun', () => {
         const result = await getExecutionRun({
             token: 'token',
             sessionId: 'sess-1',
+            mode: 'e2ee',
             ctx: { encryptionKey: new Uint8Array([1, 2, 3, 4]), encryptionVariant: 'legacy' },
             request: { runId: 'run-invalid' },
         });
@@ -1026,6 +1159,7 @@ describe('getExecutionRun', () => {
         const result = await getExecutionRun({
             token: 'token',
             sessionId: 'sess-1',
+            mode: 'e2ee',
             ctx: { encryptionKey: new Uint8Array([1, 2, 3, 4]), encryptionVariant: 'legacy' },
             request: { runId: 'run-missing' },
         });
@@ -1115,6 +1249,7 @@ describe('getExecutionRun', () => {
         const result = await getExecutionRun({
             token: 'token',
             sessionId: 'sess-1',
+            mode: 'e2ee',
             ctx: { encryptionKey: new Uint8Array([1, 2, 3, 4]), encryptionVariant: 'legacy' },
             request: { runId: 'run_hist_1' },
         });
@@ -1159,6 +1294,7 @@ describe('getExecutionRun', () => {
         const result = await getExecutionRun({
             token: 'token',
             sessionId: 'sess-1',
+            mode: 'e2ee',
             ctx: { encryptionKey: new Uint8Array([1, 2, 3, 4]), encryptionVariant: 'legacy' },
             request: { runId: 'run_hist_1' },
         });
@@ -1198,6 +1334,7 @@ describe('getExecutionRun', () => {
         const result = await getExecutionRun({
             token: 'token',
             sessionId: 'sess-1',
+            mode: 'e2ee',
             ctx: { encryptionKey: new Uint8Array([1, 2, 3, 4]), encryptionVariant: 'legacy' },
             request: { runId: 'run-marker-only' },
         });
@@ -1210,7 +1347,7 @@ describe('getExecutionRun', () => {
         });
     });
 
-    it('preserves the original rpc transport error when transcript get fallback lookup fails', async () => {
+    it('reports target unavailable when the rpc target and get recovery are unavailable', async () => {
         callSessionRpc.mockRejectedValueOnce(new Error('Socket connect timeout'));
         listExecutionRunMarkers.mockResolvedValueOnce([]);
         readRawSessionHistoryRows.mockRejectedValueOnce(new Error('transcript fetch failed'));
@@ -1218,18 +1355,19 @@ describe('getExecutionRun', () => {
         const result = await getExecutionRun({
             token: 'token',
             sessionId: 'sess-1',
+            mode: 'e2ee',
             ctx: { encryptionKey: new Uint8Array([1, 2, 3, 4]), encryptionVariant: 'legacy' },
             request: { runId: 'run-missing' },
         });
 
         expect(result).toEqual({
             ok: false,
-            code: 'unknown_error',
+            code: 'execution_run_target_unavailable',
             message: 'Socket connect timeout',
         });
     });
 
-    it('returns not found when rpc is unavailable and no fallback run exists', async () => {
+    it('reports protocol unsupported when the get rpc method is unavailable and bounded recovery finds no run', async () => {
         callSessionRpc.mockRejectedValueOnce(new Error('RPC method not available'));
         listExecutionRunMarkers.mockResolvedValueOnce([]);
         readRawSessionHistoryRows.mockResolvedValueOnce([]);
@@ -1237,14 +1375,15 @@ describe('getExecutionRun', () => {
         const result = await getExecutionRun({
             token: 'token',
             sessionId: 'sess-1',
+            mode: 'e2ee',
             ctx: { encryptionKey: new Uint8Array([1, 2, 3, 4]), encryptionVariant: 'legacy' },
             request: { runId: 'run-missing' },
         });
 
         expect(result).toEqual({
             ok: false,
-            code: 'execution_run_not_found',
-            message: 'Execution run not found',
+            code: 'execution_run_protocol_unsupported',
+            message: 'RPC method not available',
         });
     });
 });
@@ -1264,6 +1403,7 @@ describe('execution run control fallback', () => {
         const result = await stopExecutionRun({
             token: 'token',
             sessionId: 'sess-1',
+            mode: 'e2ee',
             ctx: { encryptionKey: new Uint8Array([1, 2, 3, 4]), encryptionVariant: 'legacy' },
             request: { runId: 'run-missing' },
         });
@@ -1285,6 +1425,7 @@ describe('execution run control fallback', () => {
         const result = await sendExecutionRunMessage({
             token: 'token',
             sessionId: 'sess-1',
+            mode: 'e2ee',
             ctx: { encryptionKey: new Uint8Array([1, 2, 3, 4]), encryptionVariant: 'legacy' },
             request: { runId: 'run-marker-running', message: 'continue' },
         });
@@ -1322,6 +1463,7 @@ describe('waitForExecutionRun', () => {
         const waitPromise = waitForExecutionRun({
             token: 'token',
             sessionId: 'sess-1',
+            mode: 'e2ee',
             ctx: { encryptionKey: new Uint8Array([1, 2, 3, 4]), encryptionVariant: 'legacy' },
             runId: 'run_1',
             timeoutMs: null,
@@ -1351,6 +1493,7 @@ describe('waitForExecutionRun', () => {
         const waitPromise = waitForExecutionRun({
             token: 'token',
             sessionId: 'sess-1',
+            mode: 'e2ee',
             ctx: { encryptionKey: new Uint8Array([1, 2, 3, 4]), encryptionVariant: 'legacy' },
             runId: 'run_1',
             timeoutMs: 100,

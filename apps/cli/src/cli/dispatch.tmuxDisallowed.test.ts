@@ -22,12 +22,11 @@ import { synchronizePluginCommandContributions } from './commandRegistry';
 function pluginCommands(tmux: 'inherit' | 'required' | 'forbidden'): ResolvedContributionRegistry {
   const command: ResolvedCommandContribution = {
     provenance: 'external', source: { kind: 'path' }, pluginId: 'acme.notes',
-    manifestPath: '/plugins/acme.notes/plugin.json', manifestDigest: 'sha256:notes',
-    sourceSpec: { kind: 'path', locator: '/plugins/acme.notes', trustPolicy: 'local_trusted', installPolicy: 'link' },
+    manifestPath: '/plugins/acme.notes/plugin.json', sourceSpec: { kind: 'path', locator: '/plugins/acme.notes', trustPolicy: 'local_trusted', installPolicy: 'link' },
     definition: { kindVersion: 1, id: 'watch', title: 'Watch', path: ['notes', 'watch'], action: 'run', actionId: 'acme.notes/run', tmux },
   };
   return {
-    generationId: `commands:${tmux}`, uiViewsV2: [], uiRenderersV2: [], uiTranslationsV2: [], agents: [],     actions: [], tools: [], commands: [command], resources: [], activationTargets: [],
+    uiViewsV2: [], uiRenderersV2: [], uiTranslationsV2: [], agents: [],     actions: [], tools: [], commands: [command], resources: [], activationTargets: [],
     actionsById: new Map(), toolsById: new Map(), commandsById: new Map([['acme.notes/watch', command]]), resourcesById: new Map(),
     catalogEntriesById: {}, agentDefinitionsById: new Map(),     pluginDiagnosticsByPluginId: {},
   };

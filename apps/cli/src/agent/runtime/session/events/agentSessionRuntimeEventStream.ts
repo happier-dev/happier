@@ -1,9 +1,9 @@
 import {
   AGENT_SESSION_RUNTIME_LIMITS_CANDIDATE_V1,
-  AgentSessionRuntimeEventV1Schema,
+  AgentSessionRuntimeEventSchema,
 } from '@happier-dev/protocol/runtime';
 
-import type { AgentSessionRuntimeEvent } from '@happier-dev/plugin-sdk/agent-runtime';
+import type { AgentSessionRuntimeEvent } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { Disposable, PluginDiagnosticData } from '@happier-dev/plugin-sdk';
 
 export type AgentSessionRuntimeEventStreamFailure =
@@ -201,7 +201,7 @@ export function createAgentSessionRuntimeEventStream(
       && !(useRecoveryReserve && terminalFailure.status === 'overflow')
     ) return terminalFailure;
 
-    const parsed = AgentSessionRuntimeEventV1Schema.safeParse(event);
+    const parsed = AgentSessionRuntimeEventSchema.safeParse(event);
     if (!parsed.success) {
       const failure = invalidEventFailure();
       notifyFailure(failure);

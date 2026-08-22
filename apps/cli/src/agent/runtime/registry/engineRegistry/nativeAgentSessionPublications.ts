@@ -1,14 +1,12 @@
 import type {
+  AgentSessionActiveInputBinding,
+  AgentSessionActiveInputStatus,
   AgentSessionHostServices,
-} from '@happier-dev/plugin-sdk/agent-runtime';
+  AgentSessionModelsSnapshot,
+  AgentSessionModelsSource,
+} from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { updateAgentStateBestEffort } from '@/api/session/sessionWritesBestEffort';
-
-type ModelsSource = Parameters<AgentSessionHostServices['models']['bind']>[0];
-type AgentSessionModelsSource = ModelsSource;
-type AgentSessionModelsSnapshot = ReturnType<ModelsSource['read']>;
-type ActiveInputBinding = Parameters<AgentSessionHostServices['activeInput']['bind']>[0];
-type ActiveInputStatus = Parameters<AgentSessionHostServices['activeInput']['publishStatus']>[0];
 
 type PublicationSession = Readonly<{
   updateAgentState(updater: Parameters<typeof updateAgentStateBestEffort>[1]): Promise<void> | void;
@@ -17,7 +15,7 @@ type PublicationSession = Readonly<{
 export type NativeAgentSessionPublications = Readonly<{
   services: Pick<AgentSessionHostServices, 'models' | 'activeInput'>;
   modelsSource: AgentSessionModelsSource;
-  readActiveInputBinding(): ActiveInputBinding | null;
+  readActiveInputBinding(): AgentSessionActiveInputBinding | null;
   dispose(): void;
 }>;
 
@@ -29,8 +27,8 @@ export function createNativeAgentSessionPublications(params: Readonly<{
   supportsInFlightSteer: boolean;
 }>): NativeAgentSessionPublications {
   let disposed = false;
-  let modelBinding: Readonly<{ source: ModelsSource; dispose(): void }> | null = null;
-  let activeInputBinding: ActiveInputBinding | null = null;
+  let modelBinding: Readonly<{ source: AgentSessionModelsSource; dispose(): void }> | null = null;
+  let activeInputBinding: AgentSessionActiveInputBinding | null = null;
   let modelSnapshot: AgentSessionModelsSnapshot = Object.freeze({ models: null });
   const modelSubscribers = new Set<(snapshot: AgentSessionModelsSnapshot) => void>();
 
@@ -47,7 +45,7 @@ export function createNativeAgentSessionPublications(params: Readonly<{
       throw new Error('The native Agent session publication scope is retired or unavailable');
     }
   };
-  const publishModels = (snapshot: ReturnType<ModelsSource['read']>): void => {
+  const publishModels = (snapshot: AgentSessionModelsSnapshot): void => {
     modelSnapshot = Object.freeze({
       models: snapshot.models,
       ...(snapshot.currentModelId === undefined ? {} : { currentModelId: snapshot.currentModelId }),
@@ -66,7 +64,7 @@ export function createNativeAgentSessionPublications(params: Readonly<{
       });
     },
   });
-  const publishActiveInputStatus = (status: ActiveInputStatus): void => {
+  const publishActiveInputStatus = (status: AgentSessionActiveInputStatus): void => {
     assertAvailable();
     if (!activeInputBinding) {
       throw new Error('Native Agent active-input status requires an active session binding');
@@ -103,8 +101,8 @@ export function createNativeAgentSessionPublications(params: Readonly<{
         throw new Error('Native Agent session models already have an active publisher');
       }
       let bindingDisposed = false;
-      let sourceDisposable: ReturnType<ModelsSource['subscribe']> | null = null;
-      const apply = (snapshot: ReturnType<ModelsSource['read']>): void => {
+      let sourceDisposable: ReturnType<AgentSessionModelsSource['subscribe']> | null = null;
+      const apply = (snapshot: AgentSessionModelsSnapshot): void => {
         if (bindingDisposed || !isAvailable() || modelBinding?.source !== source) return;
         publishModels(snapshot);
       };

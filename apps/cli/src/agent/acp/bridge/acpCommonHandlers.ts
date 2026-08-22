@@ -1,11 +1,7 @@
-import type { AgentMessage } from '@/agent/core/AgentMessage';
 import type { MessageBuffer } from '@/ui/ink/messageBuffer';
-import type { AcpRuntimeSessionClient } from '@/agent/acp/sessionClient';
+import type { ACPMessageData } from '@/api/session/sessionMessageTypes';
 
-type AgentKey = Parameters<AcpRuntimeSessionClient['sendAgentMessage']>[0];
-type AgentPayload = Parameters<AcpRuntimeSessionClient['sendAgentMessage']>[1];
-type SessionWithKeepAlive = Pick<AcpRuntimeSessionClient, 'keepAlive' | 'sendAgentMessage'>;
-type SessionWithSendOnly = Pick<AcpRuntimeSessionClient, 'sendAgentMessage'>;
+type AgentPayload = ACPMessageData;
 type MessageBufferForModelOutput = Pick<MessageBuffer, 'removeLastMessage' | 'addMessage' | 'updateLastMessage'>;
 
 export function handleAcpModelOutputDelta(params: {
@@ -30,37 +26,16 @@ export function handleAcpModelOutputDelta(params: {
 }
 
 export function handleAcpStatusRunning(params: {
-  session: SessionWithKeepAlive;
-  agent: AgentKey;
   getTaskStartedSent: () => boolean;
   setTaskStartedSent: (value: boolean) => void;
   makeId: () => string;
+  publishTaskStarted: (payload: AgentPayload) => void;
 }): void {
   if (!params.getTaskStartedSent()) {
     const payload: AgentPayload = { type: 'task_started', id: params.makeId() };
-    params.session.sendAgentMessage(params.agent, payload);
+    params.publishTaskStarted(payload);
     params.setTaskStartedSent(true);
   }
-}
-
-export function forwardAcpPermissionRequest(params: {
-  msg: AgentMessage;
-  session: SessionWithSendOnly;
-  agent: AgentKey;
-}): void {
-  if (params.msg.type !== 'permission-request') return;
-  const payload = (params.msg as any).payload || {};
-  const normalizedPayload = normalizePermissionRequestOptionsForAcp(payload);
-
-  const message: AgentPayload = {
-    type: 'permission-request',
-    permissionId: (params.msg as any).id,
-    toolName: payload.toolName || (params.msg as any).reason || 'unknown',
-    description: (params.msg as any).reason || payload.toolName || '',
-    options: normalizedPayload,
-  };
-
-  params.session.sendAgentMessage(params.agent, message);
 }
 
 export function normalizePermissionRequestOptionsForAcp(payload: unknown): unknown {

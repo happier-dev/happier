@@ -1,4 +1,4 @@
-import { inferAgentIdFromSessionMetadata } from '@happier-dev/agents';
+import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 import { readAcpConfiguredBackendV1FromMetadata } from '@happier-dev/protocol';
 
 function normalizeString(value: unknown): string | null {
@@ -17,5 +17,5 @@ export function resolveCliSessionAttachBackendId(metadata: Record<string, unknow
   if (!metadata) return null;
   return readAcpConfiguredBackendV1FromMetadata(metadata)?.backendId
     ?? readConfiguredAcpBackendIdFromFlavor(metadata)
-    ?? inferAgentIdFromSessionMetadata(metadata);
+    ?? resolveAgentIdFromSessionMetadata(metadata);
 }

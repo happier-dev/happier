@@ -61,6 +61,24 @@ describe('setSessionTitle', () => {
     })).resolves.toEqual({ ok: false, code: 'forbidden' });
   });
 
+  it('clears display.title through the same session-state target updater', async () => {
+    updateSessionMetadataForTargetMock.mockImplementationOnce(async ({ updater }: {
+      updater: (metadata: Record<string, unknown>) => Record<string, unknown>;
+    }) => ({
+      ok: true,
+      sessionId: 's1',
+      version: 4,
+      metadata: updater({ summary: { text: 'Current', updatedAt: 10 } }),
+    }));
+
+    const { setSessionTitle } = await import('./setSessionTitle');
+    await expect(setSessionTitle({
+      credentials: { token: 'token' } as never,
+      idOrPrefix: 's1',
+      title: null,
+    })).resolves.toEqual({ ok: true, sessionId: 's1', version: 4, metadata: {} });
+  });
+
   it('maps target metadata retry exhaustion through the session-state port contract', async () => {
     updateSessionMetadataForTargetMock.mockRejectedValueOnce(Object.assign(
       new Error('Failed to update session metadata after 6 attempts'),
@@ -73,5 +91,19 @@ describe('setSessionTitle', () => {
       idOrPrefix: 's1',
       title: 'Renamed',
     })).resolves.toEqual({ ok: false, code: 'conflict' });
+  });
+
+  it('preserves session lookup timeouts through the session-state port contract', async () => {
+    updateSessionMetadataForTargetMock.mockResolvedValueOnce({
+      ok: false,
+      code: 'session_lookup_timeout',
+    });
+
+    const { setSessionTitle } = await import('./setSessionTitle');
+    await expect(setSessionTitle({
+      credentials: { token: 'token' } as never,
+      idOrPrefix: 'c123456789012345678901234',
+      title: 'Renamed',
+    })).resolves.toEqual({ ok: false, code: 'session_lookup_timeout' });
   });
 });

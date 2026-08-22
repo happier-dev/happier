@@ -54,7 +54,7 @@ vi.mock('@/plugins/runtime/exec/processSupervisor', () => ({
 
 const tempDirs = new Set<string>();
 
-function createDescriptor() {
+function createDescriptor(distribution = 'google-antigravity') {
   return InstallableDependencyDescriptorSchema.parse({
     id: 'google-antigravity-localharness',
     key: 'google-antigravity-localharness',
@@ -67,7 +67,7 @@ function createDescriptor() {
     description: 'Local harness from a managed PyPI wheel asset',
     source: {
       kind: 'managed_pypi_wheel_asset',
-      distribution: 'google-antigravity',
+      distribution,
       versionSpecifier: '>=0.1.3,<0.2.0',
       assetPathByPlatform: {
         'darwin-arm64': 'google/antigravity/bin/localharness',
@@ -124,8 +124,8 @@ describe('managed_pypi_wheel_asset runtime adapter', () => {
     expect(adapter.capabilityId).toBe('dep.google-antigravity-localharness');
   });
 
-  it('installs through the binary-safe wheel installer and can launch the managed executable', async () => {
-    const descriptor = createDescriptor();
+  it('recognizes canonical installed metadata for an underscore-named PyPI distribution', async () => {
+    const descriptor = createDescriptor('google_antigravity');
     const homeDir = join(tmpdir(), `happier-pypi-adapter-${Date.now()}-${Math.random()}`);
     tempDirs.add(homeDir);
     configurationState.happyHomeDir = homeDir;
@@ -151,6 +151,7 @@ describe('managed_pypi_wheel_asset runtime adapter', () => {
       await writeFile(managedPath, 'binary');
       await writeFile(metadataPath, `${JSON.stringify({
         sourceKind: 'managed_pypi_wheel_asset',
+        installOwnerId: 'happier.antigravity',
         distribution: 'google-antigravity',
         version: '0.1.5',
         wheelFilename: 'google_antigravity-0.1.5-py3-none-test.whl',
@@ -176,6 +177,11 @@ describe('managed_pypi_wheel_asset runtime adapter', () => {
     );
 
     await expect(adapter.installOrUpgrade()).resolves.toEqual(expect.objectContaining({ ok: true }));
+    expect(installPypiWheelAssetMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        installOwnerId: 'happier.antigravity',
+      }),
+    );
     const canonicalManagedPath = await realpath(managedPath);
     await expect(adapter.resolveLaunchCommand?.({ sourcePreference: 'managed-first' })).resolves.toEqual({
       ok: true,
@@ -184,10 +190,73 @@ describe('managed_pypi_wheel_asset runtime adapter', () => {
       source: 'managed',
     });
     expect(installPypiWheelAssetMock).toHaveBeenCalledWith(expect.objectContaining({
-      distribution: 'google-antigravity',
+      distribution: 'google_antigravity',
       versionSpecifier: '>=0.1.3,<0.2.0',
       executable: true,
     }));
+  });
+
+  it('does not borrow readiness from mismatched distribution, asset, executable, or probe metadata under the same installable key', async () => {
+    vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin');
+    vi.spyOn(process, 'arch', 'get').mockReturnValue('arm64');
+
+    const descriptor = createDescriptor();
+    const homeDir = join(tmpdir(), `happier-pypi-source-mismatch-${Date.now()}-${Math.random()}`);
+    tempDirs.add(homeDir);
+    configurationState.happyHomeDir = homeDir;
+    const managedPath = join(homeDir, 'tools', descriptor.key, 'versions', '0.1.5-current', 'bin', 'localharness');
+    const wrongExecutablePath = join(homeDir, 'tools', descriptor.key, 'versions', '9.9.9-lookalike', 'bin', 'lookalike');
+    const metadataPath = join(homeDir, 'tools', descriptor.key, 'current.json');
+    await mkdir(join(managedPath, '..'), { recursive: true });
+    await writeFile(managedPath, 'matching');
+    await chmod(managedPath, 0o755);
+    await mkdir(join(wrongExecutablePath, '..'), { recursive: true });
+    await writeFile(wrongExecutablePath, 'lookalike');
+    await chmod(wrongExecutablePath, 0o755);
+    const matchingMetadata = {
+      sourceKind: 'managed_pypi_wheel_asset',
+      installOwnerId: 'happier.antigravity',
+      distribution: 'google-antigravity',
+      version: '0.1.5',
+      wheelFilename: 'google_antigravity-0.1.5-py3-none-macosx_14_0_arm64.whl',
+      wheelDigest: `sha256:${'b'.repeat(64)}`,
+      assetPath: 'google/antigravity/bin/localharness',
+      platform: 'darwin-arm64',
+      executablePath: managedPath,
+      compatibilityProbe: { id: 'antigravity-localharness-v1', ok: true },
+    } as const;
+    const installablesRegistry = resolveInstallablesRegistry({
+      bundledFirstPartyPlugins: [{
+        owner: {
+          provenance: 'bundled_first_party_plugin',
+          ownerId: 'happier.antigravity',
+          pluginId: 'happier.antigravity',
+        },
+        descriptor,
+      }],
+    });
+    const adapter = await getRuntimeInstallableAdapter(
+      'google-antigravity-localharness' as InstallableKey,
+      { installablesRegistry },
+    );
+
+    for (const metadata of [
+      { ...matchingMetadata, installOwnerId: 'acme.lookalike' },
+      { ...matchingMetadata, distribution: 'acme-lookalike' },
+      { ...matchingMetadata, assetPath: 'acme/bin/lookalike' },
+      { ...matchingMetadata, compatibilityProbe: { id: null, ok: true } },
+      { ...matchingMetadata, executablePath: wrongExecutablePath },
+      { ...matchingMetadata, version: '9.9.9' },
+    ]) {
+      await writeFile(metadataPath, `${JSON.stringify(metadata, null, 2)}\n`, 'utf8');
+      await expect(adapter.detectLaunchResolution({ env: { PATH: '' } })).resolves.toMatchObject({
+        availability: { ok: false },
+      });
+      await expect(adapter.resolveLaunchCommand?.({
+        sourcePreference: 'managed-first',
+        env: { PATH: '' },
+      })).resolves.toMatchObject({ ok: false });
+    }
   });
 
   it('probes localharness with its framed startup handshake under supervised process ownership', async () => {
@@ -482,6 +551,7 @@ describe('managed_pypi_wheel_asset runtime adapter', () => {
     await chmod(managedPath, 0o755);
     await writeFile(metadataPath, `${JSON.stringify({
       sourceKind: 'managed_pypi_wheel_asset',
+      installOwnerId: 'happier.antigravity',
       distribution: 'google-antigravity',
       version: '0.1.5',
       wheelFilename: 'google_antigravity-0.1.5-py3-none-test.whl',

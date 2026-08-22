@@ -116,6 +116,43 @@ describe('syncPackageDist', () => {
     }
   });
 
+  it('does not block package-dist promotion on shared-dependency publication', async () => {
+    const packageRoot = createTempDirSync('happier-cli-sync-package-dist-independent-lock-');
+    try {
+      const distDir = join(packageRoot, 'dist');
+      const packageDistDir = join(packageRoot, 'package-dist');
+      mkdirSync(distDir, { recursive: true });
+      mkdirSync(packageDistDir, { recursive: true });
+      writeFileSync(join(distDir, 'index.mjs'), 'export const next = true;\n', 'utf8');
+      writeFileSync(join(packageDistDir, 'index.mjs'), 'export const previous = true;\n', 'utf8');
+
+      const sharedDepsLockPath = resolve(packageRoot, '.project', 'tmp', 'cli-shared-deps.lock');
+      await withWorkspaceBundleLock(
+        async () => {
+          expect(() =>
+            syncPackageDist({
+              packageRoot,
+              repoRoot: packageRoot,
+              lockModulePath: workspaceBundleLockModulePath,
+              lockTimeoutMs: 50,
+              lockPollIntervalMs: 10,
+              lockStaleAfterMs: 1_000,
+            }),
+          ).not.toThrow();
+          expect(readFileSync(join(packageDistDir, 'index.mjs'), 'utf8')).toBe('export const next = true;\n');
+        },
+        {
+          lockPath: sharedDepsLockPath,
+          timeoutMs: 2_000,
+          pollIntervalMs: 10,
+          staleAfterMs: 1_000,
+        },
+      );
+    } finally {
+      rmSync(packageRoot, { recursive: true, force: true });
+    }
+  });
+
   it('rejects incomplete write filesystem adapters instead of mixing fake and real promotion operations', () => {
     const packageRoot = createTempDirSync('happier-cli-sync-package-dist-incomplete-fs-');
     try {

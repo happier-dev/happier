@@ -94,4 +94,30 @@ describe('resolveForkCutoffSeqInclusive timeouts', () => {
       response: { status: 403 },
     } satisfies Partial<HttpStatusError>);
   });
+
+  it('preserves the typed stored-content-unavailable response', async () => {
+    process.env.HAPPIER_SERVER_URL = 'http://server.example.test';
+
+    vi.resetModules();
+    axiosGetMock.mockResolvedValueOnce({
+      status: 503,
+      data: { error: 'session_transcript_stored_content_unavailable' },
+    } as any);
+
+    const { resolveForkCutoffSeqInclusive } = await import('./resolveForkCutoffSeqInclusive');
+    const credentials: Credentials = {
+      token: 't',
+      encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
+    };
+
+    await expect(resolveForkCutoffSeqInclusive({
+      credentials,
+      parentSessionId: 'sess_parent_1',
+      parentRawSession: { encryptionMode: 'plain', dataEncryptionKey: null },
+      targetSeqInclusive: 1,
+    })).rejects.toMatchObject({
+      code: 'session_transcript_stored_content_unavailable',
+      response: { status: 503 },
+    });
+  });
 });

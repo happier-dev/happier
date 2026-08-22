@@ -175,7 +175,15 @@ export async function executeCliTranscriptAction(
                 maxLeases: 16,
                 idleTtlMs: DEFAULT_SESSION_TRANSCRIPT_FOLLOW_LEASE_IDLE_TTL_MS,
             });
-        return { ok: true, result: await followSessionTranscript({ store, registry, input }) };
+        const result = await followSessionTranscript({ store, registry, input });
+        if (!result.ok) {
+            return {
+                ok: false,
+                errorCode: result.errorCode,
+                error: result.message,
+            };
+        }
+        return { ok: true, result };
     }
     if (params.actionId === 'transcript.search') {
         return {

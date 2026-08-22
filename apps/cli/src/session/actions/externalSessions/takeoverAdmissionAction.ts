@@ -436,6 +436,7 @@ export function createExternalSessionTakeoverAdmissionActionExecutor(
         );
         maintenance.throwIfLost();
         admissionWait = dependencies.admissionWaiter.register({
+          mode: 'persisted',
           operationId: activeRecord.operationId,
           attemptId,
         });
@@ -445,6 +446,7 @@ export function createExternalSessionTakeoverAdmissionActionExecutor(
             options: {
               transcriptStorage: 'persisted',
               persistedTakeoverAdmission: {
+                mode: 'persisted',
                 operationId: activeRecord.operationId,
                 attemptId,
               },
@@ -456,6 +458,16 @@ export function createExternalSessionTakeoverAdmissionActionExecutor(
         maintenance.throwIfLost();
         if (!fencedSpawn.ok) {
           cancelAdmissionWait();
+          const reconciled =
+            await dependencies.reconcileRuntimeBindingFailure?.({
+              sessionId: activeRecord.request.sessionId,
+              operationId: activeRecord.operationId,
+              attemptId,
+            });
+          if (reconciled) {
+            const published = await publishBestEffort(reconciled);
+            return success(published);
+          }
           return await recoverPrecommitAdmissionFailure(activeRecord);
         }
         const spawnResult = fencedSpawn.value;

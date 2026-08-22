@@ -1,7 +1,7 @@
 import { logger } from "@/ui/logger";
 import { statSync } from "node:fs";
 import { stat, watch } from "node:fs/promises";
-import { basename, dirname } from "node:path";
+import { basename, dirname, resolve } from "node:path";
 
 const DEFAULT_MISSING_PARENT_RETRY_DELAY_MS = 1_000;
 const DEFAULT_MISSING_PARENT_TIMEOUT_MS = 30_000;
@@ -15,6 +15,7 @@ interface StartFileWatcherPolicy {
 
 export type StartFileWatcherOptions = Readonly<{
     emitInitial?: boolean;
+    reportEventPath?: boolean;
     onWatcherAttached?: () => void;
     onWatcherUnavailable?: (error: Error) => void;
 }>;
@@ -78,6 +79,15 @@ function readFileVersionAtRegistration(path: string): string | null {
         if (hasErrorCode(error, 'ENOENT')) {
             return null;
         }
+        throw error;
+    }
+}
+
+function isDirectoryAtRegistration(path: string): boolean {
+    try {
+        return statSync(path).isDirectory();
+    } catch (error) {
+        if (hasErrorCode(error, 'ENOENT')) return false;
         throw error;
     }
 }
@@ -224,6 +234,7 @@ export function startFileWatcher(
     const targetName = basename(file);
     const watcherPolicy = DEFAULT_WATCHER_POLICY;
     const registrationVersion = readFileVersionAtRegistration(file);
+    const registeredAsDirectory = isDirectoryAtRegistration(file);
     let attachmentCount = 0;
 
     void (async () => {
@@ -270,7 +281,14 @@ export function startFileWatcher(
                         return;
                     }
                     logger.debug('[FILE_WATCHER] Watched file changed');
-                    await onFileChange(file);
+                    const eventName = typeof event.filename === 'string'
+                        ? event.filename
+                        : '';
+                    await onFileChange(
+                        options?.reportEventPath === true && registeredAsDirectory && eventName
+                            ? resolve(file, eventName)
+                            : file,
+                    );
                     const watchedIdentity = watchedVersion
                         ?.split(':', 2)
                         .join(':') ?? null;

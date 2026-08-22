@@ -1,9 +1,9 @@
 import { PluginError, type JsonValue } from '@happier-dev/plugin-sdk';
 import {
-  type PluginSubagentObservation,
-  type PluginSubagentsService,
-  type PluginSubagentSummary,
-} from '@happier-dev/plugin-sdk/runtime';
+  type SubagentObservation,
+  type SubagentsService,
+  type SubagentSummary,
+} from '@happier-dev/plugin-sdk/sessions/subagents';
 import {
   serializeSessionSubagentCustodyDetailV1,
   type SubagentRefV1,
@@ -24,12 +24,12 @@ type StoreState = {
   writeTail: Promise<void>;
 };
 
-type ListSnapshot = Readonly<{ queryKey: string; items: readonly PluginSubagentSummary[]; offset: number }>;
+type ListSnapshot = Readonly<{ queryKey: string; items: readonly SubagentSummary[]; offset: number }>;
 
 const stateByStore = new WeakMap<object, StoreState>();
 const CURSOR_PREFIX = 'plugin_subagents_v1_';
 const MAX_CURSOR_SNAPSHOTS = 128;
-const subagentStatuses = new Set<PluginSubagentSummary['status']>(['starting', 'running', 'completed', 'failed', 'aborted']);
+const subagentStatuses = new Set<SubagentSummary['status']>(['starting', 'running', 'completed', 'failed', 'aborted']);
 
 function fail(code: string, message = code): never {
   throw new PluginError({ code, message });
@@ -59,7 +59,7 @@ function observationOperationId(input: Readonly<{
   scope: string;
   subagentId: string;
   groupId: string | null;
-  status: PluginSubagentSummary['status'];
+  status: SubagentSummary['status'];
   detail: JsonValue;
 }>): string {
   const digest = createHash('sha256')
@@ -87,7 +87,7 @@ function assertDataOnly(value: unknown, seen = new Set<object>()): void {
   seen.delete(value);
 }
 
-function normalizeObservation(input: unknown): PluginSubagentObservation {
+function normalizeObservation(input: unknown): SubagentObservation {
   assertDataOnly(input);
   if (!input || typeof input !== 'object' || Array.isArray(input)) fail('plugin_subagent_input_invalid');
   const value = input as Record<string, unknown>;
@@ -96,7 +96,7 @@ function normalizeObservation(input: unknown): PluginSubagentObservation {
   }
   if (
     typeof value.observationId !== 'string' || value.observationId.trim().length === 0
-    || typeof value.status !== 'string' || !subagentStatuses.has(value.status as PluginSubagentSummary['status'])
+    || typeof value.status !== 'string' || !subagentStatuses.has(value.status as SubagentSummary['status'])
     || (value.groupId !== undefined && typeof value.groupId !== 'string')
   ) fail('plugin_subagent_input_invalid');
   const detail = value.detail === undefined
@@ -106,7 +106,7 @@ function normalizeObservation(input: unknown): PluginSubagentObservation {
   return Object.freeze({
     observationId: value.observationId,
     ...(value.groupId !== undefined ? { groupId: value.groupId as string } : {}),
-    status: value.status as PluginSubagentSummary['status'],
+    status: value.status as SubagentSummary['status'],
     ...(detail !== undefined ? { detail: detail.data } : {}),
   });
 }
@@ -129,7 +129,7 @@ async function withWriteLock<T>(state: StoreState, operation: () => Promise<T>):
   }
 }
 
-function normalizeStatus(status: PluginSubagentSummary['status']) {
+function normalizeStatus(status: SubagentSummary['status']) {
   return status === 'starting' ? 'pending' as const : status;
 }
 
@@ -157,7 +157,7 @@ function readMetadata(ref: SubagentRefV1): PluginServiceMetadata | null {
   return value as PluginServiceMetadata;
 }
 
-function projectSummary(ref: SubagentRefV1): PluginSubagentSummary | null {
+function projectSummary(ref: SubagentRefV1): SubagentSummary | null {
   const metadata = readMetadata(ref);
   if (!metadata) return null;
   return Object.freeze({
@@ -169,7 +169,7 @@ function projectSummary(ref: SubagentRefV1): PluginSubagentSummary | null {
   });
 }
 
-function projectOwnedSummary(ref: SubagentRefV1, identity: PluginSubagentHostIdentity): PluginSubagentSummary | null {
+function projectOwnedSummary(ref: SubagentRefV1, identity: PluginSubagentHostIdentity): SubagentSummary | null {
   const metadata = readMetadata(ref);
   if (!metadata || identityKey(identity) !== identityKey({
     pluginId: metadata.pluginId,
@@ -185,7 +185,7 @@ export function createPluginSubagentsService(params: Readonly<{
   identity: PluginSubagentHostIdentity;
   isCurrent: () => boolean;
   durableCustody?: PluginSubagentDurableCustody;
-}>): PluginSubagentsService {
+}>): SubagentsService {
   const state = stateFor(params.store);
   const snapshots = new Map<string, ListSnapshot>();
 
@@ -200,7 +200,7 @@ export function createPluginSubagentsService(params: Readonly<{
     if (value !== params.identity.parentSessionId) fail('plugin_subagent_parent_forbidden', 'Subagent parent session is outside this invocation');
     return value;
   };
-  const mirrorSummary = async (summary: PluginSubagentDurableSummary, observationId: string): Promise<PluginSubagentSummary> => {
+  const mirrorSummary = async (summary: PluginSubagentDurableSummary, observationId: string): Promise<SubagentSummary> => {
     const stored = await params.store.upsert({
       actor: { kind: 'plugin', pluginId: params.identity.pluginId, agentId: params.identity.contributionId },
       input: {
@@ -246,9 +246,9 @@ export function createPluginSubagentsService(params: Readonly<{
       ? params.durableCustody.availability()
       : Object.freeze({ status: 'unavailable' as const, code: 'plugin_subagent_durable_custody_unavailable' })
     : Object.freeze({ status: 'unavailable' as const, code: 'plugin_generation_retired' });
-  const service: PluginSubagentsService = {
+  const service: SubagentsService = {
     capabilities: () => Object.freeze({ list: availability(), observe: observeAvailability(), watch: availability() }),
-    async list(query: NonNullable<Parameters<PluginSubagentsService['list']>[0]> = {}) {
+    async list(query: NonNullable<Parameters<SubagentsService['list']>[0]> = {}) {
       assertCurrent();
       const parentSessionId = assertParent(query.parentSessionId);
       if (query.signal?.aborted) fail('plugin_operation_aborted');
@@ -268,7 +268,7 @@ export function createPluginSubagentsService(params: Readonly<{
         const refs = await params.store.list({ parentSessionId, ...(groupId ? { groupId } : {}), limit: 256 });
         if (query.signal?.aborted) fail('plugin_operation_aborted');
         assertCurrent();
-        const items = refs.map((ref) => projectOwnedSummary(ref, params.identity)).filter((summary): summary is PluginSubagentSummary => summary !== null)
+        const items = refs.map((ref) => projectOwnedSummary(ref, params.identity)).filter((summary): summary is SubagentSummary => summary !== null)
           .sort((a, b) => a.id.localeCompare(b.id));
         snapshot = Object.freeze({ queryKey, items: Object.freeze(items), offset: 0 });
       }
@@ -285,7 +285,7 @@ export function createPluginSubagentsService(params: Readonly<{
         ...(nextCursor ? { nextCursor } : {}),
       });
     },
-    async get(id: string, options: NonNullable<Parameters<PluginSubagentsService['get']>[1]> = {}) {
+    async get(id: string, options: NonNullable<Parameters<SubagentsService['get']>[1]> = {}) {
       assertCurrent();
       const parentSessionId = assertParent(options.parentSessionId);
       if (options.signal?.aborted) fail('plugin_operation_aborted');
@@ -295,7 +295,7 @@ export function createPluginSubagentsService(params: Readonly<{
       assertCurrent();
       return ref ? projectOwnedSummary(ref, params.identity) : null;
     },
-    async observe(input: PluginSubagentObservation, options: NonNullable<Parameters<PluginSubagentsService['observe']>[1]> = {}) {
+    async observe(input: SubagentObservation, options: NonNullable<Parameters<SubagentsService['observe']>[1]> = {}) {
       assertCurrent();
       if (options.signal?.aborted) fail('plugin_operation_aborted');
       if (!params.durableCustody) fail('plugin_subagent_durable_custody_unavailable');
@@ -323,10 +323,13 @@ export function createPluginSubagentsService(params: Readonly<{
         });
         if (options.signal?.aborted) fail('plugin_operation_aborted');
         assertCurrent();
-        return await mirrorSummary(summary, observation.observationId);
+        const mirrored = await mirrorSummary(summary, observation.observationId);
+        if (options.signal?.aborted) fail('plugin_operation_aborted');
+        assertCurrent();
+        return mirrored;
       });
     },
-    watch(query: Parameters<PluginSubagentsService['watch']>[0], listener: Parameters<PluginSubagentsService['watch']>[1]) {
+    watch(query: Parameters<SubagentsService['watch']>[0], listener: Parameters<SubagentsService['watch']>[1]) {
       assertCurrent();
       const parentSessionId = assertParent(query.parentSessionId);
       const ownedIds = new Set<string>();
@@ -379,11 +382,11 @@ export type PluginSubagentDurableCustody = Readonly<{
     operationId: string;
     subagentId: string;
     groupId?: string;
-    status: PluginSubagentSummary['status'];
+    status: SubagentSummary['status'];
     detail?: JsonValue;
     signal?: AbortSignal;
   }>): Promise<PluginSubagentDurableSummary>;
   retire(options?: Readonly<{ signal?: AbortSignal }>): Promise<void>;
 }>;
 
-export type PluginSubagentDurableSummary = Readonly<PluginSubagentSummary & { revision: string }>;
+export type PluginSubagentDurableSummary = Readonly<SubagentSummary & { revision: string }>;

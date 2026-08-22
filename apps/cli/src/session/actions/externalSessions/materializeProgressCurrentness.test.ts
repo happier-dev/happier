@@ -5,12 +5,16 @@ import { join } from 'node:path';
 import {
   EXTERNAL_SESSION_OPERATION_PRESENTATION_METADATA_KEY,
   ExternalSessionOperationSharedPresentationV1Schema,
+  openSessionOwnerMetadataEnvelopeV1,
   projectExternalSessionOperationProgressV1,
   resolveExternalSessionOperationTimelineV1,
   type ExternalSessionOperationRecordV1,
+  type ExternalSessionOperationSharedPresentationV1,
   type ExternalSessionOperationSocketCommandV1,
   type ExternalSessionOperationSocketResponseV1,
   type ExternalSessionPriorStableStorageV1,
+  type SessionOwnerMetadataEnvelopeV1,
+  type SessionMetadataTuplePatchV1,
 } from '@happier-dev/protocol';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -20,6 +24,7 @@ const boundaryMocks = vi.hoisted(() => ({
   patchSessionMetadata: vi.fn(),
   patchSessionMetadataEnvelopeTuple: vi.fn(),
   readCredentials: vi.fn(),
+  fetchAccountEncryptionCurrentness: vi.fn(),
 }));
 
 vi.mock('@/session/transport/http/sessionsHttp', () => ({
@@ -31,7 +36,12 @@ vi.mock('@/session/transport/http/sessionsHttp', () => ({
 }));
 
 vi.mock('@/persistence', () => ({
-  readCredentials: boundaryMocks.readCredentials,
+  readStoredCredentials: boundaryMocks.readCredentials,
+}));
+
+vi.mock('@/api/client/connectedServiceCredentialApi', () => ({
+  fetchAccountEncryptionCurrentness:
+    boundaryMocks.fetchAccountEncryptionCurrentness,
 }));
 
 import {
@@ -47,12 +57,14 @@ import {
   createExternalSessionOperationPrivateStagingStore,
 } from '@/session/external/staging/operationPrivateStaging';
 import {
+  assertExternalSessionOperationProgressCanBeSelected,
   publishExternalSessionOperationProgress,
+  settlePriorTerminalExternalSessionOperationProgressProjections,
 } from './operationProgressPublisher';
 import {
-  externalSessionOperationIdForRequest,
   mutateExternalSessionOperationRecordAtRevision,
   readExternalSessionOperationRecord,
+  readExternalSessionOperationStoredEntry,
   writeExternalSessionOperationRecord,
 } from './operationRecordStore';
 import {
@@ -63,7 +75,7 @@ type MutableRawSession = {
   metadata: string;
   metadataVersion: number;
   metadataLayoutVersion: 0 | 1;
-  ownerMetadata: string | null;
+  ownerMetadata: SessionOwnerMetadataEnvelopeV1 | null;
   agentState: string | null;
   agentStateVersion: number;
   encryptionMode: 'plain';
@@ -111,6 +123,7 @@ function validatingTakeoverRecord(): ExternalSessionOperationRecordV1 {
     },
     plan: 'takeover' as const,
     targetStorageMode: 'persisted' as const,
+    targetDirectory: '/local/selected/workspace',
     targetRuntimeMode: 'terminal' as const,
   };
   return {
@@ -175,7 +188,7 @@ function validatingMaterializeRecord(): ExternalSessionOperationRecordV1 {
   };
   return {
     v: 1,
-    operationId: externalSessionOperationIdForRequest(request),
+    operationId: 'external-materialize:progress-currentness-1',
     revision: 0,
     request,
     status: 'awaiting_user_resume',
@@ -209,32 +222,78 @@ function validatingMaterializeRecord(): ExternalSessionOperationRecordV1 {
   };
 }
 
-function installMetadataCas(
+function installMetadataMigrationCas(
   rawSession: MutableRawSession,
   beforeCommit?: () => Promise<void>,
 ): void {
-  boundaryMocks.patchSessionMetadata.mockImplementation(async (request: Readonly<{
-    ciphertext: string;
-    expectedVersion: number;
-  }>) => {
-    await beforeCommit?.();
-    if (request.expectedVersion !== rawSession.metadataVersion) {
+  boundaryMocks.patchSessionMetadataEnvelopeTuple.mockImplementation(
+    async (request: Readonly<{ patch: SessionMetadataTuplePatchV1 }>) => {
+      await beforeCommit?.();
+      const { patch } = request;
+      if (patch.mode === 'owner') {
+        if (
+          rawSession.metadataLayoutVersion !== 1
+          || JSON.stringify(patch.expectedOwnerMetadata)
+            !== JSON.stringify(rawSession.ownerMetadata)
+          || patch.sharedMetadata.expectedVersion
+            !== rawSession.metadataVersion
+          || patch.agentState.expectedVersion
+            !== rawSession.agentStateVersion
+        ) {
+          return {
+            success: false as const,
+            error: 'session_metadata_version_conflict' as const,
+            metadataLayoutVersion: rawSession.metadataLayoutVersion,
+            sharedMetadata: { version: rawSession.metadataVersion },
+            agentState: { version: rawSession.agentStateVersion },
+          };
+        }
+        rawSession.metadata = patch.sharedMetadata.ciphertext;
+        rawSession.metadataVersion += 1;
+        rawSession.ownerMetadata = patch.ownerMetadata;
+        rawSession.agentState = patch.agentState.ciphertext;
+        rawSession.agentStateVersion += 1;
+        return {
+          success: true as const,
+          metadataLayoutVersion: 1 as const,
+          sharedMetadata: { version: rawSession.metadataVersion },
+          ownerMetadata: { version: rawSession.metadataVersion },
+          agentState: { version: rawSession.agentStateVersion },
+        };
+      }
+      if (patch.mode !== 'owner_migration') {
+        throw new Error(`expected owner mutation, received ${patch.mode}`);
+      }
+      if (
+        rawSession.metadataLayoutVersion !== 0
+        || patch.source.metadata.version !== rawSession.metadataVersion
+        || patch.source.metadata.ciphertext !== rawSession.metadata
+        || patch.source.ownerMetadata !== null
+        || patch.source.agentState.version !== rawSession.agentStateVersion
+        || patch.source.agentState.ciphertext !== rawSession.agentState
+      ) {
+        return {
+          success: false as const,
+          error: 'session_metadata_version_conflict' as const,
+          metadataLayoutVersion: rawSession.metadataLayoutVersion,
+          sharedMetadata: { version: rawSession.metadataVersion },
+          agentState: { version: rawSession.agentStateVersion },
+        };
+      }
+      rawSession.metadata = patch.target.sharedMetadata.ciphertext;
+      rawSession.metadataVersion += 1;
+      rawSession.metadataLayoutVersion = 1;
+      rawSession.ownerMetadata = patch.target.ownerMetadata;
+      rawSession.agentState = patch.target.agentState.ciphertext;
+      rawSession.agentStateVersion += 1;
       return {
-        success: false as const,
-        error: 'version-mismatch' as const,
-        current: {
-          version: rawSession.metadataVersion,
-          value: rawSession.metadata,
-        },
+        success: true as const,
+        metadataLayoutVersion: 1 as const,
+        sharedMetadata: { version: rawSession.metadataVersion },
+        agentState: { version: rawSession.agentStateVersion },
       };
-    }
-    rawSession.metadata = request.ciphertext;
-    rawSession.metadataVersion += 1;
-    return {
-      success: true as const,
-      version: rawSession.metadataVersion,
-    };
-  });
+    },
+  );
   boundaryMocks.fetchSessionById.mockImplementation(async () => rawSession);
   boundaryMocks.fetchSessionByIdCompat.mockImplementation(
     async () => rawSession,
@@ -248,12 +307,12 @@ function installMetadataTupleCas(
   boundaryMocks.patchSessionMetadataEnvelopeTuple.mockImplementation(
     async (request: Readonly<{
       patch: Readonly<{
-        expectedOwnerMetadataCiphertext: string;
+        expectedOwnerMetadata: SessionOwnerMetadataEnvelopeV1;
         sharedMetadata: Readonly<{
           ciphertext: string;
           expectedVersion: number;
         }>;
-        ownerMetadata: Readonly<{ ciphertext: string }>;
+        ownerMetadata: SessionOwnerMetadataEnvelopeV1;
         agentState: Readonly<{
           ciphertext: string | null;
           expectedVersion: number;
@@ -262,8 +321,8 @@ function installMetadataTupleCas(
     }>) => {
       await beforeCommit?.();
       if (
-        request.patch.expectedOwnerMetadataCiphertext
-          !== rawSession.ownerMetadata
+        JSON.stringify(request.patch.expectedOwnerMetadata)
+          !== JSON.stringify(rawSession.ownerMetadata)
         || request.patch.sharedMetadata.expectedVersion
           !== rawSession.metadataVersion
         || request.patch.agentState.expectedVersion
@@ -279,7 +338,7 @@ function installMetadataTupleCas(
       }
       rawSession.metadata = request.patch.sharedMetadata.ciphertext;
       rawSession.metadataVersion += 1;
-      rawSession.ownerMetadata = request.patch.ownerMetadata.ciphertext;
+      rawSession.ownerMetadata = request.patch.ownerMetadata;
       rawSession.agentState = request.patch.agentState.ciphertext;
       rawSession.agentStateVersion += 1;
       return {
@@ -357,10 +416,12 @@ beforeEach(() => {
   boundaryMocks.readCredentials.mockReset();
   boundaryMocks.readCredentials.mockResolvedValue({
     token: 'token-1',
-    encryption: {
-      type: 'legacy',
-      secret: new Uint8Array(32).fill(1),
-    },
+    encryption: null,
+  });
+  boundaryMocks.fetchAccountEncryptionCurrentness.mockReset();
+  boundaryMocks.fetchAccountEncryptionCurrentness.mockResolvedValue({
+    mode: 'plain', version: 1, signingKeyFingerprint: null,
+    contentKeyFingerprint: null, updatedAt: 1,
   });
 });
 
@@ -371,7 +432,71 @@ afterEach(async () => {
 });
 
 describe('materialize semantic currentness after operation progress publication', () => {
-  it('uses the exact pushed revision to reread the durable private claim and fences all public actions before effects', async () => {
+  it('compacts an external-linked takeover only after the canonical publisher durably acknowledges its completed presentation', async () => {
+    const activeServerDir = await mkdtemp(join(
+      tmpdir(),
+      'happier-external-linked-completion-publication-',
+    ));
+    roots.push(activeServerDir);
+    const base = validatingTakeoverRecord();
+    const request = {
+      ...base.request,
+      targetStorageMode: 'external-linked' as const,
+    };
+    const {
+      retryTargetPhase: _retryTargetPhase,
+      ...baseWithoutRetryTarget
+    } = base;
+    const completed: ExternalSessionOperationRecordV1 = {
+      ...baseWithoutRetryTarget,
+      request,
+      revision: 1,
+      status: 'completed',
+      phase: 'finalizing',
+      timeline: resolveExternalSessionOperationTimelineV1(request),
+      updatedAtMs: 2,
+      terminalResult: { kind: 'completed' },
+    };
+    await writeExternalSessionOperationRecord(activeServerDir, completed);
+    const rawSession: MutableRawSession = {
+      metadata: '{}',
+      metadataVersion: 7,
+      metadataLayoutVersion: 0,
+      ownerMetadata: null,
+      agentState: null,
+      agentStateVersion: 0,
+      encryptionMode: 'plain',
+      dataEncryptionKey: null,
+    };
+    installMetadataMigrationCas(rawSession);
+
+    await publishExternalSessionOperationProgress({
+      activeServerDir,
+      sessionId: completed.request.sessionId,
+      progress: projectExternalSessionOperationProgressV1(completed),
+    });
+
+    await expect(readExternalSessionOperationStoredEntry(
+      activeServerDir,
+      completed.operationId,
+    )).resolves.toMatchObject({
+      kind: 'completion_receipt',
+      receipt: {
+        reference: {
+          sessionId: completed.request.sessionId,
+          operationId: completed.operationId,
+          revision: completed.revision,
+        },
+        presentation: {
+          operationId: completed.operationId,
+          revision: completed.revision,
+          status: 'completed',
+        },
+      },
+    });
+  });
+
+  it('migrates one layout-0 publish into an exact shared presentation and complete owner operation before acknowledging it', async () => {
     const activeServerDir = await mkdtemp(join(
       tmpdir(),
       'happier-materialize-public-reference-',
@@ -389,12 +514,13 @@ describe('materialize semantic currentness after operation progress publication'
       encryptionMode: 'plain',
       dataEncryptionKey: null,
     };
-    installMetadataCas(rawSession);
+    installMetadataMigrationCas(rawSession);
 
+    const expectedProgress = projectExternalSessionOperationProgressV1(initial);
     await publishExternalSessionOperationProgress({
       activeServerDir,
       sessionId: initial.request.sessionId,
-      progress: projectExternalSessionOperationProgressV1(initial),
+      progress: expectedProgress,
     });
     const publishedMetadata = JSON.parse(rawSession.metadata);
     const pushedState =
@@ -406,6 +532,43 @@ describe('materialize semantic currentness after operation progress publication'
     expect(publishedMetadata).not.toHaveProperty(
       'externalSessionOperationV1',
     );
+    expect(pushedState).toEqual({
+      v: 1,
+      operationId: expectedProgress.operationId,
+      revision: expectedProgress.revision,
+      kind: expectedProgress.request.plan,
+      status: expectedProgress.status,
+      phase: expectedProgress.phase,
+    });
+    expect(Object.keys(pushedState).sort()).toEqual([
+      'kind',
+      'operationId',
+      'phase',
+      'revision',
+      'status',
+      'v',
+    ]);
+    if (!rawSession.ownerMetadata) {
+      throw new Error('expected layout-1 owner metadata');
+    }
+    const ownerMetadata = openSessionOwnerMetadataEnvelopeV1({
+      accountMode: 'plain',
+      envelope: rawSession.ownerMetadata,
+    });
+    expect(ownerMetadata.ok && ownerMetadata.ownerMetadata.runtime?.externalSessionOperationV1).toEqual({
+      v: 1,
+      progress: expectedProgress,
+    });
+    expect(boundaryMocks.patchSessionMetadataEnvelopeTuple).toHaveBeenCalledOnce();
+    expect(boundaryMocks.patchSessionMetadata).not.toHaveBeenCalled();
+    await expect(readExternalSessionOperationRecord(
+      activeServerDir,
+      initial.operationId,
+    )).resolves.toMatchObject({
+      progressProjection: {
+        acknowledgedRevision: expectedProgress.revision,
+      },
+    });
     const publicReference = {
       sessionId: initial.request.sessionId,
       operationId: pushedState.operationId,
@@ -511,11 +674,13 @@ describe('materialize semantic currentness after operation progress publication'
     await writeExternalSessionOperationRecord(activeServerDir, initial);
     const rawSession: MutableRawSession = {
       metadata: JSON.stringify({
-        linkedExternalSessionV1: {
+        externalSessionV1: {
           v: 1,
+          agentId: 'example',
+          machineId: 'machine-1',
           remoteSessionId: 'remote-1',
           source: { kind: 'jsonl' },
-          linkGeneration: 'link-1',
+          linkedAtMs: 1,
         },
       }),
       metadataVersion: 7,
@@ -526,7 +691,7 @@ describe('materialize semantic currentness after operation progress publication'
       encryptionMode: 'plain',
       dataEncryptionKey: null,
     };
-    installMetadataCas(rawSession);
+    installMetadataMigrationCas(rawSession);
 
     await publishExternalSessionOperationProgress({
       activeServerDir,
@@ -550,6 +715,7 @@ describe('materialize semantic currentness after operation progress publication'
         },
       }),
       preparePersistedTakeover: async () => ({
+        workingDirectory: '/workspace',
         resumeFollowOnFailure: async () => undefined,
       }),
       describeSource: async () => ({
@@ -688,7 +854,7 @@ describe('materialize semantic currentness after operation progress publication'
       encryptionMode: 'plain',
       dataEncryptionKey: null,
     };
-    installMetadataCas(rawSession);
+    installMetadataMigrationCas(rawSession);
     await publishExternalSessionOperationProgress({
       activeServerDir,
       sessionId: initial.request.sessionId,
@@ -726,6 +892,7 @@ describe('materialize semantic currentness after operation progress publication'
         },
       }),
       preparePersistedTakeover: async () => ({
+        workingDirectory: '/workspace',
         resumeFollowOnFailure: async () => undefined,
       }),
       describeSource: async () => ({
@@ -780,21 +947,21 @@ describe('materialize semantic currentness after operation progress publication'
       roots.push(activeServerDir);
       const credentials = {
         token: 'token-1',
-        encryption: {
-          type: 'legacy' as const,
-          secret: new Uint8Array(32).fill(1),
-        },
+        encryption: null,
       };
       boundaryMocks.readCredentials.mockResolvedValue(credentials);
+      boundaryMocks.fetchAccountEncryptionCurrentness.mockResolvedValue({
+        mode: 'plain', version: 1, signingKeyFingerprint: null,
+        contentKeyFingerprint: null, updatedAt: 1,
+      });
       const initialA = validatingMaterializeRecord();
       await writeExternalSessionOperationRecord(activeServerDir, initialA);
       const layout1Fields = buildSessionMetadataEnvelopeFields({
         credentials,
+        accountEncryptionMode: 'plain',
         metadata: {},
         agentState: null,
         storedContentMode: 'plain',
-        encryptionKey: credentials.encryption.secret,
-        encryptionVariant: 'legacy',
       });
       const rawSession: MutableRawSession = metadataLayoutVersion === 0
         ? {
@@ -811,7 +978,7 @@ describe('materialize semantic currentness after operation progress publication'
             metadata: layout1Fields.sharedMetadata.ciphertext,
             metadataVersion: 7,
             metadataLayoutVersion: 1,
-            ownerMetadata: layout1Fields.ownerMetadata.ciphertext,
+            ownerMetadata: layout1Fields.ownerMetadata,
             agentState: layout1Fields.agentState,
             agentStateVersion: 0,
             encryptionMode: 'plain',
@@ -833,7 +1000,7 @@ describe('materialize semantic currentness after operation progress publication'
         await firstCommitRelease;
       };
       if (metadataLayoutVersion === 0) {
-        installMetadataCas(rawSession, beforeCommit);
+        installMetadataMigrationCas(rawSession, beforeCommit);
       } else {
         installMetadataTupleCas(rawSession, beforeCommit);
       }
@@ -849,7 +1016,7 @@ describe('materialize semantic currentness after operation progress publication'
         (error: unknown) => ({ kind: 'rejected' as const, error }),
       );
       await firstCommitReached;
-      await terminalizeMaterializeRecord(
+      const terminalA = await terminalizeMaterializeRecord(
         activeServerDir,
         initialA,
         `a-layout-${metadataLayoutVersion}`,
@@ -862,7 +1029,8 @@ describe('materialize semantic currentness after operation progress publication'
       };
       const initialB = {
         ...initialA,
-        operationId: externalSessionOperationIdForRequest(requestB),
+        operationId:
+          `external-materialize:progress-currentness-b-${metadataLayoutVersion}`,
         request: requestB,
         createdAtMs: 3,
         updatedAtMs: 3,
@@ -870,15 +1038,45 @@ describe('materialize semantic currentness after operation progress publication'
         progressProjection: { acknowledgedRevision: null },
       } satisfies ExternalSessionOperationRecordV1;
       const successorB = (async () => {
+        let expectedDifferentTerminalPresentation:
+          ExternalSessionOperationSharedPresentationV1 | undefined;
         const admittedB = await writeExternalSessionOperationRecord(
           activeServerDir,
           initialB,
+          {
+            settlePriorTerminalProgressProjection: async (
+              priorTerminalRecords,
+            ) => {
+              await settlePriorTerminalExternalSessionOperationProgressProjections(
+                activeServerDir,
+                priorTerminalRecords,
+              );
+            },
+            validateSessionAdmission: async (
+              _current,
+              incoming,
+              priorTerminalRecords,
+            ) => {
+              expectedDifferentTerminalPresentation =
+                await assertExternalSessionOperationProgressCanBeSelected({
+                  sessionId: incoming.request.sessionId,
+                  progress:
+                    projectExternalSessionOperationProgressV1(incoming),
+                  priorTerminalRecords,
+                });
+            },
+          },
         );
         await publishExternalSessionOperationProgress({
           activeServerDir,
           sessionId: admittedB.request.sessionId,
           progress: projectExternalSessionOperationProgressV1(admittedB),
-          allowDifferentTerminalReplacement: true,
+          ...(expectedDifferentTerminalPresentation
+            ? {
+              allowDifferentTerminalReplacement: true,
+              expectedDifferentTerminalPresentation,
+            }
+            : {}),
         });
         const terminalB = await terminalizeMaterializeRecord(
           activeServerDir,
@@ -950,7 +1148,7 @@ describe('materialize semantic currentness after operation progress publication'
       )).resolves.toMatchObject({
         status: 'completed',
         progressProjection: {
-          acknowledgedRevision: null,
+          acknowledgedRevision: terminalA.revision,
         },
       });
     },

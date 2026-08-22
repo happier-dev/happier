@@ -1148,6 +1148,76 @@ describe('createSessionProviderInputConsumer', () => {
     }
   });
 
+  it('rejoins an ambiguously acknowledged materialization after its requested backoff without a new wake', async () => {
+    vi.useFakeTimers();
+    try {
+      type Mode = { id: string };
+      const queue = new MessageQueue2<Mode>(() => 'hash');
+      const materializeNextPendingMessageSafely = vi
+        .fn()
+        .mockResolvedValueOnce({ type: 'retryable_transport' as const, retryAfterMs: 1_000 })
+        .mockImplementationOnce(async () => {
+          queue.pushImmediate('rejoined frozen claim', { id: 'mode' });
+          return { type: 'materialized' as const, localId: 'rejoined-local', seq: 1, content: null };
+        });
+      const consumer = createSessionProviderInputConsumer({
+        messageQueue: queue,
+        session: {
+          waitForMetadataUpdate: () => new Promise<boolean>(() => {}),
+          materializeNextPendingMessageSafely,
+        },
+        reconcileWhenEmpty: 'skip',
+      });
+
+      const waiting = consumer.waitForNextInput({ abortSignal: new AbortController().signal });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(materializeNextPendingMessageSafely).toHaveBeenCalledTimes(1);
+
+      await vi.advanceTimersByTimeAsync(999);
+      expect(materializeNextPendingMessageSafely).toHaveBeenCalledTimes(1);
+
+      await vi.advanceTimersByTimeAsync(1);
+      expect(materializeNextPendingMessageSafely).toHaveBeenCalledTimes(2);
+      await expect(waiting).resolves.toMatchObject({ message: 'rejoined frozen claim' });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('caps timer-driven ambiguous materialization rejoin at one attempt until another wake', async () => {
+    vi.useFakeTimers();
+    try {
+      const abortController = new AbortController();
+      type Mode = { id: string };
+      const materializeNextPendingMessageSafely = vi
+        .fn()
+        .mockResolvedValue({ type: 'retryable_transport' as const, retryAfterMs: 1_000 });
+      const consumer = createSessionProviderInputConsumer({
+        messageQueue: new MessageQueue2<Mode>(() => 'hash'),
+        session: {
+          waitForMetadataUpdate: () => new Promise<boolean>(() => {}),
+          materializeNextPendingMessageSafely,
+        },
+        reconcileWhenEmpty: 'skip',
+      });
+
+      const waiting = consumer.waitForNextInput({ abortSignal: abortController.signal });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(materializeNextPendingMessageSafely).toHaveBeenCalledTimes(1);
+
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(materializeNextPendingMessageSafely).toHaveBeenCalledTimes(2);
+
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(materializeNextPendingMessageSafely).toHaveBeenCalledTimes(2);
+
+      abortController.abort();
+      await expect(waiting).resolves.toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('drains through structured materialization without invoking the boolean compatibility surface', async () => {
     const popPendingMessage = vi.fn(async () => {
       throw new Error('boolean compatibility materialization must not own durable retries');

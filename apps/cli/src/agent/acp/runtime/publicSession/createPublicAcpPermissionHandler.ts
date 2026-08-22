@@ -1,4 +1,5 @@
 import { AgentRuntimeJsonValueV1Schema } from '@happier-dev/protocol/runtime';
+import { TurnIdSchema, type SessionInputCausalPermissionAuthorityV1 } from '@happier-dev/protocol';
 import type { HostCurrentSessionInteractionsService as PluginCurrentSessionInteractionsService } from '@/agent/runtime/state/currentSessionUiTypes';
 
 import type {
@@ -18,6 +19,10 @@ export function createPublicAcpPermissionHandler(params: Readonly<{
   interactions: PluginCurrentSessionInteractionsService;
   signal: AbortSignal;
   resolveRequestId(toolCallId: string): string | null;
+  /** Returns only the current active turn's host-stamped identity. */
+  resolveTurnId?(toolCallId: string): string | null;
+  /** Returns only the current active turn's host-stamped admitted-input authority. */
+  resolveCausalPermissionAuthority?(toolCallId: string): SessionInputCausalPermissionAuthorityV1 | null;
 }>): AcpPermissionHandler {
   const pending = new Set<Readonly<{
     controller: AbortController;
@@ -40,6 +45,39 @@ export function createPublicAcpPermissionHandler(params: Readonly<{
       if (!requestId) {
         return abortDecision('ACP permission request has no active public turn');
       }
+      const hasCausalPermissionAuthorityResolver =
+        typeof params.resolveCausalPermissionAuthority === 'function';
+      const hasTurnIdResolver = typeof params.resolveTurnId === 'function';
+      let turnId: string | null = null;
+      try {
+        const candidate = params.resolveTurnId?.(toolCallId) ?? null;
+        const parsedTurnId = TurnIdSchema.safeParse(candidate);
+        turnId = parsedTurnId.success ? parsedTurnId.data : null;
+      } catch {
+        return abortDecision('ACP permission request turn custody is unavailable');
+      }
+      if (hasTurnIdResolver && !turnId) {
+        return abortDecision('ACP permission request turn custody is unavailable');
+      }
+      let causalPermissionAuthority: SessionInputCausalPermissionAuthorityV1 | null = null;
+      try {
+        causalPermissionAuthority = params.resolveCausalPermissionAuthority?.(toolCallId) ?? null;
+      } catch {
+        return abortDecision('ACP permission request causal authority is unavailable');
+      }
+      // Current public ACP sessions always install the active-turn reader. A
+      // null result therefore means that this provider request cannot be tied
+      // to an admitted input, not that it is a legacy host operation.
+      if (hasCausalPermissionAuthorityResolver && !causalPermissionAuthority) {
+        return abortDecision('ACP permission request causal authority is unavailable');
+      }
+      const permissionContext = context?.origin || causalPermissionAuthority || turnId
+        ? Object.freeze({
+            ...(context?.origin ? { origin: context.origin } : {}),
+            ...(turnId ? { turnId } : {}),
+            ...(causalPermissionAuthority ? { causalPermissionAuthority } : {}),
+          })
+        : undefined;
 
       const controller = new AbortController();
       let resolveSettled!: () => void;
@@ -52,45 +90,27 @@ export function createPublicAcpPermissionHandler(params: Readonly<{
       try {
         const result = await params.interactions.request({
           kind: 'approval',
-          requestId,
           title: `Allow ${toolName}?`,
           subject: Object.freeze({
             kind: 'tool',
             name: toolName,
             input: parsedInput.data,
           }),
-          allowedPersistenceScopes: ['session'],
+          allowSessionPersistence: true,
         }, {
           signal: AbortSignal.any([params.signal, controller.signal]),
-          ...(context?.origin === 'host_acp_fs_write'
-            ? { permissionContext: { origin: context.origin } }
-            : {}),
+          ...(permissionContext ? { permissionContext } : {}),
         });
 
-        if (result.status === 'denied') {
+        if (result.status === 'declined') {
           return Object.freeze({ decision: 'denied' as const });
         }
         if (result.status !== 'approved') {
-          return abortDecision(result.diagnostic?.message);
-        }
-
-        const effects = result.effects;
-        if (effects?.replaceInput !== undefined
-          || effects?.permissionModeId !== undefined
-          || effects?.followUp !== undefined) {
-          return abortDecision('The approval contains effects ACP cannot apply safely');
-        }
-        const persisted = effects?.persistApprovals ?? [];
-        if (persisted.some((approval) => (
-          approval.scope !== 'session'
-          || approval.toolName !== undefined && approval.toolName !== toolName
-        ))) {
-          return abortDecision('The approval persistence does not match this ACP tool request');
+          return abortDecision();
         }
 
         return Object.freeze({
-          decision: persisted.length > 0 ? 'approved_for_session' as const : 'approved' as const,
-          ...(result.rationale ? { rationale: result.rationale } : {}),
+          decision: result.persistence === 'session' ? 'approved_for_session' as const : 'approved' as const,
         });
       } catch (error) {
         return abortDecision(error instanceof Error ? error.message : undefined);

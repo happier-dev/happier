@@ -7,7 +7,7 @@ vi.mock('@/utils/spawnHappyCLI', () => ({
     args: [
       '--no-warnings',
       '--no-deprecation',
-      '/tmp/happier/index.mjs',
+      '/tmp/apps/cli/index.mjs',
       'tools',
       'call',
       '--source',
@@ -22,6 +22,40 @@ vi.mock('@/utils/spawnHappyCLI', () => ({
 }));
 
 describe('buildHappierToolsShellBridgeCommand', () => {
+  it('recognizes only the exact locally generated bridge launcher as trusted', async () => {
+    const {
+      buildHappierToolsShellBridgeCommand,
+      parseTrustedHappierToolsShellBridgeCommand,
+    } = await import('./buildHappierToolsShellBridgeCommand');
+    const command = buildHappierToolsShellBridgeCommand([
+      'call',
+      '--source',
+      'happier',
+      '--tool',
+      'change_title',
+      '--args-json',
+      '{"title":"Renamed"}',
+      '--json',
+    ]);
+
+    expect(parseTrustedHappierToolsShellBridgeCommand(command)).toMatchObject({
+      kind: 'call',
+      source: 'happier',
+      tool: 'change_title',
+    });
+    expect(
+      parseTrustedHappierToolsShellBridgeCommand(
+        `happier tools call --source happier --tool change_title --args-json '{"title":"Renamed"}' --json`,
+      ),
+    ).toBeNull();
+    expect(
+      parseTrustedHappierToolsShellBridgeCommand(
+        `node ./happier-helper.js tools call --source happier --tool change_title --args-json '{"title":"Renamed"}' --json`,
+      ),
+    ).toBeNull();
+    expect(parseTrustedHappierToolsShellBridgeCommand(`${command} && touch /tmp/happier-pwn`)).toBeNull();
+  });
+
   const originalHomeDir = process.env.HAPPIER_HOME_DIR;
   const originalContextEnv = process.env.HAPPIER_SHELL_BRIDGE_CONTEXT_ENV;
   const originalActiveServerId = process.env.HAPPIER_ACTIVE_SERVER_ID;

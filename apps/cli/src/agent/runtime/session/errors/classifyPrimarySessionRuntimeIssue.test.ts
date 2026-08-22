@@ -516,4 +516,68 @@ describe('classifyPrimarySessionRuntimeIssue', () => {
     });
     expect(issue.temporaryThrottle).toBeUndefined();
   });
+
+  it('normalizes a versioned provider-declared runtime issue source without reading provider prose', () => {
+    const issue = classifyPrimarySessionRuntimeIssue({
+      provider: 'unrelated-agent',
+      cause: 'session_error',
+      occurredAt: 1_000,
+      error: {
+        code: 'opaque_provider_terminal_failure',
+        message: 'Opaque native terminal state.',
+        details: {
+          v: 1,
+          source: 'permission_blocked',
+          agentId: 'opencode',
+        },
+      },
+    });
+
+    expect(issue).toMatchObject({
+      source: 'permission_blocked',
+      code: 'permission_blocked',
+      sanitizedPreview: 'Permission blocked',
+    });
+  });
+
+  it('does not trust a typed diagnostic source from ACP status-error details', () => {
+    const issue = classifyPrimarySessionRuntimeIssue({
+      cause: 'status_error',
+      occurredAt: 1_000,
+      error: {
+        message: '401 Unauthorized: login required',
+        details: { v: 1, source: 'permission_blocked' },
+      },
+    });
+
+    expect(issue).toMatchObject({
+      source: 'auth_error',
+      code: 'auth_error',
+    });
+  });
+
+  it('does not infer session-failure provenance from provider prose without a declared source', () => {
+    expect(classifyPrimarySessionRuntimeIssue({
+      cause: 'session_error',
+      occurredAt: 1_000,
+      error: { message: 'Permission blocked by provider policy.' },
+    })).toMatchObject({
+      source: 'agent_session_error',
+      code: 'agent_session_error',
+    });
+  });
+
+  it.each([
+    ['unknown source', { v: 1, source: 'future_permission_state' }],
+    ['malformed version', { v: 2, source: 'permission_blocked' }],
+  ])('fails closed for a %s declared runtime issue source', (_name, details) => {
+    expect(classifyPrimarySessionRuntimeIssue({
+      cause: 'session_error',
+      occurredAt: 1_000,
+      error: { details },
+    })).toMatchObject({
+      source: 'agent_session_error',
+      code: 'agent_session_error',
+    });
+  });
 });

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { PermissionIntent } from '@happier-dev/agents';
+import { ProviderBoundModelRefSchema } from '@happier-dev/protocol';
 import type { CatalogAgentId as AgentId } from '@/agent/catalog/ids';
 import type { ExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';
 import { createTestExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/testkit';
@@ -533,6 +534,88 @@ describe('VoiceAgentManager', () => {
     ]);
   });
 
+  it('routes independent Provider selections and the same non-default temperature to chat and commit', async () => {
+    const chatBackend = createDeterministicBackend('chat');
+    const commitBackend = createDeterministicBackend('commit');
+    const seen: Parameters<BackendFactory>[0][] = [];
+    const createBackend: BackendFactory = (options) => {
+      seen.push(options);
+      return options.modelId === 'commit-model' ? commitBackend : chatBackend;
+    };
+    const manager = new VoiceAgentManager({ createBackend });
+    const chatModelSelection = ProviderBoundModelRefSchema.parse({
+      agentTargetKey: 'backend:opencode',
+      providerConnectionId: 'pc_chat',
+      modelId: 'chat-model',
+    });
+    const commitModelSelection = ProviderBoundModelRefSchema.parse({
+      agentTargetKey: 'backend:opencode',
+      providerConnectionId: 'pc_commit',
+      modelId: 'commit-model',
+    });
+    const sessionConfigOptionOverrides = {
+      v: 1,
+      updatedAt: 0,
+      overrides: { temperature: { updatedAt: 0, value: 0.73 } },
+    } as const;
+
+    const started = await manager.start({
+      agentId: 'opencode',
+      chatModelId: 'chat-model',
+      commitModelId: 'commit-model',
+      chatModelSelection,
+      commitModelSelection,
+      sessionConfigOptionOverrides,
+      permissionIntent: 'read-only',
+      idleTtlSeconds: 60,
+      initialContext: 'CTX',
+    });
+    await manager.commit({ voiceAgentId: started.voiceAgentId, maxChars: 10_000 });
+
+    expect(seen).toEqual([
+      expect.objectContaining({
+        modelId: 'chat-model',
+        modelSelection: chatModelSelection,
+        sessionConfigOptionOverrides,
+      }),
+      expect.objectContaining({
+        modelId: 'commit-model',
+        modelSelection: commitModelSelection,
+        sessionConfigOptionOverrides,
+      }),
+    ]);
+  });
+
+  it('does not reuse chat for commit when identical model ids belong to different Provider connections', async () => {
+    const createBackend = vi.fn<BackendFactory>(() => createDeterministicBackend('provider'));
+    const manager = new VoiceAgentManager({ createBackend });
+    const started = await manager.start({
+      agentId: 'opencode',
+      chatModelId: 'shared-model',
+      commitModelId: 'shared-model',
+      chatModelSelection: ProviderBoundModelRefSchema.parse({
+        agentTargetKey: 'backend:opencode',
+        providerConnectionId: 'pc_chat',
+        modelId: 'shared-model',
+      }),
+      commitModelSelection: ProviderBoundModelRefSchema.parse({
+        agentTargetKey: 'backend:opencode',
+        providerConnectionId: 'pc_commit',
+        modelId: 'shared-model',
+      }),
+      permissionIntent: 'read-only',
+      idleTtlSeconds: 60,
+      initialContext: 'CTX',
+    });
+
+    await manager.commit({ voiceAgentId: started.voiceAgentId, maxChars: 10_000 });
+
+    expect(createBackend).toHaveBeenCalledTimes(2);
+    expect(createBackend.mock.calls[1]?.[0]).toMatchObject({
+      modelSelection: { providerConnectionId: 'pc_commit', modelId: 'shared-model' },
+    });
+  });
+
   it('uses a more detailed prompt when verbosity is balanced', async () => {
 
     const chatBackend = createDeterministicBackend('chat');
@@ -894,6 +977,55 @@ describe('VoiceAgentManager', () => {
     expect(commit.commitText).not.toContain(cancelledText);
   });
 
+  it('re-seeds a fresh chat session after cancelling a mid-conversation turn', async () => {
+    let promptCount = 0;
+    let releaseCancelledPrompt: (() => void) | null = null;
+    let cancelledRuntime: ReturnType<typeof createTestExecutionRunHostRuntime>;
+    cancelledRuntime = createTestExecutionRunHostRuntime({
+      sessionId: 's-cancelled-mid-conversation',
+      async onSendPrompt() {
+        promptCount += 1;
+        if (promptCount === 1) {
+          cancelledRuntime.emitMessage({ type: 'model-output', fullText: 'first response' });
+          cancelledRuntime.emitMessage({ type: 'status', status: 'idle' });
+          return;
+        }
+        await new Promise<void>((resolve) => {
+          releaseCancelledPrompt = resolve;
+        });
+        cancelledRuntime.emitMessage({ type: 'status', status: 'idle' });
+      },
+      onCancel() {
+        releaseCancelledPrompt?.();
+        releaseCancelledPrompt = null;
+      },
+    });
+    const replacementRuntime = createPromptCaptureBackend([{ responseText: 'replacement response' }]);
+    const createBackend = vi.fn<BackendFactory>()
+      .mockReturnValueOnce(cancelledRuntime)
+      .mockReturnValueOnce(replacementRuntime);
+    const manager = new VoiceAgentManager({ createBackend });
+    const started = await manager.start({
+      agentId: 'claude',
+      chatModelId: 'chat-model',
+      commitModelId: 'chat-model',
+      permissionIntent: 'read-only',
+      idleTtlSeconds: 60,
+      initialContext: 'CURRENT VOICE CONTEXT',
+    });
+
+    const first = await manager.startTurnStream({ voiceAgentId: started.voiceAgentId, userText: 'first turn' });
+    await readVoiceAgentTurnStreamUntilDone({ manager, voiceAgentId: started.voiceAgentId, streamId: first.streamId });
+    const cancelled = await manager.startTurnStream({ voiceAgentId: started.voiceAgentId, userText: 'cancel this turn' });
+    await manager.cancelTurnStream({ voiceAgentId: started.voiceAgentId, streamId: cancelled.streamId });
+    const next = await manager.startTurnStream({ voiceAgentId: started.voiceAgentId, userText: 'next turn' });
+    await readVoiceAgentTurnStreamUntilDone({ manager, voiceAgentId: started.voiceAgentId, streamId: next.streamId });
+
+    expect(replacementRuntime.prompts).toHaveLength(1);
+    expect(replacementRuntime.prompts[0]).toContain('CURRENT VOICE CONTEXT');
+    expect(replacementRuntime.prompts[0]).toContain('next turn');
+  });
+
   it('retires the complete voice agent cleanly when cancelled-backend replacement creation fails', async () => {
     let chatDisposeCount = 0;
     const chatBase = createCancelableBlockingBackend('chat');
@@ -906,7 +1038,8 @@ describe('VoiceAgentManager', () => {
     const createBackend = vi.fn<BackendFactory>()
       .mockReturnValueOnce(chatBackend)
       .mockImplementationOnce(() => { throw new Error('replacement factory failed'); });
-    const manager = new VoiceAgentManager({ createBackend });
+    const onTerminalFailure = vi.fn(async () => {});
+    const manager = new VoiceAgentManager({ createBackend, onTerminalFailure });
     const started = await manager.start({
       agentId: 'claude',
       chatModelId: 'chat-model',
@@ -925,6 +1058,7 @@ describe('VoiceAgentManager', () => {
       code: 'VOICE_AGENT_NOT_FOUND',
     });
     expect(chatDisposeCount).toBe(1);
+    expect(onTerminalFailure).toHaveBeenCalledWith(started.voiceAgentId, 'backend_replacement_failed');
   });
 
   it('makes backend replacement exclusive and never resumes the cancelled provider session', async () => {
@@ -1315,6 +1449,52 @@ describe('VoiceAgentManager', () => {
     deferred.resolve();
     await sendP;
     await stopP;
+  });
+
+  it('notifies the lifecycle owner before reaping an idle voice agent', async () => {
+    let nowMs = 0;
+    let disposed = false;
+    const reapedVoiceAgentIds: string[] = [];
+    const createBackend: BackendFactory = ({ modelId }) => createTestExecutionRunHostRuntime({
+      sessionId: `s-${modelId}`,
+      onDispose() {
+        disposed = true;
+      },
+    });
+
+    vi.useFakeTimers();
+    try {
+      const manager = new VoiceAgentManager({
+        createBackend,
+        getNowMs: () => nowMs,
+        reaperIntervalMs: 5_000,
+        async onIdleReaped(voiceAgentId) {
+          expect(disposed).toBe(false);
+          reapedVoiceAgentIds.push(voiceAgentId);
+        },
+      });
+      const started = await manager.start({
+        agentId: 'claude',
+        chatModelId: 'chat-model',
+        commitModelId: 'commit-model',
+        permissionIntent: 'read-only',
+        idleTtlSeconds: 60,
+        initialContext: 'CTX',
+      });
+
+      nowMs = 120_000;
+      await vi.advanceTimersByTimeAsync(5_000);
+
+      expect(reapedVoiceAgentIds).toEqual([started.voiceAgentId]);
+      expect(disposed).toBe(true);
+      await expect(manager.sendTurn({ voiceAgentId: started.voiceAgentId, userText: 'hi' })).rejects.toMatchObject({
+        code: 'VOICE_AGENT_NOT_FOUND',
+      });
+
+      await manager.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('treats a NaN idleTtlSeconds as the minimum TTL so idle voice agents can be reaped', async () => {
@@ -1745,6 +1925,24 @@ describe('VoiceAgentManager', () => {
     expect(backend.prompts.length).toBe(2);
     expect(backend.prompts[1]).toContain('User: hello');
     expect(backend.prompts[1]).not.toContain('Initial context:');
+  });
+
+  it('strips malformed action markup from the welcome response', async () => {
+    const backend = createPromptCaptureBackend([{
+      responseText: 'Hello!\n<voice_actions>\n{"actions": [',
+    }]);
+    const manager = new VoiceAgentManager({ createBackend: () => backend });
+    const started = await manager.start({
+      agentId: 'claude',
+      chatModelId: 'chat-model',
+      commitModelId: 'commit-model',
+      permissionIntent: 'read-only',
+      idleTtlSeconds: 60,
+      initialContext: 'CTX',
+    });
+
+    await expect(manager.welcome({ voiceAgentId: started.voiceAgentId }))
+      .resolves.toEqual({ assistantText: 'Hello!' });
   });
 
   it('reuses the chat backend for commits when commitIsolation is false and commitModelId matches chatModelId', async () => {

@@ -8,17 +8,11 @@ import {
 
 import { BasePermissionHandler, type PermissionResult } from './BasePermissionHandler';
 import type { AgentStateRequestResponseTarget } from './agentStateRequestStore';
-
-class FakeRpcHandlerManager {
-  handlers = new Map<string, (payload: any) => any>();
-  registerHandler(_name: string, handler: any) {
-    this.handlers.set(_name, handler);
-  }
-}
+import { ServerBoundPermissionRpcHandlerManager } from './testkit/serverBoundPermissionRpcHandlerManager';
 
 class FakeSession {
   sessionId = 'session-test';
-  rpcHandlerManager = new FakeRpcHandlerManager();
+  rpcHandlerManager = new ServerBoundPermissionRpcHandlerManager(this.sessionId);
   agentState: any = { requests: {}, completedRequests: {} };
   metadata: unknown = {
     summary: { text: 'Fix prod issue' },
@@ -201,6 +195,7 @@ describe('BasePermissionHandler push notifications', () => {
       tool: 'Write',
       arguments: { path: '/tmp/x', content: 'hi' },
       createdAt: 123,
+      turnId: 'turn-perm-1',
       responseTarget: {
         kind: 'test_target',
         requestOwner: 'owner-1',
@@ -235,6 +230,7 @@ describe('BasePermissionHandler push notifications', () => {
       expect.objectContaining({
         tool: 'Write',
         arguments: { path: '/tmp/x', content: 'hi' },
+        turnId: 'turn-perm-1',
         responseTarget: {
           kind: 'test_target',
           requestOwner: 'owner-1',

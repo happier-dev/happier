@@ -1,7 +1,9 @@
 import * as z from 'zod';
 import {
   SESSION_METADATA_LAYOUT_VERSION_V1,
+  SessionOwnerMetadataEnvelopeV1Schema,
   SessionOwnerMetadataV1Schema,
+  type SessionOwnerMetadataEnvelopeV1,
   type SessionOwnerMetadataV1,
 } from '@happier-dev/protocol';
 
@@ -12,7 +14,7 @@ type AttachSnapshotPayload = Readonly<{
   agentStateVersion: number;
   metadataLayoutVersion?: typeof SESSION_METADATA_LAYOUT_VERSION_V1;
   ownerMetadata?: SessionOwnerMetadataV1;
-  ownerMetadataCiphertext?: string;
+  ownerMetadataEnvelope?: SessionOwnerMetadataEnvelopeV1;
 }>;
 
 type AttachPayloadV2Plain = Readonly<{
@@ -54,7 +56,7 @@ const AttachSnapshotSchema = z.object({
   agentStateVersion: z.number().int().nonnegative(),
   metadataLayoutVersion: z.literal(SESSION_METADATA_LAYOUT_VERSION_V1).optional(),
   ownerMetadata: SessionOwnerMetadataV1Schema.optional(),
-  ownerMetadataCiphertext: z.string().min(1).optional(),
+  ownerMetadataEnvelope: SessionOwnerMetadataEnvelopeV1Schema.optional(),
 });
 
 const LegacyAttachPayloadSchema = z.object({

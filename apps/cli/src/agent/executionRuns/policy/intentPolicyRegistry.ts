@@ -31,6 +31,7 @@ const PERMISSION_MODE_POLICY_BY_INTENT: Readonly<Record<ExecutionRunIntent, Exec
   review: 'safe_only',
   plan: 'safe_only',
   delegate: 'permissive',
+  task: 'safe_only',
   voice_agent: 'permissive',
   memory_hints: 'safe_only',
   scm_commit_message: 'safe_only',

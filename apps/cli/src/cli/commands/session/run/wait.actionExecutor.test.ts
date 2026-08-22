@@ -4,15 +4,18 @@ import { captureConsoleJsonOutput } from '@/testkit/logger/captureOutput';
 
 const execute = vi.fn();
 const createCliActionExecutorFromCredentials = vi.fn(() => ({ execute }));
+const resolveSessionTransportContext = vi.fn(async () => ({ ok: true, sessionId: 'sess-canonical' }));
 
 vi.mock('@/session/actions/createCliActionExecutorFromCredentials', () => ({
   createCliActionExecutorFromCredentials,
 }));
+vi.mock('@/session/services/resolveSessionTransportContext', () => ({ resolveSessionTransportContext }));
 
 describe('happier session run wait (action executor)', () => {
   beforeEach(() => {
     execute.mockReset();
     createCliActionExecutorFromCredentials.mockClear();
+    resolveSessionTransportContext.mockClear();
   });
 
   it('does not add a default timeout when --timeout is omitted', async () => {
@@ -34,7 +37,7 @@ describe('happier session run wait (action executor)', () => {
 
       expect(execute).toHaveBeenCalledWith(
         'execution.run.wait',
-        { sessionId: 'sess-1', runId: 'run-1' },
+        { sessionId: 'sess-canonical', runId: 'run-1' },
         { surface: 'cli', defaultSessionId: null },
       );
     } finally {
@@ -62,17 +65,30 @@ describe('happier session run wait (action executor)', () => {
       expect(createCliActionExecutorFromCredentials).toHaveBeenCalledTimes(1);
       expect(execute).toHaveBeenCalledWith(
         'execution.run.wait',
-        { sessionId: 'sess-1', runId: 'run-1', timeoutSeconds: 42 },
+        { sessionId: 'sess-canonical', runId: 'run-1', timeoutSeconds: 42 },
         { surface: 'cli', defaultSessionId: null },
       );
 
       expect(output.json()).toEqual(expect.objectContaining({
         ok: true,
         kind: 'session_run_wait',
-        data: { sessionId: 'sess-1', runId: 'run-1', status: 'succeeded' },
+        data: { sessionId: 'sess-canonical', runId: 'run-1', status: 'succeeded' },
       }));
     } finally {
       output.restore();
     }
+  });
+
+  it('rejects an explicit invalid timeout before reading credentials', async () => {
+    const readCredentialsFn = vi.fn(async () => null);
+    const { cmdSessionRunWait } = await import('./wait');
+
+    await expect(cmdSessionRunWait(
+      ['session', 'run', 'sess-prefix', 'run-1', '--timeout', '0'],
+      { readCredentialsFn },
+    )).rejects.toMatchObject({ code: 'invalid_arguments' });
+
+    expect(readCredentialsFn).not.toHaveBeenCalled();
+    expect(resolveSessionTransportContext).not.toHaveBeenCalled();
   });
 });

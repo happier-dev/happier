@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import axios from 'axios';
+import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 
 const { callSessionRpc } = vi.hoisted(() => ({
   callSessionRpc: vi.fn(),
@@ -8,23 +10,88 @@ vi.mock('@/session/transport/rpc/sessionRpc', () => ({
   callSessionRpc,
 }));
 
-import { createResolvedSessionConnectedServiceAuthTransport } from './transport';
+import {
+  createResolvedSessionConnectedServiceAuthTransport,
+  createSessionConnectedServiceAuthTransport,
+} from './transport';
 
 function createTransport() {
   return createResolvedSessionConnectedServiceAuthTransport({
     token: 'token-1',
     sessionId: 's1',
     mode: 'plain',
-    ctx: {
-      encryptionKey: new Uint8Array(32),
-      encryptionVariant: 'dataKey',
-    },
+    ctx: null,
   });
 }
 
 describe('createResolvedSessionConnectedServiceAuthTransport', () => {
   beforeEach(() => {
     callSessionRpc.mockReset();
+    vi.restoreAllMocks();
+  });
+
+  it('invalidates connected-service auth for a plain Session with token-only credentials', async () => {
+    vi.spyOn(axios, 'get').mockResolvedValueOnce({
+      status: 200,
+      data: {
+        session: createSessionRecordFixture({
+          id: 'session-plain-123',
+          encryptionMode: 'plain',
+          metadata: '{}',
+          dataEncryptionKey: null,
+        }),
+      },
+    } as never);
+    callSessionRpc.mockResolvedValueOnce({ ok: true });
+    const transport = createSessionConnectedServiceAuthTransport({
+      credentials: {
+        token: 'token-only',
+        encryption: null,
+      },
+      sessionId: 'session-plain-123',
+    });
+
+    await expect(transport.invalidateConnectedServiceAuthTransports()).resolves.toEqual({
+      ok: true,
+      value: true,
+    });
+    expect(callSessionRpc).toHaveBeenCalledWith({
+      token: 'token-only',
+      sessionId: 'session-plain-123',
+      ctx: null,
+      mode: 'plain',
+      method: 'session-plain-123:session.connectedServiceAuth.invalidateTransports',
+      request: {},
+    });
+  });
+
+  it('preserves typed material-unavailable failure for retained E2EE Session control', async () => {
+    vi.spyOn(axios, 'get').mockResolvedValueOnce({
+      status: 200,
+      data: {
+        session: createSessionRecordFixture({
+          id: 'session-e2ee-123',
+          encryptionMode: 'e2ee',
+          metadata: 'retained-ciphertext',
+          dataEncryptionKey: 'retained-data-key-envelope',
+        }),
+      },
+    } as never);
+    const transport = createSessionConnectedServiceAuthTransport({
+      credentials: {
+        token: 'token-only',
+        encryption: null,
+      },
+      sessionId: 'session-e2ee-123',
+    });
+
+    await expect(transport.invalidateConnectedServiceAuthTransports()).resolves.toEqual({
+      ok: false,
+      code: 'encryption_material_unavailable',
+      error: 'encryption_material_unavailable',
+      diagnostics: [{ code: 'encryption_material_unavailable' }],
+    });
+    expect(callSessionRpc).not.toHaveBeenCalled();
   });
 
   it('forwards connected-service auth apply and runtime identity RPCs', async () => {

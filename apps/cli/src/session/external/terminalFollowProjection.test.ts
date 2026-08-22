@@ -1,4 +1,7 @@
-import { RuntimeEventV1Schema, type RuntimeEventV1 } from '@happier-dev/protocol/runtime';
+import {
+  AgentSessionRuntimeEventSchema,
+  type AgentSessionRuntimeEvent,
+} from '@happier-dev/protocol/runtime';
 import { describe, expect, it, vi } from 'vitest';
 
 import { projectRuntimeTranscriptEvent } from '@/agent/runtime/session/transcripts/projectRuntimeTranscriptEvent';
@@ -6,10 +9,44 @@ import { projectRuntimeTranscriptEvent } from '@/agent/runtime/session/transcrip
 import { createExternalSessionTerminalFollowProjector } from './terminalFollowProjection';
 
 describe('createExternalSessionTerminalFollowProjector', () => {
-  it('projects authoritative agent items through strict runtime events and treats user rows as echoes', async () => {
-    const projected: RuntimeEventV1[] = [];
-    const projectRuntimeEvent = vi.fn(async (event: RuntimeEventV1) => {
-      projected.push(RuntimeEventV1Schema.parse(event));
+  it('threads terminal admission through the canonical durable projector', async () => {
+    const projectRuntimeEvent = vi.fn(async () => ({ projected: true as const }));
+    const publish = createExternalSessionTerminalFollowProjector({
+      sessionId: 'session-1',
+      agentId: 'claude',
+      projectRuntimeEvent,
+    });
+    const admission = {
+      signal: new AbortController().signal,
+      deadlineAtMs: 25_000,
+    };
+
+    await publish({
+      kind: 'data',
+      phase: 'initial_replay',
+      fromCursor: null,
+      nextCursor: 'cursor-1',
+      items: [{
+        id: 'agent-1',
+        timestampMs: 10,
+        kind: 'agent',
+        data: { role: 'agent', content: { type: 'text', text: 'durable output' } },
+      }],
+    }, admission);
+
+    expect(projectRuntimeEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'transcript-message-committed',
+        messageId: 'agent-1',
+      }),
+      admission,
+    );
+  });
+
+  it('projects canonical agent envelopes and suppresses explicitly classified host prompt echoes', async () => {
+    const projected: AgentSessionRuntimeEvent[] = [];
+    const projectRuntimeEvent = vi.fn(async (event: AgentSessionRuntimeEvent) => {
+      projected.push(AgentSessionRuntimeEventSchema.parse(event));
       return { projected: true as const };
     });
     const publish = createExternalSessionTerminalFollowProjector({
@@ -27,25 +64,24 @@ describe('createExternalSessionTerminalFollowProjector', () => {
           id: 'user-echo-1',
           timestampMs: 10,
           kind: 'user',
-          data: { type: 'text', text: 'inspect this' },
+          userProjection: 'host_prompt_echo',
+          data: { role: 'user', content: { type: 'text', text: 'inspect this' } },
         },
         {
           id: 'agent-1',
+          localId: 'provider-fact-agent-1',
           timestampMs: 11,
           kind: 'agent',
-          data: { type: 'text', text: 'I will inspect it.' },
+          data: { role: 'agent', content: { type: 'text', text: 'I will inspect it.' } },
         },
         {
-          id: 'tool-1',
+          id: 'reasoning-1',
           timestampMs: 12,
           kind: 'event',
-          data: {
-            type: 'tool-call',
-            callId: 'tool-1',
-            name: 'read',
-            input: { path: 'README.md' },
-            id: 'tool-1',
-          },
+          data: { role: 'agent', content: {
+              type: 'reasoning',
+              message: 'I should inspect the repository first.',
+            } },
         },
       ],
     });
@@ -53,28 +89,328 @@ describe('createExternalSessionTerminalFollowProjector', () => {
     expect(projectRuntimeEvent).toHaveBeenCalledTimes(2);
     expect(projected).toEqual([
       {
-        kind: 'transcript-agent-message-committed',
+        kind: 'transcript-message-committed',
+        sequence: 1,
         sessionId: 'session-1',
         emittedAtMs: 11,
-        agentId: 'antigravity',
-        localId: 'agent-1',
-        body: { type: 'message', message: 'I will inspect it.' },
+        messageId: 'provider-fact-agent-1',
+        role: 'assistant',
+        text: 'I will inspect it.',
       },
       {
-        kind: 'transcript-agent-message-committed',
+        kind: 'transcript-message-committed',
+        sequence: 2,
         sessionId: 'session-1',
         emittedAtMs: 12,
-        agentId: 'antigravity',
-        localId: 'tool-1',
-        body: {
-          type: 'tool-call',
-          callId: 'tool-1',
-          name: 'read',
-          input: { path: 'README.md' },
-          id: 'tool-1',
-        },
+        messageId: 'reasoning-1',
+        role: 'reasoning',
+        text: 'I should inspect the repository first.',
       },
     ]);
+  });
+
+  it('projects canonical tool calls and results through the runtime tool-event contract', async () => {
+    const projected: AgentSessionRuntimeEvent[] = [];
+    const publish = createExternalSessionTerminalFollowProjector({
+      sessionId: 'session-1',
+      agentId: 'codex',
+      projectRuntimeEvent: async (event) => {
+        projected.push(AgentSessionRuntimeEventSchema.parse(event));
+        return { projected: true as const };
+      },
+    });
+
+    await publish({
+      kind: 'data',
+      fromCursor: 'cursor-1',
+      nextCursor: 'cursor-2',
+      items: [
+        {
+          id: 'tool-call-row-1',
+          timestampMs: 11,
+          kind: 'event',
+          data: {
+            role: 'agent',
+            content: {
+              type: 'codex',
+              data: {
+                type: 'tool-call',
+                callId: 'tool-call-1',
+                name: 'read_file',
+                input: { path: '/workspace/file.ts' },
+                sidechainId: 'sidechain-1',
+              },
+            },
+          },
+        },
+        {
+          id: 'tool-result-row-1',
+          timestampMs: 12,
+          kind: 'event',
+          data: {
+            role: 'agent',
+            content: {
+              type: 'codex',
+              data: {
+                type: 'tool-call-result',
+                callId: 'tool-call-1',
+                output: { error: 'permission denied' },
+                isError: true,
+                sidechainId: 'sidechain-1',
+              },
+            },
+          },
+        },
+      ],
+    });
+
+    expect(projected).toEqual([
+      {
+        kind: 'tool-call',
+        sequence: 1,
+        sessionId: 'session-1',
+        emittedAtMs: 11,
+        turnId: 'tool-call-1',
+        toolCallId: 'tool-call-1',
+        toolName: 'read_file',
+        input: { path: '/workspace/file.ts' },
+        sidechainId: 'sidechain-1',
+      },
+      {
+        kind: 'tool-result',
+        sequence: 2,
+        sessionId: 'session-1',
+        emittedAtMs: 12,
+        turnId: 'tool-call-1',
+        toolCallId: 'tool-call-1',
+        output: { error: 'permission denied' },
+        isError: true,
+        sidechainId: 'sidechain-1',
+      },
+    ]);
+  });
+
+  it('persists terminal-followed tool calls and results through the canonical writer without a delta bridge', async () => {
+    const enqueueAgentMessageCommitted = vi.fn(async () => ({
+      persisted: true as const,
+      delivered: false as const,
+    }));
+    const session = {
+      sessionId: 'session-1',
+      enqueueAgentMessageCommitted,
+    };
+    const publish = createExternalSessionTerminalFollowProjector({
+      sessionId: session.sessionId,
+      agentId: 'codex',
+      projectRuntimeEvent: async (event, admission) => await projectRuntimeTranscriptEvent({
+        session,
+        provider: 'codex',
+        event,
+        ...(admission === undefined ? {} : { admission }),
+      }),
+    });
+    const admission = {
+      signal: new AbortController().signal,
+      deadlineAtMs: Date.now() + 60_000,
+    };
+
+    await publish({
+      kind: 'data',
+      fromCursor: 'cursor-1',
+      nextCursor: 'cursor-2',
+      items: [
+        {
+          id: 'tool-call-row-1',
+          timestampMs: 11,
+          kind: 'event',
+          data: {
+            role: 'agent',
+            content: {
+              type: 'codex',
+              data: {
+                type: 'tool-call',
+                callId: 'tool-call-1',
+                name: 'read_file',
+                input: { path: '/workspace/file.ts' },
+              },
+            },
+          },
+        },
+        {
+          id: 'tool-result-row-1',
+          timestampMs: 12,
+          kind: 'event',
+          data: {
+            role: 'agent',
+            content: {
+              type: 'codex',
+              data: {
+                type: 'tool-call-result',
+                callId: 'tool-call-1',
+                output: { ok: true },
+                isError: false,
+              },
+            },
+          },
+        },
+      ],
+    }, admission);
+
+    expect(enqueueAgentMessageCommitted).toHaveBeenCalledTimes(2);
+    expect(enqueueAgentMessageCommitted).toHaveBeenNthCalledWith(
+      1,
+      'codex',
+      expect.objectContaining({
+        type: 'tool-call',
+        callId: 'tool-call-1',
+        name: 'read_file',
+        input: { path: '/workspace/file.ts' },
+      }),
+      expect.objectContaining({
+        provenance: { kind: 'non_dependent', source: 'external' },
+        admission,
+      }),
+    );
+    expect(enqueueAgentMessageCommitted).toHaveBeenNthCalledWith(
+      2,
+      'codex',
+      expect.objectContaining({
+        type: 'tool-result',
+        callId: 'tool-call-1',
+        output: { ok: true },
+        isError: false,
+      }),
+      expect.objectContaining({
+        provenance: { kind: 'non_dependent', source: 'external' },
+        admission,
+      }),
+    );
+  });
+
+  it('imports an explicitly source-authoritative user fact only during initial replay', async () => {
+    const projected: AgentSessionRuntimeEvent[] = [];
+    const publish = createExternalSessionTerminalFollowProjector({
+      sessionId: 'session-1',
+      agentId: 'claude',
+      projectRuntimeEvent: async (event) => {
+        projected.push(AgentSessionRuntimeEventSchema.parse(event));
+        return { projected: true as const };
+      },
+    });
+    const item = {
+      id: 'claude:session.jsonl:000000000042',
+      localId: 'claude-jsonl:main:user:user-1',
+      timestampMs: 10,
+      kind: 'user' as const,
+      userProjection: 'source_fact' as const,
+      data: { role: 'user', content: { type: 'text', text: 'typed outside Happier' } },
+    };
+
+    await publish({
+      kind: 'data',
+      phase: 'initial_replay',
+      fromCursor: null,
+      nextCursor: 'cursor-1',
+      items: [item],
+    });
+    await expect(publish({
+      kind: 'data',
+      fromCursor: 'cursor-1',
+      nextCursor: 'cursor-2',
+      items: [item],
+    })).rejects.toThrow('external_session_terminal_transcript_item_invalid');
+
+    expect(projected).toEqual([{
+      kind: 'transcript-message-committed',
+      sequence: 1,
+      sessionId: 'session-1',
+      emittedAtMs: 10,
+      messageId: 'claude-jsonl:main:user:user-1',
+      role: 'user',
+      text: 'typed outside Happier',
+    }]);
+  });
+
+  it('projects terminal-origin user rows in replay and live phases and rejects missing classification', async () => {
+    const projected: AgentSessionRuntimeEvent[] = [];
+    const publish = createExternalSessionTerminalFollowProjector({
+      sessionId: 'session-1',
+      agentId: 'claude',
+      projectRuntimeEvent: async (event) => {
+        projected.push(AgentSessionRuntimeEventSchema.parse(event));
+        return { projected: true as const };
+      },
+    });
+    const terminalItem = {
+      id: 'terminal-user-1',
+      localId: 'terminal-local-1',
+      timestampMs: 10,
+      kind: 'user' as const,
+      userProjection: 'terminal_origin' as const,
+      data: { role: 'user', content: { type: 'text', text: 'typed in terminal' } },
+    };
+
+    await publish({
+      kind: 'data',
+      phase: 'initial_replay',
+      fromCursor: null,
+      nextCursor: 'cursor-1',
+      items: [terminalItem],
+    });
+    await publish({
+      kind: 'data',
+      fromCursor: 'cursor-1',
+      nextCursor: 'cursor-2',
+      items: [{ ...terminalItem, id: 'terminal-user-2', localId: 'terminal-local-2' }],
+    });
+    await expect(publish({
+      kind: 'data',
+      fromCursor: 'cursor-2',
+      nextCursor: 'cursor-3',
+      items: [{
+        id: 'unclassified-user',
+        timestampMs: 12,
+        kind: 'user',
+        data: { role: 'user', content: { type: 'text', text: 'unknown origin' } },
+      }],
+    })).rejects.toThrow('external_session_terminal_transcript_item_invalid');
+
+    expect(projected.map((event) => event.kind === 'transcript-message-committed' ? event.role : null)).toEqual([
+      'user',
+      'user',
+    ]);
+  });
+
+  it('suppresses host prompt echoes in replay and live phases without invoking the writer', async () => {
+    const projectRuntimeEvent = vi.fn(async () => ({ projected: true as const }));
+    const publish = createExternalSessionTerminalFollowProjector({
+      sessionId: 'session-1',
+      agentId: 'claude',
+      projectRuntimeEvent,
+    });
+    const item = {
+      id: 'echo-1',
+      timestampMs: 10,
+      kind: 'user' as const,
+      userProjection: 'host_prompt_echo' as const,
+      data: { role: 'user', content: { type: 'text', text: 'owned by Happier' } },
+    };
+
+    await publish({
+      kind: 'data',
+      phase: 'initial_replay',
+      fromCursor: null,
+      nextCursor: 'cursor-1',
+      items: [item],
+    });
+    await publish({
+      kind: 'data',
+      fromCursor: 'cursor-1',
+      nextCursor: 'cursor-2',
+      items: [item],
+    });
+
+    expect(projectRuntimeEvent).not.toHaveBeenCalled();
   });
 
   it('does not manufacture transcript rows for resync or termination control events', async () => {
@@ -99,7 +435,7 @@ describe('createExternalSessionTerminalFollowProjector', () => {
     expect(projectRuntimeEvent).not.toHaveBeenCalled();
   });
 
-  it('does not manufacture transcript rows for provider progress records without a canonical transcript role', async () => {
+  it('rejects unsupported provider records instead of dropping them while the cursor advances', async () => {
     const projectRuntimeEvent = vi.fn(async () => ({ projected: true as const }));
     const publish = createExternalSessionTerminalFollowProjector({
       sessionId: 'session-1',
@@ -107,7 +443,7 @@ describe('createExternalSessionTerminalFollowProjector', () => {
       projectRuntimeEvent,
     });
 
-    await publish({
+    await expect(publish({
       kind: 'data',
       fromCursor: 'cursor-1',
       nextCursor: 'cursor-2',
@@ -115,9 +451,9 @@ describe('createExternalSessionTerminalFollowProjector', () => {
         id: 'checkpoint-1',
         timestampMs: 10,
         kind: 'event',
-        data: { type: 'antigravity_checkpoint', checkpointId: 'checkpoint-1' },
+        data: { role: 'agent', content: { type: 'antigravity_checkpoint', checkpointId: 'checkpoint-1' } },
       }],
-    });
+    })).rejects.toThrow('external_session_terminal_transcript_item_invalid');
 
     expect(projectRuntimeEvent).not.toHaveBeenCalled();
   });
@@ -145,6 +481,7 @@ describe('createExternalSessionTerminalFollowProjector', () => {
 
     await publish({
       kind: 'data',
+      phase: 'initial_replay',
       fromCursor: 'cursor-1',
       nextCursor: 'cursor-2',
       items: [
@@ -152,13 +489,15 @@ describe('createExternalSessionTerminalFollowProjector', () => {
           id: 'user-echo-1',
           timestampMs: 10,
           kind: 'user',
-          data: { type: 'text', text: 'inspect this' },
+          userProjection: 'host_prompt_echo',
+          data: { role: 'user', content: { type: 'text', text: 'inspect this' } },
         },
         {
           id: 'agent-1',
+          localId: 'provider-fact-agent-1',
           timestampMs: 11,
           kind: 'agent',
-          data: { type: 'text', text: 'I will inspect it.' },
+          data: { role: 'agent', content: { type: 'text', text: 'I will inspect it.' } },
         },
       ],
     });
@@ -169,10 +508,42 @@ describe('createExternalSessionTerminalFollowProjector', () => {
       'antigravity',
       { type: 'message', message: 'I will inspect it.' },
       {
-        localId: 'agent-1',
+        localId: 'provider-fact-agent-1',
+        createdAt: 11,
+        updatedAt: 11,
         provenance: { kind: 'non_dependent', source: 'external' },
       },
     );
+  });
+
+  it('rejects a semantic body that cannot form a strict canonical runtime event before invoking the writer', async () => {
+    const projectRuntimeEvent = vi.fn(async () => ({ projected: true as const }));
+    const publish = createExternalSessionTerminalFollowProjector({
+      sessionId: 'session-1',
+      agentId: 'antigravity',
+      projectRuntimeEvent,
+    });
+
+    await expect(publish({
+      kind: 'data',
+      fromCursor: 'cursor-1',
+      nextCursor: 'cursor-2',
+      items: [{
+        id: 'reasoning-1',
+        timestampMs: 11,
+        kind: 'event',
+        data: {
+          role: 'agent',
+          content: {
+            type: 'reasoning',
+            message: 'I should inspect the repository first.',
+            sidechainId: 42,
+          },
+        },
+      }],
+    })).rejects.toThrow('external_session_terminal_transcript_item_invalid');
+
+    expect(projectRuntimeEvent).not.toHaveBeenCalled();
   });
 
   it('fails the follow-local publication when an item cannot form a strict runtime transcript event', async () => {
@@ -190,7 +561,8 @@ describe('createExternalSessionTerminalFollowProjector', () => {
       items: [{
         id: 'invalid-1',
         kind: 'agent',
-        data: { type: 'text' },
+        timestampMs: 1,
+        data: { role: 'agent', content: { type: 'text' } },
       }],
     })).rejects.toThrow('external_session_terminal_transcript_item_invalid');
     expect(projectRuntimeEvent).not.toHaveBeenCalled();
@@ -215,7 +587,7 @@ describe('createExternalSessionTerminalFollowProjector', () => {
         id: 'agent-1',
         timestampMs: 11,
         kind: 'agent',
-        data: { type: 'text', text: 'hello' },
+        data: { role: 'agent', content: { type: 'text', text: 'hello' } },
       }],
     })).rejects.toThrow('external_session_terminal_transcript_projection_rejected');
   });

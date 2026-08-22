@@ -14,6 +14,21 @@ function createLegacyCredentials() {
   };
 }
 
+function createTokenOnlyCredentials() {
+  return {
+    token: 'token-1',
+    encryption: null,
+  };
+}
+
+const plainAccountEncryptionCurrentness = {
+  mode: 'plain' as const,
+  version: 1,
+  signingKeyFingerprint: null,
+  contentKeyFingerprint: null,
+  updatedAt: 1,
+};
+
 describe('sessionControl.sessionsHttp authentication status handling', () => {
   let envScope = createEnvKeyScope(['HAPPIER_SERVER_URL']);
 
@@ -23,6 +38,7 @@ describe('sessionControl.sessionsHttp authentication status handling', () => {
     vi.restoreAllMocks();
     vi.resetModules();
     vi.doUnmock('@/api/session/resolveSessionCreateEncryptionMode');
+    vi.unstubAllGlobals();
   });
 
   it('throws a stable auth status error for fetchSessionById', async () => {
@@ -96,6 +112,7 @@ describe('sessionControl.sessionsHttp authentication status handling', () => {
     vi.doMock('@/api/session/resolveSessionCreateEncryptionMode', () => ({
       resolveSessionCreateEncryptionMode: vi.fn(async () => ({
         desiredSessionEncryptionMode: 'plain',
+        accountEncryptionCurrentness: plainAccountEncryptionCurrentness,
         serverSupportsFeatureSnapshot: true,
       })),
     }));
@@ -118,11 +135,68 @@ describe('sessionControl.sessionsHttp authentication status handling', () => {
     });
   });
 
+  it('does not POST a tagged Session when the server is too old for current stored content', async () => {
+    process.env.HAPPIER_SERVER_URL = 'http://server.example.test';
+    vi.doMock('@/api/session/resolveSessionCreateEncryptionMode', () => ({
+      resolveSessionCreateEncryptionMode: vi.fn(async () => {
+        throw Object.assign(new Error('server is too old'), {
+          code: 'client-upgrade-required' as const,
+          retryable: false as const,
+          decision: 'server-too-old' as const,
+        });
+      }),
+    }));
+    vi.resetModules();
+    const { getOrCreateSessionByTag } = await import('./sessionsHttp');
+    const post = vi.spyOn(axios, 'post');
+
+    await expect(getOrCreateSessionByTag({
+      credentials: createTokenOnlyCredentials(),
+      tag: 'tag-old-server',
+      metadata: { path: '/private/project', host: 'private-host' },
+      agentState: null,
+    })).rejects.toMatchObject({
+      code: 'client-upgrade-required',
+      retryable: false,
+      decision: 'server-too-old',
+    });
+    expect(post).not.toHaveBeenCalled();
+  }, 120_000);
+
+  it('does not relabel a current invalid-params 400 as an old-server upgrade', async () => {
+    process.env.HAPPIER_SERVER_URL = 'http://server.example.test';
+    vi.doMock('@/api/session/resolveSessionCreateEncryptionMode', () => ({
+      resolveSessionCreateEncryptionMode: vi.fn(async () => ({
+        desiredSessionEncryptionMode: 'plain',
+        accountEncryptionCurrentness: plainAccountEncryptionCurrentness,
+        serverSupportsFeatureSnapshot: true,
+      })),
+    }));
+    vi.resetModules();
+    const { getOrCreateSessionByTag } = await import('./sessionsHttp');
+    const post = vi.spyOn(axios, 'post').mockResolvedValueOnce({
+      status: 400,
+      data: { error: 'invalid-params' },
+    } as never);
+
+    const error = await getOrCreateSessionByTag({
+      credentials: createTokenOnlyCredentials(),
+      tag: 'tag-current-invalid',
+      metadata: { path: '/private/project', host: 'private-host' },
+      agentState: null,
+    }).catch((caught) => caught);
+    expect(error).not.toMatchObject({
+      code: 'client-upgrade-required',
+    });
+    expect(post).toHaveBeenCalledOnce();
+  }, 120_000);
+
   it('returns exact create-or-load truth while accepting released responses that omit it', async () => {
     process.env.HAPPIER_SERVER_URL = 'http://server.example.test';
     vi.doMock('@/api/session/resolveSessionCreateEncryptionMode', () => ({
       resolveSessionCreateEncryptionMode: vi.fn(async () => ({
         desiredSessionEncryptionMode: 'plain',
+        accountEncryptionCurrentness: plainAccountEncryptionCurrentness,
         serverSupportsFeatureSnapshot: true,
       })),
     }));
@@ -146,7 +220,7 @@ describe('sessionControl.sessionsHttp authentication status handling', () => {
       .mockResolvedValueOnce({ status: 200, data: { session } } as never);
 
     const input = {
-      credentials: createLegacyCredentials(),
+      credentials: createTokenOnlyCredentials(),
       tag: 'tag-1',
       metadata: { path: '/private/project', host: 'private-host' },
       agentState: null,
@@ -156,17 +230,29 @@ describe('sessionControl.sessionsHttp authentication status handling', () => {
     expect(post).toHaveBeenCalledTimes(2);
     for (const call of post.mock.calls) {
       const requestBody = call[1] as Readonly<{
-        metadata: string;
+        metadataLayoutVersion: 1;
+        sharedMetadata: Readonly<{ ciphertext: string }>;
+        ownerMetadata: Readonly<{
+          t: 'plain';
+          v: Readonly<Record<string, unknown>>;
+        }>;
         agentState: null;
       }>;
-      expect(requestBody).toMatchObject({ agentState: null });
-      expect(requestBody).not.toHaveProperty('metadataLayoutVersion');
-      expect(requestBody).not.toHaveProperty('sharedMetadata');
-      expect(requestBody).not.toHaveProperty('ownerMetadata');
-      expect(JSON.parse(requestBody.metadata)).toMatchObject({
-        path: '/private/project',
-        host: 'private-host',
+      expect(requestBody).toMatchObject({
+        metadataLayoutVersion: 1,
+        agentState: null,
+        ownerMetadata: {
+          t: 'plain',
+          v: {
+            workspace: {
+              path: '/private/project',
+              host: 'private-host',
+            },
+          },
+        },
       });
+      expect(JSON.parse(requestBody.sharedMetadata.ciphertext))
+        .not.toHaveProperty('path');
     }
   });
 
@@ -178,6 +264,7 @@ describe('sessionControl.sessionsHttp authentication status handling', () => {
         async () => await new Promise((resolve) => {
           releasePreparation = () => resolve({
             desiredSessionEncryptionMode: 'plain',
+            accountEncryptionCurrentness: plainAccountEncryptionCurrentness,
             serverSupportsFeatureSnapshot: true,
           });
         }),

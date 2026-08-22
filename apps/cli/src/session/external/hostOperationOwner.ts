@@ -1,8 +1,9 @@
 import {
+    ExternalSessionRefSchema,
     ExternalSessionsSourceSchema,
     type ExternalSessionsSource,
 } from '@happier-dev/protocol';
-import { PluginError } from '@happier-dev/plugin-sdk';
+import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
 
 import { EXTERNAL_SESSIONS_INVOCATION_POLICY } from './agentExternalSessionsInvocation';
 import type {
@@ -10,14 +11,14 @@ import type {
     ExternalSessionFollowHostOperationRequest,
 } from './followHostOperation';
 import type {
-    ExternalSessionTakeoverHostOperation,
-    ExternalSessionTakeoverHostOperationRequest,
-} from './takeoverHostOperation';
-import type {
     HostExternalSessionFollowTargetResolution,
     HostExternalSessionRef,
     HostExternalTranscriptFollowResult,
 } from './privateContract';
+import type { ExternalSessionExecutionSurface } from './providerOps';
+import type {
+    ConfiguredExternalSessionSourceAgentContribution,
+} from './configuredSourceMaterializer';
 
 export type ExternalSessionFollowTargetHostOperationRequest = Readonly<{
     pluginId: string;
@@ -27,8 +28,17 @@ export type ExternalSessionFollowTargetHostOperationRequest = Readonly<{
     machineId: string;
     accountRevision: string;
     remoteSessionId: string;
+    admissionDeadlineAtMs?: number;
     signal?: AbortSignal;
     isCurrent(): boolean;
+    providerOps?: Required<Pick<
+        ExternalSessionExecutionSurface,
+        | 'validateSource'
+        | 'resolveLinkIdentity'
+        | 'pageTranscript'
+        | 'readAfterTranscript'
+    >>;
+    agentContribution?: ConfiguredExternalSessionSourceAgentContribution;
 }>;
 
 export type ExternalSessionFollowTargetHostOperation = Readonly<{
@@ -40,7 +50,6 @@ export type ExternalSessionFollowTargetHostOperation = Readonly<{
 export type ExternalSessionHostOperationSet = Readonly<{
     followTargetOperation?: ExternalSessionFollowTargetHostOperation | null;
     followOperation: ExternalSessionFollowHostOperation | null;
-    takeoverOperation: ExternalSessionTakeoverHostOperation | null;
 }>;
 
 export type ExternalSessionHostOperationBinding = Readonly<{
@@ -53,12 +62,7 @@ export type ExternalSessionHostOperationBinding = Readonly<{
     sessionSignal?: AbortSignal;
     generationRetirementSignal?: AbortSignal;
     isGenerationCurrent(): boolean;
-}>;
-
-export type BoundExternalSessionTakeoverRequest = Readonly<{
-    ref: HostExternalSessionRef;
-    source: ExternalSessionsSource;
-    signal?: AbortSignal;
+    agentContribution?: ConfiguredExternalSessionSourceAgentContribution;
 }>;
 
 export type BoundExternalSessionFollowRequest = Readonly<{
@@ -66,6 +70,10 @@ export type BoundExternalSessionFollowRequest = Readonly<{
     source: ExternalSessionsSource;
     options: ExternalSessionFollowHostOperationRequest['options'];
     listener: ExternalSessionFollowHostOperationRequest['listener'];
+    providerOps?: Required<Pick<
+        ExternalSessionExecutionSurface,
+        'pageTranscript' | 'readAfterTranscript'
+    >>;
 }>;
 
 export type BoundExternalSessionProviderSessionFollowRequest = Readonly<{
@@ -73,12 +81,16 @@ export type BoundExternalSessionProviderSessionFollowRequest = Readonly<{
     providerSessionId: string;
     options: ExternalSessionFollowHostOperationRequest['options'];
     listener: ExternalSessionFollowHostOperationRequest['listener'];
+    providerOps?: Required<Pick<
+        ExternalSessionExecutionSurface,
+        | 'validateSource'
+        | 'resolveLinkIdentity'
+        | 'pageTranscript'
+        | 'readAfterTranscript'
+    >>;
 }>;
 
 export type ExternalSessionHostOperationPort = Readonly<{
-    executeTakeover(
-        request: BoundExternalSessionTakeoverRequest,
-    ): ReturnType<ExternalSessionTakeoverHostOperation['execute']>;
     executeFollow(
         request: BoundExternalSessionFollowRequest,
     ): Promise<HostExternalTranscriptFollowResult>;
@@ -99,11 +111,20 @@ export type ExternalSessionHostOperationOwner = Readonly<{
     install(
         operations: ExternalSessionHostOperationSet,
     ): Promise<ExternalSessionHostOperationInstallation>;
+    /**
+     * Whether a follow can actually run right now. The owner is constructed
+     * unconditionally at daemon startup, but a generation is installed into it only
+     * during machine-RPC registration — so the owner *existing* does not mean follow
+     * is runnable. Capability reporting must read this live rather than infer
+     * runnability from the presence of a `followTranscript` function reference.
+     */
+    canFollowNow(): boolean;
     retire(): Promise<void>;
 }>;
 
 type ActiveFollow = Readonly<{
     dispose(): Promise<void>;
+    retire(): Promise<void>;
 }>;
 
 type OwnerGeneration = {
@@ -115,7 +136,6 @@ type OwnerGeneration = {
 
 const MAX_ACTIVE_FOLLOWS_PER_BINDING = 64;
 const MAX_FOLLOW_EVENT_SERIALIZED_BYTES = 1024 * 1024;
-const MAX_REMOTE_SESSION_ID_CODE_UNITS = 2_000;
 const EXTERNAL_SESSION_FOLLOW_DISPOSE_TIMEOUT_MS = 5_000;
 
 function fail(code: string): never {
@@ -124,13 +144,6 @@ function fail(code: string): never {
 
 function unavailableFollow(code: string): HostExternalTranscriptFollowResult {
     return Object.freeze({ status: 'unavailable', code });
-}
-
-function isCanonicalBoundedRemoteSessionId(value: unknown): value is string {
-    return typeof value === 'string'
-        && value.length > 0
-        && value.length <= MAX_REMOTE_SESSION_ID_CODE_UNITS
-        && value === value.trim();
 }
 
 function readResolvedFollowTarget(
@@ -148,19 +161,8 @@ function readResolvedFollowTarget(
     ) {
         return null;
     }
-    const ref = target.ref as Readonly<Record<string, unknown>>;
-    if (
-        typeof ref.agentId !== 'string'
-        || ref.agentId.length === 0
-        || ref.agentId !== ref.agentId.trim()
-        || typeof ref.sourceId !== 'string'
-        || ref.sourceId.length === 0
-        || ref.sourceId !== ref.sourceId.trim()
-        || ref.sourceId.length > MAX_REMOTE_SESSION_ID_CODE_UNITS
-        || !isCanonicalBoundedRemoteSessionId(ref.remoteSessionId)
-    ) {
-        return null;
-    }
+    const parsedRef = ExternalSessionRefSchema.safeParse(target.ref);
+    if (!parsedRef.success) return null;
     const parsedSource = ExternalSessionsSourceSchema.safeParse(target.source);
     if (!parsedSource.success) return null;
     try {
@@ -177,11 +179,7 @@ function readResolvedFollowTarget(
     }
     return Object.freeze({
         status: 'resolved',
-        ref: Object.freeze({
-            agentId: ref.agentId,
-            sourceId: ref.sourceId,
-            remoteSessionId: ref.remoteSessionId,
-        }),
+        ref: Object.freeze(parsedRef.data),
         source: parsedSource.data,
     });
 }
@@ -223,7 +221,7 @@ function readCurrentAccountRevision(
             'plugin_external_operation_identity_invalid',
         );
     } catch (error) {
-        if (error instanceof PluginError) throw error;
+        if (isPluginError(error)) throw error;
         return fail('plugin_external_operation_identity_invalid');
     }
 }
@@ -255,7 +253,6 @@ function createOwnerGeneration(
             followTargetOperation:
                 operations.followTargetOperation ?? null,
             followOperation: operations.followOperation,
-            takeoverOperation: operations.takeoverOperation,
         }),
         retirement: new AbortController(),
         activeFollows: new Set(),
@@ -287,14 +284,27 @@ async function disposeFollowSubscriptionBounded(
 }
 
 async function retireOwnerGeneration(generation: OwnerGeneration): Promise<void> {
-    generation.retirementPromise ??= (async () => {
+    const attempt = generation.retirementPromise ??= (async () => {
+        // Snapshot before aborting: the abort listener starts each follow's own
+        // retirement, and a follow whose cleanup fails stays in `activeFollows`
+        // so this snapshot (and every later retry) keeps exact custody of it.
         const activeFollows = Array.from(generation.activeFollows);
         generation.retirement.abort();
         await Promise.all(
-            activeFollows.map(async (follow) => await follow.dispose()),
+            activeFollows.map(async (follow) => await follow.retire()),
         );
     })();
-    await generation.retirementPromise;
+    try {
+        await attempt;
+    } catch (error) {
+        // Follow subscription cleanup is allowed to reject once and succeed on
+        // retry (`followHostOperation` proves that contract). Caching the rejected
+        // attempt would make the exact same cleanup permanently unreachable.
+        if (generation.retirementPromise === attempt) {
+            generation.retirementPromise = null;
+        }
+        throw error;
+    }
 }
 
 export function createExternalSessionHostOperationOwner(): ExternalSessionHostOperationOwner {
@@ -333,6 +343,7 @@ export function createExternalSessionHostOperationOwner(): ExternalSessionHostOp
                 generationRetirementSignal:
                     identityInput.generationRetirementSignal,
                 isGenerationCurrent: identityInput.isGenerationCurrent,
+                agentContribution: identityInput.agentContribution,
             });
             const boundGeneration = currentGeneration;
             const bindingRetirement = new AbortController();
@@ -374,51 +385,11 @@ export function createExternalSessionHostOperationOwner(): ExternalSessionHostOp
                 const activeFollows = Array.from(bindingFollows);
                 bindingRetirement.abort();
                 await Promise.all(
-                    activeFollows.map(async (follow) => await follow.dispose()),
+                    activeFollows.map(async (follow) => await follow.retire()),
                 );
             };
 
             const port: ExternalSessionHostOperationPort = Object.freeze({
-                async executeTakeover(request) {
-                    if (request.ref.agentId !== identity.agentId) {
-                        fail('plugin_external_takeover_identity_mismatch');
-                    }
-                    if (request.signal?.aborted) {
-                        fail('plugin_operation_aborted');
-                    }
-                    if (!isBindingCurrent()) {
-                        fail('plugin_generation_retired');
-                    }
-                    const generation = boundGeneration;
-                    if (!generation) {
-                        fail('plugin_generation_retired');
-                    }
-                    const operation =
-                        generation.operations.takeoverOperation;
-                    if (!operation) {
-                        fail('plugin_external_takeover_unavailable');
-                    }
-                    const signal = AbortSignal.any([
-                        lifecycleSignal,
-                        ...(request.signal ? [request.signal] : []),
-                    ]);
-                    const operationRequest:
-                        ExternalSessionTakeoverHostOperationRequest = {
-                            pluginId: identity.pluginId,
-                            contributionId: identity.agentId,
-                            generationId: identity.generationId,
-                            accountRevision: identity.accountRevision,
-                            sessionId: identity.sessionId,
-                            machineId: identity.machineId,
-                            ref: request.ref,
-                            source: request.source,
-                            signal,
-                            isCurrent: isBindingCurrent,
-                        };
-                    // The delegated operation owns its takeover commit boundary.
-                    // A successful return is never post-checked and relabeled here.
-                    return await operation.execute(operationRequest);
-                },
                 async executeFollow(request) {
                     if (request.ref.agentId !== identity.agentId) {
                         return unavailableFollow(
@@ -428,13 +399,22 @@ export function createExternalSessionHostOperationOwner(): ExternalSessionHostOp
                     if (request.options.signal?.aborted) {
                         return unavailableFollow('plugin_operation_aborted');
                     }
+                    // A binding taken before any generation was installed is not a
+                    // *retired* generation — it is a host that never had one. Reporting
+                    // retirement here makes the failure unattributable, which is exactly
+                    // how this defect stayed hidden behind a plausible-sounding code.
+                    // A retired owner, by contrast, genuinely is retired.
+                    if (boundGeneration === null) {
+                        return unavailableFollow(
+                            retired
+                                ? 'plugin_generation_retired'
+                                : 'plugin_external_follow_host_operations_uninstalled',
+                        );
+                    }
                     if (!isBindingCurrent()) {
                         return unavailableFollow('plugin_generation_retired');
                     }
                     const generation = boundGeneration;
-                    if (!generation) {
-                        return unavailableFollow('plugin_generation_retired');
-                    }
                     const operation = generation.operations.followOperation;
                     if (!operation) {
                         return unavailableFollow(
@@ -458,6 +438,8 @@ export function createExternalSessionHostOperationOwner(): ExternalSessionHostOp
                         >['subscription']
                         | null = null;
                     let disposed = false;
+                    let explicitDisposePending = false;
+                    let disposedAcknowledgementSeen = false;
                     let listenerFailed = false;
                     const activeSignal = AbortSignal.any([
                         lifecycleSignal,
@@ -465,38 +447,67 @@ export function createExternalSessionHostOperationOwner(): ExternalSessionHostOp
                             ? [request.options.signal]
                             : []),
                     ]);
-                    const active: ActiveFollow = Object.freeze({
-                        async dispose() {
-                            if (!disposal) {
-                                disposal = (async () => {
-                                    disposed = true;
-                                    activeSignal.removeEventListener(
-                                        'abort',
-                                        onLifecycleAbort,
-                                    );
-                                    bindingFollows.delete(active);
-                                    generation.activeFollows.delete(active);
-                                    const currentSubscription = subscription;
+                    const settleDisposal = async (
+                        admitDisposedAcknowledgement: boolean,
+                    ): Promise<void> => {
+                        if (!disposal) {
+                            explicitDisposePending =
+                                admitDisposedAcknowledgement;
+                            if (!admitDisposedAcknowledgement) {
+                                disposed = true;
+                            }
+                            disposal = (async () => {
+                                activeSignal.removeEventListener(
+                                    'abort',
+                                    onLifecycleAbort,
+                                );
+                                const currentSubscription = subscription;
+                                try {
                                     await disposeFollowSubscriptionBounded(
                                         currentSubscription
                                             ? () => currentSubscription.dispose()
                                             : undefined,
                                     );
-                                })();
-                            }
-                            const disposalAttempt = disposal;
-                            try {
-                                await disposalAttempt;
-                            } catch (error) {
-                                if (disposal === disposalAttempt) {
-                                    disposal = null;
+                                } finally {
+                                    disposed = true;
+                                    explicitDisposePending = false;
                                 }
-                                throw error;
+                                // Ownership is surrendered only once cleanup has
+                                // actually settled. A rejecting disposer keeps this
+                                // follow discoverable through the owner so binding
+                                // and generation retirement retry the exact same
+                                // cleanup instead of losing custody of it.
+                                bindingFollows.delete(active);
+                                generation.activeFollows.delete(active);
+                            })();
+                        }
+                        const disposalAttempt = disposal;
+                        try {
+                            await disposalAttempt;
+                        } catch (error) {
+                            if (disposal === disposalAttempt) {
+                                disposal = null;
                             }
+                            throw error;
+                        }
+                    };
+                    const active: ActiveFollow = Object.freeze({
+                        async dispose() {
+                            await settleDisposal(true);
+                        },
+                        async retire() {
+                            await settleDisposal(false);
                         },
                     });
                     function onLifecycleAbort(): void {
-                        void active.dispose();
+                        // Abort-triggered retirement is owner-driven cleanup, not a
+                        // caller promise: the daemon turns an unhandled rejection into
+                        // `requestShutdown('exception')`, so one plugin disposer failing
+                        // must not take the daemon down. The failure is not discarded —
+                        // `settleDisposal` keeps this follow in the owner's active sets
+                        // and clears its in-flight disposal, so the next owned retirement
+                        // retries the exact same cleanup and surfaces the failure there.
+                        void active.retire().catch(() => undefined);
                     }
                     bindingFollows.add(active);
                     generation.activeFollows.add(active);
@@ -509,15 +520,30 @@ export function createExternalSessionHostOperationOwner(): ExternalSessionHostOp
                     const listener:
                         ExternalSessionFollowHostOperationRequest['listener'] =
                         async (event) => {
-                            if (disposed) {
+                            const isDisposedAcknowledgement =
+                                explicitDisposePending
+                                && !disposedAcknowledgementSeen
+                                && event.kind === 'terminated'
+                                && event.reason === 'disposed';
+                            if (
+                                (explicitDisposePending
+                                    && !isDisposedAcknowledgement)
+                                || disposed
+                                || activeSignal.aborted
+                            ) {
                                 fail('plugin_external_follow_unavailable');
+                            }
+                            if (isDisposedAcknowledgement) {
+                                disposedAcknowledgementSeen = true;
                             }
                             try {
                                 assertFollowEventBounded(event);
                                 await request.listener(event);
                             } catch (error) {
                                 listenerFailed = true;
-                                await active.dispose();
+                                if (!explicitDisposePending) {
+                                    await active.retire();
+                                }
                                 throw error;
                             }
                         };
@@ -536,13 +562,16 @@ export function createExternalSessionHostOperationOwner(): ExternalSessionHostOp
                             listener,
                             retirementSignal: lifecycleSignal,
                             isCurrent: isBindingCurrent,
+                            ...(request.providerOps
+                                ? { providerOps: request.providerOps }
+                                : {}),
                         });
                     } catch (error) {
-                        await active.dispose();
+                        await active.retire();
                         throw error;
                     }
                     if (result.status !== 'following') {
-                        await active.dispose();
+                        await active.retire();
                         return result;
                     }
                     const resolvedSubscription = result.subscription;
@@ -567,15 +596,16 @@ export function createExternalSessionHostOperationOwner(): ExternalSessionHostOp
                     return Object.freeze({
                         status: 'following',
                         startingCursor: result.startingCursor,
-                        subscription: active,
+                        subscription: Object.freeze({
+                            dispose: async () => await active.dispose(),
+                        }),
                     });
                 },
                 async executeProviderSessionFollow(request) {
                     if (
                         request.agentId !== identity.agentId
-                        || !isCanonicalBoundedRemoteSessionId(
-                            request.providerSessionId,
-                        )
+                        || !ExternalSessionRefSchema.shape.remoteSessionId
+                            .safeParse(request.providerSessionId).success
                     ) {
                         return unavailableFollow(
                             'plugin_external_follow_identity_mismatch',
@@ -583,6 +613,14 @@ export function createExternalSessionHostOperationOwner(): ExternalSessionHostOp
                     }
                     if (request.options.signal?.aborted) {
                         return unavailableFollow('plugin_operation_aborted');
+                    }
+                    // Same distinction as executeFollow: never-installed is not retired.
+                    if (boundGeneration === null) {
+                        return unavailableFollow(
+                            retired
+                                ? 'plugin_generation_retired'
+                                : 'plugin_external_follow_host_operations_uninstalled',
+                        );
                     }
                     if (!isBindingCurrent()) {
                         return unavailableFollow('plugin_generation_retired');
@@ -596,9 +634,6 @@ export function createExternalSessionHostOperationOwner(): ExternalSessionHostOp
                         );
                     }
                     const generation = boundGeneration;
-                    if (!generation) {
-                        return unavailableFollow('plugin_generation_retired');
-                    }
                     const operation =
                         generation.operations.followTargetOperation;
                     if (!operation) {
@@ -620,8 +655,20 @@ export function createExternalSessionHostOperationOwner(): ExternalSessionHostOp
                         machineId: identity.machineId,
                         accountRevision: identity.accountRevision,
                         remoteSessionId: request.providerSessionId,
+                        ...(request.options.admissionDeadlineAtMs === undefined
+                            ? {}
+                            : {
+                                admissionDeadlineAtMs:
+                                    request.options.admissionDeadlineAtMs,
+                            }),
                         signal,
                         isCurrent: isBindingCurrent,
+                        ...(request.providerOps
+                            ? { providerOps: request.providerOps }
+                            : {}),
+                        ...(identity.agentContribution
+                            ? { agentContribution: identity.agentContribution }
+                            : {}),
                     });
                     const unavailableTarget =
                         readUnavailableFollowTarget(target);
@@ -654,11 +701,20 @@ export function createExternalSessionHostOperationOwner(): ExternalSessionHostOp
                         source: resolvedTarget.source,
                         options: request.options,
                         listener: request.listener,
+                        ...(request.providerOps
+                            ? { providerOps: request.providerOps }
+                            : {}),
                     });
                 },
                 retire: retireBinding,
             });
             return port;
+        },
+        canFollowNow() {
+            return !retired
+                && currentGeneration !== null
+                && !currentGeneration.retirement.signal.aborted
+                && currentGeneration.operations.followOperation != null;
         },
         async install(operations) {
             if (retired) {
@@ -670,7 +726,26 @@ export function createExternalSessionHostOperationOwner(): ExternalSessionHostOp
             const priorGeneration = currentGeneration;
             currentGeneration = installedGeneration;
             if (priorGeneration) {
-                await retireOwnerGeneration(priorGeneration);
+                try {
+                    await retireOwnerGeneration(priorGeneration);
+                } catch (error) {
+                    // Installation failed, so the provisional replacement must not stay
+                    // callable without a returned cleanup handle. Retire it and restore
+                    // the prior (now aborted, so no longer runnable) generation as
+                    // current: installing again retries the exact same prior cleanup.
+                    if (currentGeneration === installedGeneration) {
+                        currentGeneration = priorGeneration;
+                    }
+                    try {
+                        await retireOwnerGeneration(installedGeneration);
+                    } catch (replacementError) {
+                        throw new AggregateError(
+                            [error, replacementError],
+                            'External Session host-operation installation failed',
+                        );
+                    }
+                    throw error;
+                }
             }
             let disposed = false;
             return Object.freeze({

@@ -79,7 +79,6 @@ describe('engineRegistry (Oh My Pi External Sessions)', () => {
               expect.objectContaining({
                 family: 'agents',
                 localId: OH_MY_PI_AGENT_LOCAL_ID,
-                requiredFields: ['factory', 'externalSessions'],
               }),
             ]),
             bound: expect.arrayContaining([
@@ -168,12 +167,12 @@ describe('engineRegistry (Oh My Pi External Sessions)', () => {
             sessionFilePath: expect.stringContaining(`${remoteSessionId}.jsonl`),
           },
           remoteSessionId,
-          externalSessionMetadata: {
-            linkData: {
-              sessionFilePath: expect.stringContaining(`${remoteSessionId}.jsonl`),
-            },
-          },
+          externalSessionMetadata: { linkData: {} },
         });
+        // The host projects only Agent-owned native-session facts out of a link
+        // identity into TOP-LEVEL session owner metadata, whose strict allow-list
+        // rejects unknown keys with a typed-error-less failure.
+        expect(linked.vendorMetadata).toEqual({});
 
         const page = await externalSession.pageTranscript!({
           source: linked.source,

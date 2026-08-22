@@ -5,10 +5,14 @@ import type { DaemonServiceListEntry } from '@/daemon/service/cli';
 
 const {
     axiosGetMock,
-    readCredentialsMock,
+    readStoredCredentialsMock,
+    resolveInstalledDaemonServiceInventoryMock,
 } = vi.hoisted(() => ({
     axiosGetMock: vi.fn(),
-    readCredentialsMock: vi.fn(async (): Promise<{ token: string } | null> => null),
+    readStoredCredentialsMock: vi.fn(async (): Promise<{ token: string; encryption: null } | null> => null),
+    resolveInstalledDaemonServiceInventoryMock: vi.fn<
+        (...args: unknown[]) => Promise<readonly DaemonServiceListEntry[]>
+    >(async () => []),
 }));
 
 vi.mock('axios', async () => {
@@ -35,13 +39,19 @@ vi.mock('@/configuration', () => ({
 }));
 
 vi.mock('@/persistence', () => ({
-    readCredentials: () => readCredentialsMock(),
+    readStoredCredentials: () => readStoredCredentialsMock(),
+}));
+
+vi.mock('@/daemon/ownership/daemonServiceInventory', () => ({
+    resolveInstalledDaemonServiceInventoryForCurrentRelay: (...args: unknown[]) =>
+        resolveInstalledDaemonServiceInventoryMock(...args),
 }));
 
 import {
     resolveInstalledDefaultFollowingDaemonServiceModes,
     runDefaultFollowingBackgroundServiceRestartFollowUp,
     runDefaultFollowingBackgroundServiceServerChangeFollowUp,
+    runServerSelectionBackgroundServiceFollowUp,
 } from './backgroundServiceFollowUp';
 
 function createServiceInventoryEntry(overrides: Partial<HappierService> = {}): HappierService {
@@ -80,14 +90,29 @@ function createDaemonServiceListEntry(overrides: Partial<DaemonServiceListEntry>
 
 describe('server background service follow-up helpers', () => {
     afterEach(() => {
-        readCredentialsMock.mockReset();
-        readCredentialsMock.mockResolvedValue(null);
+        readStoredCredentialsMock.mockReset();
+        readStoredCredentialsMock.mockResolvedValue(null);
         axiosGetMock.mockReset();
+        resolveInstalledDaemonServiceInventoryMock.mockReset();
+        resolveInstalledDaemonServiceInventoryMock.mockResolvedValue([]);
+        delete process.env.HAPPIER_DEFER_SERVER_SELECTION_FOLLOW_UP;
+    });
+
+    it('defers the child command follow-up while guided setup owns the larger sequence', async () => {
+        process.env.HAPPIER_DEFER_SERVER_SELECTION_FOLLOW_UP = '1';
+
+        await runServerSelectionBackgroundServiceFollowUp({
+            interactive: true,
+            targetServerUrl: 'https://relay.example.test',
+        });
+
+        expect(resolveInstalledDaemonServiceInventoryMock).not.toHaveBeenCalled();
     });
 
     it('restarts a default-following background service after an authenticated interactive server change', async () => {
-        readCredentialsMock.mockResolvedValueOnce({
+        readStoredCredentialsMock.mockResolvedValueOnce({
             token: 'token-123',
+            encryption: null,
         });
         axiosGetMock.mockResolvedValueOnce({
             status: 200,
@@ -123,7 +148,7 @@ describe('server background service follow-up helpers', () => {
     });
 
     it('logs auth + restart guidance when authentication is declined', async () => {
-        readCredentialsMock.mockResolvedValueOnce(null);
+        readStoredCredentialsMock.mockResolvedValueOnce(null);
         const output: string[] = [];
 
         await runDefaultFollowingBackgroundServiceServerChangeFollowUp({
@@ -142,8 +167,9 @@ describe('server background service follow-up helpers', () => {
     });
 
     it('prompts for authentication when the profile probe returns an auth failure through the shared carrier shape', async () => {
-        readCredentialsMock.mockResolvedValueOnce({
+        readStoredCredentialsMock.mockResolvedValueOnce({
             token: 'token-123',
+            encryption: null,
         });
         axiosGetMock.mockRejectedValueOnce({
             response: { status: 403 },
@@ -167,7 +193,7 @@ describe('server background service follow-up helpers', () => {
     });
 
     it('logs manual restart guidance in non-interactive mode', async () => {
-        readCredentialsMock.mockResolvedValueOnce(null);
+        readStoredCredentialsMock.mockResolvedValueOnce(null);
         const output: string[] = [];
 
         await runDefaultFollowingBackgroundServiceServerChangeFollowUp({
@@ -185,8 +211,9 @@ describe('server background service follow-up helpers', () => {
     });
 
     it('renders system-mode restart commands for system inventory entries', async () => {
-        readCredentialsMock.mockResolvedValueOnce({
+        readStoredCredentialsMock.mockResolvedValueOnce({
             token: 'token-123',
+            encryption: null,
         });
         axiosGetMock.mockResolvedValueOnce({
             status: 200,
@@ -219,8 +246,9 @@ describe('server background service follow-up helpers', () => {
     });
 
     it('prefers explicit daemon service list entry mode over path heuristics', async () => {
-        readCredentialsMock.mockResolvedValueOnce({
+        readStoredCredentialsMock.mockResolvedValueOnce({
             token: 'token-123',
+            encryption: null,
         });
         axiosGetMock.mockResolvedValueOnce({
             status: 200,
@@ -252,8 +280,9 @@ describe('server background service follow-up helpers', () => {
     });
 
     it('fails closed with repair guidance when duplicate user and system default-following services exist', async () => {
-        readCredentialsMock.mockResolvedValueOnce({
+        readStoredCredentialsMock.mockResolvedValueOnce({
             token: 'token-123',
+            encryption: null,
         });
         axiosGetMock.mockResolvedValueOnce({
             status: 200,
@@ -306,8 +335,9 @@ describe('server background service follow-up helpers', () => {
     });
 
     it('prompts to authenticate when stored credentials are no longer accepted by the target server', async () => {
-        readCredentialsMock.mockResolvedValueOnce({
+        readStoredCredentialsMock.mockResolvedValueOnce({
             token: 'token-123',
+            encryption: null,
         });
         axiosGetMock.mockRejectedValueOnce({
             isAxiosError: true,
@@ -342,8 +372,9 @@ describe('server background service follow-up helpers', () => {
     });
 
     it('trusts an explicit logged_out auth state instead of probing stored credentials again', async () => {
-        readCredentialsMock.mockResolvedValueOnce({
+        readStoredCredentialsMock.mockResolvedValueOnce({
             token: 'token-123',
+            encryption: null,
         });
         axiosGetMock.mockResolvedValueOnce({
             status: 200,
@@ -377,8 +408,9 @@ describe('server background service follow-up helpers', () => {
     });
 
     it('warns instead of failing when restart follow-up execution fails after the primary action already applied', async () => {
-        readCredentialsMock.mockResolvedValueOnce({
+        readStoredCredentialsMock.mockResolvedValueOnce({
             token: 'token-123',
+            encryption: null,
         });
         axiosGetMock.mockResolvedValueOnce({
             status: 200,

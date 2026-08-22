@@ -550,6 +550,46 @@ describe('transferSessionLifecycle', () => {
         }
     });
 
+    it('reads only the declared bounded range of a download source', async () => {
+        const tempDir = await mkdtemp(join(tmpdir(), 'happier-transfer-lifecycle-download-range-'));
+        const store = new TransferSessionStore({ ttlMs: 30_000 });
+        const lifecycle = createTransferSessionLifecycle({ store, chunkSizeBytes: 3 });
+
+        try {
+            const filePath = join(tempDir, 'source.bin');
+            await writeFile(filePath, Buffer.from('prefix:CONTENT:suffix', 'utf8'));
+            const session = await openDownloadTransferSession({
+                lifecycle,
+                source: {
+                    filePath,
+                    deleteFileOnClose: false,
+                    sourceOffsetBytes: 7,
+                    sizeBytes: 7,
+                    name: 'content.bin',
+                },
+            });
+
+            const chunks: Buffer[] = [];
+            for (let index = 0; index < 3; index += 1) {
+                const chunk = await readDownloadTransferChunk({
+                    lifecycle,
+                    downloadId: session.downloadId,
+                    index,
+                });
+                expect(chunk.success).toBe(true);
+                if (!chunk.success || !('contentBase64' in chunk)) throw new Error('expected unencrypted chunk');
+                chunks.push(Buffer.from(chunk.contentBase64, 'base64'));
+                if (chunk.isLast) break;
+            }
+
+            expect(Buffer.concat(chunks).toString('utf8')).toBe('CONTENT');
+            await expect(finalizeDownloadTransferSession({ lifecycle, downloadId: session.downloadId })).resolves.toBeUndefined();
+        } finally {
+            await store.dispose();
+            await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
+        }
+    });
+
     it('keeps a download session attached while an external expiry sweep overlaps an in-flight read', async () => {
         const tempDir = await mkdtemp(join(tmpdir(), 'happier-transfer-lifecycle-download-expiry-race-'));
         const store = new TransferSessionStore({ ttlMs: 1_000 });

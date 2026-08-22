@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
     loadLinkedExternalSession: vi.fn(),
     readCredentials: vi.fn(),
     resolveExternalLinkedTakeoverWriterSafety: vi.fn(),
+    resolveSource: vi.fn(),
     resolveLinkedIdentity: vi.fn(),
     isExternalTakeoverLaunchAvailable: vi.fn(),
     updateSessionMetadataWithRetry: vi.fn(),
@@ -32,7 +33,7 @@ vi.mock('@/api/session/external/security/validateExternalMachineSource', () => (
     validateExternalMachineSource: mocks.validateExternalMachineSource,
 }));
 vi.mock('@/persistence', () => ({
-    readCredentials: mocks.readCredentials,
+    readStoredCredentials: mocks.readCredentials,
 }));
 vi.mock('@/api/session/external/takeover/loadLinkedExternalSession', () => ({
     loadLinkedExternalSession: mocks.loadLinkedExternalSession,
@@ -90,18 +91,7 @@ function readyServerFeatures(
 ): CliServerFeaturesSnapshot {
     const features = FeaturesResponseSchema.parse({
         features: {},
-        capabilities: {
-            compatibility: {
-                v: 1,
-                sessionSync: {
-                    v: 1,
-                    enforcement: 'observe',
-                    minimumSessionSyncProtocolVersion: 1,
-                    currentSessionSyncProtocolVersion: 2,
-                    declarationTransport: 'headers-v1',
-                },
-            },
-        },
+        capabilities: {},
     });
     return {
         status: 'ready',
@@ -109,10 +99,10 @@ function readyServerFeatures(
             ...features,
             capabilities: {
                 ...features.capabilities,
-                compatibility: {
-                    ...features.capabilities.compatibility!,
-                    externalSessionImport: {
-                        currentPublicationFenceVersion,
+                session: {
+                    ...features.capabilities.session,
+                    externalImport: {
+                        publicationFenceVersion: currentPublicationFenceVersion,
                     },
                 },
             },
@@ -195,9 +185,9 @@ const failClosedPersistedTakeoverServerSnapshots: ReadonlyArray<
         status: 'ready',
         features: {
             capabilities: {
-                compatibility: {
-                    externalSessionImport: {
-                        currentPublicationFenceVersion: '2',
+                session: {
+                    externalImport: {
+                        publicationFenceVersion: '2',
                     },
                 },
             },
@@ -218,6 +208,10 @@ describe('executeExternalSessionStatusGetAction observation reconciliation', () 
             ok: true,
             source: request.source,
         });
+        mocks.resolveSource.mockImplementation(async (sourceRequest) => ({
+            ok: true,
+            value: { source: sourceRequest.source },
+        }));
         mocks.readCredentials.mockResolvedValue({
             token: 'token',
             encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3]) },
@@ -230,6 +224,7 @@ describe('executeExternalSessionStatusGetAction observation reconciliation', () 
                 remoteSessionId: 'remote-1',
                 linkGeneration: '1000',
                 source: request.source,
+                canonicalResolvedSourceKey: 'opencodeServer:::',
                 metadata: {
                     externalSessionV1: {
                         v: 1,
@@ -315,6 +310,7 @@ describe('executeExternalSessionStatusGetAction observation reconciliation', () 
                         generation: 'plugin-generation-1',
                         isCurrent: () => true,
                         externalSessions: {
+                            resolveSource: mocks.resolveSource,
                             resolveLinkedIdentity: mocks.resolveLinkedIdentity,
                             pageTranscript: vi.fn(),
                             readAfterTranscript: vi.fn(),
@@ -331,6 +327,73 @@ describe('executeExternalSessionStatusGetAction observation reconciliation', () 
             resourceKey: 'endpoint-default',
             linkKey: 'remote-1',
         });
+    });
+
+    it('admits the exact validated request identity before status or takeover effects', async () => {
+        mocks.loadLinkedExternalSession.mockResolvedValueOnce({
+            ok: false,
+            errorCode: 'invalid_request',
+            error: 'linked_session_identity_mismatch',
+        });
+        const owner = actionContext(snapshot('working'));
+
+        const response = await executeExternalSessionStatusGetAction(
+            request,
+            owner.context as never,
+        );
+
+        expect(mocks.loadLinkedExternalSession).toHaveBeenCalledWith({
+            credentials: expect.any(Object),
+            sessionId: request.sessionId,
+            machineId: request.machineId,
+            expectedIdentity: {
+                agentId: request.agentId,
+                machineId: request.machineId,
+                remoteSessionId: request.remoteSessionId,
+                source: request.source,
+            },
+        });
+        expect(response).toMatchObject({
+            ok: true,
+            activity: 'unknown',
+            externalAgent: null,
+            canTakeOverDirect: false,
+            canTakeOverPersist: false,
+        });
+        expect(mocks.validateExternalMachineSource).not.toHaveBeenCalled();
+        expect(owner.reconcileStatusLink).not.toHaveBeenCalled();
+        expect(mocks.listSessionMarkers).not.toHaveBeenCalled();
+        expect(mocks.isExternalTakeoverLaunchAvailable).not.toHaveBeenCalled();
+        expect(mocks.resolveExternalLinkedTakeoverWriterSafety).not.toHaveBeenCalled();
+    });
+
+    it('fails closed before status or takeover effects when the persisted source is no longer configured', async () => {
+        mocks.validateExternalMachineSource.mockResolvedValueOnce({
+            ok: false,
+            errorCode: 'invalid_request',
+            error: 'external_session_source_invalid',
+        });
+        const owner = actionContext(snapshot('working'));
+
+        await expect(executeExternalSessionStatusGetAction(
+            request,
+            owner.context as never,
+        )).resolves.toEqual({
+            ok: false,
+            errorCode: 'invalid_request',
+            error: 'external_session_source_invalid',
+        });
+
+        expect(mocks.validateExternalMachineSource).toHaveBeenCalledWith({
+            agentId: 'opencode',
+            source: request.source,
+            env: process.env,
+        });
+        expect(owner.reconcileStatusLink).not.toHaveBeenCalled();
+        expect(mocks.resolveSource).not.toHaveBeenCalled();
+        expect(mocks.listSessionMarkers).not.toHaveBeenCalled();
+        expect(mocks.isExternalTakeoverLaunchAvailable).not.toHaveBeenCalled();
+        expect(mocks.resolveExternalLinkedTakeoverWriterSafety).not.toHaveBeenCalled();
     });
 
     it('does not expose an unknown marker PID as trusted or takeover-safe', async () => {

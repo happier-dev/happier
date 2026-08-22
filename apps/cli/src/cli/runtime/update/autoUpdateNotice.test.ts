@@ -59,6 +59,42 @@ describe('maybeAutoUpdateNotice', () => {
     });
   });
 
+  it('suppresses an inconsistent cached downgrade even when updateAvailable is stale true', () => {
+    withUpdateHomeDir((homeDir) => {
+      const output = captureConsoleText();
+      try {
+        const cacheDir = join(homeDir, 'cache');
+        mkdirSync(cacheDir, { recursive: true });
+        writeJson(join(cacheDir, 'update.json'), {
+          checkedAt: 99_000,
+          latest: '0.2.1',
+          current: '0.2.10',
+          runtimeVersion: null,
+          invokerVersion: '0.2.10',
+          updateAvailable: true,
+          notifiedAt: null,
+        });
+
+        maybeAutoUpdateNotice({
+          argv: ['claude'],
+          isTTY: true,
+          homeDir,
+          cliRootDir: '/repo/apps/cli',
+          env: {},
+          publicReleaseRing: 'stable',
+          nowMs: 100_000,
+          spawnDetached: vi.fn(),
+          notifyIntervalMs: 1000,
+          checkIntervalMs: 1_000_000,
+        });
+
+        expect(output.lines).toHaveLength(0);
+      } finally {
+        output.restore();
+      }
+    });
+  });
+
   it('does nothing when update checks are disabled', () => {
     const output = captureConsoleText();
     const spawnDetached = vi.fn();

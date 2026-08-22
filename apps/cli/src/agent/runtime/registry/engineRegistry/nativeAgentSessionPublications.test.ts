@@ -89,6 +89,7 @@ describe('createNativeAgentSessionPublications', () => {
     const session = {
       getMetadataSnapshot: () => metadata,
       updateMetadata,
+      updateMetadataAsCurrentPublisher: updateMetadata,
       on: onMetadata,
       off: offMetadata,
       updateAgentState: vi.fn(),

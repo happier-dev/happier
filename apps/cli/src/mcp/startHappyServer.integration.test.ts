@@ -128,13 +128,12 @@ describe('startHappyServer (MCP integration)', () => {
       cwd: process.cwd(),
       parentProvider: 'claude',
       createBackend: () => createStaticRuntime(JSON.stringify({ ok: true })),
-      sendAcp: () => {},
+      sendAcp: async () => {},
     });
 
     const fakeClient: HappyMcpSessionClient = {
       sessionId: 'sess_mcp_keepalive_1',
       rpcHandlerManager,
-      sendProviderMessage: () => {},
       updateMetadata: () => {},
     };
 
@@ -216,7 +215,6 @@ describe('startHappyServer (MCP integration)', () => {
     const fakeClient: HappyMcpSessionClient = {
       sessionId: 'sess_mcp_account_tool_names_1',
       rpcHandlerManager,
-      sendProviderMessage: () => {},
       updateMetadata: () => {},
     };
 
@@ -273,14 +271,14 @@ describe('startHappyServer (MCP integration)', () => {
             summary: 'Summary.',
           }),
         ),
-      sendAcp: (_provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) =>
-        sent.push({ body, meta: opts?.meta }),
+      sendAcp: async (_provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
+        sent.push({ body, meta: opts?.meta });
+      },
     });
 
     const fakeClient: HappyMcpSessionClient = {
       sessionId: 'sess_mcp_1',
       rpcHandlerManager,
-      sendProviderMessage: () => {},
       updateMetadata: () => {},
     };
 
@@ -423,12 +421,10 @@ describe('startHappyServer (MCP integration)', () => {
     const updateMetadata = vi.fn((updater: (current: Metadata) => Metadata) => {
       metadata = updater(metadata);
     });
-    const sendProviderMessage = vi.fn();
 
     const fakeClient = {
       sessionId: 'sess_mcp_change_title_1',
       rpcHandlerManager,
-      sendProviderMessage,
       updateMetadata,
     } satisfies HappyMcpSessionClient;
 
@@ -446,7 +442,6 @@ describe('startHappyServer (MCP integration)', () => {
 
       expect(result.success).toBe(true);
       expect(updateMetadata).toHaveBeenCalled();
-      expect(sendProviderMessage).not.toHaveBeenCalled();
       expect((metadata.summary as { text?: string }).text).toBe('QA MCP Title');
     } finally {
       await (client as any)?.close?.();
@@ -469,7 +464,6 @@ describe('startHappyServer (MCP integration)', () => {
           return {};
         }),
       } as any,
-      sendProviderMessage: () => {},
       updateMetadata: () => {},
     };
 
@@ -521,7 +515,6 @@ describe('startHappyServer (MCP integration)', () => {
           return {};
         }),
       } as any,
-      sendProviderMessage: () => {},
       updateMetadata: () => {},
     };
 
@@ -566,7 +559,6 @@ describe('startHappyServer (MCP integration)', () => {
       rpcHandlerManager: {
         invokeLocal: vi.fn(async () => ({})),
       } as any,
-      sendProviderMessage: () => {},
       updateMetadata: () => {},
       getMetadataSnapshot: () => ({
         sessionModesV1: {
@@ -628,13 +620,12 @@ describe('startHappyServer (MCP integration)', () => {
       cwd: process.cwd(),
       parentProvider: 'claude',
       createBackend: () => createStaticRuntime(JSON.stringify({ ok: true })),
-      sendAcp: () => {},
+      sendAcp: async () => {},
     });
 
     const fakeClient: HappyMcpSessionClient = {
       sessionId: 'sess_mcp_disabled_1',
       rpcHandlerManager,
-      sendProviderMessage: () => {},
       updateMetadata: () => {},
     };
 
@@ -675,13 +666,12 @@ describe('startHappyServer (MCP integration)', () => {
       cwd: process.cwd(),
       parentProvider: 'claude',
       createBackend: () => createStaticRuntime(JSON.stringify({ ok: true })),
-      sendAcp: () => {},
+      sendAcp: async () => {},
     });
 
     const fakeClient: HappyMcpSessionClient = {
       sessionId: 'sess_mcp_resources_1',
       rpcHandlerManager,
-      sendProviderMessage: () => {},
       updateMetadata: () => {},
     };
 
@@ -731,13 +721,12 @@ describe('startHappyServer (MCP integration)', () => {
       cwd: process.cwd(),
       parentProvider: 'claude',
       createBackend: () => createStaticRuntime(JSON.stringify({ ok: true })),
-      sendAcp: () => {},
+      sendAcp: async () => {},
     });
 
     const fakeClient: HappyMcpSessionClient = {
       sessionId: 'sess_mcp_seq_1',
       rpcHandlerManager,
-      sendProviderMessage: () => {},
       updateMetadata: () => {},
     };
 

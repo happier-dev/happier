@@ -1,11 +1,25 @@
 import type { AcpPermissionHandler } from '@/agent/acp/AcpBackend';
+import type {
+  AcpPermissionCallContext,
+  AcpPermissionCausalAuthority,
+} from '@/agent/acp/permissions/acpPermissionHandler';
 import {
   isPermissionGuardToolName,
   isSharedPermissionSafeToolName,
   isSharedPermissionWriteLikeToolName,
 } from '@/agent/permissions/permissionTaxonomy';
+import { resolveCausalPermissionMode } from '@/agent/permissions/causalPermissionMode';
+import { extractShellCommand } from '@happier-dev/protocol';
 
 import { permissionMode } from '@/agent/executionRuns/policy/permissionMode';
+
+const EXECUTION_RUN_EXACT_READ_ONLY_SHELL_COMMANDS = new Set([
+  'git status',
+  'git diff',
+  'git log',
+  'git branch --show-current',
+  'git rev-parse --show-toplevel',
+]);
 
 export type ExecutionRunPermissionHandler = AcpPermissionHandler & Readonly<{
   getImmediateDecision: NonNullable<AcpPermissionHandler['getImmediateDecision']>;
@@ -27,9 +41,31 @@ function resolveExecutionRunImmediateDecision(args: Readonly<{
   permissionMode: string;
   backendId: string;
   toolName: string;
+  input?: unknown;
+  causalPermissionAuthority?: AcpPermissionCausalAuthority;
+  context?: AcpPermissionCallContext;
 }>): { decision: 'approved' | 'approved_for_session' | 'denied' } | null {
   const rawLower = String(args.permissionMode ?? '').trim().toLowerCase();
   const normalizedMode = permissionMode(args.permissionMode);
+  const hasContextCausalAuthority = Boolean(
+    args.context
+    && Object.prototype.hasOwnProperty.call(args.context, 'causalPermissionAuthority'),
+  );
+  const hasRunCausalAuthority = Object.prototype.hasOwnProperty.call(args, 'causalPermissionAuthority');
+  const effective = resolveCausalPermissionMode({
+    currentPermissionMode: normalizedMode,
+    context: hasContextCausalAuthority
+      ? args.context
+      : hasRunCausalAuthority
+        ? { causalPermissionAuthority: args.causalPermissionAuthority }
+        : undefined,
+  });
+
+  // A supplied causal authority that cannot be proved valid is itself a typed
+  // non-authorizing fact. Returning a pending prompt here would let a buffered
+  // or later response bypass the malformed admitted ceiling.
+  if (!effective.ok) return { decision: 'denied' };
+  const effectiveMode = effective.effectiveMode;
 
   if (shouldAlwaysApproveExecutionRunTool(args.toolName)) return { decision: 'approved' };
 
@@ -37,15 +73,26 @@ function resolveExecutionRunImmediateDecision(args: Readonly<{
   // (e.g. title changes) regardless of how it normalizes onto the canonical PermissionMode surface.
   if (rawLower === 'no_tools') return { decision: 'denied' };
 
-  if (normalizedMode === 'read-only' || normalizedMode === 'plan') {
+  if (effectiveMode === 'read-only' || effectiveMode === 'plan') {
+    const normalizedToolName = String(args.toolName ?? '').trim().toLowerCase();
+    if (
+      normalizedToolName === 'bash'
+      || normalizedToolName === 'shell'
+      || normalizedToolName === 'execute'
+    ) {
+      const command = extractShellCommand(args.input);
+      if (command && EXECUTION_RUN_EXACT_READ_ONLY_SHELL_COMMANDS.has(command.trim())) {
+        return { decision: 'approved' };
+      }
+    }
     return isExecutionRunWriteLikeToolName(args.toolName) ? { decision: 'denied' } : { decision: 'approved' };
   }
 
-  if (normalizedMode === 'yolo') {
+  if (effectiveMode === 'yolo') {
     return { decision: 'approved_for_session' };
   }
 
-  if (normalizedMode === 'safe-yolo') {
+  if (effectiveMode === 'safe-yolo') {
     // Safe-yolo: auto-approve read-like tools, prompt for write-like tools.
     return isExecutionRunWriteLikeToolName(args.toolName) ? null : { decision: 'approved' };
   }
@@ -65,6 +112,8 @@ export function resolveExecutionRunPermissionDecision(args: Readonly<{
   permissionMode: string;
   backendId: string;
   toolName: string;
+  input?: unknown;
+  causalPermissionAuthority?: AcpPermissionCausalAuthority;
 }>): 'approved_for_session' | 'denied' {
   const immediate = resolveExecutionRunImmediateDecision(args);
   if (!immediate) return 'denied';
@@ -74,6 +123,7 @@ export function resolveExecutionRunPermissionDecision(args: Readonly<{
 export function createExecutionRunPermissionHandler(args: Readonly<{
   permissionMode: string;
   backendId: string;
+  causalPermissionAuthority?: AcpPermissionCausalAuthority;
 }>): ExecutionRunPermissionHandler {
   const pending = new Map<string, { resolve: (value: { decision: 'approved' | 'denied' }) => void }>();
   const buffered = new Map<string, { approved: boolean }>();
@@ -88,7 +138,30 @@ export function createExecutionRunPermissionHandler(args: Readonly<{
     request.resolve({ decision: approved ? 'approved' : 'denied' });
   }
 
-  function readImmediate(toolCallId: string, toolName: string, input: unknown) {
+  function readImmediate(
+    toolCallId: string,
+    toolName: string,
+    input: unknown,
+    context?: AcpPermissionCallContext,
+  ) {
+    const immediate = resolveExecutionRunImmediateDecision({
+      permissionMode: args.permissionMode,
+      backendId: args.backendId,
+      toolName,
+      input,
+      ...(Object.prototype.hasOwnProperty.call(args, 'causalPermissionAuthority')
+        ? { causalPermissionAuthority: args.causalPermissionAuthority }
+        : {}),
+      ...(context ? { context } : {}),
+    });
+    if (immediate) {
+      // A narrower current/admitted mode remains authoritative even if an
+      // asynchronous response arrived before the provider emitted the tool
+      // call. The buffered answer is correlation state, not policy authority.
+      buffered.delete(toolCallId);
+      return immediate;
+    }
+
     // Execution runs treat the ACP permission id as the toolCallId for correlation.
     const bufferedResponse = buffered.get(toolCallId) ?? null;
     if (bufferedResponse) {
@@ -96,20 +169,16 @@ export function createExecutionRunPermissionHandler(args: Readonly<{
       return { decision: bufferedResponse.approved ? 'approved' : 'denied' } as const;
     }
 
-    return resolveExecutionRunImmediateDecision({
-      permissionMode: args.permissionMode,
-      backendId: args.backendId,
-      toolName,
-    });
+    return null;
   }
 
   return {
     respondToPermissionRequest,
-    getImmediateDecision(toolCallId, toolName, input) {
-      return readImmediate(toolCallId, toolName, input);
+    getImmediateDecision(toolCallId, toolName, input, context) {
+      return readImmediate(toolCallId, toolName, input, context);
     },
-    async handleToolCall(toolCallId, toolName, input) {
-      const immediate = readImmediate(toolCallId, toolName, input);
+    async handleToolCall(toolCallId, toolName, input, context) {
+      const immediate = readImmediate(toolCallId, toolName, input, context);
       if (immediate) return immediate;
 
       return await new Promise<{ decision: 'approved' | 'denied' }>((resolve) => {

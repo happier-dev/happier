@@ -9,9 +9,11 @@ describe('sessionControl.sessionsHttp lookup by tags', () => {
   const envKeys = ['HAPPIER_SERVER_URL'] as const;
   let envScope = createEnvKeyScope(envKeys);
 
-  afterEach(() => {
+  afterEach(async () => {
     envScope.restore();
     envScope = createEnvKeyScope(envKeys);
+    const { reloadConfiguration } = await import('@/configuration');
+    reloadConfiguration();
     vi.restoreAllMocks();
     vi.resetModules();
     vi.useRealTimers();
@@ -19,6 +21,8 @@ describe('sessionControl.sessionsHttp lookup by tags', () => {
 
   it('posts the bounded tags with the remaining absolute deadline and signal', async () => {
     process.env.HAPPIER_SERVER_URL = 'http://server.example.test';
+    const { reloadConfiguration } = await import('@/configuration');
+    reloadConfiguration();
     vi.useFakeTimers();
     vi.setSystemTime(1_000);
     const signal = new AbortController().signal;

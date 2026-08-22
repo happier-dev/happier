@@ -4,7 +4,7 @@ import { buildCodexAgentRuntimeDescriptorV1 } from '@happier-dev/protocol/agents
 import {
   type AgentRuntime,
   type AgentSessionRuntimeFactory,
-} from '@happier-dev/plugin-sdk/agent-runtime';
+} from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { createUnavailablePluginServices } from '@/plugins/runtime/invocation/services/unavailable';
 import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
@@ -19,11 +19,6 @@ import {
   createNativeInactiveGoalAdapter,
   createNativeInactiveUsageAdapter,
 } from './nativeInactiveSessionControlAdapters';
-
-const encryptionContext = {
-  encryptionKey: new Uint8Array(32).fill(1),
-  encryptionVariant: 'legacy' as const,
-};
 
 function rawSession(id: string): RawSessionRecord {
   return {
@@ -113,7 +108,7 @@ function runtimeRegistryFixture(params: Readonly<{
       createRuntime: params.createRuntime ?? (async () => runtime),
     }]]),
     activateContributionsOnDemand: async () => [],
-    createAgentInvocationServices: () => createUnavailablePluginServices(),
+    createAgentInvocationServices: async () => createUnavailablePluginServices(),
   } as unknown as ResolvedExecutablePluginRuntimeRegistry;
   return {
     registry,
@@ -132,7 +127,7 @@ function commonRouteParams(sessionId: string) {
     rawSession: rawSession(sessionId),
     metadata: metadata(),
     currentMachineId: 'machine-local',
-    ctx: encryptionContext,
+    ctx: null,
     mode: 'plain' as const,
     callLiveSessionRpc: vi.fn(),
   };
@@ -287,6 +282,7 @@ describe('native inactive Agent session controls', () => {
 
     await expect(routeSessionUsageLimitRecoveryCheckNow({
       ...commonRouteParams('usage-session'),
+      ctx: null,
       request: { sessionId: 'usage-session', agentId: 'codex' },
       stageUsageLimitRecoveryMutation: vi.fn(async () => undefined),
       resolveAdapter: async () => adapter,
@@ -325,6 +321,7 @@ describe('native inactive Agent session controls', () => {
 
     const checking = routeSessionUsageLimitRecoveryCheckNow({
       ...commonRouteParams('usage-retired-during-runtime-create'),
+      ctx: null,
       request: { sessionId: 'usage-retired-during-runtime-create', agentId: 'codex' },
       stageUsageLimitRecoveryMutation: vi.fn(async () => undefined),
       resolveAdapter: async () => adapter,
@@ -368,12 +365,10 @@ describe('native inactive Agent session controls', () => {
 
     const result = await routeSessionUsageLimitRecoveryCheckNow({
       ...commonRouteParams('usage-host-state-session'),
+      ctx: null,
       credentials: {
         token: 'token',
-        encryption: {
-          type: 'legacy',
-          secret: new Uint8Array(32).fill(1),
-        },
+        encryption: null,
       },
       rawSession: {
         ...rawSession('usage-host-state-session'),
@@ -438,6 +433,7 @@ describe('native inactive Agent session controls', () => {
 
     await expect(routeSessionUsageLimitRecoveryCheckNow({
       ...commonRouteParams('usage-absent-session'),
+      ctx: null,
       request: { sessionId: 'usage-absent-session', agentId: 'codex' },
       stageUsageLimitRecoveryMutation: vi.fn(async () => undefined),
       resolveAdapter: async () => adapter,

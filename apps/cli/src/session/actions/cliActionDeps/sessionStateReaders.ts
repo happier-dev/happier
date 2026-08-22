@@ -8,8 +8,7 @@ import {
 
 import {
   decryptStoredSessionPayload,
-  type SessionEncryptionContext,
-  type SessionStoredContentEncryptionMode,
+  type SessionStoredContentCryptoContext,
 } from '@/session/transport/encryption/sessionEncryptionContext';
 
 export function normalizeLimit(value: unknown): number | null {
@@ -18,23 +17,20 @@ export function normalizeLimit(value: unknown): number | null {
   return Math.max(1, Math.min(200, Math.floor(parsed)));
 }
 
-function readStoredSessionRecord(params: Readonly<{
-  rawValue: unknown;
-  mode?: SessionStoredContentEncryptionMode;
-  ctx: SessionEncryptionContext;
-}>): Record<string, unknown> | null {
+function readStoredSessionRecord(
+  params: Readonly<{ rawValue: unknown }> & SessionStoredContentCryptoContext,
+): Record<string, unknown> | null {
   const raw = params.rawValue;
   if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
     return raw as Record<string, unknown>;
   }
-  if (typeof raw !== 'string' || raw.trim().length === 0 || !params.mode) {
+  if (typeof raw !== 'string' || raw.trim().length === 0) {
     return null;
   }
 
   try {
     const decrypted = decryptStoredSessionPayload({
-      mode: params.mode,
-      ctx: params.ctx,
+      ...params,
       value: raw,
     });
     return decrypted && typeof decrypted === 'object' && !Array.isArray(decrypted)
@@ -45,27 +41,25 @@ function readStoredSessionRecord(params: Readonly<{
   }
 }
 
-export function readSessionMetadata(params: Readonly<{
-  rawSession?: Readonly<{ metadata?: unknown }> | null;
-  mode?: SessionStoredContentEncryptionMode;
-  ctx: SessionEncryptionContext;
-}>): Record<string, unknown> | null {
+export function readSessionMetadata(
+  params: Readonly<{
+    rawSession?: Readonly<{ metadata?: unknown }> | null;
+  }> & SessionStoredContentCryptoContext,
+): Record<string, unknown> | null {
   return readStoredSessionRecord({
+    ...params,
     rawValue: params.rawSession?.metadata,
-    mode: params.mode,
-    ctx: params.ctx,
   });
 }
 
-export function readSessionAgentState(params: Readonly<{
-  rawSession?: Readonly<{ agentState?: unknown }> | null;
-  mode?: SessionStoredContentEncryptionMode;
-  ctx: SessionEncryptionContext;
-}>): Record<string, unknown> | null {
+export function readSessionAgentState(
+  params: Readonly<{
+    rawSession?: Readonly<{ agentState?: unknown }> | null;
+  }> & SessionStoredContentCryptoContext,
+): Record<string, unknown> | null {
   return readStoredSessionRecord({
+    ...params,
     rawValue: params.rawSession?.agentState,
-    mode: params.mode,
-    ctx: params.ctx,
   });
 }
 

@@ -1,10 +1,13 @@
-import type { RuntimeEventV1 } from '@happier-dev/protocol';
-import type { HappierStructuredInputV1 } from '@happier-dev/protocol/runtime';
+import type {
+  AgentDispatchStructuredInputV1,
+  AgentSessionRuntimeEvent,
+  SessionInputCausalPermissionAuthorityV1,
+} from '@happier-dev/protocol';
 import type { RuntimeConfigUpdateOutcomeV1 } from '@happier-dev/agents';
 import type {
   AgentSessionProviderBinding,
   AgentSessionRuntime,
-} from '@happier-dev/plugin-sdk/agent-runtime';
+} from '@happier-dev/plugin-sdk/agents/runtime';
 
 export type { RuntimeConfigUpdateOutcomeV1 };
 
@@ -55,10 +58,13 @@ export type RuntimeTurnPromptMeta = Readonly<{
   turnId?: string | null;
   localId?: string | null;
   localIds?: readonly string[];
-  structuredInput?: HappierStructuredInputV1;
+  /** Raw Composer attachments have been resolved away before a runtime sees this envelope. */
+  structuredInput?: AgentDispatchStructuredInputV1;
   modelId?: string | null;
   userMessageSeq?: number | null;
   userMessageSeqs?: readonly number[];
+  /** Exact immutable authority captured at terminal user-input admission. */
+  causalPermissionAuthority?: SessionInputCausalPermissionAuthorityV1;
 }>;
 
 export type RuntimePublicationEvent = Readonly<{
@@ -67,11 +73,11 @@ export type RuntimePublicationEvent = Readonly<{
   payload?: unknown;
 }>;
 
-export type RuntimeTurnMessage = RuntimeEventV1 | RuntimePublicationEvent;
+export type RuntimeTurnMessage = AgentSessionRuntimeEvent | RuntimePublicationEvent;
 
 export type RuntimeTurnMessageHandler = (message: RuntimeTurnMessage) => void;
 
-type RuntimeTurnFailureAlreadySurfacedEvent = Extract<RuntimeEventV1, { kind: 'turn-failed' }>;
+type RuntimeTurnFailureAlreadySurfacedEvent = Extract<AgentSessionRuntimeEvent, { kind: 'turn-failed' }>;
 
 const RUNTIME_TURN_FAILURE_ALREADY_SURFACED = '__happierRuntimeTurnFailureAlreadySurfaced';
 const RUNTIME_TURN_FAILURE_EVENT = '__happierRuntimeTurnFailureEvent';
@@ -136,6 +142,12 @@ export type RuntimeTurnOperations = Readonly<{
   subscribeRuntimeEvents: (handler: RuntimeTurnMessageHandler) => () => void;
   respondToPermission?: (requestId: string, approved: boolean) => Promise<RuntimePermissionResponseOutcome>;
   cancelTurn: () => Promise<void>;
+  /**
+   * Read-only projection of the canonical active-turn admission witness for
+   * host-internal consumers such as the per-Session MCP bridge. `null` means
+   * no current admitted turn and must not authorize a fallback.
+   */
+  readActiveTurnCausalPermissionAuthority?: () => SessionInputCausalPermissionAuthorityV1 | null;
   readSessionIdentity: () => RuntimeTurnSessionIdentity;
   updateSessionRuntimeConfig: (update: RuntimeTurnConfigUpdate) => Promise<RuntimeConfigUpdateOutcomeV1 | void>;
   resetOrDisposeRuntime: (

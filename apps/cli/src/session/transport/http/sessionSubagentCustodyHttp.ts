@@ -1,3 +1,4 @@
+import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import axios from 'axios';
 import {
   SessionSubagentCustodyCapabilityV1Schema,
@@ -26,7 +27,7 @@ function route(sessionId: string, suffix = ''): string {
 
 function config(token: string, signal?: AbortSignal) {
   return {
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    headers: { ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(), Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
     timeout: configuration.sessionControlHttpTimeoutMs,
     validateStatus: () => true,
     ...(signal ? { signal } : {}),

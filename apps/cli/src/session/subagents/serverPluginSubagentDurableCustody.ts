@@ -11,7 +11,7 @@ import {
 } from '@happier-dev/protocol';
 import { PluginError, type JsonValue } from '@happier-dev/plugin-sdk';
 
-import type { Credentials } from '@/persistence';
+import type { StoredCredentials } from '@/persistence';
 import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
 import {
   encryptStoredSessionPayload,
@@ -112,7 +112,8 @@ async function awaitWithAbort<T>(promise: Promise<T>, signal?: AbortSignal): Pro
 }
 
 export function createServerPluginSubagentDurableCustody(params: Readonly<{
-  credentials: Credentials;
+  credentials: StoredCredentials;
+  readCredentials?: () => Promise<StoredCredentials | null>;
   identity: PluginSubagentHostIdentity;
 }>): PluginSubagentDurableCustody {
   const scope = Object.freeze({
@@ -124,13 +125,26 @@ export function createServerPluginSubagentDurableCustody(params: Readonly<{
   let capability: 'unknown' | 'available' = 'unknown';
   let capabilityPromise: Promise<void> | null = null;
 
-  const ensureCapability = async (signal?: AbortSignal): Promise<void> => {
+  const readCurrentCredentials = async (signal?: AbortSignal): Promise<StoredCredentials> => {
+    if (signal?.aborted) throw aborted();
+    const credentials = params.readCredentials ? await params.readCredentials() : params.credentials;
+    if (signal?.aborted) throw aborted();
+    if (!credentials) {
+      throw new PluginError({
+        code: 'plugin_subagent_credentials_unavailable',
+        message: 'Plugin subagent credentials are unavailable',
+      });
+    }
+    return credentials;
+  };
+
+  const ensureCapability = async (credentials: StoredCredentials, signal?: AbortSignal): Promise<void> => {
     if (signal?.aborted) throw new PluginError({ code: 'plugin_operation_aborted', message: 'plugin_operation_aborted' });
     if (capability === 'available') return;
     if (!capabilityPromise) {
       let pending!: Promise<void>;
       pending = probeSessionSubagentCustody({
-        token: params.credentials.token,
+        token: credentials.token,
         sessionId: params.identity.parentSessionId,
       }).then(() => {
         capability = 'available';
@@ -149,13 +163,17 @@ export function createServerPluginSubagentDurableCustody(params: Readonly<{
     }
   };
 
-  const buildContent = async (detail: JsonValue | undefined, signal?: AbortSignal): Promise<Readonly<{
+  const buildContent = async (
+    credentials: StoredCredentials,
+    detail: JsonValue | undefined,
+    signal?: AbortSignal,
+  ): Promise<Readonly<{
     content: SessionSubagentCustodyContentV1;
     contentFingerprint: SessionSubagentCustodyContentFingerprintV1;
   }>> => {
     const payload = detail ?? null;
     const rawSession = await awaitWithAbort(fetchSessionById({
-      token: params.credentials.token,
+      token: credentials.token,
       sessionId: params.identity.parentSessionId,
     }), signal);
     if (signal?.aborted) throw aborted();
@@ -170,7 +188,10 @@ export function createServerPluginSubagentDurableCustody(params: Readonly<{
         contentFingerprint: createSessionSubagentCustodyPlainContentFingerprintV1(payload),
       };
     }
-    const ctx = resolveSessionEncryptionContextFromCredentials(params.credentials, rawSession);
+    const ctx = resolveSessionEncryptionContextFromCredentials(credentials, rawSession);
+    if (!ctx) {
+      throw new SessionSubagentCustodyHttpError('encryption_material_unavailable');
+    }
     return {
       content: {
         t: 'encrypted',
@@ -195,10 +216,11 @@ export function createServerPluginSubagentDurableCustody(params: Readonly<{
         : Object.freeze({ status: 'unavailable' as const, code: 'plugin_subagent_durable_custody_unverified' });
     },
     async list(options) {
-      await ensureCapability(options.signal);
+      const credentials = await readCurrentCredentials(options.signal);
+      await ensureCapability(credentials, options.signal);
       try {
         const records = await listSessionSubagentCustody({
-          token: params.credentials.token,
+          token: credentials.token,
           sessionId: params.identity.parentSessionId,
           scope,
           custodyKey: key,
@@ -210,15 +232,16 @@ export function createServerPluginSubagentDurableCustody(params: Readonly<{
       }
     },
     async mutate(input) {
-      await ensureCapability(input.signal);
+      const credentials = await readCurrentCredentials(input.signal);
+      await ensureCapability(credentials, input.signal);
       try {
-        const { content, contentFingerprint } = await buildContent(input.detail, input.signal);
+        const { content, contentFingerprint } = await buildContent(credentials, input.detail, input.signal);
         if (input.signal?.aborted) throw aborted();
         let expectedRevision: number | null = null;
         for (let attempt = 0; attempt < 2; attempt += 1) {
           try {
             const result = await mutateSessionSubagentCustody({
-              token: params.credentials.token,
+              token: credentials.token,
               sessionId: params.identity.parentSessionId,
               request: {
                 operationId: boundedOperationId(input.operationId),
@@ -249,7 +272,7 @@ export function createServerPluginSubagentDurableCustody(params: Readonly<{
               || error.code !== 'plugin_subagent_revision_conflict'
             ) throw error;
             const records = await listSessionSubagentCustody({
-              token: params.credentials.token,
+              token: credentials.token,
               sessionId: params.identity.parentSessionId,
               scope,
               custodyKey: key,
@@ -265,10 +288,11 @@ export function createServerPluginSubagentDurableCustody(params: Readonly<{
       }
     },
     async retire(options = {}) {
-      await ensureCapability(options.signal);
+      const credentials = await readCurrentCredentials(options.signal);
+      await ensureCapability(credentials, options.signal);
       try {
         await retireSessionSubagentCustodyGeneration({
-          token: params.credentials.token,
+          token: credentials.token,
           pluginId: scope.pluginId,
           immutableGenerationId: scope.immutableGenerationId,
           signal: options.signal,

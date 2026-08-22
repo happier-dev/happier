@@ -1,18 +1,30 @@
 import { Buffer } from 'node:buffer';
 
-import type {
-  TerminalControlPort,
-  TerminalHostAdapter,
-  TerminalHostHandle,
-  TerminalHostKind,
-  TerminalHostLivenessV1,
-  TerminalInjectionDuplicateRisk,
-  TerminalInjectionFailurePhase,
-  TerminalInputInjectionResult,
-  TerminalInputState,
-  TerminalPromptInput,
-  TerminalSpecialKey,
+import {
+  resolveTerminalPromptWriteTimeoutMs,
+  type TerminalControlPort,
+  type TerminalHostAdapter,
+  type TerminalHostHandle,
+  type TerminalHostKind,
+  type TerminalHostLivenessV1,
+  type TerminalInjectionDuplicateRisk,
+  type TerminalInjectionFailurePhase,
+  type TerminalInputInjectionResult,
+  type TerminalInputState,
+  type TerminalPromptInput,
+  type TerminalSpecialKey,
 } from '@happier-dev/agents';
+import { encodeTerminalPasteInput } from '@happier-dev/protocol';
+
+import {
+  createTerminalHostDeadline,
+  remainingTerminalHostDeadlineMs,
+} from '@/integrations/terminalHost/deadline';
+import {
+  resolveTerminalPromptSubmissionFailureReason,
+  runTerminalPromptSubmission,
+  type TerminalPromptSubmitVerificationPolicy,
+} from '@/integrations/terminalHost/promptSubmitVerification';
 
 import { buildTerminalControlCapture } from '@/integrations/terminalHost/controlCapture';
 import { TERMINAL_SHIFT_TAB_SEQUENCE } from '@/integrations/terminalHost/controlTypes';
@@ -111,6 +123,7 @@ export function createPtyTerminalHostAdapter(params?: Readonly<{
   rows?: number;
   inputStabilityDelayMs?: number;
   postWriteLivenessDelayMs?: number;
+  promptSubmitVerification?: TerminalPromptSubmitVerificationPolicy;
   now?: () => number;
 }>): TerminalHostAdapter {
   const ptyProvider = params?.ptyProvider ?? createNodePtyProvider();
@@ -118,6 +131,7 @@ export function createPtyTerminalHostAdapter(params?: Readonly<{
   const rows = Math.max(2, Math.trunc(params?.rows ?? DEFAULT_ROWS));
   const inputStabilityDelayMs = Math.max(0, Math.trunc(params?.inputStabilityDelayMs ?? INPUT_STABILITY_DELAY_MS));
   const postWriteLivenessDelayMs = Math.max(0, Math.trunc(params?.postWriteLivenessDelayMs ?? POST_WRITE_LIVENESS_DELAY_MS));
+  const promptSubmitVerification = params?.promptSubmitVerification;
   const now = params?.now ?? (() => Date.now());
   const sessions = new Map<string, PtyTerminalHostSession>();
   const endedSessions = new Map<string, PtyTerminalHostEndedSession>();
@@ -195,7 +209,14 @@ export function createPtyTerminalHostAdapter(params?: Readonly<{
     const firstInput = session.screen.capture();
     await delay(inputStabilityDelayMs);
     const currentInput = session.screen.capture();
-    return { stable: firstInput === currentInput, currentInput, observedAt: now() };
+    return {
+      stable: firstInput.text === currentInput.text
+        && firstInput.cursor.x === currentInput.cursor.x
+        && firstInput.cursor.y === currentInput.cursor.y,
+      currentInput: currentInput.text,
+      cursor: currentInput.cursor,
+      observedAt: now(),
+    };
   }
 
   function createControlPort(handle: TerminalHostHandle): TerminalControlPort {
@@ -226,10 +247,12 @@ export function createPtyTerminalHostAdapter(params?: Readonly<{
         const session = readSession(handle);
         if (!session) return { status: 'host_dead', recoverable: !readEndedSession(handle) };
         if (session.ended) return { status: 'host_dead', recoverable: false };
+        const screen = session.screen.capture();
         return {
           status: 'captured',
           capture: buildTerminalControlCapture({
-            rawText: session.screen.capture(),
+            rawText: screen.text,
+            cursor: screen.cursor,
             hostKind: 'windows_console',
             capturedAtMs: now(),
           }),
@@ -369,7 +392,43 @@ export function createPtyTerminalHostAdapter(params?: Readonly<{
           };
         }
       }
-      if (!writeToSession(session, `${input.text}\r`)) {
+      const shouldVerifyPrompt = promptSubmitVerification?.shouldVerifyAfterSubmit(input.text) === true;
+      if (!shouldVerifyPrompt) {
+        if (!writeToSession(session, `${input.text}\r`)) {
+          return failedInjectionResult({
+            handle,
+            reason: 'host_unreachable',
+            phase: 'during_write',
+            duplicateRisk: 'possible',
+            recoverable: true,
+            observedAt: now(),
+          });
+        }
+        if (!await waitForPostWriteLiveness(session)) {
+          return failedInjectionResult({
+            handle,
+            reason: 'host_unreachable',
+            phase: 'after_enter_unknown',
+            duplicateRisk: 'possible',
+            recoverable: true,
+            observedAt: now(),
+          });
+        }
+        return {
+          status: 'injected',
+          injectedAt: now(),
+          bytesWritten: Buffer.byteLength(input.text),
+          ...handleFields(handle),
+        };
+      }
+      const shouldStagePrompt = shouldVerifyPrompt;
+      const deadline = createTerminalHostDeadline(
+        input.scheduling.timeoutMs ?? resolveTerminalPromptWriteTimeoutMs(input.text),
+      );
+      const textToWrite = input.multiline && shouldStagePrompt
+        ? encodeTerminalPasteInput(input.text, true)
+        : input.text;
+      if (!writeToSession(session, textToWrite)) {
         return failedInjectionResult({
           handle,
           reason: 'host_unreachable',
@@ -379,13 +438,40 @@ export function createPtyTerminalHostAdapter(params?: Readonly<{
           observedAt: now(),
         });
       }
-      if (!await waitForPostWriteLiveness(session)) {
+      const submissionDeadline = createTerminalHostDeadline(
+        input.scheduling.timeoutMs ?? resolveTerminalPromptWriteTimeoutMs(input.text),
+      );
+      const submission = await runTerminalPromptSubmission({
+        promptText: input.text,
+        ...(shouldStagePrompt
+          ? {
+            verifyStagedBeforeSubmit: async ({ promptText }) => (
+              promptSubmitVerification.verifyBeforeSubmitStaging
+              ?? promptSubmitVerification.verifyAfterSubmit
+            )({
+              promptText,
+              screenText: session.screen.capture().text,
+            }),
+            verifyAfterSubmit: async ({ promptText }) => promptSubmitVerification.verifyAfterSubmit({
+              promptText,
+              screenText: session.screen.capture().text,
+            }),
+          }
+          : {}),
+        submitEnter: async ({ remainingTimeoutMs }) => {
+          if (remainingTimeoutMs === 0) return 'timeout';
+          if (!writeToSession(session, '\r')) return 'failed';
+          return await waitForPostWriteLiveness(session) ? 'success' : 'failed';
+        },
+        remainingTimeoutMs: () => remainingTerminalHostDeadlineMs(submissionDeadline),
+      });
+      if (!submission.success) {
         return failedInjectionResult({
           handle,
-          reason: 'host_unreachable',
-          phase: 'after_enter_unknown',
-          duplicateRisk: 'possible',
-          recoverable: true,
+          reason: resolveTerminalPromptSubmissionFailureReason(submission.reason),
+          phase: submission.phase,
+          duplicateRisk: submission.duplicateRisk,
+          recoverable: submission.reason !== 'submit_failed',
           observedAt: now(),
         });
       }

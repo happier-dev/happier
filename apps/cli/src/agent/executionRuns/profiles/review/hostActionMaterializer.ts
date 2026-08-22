@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 
 import {
+  GENERAL_PLUGIN_PERMISSION_SUBJECT_V1,
   evaluatePluginFinalPolicy,
   ReviewCommentProposalsV1Schema,
   REVIEW_COMMENT_DIRECT_WRITE_SCOPE_V1,
@@ -38,18 +39,14 @@ type ReviewCommentHostWorkspace = Readonly<{
 
 export type ReviewCommentHostPluginAuthority = Readonly<{
   immutableGenerationId: string;
-  packageDigest: string;
-  manifestDigest: string;
 }>;
 
 export function resolveReviewCommentHostPluginAuthority(params: Readonly<{
   pluginId: string;
   current: PluginFinalPolicyCurrentGeneration | null;
 }>): ReviewCommentHostPluginAuthority | null {
-  const targetManifestDigest = params.current?.manifestDigest ?? `uncommitted:${params.pluginId}`;
   const authorizationFacts = resolvePluginFinalPolicyAuthorizationFacts({
     pluginId: params.pluginId,
-    targetManifestDigest,
     current: params.current,
   });
   const decision = evaluatePluginFinalPolicy({
@@ -60,8 +57,6 @@ export function resolveReviewCommentHostPluginAuthority(params: Readonly<{
   if (decision.outcome !== 'visible' || !params.current) return null;
   return Object.freeze({
     immutableGenerationId: params.current.immutableGenerationId,
-    packageDigest: params.current.packageDigest,
-    manifestDigest: params.current.manifestDigest,
   });
 }
 
@@ -344,8 +339,6 @@ export function createReviewCommentHostActionMaterializer(deps: Readonly<{
             projectId: approved.projectId,
             workspaceId: approved.workspaceId,
             immutableGenerationId: approved.immutableGenerationId,
-            packageDigest: approved.packageDigest,
-            manifestDigest: approved.manifestDigest,
           },
         },
       };
@@ -366,6 +359,7 @@ export function createReviewCommentHostActionMaterializer(deps: Readonly<{
               pluginId: approved.pluginId,
               capability: REVIEW_COMMENT_DIRECT_WRITE_SCOPE_V1,
               targetScope: { kind: 'project', projectId: approved.projectId },
+              subject: GENERAL_PLUGIN_PERMISSION_SUBJECT_V1,
               requester: {
                 kind: 'plugin',
                 pluginId: approved.pluginId,

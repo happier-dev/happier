@@ -1,5 +1,5 @@
 import fs, { existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
-import { isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 
 import { describe, expect, it, vi } from 'vitest';
 
@@ -57,6 +57,63 @@ function createRealArtifactFsAdapter(packageRoot: string) {
   return createPackageDistFsAdapter((targetPath) => (
     String(targetPath) === join(packageRoot, 'dist') || existsSync(String(targetPath))
   ));
+}
+
+function createArtifactWorkspaceManifestAdmissionAttempt({
+  manifests,
+  packageFiles = {},
+  onPackSnapshot,
+}: Readonly<{
+  manifests: Readonly<Record<string, Readonly<Record<string, unknown>>>>;
+  packageFiles?: Readonly<Record<string, Readonly<Record<string, string>>>>;
+  onPackSnapshot?: (snapshotRoot: string) => void;
+}>) {
+  const repoRoot = createTempDirSync('happier-cli-prepublication-artifact-admission-repo-');
+  const packageRoot = join(repoRoot, 'apps', 'cli');
+  const destDir = createTempDirSync('happier-cli-prepublication-artifact-admission-dest-');
+  const tarballName = 'artifact.tgz';
+  mkdirSync(join(packageRoot, 'dist'), { recursive: true });
+  writeFileSync(join(packageRoot, 'package.json'), `${JSON.stringify({
+    name: '@happier-dev/cli',
+    version: '0.2.10',
+    files: ['package-dist', 'package-dist/**', 'package.json'],
+    bundledDependencies: Object.keys(manifests),
+  })}\n`, 'utf8');
+
+  const bundleWorkspaceDeps = vi.fn(async ({ packageRoot: artifactPackageRoot }: { packageRoot: string }) => {
+    for (const [packageName, manifest] of Object.entries(manifests)) {
+      const artifactPackagePath = join(
+        artifactPackageRoot,
+        'node_modules',
+        ...packageName.split('/'),
+      );
+      const artifactManifestPath = join(artifactPackagePath, 'package.json');
+      mkdirSync(join(artifactManifestPath, '..'), { recursive: true });
+      writeFileSync(artifactManifestPath, `${JSON.stringify(manifest)}\n`, 'utf8');
+      for (const [relativePath, contents] of Object.entries(packageFiles[packageName] ?? {})) {
+        const artifactFilePath = join(artifactPackagePath, ...relativePath.split('/'));
+        mkdirSync(dirname(artifactFilePath), { recursive: true });
+        writeFileSync(artifactFilePath, contents, 'utf8');
+      }
+    }
+  });
+  const spawn = vi.fn((_command: unknown, _args: unknown, options: { cwd: string }) => {
+    onPackSnapshot?.(options.cwd);
+    writeFileSync(join(destDir, tarballName), '', 'utf8');
+    return { status: 0, signal: null, stdout: `${tarballName}\n`, stderr: '' };
+  });
+
+  return {
+    spawn,
+    result: packTarball({
+      packageRoot,
+      repoRoot,
+      destDir,
+      bundleWorkspaceDeps,
+      spawnSync: spawn,
+      env: {},
+    }),
+  };
 }
 
 describe('packTarball (npmExecpath)', () => {
@@ -1081,6 +1138,263 @@ describe('packTarball (npmExecpath)', () => {
       spawnSync: spawn,
       env: {},
     })).rejects.toThrow(/unsanitized.*artifact workspace publication.*plugins-inspector/i);
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
+  it('admits marked flattened prepublication SDK and UI manifests before npm pack', async () => {
+    const sdkPackageName = '@happier-dev/plugin-sdk';
+    const uiPackageName = '@happier-dev/plugin-ui';
+    const protocolPackageName = '@happier-dev/protocol';
+    const sdkManifest = {
+      name: sdkPackageName,
+      version: '0.2.10',
+      dependencies: {
+        [protocolPackageName]: '0.0.0',
+        zod: '4.3.6',
+      },
+      bundledDependencies: [protocolPackageName],
+      files: [
+        'dist',
+        'package.json',
+        'API.md',
+        'api-surface.json',
+        'capability-matrix.json',
+        'examples/public-authoring/index.ts',
+        'scripts/validate-authoring.mjs',
+      ],
+      happier: {
+        publicSdkRelease: {
+          posture: 'prepublish_hold',
+          supportPolicy: 'README.md#public-sdk-release-posture',
+          externalPublicationRequiresApproval: true,
+        },
+      },
+    };
+    const uiManifest = {
+      name: uiPackageName,
+      version: '0.2.10',
+      dependencies: {
+        [sdkPackageName]: '0.0.0',
+      },
+      bundledDependencies: [],
+      files: ['dist', 'package.json', 'api-declarations.md'],
+      happier: {
+        publicSdkRelease: {
+          posture: 'prepublish_hold',
+          supportPolicy: 'README.md#plugin-ui-release-posture',
+          externalPublicationRequiresApproval: true,
+        },
+      },
+    };
+    const protocolManifest = {
+      name: protocolPackageName,
+      version: '0.2.10',
+      dependencies: {},
+    };
+
+    const { result, spawn } = createArtifactWorkspaceManifestAdmissionAttempt({
+      manifests: {
+        [sdkPackageName]: sdkManifest,
+        [uiPackageName]: uiManifest,
+        [protocolPackageName]: protocolManifest,
+      },
+      packageFiles: {
+        [sdkPackageName]: {
+          'dist/index.js': 'export const sdk = true;\n',
+          'API.md': '# API\n',
+          'api-surface.json': '{"api":"current"}\n',
+          'capability-matrix.json': '{"capability":"authoring"}\n',
+          'examples/public-authoring/index.ts': 'export const example = true;\n',
+          'scripts/validate-authoring.mjs': 'export const validate = true;\n',
+        },
+        [uiPackageName]: {
+          'dist/index.js': 'export const ui = true;\n',
+          'api-declarations.md': '# UI declarations\n',
+        },
+        [protocolPackageName]: {
+          'dist/index.js': 'export const protocol = true;\n',
+        },
+      },
+      onPackSnapshot: (snapshotRoot) => {
+        expect(readFileSync(join(
+          snapshotRoot,
+          'node_modules',
+          '@happier-dev',
+          'plugin-sdk',
+          'package.json',
+        ), 'utf8')).toContain('prepublish_hold');
+        expect(existsSync(join(
+          snapshotRoot,
+          'node_modules',
+          '@happier-dev',
+          'plugin-sdk',
+          'node_modules',
+        ))).toBe(false);
+        expect(existsSync(join(
+          snapshotRoot,
+          'node_modules',
+          '@happier-dev',
+          'plugin-ui',
+          'node_modules',
+        ))).toBe(false);
+        expect(existsSync(join(
+          snapshotRoot,
+          'node_modules',
+          '@happier-dev',
+          'protocol',
+          'package.json',
+        ))).toBe(true);
+      },
+    });
+
+    await expect(result).resolves.toMatchObject({ tarballName: 'artifact.tgz' });
+    expect(spawn).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    ['a traversal entry', ['dist', '../outside.md'], { 'dist/index.js': 'export {};\n' }],
+    ['a glob entry', ['dist', 'examples/**'], { 'dist/index.js': 'export {};\n' }],
+    ['a missing entry', ['dist', 'API.md'], { 'dist/index.js': 'export {};\n' }],
+  ])('fails closed before npm pack when a marked preserved inventory has %s', async (_description, files, packageFiles) => {
+    const packageName = '@happier-dev/plugin-sdk';
+    const { result, spawn } = createArtifactWorkspaceManifestAdmissionAttempt({
+      manifests: {
+        [packageName]: {
+          name: packageName,
+          version: '0.2.10',
+          files,
+          dependencies: {},
+          bundledDependencies: [],
+          happier: { publicSdkRelease: { posture: 'prepublish_hold' } },
+        },
+      },
+      packageFiles: { [packageName]: packageFiles },
+    });
+
+    await expect(result).rejects.toThrow(/unsanitized.*artifact workspace publication/i);
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
+  it('fails closed before npm pack when a marked closure has no flat physical sibling', async () => {
+    const packageName = '@happier-dev/plugin-sdk';
+    const { result, spawn } = createArtifactWorkspaceManifestAdmissionAttempt({
+      manifests: {
+        [packageName]: {
+          name: packageName,
+          version: '0.2.10',
+          dependencies: { '@happier-dev/protocol': '0.0.0' },
+          bundledDependencies: ['@happier-dev/protocol'],
+          happier: { publicSdkRelease: { posture: 'prepublish_hold' } },
+        },
+      },
+    });
+
+    await expect(result).rejects.toThrow(/unsanitized.*artifact workspace publication/i);
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
+  it('fails closed before npm pack when a marked internal edge is neither closure nor marked sibling root', async () => {
+    const sdkPackageName = '@happier-dev/plugin-sdk';
+    const protocolPackageName = '@happier-dev/protocol';
+    const cliCommonPackageName = '@happier-dev/cli-common';
+    const { result, spawn } = createArtifactWorkspaceManifestAdmissionAttempt({
+      manifests: {
+        [sdkPackageName]: {
+          name: sdkPackageName,
+          version: '0.2.10',
+          dependencies: {
+            [protocolPackageName]: '0.0.0',
+            [cliCommonPackageName]: '0.0.0',
+          },
+          bundledDependencies: [protocolPackageName],
+          happier: { publicSdkRelease: { posture: 'prepublish_hold' } },
+        },
+        [protocolPackageName]: {
+          name: protocolPackageName,
+          version: '0.2.10',
+          dependencies: {},
+        },
+        [cliCommonPackageName]: {
+          name: cliCommonPackageName,
+          version: '0.2.10',
+          dependencies: {},
+        },
+      },
+    });
+
+    await expect(result).rejects.toThrow(/unsanitized.*artifact workspace publication/i);
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
+  it('fails closed before npm pack when a marked UI manifest lacks its marked SDK sibling root', async () => {
+    const packageName = '@happier-dev/plugin-ui';
+    const { result, spawn } = createArtifactWorkspaceManifestAdmissionAttempt({
+      manifests: {
+        [packageName]: {
+          name: packageName,
+          version: '0.2.10',
+          dependencies: { '@happier-dev/plugin-sdk': '0.0.0' },
+          bundledDependencies: [],
+          happier: { publicSdkRelease: { posture: 'prepublish_hold' } },
+        },
+      },
+    });
+
+    await expect(result).rejects.toThrow(/unsanitized.*artifact workspace publication/i);
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      name: 'an unmarked workspace',
+      manifest: {
+        name: '@happier-dev/plugins-inspector',
+        version: '0.2.10',
+        dependencies: { '@happier-dev/plugin-sdk': '0.0.0' },
+        optionalDependencies: { '@happier-dev/protocol': '0.0.0' },
+        bundledDependencies: ['@happier-dev/protocol'],
+      },
+    },
+    {
+      name: 'a malformed prepublication marker',
+      manifest: {
+        name: '@happier-dev/plugin-sdk',
+        version: '0.2.10',
+        dependencies: { '@happier-dev/protocol': '0.0.0' },
+        bundledDependencies: ['@happier-dev/protocol'],
+        happier: { publicSdkRelease: { posture: 'prepublish-ready' } },
+      },
+    },
+    {
+      name: 'a malformed prepublication closure',
+      manifest: {
+        name: '@happier-dev/plugin-sdk',
+        version: '0.2.10',
+        dependencies: {
+          '@happier-dev/protocol': '0.0.0',
+          zod: '4.3.6',
+        },
+        bundledDependencies: ['@happier-dev/protocol', 'zod'],
+        happier: { publicSdkRelease: { posture: 'prepublish_hold' } },
+      },
+    },
+    {
+      name: 'a malformed prepublication dependency declaration',
+      manifest: {
+        name: '@happier-dev/plugin-sdk',
+        version: '0.2.10',
+        dependencies: { '@happier-dev/protocol': '' },
+        bundledDependencies: ['@happier-dev/protocol'],
+        happier: { publicSdkRelease: { posture: 'prepublish_hold' } },
+      },
+    },
+  ])('fails closed before npm pack for $name', async ({ manifest }) => {
+    const packageName = String(manifest.name);
+    const { result, spawn } = createArtifactWorkspaceManifestAdmissionAttempt({
+      manifests: { [packageName]: manifest },
+    });
+
+    await expect(result).rejects.toThrow(/unsanitized.*artifact workspace publication/i);
     expect(spawn).not.toHaveBeenCalled();
   });
 

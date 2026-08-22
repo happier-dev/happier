@@ -42,6 +42,9 @@ export interface CreateAcpBackendOptions {
   /** Environment variable names removed from the inherited child environment. */
   unsetEnv?: readonly string[];
 
+  transformAgentChildLaunchEnvironment?:
+    AcpBackendOptions['transformAgentChildLaunchEnvironment'];
+
   /** MCP servers to make available to the agent */
   mcpServers?: Record<string, McpServerConfig>;
 
@@ -76,6 +79,8 @@ export interface CreateAcpBackendOptions {
 
   prepareToolUpdate?: AcpBackendOptions['prepareToolUpdate'];
 
+  transformPromptRequest?: AcpBackendOptions['transformPromptRequest'];
+
   extensions?: ReadonlyArray<AcpExtensionRegistration>;
   createExtensionContext?: AcpExtensionContextFactory;
   onProcessExit?: AcpBackendOptions['onProcessExit'];
@@ -109,6 +114,12 @@ export function createAcpBackend(options: CreateAcpBackendOptions): AcpBackend {
     args: options.args,
     env: options.env,
     ...(options.unsetEnv ? { unsetEnv: options.unsetEnv } : {}),
+    ...(options.transformAgentChildLaunchEnvironment
+      ? {
+          transformAgentChildLaunchEnvironment:
+            options.transformAgentChildLaunchEnvironment,
+        }
+      : {}),
     mcpServers: options.mcpServers,
     permissionHandler: options.permissionHandler,
     ...(typeof options.fsEnabled === 'boolean' ? { fsEnabled: options.fsEnabled } : {}),
@@ -130,6 +141,9 @@ export function createAcpBackend(options: CreateAcpBackendOptions): AcpBackend {
       ? { projectSetModelResponseAwaitable: options.projectSetModelResponseAwaitable }
       : {}),
     ...(options.prepareToolUpdate ? { prepareToolUpdate: options.prepareToolUpdate } : {}),
+    ...(options.transformPromptRequest
+      ? { transformPromptRequest: options.transformPromptRequest }
+      : {}),
     ...(options.extensions ? { extensions: options.extensions } : {}),
     ...(options.createExtensionContext
       ? { createExtensionContext: options.createExtensionContext }

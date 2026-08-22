@@ -4,6 +4,7 @@ import { bindApiSessionSocketMock, createApiSessionSocketStub } from '@/testkit/
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 import { captureConsoleJsonOutput } from '@/testkit/logger/captureOutput';
+import { SESSION_HELP_LINES } from '@/cli/commands/session/shared/sessionCommandUsage';
 
 import {
   deriveBoxPublicKeyFromSeed,
@@ -53,6 +54,27 @@ describe('happier session run list (integration)', () => {
 
     server = createServer((req, res) => {
       const url = new URL(req.url ?? '/', `http://${req.headers.host ?? '127.0.0.1'}`);
+      if (req.method === 'GET' && url.pathname === '/v2/account/settings') {
+        res.statusCode = 200;
+        res.setHeader('content-type', 'application/json');
+        res.end(JSON.stringify({
+          version: 1,
+          content: { t: 'plain', v: { schemaVersion: 2, actionsSettingsV1: { v: 1, actions: {} } } },
+        }));
+        return;
+      }
+      if (req.method === 'GET' && url.pathname === '/v1/account/encryption/currentness') {
+        res.statusCode = 200;
+        res.setHeader('content-type', 'application/json');
+        res.end(JSON.stringify({
+          mode: 'e2ee',
+          version: 1,
+          signingKeyFingerprint: null,
+          contentKeyFingerprint: null,
+          updatedAt: 1,
+        }));
+        return;
+      }
       if (req.method === 'GET' && url.pathname === `/v2/sessions/${sessionId}`) {
         res.statusCode = 200;
         res.setHeader('content-type', 'application/json');
@@ -164,11 +186,11 @@ describe('happier session run list (integration)', () => {
       callId: 'call_1',
       sidechainId: 'call_1',
       intent: 'review',
-      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
-      permissionMode: 'read_only',
+      backendTarget: { kind: 'backend', backendId: 'claude' },
+      permissionMode: 'workspace_write',
+      retentionPolicy: 'ephemeral',
       runClass: 'bounded',
       ioMode: 'request_response',
-      retentionPolicy: 'ephemeral',
       status: 'succeeded',
       startedAtMs: 1,
       finishedAtMs: 2,
@@ -211,11 +233,11 @@ describe('happier session run list (integration)', () => {
       callId: 'call_filter_match',
       sidechainId: 'call_filter_match',
       intent: 'review',
-      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
-      permissionMode: 'read_only',
+      backendTarget: { kind: 'backend', backendId: 'claude' },
+      permissionMode: 'workspace_write',
+      retentionPolicy: 'ephemeral',
       runClass: 'bounded',
       ioMode: 'request_response',
-      retentionPolicy: 'ephemeral',
       status: 'running',
       startedAtMs: 10,
       updatedAtMs: 11,
@@ -227,11 +249,11 @@ describe('happier session run list (integration)', () => {
       callId: 'call_filter_status_hidden',
       sidechainId: 'call_filter_status_hidden',
       intent: 'review',
-      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
-      permissionMode: 'read_only',
+      backendTarget: { kind: 'backend', backendId: 'claude' },
+      permissionMode: 'workspace_write',
+      retentionPolicy: 'ephemeral',
       runClass: 'bounded',
       ioMode: 'request_response',
-      retentionPolicy: 'ephemeral',
       status: 'succeeded',
       startedAtMs: 20,
       finishedAtMs: 21,
@@ -244,11 +266,11 @@ describe('happier session run list (integration)', () => {
       callId: 'call_filter_backend_hidden',
       sidechainId: 'call_filter_backend_hidden',
       intent: 'review',
-      backendTarget: { kind: 'builtInAgent', agentId: 'opencode' },
-      permissionMode: 'read_only',
+      backendTarget: { kind: 'backend', backendId: 'opencode' },
+      permissionMode: 'workspace_write',
+      retentionPolicy: 'ephemeral',
       runClass: 'bounded',
       ioMode: 'request_response',
-      retentionPolicy: 'ephemeral',
       status: 'running',
       startedAtMs: 30,
       updatedAtMs: 31,
@@ -304,7 +326,7 @@ describe('happier session run list (integration)', () => {
       expect(parsed.ok).toBe(false);
       expect(parsed.kind).toBe('session_run_list');
       expect(parsed.error?.code).toBe('invalid_arguments');
-      expect(parsed.error?.message).toBe('Usage: happier session run list <session-id-or-prefix> [--backend <backend-target>] [--status <status>] [--limit <count>] [--json]');
+      expect(parsed.error?.message).toBe(`Usage: ${SESSION_HELP_LINES.runList}`);
     } finally {
       output.restore();
     }
@@ -321,11 +343,11 @@ describe('happier session run list (integration)', () => {
       callId: 'call_marker_visible',
       sidechainId: 'call_marker_visible',
       intent: 'delegate',
-      backendTarget: { kind: 'builtInAgent', agentId: 'opencode' },
+      backendTarget: { kind: 'backend', backendId: 'opencode' },
       permissionMode: 'workspace_write',
-      runClass: 'long_lived',
+      retentionPolicy: 'ephemeral',
+      runClass: 'bounded',
       ioMode: 'request_response',
-      retentionPolicy: 'resumable',
       status: 'running',
       startedAtMs: 20,
       updatedAtMs: 21,
@@ -337,11 +359,11 @@ describe('happier session run list (integration)', () => {
       callId: 'call_marker_hidden',
       sidechainId: 'call_marker_hidden',
       intent: 'delegate',
-      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      backendTarget: { kind: 'backend', backendId: 'claude' },
       permissionMode: 'workspace_write',
-      runClass: 'long_lived',
+      retentionPolicy: 'ephemeral',
+      runClass: 'bounded',
       ioMode: 'request_response',
-      retentionPolicy: 'resumable',
       status: 'running',
       startedAtMs: 30,
       updatedAtMs: 31,

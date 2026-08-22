@@ -96,8 +96,8 @@ export async function quiesceInstalledCliWindowsPayloadOwners(params: Readonly<{
 
   if (invoker && !shouldSkipInstalledCliStopCommands(processEnv)) {
     for (const args of [
-      ['service', 'stop', '--transfer-managed-local-services', '--json'],
-      ['daemon', 'stop', '--all', '--transfer-managed-local-services', '--json'],
+      ['service', 'stop', '--json'],
+      ['daemon', 'stop', '--all', '--json'],
     ] as const) {
       spawn.sync(invoker, [...args], {
         env: processEnv,

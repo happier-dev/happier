@@ -127,8 +127,12 @@ describe('replaySeedV1', () => {
       refreshMetadataBeforeRead: true,
     });
 
-    expect(calls.map((c) => c.kind)).toEqual(['refresh', 'consume']);
+    // Composition must not retire the seed: the provider call is several awaited steps away.
+    expect(calls.map((c) => c.kind)).toEqual(['refresh']);
     expect(res.providerPrompt).toBe('SEED\n\nhello');
+
+    await expect(res.settleOnProviderAcceptance()).resolves.toBe('settled');
+    expect(calls.map((c) => c.kind)).toEqual(['refresh', 'consume']);
   });
 
   it('does not strand prompt delivery when metadata refresh never resolves', async () => {
@@ -163,7 +167,7 @@ describe('replaySeedV1', () => {
         Promise.resolve('still-pending' as const),
       ]);
 
-      expect(result).toEqual({
+      expect(result).toMatchObject({
         providerPrompt: 'hello',
         seedApplied: false,
         seedText: '',
@@ -240,7 +244,120 @@ describe('replaySeedV1', () => {
       refreshMetadataBeforeRead: true,
     });
 
+    expect(calls.map((c) => c.kind)).toEqual(['ensure']);
+    await expect(res.settleOnProviderAcceptance()).resolves.toBe('settled');
     expect(calls.map((c) => c.kind)).toEqual(['ensure', 'consume']);
     expect(res.providerPrompt).toBe('SEED\n\nhello');
+  });
+
+  it('keeps the seed reusable when the prompt never reaches the provider', async () => {
+    const metadata = {
+      replaySeedV1: {
+        v: 1,
+        seedText: 'SEED',
+        sourceSessionId: 'parent',
+        sourceCutoffSeqInclusive: 3,
+        createdAtMs: 123,
+      },
+    };
+    const updateMetadata = vi.fn(async () => {});
+    const session = { getMetadataSnapshot: () => metadata, updateMetadata };
+
+    const first = await resolveProviderPromptWithReplaySeed({
+      session,
+      userText: 'hello',
+      allowSeed: true,
+      localId: 'local-1',
+      nowMs: 999,
+      refreshMetadataBeforeRead: false,
+    });
+    expect(first.providerPrompt).toBe('SEED\n\nhello');
+    // Composition happened but the dispatch threw before provider acceptance: no settlement.
+    expect(updateMetadata).not.toHaveBeenCalled();
+
+    // The retry still gets the full replay context rather than a bare user prompt.
+    const retry = await resolveProviderPromptWithReplaySeed({
+      session,
+      userText: 'hello',
+      allowSeed: true,
+      localId: 'local-1',
+      nowMs: 1_000,
+      refreshMetadataBeforeRead: false,
+    });
+    expect(retry.providerPrompt).toBe('SEED\n\nhello');
+  });
+
+  it('retires an accepted seed exactly once', async () => {
+    const updateMetadata = vi.fn(async () => {});
+    const session = {
+      getMetadataSnapshot: () => ({
+        replaySeedV1: {
+          v: 1,
+          seedText: 'SEED',
+          sourceSessionId: 'parent',
+          sourceCutoffSeqInclusive: 3,
+          createdAtMs: 123,
+        },
+      }),
+      updateMetadata,
+    };
+
+    const res = await resolveProviderPromptWithReplaySeed({
+      session,
+      userText: 'hello',
+      allowSeed: true,
+      localId: 'local-1',
+      nowMs: 999,
+      refreshMetadataBeforeRead: false,
+    });
+
+    await expect(res.settleOnProviderAcceptance()).resolves.toBe('settled');
+    await expect(res.settleOnProviderAcceptance()).resolves.toBe('settled');
+    expect(updateMetadata).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports a failed settlement instead of silently swallowing it', async () => {
+    const session = {
+      getMetadataSnapshot: () => ({
+        replaySeedV1: {
+          v: 1,
+          seedText: 'SEED',
+          sourceSessionId: 'parent',
+          sourceCutoffSeqInclusive: 3,
+          createdAtMs: 123,
+        },
+      }),
+      updateMetadata: vi.fn(async () => {
+        throw new Error('metadata unavailable');
+      }),
+    };
+
+    const res = await resolveProviderPromptWithReplaySeed({
+      session,
+      userText: 'hello',
+      allowSeed: true,
+      localId: 'local-1',
+      nowMs: 999,
+      refreshMetadataBeforeRead: false,
+    });
+
+    // A swallowed failure is how the same seed silently gets prefixed twice.
+    await expect(res.settleOnProviderAcceptance()).resolves.toBe('failed');
+  });
+
+  it('reports no settlement work when no seed was applied', async () => {
+    const updateMetadata = vi.fn(async () => {});
+    const res = await resolveProviderPromptWithReplaySeed({
+      session: { getMetadataSnapshot: () => ({ flavor: 'claude' }), updateMetadata },
+      userText: 'hello',
+      allowSeed: true,
+      localId: 'local-1',
+      nowMs: 999,
+      refreshMetadataBeforeRead: false,
+    });
+
+    expect(res.seedApplied).toBe(false);
+    await expect(res.settleOnProviderAcceptance()).resolves.toBe('not_applied');
+    expect(updateMetadata).not.toHaveBeenCalled();
   });
 });

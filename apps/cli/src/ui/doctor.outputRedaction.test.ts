@@ -42,6 +42,10 @@ vi.mock('@/persistence', () => ({
     },
   }),
   readCredentials: async () => null,
+  readStoredCredentials: async () => ({
+    token: 'token-only',
+    encryption: null,
+  }),
   readDaemonState: async () => ({
     pid: 4242,
     httpPort: 4949,
@@ -157,6 +161,7 @@ describe('doctor output redaction', () => {
     expect(output).toContain('/usr/bin');
     expect(output).toContain('useful-model');
     expect(output).toMatch(/redacted/i);
+    expect(output).toContain('Authenticated (credentials found)');
 
     expect(output).not.toContain('doctor-settings-token-123456');
     expect(output).not.toContain('doctor-settings-authorization-123456');

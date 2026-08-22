@@ -135,7 +135,7 @@ describe('quiesceInstalledCliWindowsPayloadOwners', () => {
     expect(spawnSyncMock).toHaveBeenNthCalledWith(
       1,
       'C:\\Users\\tester\\.happier\\bin\\hdev.exe',
-      ['service', 'stop', '--transfer-managed-local-services', '--json'],
+      ['service', 'stop', '--json'],
       expect.objectContaining({
         env: expect.objectContaining({
           HAPPIER_HOME_DIR: 'C:\\Users\\tester\\.happier',
@@ -147,7 +147,7 @@ describe('quiesceInstalledCliWindowsPayloadOwners', () => {
     expect(spawnSyncMock).toHaveBeenNthCalledWith(
       2,
       'C:\\Users\\tester\\.happier\\bin\\hdev.exe',
-      ['daemon', 'stop', '--all', '--transfer-managed-local-services', '--json'],
+      ['daemon', 'stop', '--all', '--json'],
       expect.objectContaining({
         env: expect.objectContaining({
           HAPPIER_HOME_DIR: 'C:\\Users\\tester\\.happier',
@@ -188,7 +188,7 @@ describe('quiesceInstalledCliWindowsPayloadOwners', () => {
     expect(spawnSyncMock).toHaveBeenNthCalledWith(
       1,
       'C:\\Users\\tester\\.happier\\bin\\hdev.exe',
-      ['service', 'stop', '--transfer-managed-local-services', '--json'],
+      ['service', 'stop', '--json'],
       expect.objectContaining({
         timeout: 7000,
         stdio: 'ignore',
@@ -198,7 +198,7 @@ describe('quiesceInstalledCliWindowsPayloadOwners', () => {
     expect(spawnSyncMock).toHaveBeenNthCalledWith(
       2,
       'C:\\Users\\tester\\.happier\\bin\\hdev.exe',
-      ['daemon', 'stop', '--all', '--transfer-managed-local-services', '--json'],
+      ['daemon', 'stop', '--all', '--json'],
       expect.objectContaining({
         timeout: 7000,
         stdio: 'ignore',

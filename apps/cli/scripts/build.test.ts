@@ -221,14 +221,19 @@ describe('buildCliDist', () => {
     }
   });
 
-  it('rejects a Stack-admitted fingerprint when package prebuild moved canonical runtime inputs', async () => {
+  it('publishes the post-prebuild generation that the immutable CLI source snapshot actually contains', async () => {
     const packageRoot = createTempDirSync('happier-cli-build-prebuild-fingerprint-');
     try {
       writeBuildPackageManifest(packageRoot);
       const admittedFingerprint = 'a'.repeat(64);
+      const postPrebuildFingerprint = 'b'.repeat(64);
+      const workspaceRuntimeFingerprint = 'c'.repeat(64);
+      const workspaceRuntimePackages = ['@happier-dev/protocol'] as const;
       let finalized = false;
+      let finalizedInputFingerprint: string | undefined;
+      let finalizedWorkspaceRuntimePackages: readonly string[] | undefined;
 
-      await expect(buildCliDist({
+      await buildCliDist({
         packageRoot,
         repoRoot: packageRoot,
         skipLock: true,
@@ -241,14 +246,60 @@ describe('buildCliDist', () => {
         }),
         runTypecheckImpl: () => {},
         runPkgrollBuildImpl: () => {},
-        finalizeDistImpl: () => {
+        readRuntimeInputFreshnessImpl: async () => ({
+          fingerprint: postPrebuildFingerprint,
+          newestMtimeNs: 2n,
+        }),
+        readWorkspaceRuntimeIdentityImpl: () => ({
+          fingerprint: workspaceRuntimeFingerprint,
+          packageCount: workspaceRuntimePackages.length,
+          packageNames: workspaceRuntimePackages,
+        }),
+        finalizeDistImpl: (options: {
+          inputFingerprint?: string;
+          workspaceRuntimePackages?: readonly string[];
+        }) => {
           finalized = true;
+          finalizedInputFingerprint = options.inputFingerprint;
+          finalizedWorkspaceRuntimePackages = options.workspaceRuntimePackages;
         },
-      })).rejects.toThrow(
-        '[cli-build-inputs] runtime inputs changed while package prebuild was preparing dependencies; refusing to build a mixed CLI closure',
-      );
+      });
 
-      expect(finalized).toBe(false);
+      expect(finalized).toBe(true);
+      expect(finalizedInputFingerprint).toBe(postPrebuildFingerprint);
+      expect(finalizedWorkspaceRuntimePackages).toEqual(workspaceRuntimePackages);
+    } finally {
+      rmSync(packageRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses to publish when the workspace runtime changes during bundling', async () => {
+    const packageRoot = createTempDirSync('happier-cli-build-workspace-runtime-race-');
+    try {
+      writeBuildPackageManifest(packageRoot);
+      let identityReadCount = 0;
+      await expect(buildCliDist({
+        packageRoot,
+        repoRoot: packageRoot,
+        skipLock: true,
+        rmDistImpl: async () => {},
+        resolveTypeScriptCliInvocationImpl: () => ({
+          argsPrefix: ['/canonical/runTypeScriptCli.mjs'],
+        }),
+        runTypecheckImpl: () => {},
+        runPkgrollBuildImpl: () => {},
+        readRuntimeInputFreshnessImpl: async () => ({
+          fingerprint: 'c'.repeat(64),
+          newestMtimeNs: 1n,
+        }),
+        readWorkspaceRuntimeIdentityImpl: () => ({
+          fingerprint: (identityReadCount++ === 0 ? 'a' : 'b').repeat(64),
+          packageCount: 1,
+        }),
+        finalizeDistImpl: () => {
+          throw new Error('mixed workspace runtime must not be finalized');
+        },
+      })).rejects.toThrow(/workspace runtime publication changed during the CLI build/i);
     } finally {
       rmSync(packageRoot, { recursive: true, force: true });
     }

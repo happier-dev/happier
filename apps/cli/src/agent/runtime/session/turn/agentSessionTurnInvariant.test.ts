@@ -85,6 +85,46 @@ describe('createAgentSessionTurnInvariant', () => {
         expect(invariant.read().providerSessionId).toBe('provider-1');
     });
 
+    it('dedupes the provider session id on the matched PAIR, so a later log-path republish is not swallowed', () => {
+        // A runtime publishes its provider id as soon as it knows it, and the
+        // path of that session's log only once the conversation materializes —
+        // Claude's SDK path can only ever deliver the path as a SAME-ID
+        // republish. An id-keyed dedupe here suppresses the event before the
+        // pair-aware metadata subscriber downstream ever sees it, so the path
+        // never reaches Session metadata and a successor Agent is offered no
+        // log to read.
+        const invariant = createAgentSessionTurnInvariant({ sessionId: 'session-1' });
+        const nativeSessionLogPath = '/Users/dev/.claude/projects/x.jsonl';
+
+        expect(invariant.observe({
+            sequence: 1,
+            sessionId: 'session-1',
+            emittedAtMs: 1,
+            kind: 'provider-session-id',
+            providerSessionId: 'provider-1',
+        })).toMatchObject({ status: 'accepted' });
+
+        expect(invariant.observe({
+            sequence: 2,
+            sessionId: 'session-1',
+            emittedAtMs: 2,
+            kind: 'provider-session-id',
+            providerSessionId: 'provider-1',
+            nativeSessionLogPath,
+        })).toMatchObject({ status: 'accepted' });
+
+        // Control: the pair really is the key — republishing the SAME pair is
+        // still redundant and must stay suppressed.
+        expect(invariant.observe({
+            sequence: 3,
+            sessionId: 'session-1',
+            emittedAtMs: 3,
+            kind: 'provider-session-id',
+            providerSessionId: 'provider-1',
+            nativeSessionLogPath,
+        })).toMatchObject({ status: 'ignored' });
+    });
+
     it('requires accepted host delivery before start and enforces exact terminal finality', () => {
         const invariant = createAgentSessionTurnInvariant({ sessionId: 'session-1' });
 

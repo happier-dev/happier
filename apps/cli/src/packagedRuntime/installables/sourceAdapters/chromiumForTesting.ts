@@ -1,14 +1,17 @@
-import { access, chmod, mkdir, mkdtemp, rename, rm } from 'node:fs/promises';
+import { access, chmod, rename, rm } from 'node:fs/promises';
 import { constants as fsConstants } from 'node:fs';
 import { basename, join } from 'node:path';
-import { tmpdir } from 'node:os';
 
 import {
   CHROMIUM_FOR_TESTING_PRODUCT_SOURCE,
   resolveChromiumForTestingPlatform,
   type ChromiumForTestingPlatformAsset,
 } from '@happier-dev/protocol';
-import { downloadGitHubReleaseAsset, promoteManagedCurrentInstall } from '@happier-dev/cli-common/agents';
+import {
+  createManagedToolScratchDir,
+  downloadGitHubReleaseAsset,
+  promoteManagedCurrentInstall,
+} from '@happier-dev/cli-common/agents';
 import { extractReleasePayloadRootFromArchive } from '@happier-dev/cli-common/firstPartyRuntime';
 
 import { configuration } from '@/configuration';
@@ -17,7 +20,7 @@ import { configuration } from '@/configuration';
  * Binary-safe installer/unpacker for the pinned managed Chrome-for-Testing source (FP-BRW-SOURCE-1).
  *
  * Mirrors the canonical `githubReleaseBinary.ts` install shape: digest-verified download BEFORE
- * unpack, scratch extraction, atomic `next` -> `current` rename, managed dir under
+ * unpack, same-volume per-call scratch extraction, atomic candidate -> `current` rename, managed dir under
  * `<happyHomeDir>/tools/<key>`. It NEVER spawns a package manager. It refuses to promote any
  * artifact unless the pinned descriptor carries a real verified digest — the external-artifact
  * remainder (the hosted archive bytes + their real sha256) keeps the product source fail-closed
@@ -94,12 +97,16 @@ export async function installChromiumForTesting(params: Readonly<{
     };
   }
 
-  const scratchDir = await mkdtemp(join(tmpdir(), `happier-${MANAGED_KEY}-`));
+  const installRoot = managedInstallDir();
+  const scratchDir = await createManagedToolScratchDir({
+    installDir: installRoot,
+    prefix: MANAGED_KEY,
+  });
   try {
     const archiveName = basename(new URL(asset.archiveUrl).pathname) || 'chrome.zip';
     const archivePath = join(scratchDir, archiveName);
     const extractDir = join(scratchDir, 'extract');
-    const nextDir = join(managedInstallDir(), 'next');
+    const candidateDir = join(scratchDir, 'candidate');
 
     // Digest verification happens INSIDE the download helper, before any promotion.
     await downloadGitHubReleaseAsset({
@@ -109,31 +116,29 @@ export async function installChromiumForTesting(params: Readonly<{
       userAgent: 'happier-cli',
     });
 
-    await rm(nextDir, { recursive: true, force: true });
     const payloadRoot = await extractReleasePayloadRootFromArchive({
       archivePath,
       archiveName,
       extractDir,
     });
 
-    // Move the extracted payload root into the managed `next` slot, then atomically swap to current.
-    await mkdir(managedInstallDir(), { recursive: true });
-    await rename(payloadRoot, nextDir);
+    // Keep each staged candidate isolated until the shared promotion owner acquires its commit lock.
+    await rename(payloadRoot, candidateDir);
 
-    const nextExecutablePath = join(nextDir, asset.executableSubpath);
+    const candidateExecutablePath = join(candidateDir, asset.executableSubpath);
     try {
-      await access(nextExecutablePath, fsConstants.F_OK);
+      await access(candidateExecutablePath, fsConstants.F_OK);
     } catch {
-      await rm(nextDir, { recursive: true, force: true });
+      await rm(candidateDir, { recursive: true, force: true });
       return { ok: false, errorMessage: `Chrome-for-Testing executable missing at ${asset.executableSubpath}` };
     }
     if (platform !== 'win32') {
-      await chmod(nextExecutablePath, 0o755);
+      await chmod(candidateExecutablePath, 0o755);
     }
 
     await promoteManagedCurrentInstall({
-      installRoot: managedInstallDir(),
-      candidatePath: nextDir,
+      installRoot,
+      candidatePath: candidateDir,
       currentPath: managedCurrentDir(),
     });
 
@@ -144,7 +149,6 @@ export async function installChromiumForTesting(params: Readonly<{
       integrityDigest: asset.integrityDigest,
     };
   } catch (error) {
-    await rm(join(managedInstallDir(), 'next'), { recursive: true, force: true }).catch(() => undefined);
     const errorMessage = error instanceof Error ? error.message : 'Chrome-for-Testing install failed';
     return { ok: false, errorMessage };
   } finally {

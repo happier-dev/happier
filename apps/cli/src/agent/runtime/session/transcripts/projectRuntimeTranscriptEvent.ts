@@ -1,4 +1,4 @@
-import { RuntimeEventV1Schema, type SessionTranscriptObservationProvenanceV1 } from '@happier-dev/protocol';
+import { AgentSessionRuntimeEventSchema, type SessionTranscriptObservationProvenanceV1 } from '@happier-dev/protocol';
 
 import { createAcpToolIdentity } from '@/agent/acp/toolCalls';
 import {
@@ -6,6 +6,12 @@ import {
   type EphemeralSendResult,
 } from '@/api/session/client/transcript/ephemeralSendOutcome';
 import type { ACPMessageData, ACPProvider } from '@/api/session/sessionMessageTypes';
+import type { StreamedTranscriptFlushSummary } from '@/api/session/streamedTranscriptWriter';
+import {
+  CommittedTranscriptAdmissionExpiredError,
+  type CommittedTranscriptAdmission,
+  type CommittedTranscriptMessageOptions,
+} from '@/api/session/transcriptPort';
 
 type RuntimeMessageDeltaBridge = Readonly<{
   appendAssistantDelta: (args: Readonly<{
@@ -21,30 +27,25 @@ type RuntimeMessageDeltaBridge = Readonly<{
   flushAll: (args: Readonly<{
     reason: 'tool-call-boundary' | 'turn-end' | 'abort';
     interruptedReason?: string;
-  }>) => Promise<unknown>;
+  }>) => Promise<readonly StreamedTranscriptFlushSummary[]>;
 }>;
 
-type AgentMessageCommitResult = Readonly<{
+type TranscriptMessageCommitResult = Readonly<{
   persisted: boolean;
   delivered: boolean;
 }>;
 
-type RuntimeTranscriptProjectionSession = Readonly<{
+export type RuntimeTranscriptProjectionSession = Readonly<{
   sessionId: string;
-  sendUserTextMessage: (
+  enqueueUserTextMessageCommitted?: (
     text: string,
-    opts?: Readonly<{ localId?: string; meta?: Record<string, unknown> }>,
-  ) => void;
-  sendAgentMessageCommitted: (
-    provider: ACPProvider,
-    body: ACPMessageData,
-    opts: Readonly<{ localId: string; meta?: Record<string, unknown> }>,
-  ) => Promise<void>;
+    opts: CommittedTranscriptMessageOptions,
+  ) => Promise<TranscriptMessageCommitResult>;
   enqueueAgentMessageCommitted?: (
     provider: ACPProvider,
     body: ACPMessageData,
-    opts: Readonly<{ localId: string; meta?: Record<string, unknown>; provenance: SessionTranscriptObservationProvenanceV1 }>,
-  ) => Promise<AgentMessageCommitResult>;
+    opts: CommittedTranscriptMessageOptions,
+  ) => Promise<TranscriptMessageCommitResult>;
   sendAgentMessageEphemeral?: (
     provider: ACPProvider,
     body: ACPMessageData,
@@ -58,6 +59,27 @@ type RuntimeTranscriptProjectionSession = Readonly<{
   getEphemeralStreamConnectionEpoch?: () => number;
 }>;
 
+export type RuntimeTranscriptRequiredAdmissionFailureReason =
+  | 'admission_expired'
+  | 'durable_enqueue_unavailable'
+  | 'durable_enqueue_failed'
+  | 'durable_custody_rejected'
+  | 'streamed_finalization_failed'
+  | 'streamed_final_not_durable'
+  | 'projection_drain_timed_out';
+
+export class RuntimeTranscriptRequiredAdmissionError extends Error {
+  readonly code = 'runtime_transcript_required_admission_failed' as const;
+
+  constructor(
+    readonly reason: RuntimeTranscriptRequiredAdmissionFailureReason,
+    readonly eventKind: string,
+  ) {
+    super(`Required runtime transcript admission failed: ${reason}`);
+    this.name = 'RuntimeTranscriptRequiredAdmissionError';
+  }
+}
+
 export type RuntimeTranscriptProjectionResult =
   | Readonly<{
     projected: true;
@@ -69,8 +91,7 @@ export type RuntimeTranscriptProjectionResult =
       | 'turn-complete'
       | 'turn-failed'
       | 'turn-cancelled'
-      | 'transcript-user-text'
-      | 'transcript-agent-message-committed';
+      | 'transcript-message-committed';
   }>
   | Readonly<{
     projected: false;
@@ -81,13 +102,6 @@ function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function readACPMessageData(value: unknown): ACPMessageData | null {
-  if (!isRecord(value) || typeof value.type !== 'string') {
-    return null;
-  }
-  return value as ACPMessageData;
-}
-
 function readString(value: unknown): string | null {
   return typeof value === 'string' && value.length > 0 ? value : null;
 }
@@ -96,32 +110,17 @@ function hasOwn(value: object, key: PropertyKey): boolean {
   return Object.prototype.hasOwnProperty.call(value, key);
 }
 
-export function readRuntimeMessageDeltaText(value: unknown): string | null {
-  const directText = readString(value);
-  if (directText) return directText;
-  if (!isRecord(value)) return null;
-
-  const content = isRecord(value.content) ? value.content : null;
-  return readString(value.text)
-    ?? readString(value.textDelta)
-    ?? readString(value.deltaText)
-    ?? readString(value.message)
-    ?? readString(content?.text)
-    ?? readString(content?.textDelta);
-}
-
-function isThinkingRuntimeMessageDelta(value: unknown): boolean {
-  return isRecord(value) && value.thinking === true;
-}
-
-function buildUserTextOptions(event: Readonly<{
-  localId?: string;
-  meta?: Record<string, unknown>;
-}>): Readonly<{ localId?: string; meta?: Record<string, unknown> }> | undefined {
-  if (!event.localId && !event.meta) return undefined;
+function resolveCommittedTranscriptObservation(event: Readonly<{
+  emittedAtMs: number;
+}>): Readonly<{
+  createdAt: number;
+  updatedAt: number;
+  provenance: SessionTranscriptObservationProvenanceV1;
+}> {
   return {
-    ...(event.localId ? { localId: event.localId } : {}),
-    ...(event.meta ? { meta: event.meta } : {}),
+    createdAt: event.emittedAtMs,
+    updatedAt: event.emittedAtMs,
+    provenance: { kind: 'non_dependent', source: 'external' },
   };
 }
 
@@ -130,9 +129,7 @@ function buildRuntimeToolLocalId(event: Readonly<{
   turnId: string;
   sidechainId?: string;
   toolCallId: string;
-  localId?: string;
 }>, kind: 'tool-call' | 'tool-result'): string {
-  if (event.localId) return event.localId;
   const identity = createAcpToolIdentity({
     sessionId: event.sessionId,
     turnId: event.turnId,
@@ -206,33 +203,154 @@ function readEphemeralEpoch(session: RuntimeTranscriptProjectionSession): number
   }
 }
 
-async function commitAgentMessage(params: Readonly<{
+function assertRequiredTranscriptAdmission(
+  admission: CommittedTranscriptAdmission | undefined,
+  eventKind: string,
+): void {
+  if (
+    !admission
+    || (
+      !admission.signal.aborted
+      && (
+        admission.deadlineAtMs === undefined
+        || Date.now() < admission.deadlineAtMs
+      )
+    )
+  ) {
+    return;
+  }
+  throw new RuntimeTranscriptRequiredAdmissionError('admission_expired', eventKind);
+}
+
+export async function commitRequiredRuntimeTranscriptMessage(params: Readonly<{
   session: RuntimeTranscriptProjectionSession;
   provider: ACPProvider;
   body: ACPMessageData;
   localId: string;
   meta?: Record<string, unknown>;
+  createdAt?: number;
+  updatedAt?: number;
   provenance: SessionTranscriptObservationProvenanceV1;
+  eventKind: string;
+  admission?: CommittedTranscriptAdmission;
 }>): Promise<void> {
-  const opts = {
+  assertRequiredTranscriptAdmission(params.admission, params.eventKind);
+  const opts: CommittedTranscriptMessageOptions = {
     localId: params.localId,
     ...(params.meta ? { meta: params.meta } : {}),
+    ...(params.createdAt === undefined ? {} : { createdAt: params.createdAt }),
+    ...(params.updatedAt === undefined ? {} : { updatedAt: params.updatedAt }),
     provenance: params.provenance,
+    ...(params.admission === undefined ? {} : { admission: params.admission }),
   };
-  if (params.session.enqueueAgentMessageCommitted) {
-    await params.session.enqueueAgentMessageCommitted(params.provider, params.body, opts);
-  } else {
-    await params.session.sendAgentMessageCommitted(params.provider, params.body, opts);
+  if (!params.session.enqueueAgentMessageCommitted) {
+    throw new RuntimeTranscriptRequiredAdmissionError(
+      'durable_enqueue_unavailable',
+      params.eventKind,
+    );
   }
+  try {
+    const result = await params.session.enqueueAgentMessageCommitted(params.provider, params.body, opts);
+    assertRequiredTranscriptAdmission(params.admission, params.eventKind);
+    if (!result.persisted) {
+      throw new RuntimeTranscriptRequiredAdmissionError(
+        'durable_custody_rejected',
+        params.eventKind,
+      );
+    }
+  } catch (error) {
+    if (error instanceof RuntimeTranscriptRequiredAdmissionError) throw error;
+    if (error instanceof CommittedTranscriptAdmissionExpiredError) {
+      throw new RuntimeTranscriptRequiredAdmissionError('admission_expired', params.eventKind);
+    }
+    throw new RuntimeTranscriptRequiredAdmissionError(
+      'durable_enqueue_failed',
+      params.eventKind,
+    );
+  }
+}
+
+async function commitRequiredRuntimeTranscriptUserText(params: Readonly<{
+  session: RuntimeTranscriptProjectionSession;
+  text: string;
+  localId: string;
+  meta?: Record<string, unknown>;
+  createdAt?: number;
+  updatedAt?: number;
+  provenance?: SessionTranscriptObservationProvenanceV1;
+  eventKind: string;
+  admission?: CommittedTranscriptAdmission;
+}>): Promise<void> {
+  assertRequiredTranscriptAdmission(params.admission, params.eventKind);
+  if (!params.session.enqueueUserTextMessageCommitted) {
+    throw new RuntimeTranscriptRequiredAdmissionError('durable_enqueue_unavailable', params.eventKind);
+  }
+  try {
+    const result = await params.session.enqueueUserTextMessageCommitted(params.text, {
+      localId: params.localId,
+      ...(params.meta ? { meta: params.meta } : {}),
+      ...(params.createdAt === undefined ? {} : { createdAt: params.createdAt }),
+      ...(params.updatedAt === undefined ? {} : { updatedAt: params.updatedAt }),
+      provenance: params.provenance ?? { kind: 'non_dependent', source: 'external' },
+      ...(params.admission === undefined ? {} : { admission: params.admission }),
+    });
+    assertRequiredTranscriptAdmission(params.admission, params.eventKind);
+    if (!result.persisted) {
+      throw new RuntimeTranscriptRequiredAdmissionError('durable_custody_rejected', params.eventKind);
+    }
+  } catch (error) {
+    if (error instanceof RuntimeTranscriptRequiredAdmissionError) throw error;
+    if (error instanceof CommittedTranscriptAdmissionExpiredError) {
+      throw new RuntimeTranscriptRequiredAdmissionError('admission_expired', params.eventKind);
+    }
+    throw new RuntimeTranscriptRequiredAdmissionError('durable_enqueue_failed', params.eventKind);
+  }
+}
+
+function assertStreamedTranscriptFlushDurability(
+  summaries: readonly StreamedTranscriptFlushSummary[],
+  eventKind: 'tool-call' | 'turn-complete' | 'turn-failed' | 'turn-cancelled',
+): void {
+  const failedRequiredSegment = summaries
+    .flatMap((summary) => summary.segments)
+    .find((segment) => segment.sawText && !segment.didDurablyFlush);
+  if (!failedRequiredSegment) return;
+  throw new RuntimeTranscriptRequiredAdmissionError(
+    'streamed_final_not_durable',
+    eventKind,
+  );
+}
+
+async function flushRequiredRuntimeTranscriptSegments(params: Readonly<{
+  bridge: RuntimeMessageDeltaBridge;
+  reason: 'tool-call-boundary' | 'turn-end' | 'abort';
+  eventKind: 'tool-call' | 'turn-complete' | 'turn-failed' | 'turn-cancelled';
+  interruptedReason?: string;
+}>): Promise<void> {
+  let summaries: readonly StreamedTranscriptFlushSummary[];
+  try {
+    summaries = await params.bridge.flushAll({
+      reason: params.reason,
+      ...(params.interruptedReason ? { interruptedReason: params.interruptedReason } : {}),
+    });
+  } catch (error) {
+    if (error instanceof RuntimeTranscriptRequiredAdmissionError) throw error;
+    throw new RuntimeTranscriptRequiredAdmissionError(
+      'streamed_finalization_failed',
+      params.eventKind,
+    );
+  }
+  assertStreamedTranscriptFlushDurability(summaries, params.eventKind);
 }
 
 export async function projectRuntimeTranscriptEvent(params: Readonly<{
   session: RuntimeTranscriptProjectionSession;
   provider?: ACPProvider;
   runtimeMessageDeltaBridge?: RuntimeMessageDeltaBridge;
+  admission?: CommittedTranscriptAdmission;
   event: unknown;
 }>): Promise<RuntimeTranscriptProjectionResult> {
-  const parsed = RuntimeEventV1Schema.safeParse(params.event);
+  const parsed = AgentSessionRuntimeEventSchema.safeParse(params.event);
   if (!parsed.success) {
     return { projected: false, reason: 'unsupported_event' };
   }
@@ -241,11 +359,11 @@ export async function projectRuntimeTranscriptEvent(params: Readonly<{
     return { projected: false, reason: 'session_mismatch' };
   }
   if (event.kind === 'message-delta') {
-    const deltaText = readRuntimeMessageDeltaText(event.delta);
-    if (!params.runtimeMessageDeltaBridge || deltaText === null) {
+    const deltaText = event.text;
+    if (!params.runtimeMessageDeltaBridge) {
       return { projected: false, reason: 'unsupported_event' };
     }
-    const appendDelta = isThinkingRuntimeMessageDelta(event.delta)
+    const appendDelta = event.channel === 'reasoning'
       ? params.runtimeMessageDeltaBridge.appendThinkingDelta
       : params.runtimeMessageDeltaBridge.appendAssistantDelta;
     appendDelta({
@@ -287,15 +405,18 @@ export async function projectRuntimeTranscriptEvent(params: Readonly<{
       : { projected: false, reason: 'ephemeral_not_accepted' };
   }
   if (event.kind === 'tool-call') {
-    if (!params.runtimeMessageDeltaBridge) {
-      return { projected: false, reason: 'unsupported_event' };
+    if (params.runtimeMessageDeltaBridge) {
+      await flushRequiredRuntimeTranscriptSegments({
+        bridge: params.runtimeMessageDeltaBridge,
+        reason: 'tool-call-boundary',
+        eventKind: event.kind,
+      });
     }
-    await params.runtimeMessageDeltaBridge.flushAll({ reason: 'tool-call-boundary' });
     if (!params.provider) {
       return { projected: false, reason: 'unsupported_event' };
     }
     const localId = buildRuntimeToolLocalId(event, 'tool-call');
-    await commitAgentMessage({
+    await commitRequiredRuntimeTranscriptMessage({
       session: params.session,
       provider: params.provider,
       localId,
@@ -303,12 +424,14 @@ export async function projectRuntimeTranscriptEvent(params: Readonly<{
         type: 'tool-call',
         callId: event.toolCallId,
         name: event.toolName,
-        input: buildProjectedToolInput(event.toolInput, event.toolSnapshot),
+        input: event.input,
         id: localId,
         ...(event.sidechainId ? { sidechainId: event.sidechainId } : {}),
       },
-      meta: buildRuntimeToolMeta(event, 'tool-call', isRecord(event.toolSnapshot)),
+      meta: buildRuntimeToolMeta(event, 'tool-call', false),
       provenance: { kind: 'non_dependent', source: event.sidechainId ? 'sidechain' : 'external' },
+      eventKind: event.kind,
+      ...(params.admission === undefined ? {} : { admission: params.admission }),
     });
     return { projected: true, kind: event.kind };
   }
@@ -317,7 +440,7 @@ export async function projectRuntimeTranscriptEvent(params: Readonly<{
       return { projected: false, reason: 'unsupported_event' };
     }
     const localId = buildRuntimeToolLocalId(event, 'tool-result');
-    await commitAgentMessage({
+    await commitRequiredRuntimeTranscriptMessage({
       session: params.session,
       provider: params.provider,
       localId,
@@ -331,6 +454,8 @@ export async function projectRuntimeTranscriptEvent(params: Readonly<{
       },
       meta: buildRuntimeToolMeta(event, 'tool-result', false),
       provenance: { kind: 'non_dependent', source: event.sidechainId ? 'sidechain' : 'external' },
+      eventKind: event.kind,
+      ...(params.admission === undefined ? {} : { admission: params.admission }),
     });
     return { projected: true, kind: event.kind };
   }
@@ -338,35 +463,81 @@ export async function projectRuntimeTranscriptEvent(params: Readonly<{
     if (!params.runtimeMessageDeltaBridge) {
       return { projected: false, reason: 'unsupported_event' };
     }
-    await params.runtimeMessageDeltaBridge.flushAll({ reason: 'turn-end' });
+    await flushRequiredRuntimeTranscriptSegments({
+      bridge: params.runtimeMessageDeltaBridge,
+      reason: 'turn-end',
+      eventKind: event.kind,
+    });
     return { projected: true, kind: event.kind };
   }
-  if (event.kind === 'turn-failed' || event.kind === 'turn-cancelled') {
+  if (event.kind === 'turn-failed') {
     if (!params.runtimeMessageDeltaBridge) {
       return { projected: false, reason: 'unsupported_event' };
     }
-    await params.runtimeMessageDeltaBridge.flushAll({ reason: 'abort', interruptedReason: event.kind });
+    await flushRequiredRuntimeTranscriptSegments({
+      bridge: params.runtimeMessageDeltaBridge,
+      reason: 'abort',
+      eventKind: event.kind,
+      interruptedReason: 'turn-failed',
+    });
     return { projected: true, kind: event.kind };
   }
-  if (event.kind === 'transcript-user-text') {
-    params.session.sendUserTextMessage(event.text, buildUserTextOptions(event));
+  if (event.kind === 'turn-cancelled') {
+    if (!params.runtimeMessageDeltaBridge || !params.provider) {
+      return { projected: false, reason: 'unsupported_event' };
+    }
+    await flushRequiredRuntimeTranscriptSegments({
+      bridge: params.runtimeMessageDeltaBridge,
+      reason: 'abort',
+      eventKind: event.kind,
+      interruptedReason: 'turn-cancelled',
+    });
+    const markerId = event.agentTurnId ?? event.turnId;
+    await commitRequiredRuntimeTranscriptMessage({
+      session: params.session,
+      provider: params.provider,
+      body: { type: 'turn_cancelled', id: markerId },
+      localId: `${markerId}:turn_cancelled`,
+      meta: {
+        source: 'runtime',
+        runtimeEventKind: event.kind,
+        runtimeTurnId: event.turnId,
+      },
+      createdAt: event.emittedAtMs,
+      updatedAt: event.emittedAtMs,
+      provenance: { kind: 'non_dependent', source: 'external' },
+      eventKind: event.kind,
+      ...(params.admission === undefined ? {} : { admission: params.admission }),
+    });
     return { projected: true, kind: event.kind };
   }
-  if (event.kind !== 'transcript-agent-message-committed') {
+  if (event.kind === 'transcript-message-committed' && event.role === 'user') {
+    const observation = resolveCommittedTranscriptObservation(event);
+    await commitRequiredRuntimeTranscriptUserText({
+      session: params.session,
+      text: event.text,
+      localId: event.messageId,
+      ...observation,
+      eventKind: event.kind,
+      ...(params.admission === undefined ? {} : { admission: params.admission }),
+    });
+    return { projected: true, kind: event.kind };
+  }
+  if (event.kind !== 'transcript-message-committed' || !params.provider) {
     return { projected: false, reason: 'unsupported_event' };
   }
 
-  const body = readACPMessageData(event.body);
-  if (!body) {
-    return { projected: false, reason: 'unsupported_event' };
-  }
-  await commitAgentMessage({
+  const observation = resolveCommittedTranscriptObservation(event);
+  await commitRequiredRuntimeTranscriptMessage({
     session: params.session,
-    provider: event.agentId,
-    body,
-    localId: event.localId,
-    ...(event.meta ? { meta: event.meta } : {}),
-    provenance: { kind: 'non_dependent', source: 'external' },
+    provider: params.provider,
+    body: event.role === 'reasoning'
+      ? { type: 'thinking', text: event.text, ...(event.sidechainId ? { sidechainId: event.sidechainId } : {}) }
+      : { type: 'message', message: event.text, ...(event.sidechainId ? { sidechainId: event.sidechainId } : {}) },
+    localId: event.messageId,
+    ...observation,
+    eventKind: event.kind,
+    ...(params.admission === undefined ? {} : { admission: params.admission }),
   });
   return { projected: true, kind: event.kind };
 }

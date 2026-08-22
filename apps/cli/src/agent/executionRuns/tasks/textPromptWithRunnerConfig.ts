@@ -1,6 +1,10 @@
-import { runEphemeralExecutionRunTextPrompt, type EphemeralExecutionRunTextPromptRuntimeFactory } from '@/agent/runtime/bridges/executionRun/runtime/textPrompt';
-import { resolveExecutionRunPublicBackendId } from '@/agent/runtime/bridges/executionRun/backendTargets';
-import { createExecutionRunTextPromptBackendForTarget } from './textPromptBackend';
+import type { ExecutionRunIntent } from '@happier-dev/protocol';
+
+import {
+  runEphemeralExecutionRunTextPrompt,
+  type EphemeralExecutionRunTextPromptStartAction,
+} from '@/agent/runtime/bridges/executionRun/runtime/textPrompt';
+import type { StoredCredentials } from '@/persistence';
 
 function normalizeNonEmptyString(value: unknown): string | null {
   if (typeof value !== 'string') return null;
@@ -22,53 +26,28 @@ export async function runEphemeralExecutionRunTextPromptWithRunnerConfig(params:
     modelId?: string;
     permissionMode?: string;
   }>;
-  intent: string;
+  intent: ExecutionRunIntent;
   prompt: string;
-  createRuntime?: EphemeralExecutionRunTextPromptRuntimeFactory;
+  credentials?: StoredCredentials | null;
+  signal?: AbortSignal;
   timeoutMs?: number | null;
+  executeStart?: EphemeralExecutionRunTextPromptStartAction;
 }>): Promise<string> {
   const backendTarget = params.runner?.backendTarget;
   if (!backendTarget) return '';
   const modelId = normalizeNonEmptyString(params.runner?.modelId) ?? undefined;
   const permissionMode = normalizeNonEmptyString(params.runner?.permissionMode) ?? 'no_tools';
-  const resolved = params.createRuntime
-      ? {
-        backendId: resolveExecutionRunPublicBackendId(backendTarget),
-        backend: params.createRuntime({
-          cwd: params.cwd,
-          runId: `${params.intent}_${Date.now()}`,
-          backendId: resolveExecutionRunPublicBackendId(backendTarget),
-          backendTarget,
-          modelId,
-          permissionMode,
-          start: {
-            sessionId: params.sessionId,
-            intent: params.intent,
-            retentionPolicy: 'ephemeral' as const,
-          },
-        }),
-        configureSession: undefined,
-      }
-    : await createExecutionRunTextPromptBackendForTarget({
-        cwd: params.cwd,
-        sessionId: params.sessionId,
-        backendTarget,
-        modelId,
-        permissionMode,
-        intent: params.intent,
-      });
 
   return await runEphemeralExecutionRunTextPrompt({
-    cwd: params.cwd,
     sessionId: params.sessionId,
-    backendId: resolved.backendId,
     backendTarget,
     modelId,
     permissionMode,
     intent: params.intent,
     prompt: params.prompt,
-    createRuntime: () => resolved.backend,
-    configureSession: resolved.configureSession,
+    ...(params.credentials !== undefined ? { credentials: params.credentials } : {}),
+    ...(params.signal ? { signal: params.signal } : {}),
     timeoutMs: params.timeoutMs,
+    ...(params.executeStart ? { executeStart: params.executeStart } : {}),
   });
 }

@@ -1,6 +1,9 @@
 import { decodeBase64 } from '@/api/encryption';
 import type { AgentState, Metadata } from '@/api/types';
-import type { SessionOwnerMetadataV1 } from '@happier-dev/protocol';
+import type {
+  SessionOwnerMetadataEnvelopeV1,
+  SessionOwnerMetadataV1,
+} from '@happier-dev/protocol';
 import { assertSessionAttachFilePathWithinBaseDir, resolveSessionAttachBaseDir } from '@/agent/runtime/sessionAttachPaths';
 import { SessionAttachPayloadSchema } from '@/agent/runtime/sessionAttachPayload';
 import { configuration } from '@/configuration';
@@ -19,7 +22,7 @@ export type SessionAttachSnapshot = Readonly<{
   agentStateVersion: number;
   metadataLayoutVersion?: 1;
   ownerMetadata?: SessionOwnerMetadataV1;
-  ownerMetadataCiphertext?: string;
+  ownerMetadataEnvelope?: SessionOwnerMetadataEnvelopeV1;
 }>;
 
 function readNonNegativeIntegerProperty(payload: unknown, key: string): number | undefined {

@@ -91,10 +91,15 @@ export function isMemoryArtifactDecryptedRow(value: unknown): boolean {
 function tryDecryptTranscriptEnvelope(params: Readonly<{
     content: { t: 'encrypted'; c: string } | { t: 'plain'; v: unknown };
     encryptionMode: SessionStoredContentEncryptionMode;
-    encryptionKey: Uint8Array;
-    encryptionVariant: 'legacy' | 'dataKey';
+    encryptionKey: Uint8Array | null;
+    encryptionVariant: 'legacy' | 'dataKey' | null;
 }>): unknown | null {
     if (params.content.t === 'plain') return params.content.v;
+    if (!params.encryptionKey || !params.encryptionVariant) {
+        throw new SessionTurnActivityUnavailableError(
+            new Error('Session encryption material is unavailable'),
+        );
+    }
     try {
         return decrypt(
             params.encryptionKey,
@@ -120,8 +125,8 @@ export async function detectSessionTurnActivity(params: Readonly<{
     token: string;
     sessionId: string;
     encryptionMode: SessionStoredContentEncryptionMode;
-    encryptionKey: Uint8Array;
-    encryptionVariant: 'legacy' | 'dataKey';
+    encryptionKey: Uint8Array | null;
+    encryptionVariant: 'legacy' | 'dataKey' | null;
     afterSeqExclusive?: number;
     sessionProjection?: unknown;
     readyCompletesPendingUserTurns?: boolean;

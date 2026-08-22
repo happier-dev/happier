@@ -62,10 +62,7 @@ describe('createCliActionInventoryDeps', () => {
       sessionId: 'sess-1',
       probeDeps: createProbeDeps(),
       mode: 'plain',
-      ctx: {
-        encryptionKey: new Uint8Array([1, 2, 3, 4]),
-        encryptionVariant: 'legacy',
-      },
+      ctx: null,
       rawSession: {
         host: 'local-machine',
         path: '/repo',
@@ -109,10 +106,7 @@ describe('createCliActionInventoryDeps', () => {
       sessionId: 'sess-1',
       probeDeps: createProbeDeps(),
       mode: 'plain',
-      ctx: {
-        encryptionKey: new Uint8Array([1, 2, 3, 4]),
-        encryptionVariant: 'legacy',
-      },
+      ctx: null,
       rawSession: {
         host: 'local-machine',
         path: '/repo',
@@ -158,10 +152,7 @@ describe('createCliActionInventoryDeps', () => {
       sessionId: 'sess-1',
       probeDeps: createProbeDeps(),
       mode: 'plain',
-      ctx: {
-        encryptionKey: new Uint8Array([1, 2, 3, 4]),
-        encryptionVariant: 'legacy',
-      },
+      ctx: null,
       rawSession: {
         host: 'local-machine',
         path: '/repo',
@@ -200,10 +191,7 @@ describe('createCliActionInventoryDeps', () => {
       sessionId: 'sess-1',
       probeDeps: createProbeDeps(),
       mode: 'plain',
-      ctx: {
-        encryptionKey: new Uint8Array([1, 2, 3, 4]),
-        encryptionVariant: 'legacy',
-      },
+      ctx: null,
       rawSession: {
         host: 'local-machine',
         path: '/repo',
@@ -232,10 +220,7 @@ describe('createCliActionInventoryDeps', () => {
       sessionId: 'sess-1',
       probeDeps: createProbeDeps(),
       mode: 'plain',
-      ctx: {
-        encryptionKey: new Uint8Array([1, 2, 3, 4]),
-        encryptionVariant: 'legacy',
-      },
+      ctx: null,
       rawSession: {
         host: 'local-machine',
         path: '/repo',
@@ -292,10 +277,7 @@ describe('createCliActionInventoryDeps', () => {
       sessionId: 'sess-1',
       probeDeps: createProbeDeps(),
       mode: 'plain',
-      ctx: {
-        encryptionKey: new Uint8Array([1, 2, 3, 4]),
-        encryptionVariant: 'legacy',
-      },
+      ctx: null,
       rawSession: {
         host: 'local-machine',
         path: '/repo',
@@ -367,10 +349,7 @@ describe('createCliActionInventoryDeps', () => {
       sessionId: 'sess-1',
       probeDeps: createProbeDeps(),
       mode: 'plain',
-      ctx: {
-        encryptionKey: new Uint8Array([1, 2, 3, 4]),
-        encryptionVariant: 'legacy',
-      },
+      ctx: null,
       rawSession: {
         host: 'local-machine',
         path: '/repo',
@@ -496,10 +475,7 @@ describe('createCliActionInventoryDeps', () => {
       sessionId: 'sess-1',
       probeDeps: createProbeDeps(),
       mode: 'plain',
-      ctx: {
-        encryptionKey: new Uint8Array([1, 2, 3, 4]),
-        encryptionVariant: 'legacy',
-      },
+      ctx: null,
       rawSession: {
         host: 'local-machine',
         machineId: 'machine-1',

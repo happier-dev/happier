@@ -1,6 +1,6 @@
 import type { SessionSummaryShardV1, SessionSynopsisV1 } from '@happier-dev/protocol';
 
-import type { Credentials } from '@/persistence';
+import type { StoredCredentials } from '@/persistence';
 import type {
   SessionEncryptionContext,
   SessionStoredContentEncryptionMode,
@@ -22,7 +22,7 @@ export type CommitMemorySystemRecordsDeps = Readonly<{
 }>;
 
 export async function commitMemorySystemRecords(params: Readonly<{
-  credentials: Credentials;
+  credentials: StoredCredentials;
   sessionId: string;
   mode: SessionStoredContentEncryptionMode;
   ctx?: SessionEncryptionContext;

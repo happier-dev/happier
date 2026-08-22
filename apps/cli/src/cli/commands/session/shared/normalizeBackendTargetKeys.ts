@@ -8,7 +8,7 @@ import {
   readBackendTargetRefV2,
   type BackendTargetRefV1,
 } from '@happier-dev/protocol';
-import { getAgentCatalogDefinition, isAgentId } from '@happier-dev/agents';
+import { getAgentCatalogDefinition } from '@happier-dev/agents';
 
 function normalizeBackendTargetKeyFromInput(entry: string): string | null {
   const parsedV2 = BackendTargetKeyV2Schema.safeParse(entry);
@@ -29,16 +29,14 @@ function normalizeBackendTargetKeyFromInput(entry: string): string | null {
     return null;
   }
 
-  if (isAgentId(entry)) {
-    const settingsBackendId = getAgentCatalogDefinition(entry)?.settingsBackendId?.trim();
-    if (settingsBackendId) {
-      return buildBackendTargetKeyV2({
-        kind: 'backend',
-        backendId: settingsBackendId,
-        configuredBackendId: settingsBackendId,
-        sourceKind: 'configured',
-      });
-    }
+  const settingsBackendId = getAgentCatalogDefinition(entry)?.settingsBackendId?.trim();
+  if (settingsBackendId) {
+    return buildBackendTargetKeyV2({
+      kind: 'backend',
+      backendId: settingsBackendId,
+      configuredBackendId: settingsBackendId,
+      sourceKind: 'configured',
+    });
   }
 
   return buildBackendTargetKey({ kind: 'builtInAgent', agentId: entry });

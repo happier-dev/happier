@@ -1,4 +1,4 @@
-import type { Credentials } from '@/persistence';
+import type { StoredCredentials } from '@/persistence';
 import {
   detectSessionTurnActivity,
   detectSessionTurnActivityFromProjection,
@@ -19,12 +19,12 @@ function unknownTranscriptTurnActivity(): SessionTurnActivity {
 }
 
 export async function waitForSessionIdle(params: Readonly<{
-  credentials: Credentials;
+  credentials: StoredCredentials;
   idOrPrefix: string;
   timeoutMs: number;
 }>): Promise<
   | Readonly<{ ok: true; sessionId: string; idle: true; observedAt: number }>
-  | Readonly<{ ok: false; code: 'session_not_found' | 'session_id_ambiguous' | 'unsupported' | 'timeout'; candidates?: string[] }>
+  | Readonly<{ ok: false; code: 'session_not_found' | 'session_id_ambiguous' | 'session_lookup_timeout' | 'unsupported' | 'encryption_material_unavailable' | 'timeout'; candidates?: string[] }>
 > {
   const timeoutMs = Math.max(1, Math.trunc(params.timeoutMs));
   const deadlineMs = Date.now() + timeoutMs;
@@ -53,8 +53,8 @@ export async function waitForSessionIdle(params: Readonly<{
         token: params.credentials.token,
         sessionId: sessionTarget.sessionId,
         encryptionMode: sessionTarget.mode,
-        encryptionKey: sessionTarget.ctx.encryptionKey,
-        encryptionVariant: sessionTarget.ctx.encryptionVariant,
+        encryptionKey: sessionTarget.ctx?.encryptionKey ?? null,
+        encryptionVariant: sessionTarget.ctx?.encryptionVariant ?? null,
         transcriptFetchTimeoutMs: remainingTimeoutMs(),
       });
     } catch {
@@ -97,26 +97,26 @@ export async function waitForSessionIdle(params: Readonly<{
             token: params.credentials.token,
             sessionId: sessionTarget.sessionId,
             encryptionMode: sessionTarget.mode,
-            encryptionKey: sessionTarget.ctx.encryptionKey,
-            encryptionVariant: sessionTarget.ctx.encryptionVariant,
+            encryptionKey: sessionTarget.ctx?.encryptionKey ?? null,
+            encryptionVariant: sessionTarget.ctx?.encryptionVariant ?? null,
             transcriptFetchTimeoutMs: remainingTimeoutMs(),
           })
           : detectSessionTurnActivity({
             token: params.credentials.token,
             sessionId: sessionTarget.sessionId,
             encryptionMode: sessionTarget.mode,
-            encryptionKey: sessionTarget.ctx.encryptionKey,
-            encryptionVariant: sessionTarget.ctx.encryptionVariant,
+            encryptionKey: sessionTarget.ctx?.encryptionKey ?? null,
+            encryptionVariant: sessionTarget.ctx?.encryptionVariant ?? null,
             transcriptFetchTimeoutMs: remainingTimeoutMs(),
           }),
       ...(initialProjectedPendingRequestCount !== null
         ? { initialAgentStateSummary: { pendingRequestsCount: initialProjectedPendingRequestCount } }
         : {}),
       preferProjectionUpdates: initialProjectedActivity !== null,
+      // The projection only carries the pending-request count, so the AgentState observation from the
+      // same snapshot must still reach the idle owner: it is the only source of `controlledByUser`.
       initialAgentStateCiphertextBase64:
-        initialProjectedPendingRequestCount === null && agentStateCiphertext && agentStateCiphertext.length > 0
-          ? agentStateCiphertext
-          : null,
+        agentStateCiphertext && agentStateCiphertext.length > 0 ? agentStateCiphertext : null,
     });
     return {
       ok: true,

@@ -1,5 +1,5 @@
-import { getAgentCliRuntimeSpec, isAgentId } from '@happier-dev/agents';
 import type { AcpPermissionHandler } from '@/agent/acp/permissions/acpPermissionHandler';
+import { resolveAgentDisplayTitle } from '@/agent/catalog/agentDisplayTitle';
 import { createAcpRuntime, type AcpRuntimeBackend } from '@/agent/acp/runtime/createAcpRuntime';
 import type { RuntimeTurnSessionOpenIntent } from '@/agent/runtime/turns/runtimeTurnOperations';
 import type { McpServerConfig } from '@/agent';
@@ -173,10 +173,11 @@ export function createCatalogProviderAcpRuntime<TBackendOptions extends AgentFac
 export function createCatalogProviderAcpRuntime<TBackendOptions extends AgentFactoryOptions = AgentFactoryOptions>(
   params: CustomBackedAcpProviderRuntimeParams<TBackendOptions>,
 ): ReturnType<typeof createAcpRuntime> {
-  const resolveConnectedServiceRuntimeAuthAdapter = async () => {
-    if (!isAgentId(params.provider)) return null;
-    return await getConnectedServiceRuntimeAuthAdapter(params.provider);
-  };
+  // An installed external Agent reaches its own Connected Service runtime auth
+  // adapter exactly like a bundled one; the catalog hook answers null when the
+  // Agent contributes none.
+  const resolveConnectedServiceRuntimeAuthAdapter = async () =>
+    await getConnectedServiceRuntimeAuthAdapter(params.provider);
   const sendPermissionPush = (evt: { permissionId: string; toolName: string }): void => {
     if (!params.pushSender) return;
     try {
@@ -184,9 +185,8 @@ export function createCatalogProviderAcpRuntime<TBackendOptions extends AgentFac
         pushSender: params.pushSender,
         sessionId: params.session.sessionId,
         sessionTitle: getSessionNotificationTitle(() => params.session.getMetadataSnapshot?.() ?? null),
-        agentDisplayName: isAgentId(params.provider)
-          ? getAgentCliRuntimeSpec(params.provider).title
-          : null,
+        // The installed Agent owns its title, bundled or externally contributed.
+        agentDisplayName: resolveAgentDisplayTitle(params.provider),
         permissionId: evt.permissionId,
         toolName: evt.toolName,
         permissionMode: params.getPermissionMode?.(),
@@ -235,6 +235,7 @@ export function createCatalogProviderAcpRuntime<TBackendOptions extends AgentFac
       })) {
         return recoveryReport;
       }
+      const transcriptAdmissions: Array<Promise<Readonly<{ persisted: boolean; delivered: boolean }>>> = [];
       const projectionResult = projectConnectedServiceRuntimeAuthRecoveryReport({
         report: recoveryReport,
         classification: evt.classification as ConnectedServiceRuntimeFailureClassification,
@@ -242,14 +243,16 @@ export function createCatalogProviderAcpRuntime<TBackendOptions extends AgentFac
           params.messageBuffer.addMessage(message, 'status');
         },
         sendGenericStatusMessage: (message) => {
-          params.session.sendSessionEvent({ type: 'message', message });
-        },
-        commitTypedProjection: (projection) => {
-          if (!projection.transcriptEvent) return false;
-          params.session.sendSessionEvent(projection.transcriptEvent);
-          return true;
+          transcriptAdmissions.push(params.session.enqueueSessionEventCommitted({
+            type: 'message',
+            message,
+          }));
         },
       });
+      const transcriptAdmissionResults = await Promise.all(transcriptAdmissions);
+      if (transcriptAdmissionResults.some((admission) => !admission.persisted)) {
+        throw new Error('Runtime-auth recovery transcript notice was not durably admitted');
+      }
       if (projectionResult.emitted) {
         rememberRuntimeAuthRecoveryProjection({
           session: params.session,

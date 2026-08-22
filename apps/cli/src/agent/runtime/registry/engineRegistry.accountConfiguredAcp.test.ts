@@ -1,7 +1,7 @@
 import { accountSettingsParse } from '@happier-dev/protocol';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { Credentials } from '@/persistence';
+import type { Credentials, StoredCredentials } from '@/persistence';
 import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
 import { setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import {
@@ -10,11 +10,11 @@ import {
 } from './engineRegistry';
 
 const mocks = vi.hoisted(() => ({
-  readCredentials: vi.fn(),
+  readStoredCredentials: vi.fn(),
 }));
 
 vi.mock('@/persistence', () => ({
-  readCredentials: mocks.readCredentials,
+  readStoredCredentials: mocks.readStoredCredentials,
 }));
 
 function createCredentials(): Credentials {
@@ -42,11 +42,23 @@ function createEmptyRegistry(): ResolvedContributionRegistry {
   };
 }
 
-function setAccountConfiguredAcpBackend(): void {
+function setAccountConfiguredAcpBackend(options: Readonly<{
+  savedSecret?: string;
+}> = {}): void {
   setActiveAccountSettingsSnapshot({
     source: 'network',
     settings: accountSettingsParse({
       schemaVersion: 6,
+      ...(options.savedSecret ? {
+        secrets: [{
+          id: 'secret-acp',
+          name: 'ACP token',
+          kind: 'token',
+          encryptedValue: { _isSecretValue: true, value: options.savedSecret },
+          createdAt: 1,
+          updatedAt: 1,
+        }],
+      } : {}),
       acpCatalogSettingsV1: {
         v: 2,
         backends: [{
@@ -56,7 +68,9 @@ function setAccountConfiguredAcpBackend(): void {
           command: 'custom-acp',
           args: ['--stdio'],
           env: {
-            ACP_TOKEN: { t: 'literal', v: 'token-from-settings' },
+            ACP_TOKEN: options.savedSecret
+              ? { t: 'savedSecret', secretId: 'secret-acp' }
+              : { t: 'literal', v: 'token-from-settings' },
           },
           transportProfile: 'generic',
           capabilities: {
@@ -80,8 +94,8 @@ function setAccountConfiguredAcpBackend(): void {
 describe('engineRegistry account-configured ACP ingestion', () => {
   beforeEach(() => {
     vi.resetModules();
-    mocks.readCredentials.mockReset();
-    mocks.readCredentials.mockResolvedValue(createCredentials());
+    mocks.readStoredCredentials.mockReset();
+    mocks.readStoredCredentials.mockResolvedValue(createCredentials());
     setActiveAccountSettingsSnapshot({
       source: 'none',
       settings: accountSettingsParse({ schemaVersion: 6 }),
@@ -108,6 +122,7 @@ describe('engineRegistry account-configured ACP ingestion', () => {
     expect(resolution?.agent.source).toEqual({ kind: 'configured' });
 
     await expect(resolution?.engineAdapter.runtimeCore.createSessionRuntime({
+      credentials: { token: 'token-only', encryption: null },
       cwd: '/workspace',
     })).resolves.toMatchObject({
       kind: 'hostSessionRuntimePlan',
@@ -135,5 +150,24 @@ describe('engineRegistry account-configured ACP ingestion', () => {
       backendId: 'account-configured-acp',
       agentId: 'acp:account-configured-acp',
     });
+  });
+
+  it('resolves a plaintext Saved Secret launch environment with token-only credentials', async () => {
+    const credentials: StoredCredentials = {
+      token: 'token-only',
+      encryption: null,
+    };
+    mocks.readStoredCredentials.mockResolvedValue(credentials);
+    setAccountConfiguredAcpBackend({ savedSecret: 'plain-runtime-secret' });
+
+    await expect(resolveBackendEngineAdapterResolution('account-configured-acp', {
+      contributes: createEmptyRegistry(),
+    })).resolves.toMatchObject({
+      backendId: 'account-configured-acp',
+      engineAdapter: {
+        runtimeCore: expect.any(Object),
+      },
+    });
+    expect(mocks.readStoredCredentials).toHaveBeenCalled();
   });
 });

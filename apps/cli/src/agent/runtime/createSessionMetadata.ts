@@ -11,6 +11,7 @@ import os from 'node:os';
 import { resolve } from 'node:path';
 
 import {
+    buildSessionWorkspaceLocationV1,
     parseSessionMcpSelectionV1Json,
     type SessionModelSelectionIntentV1,
 } from '@happier-dev/protocol';
@@ -32,7 +33,10 @@ import {
     parseSessionMetadataConfigOptionOverridesJson,
     type SessionMetadataConfigOptionOverrides,
 } from './compat/sessionMetadataOverrides';
-import { resolveRequestedSessionDirectory } from './resolveRequestedSessionDirectory';
+import {
+    resolveRequestedSessionDirectory,
+    SESSION_MACHINE_WORKSPACE_PATH_ENV,
+} from './resolveRequestedSessionDirectory';
 import {
     HAPPIER_SESSION_CONNECTED_SERVICES_BINDINGS_ENV_KEY,
     parseSessionConnectedServicesBindingsJson,
@@ -81,12 +85,14 @@ type LaunchControlEnvKey =
     | 'HAPPIER_SESSION_PROFILE_ID'
     | 'HAPPIER_SESSION_CONFIG_OPTION_OVERRIDES_JSON'
     | 'HAPPIER_SESSION_MCP_SELECTION_JSON'
+    | typeof SESSION_MACHINE_WORKSPACE_PATH_ENV
     | typeof HAPPIER_SESSION_CONNECTED_SERVICES_BINDINGS_ENV_KEY
     | typeof HAPPIER_SESSION_CONNECTED_SERVICE_MATERIALIZATION_IDENTITY_ENV_KEY;
 
 const ONE_SHOT_LAUNCH_CONTROL_ENV_KEYS = [
     'HAPPIER_SESSION_CONFIG_OPTION_OVERRIDES_JSON',
     'HAPPIER_SESSION_MCP_SELECTION_JSON',
+    SESSION_MACHINE_WORKSPACE_PATH_ENV,
     HAPPIER_SESSION_CONNECTED_SERVICES_BINDINGS_ENV_KEY,
     HAPPIER_SESSION_CONNECTED_SERVICE_MATERIALIZATION_IDENTITY_ENV_KEY,
 ] as const satisfies readonly LaunchControlEnvKey[];
@@ -97,6 +103,7 @@ export type SessionLaunchControlMetadata = Readonly<{
     connectedServices: ReturnType<typeof parseSessionConnectedServicesBindingsJson>;
     connectedServiceMaterializationIdentity: ReturnType<typeof parseSessionConnectedServiceMaterializationIdentityJson>;
     sessionConfigOptionOverrides: SessionMetadataConfigOptionOverrides | null;
+    machineWorkspacePath: string | null;
 }>;
 
 export function captureSessionLaunchControlMetadata(params: Readonly<{
@@ -129,6 +136,7 @@ export function captureSessionLaunchControlMetadata(params: Readonly<{
         sessionConfigOptionOverrides: parseSessionMetadataConfigOptionOverridesJson(
             readNonEmpty('HAPPIER_SESSION_CONFIG_OPTION_OVERRIDES_JSON'),
         ),
+        machineWorkspacePath: readNonEmpty(SESSION_MACHINE_WORKSPACE_PATH_ENV),
     });
     for (const key of ONE_SHOT_LAUNCH_CONTROL_ENV_KEYS) {
         delete processEnvironment[key];
@@ -217,8 +225,9 @@ export function createSessionMetadata(opts: CreateSessionMetadataOptions): Sessi
     };
 
     const launchControlMetadata = opts.launchControlMetadata;
+    const sessionPath = resolveRequestedSessionDirectory({ requestedDirectory: opts.directory });
     const metadataBase: Metadata = {
-        path: resolveRequestedSessionDirectory({ requestedDirectory: opts.directory }),
+        path: sessionPath,
         host: os.hostname(),
         version: packageJson.version,
         os: os.platform(),
@@ -236,6 +245,11 @@ export function createSessionMetadata(opts: CreateSessionMetadataOptions): Sessi
         lifecycleState: 'running',
         lifecycleStateSince: Date.now(),
         flavor: opts.flavor,
+        sessionWorkspaceLocationV1: buildSessionWorkspaceLocationV1({
+            machineId: opts.machineId,
+            agentPath: sessionPath,
+            machinePath: launchControlMetadata.machineWorkspacePath ?? sessionPath,
+        }),
         ...(launchControlMetadata.mcpSelection ? { mcpSelectionV1: launchControlMetadata.mcpSelection } : {}),
         ...(launchControlMetadata.connectedServices ? { connectedServices: launchControlMetadata.connectedServices } : {}),
         ...(launchControlMetadata.connectedServiceMaterializationIdentity

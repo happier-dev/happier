@@ -14,6 +14,19 @@ type PushSender = LiveActivityRemoteSenderCandidate & {
   sendToAllDevicesAsync?: (title: string, body: string, data: Record<string, unknown>) => Promise<void>
 }
 
+type ReadyTranscriptSession = Pick<SessionClientPort, 'sessionId'>
+  & Required<Pick<SessionClientPort, 'enqueueSessionEventCommitted'>>
+
+export async function enqueueReadySessionEventCommitted(session: ReadyTranscriptSession): Promise<void> {
+  const admission = await session.enqueueSessionEventCommitted({ type: 'ready' })
+  if (!admission.persisted) {
+    throw Object.assign(
+      new Error('Ready event was not admitted to durable transcript custody'),
+      { code: 'ready_transcript_custody_unavailable' },
+    )
+  }
+}
+
 function resolveReadyNotificationSettingsContext(opts: Readonly<{
   accountSettings?: AccountSettings | null
   settingsSecretsReadKeys?: ReadonlyArray<Uint8Array | null | undefined>
@@ -34,8 +47,8 @@ function resolveReadyNotificationSettingsContext(opts: Readonly<{
   }
 }
 
-export function sendReadyWithPushNotification(opts: {
-  session: Pick<SessionClientPort, 'sessionId' | 'sendSessionEvent'>
+export async function sendReadyWithPushNotification(opts: {
+  session: ReadyTranscriptSession
   pushSender: PushSender
   waitingForCommandLabel: string
   logPrefix: string
@@ -46,8 +59,8 @@ export function sendReadyWithPushNotification(opts: {
   settingsSecretsReadKeys?: ReadonlyArray<Uint8Array | null | undefined>
   loggerDebug?: (message: string, error: unknown) => void
   shouldSendPush?: () => boolean
-}): void {
-  opts.session.sendSessionEvent({ type: 'ready' })
+}): Promise<void> {
+  await enqueueReadySessionEventCommitted(opts.session)
 
   try {
     const currentSettingsContext = resolveReadyNotificationSettingsContext({

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { buildCodexAgentRuntimeDescriptorV1 as buildCodexRuntimeIdentityDescriptorV1 } from '@happier-dev/protocol/agents/runtimeDescriptorContributionsV1';
 
 import {
@@ -7,7 +7,7 @@ import {
 } from './externalSessionSourceCanonicalization';
 
 describe('canonicalizeLinkedExternalSessionSource', () => {
-  it('passes runtime descriptors to provider link identity resolvers and preserves returned metadata updates', async () => {
+  it('rejects remote-session identity rewrites from link identity resolvers', async () => {
     const runtimeDescriptor = {
       v: 1,
       agentId: 'opencode',
@@ -16,7 +16,7 @@ describe('canonicalizeLinkedExternalSessionSource', () => {
         providerSessionId: 'runtime-session',
       },
     } as const;
-    const resolved = await resolveExternalSessionLinkIdentity(
+    await expect(resolveExternalSessionLinkIdentity(
       {
         agentId: 'opencode',
         remoteSessionId: 'legacy-session',
@@ -53,24 +53,18 @@ describe('canonicalizeLinkedExternalSessionSource', () => {
           }),
         }),
       },
-    );
-
-    expect(resolved).toMatchObject({
-      remoteSessionId: 'runtime-session',
-      source: { kind: 'opencodeServer', directory: '/repo' },
-      runtimeDescriptor,
-      vendorMetadata: { opencodeSessionId: 'runtime-session' },
-      externalSessionMetadata: { opencodeSessionId: 'runtime-session' },
-      sessionStateUpdates: [
-        {
-          fieldId: 'identity.runtimeDescriptor',
-          value: runtimeDescriptor,
-        },
-      ],
+    )).rejects.toMatchObject({
+      code: 'source_invalid',
+      operation: 'resolveLinkIdentity',
     });
   });
 
-  it('falls back to resolveLinkIdentity when canonicalizeLinkedSession is unavailable', async () => {
+  it('uses the guarded link-identity fallback when canonicalizeLinkedSession is unavailable', async () => {
+    const resolveLinkIdentity = vi.fn(async () => ({
+      remoteSessionId: 'legacy-thread',
+      source: { kind: 'codexHome' as const, home: 'user' as const },
+      runtimeDescriptor: null,
+    }));
     const canonicalized = await canonicalizeLinkedExternalSessionSource(
       {
         agentId: 'codex',
@@ -82,12 +76,14 @@ describe('canonicalizeLinkedExternalSessionSource', () => {
             remoteSessionId: 'legacy-thread',
             source: { kind: 'codexHome', home: 'user' },
             linkedAtMs: 1,
-            agentRuntimeDescriptorV1: buildCodexRuntimeIdentityDescriptorV1({
-              backendMode: 'appServer',
-              providerSessionId: 'runtime-thread',
-              home: 'connectedService',
-              connectedServiceId: 'svc_1',
-            }),
+            linkData: {
+              runtimeDescriptorV1: buildCodexRuntimeIdentityDescriptorV1({
+                backendMode: 'appServer',
+                providerSessionId: 'runtime-thread',
+                home: 'connectedService',
+                connectedServiceId: 'svc_1',
+              }),
+            },
           },
         },
         remoteSessionId: 'legacy-thread',
@@ -105,21 +101,60 @@ describe('canonicalizeLinkedExternalSessionSource', () => {
             truncated: false,
           }),
           readAfterTranscript: async () => ({ outcome: 'already_current' }),
-          resolveLinkIdentity: async ({ remoteSessionId, source, runtimeDescriptor }) => ({
-            remoteSessionId:
-              typeof runtimeDescriptor?.agent?.providerSessionId === 'string'
-                ? runtimeDescriptor.agent.providerSessionId
-                : remoteSessionId,
-            source,
-            runtimeDescriptor: runtimeDescriptor ?? null,
-          }),
+          resolveLinkIdentity,
         }),
       },
     );
 
-    expect(canonicalized.remoteSessionId).toBe('runtime-thread');
+    expect(canonicalized.remoteSessionId).toBe('legacy-thread');
     expect(canonicalized.source).toEqual({ kind: 'codexHome', home: 'user' });
     expect(canonicalized.runtimeIdentity.sourceTier).toBe('canonical_runtime_descriptor');
     expect(canonicalized.runtimeIdentity.runtimeIdentityPublication.runtimeDescriptor?.providerSessionId).toBe('runtime-thread');
+    expect(resolveLinkIdentity).toHaveBeenCalledWith(expect.objectContaining({
+      remoteSessionId: 'legacy-thread',
+      source: { kind: 'codexHome', home: 'user' },
+      runtimeDescriptor: expect.objectContaining({
+        agent: expect.objectContaining({
+          providerSessionId: 'runtime-thread',
+        }),
+      }),
+    }));
+  });
+
+  it('rejects admitted identity rewrites through the link-identity fallback', async () => {
+    await expect(canonicalizeLinkedExternalSessionSource(
+      {
+        agentId: 'codex',
+        metadata: {},
+        remoteSessionId: 'legacy-thread',
+        source: { kind: 'codexHome', home: 'user' },
+      },
+      {
+        resolveExternalSessionProviderOps: async () => ({
+          validateSource: async ({ source }) => ({ ok: true, source }),
+          listCandidates: async () => ({ candidates: [], nextCursor: null }),
+          pageTranscript: async () => ({
+            items: [],
+            nextCursor: null,
+            tailCursor: null,
+            hasMore: false,
+            truncated: false,
+          }),
+          readAfterTranscript: async () => ({ outcome: 'already_current' }),
+          resolveLinkIdentity: async () => ({
+            remoteSessionId: 'rewritten-thread',
+            source: {
+              kind: 'codexHome',
+              home: 'connectedService',
+              connectedServiceId: 'svc_1',
+            },
+            runtimeDescriptor: null,
+          }),
+        }),
+      },
+    )).rejects.toMatchObject({
+      code: 'source_invalid',
+      operation: 'resolveLinkIdentity',
+    });
   });
 });

@@ -39,17 +39,12 @@ function resolveLocalRepoRoot(projectRoot) {
 }
 
 async function buildLocalRuntimeSnapshot(projectRoot, repoRoot, opts, heldLockValue) {
-  const buildSharedDepsModulePath = resolve(projectRoot, 'scripts', 'buildSharedDeps.mjs');
   const buildModulePath = resolve(projectRoot, 'scripts', 'build.mjs');
-  if (!existsSync(buildSharedDepsModulePath) || !existsSync(buildModulePath)) {
+  if (!existsSync(buildModulePath)) {
     throw new Error(`Cannot build missing CLI runtime snapshot under ${projectRoot}`);
   }
 
-  const [{ main: buildSharedDeps }, { buildCliDist }] = await Promise.all([
-    import(pathToFileURL(buildSharedDepsModulePath).href),
-    import(pathToFileURL(buildModulePath).href),
-  ]);
-  await buildSharedDeps({ skipLock: true });
+  const { buildCliDist } = await import(pathToFileURL(buildModulePath).href);
   const buildEnv = {
     ...(opts.env ?? process.env),
   };
@@ -59,7 +54,7 @@ async function buildLocalRuntimeSnapshot(projectRoot, repoRoot, opts, heldLockVa
   await buildCliDist({
     packageRoot: projectRoot,
     repoRoot,
-    lockPath: opts.lockPath,
+    lockPath: opts.cliDistLockPath ?? opts.lockPath,
     lockTimeoutMs: opts.lockTimeoutMs,
     lockPollIntervalMs: opts.lockPollIntervalMs,
     lockStaleAfterMs: opts.lockStaleAfterMs,
@@ -78,10 +73,22 @@ function resolveWorkspaceBundleLockModulePath(repoRoot, opts = {}) {
 }
 
 function resolveCliSharedDepsBuildLockPath(repoRoot, opts = {}) {
-  return String(opts.lockPath ?? resolve(repoRoot, '.project', 'tmp', 'cli-dist-build.lock'));
+  return String(
+    opts.sharedDepsLockPath
+      ?? opts.lockPath
+      ?? resolve(repoRoot, '.project', 'tmp', 'cli-shared-deps.lock'),
+  );
 }
 
-async function withOptionalCliSharedDepsBuildLock(repoRoot, fn, opts = {}) {
+function resolveCliDistBuildLockPath(repoRoot, opts = {}) {
+  return String(
+    opts.cliDistLockPath
+      ?? opts.lockPath
+      ?? resolve(repoRoot, '.project', 'tmp', 'cli-dist-build.lock'),
+  );
+}
+
+async function withOptionalWorkspaceBuildLock(repoRoot, fn, opts, resolveLockPath) {
   const lockModulePath = resolveWorkspaceBundleLockModulePath(repoRoot, opts);
   if (!lockModulePath) return await fn();
 
@@ -90,7 +97,7 @@ async function withOptionalCliSharedDepsBuildLock(repoRoot, fn, opts = {}) {
 
   const lockTimeoutMs = opts.lockTimeoutMs ?? 240_000;
   return await mod.withWorkspaceBundleLock(fn, {
-    lockPath: resolveCliSharedDepsBuildLockPath(repoRoot, opts),
+    lockPath: resolveLockPath(repoRoot, opts),
     heldLockValue: String(
       opts.heldLockValue
         ?? opts.heldLockPath
@@ -101,6 +108,36 @@ async function withOptionalCliSharedDepsBuildLock(repoRoot, fn, opts = {}) {
     pollIntervalMs: opts.lockPollIntervalMs ?? 250,
     staleAfterMs: opts.lockStaleAfterMs ?? lockTimeoutMs,
   });
+}
+
+async function withOptionalCliSharedDepsBuildLock(repoRoot, fn, opts = {}) {
+  return await withOptionalWorkspaceBuildLock(
+    repoRoot,
+    fn,
+    opts,
+    resolveCliSharedDepsBuildLockPath,
+  );
+}
+
+async function withOptionalCliDistBuildLock(repoRoot, fn, opts = {}) {
+  return await withOptionalWorkspaceBuildLock(
+    repoRoot,
+    fn,
+    opts,
+    resolveCliDistBuildLockPath,
+  );
+}
+
+async function prepareLocalSharedDependencies(projectRoot, repoRoot, opts) {
+  const buildSharedDepsModulePath = resolve(projectRoot, 'scripts', 'buildSharedDeps.mjs');
+  if (!existsSync(buildSharedDepsModulePath)) {
+    throw new Error(`Cannot build missing CLI shared dependencies under ${projectRoot}`);
+  }
+
+  await withOptionalCliSharedDepsBuildLock(repoRoot, async () => {
+    const { main: buildSharedDeps } = await import(pathToFileURL(buildSharedDepsModulePath).href);
+    await buildSharedDeps({ skipLock: true });
+  }, opts);
 }
 
 export async function maybeRefreshLocalBundledWorkspacePackages(projectRoot, opts = {}) {
@@ -121,7 +158,7 @@ export async function maybeRefreshLocalBundledWorkspacePackages(projectRoot, opt
       replaceExisting: false,
     });
   }, {
-    lockPath: opts.lockPath,
+    lockPath: opts.sharedDepsLockPath ?? opts.lockPath,
     lockModulePath: opts.lockModulePath,
     lockTimeoutMs: opts.lockTimeoutMs,
     lockPollIntervalMs: opts.lockPollIntervalMs,
@@ -140,7 +177,9 @@ export async function prepareRuntimeEntrypoint(projectRoot, relativePath, opts =
   const readyEntrypoint = resolveValidRuntimeEntrypoint(physicalProjectRoot, relativePath);
   if (readyEntrypoint) return readyEntrypoint;
 
-  return await withOptionalCliSharedDepsBuildLock(repoRoot, async ({ heldLockValue } = {}) => {
+  await prepareLocalSharedDependencies(physicalProjectRoot, repoRoot, opts);
+
+  return await withOptionalCliDistBuildLock(repoRoot, async ({ heldLockValue } = {}) => {
     const concurrentlyBuiltEntrypoint = resolveValidRuntimeEntrypoint(physicalProjectRoot, relativePath);
     if (concurrentlyBuiltEntrypoint) return concurrentlyBuiltEntrypoint;
 
@@ -151,7 +190,7 @@ export async function prepareRuntimeEntrypoint(projectRoot, relativePath, opts =
     }
     return builtEntrypoint;
   }, {
-    lockPath: opts.lockPath,
+    lockPath: opts.cliDistLockPath ?? opts.lockPath,
     lockModulePath: opts.lockModulePath,
     lockTimeoutMs: opts.lockTimeoutMs,
     lockPollIntervalMs: opts.lockPollIntervalMs,

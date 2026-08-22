@@ -213,6 +213,7 @@ describe('engineRegistry (auggie runtimeCore)', () => {
           directory,
           metadata: createTestMetadata({ path: directory }),
           machineId: 'machine-auggie-native',
+          agentTargetKey: 'backend:auggie',
           session,
           transcriptSession: session,
           messageBuffer: new MessageBuffer(),
@@ -226,6 +227,15 @@ describe('engineRegistry (auggie runtimeCore)', () => {
           getPermissionMode: () => 'default',
           setThinking: () => undefined,
           memoryRecallGuidanceEnabled: false,
+          runnerProcessIdentity: null,
+          startupModelSelection: null,
+          runWithTerminalModelSelection: async (effect) => ({
+            status: 'completed',
+            value: await effect(null, async (localEffect) => ({
+              status: 'completed',
+              value: await localEffect(),
+            })),
+          }),
         } satisfies HostSessionRuntimeFactoryParams;
         const created = await plan.config.createSessionRuntime!(runtimeParams);
 

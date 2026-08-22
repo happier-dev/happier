@@ -91,8 +91,29 @@ export type ExternalSessionOperationAcquireResult =
     }>;
 
 export type ExternalSessionOperationExclusion = Readonly<{
-    acquire(request: ExternalSessionOperationRequest): Promise<ExternalSessionOperationAcquireResult>;
+    acquire(
+        request: ExternalSessionOperationRequest,
+        input?: Readonly<{ signal?: AbortSignal }>,
+    ): Promise<ExternalSessionOperationAcquireResult>;
 }>;
+
+export type ExternalSessionOperationExclusionOwner =
+    ExternalSessionOperationExclusion & Readonly<{
+        inspectPassiveRepairClaim(input: Readonly<{
+            sessionId: string;
+            operationClaimId: string;
+        }>): Promise<'active' | 'inactive'>;
+        withPassiveRepairClaimBarrier<TResult>(
+            input: Readonly<{
+                sessionId: string;
+                operationClaimId: string;
+            }>,
+            effect: () => Promise<TResult>,
+        ): Promise<
+            | Readonly<{ status: 'active' }>
+            | Readonly<{ status: 'executed'; value: TResult }>
+        >;
+    }>;
 
 export const EXTERNAL_SESSION_OPERATION_CLAIM_LOST_CODE =
     'external_session_operation_claim_lost' as const;
@@ -305,15 +326,71 @@ function resolveClaimPaths(activeServerDir: string, sessionId: string) {
 
 async function withClaimMutationLock<TResult>(
     mutationLockPath: string,
+    acquisitionTimeoutMs: number,
     effect: () => Promise<TResult>,
+    signal?: AbortSignal,
 ): Promise<TResult> {
-    return await withJsonOwnerFileLock({
-        lockPath: mutationLockPath,
-        timeoutMs: 5_000,
-        staleAfterMs: 30_000,
-        pollIntervalMs: 5,
-        errorCode: 'external_session_operation_claim_lock_timeout',
-    }, effect);
+    const contentionTimeoutCode =
+        'external_session_operation_claim_lock_timeout';
+    const startedAtMs = Date.now();
+    for (;;) {
+        if (signal?.aborted) {
+            const error = new Error(
+                'External session operation claim acquisition was aborted',
+            );
+            error.name = 'AbortError';
+            throw error;
+        }
+        const remainingMs = acquisitionTimeoutMs - (Date.now() - startedAtMs);
+        if (remainingMs <= 0) throw new Error(contentionTimeoutCode);
+        let outcome:
+            | Readonly<{ status: 'returned'; value: TResult }>
+            | Readonly<{ status: 'threw'; error: unknown }>;
+        try {
+            outcome = await withJsonOwnerFileLock({
+                lockPath: mutationLockPath,
+                timeoutMs: Math.min(signal ? 100 : 5_000, remainingMs),
+                staleAfterMs: 30_000,
+                pollIntervalMs: 5,
+                errorCode: contentionTimeoutCode,
+            }, async () => {
+                try {
+                    if (signal?.aborted) {
+                        const error = new Error(
+                            'External session operation claim acquisition was aborted',
+                        );
+                        error.name = 'AbortError';
+                        throw error;
+                    }
+                    return Object.freeze({
+                        status: 'returned' as const,
+                        value: await effect(),
+                    });
+                } catch (error) {
+                    return Object.freeze({
+                        status: 'threw' as const,
+                        error,
+                    });
+                }
+            });
+        } catch (error) {
+            if (
+                error instanceof Error
+                && error.message === contentionTimeoutCode
+            ) {
+                // The barrier can legitimately cover remote projection and
+                // receipt convergence. Retry bounded filesystem attempts only
+                // within the owning operation's finite acquisition budget.
+                if (Date.now() - startedAtMs >= acquisitionTimeoutMs) {
+                    throw error;
+                }
+                continue;
+            }
+            throw error;
+        }
+        if (outcome.status === 'threw') throw outcome.error;
+        return outcome.value;
+    }
 }
 
 async function readClaim(filePath: string): Promise<ExternalSessionOperationClaimRecord | null> {
@@ -528,7 +605,8 @@ export function createExternalSessionOperationExclusion(input: Readonly<{
     nowMs?: () => number;
     ttlMs?: number;
     watchClaimChanges?: typeof watch;
-}>): ExternalSessionOperationExclusion {
+    claimMutationLockAcquisitionTimeoutMs?: number;
+}>): ExternalSessionOperationExclusionOwner {
     const activeServerDir = readRequiredString(input.activeServerDir, 'activeServerDir');
     const ownerId = readRequiredString(input.ownerId, 'ownerId');
     const ownerProcess = normalizeOwnerProcess(input.ownerProcess ?? {
@@ -543,9 +621,63 @@ export function createExternalSessionOperationExclusion(input: Readonly<{
     const nowMs = input.nowMs ?? Date.now;
     const watchClaimChanges = input.watchClaimChanges ?? watch;
     const ttlMs = input.ttlMs ?? 60_000;
+    const claimMutationLockAcquisitionTimeoutMs = Math.trunc(
+        input.claimMutationLockAcquisitionTimeoutMs ?? 5_000,
+    );
     if (!Number.isFinite(ttlMs) || ttlMs <= 0) {
         throw new Error('External session operation ttlMs must be positive');
     }
+    if (
+        !Number.isFinite(claimMutationLockAcquisitionTimeoutMs)
+        || claimMutationLockAcquisitionTimeoutMs <= 0
+    ) {
+        throw new Error(
+            'External session operation claim mutation lock acquisition timeout must be positive',
+        );
+    }
+
+    const inspectClaimOwnerLiveness = async (
+        claim: ExternalSessionOperationClaimRecord,
+    ): Promise<ExternalSessionOperationOwnerProcessLiveness> => {
+        if (!claim.ownerProcess) return 'unknown';
+        return sameOwnerProcess(claim.ownerProcess, ownerProcess)
+            ? 'verified_running'
+            : await inspectOwnerProcess(claim.ownerProcess);
+    };
+
+    const inspectPassiveRepairClaimUnderLock = async (rawInput: Readonly<{
+        sessionId: string;
+        operationClaimId: string;
+    }>): Promise<'active' | 'inactive'> => {
+        const sessionId = readRequiredString(rawInput.sessionId, 'sessionId');
+        const operationClaimId = readRequiredString(
+            rawInput.operationClaimId,
+            'operationClaimId',
+        );
+        const paths = resolveClaimPaths(activeServerDir, sessionId);
+        const active = await readClaim(paths.claimFilePath);
+        if (!active) {
+            try {
+                await readFile(paths.claimFilePath, 'utf8');
+            } catch (error) {
+                if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') {
+                    return 'inactive';
+                }
+            }
+            throw new Error(
+                'external_session_operation_repair_claim_unreadable',
+            );
+        }
+        if (active.expiresAtMs <= nowMs()) return 'inactive';
+        const ownerLiveness = await inspectClaimOwnerLiveness(active);
+        if (ownerLiveness === 'verified_stopped') return 'inactive';
+        if (active.claimId !== operationClaimId) {
+            throw new Error(
+                'external_session_operation_repair_claim_conflict',
+            );
+        }
+        return 'active';
+    };
 
     const buildClaim = (
         record: ExternalSessionOperationClaimRecord,
@@ -553,7 +685,7 @@ export function createExternalSessionOperationExclusion(input: Readonly<{
         record,
         async renew() {
             const paths = resolveClaimPaths(activeServerDir, record.request.sessionId);
-            return await withClaimMutationLock(paths.mutationLockPath, async () => {
+            return await withClaimMutationLock(paths.mutationLockPath, claimMutationLockAcquisitionTimeoutMs, async () => {
                 const current = await readClaim(paths.claimFilePath);
                 if (
                     !current
@@ -578,7 +710,7 @@ export function createExternalSessionOperationExclusion(input: Readonly<{
         },
         async release() {
             const paths = resolveClaimPaths(activeServerDir, record.request.sessionId);
-            await withClaimMutationLock(paths.mutationLockPath, async () => {
+            await withClaimMutationLock(paths.mutationLockPath, claimMutationLockAcquisitionTimeoutMs, async () => {
                 const current = await readClaim(paths.claimFilePath);
                 if (!current || current.claimId !== record.claimId || current.ownerId !== ownerId) return;
                 const releasedDirectory = `${paths.claimDirectory}.released-${record.claimId}`;
@@ -594,20 +726,43 @@ export function createExternalSessionOperationExclusion(input: Readonly<{
     });
 
     return Object.freeze({
-        async acquire(rawRequest) {
+        async inspectPassiveRepairClaim(rawInput) {
+            const sessionId = readRequiredString(rawInput.sessionId, 'sessionId');
+            const paths = resolveClaimPaths(activeServerDir, sessionId);
+            await mkdir(paths.rootDirectory, { recursive: true, mode: 0o700 });
+            return await withClaimMutationLock(
+                paths.mutationLockPath,
+                claimMutationLockAcquisitionTimeoutMs,
+                async () => await inspectPassiveRepairClaimUnderLock(rawInput),
+            );
+        },
+        async withPassiveRepairClaimBarrier(rawInput, effect) {
+            const sessionId = readRequiredString(rawInput.sessionId, 'sessionId');
+            const paths = resolveClaimPaths(activeServerDir, sessionId);
+            await mkdir(paths.rootDirectory, { recursive: true, mode: 0o700 });
+            return await withClaimMutationLock(paths.mutationLockPath, claimMutationLockAcquisitionTimeoutMs, async () => {
+                if (
+                    await inspectPassiveRepairClaimUnderLock(rawInput)
+                    === 'active'
+                ) {
+                    return Object.freeze({ status: 'active' as const });
+                }
+                return Object.freeze({
+                    status: 'executed' as const,
+                    value: await effect(),
+                });
+            });
+        },
+        async acquire(rawRequest, acquireInput = {}) {
             const request = normalizeRequest(rawRequest);
             const paths = resolveClaimPaths(activeServerDir, request.sessionId);
             await mkdir(paths.rootDirectory, { recursive: true, mode: 0o700 });
-            return await withClaimMutationLock(paths.mutationLockPath, async () => {
+            return await withClaimMutationLock(paths.mutationLockPath, claimMutationLockAcquisitionTimeoutMs, async () => {
                 for (let attempt = 0; attempt < 3; attempt += 1) {
                     const active = await readClaim(paths.claimFilePath);
                     const observedAtMs = nowMs();
                     if (active && active.expiresAtMs > observedAtMs) {
-                        const ownerLiveness = active.ownerProcess
-                            ? sameOwnerProcess(active.ownerProcess, ownerProcess)
-                                ? 'verified_running'
-                                : await inspectOwnerProcess(active.ownerProcess)
-                            : 'unknown';
+                        const ownerLiveness = await inspectClaimOwnerLiveness(active);
                         if (ownerLiveness !== 'verified_stopped') {
                             if (serializeSemanticRequest(active.request) === serializeSemanticRequest(request)) {
                                 return Object.freeze({
@@ -687,7 +842,7 @@ export function createExternalSessionOperationExclusion(input: Readonly<{
                         active,
                     })
                     : Object.freeze({ status: 'conflict', reason: 'claim_unreadable', active: null });
-            });
+            }, acquireInput.signal);
         },
     });
 }

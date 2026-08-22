@@ -1,9 +1,10 @@
 import {
   SessionSystemRecordNamespaceSchema,
   getSessionSystemRecordPayloadSchema,
+  type SessionSystemRecordKind,
   type SessionSystemRecordContent,
+  type SessionSystemRecordNamespace,
 } from '@happier-dev/protocol';
-import type { AgentSessionHostServices } from '@happier-dev/plugin-sdk/agent-runtime';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 
 import type { SessionClientPort } from '@/api/session/sessionClientPort';
@@ -14,7 +15,27 @@ import {
   type SessionStoredContentEncryptionMode,
 } from '@/session/transport/encryption/sessionEncryptionContext';
 
-type SessionSystemRecordsService = AgentSessionHostServices['systemRecords'];
+/**
+ * Private host transport retained for the existing Claude workflow bridge.
+ * It is intentionally not part of the SDK's author-facing session services.
+ */
+type SessionSystemRecordsService = Readonly<{
+  write(request: Readonly<{
+    namespace: SessionSystemRecordNamespace;
+    kind: SessionSystemRecordKind;
+    localId: string;
+    payload: JsonValue;
+  }>): Promise<void>;
+  read(request: Readonly<{
+    namespace: SessionSystemRecordNamespace;
+    localId: string;
+  }>): Promise<Readonly<{
+    namespace: SessionSystemRecordNamespace;
+    kind: SessionSystemRecordKind;
+    localId: string;
+    payload: JsonValue;
+  }> | null>;
+}>;
 
 type StoredContentContext = Readonly<{
   mode: SessionStoredContentEncryptionMode;
@@ -61,8 +82,14 @@ function sealPayload(context: StoredContentContext, payload: JsonValue): Session
 }
 
 function openPayload(context: StoredContentContext, content: SessionSystemRecordContent): unknown {
-  if (content.t === 'plain') {
+  if (context.mode === 'plain') {
+    if (content.t !== 'plain') {
+      throw new Error('Session system record content did not match the Session encryption mode');
+    }
     return content.v;
+  }
+  if (content.t !== 'encrypted') {
+    throw new Error('Session system record content did not match the Session encryption mode');
   }
   if (!context.ctx) {
     throw new Error('Missing session encryption context for encrypted system record');

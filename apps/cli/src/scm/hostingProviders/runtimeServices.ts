@@ -1,8 +1,13 @@
-import type { ManagedExecutableRef } from '@happier-dev/protocol';
+import {
+    ConnectedAccountHttpHeadersRequestSchema,
+    ScmHostingProviderRefSchema,
+    type ManagedExecutableRef,
+} from '@happier-dev/protocol';
 import type {
-    ScmHostingProviderRuntimeCommandResult,
-    ScmHostingProviderRuntimeServices,
-} from '@happier-dev/plugin-sdk/experimental/scm';
+    HostingProviderRuntimeCommandResult as ScmHostingProviderRuntimeCommandResult,
+    HostingProviderRuntimeServices as ScmHostingProviderRuntimeServices,
+} from '@happier-dev/plugin-sdk/scm/hosting';
+import { z } from 'zod';
 import {
     createScmHostingProviderRegistry,
     type ResolvedScmHostingProviderRegistry,
@@ -26,6 +31,7 @@ import type {
     ResolvedScmHostingProviderContribution,
 } from '@/plugins/projection/registry/types';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
+import { clonePluginPlainData } from '@/plugins/runtime/plainData';
 import { readHostingProviderExecutionAuthority } from './executionAuthority';
 
 type ScmHostingProviderRuntimeRegistryInput = Readonly<{
@@ -59,6 +65,83 @@ type ScmHostingProviderRuntimeTokenMaterializationRequest = Parameters<
 type ScmHostingProviderRuntimeBasicAuthMaterializationRequest = Parameters<
     NonNullable<ScmHostingProviderRuntimeServices['resolveScmHostingBasicAuthMaterialization']>
 >[0];
+
+type ScmHostingProviderRuntimeMaterializationRequest =
+    | ScmHostingProviderRuntimeTokenMaterializationRequest
+    | ScmHostingProviderRuntimeBasicAuthMaterializationRequest;
+
+const ScmHostingProviderRuntimeMaterializationRequestBaseSchema = z.object({
+    providerId: z.string().min(1),
+    host: z.string().min(1),
+    provider: ScmHostingProviderRefSchema,
+    profileId: z.string().nullable().optional(),
+}).strict();
+
+const ScmHostingProviderRuntimeMaterializationRequestSchema = z.discriminatedUnion('kind', [
+    ScmHostingProviderRuntimeMaterializationRequestBaseSchema.extend({
+        kind: z.literal('scm_hosting_token'),
+    }),
+    ScmHostingProviderRuntimeMaterializationRequestBaseSchema.extend({
+        kind: z.literal('scm_hosting_basic_auth'),
+    }),
+]);
+
+function invalidHostingMaterializationPlainData(label: string): Error {
+    return new Error(`${label} must contain strict plain data`);
+}
+
+function snapshotHostingPlainData<T>(value: T, label: string): T {
+    try {
+        return clonePluginPlainData(value, {
+            path: label,
+            invalid: () => invalidHostingMaterializationPlainData(label),
+        });
+    } catch {
+        throw invalidHostingMaterializationPlainData(label);
+    }
+}
+
+function normalizeHostingMaterializationRequest(
+    request: ScmHostingProviderRuntimeMaterializationRequest,
+    expectedKind: ScmHostingProviderRuntimeMaterializationRequest['kind'],
+): ScmHostingProviderRuntimeMaterializationRequest {
+    const snapshot = snapshotHostingPlainData(
+        request,
+        'SCM hosting materialization request',
+    );
+    const parsed = ScmHostingProviderRuntimeMaterializationRequestSchema.safeParse(snapshot);
+    if (!parsed.success || parsed.data.kind !== expectedKind) {
+        throw invalidHostingMaterializationPlainData('SCM hosting materialization request');
+    }
+    return snapshot;
+}
+
+function isStringRecord(value: unknown): value is Readonly<Record<string, string>> {
+    return value !== null
+        && typeof value === 'object'
+        && !Array.isArray(value)
+        && Object.values(value).every((entry) => typeof entry === 'string');
+}
+
+function snapshotHttpHeadersMaterialization(
+    value: unknown,
+): Readonly<{ kind: 'httpHeaders'; headers: Readonly<Record<string, string>> }> | null {
+    const label = 'SCM hosting materialization result';
+    const snapshot = snapshotHostingPlainData(value, label);
+    if (snapshot === null || typeof snapshot !== 'object' || Array.isArray(snapshot)) {
+        throw invalidHostingMaterializationPlainData(label);
+    }
+    const record = snapshot as Readonly<Record<string, unknown>>;
+    if (record.kind !== 'httpHeaders') return null;
+    const headers = record.headers;
+    if (!isStringRecord(headers)) {
+        throw invalidHostingMaterializationPlainData(label);
+    }
+    return Object.freeze({
+        kind: 'httpHeaders',
+        headers,
+    });
+}
 
 function assertHostingOperationCurrent(signal?: AbortSignal): void {
     if (signal?.aborted) throw new Error('SCM hosting operation was aborted');
@@ -124,6 +207,14 @@ function resolveHttpsOrigin(host: string): string | null {
     } catch {
         return null;
     }
+}
+
+function createScmConnectedAccountMaterializationRequest(origin: string) {
+    return ConnectedAccountHttpHeadersRequestSchema.parse({
+        kind: 'httpHeaders',
+        origin,
+        headerNames: ['authorization'],
+    });
 }
 
 function readHttpHeader(
@@ -243,16 +334,20 @@ export function createHostScmHostingProviderRuntimeServices(
             request: ScmHostingProviderRuntimeTokenMaterializationRequest,
             options,
         ) {
-            const authority = captureHostingAuthAuthority(request.providerId);
+            const requestSnapshot = normalizeHostingMaterializationRequest(
+                request,
+                'scm_hosting_token',
+            );
+            const authority = captureHostingAuthAuthority(requestSnapshot.providerId);
             assertHostingAuthCurrent(authority, options?.signal);
             const authorization = resolveProviderPurposeAuthorization(
                 input,
-                request.providerId,
+                requestSnapshot.providerId,
             );
             if (!authorization) return { kind: 'missing', reason: 'unsupported_provider' };
-            const origin = resolveHttpsOrigin(request.host);
+            const origin = resolveHttpsOrigin(requestSnapshot.host);
             if (!origin) return { kind: 'missing', reason: 'unsupported_host' };
-            if (request.profileId?.trim()) {
+            if (requestSnapshot.profileId?.trim()) {
                 return { kind: 'missing', reason: 'credential_unavailable' };
             }
             const owner =
@@ -261,18 +356,20 @@ export function createHostScmHostingProviderRuntimeServices(
             const signal = options?.signal ?? new AbortController().signal;
             const result = await owner.materialize({
                 ...authorization,
-                request: {
-                    kind: 'httpHeaders',
-                    origin,
-                    headerNames: ['Authorization'],
-                },
+                request: createScmConnectedAccountMaterializationRequest(origin),
                 signal,
             });
             assertHostingAuthCurrent(authority, options?.signal);
-            if (result.kind !== 'httpHeaders') {
+            let resultSnapshot: ReturnType<typeof snapshotHttpHeadersMaterialization>;
+            try {
+                resultSnapshot = snapshotHttpHeadersMaterialization(result);
+            } finally {
+                assertHostingAuthCurrent(authority, options?.signal);
+            }
+            if (!resultSnapshot) {
                 return { kind: 'missing', reason: 'unsupported_materialization' };
             }
-            const token = readBearerToken(result.headers);
+            const token = readBearerToken(resultSnapshot.headers);
             if (!token) return { kind: 'missing', reason: 'credential_unavailable' };
             return {
                 kind: 'available',
@@ -283,16 +380,20 @@ export function createHostScmHostingProviderRuntimeServices(
             request: ScmHostingProviderRuntimeBasicAuthMaterializationRequest,
             options,
         ) {
-            const authority = captureHostingAuthAuthority(request.providerId);
+            const requestSnapshot = normalizeHostingMaterializationRequest(
+                request,
+                'scm_hosting_basic_auth',
+            );
+            const authority = captureHostingAuthAuthority(requestSnapshot.providerId);
             assertHostingAuthCurrent(authority, options?.signal);
             const authorization = resolveProviderPurposeAuthorization(
                 input,
-                request.providerId,
+                requestSnapshot.providerId,
             );
             if (!authorization) return { kind: 'missing', reason: 'unsupported_provider' };
-            const origin = resolveHttpsOrigin(request.host);
+            const origin = resolveHttpsOrigin(requestSnapshot.host);
             if (!origin) return { kind: 'missing', reason: 'unsupported_host' };
-            if (request.profileId?.trim()) {
+            if (requestSnapshot.profileId?.trim()) {
                 return { kind: 'missing', reason: 'credential_unavailable' };
             }
             const owner =
@@ -301,18 +402,20 @@ export function createHostScmHostingProviderRuntimeServices(
             const signal = options?.signal ?? new AbortController().signal;
             const result = await owner.materialize({
                 ...authorization,
-                request: {
-                    kind: 'httpHeaders',
-                    origin,
-                    headerNames: ['Authorization'],
-                },
+                request: createScmConnectedAccountMaterializationRequest(origin),
                 signal,
             });
             assertHostingAuthCurrent(authority, options?.signal);
-            if (result.kind !== 'httpHeaders') {
+            let resultSnapshot: ReturnType<typeof snapshotHttpHeadersMaterialization>;
+            try {
+                resultSnapshot = snapshotHttpHeadersMaterialization(result);
+            } finally {
+                assertHostingAuthCurrent(authority, options?.signal);
+            }
+            if (!resultSnapshot) {
                 return { kind: 'missing', reason: 'unsupported_materialization' };
             }
-            const credentials = readBasicCredentials(result.headers);
+            const credentials = readBasicCredentials(resultSnapshot.headers);
             if (!credentials) {
                 return { kind: 'missing', reason: 'credential_unavailable' };
             }

@@ -28,6 +28,7 @@ describe('applyExecutionRunAction review host action', () => {
     const runs = new Map([[run.runId, run]]);
     const catalog = buildExecutionRunProfileCatalog([{
       pluginId: 'acme.review',
+      immutableGenerationId: 'immutable-review',
       definition: {
         id: 'review', intent: 'review', title: 'Review', promptAsset: 'review-prompt', compatibleAgents: ['claude'],
         defaults: { retention: 'ephemeral', runClass: 'bounded', io: 'streaming' },
@@ -43,7 +44,6 @@ describe('applyExecutionRunAction review host action', () => {
       controllers: new Map(),
       voiceAgentManager: {} as VoiceAgentManager,
       startRun: async () => ({ runId: 'unused', callId: 'unused', sidechainId: 'unused' }),
-      sendAcp: () => undefined,
       parentProvider: 'claude',
       profileCatalog: catalog,
       materializeReviewHostAction: async (read) => {
@@ -59,6 +59,8 @@ describe('applyExecutionRunAction review host action', () => {
       agentId: 'claude',
       proposals: [expect.objectContaining({ findingId: 'finding-1' })],
     }));
+    runs.set(run.runId, { ...run, sessionId: null });
+    expect(captured.readCurrent?.()).toBeNull();
     runs.set(run.runId, { ...run, status: 'cancelled' });
     expect(captured.readCurrent?.()).toBeNull();
   });
@@ -76,6 +78,7 @@ describe('applyExecutionRunAction review host action', () => {
     };
     const catalog = buildExecutionRunProfileCatalog([{
       pluginId: 'acme.review',
+      immutableGenerationId: 'immutable-review',
       definition: {
         id: 'review', intent: 'review', title: 'Review', promptAsset: 'review-prompt', compatibleAgents: ['claude'],
         defaults: { retention: 'ephemeral', runClass: 'bounded', io: 'streaming' },
@@ -90,7 +93,6 @@ describe('applyExecutionRunAction review host action', () => {
       controllers: new Map(),
       voiceAgentManager: {} as VoiceAgentManager,
       startRun: async () => ({ runId: 'unused', callId: 'unused', sidechainId: 'unused' }),
-      sendAcp: () => undefined,
       parentProvider: 'claude',
       profileCatalog: catalog,
       materializeReviewHostAction: async (read) => read()
@@ -122,6 +124,7 @@ describe('applyExecutionRunAction review host action', () => {
     };
     const catalog = buildExecutionRunProfileCatalog([{
       pluginId: 'acme.review',
+      immutableGenerationId: 'immutable-review',
       definition: {
         id: 'review', intent: 'review', title: 'Review', promptAsset: 'review-prompt', compatibleAgents: ['codex'],
         defaults: { retention: 'ephemeral', runClass: 'bounded', io: 'streaming' },
@@ -136,7 +139,6 @@ describe('applyExecutionRunAction review host action', () => {
       controllers: new Map(),
       voiceAgentManager: {} as VoiceAgentManager,
       startRun: async () => ({ runId: 'unused', callId: 'unused', sidechainId: 'unused' }),
-      sendAcp: () => undefined,
       parentProvider: 'claude',
       profileCatalog: catalog,
       materializeReviewHostAction: async (read) => read()
@@ -154,6 +156,7 @@ describe('applyExecutionRunAction review host action', () => {
     const run = succeededRun();
     const catalog = buildExecutionRunProfileCatalog([{
       pluginId: 'acme.review',
+      immutableGenerationId: 'immutable-review',
       definition: {
         id: 'review', intent: 'review', title: 'Review', promptAsset: 'review-prompt', compatibleAgents: ['claude'],
         defaults: { retention: 'ephemeral', runClass: 'bounded', io: 'streaming' },
@@ -168,7 +171,6 @@ describe('applyExecutionRunAction review host action', () => {
       controllers: new Map(),
       voiceAgentManager: {} as VoiceAgentManager,
       startRun: async () => ({ runId: 'unused', callId: 'unused', sidechainId: 'unused' }),
-      sendAcp: () => undefined,
       parentProvider: 'claude',
       profileCatalog: catalog,
       materializeReviewHostAction: async () => {

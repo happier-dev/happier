@@ -7,27 +7,33 @@ import {
   type McpDetectedProviderV1,
 } from '@happier-dev/protocol';
 import type {
-  McpDiscoveryProviderReturnV1,
-  McpResolveForSessionInputV1,
-  McpServerSpecV1,
-} from '@happier-dev/plugin-sdk/experimental/mcp';
+  McpDiscoveredEndpoint as PluginMcpDiscoveredEndpoint,
+  McpDiscoveryRequest as PluginMcpDiscoveryRequest,
+} from '@happier-dev/plugin-sdk/mcp';
 
 import { acquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
-import { assertMcpRuntimeRegistrationSecretFree } from '@/plugins/runtime/api/mcpSafety';
+import type { ResolvedMcpEndpointDiscoveryResult } from '@/mcp/runtimeTypes';
 
-export type PluginMcpDiscoveryProviderEntry = Readonly<{
+export type PluginMcpEndpointDiscoveryResult = ResolvedMcpEndpointDiscoveryResult;
+
+export type PluginMcpDiscoverySourceEntry = Readonly<{
   pluginId: string;
-  provider?: McpDetectedProviderV1;
+  /**
+   * The Agent that owns this discovery source. Detection never derives it from
+   * the contribution's local id: identity comes from the declaration, so an
+   * undeclared source is reported as unresolvable instead of borrowing one.
+   */
+  provider: McpDetectedProviderV1;
   registration: Readonly<{
     id: string;
     discover(
-      input?: McpResolveForSessionInputV1,
-    ): Promise<McpDiscoveryProviderReturnV1> | McpDiscoveryProviderReturnV1;
+      input: PluginMcpDiscoveryRequest,
+    ): Promise<PluginMcpEndpointDiscoveryResult> | PluginMcpEndpointDiscoveryResult;
   }>;
   discover?: (
-    input: McpResolveForSessionInputV1,
+    input: PluginMcpDiscoveryRequest,
     signal: AbortSignal,
-  ) => Promise<McpDiscoveryProviderReturnV1>;
+  ) => Promise<PluginMcpEndpointDiscoveryResult>;
 }>;
 
 export type DetectProviderMcpServersResult = Readonly<{
@@ -35,53 +41,67 @@ export type DetectProviderMcpServersResult = Readonly<{
   warnings: ReadonlyArray<DaemonMcpServersDetectWarningV1>;
 }>;
 
-type McpStdioExecutableLaunch =
-  Extract<McpServerSpecV1['transport'], { kind: 'stdio' }>['launch'];
-
-function normalizeProvidersFilter(input: unknown): ReadonlySet<McpDetectedProviderV1> | null {
-  if (!Array.isArray(input) || input.length === 0) return null;
+/**
+ * Normalize the requested Agent filter.
+ *
+ * An empty request means "every Agent". A request that named Agents but whose
+ * every entry was unusable keeps an empty filter — never `null` — so a
+ * malformed request cannot silently widen into an unfiltered scan, and each
+ * dropped entry is reported.
+ */
+function normalizeProvidersFilter(input: unknown): Readonly<{
+  providers: ReadonlySet<McpDetectedProviderV1> | null;
+  warnings: readonly DaemonMcpServersDetectWarningV1[];
+}> {
+  if (!Array.isArray(input) || input.length === 0) {
+    return Object.freeze({ providers: null, warnings: Object.freeze([]) });
+  }
   const out = new Set<McpDetectedProviderV1>();
+  const warnings: DaemonMcpServersDetectWarningV1[] = [];
   for (const entry of input) {
     const parsed = McpDetectedProviderV1Schema.safeParse(entry);
-    if (parsed.success) out.add(parsed.data);
+    if (parsed.success) {
+      out.add(parsed.data);
+      continue;
+    }
+    warnings.push(Object.freeze({
+      code: 'unsupported' as const,
+      detail: 'MCP detection was asked for an unresolvable Agent id',
+    }));
   }
-  return out.size > 0 ? out : null;
+  return Object.freeze({ providers: out, warnings: Object.freeze(warnings) });
 }
 
-function readProviderFromDiscoveryId(id: string): McpDetectedProviderV1 | null {
-  const segment = id.split('.')[0]?.trim();
-  if (!segment) return null;
-  const parsed = McpDetectedProviderV1Schema.safeParse(segment);
-  return parsed.success ? parsed.data : null;
-}
-
+/**
+ * Resolve the Agent that owns a declared discovery source.
+ *
+ * Only the declared `metadata.agentId` is authoritative. The contribution's
+ * local id is a plugin-chosen name (`config`, `config.servers`, ...), so
+ * reading an Agent out of it would fabricate an identity now that Agent ids
+ * are open. An undeclared source resolves to `null` and its caller warns.
+ */
 function readProviderFromDiscoveryDefinition(
   definition: Readonly<{ id: string; metadata?: Readonly<Record<string, unknown>> }>,
 ): McpDetectedProviderV1 | null {
-  const metadataAgentId = definition.metadata?.agentId;
-  if (typeof metadataAgentId === 'string') {
-    const parsed = McpDetectedProviderV1Schema.safeParse(metadataAgentId);
-    if (parsed.success) return parsed.data;
-  }
-  return readProviderFromDiscoveryId(definition.id);
+  const parsed = McpDetectedProviderV1Schema.safeParse(definition.metadata?.agentId);
+  return parsed.success ? parsed.data : null;
 }
 
 function readDirectory(input: string | null): string | null {
   return typeof input === 'string' && input.trim().length > 0 ? input.trim() : null;
 }
 
-function toDetectionInput(directory: string | null): McpResolveForSessionInputV1 {
+function toDetectionInput(directory: string | null): PluginMcpDiscoveryRequest {
   return Object.freeze({
-    sessionId: 'mcp-detection',
     ...(directory ? { directory } : {}),
   });
 }
 
-async function acquireDiscoveryProviders(
-  entries: readonly PluginMcpDiscoveryProviderEntry[] | undefined,
+async function acquireDiscoverySources(
+  entries: readonly PluginMcpDiscoverySourceEntry[] | undefined,
   providers: ReadonlySet<McpDetectedProviderV1> | null,
 ): Promise<Readonly<{
-  entries: readonly PluginMcpDiscoveryProviderEntry[];
+  entries: readonly PluginMcpDiscoverySourceEntry[];
   warnings: readonly DaemonMcpServersDetectWarningV1[];
   release: () => Promise<void>;
 }>> {
@@ -93,15 +113,28 @@ async function acquireDiscoveryProviders(
     });
   }
   const lease = await acquireAuthoritativePluginRuntimeRegistryLease();
-  const declaredProviders = (lease.registry.contributes.mcpDiscoveryProviders ?? [])
-    .flatMap((contribution) => {
-      const provider = readProviderFromDiscoveryDefinition(contribution.definition);
-      if (!provider || (providers && !providers.has(provider))) return [];
-      return [{ contribution, provider }];
-    });
+  const contributions = (lease.registry.contributes.mcpDiscoverySources ?? [])
+    .map((contribution) => ({
+      contribution,
+      provider: readProviderFromDiscoveryDefinition(contribution.definition),
+    }));
+  const unresolvedWarnings = Object.freeze(contributions.flatMap(({ contribution, provider }) => (
+    provider
+      ? []
+      : [Object.freeze({
+        code: 'unsupported' as const,
+        path: `plugin:${contribution.definition.id}`,
+        detail: `Plugin MCP discovery source declares no Agent id (plugin ${contribution.pluginId ?? 'unknown'})`,
+      })]
+  )));
+  const declaredSources = contributions.flatMap(({ contribution, provider }) => (
+    provider && (!providers || providers.has(provider))
+      ? [{ contribution, provider }]
+      : []
+  ));
   const stableDiscover = lease.registry.discoverMcpServersForDetection;
   const ownedRuntimeEntries = stableDiscover
-    ? Object.freeze(declaredProviders.flatMap(({ contribution, provider }) => {
+    ? Object.freeze(declaredSources.flatMap(({ contribution, provider }) => {
         const pluginId = contribution.pluginId;
         return pluginId
           ? [Object.freeze({
@@ -109,9 +142,9 @@ async function acquireDiscoveryProviders(
               provider,
               registration: Object.freeze({
                 id: contribution.definition.id,
-                discover: async () => Object.freeze([]),
+                discover: async () => Object.freeze({ endpoints: Object.freeze([]) }),
               }),
-              discover: async (input: McpResolveForSessionInputV1, signal: AbortSignal) => (
+              discover: async (input: PluginMcpDiscoveryRequest, signal: AbortSignal) => (
                 await stableDiscover({
                   pluginId,
                   localId: contribution.definition.id,
@@ -123,16 +156,19 @@ async function acquireDiscoveryProviders(
           : [];
       }))
     : Object.freeze([]);
-  const warnings = Object.freeze(declaredProviders.flatMap(({ contribution, provider }) => (
-    stableDiscover && contribution.pluginId
-      ? []
-      : [Object.freeze({
-        provider,
-        code: 'read_failed' as const,
-        path: `plugin:${contribution.definition.id}`,
-        detail: 'Plugin MCP discovery provider is unavailable',
-      })]
-  )));
+  const warnings = Object.freeze([
+    ...unresolvedWarnings,
+    ...declaredSources.flatMap(({ contribution, provider }) => (
+      stableDiscover && contribution.pluginId
+        ? []
+        : [Object.freeze({
+          provider,
+          code: 'read_failed' as const,
+          path: `plugin:${contribution.definition.id}`,
+          detail: 'Plugin MCP discovery source is unavailable',
+        })]
+    )),
+  ]);
   return Object.freeze({
     entries: ownedRuntimeEntries,
     warnings,
@@ -140,37 +176,9 @@ async function acquireDiscoveryProviders(
   });
 }
 
-function readEnvKeys(launch: McpStdioExecutableLaunch): string[] {
-  if (launch.kind === 'ipc' || !launch.env) return [];
-  return Object.keys(launch.env).sort();
-}
-
-function readCommand(launch: McpStdioExecutableLaunch): string | null {
-  if (launch.kind === 'binary') return launch.executablePath;
-  if (launch.kind === 'agent-cli') return launch.agentId;
-  return null;
-}
-
-function readArgs(launch: McpStdioExecutableLaunch): string[] {
-  if (launch.kind === 'ipc') return [];
-  return [...(launch.args ?? [])];
-}
-
-const MCP_DISCOVERY_ENV_KEY_MAX_LENGTH = 128;
-const MCP_DISCOVERY_ENV_KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/u;
 const DEFAULT_MCP_DISCOVERY_PROVIDER_TIMEOUT_MS = 5_000;
 const MCP_DISCOVERY_PROVIDER_TIMEOUT_ENV = 'HAPPIER_MCP_DISCOVERY_PROVIDER_TIMEOUT_MS';
 const MCP_DISCOVERY_PROVIDER_TIMEOUT_MAX_MS = 60_000;
-
-function assertLaunchEnvKeySafe(key: string): void {
-  if (
-    key.length === 0
-    || key.length > MCP_DISCOVERY_ENV_KEY_MAX_LENGTH
-    || !MCP_DISCOVERY_ENV_KEY_PATTERN.test(key)
-  ) {
-    throw new Error('MCP discovery env placeholder keys must be valid env var names');
-  }
-}
 
 function readPositiveFiniteInteger(input: unknown): number | null {
   if (typeof input === 'number') {
@@ -201,11 +209,11 @@ function resolveDiscoveryTimeoutMs(params: Readonly<{
 }
 
 async function discoverWithTimeout(
-  entry: PluginMcpDiscoveryProviderEntry,
-  input: McpResolveForSessionInputV1,
+  entry: PluginMcpDiscoverySourceEntry,
+  input: PluginMcpDiscoveryRequest,
   timeoutMs: number,
 ): Promise<
-  | Readonly<{ type: 'resolved'; value: McpDiscoveryProviderReturnV1 }>
+  | Readonly<{ type: 'resolved'; value: PluginMcpEndpointDiscoveryResult }>
   | Readonly<{ type: 'rejected'; error: unknown }>
   | Readonly<{ type: 'timeout' }>
 > {
@@ -230,90 +238,57 @@ async function discoverWithTimeout(
   }
 }
 
-function assertLaunchEnvContainsOnlyPlaceholders(launch: McpStdioExecutableLaunch): void {
-  if (launch.kind === 'ipc' || !launch.env) return;
-  for (const [key, value] of Object.entries(launch.env)) {
-    assertLaunchEnvKeySafe(key);
-    if (value !== '') {
-      throw new Error('MCP discovery env values must be redacted placeholders');
-    }
-  }
-}
-
-function stripLaunchEnvForSafety(server: McpServerSpecV1): unknown {
-  if (server.transport.kind !== 'stdio') return server;
-  const launch = server.transport.launch;
-  if (!('env' in launch) || !launch.env) return server;
-  const { env: _env, ...launchWithoutEnv } = launch;
-  return {
-    ...server,
-    transport: {
-      ...server.transport,
-      launch: launchWithoutEnv,
-    },
-  };
-}
-
-function assertDiscoveredMcpServerSafeForDetection(server: McpServerSpecV1): void {
-  if (server.transport.kind === 'stdio') {
-    assertLaunchEnvContainsOnlyPlaceholders(server.transport.launch);
-  }
+function assertDiscoveredMcpEndpointSafeForDetection(endpoint: PluginMcpDiscoveredEndpoint): void {
+  const keys = typeof endpoint === 'object' && endpoint !== null && !Array.isArray(endpoint)
+    ? Object.keys(endpoint).sort()
+    : [];
   if (
-    (server.transport.kind === 'http' || server.transport.kind === 'sse')
-    && !PluginMcpServerTransportV1Schema.safeParse({
+    typeof endpoint !== 'object'
+    || endpoint === null
+    || Array.isArray(endpoint)
+    || typeof endpoint.id !== 'string'
+    || endpoint.id.trim().length === 0
+    || typeof endpoint.name !== 'string'
+    || endpoint.name.trim().length === 0
+    || (endpoint.kind !== 'http' && endpoint.kind !== 'sse')
+    || typeof endpoint.url !== 'string'
+    || keys.length !== 4
+    || keys[0] !== 'id'
+    || keys[1] !== 'kind'
+    || keys[2] !== 'name'
+    || keys[3] !== 'url'
+    || !PluginMcpServerTransportV1Schema.safeParse({
       kind: 'http',
-      url: server.transport.url,
+      url: endpoint.url,
     }).success
   ) {
     throw new Error('Discovered MCP remote URL is not safe');
   }
-  assertMcpRuntimeRegistrationSecretFree(stripLaunchEnvForSafety(server));
 }
 
-function normalizeDiscoveredServer(params: Readonly<{
+function normalizeDiscoveredEndpoint(params: Readonly<{
   provider: McpDetectedProviderV1;
   registrationId: string;
   directory: string | null;
-  server: McpServerSpecV1;
-}>): DetectedMcpServerV1 | null {
+  endpoint: PluginMcpDiscoveredEndpoint;
+}>): DetectedMcpServerV1 {
   const source = Object.freeze({
     kind: params.directory ? 'project' as const : 'user' as const,
     path: `plugin:${params.registrationId}`,
   });
 
-  if (params.server.transport.kind === 'stdio') {
-    const command = readCommand(params.server.transport.launch);
-    if (!command) return null;
-    return {
-      provider: params.provider,
-      name: params.server.name,
-      transport: 'stdio',
-      stdio: {
-        command,
-        args: readArgs(params.server.transport.launch),
-      },
-      envKeys: readEnvKeys(params.server.transport.launch),
-      enabled: null,
-      source,
-    };
-  }
-
-  if (params.server.transport.kind === 'http' || params.server.transport.kind === 'sse') {
-    return {
-      provider: params.provider,
-      name: params.server.name,
-      transport: params.server.transport.kind,
-      remote: {
-        url: params.server.transport.url,
-        headers: [],
-      },
-      envKeys: [],
-      enabled: null,
-      source,
-    };
-  }
-
-  return null;
+  return {
+    provider: params.provider,
+    name: params.endpoint.name,
+    transport: params.endpoint.kind,
+    remote: {
+      url: params.endpoint.url,
+      headers: [],
+    },
+    envKeys: [],
+    enabled: null,
+    source,
+  };
 }
 
 function normalizeDiscoveryWarning(
@@ -334,31 +309,19 @@ function normalizeDiscoveryWarning(
   });
 }
 
-function isMcpServerSpecArray(discovered: McpDiscoveryProviderReturnV1): discovered is readonly McpServerSpecV1[] {
-  return Array.isArray(discovered);
-}
-
 function normalizeDiscoveryResult(
   provider: McpDetectedProviderV1,
-  discovered: McpDiscoveryProviderReturnV1,
+  discovered: PluginMcpEndpointDiscoveryResult,
 ): Readonly<{
-  servers: readonly McpServerSpecV1[];
+  endpoints: readonly PluginMcpDiscoveredEndpoint[];
   warnings: readonly DaemonMcpServersDetectWarningV1[];
 }> {
-  if (isMcpServerSpecArray(discovered)) {
-    return Object.freeze({
-      servers: Object.freeze([...discovered]),
-      warnings: Object.freeze([]),
-    });
-  }
-
-  const servers = Array.isArray(discovered.servers) ? Object.freeze([...discovered.servers]) : Object.freeze([]);
+  const endpoints = Array.isArray(discovered.endpoints) ? Object.freeze([...discovered.endpoints]) : Object.freeze([]);
   const rawWarnings: unknown[] = [];
   if (Array.isArray(discovered.warnings)) rawWarnings.push(...discovered.warnings);
-  if (Array.isArray(discovered.diagnostics)) rawWarnings.push(...discovered.diagnostics);
 
   return Object.freeze({
-    servers,
+    endpoints,
     warnings: Object.freeze(rawWarnings.map((warning) => normalizeDiscoveryWarning(provider, warning))),
   });
 }
@@ -368,9 +331,10 @@ export async function detectProviderMcpServers(params: Readonly<{
   providers: unknown;
   env?: NodeJS.ProcessEnv;
   discoveryTimeoutMs?: number;
-  mcpDiscoveryProviders?: readonly PluginMcpDiscoveryProviderEntry[];
+  mcpDiscoverySources?: readonly PluginMcpDiscoverySourceEntry[];
 }>): Promise<DetectProviderMcpServersResult> {
-  const providers = normalizeProvidersFilter(params.providers);
+  const providersFilter = normalizeProvidersFilter(params.providers);
+  const providers = providersFilter.providers;
   const directory = readDirectory(params.directory);
   const detectionInput = toDetectionInput(directory);
   const discoveryTimeoutMs = resolveDiscoveryTimeoutMs({
@@ -378,14 +342,14 @@ export async function detectProviderMcpServers(params: Readonly<{
     discoveryTimeoutMs: params.discoveryTimeoutMs,
   });
   const servers: DetectedMcpServerV1[] = [];
-  const warnings: DaemonMcpServersDetectWarningV1[] = [];
-  const discoveryProviders = await acquireDiscoveryProviders(params.mcpDiscoveryProviders, providers);
-  warnings.push(...discoveryProviders.warnings);
+  const warnings: DaemonMcpServersDetectWarningV1[] = [...providersFilter.warnings];
+  const discoverySources = await acquireDiscoverySources(params.mcpDiscoverySources, providers);
+  warnings.push(...discoverySources.warnings);
 
   try {
-    for (const entry of discoveryProviders.entries) {
-      const provider = entry.provider ?? readProviderFromDiscoveryId(entry.registration.id);
-      if (!provider || (providers && !providers.has(provider))) continue;
+    for (const entry of discoverySources.entries) {
+      const provider = entry.provider;
+      if (providers && !providers.has(provider)) continue;
 
       try {
         const outcome = await discoverWithTimeout(entry, detectionInput, discoveryTimeoutMs);
@@ -403,9 +367,9 @@ export async function detectProviderMcpServers(params: Readonly<{
 
         const discovered = normalizeDiscoveryResult(provider, outcome.value);
         warnings.push(...discovered.warnings);
-        for (const server of discovered.servers) {
+        for (const endpoint of discovered.endpoints) {
           try {
-            assertDiscoveredMcpServerSafeForDetection(server);
+            assertDiscoveredMcpEndpointSafeForDetection(endpoint);
           } catch {
             warnings.push(Object.freeze({
               provider,
@@ -414,21 +378,12 @@ export async function detectProviderMcpServers(params: Readonly<{
             }));
             continue;
           }
-          const normalized = normalizeDiscoveredServer({
+          servers.push(normalizeDiscoveredEndpoint({
             provider,
             registrationId: entry.registration.id,
             directory,
-            server,
-          });
-          if (normalized) {
-            servers.push(normalized);
-          } else {
-            warnings.push(Object.freeze({
-              provider,
-              code: 'unsupported',
-              detail: 'Unsupported plugin MCP discovery transport',
-            }));
-          }
+            endpoint,
+          }));
         }
       } catch {
         warnings.push(Object.freeze({
@@ -439,7 +394,7 @@ export async function detectProviderMcpServers(params: Readonly<{
       }
     }
   } finally {
-    await discoveryProviders.release();
+    await discoverySources.release();
   }
 
   return Object.freeze({

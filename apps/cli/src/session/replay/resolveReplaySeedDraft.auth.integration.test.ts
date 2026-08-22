@@ -31,6 +31,26 @@ function createPlainSession(sessionId: string, seq = 1) {
   };
 }
 
+/**
+ * The dev hydrator resolves the Account's encryption currentness before walking
+ * the chain, so every fake server here has to answer it. Without this the walk
+ * fails on that route instead of on the route each test is actually about, and
+ * the auth assertions below stop exercising the path they name.
+ */
+function respondAccountEncryptionCurrentness(url: URL, res: import('node:http').ServerResponse): boolean {
+  if (url.pathname !== '/v1/account/encryption/currentness') return false;
+  res.statusCode = 200;
+  res.setHeader('content-type', 'application/json');
+  res.end(JSON.stringify({
+    mode: 'plain',
+    version: 1,
+    signingKeyFingerprint: null,
+    contentKeyFingerprint: null,
+    updatedAt: 1,
+  }));
+  return true;
+}
+
 async function listen(server: Server): Promise<string> {
   await new Promise<void>((resolve) => {
     server.listen(0, '127.0.0.1', () => resolve());
@@ -71,6 +91,7 @@ describe('resolveReplaySeedDraft auth propagation', () => {
     const sessionId = 'sess-auth-fetch';
     server = createServer((req, res) => {
       const url = new URL(req.url ?? '/', `http://${req.headers.host ?? '127.0.0.1'}`);
+      if (respondAccountEncryptionCurrentness(url, res)) return;
       if (req.method === 'GET' && url.pathname === `/v2/sessions/${sessionId}`) {
         res.statusCode = 401;
         res.setHeader('content-type', 'application/json');
@@ -108,6 +129,7 @@ describe('resolveReplaySeedDraft auth propagation', () => {
     const sessionId = 'sess-auth-transcript';
     server = createServer((req, res) => {
       const url = new URL(req.url ?? '/', `http://${req.headers.host ?? '127.0.0.1'}`);
+      if (respondAccountEncryptionCurrentness(url, res)) return;
       if (req.method === 'GET' && url.pathname === `/v2/sessions/${sessionId}`) {
         res.statusCode = 200;
         res.setHeader('content-type', 'application/json');
@@ -151,6 +173,7 @@ describe('resolveReplaySeedDraft auth propagation', () => {
     const sessionId = 'sess-voice-auth-transcript';
     server = createServer((req, res) => {
       const url = new URL(req.url ?? '/', `http://${req.headers.host ?? '127.0.0.1'}`);
+      if (respondAccountEncryptionCurrentness(url, res)) return;
       if (req.method === 'GET' && url.pathname === `/v2/sessions/${sessionId}`) {
         res.statusCode = 200;
         res.setHeader('content-type', 'application/json');
@@ -214,13 +237,14 @@ describe('resolveReplaySeedDraft auth propagation', () => {
         maxSeedChars: 2000,
         candidateLimit: 1,
       }),
-    ).resolves.toBeNull();
+    ).resolves.toEqual({ status: 'unavailable' });
   });
 
   it('keeps non-auth transcript failures as a null seed result', async () => {
     const sessionId = 'sess-non-auth-transcript';
     server = createServer((req, res) => {
       const url = new URL(req.url ?? '/', `http://${req.headers.host ?? '127.0.0.1'}`);
+      if (respondAccountEncryptionCurrentness(url, res)) return;
       if (req.method === 'GET' && url.pathname === `/v2/sessions/${sessionId}`) {
         res.statusCode = 200;
         res.setHeader('content-type', 'application/json');
@@ -253,6 +277,6 @@ describe('resolveReplaySeedDraft auth propagation', () => {
         maxSeedChars: 2000,
         candidateLimit: 1,
       }),
-    ).resolves.toBeNull();
+    ).resolves.toEqual({ status: 'unavailable' });
   });
 });

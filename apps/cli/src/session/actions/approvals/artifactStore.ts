@@ -3,9 +3,13 @@ import { randomUUID } from 'node:crypto';
 
 import {
   ApprovalRequestV1Schema,
+  ARTIFACT_PLAIN_DATA_KEY_MARKER,
   ExecutionRunHostActionApprovalRequestV1Schema,
   TargetActionApprovalRequestV1Schema,
   ActionIdSchema,
+  decodePlainArtifactStoredContent,
+  encodePlainArtifactStoredContent,
+  isPlainArtifactDataKeyMarker,
   openEncryptedDataKeyEnvelopeV1,
   sealEncryptedDataKeyEnvelopeV1,
   type ActionId,
@@ -13,9 +17,14 @@ import {
   type ApprovalRequestV1,
   type ExecutionRunHostActionApprovalRequestV1,
   type TargetActionApprovalRequestV1,
+  type PromptLibraryArtifactStore,
 } from '@happier-dev/protocol';
 
-import type { Credentials } from '@/persistence';
+import type { Credentials, StoredCredentials } from '@/persistence';
+import {
+  createConnectedServiceCredentialApi,
+  type ConnectedServiceAccountEncryptionMode,
+} from '@/api/client/connectedServiceCredentialApi';
 import {
   decodeBase64,
   decryptWithDataKey,
@@ -25,6 +34,11 @@ import {
   libsodiumPublicKeyFromSecretKey,
 } from '@/api/encryption';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import {
+  requireCurrentAccountStoredContentServerCompatibility,
+} from '@/api/clientCompatibility/accountStoredContentActivation';
+import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
+import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import { deriveKey } from '@/utils/deriveKey';
 import { targetActionApprovalRequestsEqual, targetActionApprovalSubjectsEqual } from './targetActionApprovalSubject';
 import {
@@ -94,6 +108,107 @@ async function sealArtifactDataEncryptionKey(params: Readonly<{
   return encodeBase64(envelope, 'base64');
 }
 
+type ArtifactStoredContentCodec = Readonly<{
+  mode: 'plain' | 'e2ee';
+  dataEncryptionKey: string;
+  encode(value: unknown): string;
+  decode(value: string): unknown | null;
+}>;
+
+export const ARTIFACT_ENCRYPTION_MATERIAL_UNAVAILABLE =
+  'artifact_encryption_material_unavailable' as const;
+
+export class ArtifactEncryptionMaterialUnavailableError extends Error {
+  readonly code = ARTIFACT_ENCRYPTION_MATERIAL_UNAVAILABLE;
+
+  constructor() {
+    super('Artifact encryption material is unavailable');
+    this.name = 'ArtifactEncryptionMaterialUnavailableError';
+  }
+}
+
+function requireArtifactE2eeCredentials(credentials: StoredCredentials): Credentials {
+  if (!credentials.encryption) {
+    throw new ArtifactEncryptionMaterialUnavailableError();
+  }
+  return credentials;
+}
+
+async function createArtifactStoredContentCodec(params: Readonly<{
+  credentials: StoredCredentials;
+  accountMode: ConnectedServiceAccountEncryptionMode;
+  requirePlainWriteCompatibility: () => Promise<void>;
+}>): Promise<ArtifactStoredContentCodec> {
+  if (params.accountMode === 'plain') {
+    await params.requirePlainWriteCompatibility();
+    return {
+      mode: 'plain',
+      dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+      encode: encodePlainArtifactStoredContent,
+      decode: decodePlainArtifactStoredContent,
+    };
+  }
+  if (params.accountMode === 'unknown') {
+    throw Object.assign(new Error('account_encryption_mode_unavailable'), {
+      code: 'account_encryption_mode_unavailable',
+    });
+  }
+
+  const credentials = requireArtifactE2eeCredentials(params.credentials);
+  const dataEncryptionKey = getRandomBytes(32);
+  return {
+    mode: 'e2ee',
+    dataEncryptionKey: await sealArtifactDataEncryptionKey({ credentials, dataEncryptionKey }),
+    encode: (value) => encodeBase64(encryptWithDataKey(value, dataEncryptionKey), 'base64'),
+    decode: (value) => decryptWithDataKey(decodeBase64(value), dataEncryptionKey),
+  };
+}
+
+async function openArtifactStoredContentCodec(params: Readonly<{
+  credentials: StoredCredentials;
+  storedDataEncryptionKey: string;
+}>): Promise<ArtifactStoredContentCodec> {
+  if (isPlainArtifactDataKeyMarker(params.storedDataEncryptionKey)) {
+    return {
+      mode: 'plain',
+      dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+      encode: encodePlainArtifactStoredContent,
+      decode: decodePlainArtifactStoredContent,
+    };
+  }
+
+  const credentials = requireArtifactE2eeCredentials(params.credentials);
+  const dataEncryptionKey = await openArtifactDataEncryptionKey({
+    credentials,
+    encryptedDataEncryptionKeyBase64: params.storedDataEncryptionKey,
+  });
+  if (!dataEncryptionKey) {
+    throw new ArtifactEncryptionMaterialUnavailableError();
+  }
+  return {
+    mode: 'e2ee',
+    dataEncryptionKey: params.storedDataEncryptionKey,
+    encode: (value) => encodeBase64(encryptWithDataKey(value, dataEncryptionKey), 'base64'),
+    decode: (value) => decryptWithDataKey(decodeBase64(value), dataEncryptionKey),
+  };
+}
+
+function decodeArtifactStoredContent(
+  codec: ArtifactStoredContentCodec,
+  value: string,
+): unknown | null {
+  try {
+    const decoded = codec.decode(value);
+    if (decoded === null) {
+      throw new ArtifactEncryptionMaterialUnavailableError();
+    }
+    return decoded;
+  } catch (error) {
+    if (error instanceof ArtifactEncryptionMaterialUnavailableError) throw error;
+    throw new ArtifactEncryptionMaterialUnavailableError();
+  }
+}
+
 function buildApprovalArtifactHeader(request: ApprovalRequestV1): Record<string, unknown> {
   const sessionId = typeof request.createdBy.sessionId === 'string' ? request.createdBy.sessionId.trim() : '';
   return {
@@ -129,10 +244,10 @@ function normalizeArtifactServerId(value: unknown): string | null {
 }
 
 function decryptApprovalArtifactHeader(
-  encryptedHeaderBase64: string,
-  dataEncryptionKey: Uint8Array,
+  storedHeader: string,
+  codec: ArtifactStoredContentCodec,
 ): Record<string, unknown> | null {
-  const header = decryptWithDataKey(decodeBase64(encryptedHeaderBase64), dataEncryptionKey) as Record<string, unknown> | null;
+  const header = decodeArtifactStoredContent(codec, storedHeader) as Record<string, unknown> | null;
   return header && (
     header.kind === 'approval_request.v1'
     || header.kind === 'target_action_approval.v1'
@@ -148,8 +263,8 @@ function buildTargetActionApprovalArtifactHeader(request: TargetActionApprovalRe
   };
 }
 
-function readTargetActionApprovalBody(body: string, dataEncryptionKey: Uint8Array): TargetActionApprovalRequestV1 | null {
-  const decrypted = decryptWithDataKey(decodeBase64(body), dataEncryptionKey) as { body?: unknown } | null;
+function readTargetActionApprovalBody(body: string, codec: ArtifactStoredContentCodec): TargetActionApprovalRequestV1 | null {
+  const decrypted = decodeArtifactStoredContent(codec, body) as { body?: unknown } | null;
   if (typeof decrypted?.body !== 'string') return null;
   try {
     const parsed = TargetActionApprovalRequestV1Schema.safeParse(JSON.parse(decrypted.body));
@@ -178,9 +293,9 @@ function buildExecutionRunHostActionApprovalArtifactHeader(
 
 function readExecutionRunHostActionApprovalBody(
   body: string,
-  dataEncryptionKey: Uint8Array,
+  codec: ArtifactStoredContentCodec,
 ): ExecutionRunHostActionApprovalRequestV1 | null {
-  const decrypted = decryptWithDataKey(decodeBase64(body), dataEncryptionKey) as { body?: unknown } | null;
+  const decrypted = decodeArtifactStoredContent(codec, body) as { body?: unknown } | null;
   if (typeof decrypted?.body !== 'string') return null;
   try {
     const parsed = ExecutionRunHostActionApprovalRequestV1Schema.safeParse(JSON.parse(decrypted.body));
@@ -199,19 +314,25 @@ function approvalArtifactMatchesServerScope(
 }
 
 async function fetchArtifactFullRecord(params: Readonly<{
-  credentials: Credentials;
+  credentials: StoredCredentials;
   artifactId: string;
+  signal?: AbortSignal;
 }>): Promise<ArtifactFullRecord | null> {
   const response = await axios.get(`${resolveServerHttpBaseUrl()}/v1/artifacts/${encodeURIComponent(params.artifactId)}`, {
     headers: {
+      ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
       Authorization: `Bearer ${params.credentials.token}`,
       'Content-Type': 'application/json',
     },
     timeout: 15_000,
+    ...(params.signal ? { signal: params.signal } : {}),
     validateStatus: () => true,
   });
 
   if (response.status === 404) return null;
+  if (response.status === 500 && response.data?.error === 'Failed to get artifact') {
+    throw new ArtifactEncryptionMaterialUnavailableError();
+  }
   if (response.status < 200 || response.status >= 300) return null;
 
   const record = response.data as Record<string, unknown>;
@@ -234,13 +355,14 @@ async function fetchArtifactFullRecord(params: Readonly<{
 }
 
 async function fetchArtifactListRecords(params: Readonly<{
-  credentials: Credentials;
+  credentials: StoredCredentials;
   limit: number;
 }>): Promise<readonly ArtifactListRecord[]> {
   const url = new URL('/v1/artifacts', resolveServerHttpBaseUrl());
   url.searchParams.set('limit', String(params.limit));
   const response = await axios.get(url.toString(), {
     headers: {
+      ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
       Authorization: `Bearer ${params.credentials.token}`,
       'Content-Type': 'application/json',
     },
@@ -248,6 +370,9 @@ async function fetchArtifactListRecords(params: Readonly<{
     validateStatus: () => true,
   });
 
+  if (response.status === 500 && response.data?.error === 'Failed to get artifacts') {
+    throw new ArtifactEncryptionMaterialUnavailableError();
+  }
   if (response.status < 200 || response.status >= 300 || !Array.isArray(response.data)) return [];
 
   return response.data.flatMap((raw: unknown) => {
@@ -269,15 +394,18 @@ async function fetchArtifactListRecords(params: Readonly<{
 }
 
 async function createArtifact(params: Readonly<{
-  credentials: Credentials;
+  credentials: StoredCredentials;
   request: ArtifactCreateRequest;
+  signal?: AbortSignal;
 }>): Promise<{ ok: true; artifactId: string } | { ok: false }> {
   const response = await axios.post(`${resolveServerHttpBaseUrl()}/v1/artifacts`, params.request, {
     headers: {
+      ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
       Authorization: `Bearer ${params.credentials.token}`,
       'Content-Type': 'application/json',
     },
     timeout: 15_000,
+    ...(params.signal ? { signal: params.signal } : {}),
     validateStatus: () => true,
   });
 
@@ -288,19 +416,27 @@ async function createArtifact(params: Readonly<{
 }
 
 async function updateArtifact(params: Readonly<{
-  credentials: Credentials;
+  credentials: StoredCredentials;
   artifactId: string;
   request: ArtifactUpdateRequest;
+  storageMode: ArtifactStoredContentCodec['mode'];
+  requirePlainWriteCompatibility: () => Promise<void>;
+  signal?: AbortSignal;
 }>): Promise<
   | { ok: true }
   | { ok: false; errorCode: 'not_found' | 'version_mismatch' | 'update_failed'; error: string }
 > {
+  if (params.storageMode === 'plain') {
+    await params.requirePlainWriteCompatibility();
+  }
   const response = await axios.post(`${resolveServerHttpBaseUrl()}/v1/artifacts/${encodeURIComponent(params.artifactId)}`, params.request, {
     headers: {
+      ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
       Authorization: `Bearer ${params.credentials.token}`,
       'Content-Type': 'application/json',
     },
     timeout: 15_000,
+    ...(params.signal ? { signal: params.signal } : {}),
     validateStatus: () => true,
   });
 
@@ -315,7 +451,11 @@ async function updateArtifact(params: Readonly<{
   return { ok: false, errorCode: 'update_failed', error: 'artifact_update_failed' };
 }
 
-export function createCliApprovalsArtifactStore(params: Readonly<{ credentials: Credentials }>): Readonly<{
+export function createCliApprovalsArtifactStore(params: Readonly<{
+  credentials: StoredCredentials;
+  getAccountEncryptionMode?: () => Promise<ConnectedServiceAccountEncryptionMode>;
+  getServerFeaturesSnapshot?: () => Promise<CliServerFeaturesSnapshot | undefined>;
+}>): Readonly<{
   approvalsList: NonNullable<import('@happier-dev/protocol').ActionExecutorDeps['approvalsList']>;
   approvalsCreate: NonNullable<import('@happier-dev/protocol').ActionExecutorDeps['approvalsCreate']>;
   approvalsGet: NonNullable<import('@happier-dev/protocol').ActionExecutorDeps['approvalsGet']>;
@@ -326,17 +466,112 @@ export function createCliApprovalsArtifactStore(params: Readonly<{ credentials: 
   executionRunHostActionApprovalsCreate(args: Readonly<{ request: ExecutionRunHostActionApprovalRequestV1 }>): Promise<Readonly<{ artifactId: string }>>;
   executionRunHostActionApprovalsGet(args: Readonly<{ artifactId: string }>): Promise<ExecutionRunHostActionApprovalRequestV1 | null>;
   executionRunHostActionApprovalsUpdate(args: Readonly<{ artifactId: string; request: ExecutionRunHostActionApprovalRequestV1 }>): Promise<Readonly<{ ok: true } | { ok: false; errorCode: string; error: string }>>;
+  promptLibraryStore: PromptLibraryArtifactStore;
 }> {
+  const accountModeApi = params.getAccountEncryptionMode
+    ? null
+    : createConnectedServiceCredentialApi(params.credentials);
+  const getAccountEncryptionMode = params.getAccountEncryptionMode
+    ?? (() => accountModeApi!.getAccountEncryptionMode());
+  const requirePlainWriteCompatibility = async (): Promise<void> => {
+    await requireCurrentAccountStoredContentServerCompatibility({
+      ...(params.getServerFeaturesSnapshot
+        ? { resolveSnapshot: params.getServerFeaturesSnapshot }
+        : {}),
+    });
+  };
+
   return {
+    promptLibraryStore: {
+      read: async (artifactId, options) => {
+        options?.signal?.throwIfAborted();
+        const artifact = await fetchArtifactFullRecord({
+          credentials: params.credentials,
+          artifactId,
+          ...(options?.signal ? { signal: options.signal } : {}),
+        });
+        options?.signal?.throwIfAborted();
+        if (!artifact) return null;
+        const codec = await openArtifactStoredContentCodec({
+          credentials: params.credentials,
+          storedDataEncryptionKey: artifact.dataEncryptionKey,
+        });
+        options?.signal?.throwIfAborted();
+        const header = decodeArtifactStoredContent(codec, artifact.header);
+        const bodyEnvelope = decodeArtifactStoredContent(codec, artifact.body) as { body?: unknown } | null;
+        if (!header || typeof header !== 'object' || Array.isArray(header)) return null;
+        return {
+          id: artifact.id,
+          header: header as Readonly<Record<string, unknown>>,
+          body: typeof bodyEnvelope?.body === 'string' ? bodyEnvelope.body : null,
+        };
+      },
+      create: async ({ header, body, signal }) => {
+        signal?.throwIfAborted();
+        const artifactId = randomUUID();
+        const codec = await createArtifactStoredContentCodec({
+          credentials: params.credentials,
+          accountMode: await getAccountEncryptionMode(),
+          requirePlainWriteCompatibility,
+        });
+        signal?.throwIfAborted();
+        const created = await createArtifact({
+          credentials: params.credentials,
+          request: {
+            id: artifactId,
+            header: codec.encode(header),
+            body: codec.encode({ body }),
+            dataEncryptionKey: codec.dataEncryptionKey,
+          },
+          ...(signal ? { signal } : {}),
+        });
+        signal?.throwIfAborted();
+        if (!created.ok) throw new Error('artifact_create_failed');
+        return created.artifactId;
+      },
+      update: async ({ artifactId, header, body, signal }) => {
+        signal?.throwIfAborted();
+        const artifact = await fetchArtifactFullRecord({
+          credentials: params.credentials,
+          artifactId,
+          ...(signal ? { signal } : {}),
+        });
+        signal?.throwIfAborted();
+        if (!artifact) throw new Error('artifact_not_found');
+        const codec = await openArtifactStoredContentCodec({
+          credentials: params.credentials,
+          storedDataEncryptionKey: artifact.dataEncryptionKey,
+        });
+        signal?.throwIfAborted();
+        const updated = await updateArtifact({
+          credentials: params.credentials,
+          artifactId,
+          request: {
+            header: codec.encode(header),
+            expectedHeaderVersion: artifact.headerVersion,
+            body: codec.encode({ body }),
+            expectedBodyVersion: artifact.bodyVersion,
+          },
+          storageMode: codec.mode,
+          requirePlainWriteCompatibility,
+          ...(signal ? { signal } : {}),
+        });
+        signal?.throwIfAborted();
+        if (!updated.ok) throw Object.assign(new Error(updated.error), { code: updated.errorCode });
+      },
+    },
     executionRunHostActionApprovalsCreate: async ({ request }) => {
       const artifactId = randomUUID();
-      const dataEncryptionKey = getRandomBytes(32);
-      const encryptedKey = await sealArtifactDataEncryptionKey({ credentials: params.credentials, dataEncryptionKey });
+      const codec = await createArtifactStoredContentCodec({
+        credentials: params.credentials,
+        accountMode: await getAccountEncryptionMode(),
+        requirePlainWriteCompatibility,
+      });
       const res = await createArtifact({ credentials: params.credentials, request: {
         id: artifactId,
-        header: encodeBase64(encryptWithDataKey(buildExecutionRunHostActionApprovalArtifactHeader(request), dataEncryptionKey), 'base64'),
-        body: encodeBase64(encryptWithDataKey({ body: JSON.stringify(request) }, dataEncryptionKey), 'base64'),
-        dataEncryptionKey: encryptedKey,
+        header: codec.encode(buildExecutionRunHostActionApprovalArtifactHeader(request)),
+        body: codec.encode({ body: JSON.stringify(request) }),
+        dataEncryptionKey: codec.dataEncryptionKey,
       } });
       if (!res.ok) throw new Error('execution_run_host_action_approval_create_failed');
       return { artifactId: res.artifactId };
@@ -344,14 +579,13 @@ export function createCliApprovalsArtifactStore(params: Readonly<{ credentials: 
     executionRunHostActionApprovalsGet: async ({ artifactId }) => {
       const artifact = await fetchArtifactFullRecord({ credentials: params.credentials, artifactId });
       if (!artifact) return null;
-      const dataEncryptionKey = await openArtifactDataEncryptionKey({
+      const codec = await openArtifactStoredContentCodec({
         credentials: params.credentials,
-        encryptedDataEncryptionKeyBase64: artifact.dataEncryptionKey,
+        storedDataEncryptionKey: artifact.dataEncryptionKey,
       });
-      if (!dataEncryptionKey) return null;
-      const header = decryptApprovalArtifactHeader(artifact.header, dataEncryptionKey);
+      const header = decryptApprovalArtifactHeader(artifact.header, codec);
       if (header?.kind !== 'execution_run_host_action_approval.v1') return null;
-      const parsed = readExecutionRunHostActionApprovalBody(artifact.body, dataEncryptionKey);
+      const parsed = readExecutionRunHostActionApprovalBody(artifact.body, codec);
       if (!parsed
         || parsed.subjectFingerprint !== header.subjectFingerprint
         || parsed.actionId !== header.actionId
@@ -363,17 +597,16 @@ export function createCliApprovalsArtifactStore(params: Readonly<{ credentials: 
     executionRunHostActionApprovalsUpdate: async ({ artifactId, request }) => {
       const artifact = await fetchArtifactFullRecord({ credentials: params.credentials, artifactId });
       if (!artifact) return { ok: false, errorCode: 'not_found', error: 'artifact_not_found' };
-      const dataEncryptionKey = await openArtifactDataEncryptionKey({
+      const codec = await openArtifactStoredContentCodec({
         credentials: params.credentials,
-        encryptedDataEncryptionKeyBase64: artifact.dataEncryptionKey,
+        storedDataEncryptionKey: artifact.dataEncryptionKey,
       });
-      if (!dataEncryptionKey) return { ok: false, errorCode: 'invalid_parameters', error: 'artifact_key_unavailable' };
-      const existingHeader = decryptApprovalArtifactHeader(artifact.header, dataEncryptionKey);
+      const existingHeader = decryptApprovalArtifactHeader(artifact.header, codec);
       if (existingHeader?.kind !== 'execution_run_host_action_approval.v1'
         || existingHeader.subjectFingerprint !== request.subjectFingerprint) {
         return { ok: false, errorCode: 'subject_mismatch', error: 'execution_run_host_action_approval_subject_mismatch' };
       }
-      const existing = readExecutionRunHostActionApprovalBody(artifact.body, dataEncryptionKey);
+      const existing = readExecutionRunHostActionApprovalBody(artifact.body, codec);
       if (!existing || !executionRunHostActionApprovalSubjectsEqual(existing, request)) {
         return { ok: false, errorCode: 'subject_mismatch', error: 'execution_run_host_action_approval_subject_mismatch' };
       }
@@ -384,22 +617,25 @@ export function createCliApprovalsArtifactStore(params: Readonly<{ credentials: 
         return { ok: false, errorCode: 'invalid_transition', error: 'execution_run_host_action_approval_invalid_transition' };
       }
       const updated = await updateArtifact({ credentials: params.credentials, artifactId, request: {
-        header: encodeBase64(encryptWithDataKey(buildExecutionRunHostActionApprovalArtifactHeader(request), dataEncryptionKey), 'base64'),
+        header: codec.encode(buildExecutionRunHostActionApprovalArtifactHeader(request)),
         expectedHeaderVersion: artifact.headerVersion,
-        body: encodeBase64(encryptWithDataKey({ body: JSON.stringify(request) }, dataEncryptionKey), 'base64'),
+        body: codec.encode({ body: JSON.stringify(request) }),
         expectedBodyVersion: artifact.bodyVersion,
-      } });
+      }, storageMode: codec.mode, requirePlainWriteCompatibility });
       return updated.ok ? { ok: true } : updated;
     },
     targetActionApprovalsCreate: async ({ request }) => {
       const artifactId = randomUUID();
-      const dataEncryptionKey = getRandomBytes(32);
-      const encryptedKey = await sealArtifactDataEncryptionKey({ credentials: params.credentials, dataEncryptionKey });
+      const codec = await createArtifactStoredContentCodec({
+        credentials: params.credentials,
+        accountMode: await getAccountEncryptionMode(),
+        requirePlainWriteCompatibility,
+      });
       const res = await createArtifact({ credentials: params.credentials, request: {
         id: artifactId,
-        header: encodeBase64(encryptWithDataKey(buildTargetActionApprovalArtifactHeader(request), dataEncryptionKey), 'base64'),
-        body: encodeBase64(encryptWithDataKey({ body: JSON.stringify(request) }, dataEncryptionKey), 'base64'),
-        dataEncryptionKey: encryptedKey,
+        header: codec.encode(buildTargetActionApprovalArtifactHeader(request)),
+        body: codec.encode({ body: JSON.stringify(request) }),
+        dataEncryptionKey: codec.dataEncryptionKey,
       } });
       if (!res.ok) throw new Error('target_action_approval_create_failed');
       return { artifactId: res.artifactId };
@@ -407,22 +643,26 @@ export function createCliApprovalsArtifactStore(params: Readonly<{ credentials: 
     targetActionApprovalsGet: async ({ artifactId }) => {
       const artifact = await fetchArtifactFullRecord({ credentials: params.credentials, artifactId });
       if (!artifact) return null;
-      const dataEncryptionKey = await openArtifactDataEncryptionKey({ credentials: params.credentials, encryptedDataEncryptionKeyBase64: artifact.dataEncryptionKey });
-      if (!dataEncryptionKey) return null;
-      const header = decryptApprovalArtifactHeader(artifact.header, dataEncryptionKey);
+      const codec = await openArtifactStoredContentCodec({
+        credentials: params.credentials,
+        storedDataEncryptionKey: artifact.dataEncryptionKey,
+      });
+      const header = decryptApprovalArtifactHeader(artifact.header, codec);
       if (header?.kind !== 'target_action_approval.v1') return null;
-      const parsed = readTargetActionApprovalBody(artifact.body, dataEncryptionKey);
+      const parsed = readTargetActionApprovalBody(artifact.body, codec);
       if (!parsed || parsed.subjectFingerprint !== header.subjectFingerprint || parsed.qualifiedActionId !== header.qualifiedActionId) return null;
       return parsed;
     },
     targetActionApprovalsUpdate: async ({ artifactId, request }) => {
       const artifact = await fetchArtifactFullRecord({ credentials: params.credentials, artifactId });
       if (!artifact) return { ok: false, errorCode: 'not_found', error: 'artifact_not_found' };
-      const dataEncryptionKey = await openArtifactDataEncryptionKey({ credentials: params.credentials, encryptedDataEncryptionKeyBase64: artifact.dataEncryptionKey });
-      if (!dataEncryptionKey) return { ok: false, errorCode: 'invalid_parameters', error: 'artifact_key_unavailable' };
-      const existing = decryptApprovalArtifactHeader(artifact.header, dataEncryptionKey);
+      const codec = await openArtifactStoredContentCodec({
+        credentials: params.credentials,
+        storedDataEncryptionKey: artifact.dataEncryptionKey,
+      });
+      const existing = decryptApprovalArtifactHeader(artifact.header, codec);
       if (existing?.kind !== 'target_action_approval.v1' || existing.subjectFingerprint !== request.subjectFingerprint) return { ok: false, errorCode: 'subject_mismatch', error: 'target_action_approval_subject_mismatch' };
-      const existingRequest = readTargetActionApprovalBody(artifact.body, dataEncryptionKey);
+      const existingRequest = readTargetActionApprovalBody(artifact.body, codec);
       if (!existingRequest || !targetActionApprovalSubjectsEqual(existingRequest, request)) {
         return { ok: false, errorCode: 'subject_mismatch', error: 'target_action_approval_subject_mismatch' };
       }
@@ -433,9 +673,9 @@ export function createCliApprovalsArtifactStore(params: Readonly<{ credentials: 
         return { ok: false, errorCode: 'invalid_transition', error: 'target_action_approval_invalid_transition' };
       }
       const updated = await updateArtifact({ credentials: params.credentials, artifactId, request: {
-        header: encodeBase64(encryptWithDataKey(buildTargetActionApprovalArtifactHeader(request), dataEncryptionKey), 'base64'), expectedHeaderVersion: artifact.headerVersion,
-        body: encodeBase64(encryptWithDataKey({ body: JSON.stringify(request) }, dataEncryptionKey), 'base64'), expectedBodyVersion: artifact.bodyVersion,
-      } });
+        header: codec.encode(buildTargetActionApprovalArtifactHeader(request)), expectedHeaderVersion: artifact.headerVersion,
+        body: codec.encode({ body: JSON.stringify(request) }), expectedBodyVersion: artifact.bodyVersion,
+      }, storageMode: codec.mode, requirePlainWriteCompatibility });
       return updated.ok ? { ok: true } : updated;
     },
     approvalsList: async ({ status, limit, serverId }) => {
@@ -447,13 +687,11 @@ export function createCliApprovalsArtifactStore(params: Readonly<{ credentials: 
 
       for (const artifact of records) {
         if (items.length >= maxItems) break;
-        const dataEncryptionKey = await openArtifactDataEncryptionKey({
+        const codec = await openArtifactStoredContentCodec({
           credentials: params.credentials,
-          encryptedDataEncryptionKeyBase64: artifact.dataEncryptionKey,
+          storedDataEncryptionKey: artifact.dataEncryptionKey,
         });
-        if (!dataEncryptionKey) continue;
-
-        const header = decryptApprovalArtifactHeader(artifact.header, dataEncryptionKey);
+        const header = decryptApprovalArtifactHeader(artifact.header, codec);
         if (!header) continue;
         if (header.kind !== 'approval_request.v1') continue;
         if (typeof status === 'string' && header.approvalStatus !== status) continue;
@@ -490,23 +728,24 @@ export function createCliApprovalsArtifactStore(params: Readonly<{ credentials: 
 
     approvalsCreate: async ({ request, serverId }) => {
       const artifactId = randomUUID();
-      const dataEncryptionKey = getRandomBytes(32);
-      const encryptedKey = await sealArtifactDataEncryptionKey({ credentials: params.credentials, dataEncryptionKey });
+      const codec = await createArtifactStoredContentCodec({
+        credentials: params.credentials,
+        accountMode: await getAccountEncryptionMode(),
+        requirePlainWriteCompatibility,
+      });
 
       const header = {
         ...buildApprovalArtifactHeader(request),
         ...(typeof serverId === 'string' && serverId.trim().length > 0 ? { serverId: serverId.trim() } : {}),
       };
-      const encryptedHeader = encodeBase64(encryptWithDataKey(header, dataEncryptionKey), 'base64');
-      const encryptedBody = encodeBase64(encryptWithDataKey({ body: JSON.stringify(request) }, dataEncryptionKey), 'base64');
 
       const res = await createArtifact({
         credentials: params.credentials,
         request: {
           id: artifactId,
-          header: encryptedHeader,
-          body: encryptedBody,
-          dataEncryptionKey: encryptedKey,
+          header: codec.encode(header),
+          body: codec.encode({ body: JSON.stringify(request) }),
+          dataEncryptionKey: codec.dataEncryptionKey,
         },
       });
       if (!res.ok) {
@@ -519,16 +758,15 @@ export function createCliApprovalsArtifactStore(params: Readonly<{ credentials: 
       const artifact = await fetchArtifactFullRecord({ credentials: params.credentials, artifactId });
       if (!artifact) return null;
 
-      const dataEncryptionKey = await openArtifactDataEncryptionKey({
+      const codec = await openArtifactStoredContentCodec({
         credentials: params.credentials,
-        encryptedDataEncryptionKeyBase64: artifact.dataEncryptionKey,
+        storedDataEncryptionKey: artifact.dataEncryptionKey,
       });
-      if (!dataEncryptionKey) return null;
 
-      const header = decryptApprovalArtifactHeader(artifact.header, dataEncryptionKey);
+      const header = decryptApprovalArtifactHeader(artifact.header, codec);
       if (!header || !approvalArtifactMatchesServerScope(header, normalizeArtifactServerId(serverId))) return null;
 
-      const decrypted = decryptWithDataKey(decodeBase64(artifact.body), dataEncryptionKey) as { body?: unknown } | null;
+      const decrypted = decodeArtifactStoredContent(codec, artifact.body) as { body?: unknown } | null;
       const body = typeof decrypted?.body === 'string' ? decrypted.body : null;
       if (!body) return null;
 
@@ -544,13 +782,12 @@ export function createCliApprovalsArtifactStore(params: Readonly<{ credentials: 
       const artifact = await fetchArtifactFullRecord({ credentials: params.credentials, artifactId });
       if (!artifact) return { ok: false, errorCode: 'not_found', error: 'artifact_not_found' };
 
-      const dataEncryptionKey = await openArtifactDataEncryptionKey({
+      const codec = await openArtifactStoredContentCodec({
         credentials: params.credentials,
-        encryptedDataEncryptionKeyBase64: artifact.dataEncryptionKey,
+        storedDataEncryptionKey: artifact.dataEncryptionKey,
       });
-      if (!dataEncryptionKey) return { ok: false, errorCode: 'invalid_parameters', error: 'artifact_key_unavailable' };
 
-      const existingHeader = decryptApprovalArtifactHeader(artifact.header, dataEncryptionKey);
+      const existingHeader = decryptApprovalArtifactHeader(artifact.header, codec);
       if (!existingHeader || !approvalArtifactMatchesServerScope(existingHeader, normalizeArtifactServerId(serverId))) {
         return { ok: false, errorCode: 'not_found', error: 'artifact_not_found' };
       }
@@ -559,18 +796,17 @@ export function createCliApprovalsArtifactStore(params: Readonly<{ credentials: 
         ...buildApprovalArtifactHeader(request),
         ...(typeof serverId === 'string' && serverId.trim().length > 0 ? { serverId: serverId.trim() } : {}),
       };
-      const encryptedHeader = encodeBase64(encryptWithDataKey(header, dataEncryptionKey), 'base64');
-      const encryptedBody = encodeBase64(encryptWithDataKey({ body: JSON.stringify(request) }, dataEncryptionKey), 'base64');
-
       const updated = await updateArtifact({
         credentials: params.credentials,
         artifactId,
         request: {
-          header: encryptedHeader,
+          header: codec.encode(header),
           expectedHeaderVersion: artifact.headerVersion,
-          body: encryptedBody,
+          body: codec.encode({ body: JSON.stringify(request) }),
           expectedBodyVersion: artifact.bodyVersion,
         },
+        storageMode: codec.mode,
+        requirePlainWriteCompatibility,
       });
 
       if (updated.ok) return { ok: true };

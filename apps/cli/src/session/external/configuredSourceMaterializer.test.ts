@@ -4,8 +4,23 @@ import { join } from 'node:path';
 
 import { describe, expect, it, vi } from 'vitest';
 
-import { MAX_PLUGIN_TRANSCRIPT_SOURCES_PER_CONTRIBUTION, type PluginAgentContributionV2 } from '@happier-dev/protocol';
-import type { ExternalSessionProviderOps } from './providerOps';
+import {
+  ingestPluginManifestV2,
+  MAX_PLUGIN_TRANSCRIPT_SOURCES_PER_CONTRIBUTION,
+  type PluginAgentContributionV2,
+} from '@happier-dev/protocol';
+import { PLUGIN_MANIFEST as CLAUDE_PLUGIN_MANIFEST } from '@happier-dev/plugins-claude/manifest';
+import { PLUGIN_MANIFEST as CODEX_PLUGIN_MANIFEST } from '@happier-dev/plugins-codex/manifest';
+import { PLUGIN_MANIFEST as OPENCODE_PLUGIN_MANIFEST } from '@happier-dev/plugins-opencode/manifest';
+import { PLUGIN_MANIFEST as PI_PLUGIN_MANIFEST } from '@happier-dev/plugins-pi/manifest';
+import { PLUGIN_MANIFEST as OHMYPI_PLUGIN_MANIFEST } from '@happier-dev/plugins-ohmypi/manifest';
+import {
+  ExternalSessionProviderFailureError,
+  type ExternalSessionFollowProviderOps,
+  type ExternalSessionProviderOps,
+} from './providerOps';
+import type { HostExternalTranscriptFollowEvent } from './privateContract';
+import type { ContextualExternalSessionTakeoverAdapter } from './contextualTakeoverAdmission';
 
 import {
   createConfiguredPluginExternalSessionsAdapter,
@@ -27,6 +42,7 @@ const codexContribution = {
     externalSession: {
       sources: [{
         sourceKind: 'codexHome',
+        terminalFollow: { userRowClassification: 'explicitV1' },
         schema: {
           fields: [
             { name: 'kind', kind: 'literal', value: 'codexHome' },
@@ -77,7 +93,63 @@ function agent(contribution: PluginAgentContributionV2 = codexContribution) {
   };
 }
 
+function readManifestAgentContribution(manifest: unknown, agentId: string) {
+  const ingested = ingestPluginManifestV2(manifest);
+  if (!ingested.ok) throw new Error(`Plugin manifest for ${agentId} must be valid`);
+  const contribution = ingested.manifest.contributes.agents.find(
+    (candidate) => candidate.id === agentId,
+  );
+  if (!contribution) throw new Error(`Plugin manifest must declare Agent ${agentId}`);
+  return contribution;
+}
+
+const resolveExactLinkIdentity: NonNullable<ExternalSessionProviderOps['resolveLinkIdentity']> = async ({
+  source,
+  remoteSessionId,
+}) => ({ source, remoteSessionId });
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
+function isAbortedSignal(signal: AbortSignal | null): boolean {
+  return signal?.aborted === true;
+}
+
 describe('configured external-session source materializer', () => {
+  it('materializes independent Pi-family roots and changes only the configured Agent', () => {
+    const pi = agent(readManifestAgentContribution(PI_PLUGIN_MANIFEST, 'pi'));
+    const ohmypi = agent(readManifestAgentContribution(OHMYPI_PLUGIN_MANIFEST, 'ohmypi'));
+    const materialize = (agentSettings: Readonly<Record<string, unknown>>) =>
+      materializeConfiguredExternalSessionSourceCandidates({
+        agents: [pi, ohmypi],
+        account: { connectedServicesV2: [] },
+        agentSettings,
+      });
+
+    expect(materialize({})).toEqual([
+      { agentId: 'pi', source: { kind: 'piAgentDir' } },
+      { agentId: 'ohmypi', source: { kind: 'ohMyPiAgentDir' } },
+    ]);
+    expect(materialize({
+      piAgentDir: '/isolated/pi',
+      ohMyPiAgentDir: '/isolated/omp',
+    })).toEqual([
+      { agentId: 'pi', source: { kind: 'piAgentDir', agentDir: '/isolated/pi' } },
+      { agentId: 'ohmypi', source: { kind: 'ohMyPiAgentDir', agentDir: '/isolated/omp' } },
+    ]);
+    expect(materialize({ piAgentDir: '/changed/pi' })).toEqual([
+      { agentId: 'pi', source: { kind: 'piAgentDir', agentDir: '/changed/pi' } },
+      { agentId: 'ohmypi', source: { kind: 'ohMyPiAgentDir' } },
+    ]);
+  });
+
   it('materializes declared defaults and connected profiles using identifiers only', () => {
     const candidates = materializeConfiguredExternalSessionSourceCandidates({
       agents: [agent()],
@@ -172,16 +244,17 @@ describe('configured external-session source materializer', () => {
     })).toEqual([]);
   });
 
-  it('resolves one configured provider-session follow target without listing candidates', async () => {
-    const listCandidates = vi.fn<ExternalSessionProviderOps['listCandidates']>();
-    const ops: ExternalSessionProviderOps = {
+  it('resolves one configured provider-session follow target', async () => {
+    const ops: ExternalSessionFollowProviderOps = {
       validateSource: async ({ source }) => ({ ok: true, source }),
       resolveLinkIdentity: async ({ source, remoteSessionId }) => ({
-        source: { ...source, homePath: '/canonical/codex' },
+        source: {
+          ...source,
+          homePath: '/canonical/codex',
+        },
         remoteSessionId,
         linkData: {},
       }),
-      listCandidates,
       pageTranscript: async () => ({
         items: [], nextCursor: null, tailCursor: null, hasMore: false, truncated: false,
       }),
@@ -214,7 +287,331 @@ describe('configured external-session source materializer', () => {
         homePath: '/canonical/codex',
       },
     });
-    expect(listCandidates).not.toHaveBeenCalled();
+  });
+
+  it('bounds configured-source validation within the inherited terminal admission deadline', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(10_000));
+    const pendingValidation = deferred<{
+      ok: true;
+      source: { kind: 'codexHome'; home: 'user' };
+    }>();
+    let validationSignal: AbortSignal | null = null;
+    const resolveLinkIdentity = vi.fn(resolveExactLinkIdentity);
+    const basis = {
+      contributionGenerationId: 'registry:g1',
+      accountSettingsRevision: 'account:1',
+    };
+    let outcome: Awaited<ReturnType<typeof resolveConfiguredExternalSessionFollowTarget>> | null = null;
+    const resolution = resolveConfiguredExternalSessionFollowTarget({
+      agents: [agent()],
+      account: { connectedServicesV2: [] },
+      basis,
+      readCurrentBasis: () => basis,
+      isCurrent: () => true,
+      agentId: 'codex',
+      remoteSessionId: 'remote-1',
+      admissionDeadlineAtMs: 10_001,
+      resolveProviderOps: async () => ({
+        validateSource: async ({ signal }) => {
+          validationSignal = signal ?? null;
+          return await pendingValidation.promise;
+        },
+        resolveLinkIdentity,
+        pageTranscript: async () => ({
+          items: [], nextCursor: null, tailCursor: null, hasMore: false, truncated: false,
+        }),
+        readAfterTranscript: async () => ({ outcome: 'already_current' as const }),
+      }),
+    }).then((value) => {
+      outcome = value;
+      return value;
+    });
+
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      expect(validationSignal).toBeInstanceOf(AbortSignal);
+
+      await vi.advanceTimersByTimeAsync(1);
+
+      expect(outcome).toEqual({
+        status: 'unavailable',
+        code: 'plugin_operation_deadline_exceeded',
+      });
+      expect(isAbortedSignal(validationSignal)).toBe(true);
+      expect(resolveLinkIdentity).not.toHaveBeenCalled();
+    } finally {
+      pendingValidation.resolve({
+        ok: true,
+        source: { kind: 'codexHome', home: 'user' },
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      await resolution;
+      vi.useRealTimers();
+    }
+  });
+
+  it('bounds configured-provider acquisition within the inherited terminal admission deadline', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(10_000));
+    const pendingProviderOps = deferred<ExternalSessionFollowProviderOps>();
+    const validateSource = vi.fn(async ({ source }: Parameters<
+      ExternalSessionFollowProviderOps['validateSource']
+    >[0]) => ({ ok: true as const, source }));
+    const resolveLinkIdentity = vi.fn(resolveExactLinkIdentity);
+    const basis = {
+      contributionGenerationId: 'registry:g1',
+      accountSettingsRevision: 'account:1',
+    };
+    let outcome: Awaited<ReturnType<typeof resolveConfiguredExternalSessionFollowTarget>> | null = null;
+    const resolution = resolveConfiguredExternalSessionFollowTarget({
+      agents: [agent()],
+      account: { connectedServicesV2: [] },
+      basis,
+      readCurrentBasis: () => basis,
+      isCurrent: () => true,
+      agentId: 'codex',
+      remoteSessionId: 'remote-1',
+      admissionDeadlineAtMs: 10_001,
+      resolveProviderOps: async () => await pendingProviderOps.promise,
+    }).then((value) => {
+      outcome = value;
+      return value;
+    });
+
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(1);
+
+      expect(outcome).toEqual({
+        status: 'unavailable',
+        code: 'plugin_operation_deadline_exceeded',
+      });
+      expect(validateSource).not.toHaveBeenCalled();
+      expect(resolveLinkIdentity).not.toHaveBeenCalled();
+    } finally {
+      pendingProviderOps.resolve({
+        validateSource,
+        resolveLinkIdentity,
+        pageTranscript: async () => ({
+          items: [], nextCursor: null, tailCursor: null, hasMore: false, truncated: false,
+        }),
+        readAfterTranscript: async () => ({ outcome: 'already_current' as const }),
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      await resolution;
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps terminal follow unavailable when the Agent source omits explicit user-row classification', async () => {
+    const sourceWithoutTerminalFollow = {
+      ...codexContribution,
+      surfaces: {
+        externalSession: {
+          sources: codexContribution.surfaces.externalSession.sources.map(
+            ({ terminalFollow: _terminalFollow, ...source }) => source,
+          ),
+        },
+      },
+    } satisfies PluginAgentContributionV2;
+    const target = await resolveConfiguredExternalSessionFollowTarget({
+      agents: [agent(sourceWithoutTerminalFollow)],
+      account: { connectedServicesV2: [] },
+      basis: {
+        contributionGenerationId: 'registry:g1',
+        accountSettingsRevision: 'account:1',
+      },
+      readCurrentBasis: () => ({
+        contributionGenerationId: 'registry:g1',
+        accountSettingsRevision: 'account:1',
+      }),
+      isCurrent: () => true,
+      agentId: 'codex',
+      remoteSessionId: 'remote-1',
+      resolveProviderOps: async () => ({
+        validateSource: async ({ source }) => ({ ok: true, source }),
+        listCandidates: async () => ({ candidates: [], nextCursor: null }),
+        resolveLinkIdentity: async ({ source, remoteSessionId }) => ({
+          source,
+          remoteSessionId,
+          linkData: {},
+        }),
+        pageTranscript: async () => ({
+          items: [],
+          nextCursor: null,
+          tailCursor: null,
+          hasMore: false,
+          truncated: false,
+        }),
+        readAfterTranscript: async () => ({ outcome: 'already_current' }),
+      }),
+    });
+
+    expect(target).toEqual({
+      status: 'unavailable',
+      code: 'plugin_external_follow_identity_unavailable',
+    });
+  });
+
+  it('keeps a configured terminal source unavailable without a bound host follow port', async () => {
+    const composition = await createConfiguredPluginExternalSessionsAdapter({
+      agents: [agent()],
+      account: { connectedServicesV2: [] },
+      basis: {
+        contributionGenerationId: 'registry:g1',
+        accountSettingsRevision: 'account:1',
+      },
+      readCurrentBasis: () => ({
+        contributionGenerationId: 'registry:g1',
+        accountSettingsRevision: 'account:1',
+      }),
+      isCurrent: () => true,
+      resolveProviderOps: async () => ({
+        validateSource: async ({ source }) => ({ ok: true as const, source }),
+        listCandidates: async () => ({ candidates: [], nextCursor: null }),
+        resolveLinkIdentity: resolveExactLinkIdentity,
+        pageTranscript: async () => ({
+          items: [],
+          nextCursor: null,
+          tailCursor: null,
+          hasMore: false,
+          truncated: false,
+        }),
+        readAfterTranscript: async () => ({ outcome: 'already_current' as const }),
+      }),
+    });
+
+    await expect(composition.compositionPort.resolveFollowTarget({
+      agentId: 'codex',
+      remoteSessionId: 'remote-1',
+    })).resolves.toEqual({
+      status: 'unavailable',
+      code: 'plugin_external_follow_identity_unavailable',
+    });
+  });
+
+  it('keeps terminal follow unavailable when the current runtime lacks bounded replay', async () => {
+    const incompleteRuntime: ExternalSessionFollowProviderOps & Pick<
+      ExternalSessionProviderOps,
+      'listCandidates'
+    > = {
+      validateSource: async ({ source }) => ({ ok: true as const, source }),
+      listCandidates: async () => ({
+        candidates: [{ remoteSessionId: 'remote-1', updatedAtMs: 1 }],
+        nextCursor: null,
+      }),
+      resolveLinkIdentity: resolveExactLinkIdentity,
+      pageTranscript: async () => ({
+        items: [],
+        nextCursor: null,
+        tailCursor: null,
+        hasMore: false,
+        truncated: false,
+      }),
+      readAfterTranscript: async () => ({ outcome: 'already_current' as const }),
+      // Deliberately malformed runtime-boundary fixture: pageTranscript is the
+      // missing fact this fail-closed test exercises.
+    };
+    expect(Reflect.deleteProperty(incompleteRuntime, 'pageTranscript')).toBe(true);
+
+    await expect(resolveConfiguredExternalSessionFollowTarget({
+      agents: [agent()],
+      account: { connectedServicesV2: [] },
+      basis: {
+        contributionGenerationId: 'registry:g1',
+        accountSettingsRevision: 'account:1',
+      },
+      readCurrentBasis: () => ({
+        contributionGenerationId: 'registry:g1',
+        accountSettingsRevision: 'account:1',
+      }),
+      isCurrent: () => true,
+      agentId: 'codex',
+      remoteSessionId: 'remote-1',
+      resolveProviderOps: async () => incompleteRuntime,
+    })).resolves.toEqual({
+      status: 'unavailable',
+      code: 'plugin_external_follow_identity_unavailable',
+    });
+
+    const composition = await createConfiguredPluginExternalSessionsAdapter({
+      agents: [agent()],
+      account: { connectedServicesV2: [] },
+      basis: {
+        contributionGenerationId: 'registry:g1',
+        accountSettingsRevision: 'account:1',
+      },
+      readCurrentBasis: () => ({
+        contributionGenerationId: 'registry:g1',
+        accountSettingsRevision: 'account:1',
+      }),
+      isCurrent: () => true,
+      resolveProviderOps: async () => incompleteRuntime,
+      followTranscript: vi.fn(async () => ({
+        status: 'unavailable' as const,
+        code: 'plugin_external_follow_unavailable',
+      })),
+    });
+    expect((await composition.authorService.capabilities()).follow).toEqual({
+      status: 'unavailable',
+      code: 'plugin_external_follow_unavailable',
+    });
+    expect((await composition.authorService.list()).items[0]?.capabilities)
+      .not.toContain('follow');
+  });
+
+  it.each([
+    ['claude', CLAUDE_PLUGIN_MANIFEST],
+    ['codex', CODEX_PLUGIN_MANIFEST],
+    ['opencode', OPENCODE_PLUGIN_MANIFEST],
+  ] as const)('keeps the shipped %s Agent terminal follow unavailable until its writer proves the strict classification contract', async (agentId, manifest) => {
+    const contribution = readManifestAgentContribution(manifest, agentId);
+    const resolveProviderOps = vi.fn(async (): Promise<ExternalSessionFollowProviderOps & Pick<
+      ExternalSessionProviderOps,
+      'listCandidates'
+    >> => ({
+      validateSource: async ({ source }) => ({ ok: true, source }),
+      listCandidates: async () => ({ candidates: [], nextCursor: null }),
+      resolveLinkIdentity: async ({ source, remoteSessionId }) => ({
+        source,
+        remoteSessionId,
+        linkData: {},
+      }),
+      pageTranscript: async () => ({
+        items: [],
+        nextCursor: null,
+        tailCursor: null,
+        hasMore: false,
+        truncated: false,
+      }),
+      readAfterTranscript: async () => ({ outcome: 'already_current' }),
+    }));
+
+    await expect(resolveConfiguredExternalSessionFollowTarget({
+      agents: [{
+        id: agentId,
+        identity: { pluginId: manifest.id, localId: agentId },
+        richDefinition: { provenance: 'first_party', definition: contribution },
+      }],
+      account: { connectedServicesV2: [] },
+      basis: {
+        contributionGenerationId: 'registry:g1',
+        accountSettingsRevision: 'account:1',
+      },
+      readCurrentBasis: () => ({
+        contributionGenerationId: 'registry:g1',
+        accountSettingsRevision: 'account:1',
+      }),
+      isCurrent: () => true,
+      agentId,
+      remoteSessionId: 'remote-1',
+      resolveProviderOps,
+    })).resolves.toEqual({
+      status: 'unavailable',
+      code: 'plugin_external_follow_identity_unavailable',
+    });
+    expect(resolveProviderOps).toHaveBeenCalledOnce();
   });
 
   it('composes opaque configured sources into the native adapter and retires on account drift', async () => {
@@ -226,8 +623,11 @@ describe('configured external-session source materializer', () => {
       candidates: [{ remoteSessionId: 'remote-1', title: 'Remote', updatedAtMs: 1 }],
       nextCursor: null,
     }));
+    const validateSource = vi.fn(async (
+      { source }: Parameters<ExternalSessionProviderOps['validateSource']>[0],
+    ) => ({ ok: true as const, source }));
     const ops: ExternalSessionProviderOps = {
-      validateSource: async ({ source }) => ({ ok: true, source }),
+      validateSource,
       listCandidates,
       pageTranscript: async () => ({
         items: [], nextCursor: null, tailCursor: null, hasMore: false, truncated: false,
@@ -242,18 +642,20 @@ describe('configured external-session source materializer', () => {
       isCurrent: () => true,
       resolveProviderOps: async () => ops,
     });
+    expect(validateSource).toHaveBeenCalledOnce();
 
-    const listed = await adapter.list();
+    const listed = await adapter.authorService.list();
     expect(listed.items[0]?.ref).toMatchObject({
       agentId: 'codex',
       sourceId: 'codexHome:user:::',
       remoteSessionId: 'remote-1',
     });
     expect(listCandidates).toHaveBeenCalledOnce();
+    expect(validateSource).toHaveBeenCalledOnce();
 
     currentBasis = { ...currentBasis, accountSettingsRevision: 'account:2' };
-    expect(adapter.capabilities().list).toEqual({ status: 'unavailable', code: 'plugin_generation_retired' });
-    await expect(adapter.list()).rejects.toMatchObject({ code: 'plugin_generation_retired' });
+    expect((await adapter.authorService.capabilities()).list).toEqual({ status: 'unavailable', code: 'plugin_generation_retired' });
+    await expect(adapter.authorService.list()).rejects.toMatchObject({ code: 'plugin_generation_retired' });
   });
 
   it('routes preparation chunks through the canonical candidate-index owner before publishing candidates', async () => {
@@ -306,9 +708,9 @@ describe('configured external-session source materializer', () => {
         resolveProviderOps: async () => ops,
       });
 
-      await expect(adapter.list()).resolves.toMatchObject({ items: [] });
-      await expect(adapter.list()).resolves.toMatchObject({ items: [] });
-      await expect(adapter.list()).resolves.toMatchObject({
+      await expect(adapter.authorService.list()).resolves.toMatchObject({ items: [] });
+      await expect(adapter.authorService.list()).resolves.toMatchObject({ items: [] });
+      await expect(adapter.authorService.list()).resolves.toMatchObject({
         items: [
           { ref: { remoteSessionId: 'newest' }, title: 'Hydrated newest' },
           { ref: { remoteSessionId: 'oldest' }, title: 'Hydrated oldest' },
@@ -328,6 +730,52 @@ describe('configured external-session source materializer', () => {
     }
   });
 
+  it('qualifies a public takeover ref through the current identity owner without listing candidates', async () => {
+    const listCandidates = vi.fn<ExternalSessionProviderOps['listCandidates']>(async () => {
+      throw new Error('public takeover must not re-list candidates');
+    });
+    const ops: ExternalSessionProviderOps = {
+      validateSource: async ({ source }) => ({ ok: true, source }),
+      listCandidates,
+      resolveLinkIdentity: async ({ source, remoteSessionId }) => ({
+        source: {
+          ...source,
+          conversationId: 'takeover-current',
+        },
+        remoteSessionId,
+      }),
+      pageTranscript: async () => ({
+        items: [], nextCursor: null, tailCursor: null, hasMore: false, truncated: false,
+      }),
+      readAfterTranscript: async () => ({ outcome: 'already_current' }),
+    };
+    const basis = {
+      contributionGenerationId: 'registry:g1',
+      accountSettingsRevision: 'account:1',
+    };
+    const composition = await createConfiguredPluginExternalSessionsAdapter({
+      agents: [agent()],
+      account: { connectedServicesV2: [] },
+      basis,
+      readCurrentBasis: () => basis,
+      isCurrent: () => true,
+      resolveProviderOps: async () => ops,
+    });
+
+    await expect(composition.resolveAuthorSource({
+      agentId: 'codex',
+      sourceId: 'codexHome:user:::',
+      remoteSessionId: 'remote-1',
+    })).resolves.toEqual({
+      source: {
+        kind: 'codexHome',
+        home: 'user',
+        conversationId: 'takeover-current',
+      },
+    });
+    expect(listCandidates).not.toHaveBeenCalled();
+  });
+
   it('projects follow through the canonical host owner without accepting the deprecated provider lease', async () => {
     const dispose = vi.fn();
     const followTranscript = vi.fn(async () => ({
@@ -341,6 +789,7 @@ describe('configured external-session source materializer', () => {
         candidates: [{ remoteSessionId: 'remote-1', updatedAtMs: 1 }],
         nextCursor: null,
       }),
+      resolveLinkIdentity: resolveExactLinkIdentity,
       pageTranscript: async () => ({ items: [], nextCursor: null, tailCursor: null, hasMore: false, truncated: false }),
       readAfterTranscript: async () => ({ outcome: 'already_current' }),
     };
@@ -354,10 +803,10 @@ describe('configured external-session source materializer', () => {
       followTranscript,
     });
 
-    expect(adapter.capabilities().follow).toEqual({ status: 'available' });
-    const listed = await adapter.list();
+    expect((await adapter.authorService.capabilities()).follow).toEqual({ status: 'available' });
+    const listed = await adapter.authorService.list();
     expect(listed.items[0]?.capabilities).toContain('follow');
-    const result = await adapter.followTranscript({
+    const result = await adapter.compositionPort.followTranscript({
       ref: listed.items[0]!.ref,
       source: { kind: 'codexHome', home: 'user' },
     }, {}, vi.fn());
@@ -366,6 +815,1595 @@ describe('configured external-session source materializer', () => {
     expect(followTranscript).toHaveBeenCalledOnce();
     expect(dispose).toHaveBeenCalledOnce();
     expect(ops).not.toHaveProperty('acquireFollowLease');
+  });
+
+  it('splits stable-ref author operations from the source-bearing Runtime composition port', async () => {
+    const dispose = vi.fn(async () => undefined);
+    const privateFailure = new Promise<Error>(() => undefined);
+    const followTranscript = vi.fn(async (input: Readonly<{
+      listener(event: HostExternalTranscriptFollowEvent): void | Promise<void>;
+    }>) => {
+      await input.listener({
+        kind: 'resyncRequired',
+        reason: 'providerTruncated',
+        cursor: 'cursor-tail',
+      });
+      return {
+        status: 'following' as const,
+        startingCursor: 'cursor-tail',
+        subscription: { dispose },
+        failure: privateFailure,
+      };
+    });
+    const ops: ExternalSessionProviderOps = {
+      validateSource: async ({ source }) => ({ ok: true, source }),
+      listCandidates: async () => ({
+        candidates: [{ remoteSessionId: 'remote-1', updatedAtMs: 1 }],
+        nextCursor: null,
+      }),
+      resolveLinkIdentity: async ({ source, remoteSessionId }) => ({
+        source,
+        remoteSessionId,
+      }),
+      pageTranscript: async () => ({
+        items: [], nextCursor: null, tailCursor: null, hasMore: false, truncated: false,
+      }),
+      readAfterTranscript: async () => ({ outcome: 'already_current' }),
+    };
+    const composition = await createConfiguredPluginExternalSessionsAdapter({
+      agents: [agent()],
+      account: { connectedServicesV2: [] },
+      basis: { contributionGenerationId: 'registry:g1', accountSettingsRevision: 'account:1' },
+      readCurrentBasis: () => ({ contributionGenerationId: 'registry:g1', accountSettingsRevision: 'account:1' }),
+      isCurrent: () => true,
+      resolveProviderOps: async () => ops,
+      followTranscript,
+    });
+
+    expect(Reflect.ownKeys(composition).sort()).toEqual([
+      'authorService',
+      'bindAuthorService',
+      'compositionPort',
+      'dispose',
+      'resolveAuthorSource',
+      'sourceRefusals',
+    ]);
+    expect(Reflect.ownKeys(composition.authorService).sort()).toEqual([
+      'attach',
+      'capabilities',
+      'followTranscript',
+      'list',
+      'readTranscript',
+      'takeover',
+    ]);
+    expect(Reflect.get(composition.authorService, 'resolveFollowTarget')).toBeUndefined();
+    expect(Reflect.ownKeys(composition.compositionPort).sort()).toEqual([
+      'followTranscript',
+      'resolveFollowTarget',
+    ]);
+    expect(Reflect.get(composition.compositionPort, 'list')).toBeUndefined();
+    expect(Reflect.get(composition.compositionPort, 'attach')).toBeUndefined();
+    expect(Reflect.get(composition.compositionPort, 'readTranscript')).toBeUndefined();
+
+    const listed = await composition.authorService.list();
+    const ref = listed.items[0]!.ref;
+    await expect(composition.authorService.takeover(ref, {
+      targetStorageMode: 'persisted',
+      idempotencyKey: 'author-key-1',
+    })).rejects.toMatchObject({
+      code: 'plugin_external_takeover_contextual_admission_unavailable',
+    });
+    expect((await composition.authorService.capabilities()).takeover).toEqual({
+      status: 'unavailable',
+      code: 'plugin_external_takeover_contextual_admission_unavailable',
+    });
+    expect(listed.items[0]!.capabilities).not.toContain('takeover');
+    const publicListener = vi.fn();
+    const publicFollow = await composition.authorService.followTranscript(ref, {}, publicListener);
+    expect(publicFollow.status).toBe('following');
+    expect(publicFollow).not.toHaveProperty('failure');
+    expect(publicListener).toHaveBeenCalledWith({
+      kind: 'terminated',
+      reason: 'resyncRequired',
+      cursor: 'cursor-tail',
+    });
+    if (publicFollow.status === 'following') await publicFollow.subscription.dispose();
+    expect(followTranscript).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      ref,
+      source: { kind: 'codexHome', home: 'user' },
+    }));
+
+    const target = await composition.compositionPort.resolveFollowTarget({
+      agentId: ref.agentId,
+      remoteSessionId: ref.remoteSessionId,
+    });
+    expect(target).toMatchObject({ status: 'resolved', ref });
+    if (target.status !== 'resolved') throw new Error('Expected a private follow target');
+    const privateListener = vi.fn();
+    const privateFollow = await composition.compositionPort.followTranscript(target, {}, privateListener);
+    expect(privateFollow.status).toBe('following');
+    expect(privateFollow).toHaveProperty('failure', privateFailure);
+    expect(privateListener).toHaveBeenCalledWith({
+      kind: 'resyncRequired',
+      reason: 'providerTruncated',
+      cursor: 'cursor-tail',
+    });
+    if (privateFollow.status === 'following') await privateFollow.subscription.dispose();
+    expect(followTranscript).toHaveBeenCalledTimes(2);
+
+    composition.dispose();
+    await expect(composition.authorService.list()).rejects.toMatchObject({
+      code: 'plugin_generation_retired',
+    });
+  });
+
+  it('binds contextual durable takeover without exposing the legacy host operation', async () => {
+    const takeover = vi.fn<ContextualExternalSessionTakeoverAdapter['takeover']>(async () => ({
+      sessionId: 'linked-1',
+      operationId: 'external-takeover:operation-1',
+      revision: 1,
+    }));
+    const ops: ExternalSessionProviderOps = {
+      externalLinkedTakeoverWriterSafety: 'native_prevention',
+      validateSource: async ({ source }) => ({ ok: true, source }),
+      listCandidates: async () => ({
+        candidates: [{ remoteSessionId: 'remote-1', updatedAtMs: 1 }],
+        nextCursor: null,
+      }),
+      pageTranscript: async () => ({
+        items: [], nextCursor: null, tailCursor: null, hasMore: false, truncated: false,
+      }),
+      readAfterTranscript: async () => ({ outcome: 'already_current' }),
+    };
+    const composition = await createConfiguredPluginExternalSessionsAdapter({
+      agents: [agent()],
+      account: { connectedServicesV2: [] },
+      basis: { contributionGenerationId: 'registry:g1', accountSettingsRevision: 'account:1' },
+      readCurrentBasis: () => ({ contributionGenerationId: 'registry:g1', accountSettingsRevision: 'account:1' }),
+      isCurrent: () => true,
+      resolveProviderOps: async () => ops,
+      contextualTakeover: { takeover },
+    });
+    const listed = await composition.authorService.list();
+    const ref = listed.items[0]!.ref;
+
+    expect((await composition.authorService.capabilities()).takeover).toEqual({
+      status: 'available',
+      storageModes: ['external-linked', 'persisted'],
+    });
+    expect(listed.items[0]!.capabilities).not.toContain('takeover');
+    expect(listed.items[0]!.takeover).toEqual({
+      status: 'available',
+      storageModes: ['external-linked', 'persisted'],
+    });
+    await expect(composition.authorService.takeover(ref, {
+      targetStorageMode: 'persisted',
+      idempotencyKey: 'author-key-1',
+    })).resolves.toEqual({
+      sessionId: 'linked-1',
+      operationId: 'external-takeover:operation-1',
+      revision: 1,
+    });
+    expect(takeover).toHaveBeenCalledWith(ref, {
+      targetStorageMode: 'persisted',
+      idempotencyKey: 'author-key-1',
+    }, expect.objectContaining({
+      retirementSignal: expect.any(AbortSignal),
+      isCurrent: expect.any(Function),
+    }));
+    const takeoverOptions = takeover.mock.calls[0]![2];
+    expect(takeoverOptions?.signal).toBeUndefined();
+    expect(takeoverOptions?.retirementSignal?.aborted).toBe(false);
+    expect(takeoverOptions?.isCurrent?.()).toBe(true);
+    expect(Reflect.get(composition.compositionPort, 'takeover')).toBeUndefined();
+    composition.dispose();
+    expect(takeoverOptions?.retirementSignal?.aborted).toBe(true);
+  });
+
+  it('binds distinct caller principals to one current-global source controller', async () => {
+    const alphaTakeover = vi.fn(async () => ({
+      sessionId: 'linked-1', operationId: 'operation-alpha', revision: 1,
+    }));
+    const betaTakeover = vi.fn(async () => ({
+      sessionId: 'linked-1', operationId: 'operation-beta', revision: 1,
+    }));
+    const ops: ExternalSessionProviderOps = {
+      validateSource: async ({ source }) => ({ ok: true, source }),
+      listCandidates: async () => ({
+        candidates: [{ remoteSessionId: 'remote-global', updatedAtMs: 1 }],
+        nextCursor: null,
+      }),
+      resolveLinkIdentity: resolveExactLinkIdentity,
+      pageTranscript: async () => ({
+        items: [], nextCursor: null, tailCursor: null, hasMore: false, truncated: false,
+      }),
+      readAfterTranscript: async () => ({ outcome: 'already_current' }),
+    };
+    const composition = await createConfiguredPluginExternalSessionsAdapter({
+      agents: [agent()],
+      account: { connectedServicesV2: [] },
+      basis: { contributionGenerationId: 'registry:g1', accountSettingsRevision: 'account:1' },
+      readCurrentBasis: () => ({ contributionGenerationId: 'registry:g1', accountSettingsRevision: 'account:1' }),
+      isCurrent: () => true,
+      resolveProviderOps: async () => ops,
+    });
+    const alpha = composition.bindAuthorService({ takeover: alphaTakeover });
+    const beta = composition.bindAuthorService({ takeover: betaTakeover });
+
+    expect(Reflect.ownKeys(alpha).sort()).toEqual([
+      'attach', 'capabilities', 'followTranscript', 'list', 'readTranscript', 'takeover',
+    ]);
+    const [alphaList, betaList] = await Promise.all([alpha.list(), beta.list()]);
+    expect(alphaList.items[0]?.ref).toEqual(betaList.items[0]?.ref);
+    const ref = alphaList.items[0]!.ref;
+    await alpha.takeover(ref, {
+      targetStorageMode: 'persisted',
+      idempotencyKey: 'same-opaque-key',
+    });
+    await beta.takeover(ref, {
+      targetStorageMode: 'persisted',
+      idempotencyKey: 'same-opaque-key',
+    });
+
+    expect(alphaTakeover).toHaveBeenCalledOnce();
+    expect(betaTakeover).toHaveBeenCalledOnce();
+    composition.dispose();
+    await expect(alpha.list()).rejects.toMatchObject({ code: 'plugin_generation_retired' });
+    await expect(beta.list()).rejects.toMatchObject({ code: 'plugin_generation_retired' });
+  });
+
+  it('preserves one opaque logical ref through filtered list, attach, read, follow, and takeover without leaking the private source', async () => {
+    const sourceId = 'codexHome:user:::';
+    const ref = Object.freeze({
+      agentId: 'codex',
+      sourceId,
+      remoteSessionId: 'remote:session/%?=+#[]',
+    });
+    const dispose = vi.fn(async () => undefined);
+    const attach = vi.fn(async () => ({ sessionId: 'linked-1' }));
+    const followTranscript = vi.fn(async (input: Readonly<{
+      listener(event: HostExternalTranscriptFollowEvent): void | Promise<void>;
+    }>) => {
+      await input.listener({
+        kind: 'data',
+        items: [{
+          id: 'message-1',
+          localId: 'provider-fact-1',
+          userProjection: 'source_fact',
+          kind: 'user',
+          data: { text: 'hello' },
+        }],
+        fromCursor: null,
+        nextCursor: 'cursor-1',
+      });
+      return {
+        status: 'following' as const,
+        startingCursor: 'cursor-1',
+        subscription: { dispose },
+      };
+    });
+    const takeover = vi.fn<ContextualExternalSessionTakeoverAdapter['takeover']>(async () => ({
+      sessionId: 'linked-1',
+      operationId: 'operation-1',
+      revision: 1,
+    }));
+    const ops: ExternalSessionProviderOps = {
+      externalLinkedTakeoverWriterSafety: 'native_prevention',
+      validateSource: async ({ source }) => ({ ok: true, source }),
+      listCandidates: async () => ({
+        candidates: [{ remoteSessionId: ref.remoteSessionId, updatedAtMs: 1 }],
+        nextCursor: null,
+      }),
+      resolveLinkIdentity: resolveExactLinkIdentity,
+      pageTranscript: async () => ({
+        items: [{
+          id: 'message-1',
+          localId: 'provider-fact-1',
+          userProjection: 'source_fact',
+          createdAtMs: 1,
+          raw: { role: 'user', content: { type: 'text', text: 'hello' } },
+        }],
+        nextCursor: null,
+        tailCursor: 'cursor-1',
+        hasMore: false,
+        truncated: false,
+      }),
+      readAfterTranscript: async () => ({ outcome: 'already_current' }),
+    };
+    const composition = await createConfiguredPluginExternalSessionsAdapter({
+      agents: [agent()],
+      account: { connectedServicesV2: [] },
+      basis: { contributionGenerationId: 'registry:g1', accountSettingsRevision: 'account:1' },
+      readCurrentBasis: () => ({ contributionGenerationId: 'registry:g1', accountSettingsRevision: 'account:1' }),
+      isCurrent: () => true,
+      resolveProviderOps: async () => ops,
+      attach,
+      followTranscript,
+      contextualTakeover: { takeover },
+    });
+
+    const listed = await composition.authorService.list({ agentId: ref.agentId, sourceId });
+    expect(listed.items).toHaveLength(1);
+    expect(listed.items[0]!.ref).toEqual(ref);
+    const attached = await composition.authorService.attach(listed.items[0]!.ref);
+    const transcript = await composition.authorService.readTranscript(listed.items[0]!.ref, {
+      mode: 'page',
+      direction: 'older',
+    });
+    const events: HostExternalTranscriptFollowEvent[] = [];
+    const followed = await composition.authorService.followTranscript(
+      listed.items[0]!.ref,
+      {},
+      (event) => {
+        events.push(event);
+      },
+    );
+    const takenOver = await composition.authorService.takeover(listed.items[0]!.ref, {
+      targetStorageMode: 'persisted',
+      idempotencyKey: 'author-key-1',
+    });
+
+    expect(attached).toEqual({ sessionId: 'linked-1' });
+    expect(transcript).toMatchObject({
+      mode: 'page',
+      items: [{ id: 'message-1', kind: 'user', data: { role: 'user', text: 'hello' } }],
+    });
+    expect(events).toEqual([{
+      kind: 'data',
+      items: [{ id: 'message-1', kind: 'user', data: { text: 'hello' } }],
+      fromCursor: null,
+      nextCursor: 'cursor-1',
+    }]);
+    expect(followed).toMatchObject({ status: 'following', startingCursor: 'cursor-1' });
+    expect(takenOver).toEqual({ sessionId: 'linked-1', operationId: 'operation-1', revision: 1 });
+    expect(takeover).toHaveBeenCalledWith(ref, {
+      targetStorageMode: 'persisted',
+      idempotencyKey: 'author-key-1',
+    }, expect.objectContaining({
+      retirementSignal: expect.any(AbortSignal),
+      isCurrent: expect.any(Function),
+    }));
+
+    const authorVisible = { listed, attached, transcript, events, followed, takenOver };
+    expect(JSON.stringify(authorVisible)).not.toContain('"kind":"codexHome"');
+    expect(JSON.stringify(authorVisible)).not.toContain('"home":"user"');
+    expect(JSON.stringify(authorVisible)).not.toContain('"localId"');
+    expect(JSON.stringify(authorVisible)).not.toContain('"userProjection"');
+    if (followed.status === 'following') await followed.subscription.dispose();
+  });
+
+  it('rejects caller-selected private authority at the author boundary before host or provider effects', async () => {
+    const listCandidates = vi.fn(async () => ({
+      candidates: [{ remoteSessionId: 'remote-1', updatedAtMs: 1 }],
+      nextCursor: null,
+    }));
+    const attach = vi.fn(async () => ({ sessionId: 'must-not-attach' }));
+    const takeover = vi.fn(async () => ({
+      sessionId: 'must-not-take-over',
+      operationId: 'must-not-create-operation',
+      revision: 0,
+    }));
+    const validateSource = vi.fn(async (
+      { source }: Parameters<ExternalSessionProviderOps['validateSource']>[0],
+    ) => ({ ok: true as const, source }));
+    const ops: ExternalSessionProviderOps = {
+      validateSource,
+      listCandidates,
+      pageTranscript: async () => ({
+        items: [], nextCursor: null, tailCursor: null, hasMore: false, truncated: false,
+      }),
+      readAfterTranscript: async () => ({ outcome: 'already_current' }),
+    };
+    const composition = await createConfiguredPluginExternalSessionsAdapter({
+      agents: [agent()],
+      account: { connectedServicesV2: [] },
+      basis: { contributionGenerationId: 'registry:g1', accountSettingsRevision: 'account:1' },
+      readCurrentBasis: () => ({ contributionGenerationId: 'registry:g1', accountSettingsRevision: 'account:1' }),
+      isCurrent: () => true,
+      resolveProviderOps: async () => ops,
+      attach,
+      contextualTakeover: { takeover },
+    });
+    validateSource.mockClear();
+    const privateRef = {
+      agentId: 'codex',
+      sourceId: 'codexHome:user:::',
+      remoteSessionId: 'remote-1',
+      source: { kind: 'codexHome', home: 'attacker-selected' },
+      machineId: 'machine-private',
+      generation: 'generation-private',
+      linkData: { private: true },
+      operation: { operationId: 'operation-private' },
+    };
+
+    await expect(composition.authorService.attach(privateRef as never)).rejects.toMatchObject({
+      code: 'plugin_external_ref_invalid',
+    });
+    await expect(composition.authorService.readTranscript(privateRef as never, {
+      mode: 'page',
+      direction: 'older',
+    })).rejects.toMatchObject({ code: 'plugin_external_ref_invalid' });
+    await expect(composition.authorService.takeover(privateRef as never, {
+      targetStorageMode: 'persisted',
+      idempotencyKey: 'private-ref-rejection',
+    })).rejects.toMatchObject({ code: 'plugin_external_ref_invalid' });
+    await expect(composition.authorService.list({
+      sourceId: 'codexHome:user:::',
+      source: { kind: 'codexHome', home: 'attacker-selected' },
+      machineId: 'machine-private',
+    } as never)).rejects.toMatchObject({ code: 'plugin_external_list_query_invalid' });
+    const ref = {
+      agentId: 'codex', sourceId: 'codexHome:user:::', remoteSessionId: 'remote-1',
+    } as const;
+    await expect(composition.authorService.readTranscript(ref, {
+      mode: 'page',
+      direction: 'older',
+      source: { kind: 'codexHome', home: 'attacker-selected' },
+      path: '/private/transcript.jsonl',
+    } as never)).rejects.toMatchObject({
+      code: 'plugin_external_transcript_query_invalid',
+    });
+    await expect(composition.authorService.takeover(ref, {
+      targetStorageMode: 'persisted',
+      targetDirectory: '/local/selected/workspace',
+      idempotencyKey: 'private-request-rejection',
+      operation: {
+        operationId: 'caller-selected-operation',
+        claim: 'caller-selected-claim',
+      },
+    } as never)).rejects.toMatchObject({
+      code: 'plugin_external_takeover_request_invalid',
+    });
+    expect({
+      listCandidates: listCandidates.mock.calls.length,
+      validateSource: validateSource.mock.calls.length,
+      attach: attach.mock.calls.length,
+      takeover: takeover.mock.calls.length,
+    }).toEqual({ listCandidates: 0, validateSource: 0, attach: 0, takeover: 0 });
+  });
+
+  it('strict-validates author list and transcript identities and cursors before current-source effects', async () => {
+    const listCandidates = vi.fn(async () => ({
+      candidates: [{ remoteSessionId: 'remote:session/%?=+#[]', updatedAtMs: 1 }],
+      nextCursor: null,
+    }));
+    const pageTranscript = vi.fn(async () => ({
+      items: [], nextCursor: null, tailCursor: null, hasMore: false, truncated: false,
+    }));
+    const readAfterTranscript = vi.fn(async () => ({ outcome: 'already_current' as const }));
+    const validateSource = vi.fn(async (
+      { source }: Parameters<ExternalSessionProviderOps['validateSource']>[0],
+    ) => ({ ok: true as const, source }));
+    const readCurrentBasis = vi.fn(() => ({
+      contributionGenerationId: 'registry:g1',
+      accountSettingsRevision: 'account:1',
+    }));
+    const isCurrent = vi.fn(() => true);
+    const ops: ExternalSessionProviderOps = {
+      validateSource,
+      listCandidates,
+      pageTranscript,
+      readAfterTranscript,
+    };
+    const composition = await createConfiguredPluginExternalSessionsAdapter({
+      agents: [agent()],
+      account: { connectedServicesV2: [] },
+      basis: { contributionGenerationId: 'registry:g1', accountSettingsRevision: 'account:1' },
+      readCurrentBasis,
+      isCurrent,
+      resolveProviderOps: async () => ops,
+    });
+    const ref = {
+      agentId: 'codex', sourceId: 'codexHome:user:::', remoteSessionId: 'remote-1',
+    } as const;
+    const hostQualifiedCursorPrefix = 'happier_external_cursor_v1:';
+    const maximumPageCursor = `${hostQualifiedCursorPrefix}${'p'.repeat(4_096 - hostQualifiedCursorPrefix.length)}`;
+    const maximumReadAfterCursor = `${hostQualifiedCursorPrefix}${'r'.repeat(4_096 - hostQualifiedCursorPrefix.length)}`;
+    const hostQualifiedContinuationCursor = `${hostQualifiedCursorPrefix}${'a'.repeat(4_096 - hostQualifiedCursorPrefix.length)}`;
+    const rawNativeCursor = "cursor:v1::/%?=+#[]@!$&'()*+,;";
+    const effectCounts = () => ({
+      isCurrent: isCurrent.mock.calls.length,
+      readCurrentBasis: readCurrentBasis.mock.calls.length,
+      validateSource: validateSource.mock.calls.length,
+      listCandidates: listCandidates.mock.calls.length,
+      pageTranscript: pageTranscript.mock.calls.length,
+      readAfterTranscript: readAfterTranscript.mock.calls.length,
+    });
+    const resetEffects = () => {
+      isCurrent.mockClear();
+      readCurrentBasis.mockClear();
+      validateSource.mockClear();
+      listCandidates.mockClear();
+      pageTranscript.mockClear();
+      readAfterTranscript.mockClear();
+    };
+    const noEffects = {
+      isCurrent: 0,
+      readCurrentBasis: 0,
+      validateSource: 0,
+      listCandidates: 0,
+      pageTranscript: 0,
+      readAfterTranscript: 0,
+    };
+    resetEffects();
+
+    for (const agentId of ['', ' codex ', 'a'.repeat(129)]) {
+      await expect(composition.authorService.list({ agentId })).rejects.toMatchObject({
+        code: 'plugin_external_list_query_invalid',
+      });
+    }
+    for (const sourceId of ['', ' codexHome:user::: ', 's'.repeat(2_001)]) {
+      await expect(composition.authorService.list({ sourceId })).rejects.toMatchObject({
+        code: 'plugin_external_list_query_invalid',
+      });
+    }
+    for (const cursor of [
+      '',
+      ' cursor:v1::/%?=+#[] ',
+      'c'.repeat(4_097),
+      'plugin_external_sessions_v1_missing',
+    ]) {
+      await expect(composition.authorService.list({ cursor })).rejects.toMatchObject({
+        code: 'plugin_external_list_query_invalid',
+      });
+      await expect(composition.authorService.readTranscript(ref, {
+        mode: 'page', direction: 'older', cursor,
+      })).rejects.toMatchObject({
+        code: 'plugin_external_transcript_query_invalid',
+      });
+      await expect(composition.authorService.readTranscript(ref, {
+        mode: 'readAfter', cursor,
+      })).rejects.toMatchObject({
+        code: 'plugin_external_transcript_query_invalid',
+      });
+    }
+    await expect(composition.authorService.list({ cursor: rawNativeCursor })).rejects.toMatchObject({
+      code: 'plugin_external_list_query_invalid',
+    });
+    expect(effectCounts()).toEqual(noEffects);
+    await expect(composition.authorService.readTranscript(ref, {
+      mode: 'page', direction: 'older', cursor: rawNativeCursor,
+    })).rejects.toMatchObject({
+      code: 'plugin_external_transcript_query_invalid',
+    });
+    await expect(composition.authorService.readTranscript(ref, {
+      mode: 'readAfter', cursor: rawNativeCursor,
+    })).rejects.toMatchObject({
+      code: 'plugin_external_transcript_query_invalid',
+    });
+    for (const [field, value] of [
+      ['limit', 0],
+      ['limit', Number.NaN],
+      ['limit', Number.POSITIVE_INFINITY],
+      ['limit', 1.5],
+      ['limit', '1'],
+      ['maxBytes', 0],
+      ['maxBytes', Number.NaN],
+      ['maxBytes', Number.POSITIVE_INFINITY],
+      ['maxBytes', 1.5],
+      ['maxBytes', '1'],
+    ] as const) {
+      await expect(composition.authorService.list({
+        [field]: value,
+      } as never)).rejects.toMatchObject({
+        code: 'plugin_external_list_query_invalid',
+      });
+    }
+    for (const [field, value] of [
+      ['limit', 0],
+      ['limit', Number.NaN],
+      ['limit', 1.5],
+      ['limit', '1'],
+      ['maxBytes', -1],
+      ['maxBytes', Number.POSITIVE_INFINITY],
+      ['maxBytes', null],
+    ] as const) {
+      await expect(composition.authorService.readTranscript(ref, {
+        mode: 'page',
+        direction: 'older',
+        [field]: value,
+      } as never)).rejects.toMatchObject({
+        code: 'plugin_external_transcript_query_invalid',
+      });
+      await expect(composition.authorService.readTranscript(ref, {
+        mode: 'readAfter',
+        cursor: maximumReadAfterCursor,
+        [field]: value,
+      } as never)).rejects.toMatchObject({
+        code: 'plugin_external_transcript_query_invalid',
+      });
+    }
+    expect(effectCounts()).toEqual(noEffects);
+
+    await expect(composition.authorService.list({
+      agentId: ':plugin/v1?x=1'.padEnd(128, 'a'),
+    })).rejects.toMatchObject({ code: 'plugin_external_source_unavailable' });
+    await expect(composition.authorService.list({
+      agentId: 'codex', sourceId: ':source/v1?x=1'.padEnd(2_000, 's'),
+    })).rejects.toMatchObject({ code: 'plugin_external_source_unavailable' });
+    await expect(composition.authorService.list({
+      cursor: 'plugin_external_sessions_v1_:cursor/%?='.padEnd(4_096, 'c'),
+    })).rejects.toMatchObject({ code: 'plugin_external_list_query_invalid' });
+    await expect(composition.authorService.list({
+      sourceId: 'codexHome:user:::',
+    })).resolves.toMatchObject({
+      items: [{
+        ref: {
+          agentId: 'codex',
+          sourceId: 'codexHome:user:::',
+          remoteSessionId: 'remote:session/%?=+#[]',
+        },
+      }],
+    });
+    await expect(composition.authorService.readTranscript(ref, {
+      mode: 'page', direction: 'older', cursor: maximumPageCursor,
+    })).resolves.toMatchObject({ mode: 'page' });
+    await expect(composition.authorService.readTranscript(ref, {
+      mode: 'readAfter', cursor: maximumReadAfterCursor,
+    })).resolves.toEqual({ mode: 'readAfter', outcome: 'already_current' });
+    await expect(composition.authorService.readTranscript(ref, {
+      mode: 'page', direction: 'newer', cursor: hostQualifiedContinuationCursor,
+    })).resolves.toMatchObject({ mode: 'page' });
+    await expect(composition.authorService.readTranscript(ref, {
+      mode: 'readAfter', cursor: hostQualifiedContinuationCursor,
+    })).resolves.toEqual({ mode: 'readAfter', outcome: 'already_current' });
+    expect(pageTranscript).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      cursor: hostQualifiedContinuationCursor,
+    }));
+    expect(readAfterTranscript).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      cursor: hostQualifiedContinuationCursor,
+    }));
+  });
+
+  it('keeps cancellation in public options and rejects option fields before private effects', async () => {
+    const listCandidates = vi.fn(async () => ({ candidates: [], nextCursor: null }));
+    const pageTranscript = vi.fn(async () => ({
+      items: [], nextCursor: null, tailCursor: null, hasMore: false, truncated: false,
+    }));
+    const attach = vi.fn(async () => ({ sessionId: 'must-not-attach' }));
+    const followTranscript = vi.fn(async () => ({
+      status: 'following' as const,
+      startingCursor: null,
+      subscription: { dispose: vi.fn(async () => undefined) },
+    }));
+    const takeover = vi.fn(async () => ({
+      sessionId: 'must-not-take-over',
+      operationId: 'must-not-create-operation',
+      revision: 0,
+    }));
+    const ops: ExternalSessionProviderOps = {
+      validateSource: async ({ source }) => ({ ok: true, source }),
+      listCandidates,
+      pageTranscript,
+      readAfterTranscript: async () => ({ outcome: 'already_current' }),
+    };
+    const composition = await createConfiguredPluginExternalSessionsAdapter({
+      agents: [agent()],
+      account: { connectedServicesV2: [] },
+      basis: { contributionGenerationId: 'registry:g1', accountSettingsRevision: 'account:1' },
+      readCurrentBasis: () => ({ contributionGenerationId: 'registry:g1', accountSettingsRevision: 'account:1' }),
+      isCurrent: () => true,
+      resolveProviderOps: async () => ops,
+      attach,
+      followTranscript,
+      contextualTakeover: { takeover },
+    });
+    const ref = {
+      agentId: 'codex', sourceId: 'codexHome:user:::', remoteSessionId: 'remote-1',
+    } as const;
+    const aborted = new AbortController();
+    aborted.abort();
+
+    await expect(Reflect.apply(composition.authorService.list, composition.authorService, [
+      {}, { signal: aborted.signal },
+    ])).rejects.toMatchObject({ code: 'plugin_operation_aborted' });
+    await expect(Reflect.apply(composition.authorService.readTranscript, composition.authorService, [
+      ref, { mode: 'page', direction: 'older' }, { signal: aborted.signal },
+    ])).rejects.toMatchObject({ code: 'plugin_operation_aborted' });
+    await expect(composition.authorService.attach(ref, {
+      source: { kind: 'codexHome', home: 'attacker-selected' },
+    } as never)).rejects.toMatchObject({ code: 'plugin_external_options_invalid' });
+    await expect(composition.authorService.takeover(ref, {
+      targetStorageMode: 'persisted',
+      idempotencyKey: 'private-options-rejection',
+    }, { claim: 'caller-selected-claim' } as never)).rejects.toMatchObject({
+      code: 'plugin_external_options_invalid',
+    });
+    await expect(composition.authorService.followTranscript(ref, {
+      source: { kind: 'codexHome', home: 'attacker-selected' },
+    } as never, vi.fn())).resolves.toEqual({
+      status: 'unavailable',
+      code: 'plugin_external_follow_options_invalid',
+    });
+    expect({
+      listCandidates: listCandidates.mock.calls.length,
+      pageTranscript: pageTranscript.mock.calls.length,
+      attach: attach.mock.calls.length,
+      followTranscript: followTranscript.mock.calls.length,
+      takeover: takeover.mock.calls.length,
+    }).toEqual({
+      listCandidates: 0,
+      pageTranscript: 0,
+      attach: 0,
+      followTranscript: 0,
+      takeover: 0,
+    });
+  });
+
+  it('returns typed unavailable for malformed public follow refs before private effects', async () => {
+    const followTranscript = vi.fn(async () => ({
+      status: 'following' as const,
+      startingCursor: null,
+      subscription: { dispose: vi.fn(async () => undefined) },
+    }));
+    const validateSource = vi.fn(async (
+      { source }: Parameters<ExternalSessionProviderOps['validateSource']>[0],
+    ) => ({ ok: true as const, source }));
+    const composition = await createConfiguredPluginExternalSessionsAdapter({
+      agents: [agent()],
+      account: { connectedServicesV2: [] },
+      basis: { contributionGenerationId: 'registry:g1', accountSettingsRevision: 'account:1' },
+      readCurrentBasis: () => ({ contributionGenerationId: 'registry:g1', accountSettingsRevision: 'account:1' }),
+      isCurrent: () => true,
+      resolveProviderOps: async () => ({
+        validateSource,
+        listCandidates: async () => ({ candidates: [], nextCursor: null }),
+        pageTranscript: async () => ({
+          items: [], nextCursor: null, tailCursor: null, hasMore: false, truncated: false,
+        }),
+        readAfterTranscript: async () => ({ outcome: 'already_current' }),
+      }),
+      followTranscript,
+    });
+    validateSource.mockClear();
+
+    await expect(composition.authorService.followTranscript({
+      agentId: ' codex ',
+      sourceId: 'codexHome:user:::',
+      remoteSessionId: 'remote-1',
+    } as never, {}, vi.fn())).resolves.toEqual({
+      status: 'unavailable',
+      code: 'plugin_external_ref_invalid',
+    });
+
+    expect(validateSource).not.toHaveBeenCalled();
+    expect(followTranscript).not.toHaveBeenCalled();
+  });
+
+  it('returns typed unavailable when a public follow ref is absent from the current snapshot', async () => {
+    const followTranscript = vi.fn(async () => ({
+      status: 'following' as const,
+      startingCursor: null,
+      subscription: { dispose: vi.fn(async () => undefined) },
+    }));
+    const composition = await createConfiguredPluginExternalSessionsAdapter({
+      agents: [agent()],
+      account: { connectedServicesV2: [] },
+      basis: { contributionGenerationId: 'registry:g1', accountSettingsRevision: 'account:1' },
+      readCurrentBasis: () => ({ contributionGenerationId: 'registry:g1', accountSettingsRevision: 'account:1' }),
+      isCurrent: () => true,
+      resolveProviderOps: async () => ({
+        validateSource: async ({ source }) => ({ ok: true as const, source }),
+        listCandidates: async () => ({ candidates: [], nextCursor: null }),
+        resolveLinkIdentity: async ({ source, remoteSessionId }) => ({ source, remoteSessionId }),
+        pageTranscript: async () => ({
+          items: [], nextCursor: null, tailCursor: null, hasMore: false, truncated: false,
+        }),
+        readAfterTranscript: async () => ({ outcome: 'already_current' }),
+      }),
+      followTranscript,
+    });
+
+    await expect(composition.authorService.followTranscript({
+      agentId: 'codex',
+      sourceId: 'codexHome:missing:::',
+      remoteSessionId: 'remote-1',
+    }, {}, vi.fn())).resolves.toEqual({
+      status: 'unavailable',
+      code: 'plugin_external_source_unavailable',
+    });
+    expect(followTranscript).not.toHaveBeenCalled();
+  });
+
+  it('revalidates the current public follow ref identity before host follow effects', async () => {
+    const followTranscript = vi.fn(async () => ({
+      status: 'following' as const,
+      startingCursor: null,
+      subscription: { dispose: vi.fn(async () => undefined) },
+    }));
+    const resolveLinkIdentity = vi.fn(async () => {
+      throw new ExternalSessionProviderFailureError({
+        code: 'candidate_not_found',
+        message: 'stale public ref',
+        operation: 'resolveLinkIdentity',
+      });
+    });
+    const composition = await createConfiguredPluginExternalSessionsAdapter({
+      agents: [agent()],
+      account: { connectedServicesV2: [] },
+      basis: { contributionGenerationId: 'registry:g1', accountSettingsRevision: 'account:1' },
+      readCurrentBasis: () => ({ contributionGenerationId: 'registry:g1', accountSettingsRevision: 'account:1' }),
+      isCurrent: () => true,
+      resolveProviderOps: async () => ({
+        validateSource: async ({ source }) => ({ ok: true as const, source }),
+        listCandidates: async () => ({ candidates: [], nextCursor: null }),
+        resolveLinkIdentity,
+        pageTranscript: async () => ({
+          items: [], nextCursor: null, tailCursor: null, hasMore: false, truncated: false,
+        }),
+        readAfterTranscript: async () => ({ outcome: 'already_current' }),
+      }),
+      followTranscript,
+    });
+
+    await expect(composition.authorService.followTranscript({
+      agentId: 'codex',
+      sourceId: 'codexHome:user:::',
+      remoteSessionId: 'remote-1',
+    }, {}, vi.fn())).resolves.toEqual({
+      status: 'unavailable',
+      code: 'plugin_external_follow_identity_unavailable',
+    });
+    expect(resolveLinkIdentity).toHaveBeenCalledOnce();
+    expect(followTranscript).not.toHaveBeenCalled();
+  });
+
+  it('resolves a public follow through only the exact selected source when remote ids overlap', async () => {
+    const dispose = vi.fn(async () => undefined);
+    const resolveLinkIdentity = vi.fn(async ({
+      source,
+      remoteSessionId,
+    }: Readonly<{
+      source: Parameters<ExternalSessionProviderOps['validateSource']>[0]['source'];
+      remoteSessionId: string;
+    }>) => ({ source, remoteSessionId }));
+    const followTranscript = vi.fn(async () => ({
+      status: 'following' as const,
+      startingCursor: null,
+      subscription: { dispose },
+    }));
+    const composition = await createConfiguredPluginExternalSessionsAdapter({
+      agents: [agent()],
+      account: {
+        connectedServicesV2: [{
+          serviceId: 'openai-codex',
+          profiles: [{
+            profileId: 'work', status: 'connected', kind: 'oauth', providerEmail: null,
+            providerAccountId: null, expiresAt: null, lastUsedAt: null, health: null,
+          }],
+          groups: [],
+        }],
+      },
+      basis: { contributionGenerationId: 'registry:g1', accountSettingsRevision: 'account:1' },
+      readCurrentBasis: () => ({ contributionGenerationId: 'registry:g1', accountSettingsRevision: 'account:1' }),
+      isCurrent: () => true,
+      resolveProviderOps: async () => ({
+        validateSource: async ({ source }) => ({ ok: true as const, source }),
+        listCandidates: async () => ({ candidates: [], nextCursor: null }),
+        resolveLinkIdentity,
+        pageTranscript: async () => ({
+          items: [], nextCursor: null, tailCursor: null, hasMore: false, truncated: false,
+        }),
+        readAfterTranscript: async () => ({ outcome: 'already_current' }),
+      }),
+      followTranscript,
+    });
+    const selectedSource = {
+      kind: 'codexHome',
+      home: 'connectedService',
+      connectedServiceId: 'openai-codex',
+      connectedServiceProfileId: 'work',
+    } as const;
+
+    const result = await composition.authorService.followTranscript({
+      agentId: 'codex',
+      sourceId: 'codexHome:connectedService:openai-codex:work:',
+      remoteSessionId: 'remote-shared',
+    }, {}, vi.fn());
+
+    expect(result).toMatchObject({ status: 'following', startingCursor: null });
+    expect(resolveLinkIdentity).toHaveBeenCalledOnce();
+    expect(resolveLinkIdentity).toHaveBeenCalledWith(expect.objectContaining({
+      source: selectedSource,
+      remoteSessionId: 'remote-shared',
+    }));
+    expect(followTranscript).toHaveBeenCalledOnce();
+    expect(followTranscript).toHaveBeenCalledWith(expect.objectContaining({
+      source: selectedSource,
+      ref: {
+        agentId: 'codex',
+        sourceId: 'codexHome:connectedService:openai-codex:work:',
+        remoteSessionId: 'remote-shared',
+      },
+    }));
+    if (result.status === 'following') await result.subscription.dispose();
+    expect(dispose).toHaveBeenCalledOnce();
+  });
+
+  it('delivers exactly one canonical disposed acknowledgement before closing an explicit public follow', async () => {
+    let privateListener!: (event: HostExternalTranscriptFollowEvent) => Promise<void> | void;
+    const dispose = vi.fn(async () => {
+      await privateListener({
+        kind: 'terminated',
+        reason: 'disposed',
+        cursor: 'cursor-0',
+      });
+    });
+    const followTranscript = vi.fn(async (input: Readonly<{
+      listener(event: HostExternalTranscriptFollowEvent): void | Promise<void>;
+    }>) => {
+      privateListener = input.listener;
+      return {
+        status: 'following' as const,
+        startingCursor: 'cursor-0',
+        subscription: { dispose },
+      };
+    });
+    const composition = await createConfiguredPluginExternalSessionsAdapter({
+      agents: [agent()],
+      account: { connectedServicesV2: [] },
+      basis: { contributionGenerationId: 'registry:g1', accountSettingsRevision: 'account:1' },
+      readCurrentBasis: () => ({ contributionGenerationId: 'registry:g1', accountSettingsRevision: 'account:1' }),
+      isCurrent: () => true,
+      resolveProviderOps: async () => ({
+        validateSource: async ({ source }) => ({ ok: true as const, source }),
+        listCandidates: async () => ({ candidates: [], nextCursor: null }),
+        resolveLinkIdentity: resolveExactLinkIdentity,
+        pageTranscript: async () => ({
+          items: [], nextCursor: null, tailCursor: 'cursor-0', hasMore: false, truncated: false,
+        }),
+        readAfterTranscript: async () => ({ outcome: 'already_current' as const }),
+      }),
+      followTranscript,
+    });
+    const listener = vi.fn(async () => undefined);
+    const result = await composition.authorService.followTranscript({
+      agentId: 'codex', sourceId: 'codexHome:user:::', remoteSessionId: 'remote-1',
+    }, {}, listener);
+    expect(result.status).toBe('following');
+    if (result.status !== 'following') throw new Error('expected author follow');
+
+    await result.subscription.dispose();
+    await result.subscription.dispose();
+
+    expect(dispose).toHaveBeenCalledOnce();
+    expect(listener).toHaveBeenCalledOnce();
+    expect(listener).toHaveBeenCalledWith({
+      kind: 'terminated',
+      reason: 'disposed',
+      cursor: 'cursor-0',
+    });
+    await expect(privateListener({
+      kind: 'data', items: [], fromCursor: 'cursor-0', nextCursor: 'cursor-1',
+    })).rejects.toThrow('plugin_external_follow_listener_failed');
+    await expect(privateListener({
+      kind: 'resyncRequired', reason: 'cursorDiscontinuity', cursor: 'cursor-0',
+    })).rejects.toThrow('plugin_external_follow_listener_failed');
+    await expect(privateListener({
+      kind: 'terminated', reason: 'providerFailure', cursor: 'cursor-0',
+    })).rejects.toThrow('plugin_external_follow_listener_failed');
+    await expect(privateListener({
+      kind: 'terminated', reason: 'disposed', cursor: 'cursor-0',
+    })).rejects.toThrow('plugin_external_follow_listener_failed');
+    expect(listener).toHaveBeenCalledOnce();
+  });
+
+  it('strictly projects author follow acquisition results without private fields', async () => {
+    const followTranscript = vi.fn(async () => ({
+      status: 'unavailable' as const,
+      code: 'plugin_external_follow_unavailable',
+      source: { kind: 'codexHome', home: 'private-home' },
+      path: '/private/transcript.jsonl',
+      operation: { operationId: 'private-operation' },
+    }));
+    const ops: ExternalSessionProviderOps = {
+      validateSource: async ({ source }) => ({ ok: true, source }),
+      listCandidates: async () => ({ candidates: [], nextCursor: null }),
+      resolveLinkIdentity: resolveExactLinkIdentity,
+      pageTranscript: async () => ({
+        items: [], nextCursor: null, tailCursor: null, hasMore: false, truncated: false,
+      }),
+      readAfterTranscript: async () => ({ outcome: 'already_current' }),
+    };
+    const composition = await createConfiguredPluginExternalSessionsAdapter({
+      agents: [agent()],
+      account: { connectedServicesV2: [] },
+      basis: { contributionGenerationId: 'registry:g1', accountSettingsRevision: 'account:1' },
+      readCurrentBasis: () => ({ contributionGenerationId: 'registry:g1', accountSettingsRevision: 'account:1' }),
+      isCurrent: () => true,
+      resolveProviderOps: async () => ops,
+      followTranscript: followTranscript as never,
+    });
+
+    await expect(composition.authorService.followTranscript({
+      agentId: 'codex', sourceId: 'codexHome:user:::', remoteSessionId: 'remote-1',
+    }, {}, vi.fn())).resolves.toEqual({
+      status: 'unavailable',
+      code: 'plugin_external_follow_unavailable',
+    });
+
+    const invalidDispose = vi.fn(async () => undefined);
+    const invalid = await createConfiguredPluginExternalSessionsAdapter({
+      agents: [agent()],
+      account: { connectedServicesV2: [] },
+      basis: { contributionGenerationId: 'registry:g2', accountSettingsRevision: 'account:1' },
+      readCurrentBasis: () => ({ contributionGenerationId: 'registry:g2', accountSettingsRevision: 'account:1' }),
+      isCurrent: () => true,
+      resolveProviderOps: async () => ops,
+      followTranscript: (async () => ({
+        status: 'following' as const,
+        startingCursor: ' invalid-cursor ',
+        subscription: { dispose: invalidDispose },
+      })) as never,
+    });
+    await expect(invalid.authorService.followTranscript({
+      agentId: 'codex', sourceId: 'codexHome:user:::', remoteSessionId: 'remote-1',
+    }, {}, vi.fn())).resolves.toEqual({
+      status: 'unavailable',
+      code: 'plugin_external_follow_result_invalid',
+    });
+    expect(invalidDispose).toHaveBeenCalledOnce();
+  });
+
+  it('terminates author follow on listener rejection without cursor advance or late delivery', async () => {
+    let privateListener!: (event: HostExternalTranscriptFollowEvent) => Promise<void> | void;
+    let acceptedCursor = 'cursor-0';
+    const dispose = vi.fn(async () => undefined);
+    const followTranscript = vi.fn(async (input: Readonly<{
+      listener(event: HostExternalTranscriptFollowEvent): void | Promise<void>;
+    }>) => {
+      privateListener = input.listener;
+      return {
+        status: 'following' as const,
+        startingCursor: acceptedCursor,
+        subscription: { dispose },
+      };
+    });
+    const listener = vi.fn(async () => {
+      throw new Error('author-listener-rejected');
+    });
+    const ops: ExternalSessionProviderOps = {
+      validateSource: async ({ source }) => ({ ok: true, source }),
+      listCandidates: async () => ({ candidates: [], nextCursor: null }),
+      resolveLinkIdentity: resolveExactLinkIdentity,
+      pageTranscript: async () => ({
+        items: [], nextCursor: null, tailCursor: acceptedCursor, hasMore: false, truncated: false,
+      }),
+      readAfterTranscript: async () => ({ outcome: 'already_current' }),
+    };
+    const composition = await createConfiguredPluginExternalSessionsAdapter({
+      agents: [agent()],
+      account: { connectedServicesV2: [] },
+      basis: { contributionGenerationId: 'registry:g1', accountSettingsRevision: 'account:1' },
+      readCurrentBasis: () => ({ contributionGenerationId: 'registry:g1', accountSettingsRevision: 'account:1' }),
+      isCurrent: () => true,
+      resolveProviderOps: async () => ops,
+      followTranscript,
+    });
+    const ref = {
+      agentId: 'codex', sourceId: 'codexHome:user:::', remoteSessionId: 'remote-1',
+    } as const;
+    await expect(composition.authorService.followTranscript(
+      ref,
+      { cursor: ' cursor-0 ' },
+      listener,
+    )).resolves.toEqual({
+      status: 'unavailable',
+      code: 'plugin_external_cursor_invalid',
+    });
+    expect(followTranscript).not.toHaveBeenCalled();
+    const result = await composition.authorService.followTranscript(ref, {}, listener);
+    expect(result.status).toBe('following');
+    const deliver = async (nextCursor: string) => {
+      await privateListener!({
+        kind: 'data', items: [], fromCursor: acceptedCursor, nextCursor,
+      });
+      acceptedCursor = nextCursor;
+    };
+
+    await expect(deliver('cursor-1')).rejects.toThrow('author-listener-rejected');
+    expect(acceptedCursor).toBe('cursor-0');
+    expect(dispose).toHaveBeenCalledOnce();
+    await expect(deliver('cursor-2')).rejects.toThrow('plugin_external_follow_listener_failed');
+    expect(listener).toHaveBeenCalledOnce();
+    expect(acceptedCursor).toBe('cursor-0');
+  });
+
+  it('serializes author listener delivery when the composition producer invokes concurrently', async () => {
+    let privateListener!: (event: HostExternalTranscriptFollowEvent) => Promise<void> | void;
+    const dispose = vi.fn(async () => undefined);
+    const followTranscript = vi.fn(async (input: Readonly<{
+      listener(event: HostExternalTranscriptFollowEvent): void | Promise<void>;
+    }>) => {
+      privateListener = input.listener;
+      return {
+        status: 'following' as const,
+        startingCursor: 'cursor-0',
+        subscription: { dispose },
+      };
+    });
+    const ops: ExternalSessionProviderOps = {
+      validateSource: async ({ source }) => ({ ok: true, source }),
+      listCandidates: async () => ({ candidates: [], nextCursor: null }),
+      resolveLinkIdentity: resolveExactLinkIdentity,
+      pageTranscript: async () => ({
+        items: [], nextCursor: null, tailCursor: 'cursor-0', hasMore: false, truncated: false,
+      }),
+      readAfterTranscript: async () => ({ outcome: 'already_current' }),
+    };
+    let releaseFirst!: () => void;
+    const firstPending = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    let inFlight = 0;
+    let maximumInFlight = 0;
+    const deliveryOrder: string[] = [];
+    const listener = vi.fn(async (event: HostExternalTranscriptFollowEvent) => {
+      if (event.kind !== 'data') return;
+      inFlight += 1;
+      maximumInFlight = Math.max(maximumInFlight, inFlight);
+      deliveryOrder.push(`start:${event.nextCursor}`);
+      if (event.nextCursor === 'cursor-1') await firstPending;
+      deliveryOrder.push(`end:${event.nextCursor}`);
+      inFlight -= 1;
+    });
+    const composition = await createConfiguredPluginExternalSessionsAdapter({
+      agents: [agent()],
+      account: { connectedServicesV2: [] },
+      basis: { contributionGenerationId: 'registry:g1', accountSettingsRevision: 'account:1' },
+      readCurrentBasis: () => ({ contributionGenerationId: 'registry:g1', accountSettingsRevision: 'account:1' }),
+      isCurrent: () => true,
+      resolveProviderOps: async () => ops,
+      followTranscript,
+    });
+    const result = await composition.authorService.followTranscript({
+      agentId: 'codex', sourceId: 'codexHome:user:::', remoteSessionId: 'remote-1',
+    }, {}, listener);
+    expect(result.status).toBe('following');
+
+    const first = Promise.resolve(privateListener({
+      kind: 'data', items: [], fromCursor: 'cursor-0', nextCursor: 'cursor-1',
+    }));
+    await vi.waitFor(() => expect(listener).toHaveBeenCalledOnce());
+    const second = Promise.resolve(privateListener({
+      kind: 'data', items: [], fromCursor: 'cursor-1', nextCursor: 'cursor-2',
+    }));
+    await vi.waitFor(() => expect(listener).toHaveBeenCalledTimes(1));
+
+    expect(maximumInFlight).toBe(1);
+    expect(deliveryOrder).toEqual(['start:cursor-1']);
+    releaseFirst();
+    await expect(Promise.all([first, second])).resolves.toEqual([undefined, undefined]);
+    expect(maximumInFlight).toBe(1);
+    expect(deliveryOrder).toEqual([
+      'start:cursor-1',
+      'end:cursor-1',
+      'start:cursor-2',
+      'end:cursor-2',
+    ]);
+    if (result.status === 'following') await result.subscription.dispose();
+    expect(dispose).toHaveBeenCalledOnce();
+  });
+
+  it('strict-validates and byte-bounds projected author events before listener delivery', async () => {
+    let privateListener!: (event: HostExternalTranscriptFollowEvent) => Promise<void> | void;
+    const dispose = vi.fn(async () => undefined);
+    const followTranscript = vi.fn(async (input: Readonly<{
+      listener(event: HostExternalTranscriptFollowEvent): void | Promise<void>;
+    }>) => {
+      privateListener = input.listener;
+      return {
+        status: 'following' as const,
+        startingCursor: 'cursor-0',
+        subscription: { dispose },
+      };
+    });
+    const listener = vi.fn(async () => undefined);
+    const ops: ExternalSessionProviderOps = {
+      validateSource: async ({ source }) => ({ ok: true, source }),
+      listCandidates: async () => ({ candidates: [], nextCursor: null }),
+      resolveLinkIdentity: resolveExactLinkIdentity,
+      pageTranscript: async () => ({
+        items: [], nextCursor: null, tailCursor: 'cursor-0', hasMore: false, truncated: false,
+      }),
+      readAfterTranscript: async () => ({ outcome: 'already_current' }),
+    };
+    const composition = await createConfiguredPluginExternalSessionsAdapter({
+      agents: [agent()],
+      account: { connectedServicesV2: [] },
+      basis: { contributionGenerationId: 'registry:g1', accountSettingsRevision: 'account:1' },
+      readCurrentBasis: () => ({ contributionGenerationId: 'registry:g1', accountSettingsRevision: 'account:1' }),
+      isCurrent: () => true,
+      resolveProviderOps: async () => ops,
+      followTranscript,
+    });
+    await composition.authorService.followTranscript({
+      agentId: 'codex', sourceId: 'codexHome:user:::', remoteSessionId: 'remote-1',
+    }, {}, listener);
+
+    await expect(privateListener({
+      kind: 'data', items: [], fromCursor: 'cursor-0', nextCursor: ' cursor-1 ',
+    })).rejects.toMatchObject({ code: 'plugin_external_follow_event_invalid' });
+    expect(listener).not.toHaveBeenCalled();
+    expect(dispose).toHaveBeenCalledOnce();
+
+    const second = await createConfiguredPluginExternalSessionsAdapter({
+      agents: [agent()],
+      account: { connectedServicesV2: [] },
+      basis: { contributionGenerationId: 'registry:g2', accountSettingsRevision: 'account:1' },
+      readCurrentBasis: () => ({ contributionGenerationId: 'registry:g2', accountSettingsRevision: 'account:1' }),
+      isCurrent: () => true,
+      resolveProviderOps: async () => ops,
+      followTranscript,
+    });
+    await second.authorService.followTranscript({
+      agentId: 'codex', sourceId: 'codexHome:user:::', remoteSessionId: 'remote-1',
+    }, {}, listener);
+    await expect(privateListener({
+      kind: 'data',
+      items: Array.from({ length: 9_000 }, (_, index) => ({
+        id: `item-${index}`,
+        kind: 'agent' as const,
+        data: { text: 'x'.repeat(100) },
+      })),
+      fromCursor: 'cursor-0',
+      nextCursor: 'cursor-1',
+    })).rejects.toMatchObject({ code: 'plugin_external_follow_event_too_large' });
+    expect(listener).not.toHaveBeenCalled();
+    expect(dispose).toHaveBeenCalledTimes(2);
+  });
+
+  it('admits bounded host-qualified author follow cursors through acquisition and events', async () => {
+    let privateListener!: (event: HostExternalTranscriptFollowEvent) => Promise<void> | void;
+    const followTranscript = vi.fn(async (input: Readonly<{
+      options: Readonly<{ cursor?: string }>;
+      listener(event: HostExternalTranscriptFollowEvent): void | Promise<void>;
+    }>) => {
+      privateListener = input.listener;
+      return {
+        status: 'following' as const,
+        startingCursor: input.options.cursor ?? null,
+        subscription: { dispose: vi.fn(async () => undefined) },
+      };
+    });
+    const ops: ExternalSessionProviderOps = {
+      validateSource: async ({ source }) => ({ ok: true, source }),
+      listCandidates: async () => ({ candidates: [], nextCursor: null }),
+      resolveLinkIdentity: resolveExactLinkIdentity,
+      pageTranscript: async () => ({
+        items: [], nextCursor: null, tailCursor: null, hasMore: false, truncated: false,
+      }),
+      readAfterTranscript: async () => ({ outcome: 'already_current' }),
+    };
+    const composition = await createConfiguredPluginExternalSessionsAdapter({
+      agents: [agent()],
+      account: { connectedServicesV2: [] },
+      basis: { contributionGenerationId: 'registry:g1', accountSettingsRevision: 'account:1' },
+      readCurrentBasis: () => ({ contributionGenerationId: 'registry:g1', accountSettingsRevision: 'account:1' }),
+      isCurrent: () => true,
+      resolveProviderOps: async () => ops,
+      followTranscript,
+    });
+    const ref = {
+      agentId: 'codex', sourceId: 'codexHome:user:::', remoteSessionId: 'remote-1',
+    } as const;
+    const qualifiedPrefix = 'happier_external_cursor_v1:';
+    const maximumQualifiedCursor = `${qualifiedPrefix}${'q'.repeat(4_096 - qualifiedPrefix.length)}`;
+    const listener = vi.fn(async () => undefined);
+
+    await expect(composition.authorService.readTranscript(
+      ref,
+      { mode: 'page', direction: 'older', cursor: 'released-native-cursor' },
+      {},
+    )).rejects.toMatchObject({ code: 'plugin_external_transcript_query_invalid' });
+    await expect(composition.authorService.readTranscript(
+      ref,
+      { mode: 'readAfter', cursor: 'released-native-cursor' },
+      {},
+    )).rejects.toMatchObject({ code: 'plugin_external_transcript_query_invalid' });
+    await expect(composition.authorService.followTranscript(
+      ref,
+      { cursor: 'released-native-cursor' },
+      listener,
+    )).resolves.toEqual({
+      status: 'unavailable',
+      code: 'plugin_external_cursor_invalid',
+    });
+    expect(followTranscript).not.toHaveBeenCalled();
+
+    await expect(composition.authorService.followTranscript(
+      ref,
+      { cursor: maximumQualifiedCursor },
+      listener,
+    )).resolves.toMatchObject({ status: 'following', startingCursor: maximumQualifiedCursor });
+    await privateListener({
+      kind: 'data', items: [], fromCursor: maximumQualifiedCursor, nextCursor: maximumQualifiedCursor,
+    });
+    expect(listener).toHaveBeenCalledOnce();
+    await expect(composition.authorService.followTranscript(
+      ref,
+      { cursor: `${maximumQualifiedCursor}q` },
+      listener,
+    )).resolves.toEqual({ status: 'unavailable', code: 'plugin_external_cursor_invalid' });
+    expect(followTranscript).toHaveBeenCalledOnce();
+  });
+
+  it('starts release at the 5s author-listener deadline and bounds hanging cleanup to 5s', async () => {
+    vi.useFakeTimers();
+    try {
+      let privateListener!: (event: HostExternalTranscriptFollowEvent) => Promise<void> | void;
+      const dispose = vi.fn(() => new Promise<void>(() => undefined));
+      const followTranscript = vi.fn(async (input: Readonly<{
+        listener(event: HostExternalTranscriptFollowEvent): void | Promise<void>;
+      }>) => {
+        privateListener = input.listener;
+        return {
+          status: 'following' as const,
+          startingCursor: 'cursor-0',
+          subscription: { dispose },
+        };
+      });
+      const ops: ExternalSessionProviderOps = {
+        validateSource: async ({ source }) => ({ ok: true, source }),
+        listCandidates: async () => ({ candidates: [], nextCursor: null }),
+        resolveLinkIdentity: resolveExactLinkIdentity,
+        pageTranscript: async () => ({
+          items: [], nextCursor: null, tailCursor: 'cursor-0', hasMore: false, truncated: false,
+        }),
+        readAfterTranscript: async () => ({ outcome: 'already_current' }),
+      };
+      const composition = await createConfiguredPluginExternalSessionsAdapter({
+        agents: [agent()],
+        account: { connectedServicesV2: [] },
+        basis: { contributionGenerationId: 'registry:g1', accountSettingsRevision: 'account:1' },
+        readCurrentBasis: () => ({ contributionGenerationId: 'registry:g1', accountSettingsRevision: 'account:1' }),
+        isCurrent: () => true,
+        resolveProviderOps: async () => ops,
+        followTranscript,
+      });
+      const result = await composition.authorService.followTranscript({
+        agentId: 'codex', sourceId: 'codexHome:user:::', remoteSessionId: 'remote-1',
+      }, {}, async () => await new Promise<void>(() => undefined));
+      expect(result.status).toBe('following');
+      const delivery = Promise.resolve(privateListener({
+        kind: 'data', items: [], fromCursor: 'cursor-0', nextCursor: 'cursor-1',
+      }));
+
+      await vi.advanceTimersByTimeAsync(4_999);
+      expect(dispose).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(dispose).toHaveBeenCalledOnce();
+      await vi.advanceTimersByTimeAsync(4_999);
+      let settled = false;
+      void delivery.finally(() => { settled = true; }).catch(() => undefined);
+      await Promise.resolve();
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      await expect(delivery).rejects.toThrow('plugin_external_follow_listener_deadline_exceeded');
+      await expect(privateListener({
+        kind: 'data', items: [], fromCursor: 'cursor-0', nextCursor: 'cursor-2',
+      })).rejects.toThrow('plugin_external_follow_listener_failed');
+      expect(dispose).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('fences a pending author listener immediately when its configured generation retires', async () => {
+    let privateListener!: (event: HostExternalTranscriptFollowEvent) => Promise<void> | void;
+    let acceptedCursor = 'cursor-0';
+    let settleListener!: () => void;
+    const listenerSettlement = new Promise<void>((resolve) => {
+      settleListener = resolve;
+    });
+    const dispose = vi.fn(async () => undefined);
+    const followTranscript = vi.fn(async (input: Readonly<{
+      listener(event: HostExternalTranscriptFollowEvent): void | Promise<void>;
+    }>) => {
+      privateListener = input.listener;
+      return {
+        status: 'following' as const,
+        startingCursor: acceptedCursor,
+        subscription: { dispose },
+      };
+    });
+    const ops: ExternalSessionProviderOps = {
+      validateSource: async ({ source }) => ({ ok: true, source }),
+      listCandidates: async () => ({ candidates: [], nextCursor: null }),
+      resolveLinkIdentity: resolveExactLinkIdentity,
+      pageTranscript: async () => ({
+        items: [], nextCursor: null, tailCursor: acceptedCursor, hasMore: false, truncated: false,
+      }),
+      readAfterTranscript: async () => ({ outcome: 'already_current' }),
+    };
+    const composition = await createConfiguredPluginExternalSessionsAdapter({
+      agents: [agent()],
+      account: { connectedServicesV2: [] },
+      basis: { contributionGenerationId: 'registry:g1', accountSettingsRevision: 'account:1' },
+      readCurrentBasis: () => ({ contributionGenerationId: 'registry:g1', accountSettingsRevision: 'account:1' }),
+      isCurrent: () => true,
+      resolveProviderOps: async () => ops,
+      followTranscript,
+    });
+    const listener = vi.fn(async () => await listenerSettlement);
+    const result = await composition.authorService.followTranscript({
+      agentId: 'codex', sourceId: 'codexHome:user:::', remoteSessionId: 'remote-1',
+    }, {}, listener);
+    expect(result.status).toBe('following');
+    const deliver = async (nextCursor: string) => {
+      await privateListener({
+        kind: 'data', items: [], fromCursor: acceptedCursor, nextCursor,
+      });
+      acceptedCursor = nextCursor;
+    };
+    const pendingDelivery = deliver('cursor-1');
+    await Promise.resolve();
+    expect(listener).toHaveBeenCalledOnce();
+
+    const retirementStartedAt = Date.now();
+    composition.dispose();
+    const settlement = await pendingDelivery.then(
+      () => new Error('pending author delivery unexpectedly succeeded'),
+      (error: unknown) => error,
+    );
+    const retirementSettlementMs = Date.now() - retirementStartedAt;
+    settleListener();
+
+    expect(retirementSettlementMs).toBeLessThan(1_000);
+    expect(settlement).toMatchObject({ message: 'plugin_operation_aborted' });
+    expect(dispose).toHaveBeenCalledOnce();
+    expect(acceptedCursor).toBe('cursor-0');
+
+    await expect(deliver('cursor-2')).rejects.toThrow('plugin_external_follow_listener_failed');
+    expect(listener).toHaveBeenCalledOnce();
+    expect(acceptedCursor).toBe('cursor-0');
+    expect(dispose).toHaveBeenCalledOnce();
+  });
+
+  it('releases an idle author follow on caller abort and fences every late event', async () => {
+    let privateListener!: (event: HostExternalTranscriptFollowEvent) => Promise<void> | void;
+    const dispose = vi.fn(async () => undefined);
+    const followTranscript = vi.fn(async (input: Readonly<{
+      listener(event: HostExternalTranscriptFollowEvent): void | Promise<void>;
+    }>) => {
+      privateListener = input.listener;
+      return {
+        status: 'following' as const,
+        startingCursor: 'cursor-0',
+        subscription: { dispose },
+      };
+    });
+    const ops: ExternalSessionProviderOps = {
+      validateSource: async ({ source }) => ({ ok: true, source }),
+      listCandidates: async () => ({ candidates: [], nextCursor: null }),
+      resolveLinkIdentity: resolveExactLinkIdentity,
+      pageTranscript: async () => ({
+        items: [], nextCursor: null, tailCursor: 'cursor-0', hasMore: false, truncated: false,
+      }),
+      readAfterTranscript: async () => ({ outcome: 'already_current' }),
+    };
+    const composition = await createConfiguredPluginExternalSessionsAdapter({
+      agents: [agent()],
+      account: { connectedServicesV2: [] },
+      basis: { contributionGenerationId: 'registry:g1', accountSettingsRevision: 'account:1' },
+      readCurrentBasis: () => ({ contributionGenerationId: 'registry:g1', accountSettingsRevision: 'account:1' }),
+      isCurrent: () => true,
+      resolveProviderOps: async () => ops,
+      followTranscript,
+    });
+    const caller = new AbortController();
+    const listener = vi.fn(async () => undefined);
+    const result = await composition.authorService.followTranscript({
+      agentId: 'codex', sourceId: 'codexHome:user:::', remoteSessionId: 'remote-1',
+    }, { signal: caller.signal }, listener);
+    expect(result.status).toBe('following');
+
+    caller.abort();
+    await vi.waitFor(() => expect(dispose).toHaveBeenCalledOnce());
+    await expect(privateListener({
+      kind: 'data', items: [], fromCursor: 'cursor-0', nextCursor: 'cursor-1',
+    })).rejects.toThrow('plugin_external_follow_listener_failed');
+    expect(listener).not.toHaveBeenCalled();
+    if (result.status === 'following') await result.subscription.dispose();
+    expect(dispose).toHaveBeenCalledOnce();
+  });
+
+  it('releases and fences an author follow when its current source retires before a late event', async () => {
+    let current = true;
+    let privateListener!: (event: HostExternalTranscriptFollowEvent) => Promise<void> | void;
+    const dispose = vi.fn(async () => undefined);
+    const followTranscript = vi.fn(async (input: Readonly<{
+      listener(event: HostExternalTranscriptFollowEvent): void | Promise<void>;
+    }>) => {
+      privateListener = input.listener;
+      return {
+        status: 'following' as const,
+        startingCursor: 'cursor-0',
+        subscription: { dispose },
+      };
+    });
+    const ops: ExternalSessionProviderOps = {
+      validateSource: async ({ source }) => ({ ok: true, source }),
+      listCandidates: async () => ({ candidates: [], nextCursor: null }),
+      resolveLinkIdentity: resolveExactLinkIdentity,
+      pageTranscript: async () => ({
+        items: [], nextCursor: null, tailCursor: 'cursor-0', hasMore: false, truncated: false,
+      }),
+      readAfterTranscript: async () => ({ outcome: 'already_current' }),
+    };
+    const composition = await createConfiguredPluginExternalSessionsAdapter({
+      agents: [agent()],
+      account: { connectedServicesV2: [] },
+      basis: { contributionGenerationId: 'registry:g1', accountSettingsRevision: 'account:1' },
+      readCurrentBasis: () => ({ contributionGenerationId: 'registry:g1', accountSettingsRevision: 'account:1' }),
+      isCurrent: () => current,
+      resolveProviderOps: async () => ops,
+      followTranscript,
+    });
+    const listener = vi.fn(async () => undefined);
+    const result = await composition.authorService.followTranscript({
+      agentId: 'codex', sourceId: 'codexHome:user:::', remoteSessionId: 'remote-1',
+    }, {}, listener);
+    expect(result.status).toBe('following');
+
+    current = false;
+    await expect(privateListener({
+      kind: 'data', items: [], fromCursor: 'cursor-0', nextCursor: 'cursor-1',
+    })).rejects.toThrow('plugin_external_follow_listener_failed');
+    expect(listener).not.toHaveBeenCalled();
+    expect(dispose).toHaveBeenCalledOnce();
+  });
+
+  it('releases an author follow on asynchronous connection failure and fences every late event', async () => {
+    let privateListener!: (event: HostExternalTranscriptFollowEvent) => Promise<void> | void;
+    let failConnection!: (error: Error) => void;
+    const connectionFailure = new Promise<Error>((resolve) => {
+      failConnection = resolve;
+    });
+    const dispose = vi.fn(async () => undefined);
+    const followTranscript = vi.fn(async (input: Readonly<{
+      listener(event: HostExternalTranscriptFollowEvent): void | Promise<void>;
+    }>) => {
+      privateListener = input.listener;
+      return {
+        status: 'following' as const,
+        startingCursor: 'cursor-0',
+        subscription: { dispose },
+        failure: connectionFailure,
+      };
+    });
+    const ops: ExternalSessionProviderOps = {
+      validateSource: async ({ source }) => ({ ok: true, source }),
+      listCandidates: async () => ({ candidates: [], nextCursor: null }),
+      resolveLinkIdentity: resolveExactLinkIdentity,
+      pageTranscript: async () => ({
+        items: [], nextCursor: null, tailCursor: 'cursor-0', hasMore: false, truncated: false,
+      }),
+      readAfterTranscript: async () => ({ outcome: 'already_current' }),
+    };
+    const composition = await createConfiguredPluginExternalSessionsAdapter({
+      agents: [agent()],
+      account: { connectedServicesV2: [] },
+      basis: { contributionGenerationId: 'registry:g1', accountSettingsRevision: 'account:1' },
+      readCurrentBasis: () => ({ contributionGenerationId: 'registry:g1', accountSettingsRevision: 'account:1' }),
+      isCurrent: () => true,
+      resolveProviderOps: async () => ops,
+      followTranscript,
+    });
+    const listener = vi.fn(async () => undefined);
+    const result = await composition.authorService.followTranscript({
+      agentId: 'codex', sourceId: 'codexHome:user:::', remoteSessionId: 'remote-1',
+    }, {}, listener);
+    expect(result.status).toBe('following');
+
+    failConnection(new Error('connection-closed'));
+    await vi.waitFor(() => expect(dispose).toHaveBeenCalledOnce());
+    await expect(privateListener({
+      kind: 'data', items: [], fromCursor: 'cursor-0', nextCursor: 'cursor-1',
+    })).rejects.toThrow('plugin_external_follow_listener_failed');
+    expect(listener).not.toHaveBeenCalled();
+    if (result.status === 'following') await result.subscription.dispose();
+    expect(dispose).toHaveBeenCalledOnce();
   });
 
   it('retires old operations immediately and publishes a new immutable snapshot after account revision changes', async () => {
@@ -416,10 +2454,10 @@ describe('configured external-session source materializer', () => {
       resolveProviderOps: async () => ops,
     });
 
-    const staleList = lifecycle.service.list();
+    const staleList = lifecycle.authorService.list();
     revision = 'settings:2';
     (notifyRevision as ((next: string) => void) | null)?.(revision);
-    expect(lifecycle.service.capabilities().list).toEqual({
+    expect((await lifecycle.authorService.capabilities()).list).toEqual({
       status: 'unavailable',
       code: 'plugin_external_sources_reconfiguring',
     });
@@ -436,18 +2474,77 @@ describe('configured external-session source materializer', () => {
         groups: [],
       }],
     });
-    await vi.waitFor(() => {
-      expect(lifecycle.service.capabilities().list).toEqual({ status: 'available' });
+    await vi.waitFor(async () => {
+      expect((await lifecycle.authorService.capabilities()).list).toEqual({ status: 'available' });
     });
-    const current = await lifecycle.service.list({ sourceId: 'codexHome:connectedService:openai-codex:work:' });
+    const current = await lifecycle.authorService.list({ sourceId: 'codexHome:connectedService:openai-codex:work:' });
     expect(current.items[0]?.ref.remoteSessionId).toBe('work');
     expect(Object.isFrozen(current.items[0]?.ref)).toBe(true);
 
     lifecycle.dispose();
-    expect(lifecycle.service.capabilities().list).toEqual({
+    expect((await lifecycle.authorService.capabilities()).list).toEqual({
       status: 'unavailable',
       code: 'plugin_generation_retired',
     });
+  });
+
+  it('keeps every other Agent and the current-global service available when one Agent refuses its own source', async () => {
+    const flakyContribution: PluginAgentContributionV2 = {
+      ...codexContribution,
+      id: 'flaky',
+      title: 'Flaky',
+    };
+    const flakyAgent = {
+      id: flakyContribution.id,
+      identity: { pluginId: 'acme.flaky', localId: flakyContribution.id },
+      richDefinition: { provenance: 'first_party' as const, definition: flakyContribution },
+    };
+    const healthyOps: ExternalSessionProviderOps = {
+      validateSource: async ({ source }) => ({ ok: true, source }),
+      listCandidates: async () => ({
+        candidates: [{ remoteSessionId: 'healthy-remote', updatedAtMs: 1 }],
+        nextCursor: null,
+      }),
+      pageTranscript: async () => ({
+        items: [], nextCursor: null, tailCursor: null, hasMore: false, truncated: false,
+      }),
+      readAfterTranscript: async () => ({ outcome: 'already_current' }),
+    };
+    const flakyValidate = vi.fn<ExternalSessionProviderOps['validateSource']>(async () => {
+      throw new Error('flaky agent home probe failed');
+    });
+
+    const lifecycle = await createLiveConfiguredPluginExternalSessionsAdapter({
+      agents: [agent(), flakyAgent],
+      contributionGenerationId: 'registry:g1',
+      readAccount: async () => ({ connectedServicesV2: [] }),
+      readAccountRevision: () => 'settings:1',
+      subscribeAccountRevision: () => () => {},
+      isCurrent: () => true,
+      resolveProviderOps: async (agentId) => (agentId === 'flaky'
+        ? { ...healthyOps, validateSource: flakyValidate }
+        : healthyOps),
+    });
+
+    try {
+      expect(flakyValidate).toHaveBeenCalledOnce();
+      expect((await lifecycle.authorService.capabilities()).list).toEqual({ status: 'available' });
+      const listed = await lifecycle.authorService.list({ agentId: 'codex' });
+      expect(listed.items[0]?.ref).toMatchObject({
+        agentId: 'codex',
+        remoteSessionId: 'healthy-remote',
+      });
+      await expect(lifecycle.authorService.list({ agentId: 'flaky' })).rejects.toMatchObject({
+        code: 'plugin_external_source_unavailable',
+      });
+      expect(lifecycle.sourceRefusals).toEqual([{
+        agentId: 'flaky',
+        code: 'provider_source_invalid',
+        message: expect.stringMatching(/agent 'flaky'/i),
+      }]);
+    } finally {
+      lifecycle.dispose();
+    }
   });
 
   it('rebuilds configured sources across account removal, reconnect, and profile switch', async () => {
@@ -489,21 +2586,21 @@ describe('configured external-session source materializer', () => {
       resolveProviderOps: async () => ops,
     });
 
-    await expect(lifecycle.service.list({ sourceId: 'codexHome:connectedService:openai-codex:work:' }))
+    await expect(lifecycle.authorService.list({ sourceId: 'codexHome:connectedService:openai-codex:work:' }))
       .resolves.toMatchObject({ items: [{ ref: { remoteSessionId: 'work' } }] });
 
     account = { connectedServicesV2: [] };
     revision = 'settings:2';
     (notifyRevision as ((next: string) => void) | null)?.(revision);
-    await vi.waitFor(() => expect(lifecycle.service.capabilities().list).toEqual({ status: 'available' }));
-    await expect(lifecycle.service.list({ sourceId: 'codexHome:connectedService:openai-codex:work:' }))
+    await vi.waitFor(async () => expect((await lifecycle.authorService.capabilities()).list).toEqual({ status: 'available' }));
+    await expect(lifecycle.authorService.list({ sourceId: 'codexHome:connectedService:openai-codex:work:' }))
       .rejects.toMatchObject({ code: 'plugin_external_source_unavailable' });
 
     account = connectedAccount('backup');
     revision = 'settings:3';
     (notifyRevision as ((next: string) => void) | null)?.(revision);
-    await vi.waitFor(() => expect(lifecycle.service.capabilities().list).toEqual({ status: 'available' }));
-    await expect(lifecycle.service.list({ sourceId: 'codexHome:connectedService:openai-codex:backup:' }))
+    await vi.waitFor(async () => expect((await lifecycle.authorService.capabilities()).list).toEqual({ status: 'available' }));
+    await expect(lifecycle.authorService.list({ sourceId: 'codexHome:connectedService:openai-codex:backup:' }))
       .resolves.toMatchObject({ items: [{ ref: { remoteSessionId: 'backup' } }] });
     lifecycle.dispose();
   });
@@ -557,7 +2654,7 @@ describe('configured external-session source materializer', () => {
     (notifyRevision as ((next: string) => void) | null)?.(revision);
     expect(readAccount).toHaveBeenCalledTimes(2);
     releaseBlockedRead();
-    await vi.waitFor(() => expect(lifecycle.service.capabilities().list).toEqual({ status: 'available' }));
+    await vi.waitFor(async () => expect((await lifecycle.authorService.capabilities()).list).toEqual({ status: 'available' }));
     expect(readAccount).toHaveBeenCalledTimes(3);
     expect(maxReadsInFlight).toBe(1);
 
@@ -566,12 +2663,53 @@ describe('configured external-session source materializer', () => {
     // snapshot on the next public operation and schedule the replacement.
     account = { connectedServicesV2: [] };
     revision = 'settings:5';
-    expect(lifecycle.service.capabilities().list).toEqual({
+    expect((await lifecycle.authorService.capabilities()).list).toEqual({
       status: 'unavailable',
       code: 'plugin_external_sources_reconfiguring',
     });
-    await vi.waitFor(() => expect(lifecycle.service.capabilities().list).toEqual({ status: 'available' }));
+    await vi.waitFor(async () => expect((await lifecycle.authorService.capabilities()).list).toEqual({ status: 'available' }));
     expect(readAccount).toHaveBeenCalledTimes(4);
+    lifecycle.dispose();
+  });
+
+  it('rebuilds one active configured composition for one accepted account revision', async () => {
+    let revision = 'settings:1';
+    let notifyRevision: ((next: string) => void) | null = null;
+    const ops: ExternalSessionProviderOps = {
+      validateSource: async ({ source }) => ({ ok: true, source }),
+      listCandidates: async () => ({ candidates: [], nextCursor: null }),
+      pageTranscript: async () => ({
+        items: [], nextCursor: null, tailCursor: null, hasMore: false, truncated: false,
+      }),
+      readAfterTranscript: async () => ({ outcome: 'already_current' }),
+    };
+    const resolveProviderOps = vi.fn(async (): Promise<ExternalSessionProviderOps> => ops);
+    const lifecycle = await createLiveConfiguredPluginExternalSessionsAdapter({
+      agents: [agent()],
+      contributionGenerationId: 'registry:g1',
+      readAccount: async () => ({ connectedServicesV2: [] }),
+      readAccountRevision: () => revision,
+      subscribeAccountRevision: (listener) => {
+        notifyRevision = listener;
+        return () => { notifyRevision = null; };
+      },
+      isCurrent: () => true,
+      resolveProviderOps,
+    });
+
+    expect(resolveProviderOps).toHaveBeenCalledOnce();
+    revision = 'settings:2';
+    (notifyRevision as ((next: string) => void) | null)?.(revision);
+    await vi.waitFor(async () => {
+      expect((await lifecycle.authorService.capabilities()).list).toEqual({
+        status: 'available',
+      });
+    });
+
+    expect(resolveProviderOps).toHaveBeenCalledTimes(2);
+    (notifyRevision as ((next: string) => void) | null)?.(revision);
+    await Promise.resolve();
+    expect(resolveProviderOps).toHaveBeenCalledTimes(2);
     lifecycle.dispose();
   });
 
@@ -612,7 +2750,7 @@ describe('configured external-session source materializer', () => {
 
     const lifecycle = await lifecyclePromise;
     expect(readAccount).toHaveBeenCalledTimes(2);
-    expect(lifecycle.service.capabilities().list).toEqual({ status: 'available' });
+    expect((await lifecycle.authorService.capabilities()).list).toEqual({ status: 'available' });
     lifecycle.dispose();
     lifecycle.dispose();
     expect(unsubscribe).toHaveBeenCalledTimes(1);
@@ -639,6 +2777,7 @@ describe('configured external-session source materializer', () => {
     const ops: ExternalSessionProviderOps = {
       validateSource: async ({ source }) => ({ ok: true, source }),
       listCandidates: async () => ({ candidates: [{ remoteSessionId: revision, updatedAtMs: 1 }], nextCursor: null }),
+      resolveLinkIdentity: resolveExactLinkIdentity,
       pageTranscript: async () => ({ items: [], nextCursor: null, tailCursor: null, hasMore: false, truncated: false }),
       readAfterTranscript: async () => ({ outcome: 'already_current' }),
     };
@@ -657,14 +2796,15 @@ describe('configured external-session source materializer', () => {
     });
 
     const first = await create();
-    const firstList = await first.service.list();
+    const firstList = await first.authorService.list();
     expect(firstList).toMatchObject({
       items: [{ ref: { remoteSessionId: 'settings:1' } }],
     });
-    const firstFollow = await first.service.followTranscript({
-      ref: firstList.items[0]!.ref,
-      source: { kind: 'codexHome', home: 'user' },
-    }, {}, vi.fn());
+    const firstFollow = await first.authorService.followTranscript(
+      firstList.items[0]!.ref,
+      {},
+      vi.fn(),
+    );
     expect(firstFollow.status).toBe('following');
     first.dispose();
     await vi.waitFor(() => expect(followReleases[0]).toHaveBeenCalledOnce());
@@ -672,14 +2812,15 @@ describe('configured external-session source materializer', () => {
 
     revision = 'settings:2';
     const second = await create();
-    const secondList = await second.service.list();
+    const secondList = await second.authorService.list();
     expect(secondList).toMatchObject({
       items: [{ ref: { remoteSessionId: 'settings:2' } }],
     });
-    const secondFollow = await second.service.followTranscript({
-      ref: secondList.items[0]!.ref,
-      source: { kind: 'codexHome', home: 'user' },
-    }, {}, vi.fn());
+    const secondFollow = await second.authorService.followTranscript(
+      secondList.items[0]!.ref,
+      {},
+      vi.fn(),
+    );
     expect(secondFollow.status).toBe('following');
     expect(listeners).toHaveLength(1);
     second.dispose();

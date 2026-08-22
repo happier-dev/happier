@@ -9,6 +9,7 @@ import {
   handleAcpStatusRunning,
 } from '@/agent/acp/bridge/acpCommonHandlers';
 import { createAcpAgentMessageForwarder } from '@/agent/acp/bridge/createAcpAgentMessageForwarder';
+import type { AcpSendFn } from '@/agent/acp/bridge/acpSessionForwarding';
 import { isThinkingToolName } from '@/agent/acp/bridge/thinkingToolCall';
 import { recordToolTraceEvent } from '@/agent/tools/trace/toolTrace';
 import { createBoundedToolCallNameCache } from './createBoundedToolCallNameCache';
@@ -19,7 +20,7 @@ import type { AcpRuntimeSessionClient } from '@/agent/acp/sessionClient';
 import type { AcpRuntimeBackend } from './acpRuntimeBackendContract';
 import { isAbortLikeError } from '@/agent/runtime/lifecycle/classifyAbortLikeError';
 import { surfacePrimarySessionRuntimeIssue } from '@/agent/runtime/session/errors/surfacePrimarySessionRuntimeIssue';
-import type { RuntimeEventV1 } from '@happier-dev/protocol';
+import type { AcpRuntimeEventDraft } from './createAcpRuntime';
 
 type AcpRuntimeMessageState = {
   sessionId: string | null;
@@ -129,11 +130,20 @@ export function attachAcpRuntimeMessageHandler(params: Readonly<{
   clearToolCallCache: () => void;
   recordToolCall: (callId: string, toolName: string) => void;
   state: AcpRuntimeMessageState;
-  publishRuntimeEvent?: (event: Omit<RuntimeEventV1, 'sessionId' | 'emittedAtMs'>) => void;
-}>): void {
+  publishRuntimeEvent?: (event: AcpRuntimeEventDraft) => void;
+  publishTranscriptAgentMessageCommitted: AcpSendFn;
+}>): Readonly<{ drainRequiredPublications: () => Promise<void> }> {
   const seenSessionMediaKeys = new Set<string>();
+  let requiredPublicationTail: Promise<void> = Promise.resolve();
+  let requiredPublicationFailure: unknown = null;
+  const enqueueRequiredPublication = (publish: () => Promise<void>): void => {
+    const publication = requiredPublicationTail.then(publish);
+    requiredPublicationTail = publication.catch((error) => {
+      requiredPublicationFailure ??= error;
+    });
+  };
   const forwarder = createAcpAgentMessageForwarder({
-    sendAcp: (provider, body, opts) => params.session.sendAgentMessage(provider, body, opts),
+    sendAcp: params.publishTranscriptAgentMessageCommitted,
     provider: params.transcriptProvider,
     makeId: () => randomUUID(),
   });
@@ -162,7 +172,7 @@ export function attachAcpRuntimeMessageHandler(params: Readonly<{
             cause: isAbortLikeError(typeof msg.detail === 'string' ? msg.detail : '') ? 'cancelled' : 'status_error',
             error,
             session: params.session,
-            emitAcpLifecycleMarker: true,
+            publishTranscriptAgentMessageCommitted: params.publishTranscriptAgentMessageCommitted,
             publishRuntimeEvent: params.publishRuntimeEvent,
           });
         })();
@@ -215,13 +225,14 @@ export function attachAcpRuntimeMessageHandler(params: Readonly<{
         if (msg.status === 'running') {
           if (params.state.turnInFlight) {
             handleAcpStatusRunning({
-              session: params.session,
-              agent: params.transcriptProvider,
               getTaskStartedSent: () => params.state.taskStartedSent,
               setTaskStartedSent: (value) => {
                 params.state.taskStartedSent = value;
               },
               makeId: () => ensureCurrentTurnId(params.state),
+              publishTaskStarted: (payload) => {
+                params.publishTranscriptAgentMessageCommitted(params.transcriptProvider, payload);
+              },
             });
 
             if (params.acpTraceMarkersEnabled && params.state.sessionId) {
@@ -258,7 +269,7 @@ export function attachAcpRuntimeMessageHandler(params: Readonly<{
               cause: isAbortLikeError(typeof msg.detail === 'string' ? msg.detail : '') ? 'cancelled' : 'status_error',
               error,
               session: params.session,
-              emitAcpLifecycleMarker: true,
+              publishTranscriptAgentMessageCommitted: params.publishTranscriptAgentMessageCommitted,
               publishRuntimeEvent: params.publishRuntimeEvent,
             });
           });
@@ -303,6 +314,7 @@ export function attachAcpRuntimeMessageHandler(params: Readonly<{
           toolCallNameCache: params.toolCallNameCache,
           hooks: params.hooks,
           createReplayBackend: params.createReplayBackend,
+          publishTranscriptAgentMessageCommitted: params.publishTranscriptAgentMessageCommitted,
         });
         break;
       }
@@ -357,16 +369,39 @@ export function attachAcpRuntimeMessageHandler(params: Readonly<{
         if (msg.name === 'thinking' || msg.name === 'context_compaction' || msg.name === 'session_media') {
           params.state.hadTurnActivity = true;
         }
-        handleAcpRuntimeEventMessage({
+        const handleEvent = () => handleAcpRuntimeEventMessage({
           provider: params.transcriptProvider,
           session: params.session,
           seenSessionMediaKeys,
           streamedTranscriptWriter: params.streamedTranscriptWriter,
           publishRuntimeEvent: params.publishRuntimeEvent,
+          publishTranscriptAgentMessageCommitted: params.publishTranscriptAgentMessageCommitted,
           msg,
         });
+        if (msg.name === 'session_media') {
+          enqueueRequiredPublication(handleEvent);
+        } else {
+          void handleEvent().catch((error) => {
+            logger.debug(`[${params.provider}] ACP runtime event handling failed`, error);
+          });
+        }
         break;
       }
     }
+  });
+
+  return Object.freeze({
+    async drainRequiredPublications(): Promise<void> {
+      while (true) {
+        const current = requiredPublicationTail;
+        await current;
+        if (current === requiredPublicationTail) break;
+      }
+      if (requiredPublicationFailure !== null) {
+        const failure = requiredPublicationFailure;
+        requiredPublicationFailure = null;
+        throw failure;
+      }
+    },
   });
 }

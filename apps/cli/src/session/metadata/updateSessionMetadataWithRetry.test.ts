@@ -4,16 +4,24 @@ import {
   buildSessionMetadataEnvelopeFields,
 } from './buildSessionMetadataEnvelopeCreateFields';
 import {
-  openSessionOwnerMetadataV1,
+  createPlainSessionOwnerMetadataEnvelopeV1,
+  createAccountScopedCryptoMaterialSnapshotV1,
+  convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1,
+  openSessionOwnerMetadataEnvelopeV1,
   projectSessionOwnerCompatibilityViewV1,
   readExternalHistoryImportV1FromMetadata,
   readLinkedExternalSessionV1FromMetadata,
   removeLinkedExternalSessionMetadataV1,
+  sealSessionOwnerMetadataEnvelopeV1,
 } from '@happier-dev/protocol';
 import {
   decryptStoredSessionPayload,
   encryptStoredSessionPayload,
 } from '@/session/transport/encryption/sessionEncryptionContext';
+import {
+  clearSessionStateFieldFromMetadata,
+  writeSessionStateFieldToMetadata,
+} from '@happier-dev/agents/session/state/metadataWriters';
 import {
   prepareSessionMetadataTuplePatchForTransaction,
   readSessionMetadataTupleWriterSnapshot,
@@ -25,10 +33,12 @@ const {
   fetchSessionByIdCompatMock,
   patchSessionMetadataEnvelopeTupleMock,
   patchSessionMetadataMock,
+  fetchAccountEncryptionCurrentnessMock,
 } = vi.hoisted(() => ({
   fetchSessionByIdCompatMock: vi.fn(),
   patchSessionMetadataEnvelopeTupleMock: vi.fn(),
   patchSessionMetadataMock: vi.fn(),
+  fetchAccountEncryptionCurrentnessMock: vi.fn(),
 }));
 
 vi.mock('@/session/transport/http/sessionsHttp', () => ({
@@ -37,20 +47,53 @@ vi.mock('@/session/transport/http/sessionsHttp', () => ({
   patchSessionMetadata: patchSessionMetadataMock,
 }));
 
+vi.mock('@/api/client/connectedServiceCredentialApi', () => ({
+  fetchAccountEncryptionCurrentness: fetchAccountEncryptionCurrentnessMock,
+}));
+
+const plainCurrentness = {
+  mode: 'plain' as const,
+  version: 1,
+  signingKeyFingerprint: null,
+  contentKeyFingerprint: null,
+  updatedAt: 1,
+};
+
+function e2eeCurrentness(credentials: Readonly<{
+  encryption: Readonly<{ type: 'legacy'; secret: Uint8Array }>;
+}>) {
+  const snapshot = createAccountScopedCryptoMaterialSnapshotV1({
+    accountEncryptionMode: 'e2ee',
+    material: {
+      type: 'legacy',
+      secret: credentials.encryption.secret,
+    },
+  });
+  return {
+    mode: 'e2ee' as const,
+    version: 1,
+    signingKeyFingerprint: null,
+    contentKeyFingerprint:
+      convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1(
+        snapshot.contentPublicKeyFingerprint,
+      ),
+    updatedAt: 1,
+  };
+}
+
 describe('updateSessionMetadataWithRetry', () => {
   beforeEach(() => {
     fetchSessionByIdCompatMock.mockReset();
     patchSessionMetadataEnvelopeTupleMock.mockReset();
     patchSessionMetadataMock.mockReset();
+    fetchAccountEncryptionCurrentnessMock.mockReset();
+    fetchAccountEncryptionCurrentnessMock.mockResolvedValue(plainCurrentness);
   });
 
   it('exposes layout-1 owner state through the canonical discriminated tuple value', () => {
     const credentials = {
       token: 'token-1',
-      encryption: {
-        type: 'legacy' as const,
-        secret: new Uint8Array(32).fill(23),
-      },
+      encryption: null,
     };
     const metadata = {
       path: '/private/layout-1',
@@ -60,20 +103,20 @@ describe('updateSessionMetadataWithRetry', () => {
     const agentState = { requests: { pending: { createdAt: 1 } } };
     const fields = buildSessionMetadataEnvelopeFields({
       credentials,
+      accountEncryptionMode: 'plain',
       metadata,
       agentState,
       storedContentMode: 'plain',
-      encryptionKey: credentials.encryption.secret,
-      encryptionVariant: 'legacy',
     });
 
     const snapshot = readSessionMetadataTupleWriterSnapshot({
       credentials,
+      accountEncryptionCurrentness: plainCurrentness,
       rawSession: {
         metadataLayoutVersion: 1,
         metadata: fields.sharedMetadata.ciphertext,
         metadataVersion: 7,
-        ownerMetadata: fields.ownerMetadata.ciphertext,
+        ownerMetadata: fields.ownerMetadata,
         agentState: fields.agentState,
         agentStateVersion: 3,
         encryptionMode: 'plain',
@@ -106,16 +149,14 @@ describe('updateSessionMetadataWithRetry', () => {
     expect(snapshot).not.toHaveProperty('agentState');
   });
 
-  it('prepares an encrypted owner tuple replacement without committing it', async () => {
+  it('prepares a plaintext owner tuple replacement with token-only credentials without committing it', async () => {
     const credentials = {
       token: 'token-1',
-      encryption: {
-        type: 'legacy' as const,
-        secret: new Uint8Array(32).fill(24),
-      },
+      encryption: null,
     };
     const fields = buildSessionMetadataEnvelopeFields({
       credentials,
+      accountEncryptionMode: 'plain',
       metadata: {
         path: '/private/external',
         host: 'owner-host',
@@ -138,17 +179,16 @@ describe('updateSessionMetadataWithRetry', () => {
       },
       agentState: null,
       storedContentMode: 'plain',
-      encryptionKey: credentials.encryption.secret,
-      encryptionVariant: 'legacy',
     });
 
     const patch = await prepareSessionMetadataTuplePatchForTransaction({
       credentials,
+      accountEncryptionCurrentness: plainCurrentness,
       rawSession: {
         metadataLayoutVersion: 1,
         metadata: fields.sharedMetadata.ciphertext,
         metadataVersion: 7,
-        ownerMetadata: fields.ownerMetadata.ciphertext,
+        ownerMetadata: fields.ownerMetadata,
         agentState: fields.agentState,
         agentStateVersion: 3,
         encryptionMode: 'plain',
@@ -168,24 +208,23 @@ describe('updateSessionMetadataWithRetry', () => {
 
     expect(patch).toMatchObject({
       mode: 'owner',
-      expectedOwnerMetadataCiphertext: fields.ownerMetadata.ciphertext,
+      expectedOwnerMetadata: fields.ownerMetadata,
+      ownerMetadata: { t: 'plain' },
       sharedMetadata: { expectedVersion: 7 },
       agentState: { expectedVersion: 3, ciphertext: null },
     });
     if (patch.mode !== 'owner') {
       throw new Error('expected owner tuple replacement');
     }
-    const ownerMetadata = openSessionOwnerMetadataV1({
-      material: {
-        type: 'legacy',
-        secret: credentials.encryption.secret,
-      },
-      ciphertext: patch.ownerMetadata.ciphertext,
+    const opened = openSessionOwnerMetadataEnvelopeV1({
+      accountMode: 'plain',
+      envelope: patch.ownerMetadata,
     });
-    expect(ownerMetadata).not.toBeNull();
+    expect(opened.ok).toBe(true);
+    if (!opened.ok) throw new Error('expected plain owner metadata');
     const compatibility = projectSessionOwnerCompatibilityViewV1({
       sharedMetadata: JSON.parse(patch.sharedMetadata.ciphertext),
-      ownerMetadata: ownerMetadata!,
+      ownerMetadata: opened.ownerMetadata,
     });
     expect(readLinkedExternalSessionV1FromMetadata(compatibility)).toBeNull();
     expect(readExternalHistoryImportV1FromMetadata(compatibility)).toEqual({
@@ -199,28 +238,76 @@ describe('updateSessionMetadataWithRetry', () => {
     expect(patchSessionMetadataMock).not.toHaveBeenCalled();
   });
 
-  it('keeps an ordinary layout-0 metadata mutation on the legacy PATCH owner', async () => {
+  it('prepares an encrypted owner replacement for an E2EE Session from the persisted owner branch', async () => {
     const credentials = {
       token: 'token-1',
       encryption: {
         type: 'legacy' as const,
-        secret: new Uint8Array(32).fill(31),
+        secret: new Uint8Array(32).fill(25),
       },
+    };
+    const fields = buildSessionMetadataEnvelopeFields({
+      credentials,
+      accountEncryptionMode: 'e2ee',
+      metadata: {
+        path: '/private/encrypted-transcript',
+        host: 'private-host',
+        summary: { text: 'Before', updatedAt: 1 },
+      },
+      agentState: null,
+      storedContentMode: 'e2ee',
+      encryptionKey: credentials.encryption.secret,
+      encryptionVariant: 'legacy',
+    });
+    const patch = await prepareSessionMetadataTuplePatchForTransaction({
+      credentials,
+      accountEncryptionCurrentness: e2eeCurrentness(credentials),
+      rawSession: {
+        metadataLayoutVersion: 1,
+        metadata: fields.sharedMetadata.ciphertext,
+        metadataVersion: 7,
+        ownerMetadata: fields.ownerMetadata,
+        agentState: fields.agentState,
+        agentStateVersion: 3,
+        encryptionMode: 'e2ee',
+        dataEncryptionKey: null,
+      },
+      updater: (current) => ({
+        ...current,
+        path: '/private/encrypted-transcript-after',
+      }),
+    });
+    expect(patch).toMatchObject({
+      mode: 'owner',
+      expectedOwnerMetadata: fields.ownerMetadata,
+      ownerMetadata: { t: 'encrypted' },
+    });
+    expect(patchSessionMetadataEnvelopeTupleMock).not.toHaveBeenCalled();
+    expect(patchSessionMetadataMock).not.toHaveBeenCalled();
+  });
+
+  it('migrates an ordinary layout-0 metadata mutation through one owner tuple', async () => {
+    const credentials = {
+      token: 'token-1',
+      encryption: null,
     };
     const sourceMetadata = {
       path: '/legacy',
       host: 'owner',
       summary: { text: 'Before', updatedAt: 1 },
     };
-    patchSessionMetadataMock.mockResolvedValue({
+    patchSessionMetadataEnvelopeTupleMock.mockResolvedValue({
       success: true,
-      version: 5,
+      metadataLayoutVersion: 1,
+      sharedMetadata: { version: 5 },
+      agentState: { version: 8 },
     });
 
     const result = await updateSessionMetadataWithRetry({
       token: credentials.token,
       credentials,
       sessionId: 'sess_layout0_ordinary',
+      accountEncryptionCurrentness: plainCurrentness,
       rawSession: {
         metadataLayoutVersion: 0,
         metadata: JSON.stringify(sourceMetadata),
@@ -238,27 +325,123 @@ describe('updateSessionMetadataWithRetry', () => {
       maxAttempts: 1,
     });
 
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       version: 5,
       metadata: {
         ...sourceMetadata,
         summary: { text: 'After', updatedAt: 2 },
       },
     });
-    expect(patchSessionMetadataMock).toHaveBeenCalledWith({
+    expect(patchSessionMetadataEnvelopeTupleMock).toHaveBeenCalledWith({
       token: 'token-1',
       sessionId: 'sess_layout0_ordinary',
-      ciphertext: JSON.stringify({
-        ...sourceMetadata,
-        summary: { text: 'After', updatedAt: 2 },
+      patch: expect.objectContaining({
+        mode: 'owner_migration',
+        expectedAccountEncryptionMode: 'plain',
+        expectedAccountContentPublicKeyFingerprint: null,
+        source: expect.objectContaining({
+          metadata: {
+            version: 4,
+            ciphertext: JSON.stringify(sourceMetadata),
+          },
+        }),
       }),
-      expectedVersion: 4,
     });
-    expect(patchSessionMetadataEnvelopeTupleMock).not.toHaveBeenCalled();
+    expect(patchSessionMetadataMock).not.toHaveBeenCalled();
     expect(fetchSessionByIdCompatMock).not.toHaveBeenCalled();
   });
 
-  it('propagates the inactive-model-intent expectation through layout 0 and does not retry an active conflict', async () => {
+  it('projects canonical Agent identity while migrating layout-0 without changing local truth', async () => {
+    const credentials = {
+      token: 'token-1',
+      encryption: null,
+    };
+    const sourceMetadata = {
+      path: '/legacy',
+      host: 'owner',
+      sessionModelsV1: {
+        v: 1 as const,
+        agentId: 'opencode',
+        updatedAt: 1,
+        currentModelId: 'model-1',
+        availableModels: [{ id: 'model-1', name: 'Model 1' }],
+      },
+      runtimeDescriptorV1: {
+        v: 1 as const,
+        agentId: 'opencode',
+        agent: {
+          backendMode: 'server',
+          providerSessionId: 'opencode-private',
+        },
+      },
+      forkV1: {
+        v: 1 as const,
+        parentSessionId: 'parent-session',
+        parentCutoffSeqInclusive: 42,
+        createdAtMs: 2,
+        strategy: 'provider_native',
+        agentHint: {
+          agentId: 'opencode',
+          backendMode: 'server',
+          agentSessionId: 'opencode-private',
+        },
+      },
+    };
+    patchSessionMetadataEnvelopeTupleMock.mockResolvedValue({
+      success: true,
+      metadataLayoutVersion: 1,
+      sharedMetadata: { version: 5 },
+      agentState: { version: 8 },
+    });
+
+    const result = await updateSessionMetadataWithRetry({
+      token: credentials.token,
+      credentials,
+      sessionId: 'sess_layout0_predecessor_compat',
+      accountEncryptionCurrentness: plainCurrentness,
+      rawSession: {
+        metadataLayoutVersion: 0,
+        metadata: JSON.stringify(sourceMetadata),
+        metadataVersion: 4,
+        ownerMetadata: null,
+        agentState: null,
+        agentStateVersion: 7,
+        encryptionMode: 'plain',
+        dataEncryptionKey: null,
+      },
+      updater: (current) => ({
+        ...current,
+        summary: { text: 'Unrelated update', updatedAt: 3 },
+      }),
+      maxAttempts: 1,
+    });
+
+    expect(result.metadata.sessionModelsV1).toMatchObject({
+      agentId: 'opencode',
+    });
+    expect(result.metadata.sessionModelsV1).toHaveProperty(
+      'provider',
+      'opencode',
+    );
+    expect(result.metadata).toHaveProperty('agentRuntimeDescriptorV1');
+    expect(result.metadata.forkV1).toHaveProperty('providerHint');
+    expect(
+      patchSessionMetadataEnvelopeTupleMock.mock.calls[0]?.[0].patch,
+    ).toMatchObject({
+      mode: 'owner_migration',
+      target: {
+        ownerMetadata: {
+          t: 'plain',
+          v: expect.objectContaining({
+            runtime: expect.any(Object),
+          }),
+        },
+      },
+    });
+    expect(patchSessionMetadataMock).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when a layout-0 migration cannot preserve an inactive-model-intent fence', async () => {
     const credentials = {
       token: 'token-1',
       encryption: {
@@ -266,21 +449,17 @@ describe('updateSessionMetadataWithRetry', () => {
         secret: new Uint8Array(32).fill(33),
       },
     };
-    patchSessionMetadataMock.mockResolvedValue({
-      success: false,
-      error: 'session_active',
-    });
-
     await expect(updateSessionMetadataWithRetry({
       token: credentials.token,
       credentials,
       sessionId: 'sess_layout0_conditioned',
+      accountEncryptionCurrentness: e2eeCurrentness(credentials),
       rawSession: {
         metadataLayoutVersion: 0,
         metadata: JSON.stringify({
           path: '/legacy',
           host: 'owner',
-          model: 'before',
+          summary: { text: 'Before', updatedAt: 1 },
         }),
         metadataVersion: 4,
         ownerMetadata: null,
@@ -294,28 +473,15 @@ describe('updateSessionMetadataWithRetry', () => {
       },
       updater: (current) => ({
         ...current,
-        model: 'after',
+        summary: { text: 'After', updatedAt: 2 },
       }),
       maxAttempts: 3,
     })).rejects.toMatchObject({
-      code: 'session_active',
+      code: 'metadata_privacy_upgrade_required',
       retryable: false,
     });
 
-    expect(patchSessionMetadataMock).toHaveBeenCalledTimes(1);
-    expect(patchSessionMetadataMock).toHaveBeenCalledWith({
-      token: 'token-1',
-      sessionId: 'sess_layout0_conditioned',
-      ciphertext: JSON.stringify({
-        path: '/legacy',
-        host: 'owner',
-        model: 'after',
-      }),
-      expectedVersion: 4,
-      sessionExpectation: {
-        kind: 'inactive_model_intent',
-      },
-    });
+    expect(patchSessionMetadataMock).not.toHaveBeenCalled();
     expect(patchSessionMetadataEnvelopeTupleMock).not.toHaveBeenCalled();
     expect(fetchSessionByIdCompatMock).not.toHaveBeenCalled();
   });
@@ -337,6 +503,7 @@ describe('updateSessionMetadataWithRetry', () => {
       token: credentials.token,
       credentials,
       sessionId: 'sess_layout0_ordinary_noop',
+      accountEncryptionCurrentness: e2eeCurrentness(credentials),
       rawSession: {
         metadataLayoutVersion: 0,
         metadata: JSON.stringify(sourceMetadata),
@@ -353,7 +520,7 @@ describe('updateSessionMetadataWithRetry', () => {
       }),
     });
 
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       version: 4,
       metadata: sourceMetadata,
     });
@@ -394,7 +561,7 @@ describe('updateSessionMetadataWithRetry', () => {
       },
       privateSentinel: 'machine-private-v0.2.1',
     },
-  ])('keeps $name metadata updates on the released layout-0 writer while activation is frozen', async ({
+  ])('migrates $name metadata through the strict owner tuple', async ({
     mode,
     metadata,
     privateSentinel,
@@ -411,6 +578,9 @@ describe('updateSessionMetadataWithRetry', () => {
       encryptionKey: secret,
       encryptionVariant: 'legacy' as const,
     };
+    const cryptoContext = mode === 'plain'
+      ? { mode: 'plain' as const, ctx: null }
+      : { mode: 'e2ee' as const, ctx };
     const sourceMetadata = {
       ...metadata,
       summary: { text: 'Before', updatedAt: 1 },
@@ -420,24 +590,25 @@ describe('updateSessionMetadataWithRetry', () => {
       privateAgentSentinel: `${privateSentinel}-agent`,
     };
     const sourceMetadataCiphertext = encryptStoredSessionPayload({
-      mode,
-      ctx,
+      ...cryptoContext,
       payload: sourceMetadata,
     });
     const sourceAgentStateCiphertext = encryptStoredSessionPayload({
-      mode,
-      ctx,
+      ...cryptoContext,
       payload: sourceAgentState,
     });
-    patchSessionMetadataMock.mockResolvedValue({
+    patchSessionMetadataEnvelopeTupleMock.mockResolvedValue({
       success: true,
-      version: 5,
+      metadataLayoutVersion: 1,
+      sharedMetadata: { version: 5 },
+      agentState: { version: 8 },
     });
 
     const result = await updateSessionMetadataWithRetry({
       token: credentials.token,
       credentials,
       sessionId: 'sess_layout0_migration',
+      accountEncryptionCurrentness: e2eeCurrentness(credentials),
       rawSession: {
         metadataLayoutVersion: 0,
         metadata: sourceMetadataCiphertext,
@@ -461,28 +632,82 @@ describe('updateSessionMetadataWithRetry', () => {
         summary: { text: 'After', updatedAt: 2 },
       },
     });
-    expect(patchSessionMetadataMock).toHaveBeenCalledTimes(1);
-    const request = patchSessionMetadataMock.mock.calls[0]?.[0];
+    expect(patchSessionMetadataEnvelopeTupleMock).toHaveBeenCalledTimes(1);
+    const request =
+      patchSessionMetadataEnvelopeTupleMock.mock.calls[0]?.[0];
+    const snapshot = createAccountScopedCryptoMaterialSnapshotV1({
+      accountEncryptionMode: 'e2ee',
+      material: { type: 'legacy', secret },
+    });
     expect(request).toMatchObject({
       token: 'token-1',
       sessionId: 'sess_layout0_migration',
-      expectedVersion: 4,
+      patch: {
+        mode: 'owner_migration',
+        expectedAccountEncryptionMode: 'e2ee',
+        expectedAccountContentPublicKeyFingerprint:
+          snapshot.contentPublicKeyFingerprint,
+        source: {
+          metadata: {
+            version: 4,
+            ciphertext: sourceMetadataCiphertext,
+          },
+          agentState: {
+            version: 7,
+            ciphertext: sourceAgentStateCiphertext,
+          },
+        },
+      },
     });
-    const updatedMetadata = decryptStoredSessionPayload({
-      mode,
-      ctx,
-      value: request.ciphertext,
-    });
-    expect(updatedMetadata).toEqual({
-      ...sourceMetadata,
-      summary: { text: 'After', updatedAt: 2 },
-    });
-    expect(JSON.stringify(updatedMetadata)).toContain(privateSentinel);
-    expect(patchSessionMetadataEnvelopeTupleMock).not.toHaveBeenCalled();
+    expect(JSON.stringify(result.metadata)).toContain(privateSentinel);
+    expect(patchSessionMetadataMock).not.toHaveBeenCalled();
     expect(fetchSessionByIdCompatMock).not.toHaveBeenCalled();
   });
 
-  it('retries a linked layout-0 metadata conflict through the released writer while activation is frozen', async () => {
+  it('fails typed before HTTP when layout-0 migration currentness names different E2EE material', async () => {
+    const secret = new Uint8Array(32).fill(27);
+    const credentials = {
+      token: 'token-1',
+      encryption: { type: 'legacy' as const, secret },
+    };
+    const sourceMetadataCiphertext = encryptStoredSessionPayload({
+      mode: 'e2ee',
+      ctx: { encryptionKey: secret, encryptionVariant: 'legacy' },
+      payload: { path: '/private/mismatched', host: 'private-host' },
+    });
+    const differentCredentials = {
+      encryption: {
+        type: 'legacy' as const,
+        secret: new Uint8Array(32).fill(28),
+      },
+    };
+
+    await expect(updateSessionMetadataWithRetry({
+      token: credentials.token,
+      credentials,
+      sessionId: 'sess_layout0_mismatched_currentness',
+      accountEncryptionCurrentness: e2eeCurrentness(differentCredentials),
+      rawSession: {
+        metadataLayoutVersion: 0,
+        metadata: sourceMetadataCiphertext,
+        metadataVersion: 4,
+        ownerMetadata: null,
+        agentState: null,
+        agentStateVersion: 7,
+        encryptionMode: 'e2ee',
+        dataEncryptionKey: null,
+      },
+      updater: (current) => ({ ...current, path: '/private/after' }),
+      maxAttempts: 1,
+    })).rejects.toMatchObject({
+      code: 'metadata_privacy_upgrade_required',
+      retryable: false,
+    });
+    expect(patchSessionMetadataEnvelopeTupleMock).not.toHaveBeenCalled();
+    expect(patchSessionMetadataMock).not.toHaveBeenCalled();
+  });
+
+  it('retries a linked layout-0 owner migration after an exact conflict refresh', async () => {
     const credentials = {
       token: 'token-1',
       encryption: {
@@ -504,24 +729,39 @@ describe('updateSessionMetadataWithRetry', () => {
       ...linkedMetadata,
       summary: { text: 'Concurrent', updatedAt: 2 },
     };
-    patchSessionMetadataMock
+    patchSessionMetadataEnvelopeTupleMock
       .mockResolvedValueOnce({
         success: false,
-        error: 'version-mismatch',
-        current: {
-          version: 5,
-          value: JSON.stringify(concurrentMetadata),
-        },
+        error: 'session_metadata_version_conflict',
+        metadataLayoutVersion: 1,
+        sharedMetadata: { version: 5 },
+        agentState: { version: 8 },
       })
       .mockResolvedValueOnce({
         success: true,
-        version: 6,
+        metadataLayoutVersion: 1,
+        sharedMetadata: { version: 6 },
+        agentState: { version: 8 },
       });
+    fetchSessionByIdCompatMock.mockResolvedValue({
+      metadataLayoutVersion: 0,
+      metadata: JSON.stringify(concurrentMetadata),
+      metadataVersion: 5,
+      ownerMetadata: null,
+      agentState: null,
+      agentStateVersion: 7,
+      encryptionMode: 'plain',
+      dataEncryptionKey: null,
+    });
+    fetchAccountEncryptionCurrentnessMock.mockResolvedValue(
+      e2eeCurrentness(credentials),
+    );
 
     const result = await updateSessionMetadataWithRetry({
       token: credentials.token,
       credentials,
       sessionId: 'sess_layout0_linked_conflict',
+      accountEncryptionCurrentness: e2eeCurrentness(credentials),
       rawSession: {
         metadataLayoutVersion: 0,
         metadata: JSON.stringify(linkedMetadata),
@@ -539,28 +779,22 @@ describe('updateSessionMetadataWithRetry', () => {
       maxAttempts: 2,
     });
 
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       version: 6,
       metadata: {
         ...concurrentMetadata,
         summary: { text: 'After', updatedAt: 3 },
       },
     });
-    expect(patchSessionMetadataMock).toHaveBeenCalledTimes(2);
-    expect(patchSessionMetadataMock.mock.calls.map(
-      ([request]) => request.expectedVersion,
+    expect(patchSessionMetadataEnvelopeTupleMock).toHaveBeenCalledTimes(2);
+    expect(patchSessionMetadataEnvelopeTupleMock.mock.calls.map(
+      ([request]) => request.patch.source.metadata.version,
     )).toEqual([4, 5]);
-    expect(JSON.parse(
-      patchSessionMetadataMock.mock.calls[1]?.[0].ciphertext ?? 'null',
-    )).toEqual({
-      ...concurrentMetadata,
-      summary: { text: 'After', updatedAt: 3 },
-    });
-    expect(patchSessionMetadataEnvelopeTupleMock).not.toHaveBeenCalled();
-    expect(fetchSessionByIdCompatMock).not.toHaveBeenCalled();
+    expect(fetchSessionByIdCompatMock).toHaveBeenCalledOnce();
+    expect(patchSessionMetadataMock).not.toHaveBeenCalled();
   });
 
-  it('updates layout 1 through one strict owner HTTP tuple without creating or falling back to a socket', async () => {
+  it('preserves an encrypted layout-1 owner envelope for an E2EE Session update', async () => {
     const credentials = {
       token: 'token-1',
       encryption: {
@@ -575,11 +809,20 @@ describe('updateSessionMetadataWithRetry', () => {
     };
     const fields = buildSessionMetadataEnvelopeFields({
       credentials,
+      accountEncryptionMode: 'e2ee',
       metadata: currentMetadata,
       agentState: { requests: {} },
-      storedContentMode: 'plain',
+      storedContentMode: 'e2ee',
       encryptionKey: credentials.encryption.secret,
       encryptionVariant: 'legacy',
+    });
+    const encryptedOwnerMetadata = sealSessionOwnerMetadataEnvelopeV1({
+      material: {
+        type: 'legacy',
+        secret: credentials.encryption.secret,
+      },
+      ownerMetadata: fields.ownerMetadataValue,
+      randomBytes: (length) => new Uint8Array(length).fill(41),
     });
     patchSessionMetadataEnvelopeTupleMock.mockResolvedValue({
       success: true,
@@ -593,14 +836,15 @@ describe('updateSessionMetadataWithRetry', () => {
       token: credentials.token,
       credentials,
       sessionId: 'sess_layout_1',
+      accountEncryptionCurrentness: e2eeCurrentness(credentials),
       rawSession: {
         metadataLayoutVersion: 1,
         metadata: fields.sharedMetadata.ciphertext,
         metadataVersion: 3,
-        ownerMetadata: fields.ownerMetadata.ciphertext,
+        ownerMetadata: encryptedOwnerMetadata,
         agentState: fields.agentState,
         agentStateVersion: 7,
-        encryptionMode: 'plain',
+        encryptionMode: 'e2ee',
         dataEncryptionKey: null,
       },
       updater: (metadata) => ({
@@ -623,7 +867,8 @@ describe('updateSessionMetadataWithRetry', () => {
     expect(request.patch).toMatchObject({
       mode: 'owner',
       metadataLayoutVersion: 1,
-      expectedOwnerMetadataCiphertext: fields.ownerMetadata.ciphertext,
+      expectedOwnerMetadata: encryptedOwnerMetadata,
+      ownerMetadata: { t: 'encrypted' },
       sharedMetadata: { expectedVersion: 3 },
       agentState: { expectedVersion: 7 },
     });
@@ -631,16 +876,84 @@ describe('updateSessionMetadataWithRetry', () => {
       token: 'token-1',
       sessionId: 'sess_layout_1',
     });
-    expect(JSON.parse(request.patch.sharedMetadata.ciphertext)).toMatchObject({
+    expect(decryptStoredSessionPayload({
+      mode: 'e2ee',
+      ctx: {
+        encryptionKey: credentials.encryption.secret,
+        encryptionVariant: 'legacy',
+      },
+      value: request.patch.sharedMetadata.ciphertext,
+    })).toMatchObject({
       summary: { text: 'After', updatedAt: 2 },
     });
-    expect(openSessionOwnerMetadataV1({
+    const openedOwner = openSessionOwnerMetadataEnvelopeV1({
+      accountMode: 'e2ee',
       material: {
         type: 'legacy',
         secret: credentials.encryption.secret,
       },
-      ciphertext: request.patch.ownerMetadata.ciphertext,
-    })?.workspace?.path).toBe('/private/after');
+      envelope: request.patch.ownerMetadata,
+    });
+    expect(openedOwner.ok).toBe(true);
+    if (!openedOwner.ok) throw new Error('expected encrypted owner metadata');
+    expect(openedOwner.ownerMetadata.workspace?.path).toBe('/private/after');
+    expect(patchSessionMetadataMock).not.toHaveBeenCalled();
+  });
+
+  it('fails typed before HTTP when token-only credentials cannot open the encrypted owner branch', async () => {
+    const keyedCredentials = {
+      token: 'token-1',
+      encryption: {
+        type: 'legacy' as const,
+        secret: new Uint8Array(32).fill(43),
+      },
+    };
+    const fields = buildSessionMetadataEnvelopeFields({
+      credentials: keyedCredentials,
+      accountEncryptionMode: 'e2ee',
+      metadata: {
+        path: '/private/encrypted-owner',
+        host: 'private-host',
+      },
+      agentState: null,
+      storedContentMode: 'plain',
+    });
+    const encryptedOwnerMetadata = sealSessionOwnerMetadataEnvelopeV1({
+      material: {
+        type: 'legacy',
+        secret: keyedCredentials.encryption.secret,
+      },
+      ownerMetadata: fields.ownerMetadataValue,
+      randomBytes: (length) => new Uint8Array(length).fill(44),
+    });
+
+    await expect(updateSessionMetadataWithRetry({
+      token: 'token-1',
+      credentials: { token: 'token-1', encryption: null },
+      sessionId: 'sess_locked_owner',
+      accountEncryptionCurrentness: e2eeCurrentness(keyedCredentials),
+      rawSession: {
+        metadataLayoutVersion: 1,
+        metadata: fields.sharedMetadata.ciphertext,
+        metadataVersion: 3,
+        ownerMetadata: encryptedOwnerMetadata,
+        agentState: fields.agentState,
+        agentStateVersion: 7,
+        encryptionMode: 'plain',
+        dataEncryptionKey: null,
+      },
+      updater: (metadata) => ({
+        ...metadata,
+        path: '/private/after',
+      }),
+      maxAttempts: 1,
+    })).rejects.toMatchObject({
+      code: 'metadata_privacy_upgrade_required',
+      retryable: false,
+    });
+
+    expect(patchSessionMetadataEnvelopeTupleMock).not.toHaveBeenCalled();
+    expect(fetchSessionByIdCompatMock).not.toHaveBeenCalled();
     expect(patchSessionMetadataMock).not.toHaveBeenCalled();
   });
 
@@ -654,14 +967,13 @@ describe('updateSessionMetadataWithRetry', () => {
     };
     const fields = buildSessionMetadataEnvelopeFields({
       credentials,
+      accountEncryptionMode: 'e2ee',
       metadata: {
         path: '/private/before',
         host: 'private-host',
       },
       agentState: null,
       storedContentMode: 'plain',
-      encryptionKey: credentials.encryption.secret,
-      encryptionVariant: 'legacy',
     });
     patchSessionMetadataEnvelopeTupleMock.mockResolvedValue({
       success: false,
@@ -672,11 +984,12 @@ describe('updateSessionMetadataWithRetry', () => {
       token: credentials.token,
       credentials,
       sessionId: 'sess_layout1_conditioned',
+      accountEncryptionCurrentness: e2eeCurrentness(credentials),
       rawSession: {
         metadataLayoutVersion: 1,
         metadata: fields.sharedMetadata.ciphertext,
         metadataVersion: 3,
-        ownerMetadata: fields.ownerMetadata.ciphertext,
+        ownerMetadata: fields.ownerMetadata,
         agentState: fields.agentState,
         agentStateVersion: 7,
         encryptionMode: 'plain',
@@ -723,22 +1036,22 @@ describe('updateSessionMetadataWithRetry', () => {
     };
     const fields = buildSessionMetadataEnvelopeFields({
       credentials,
+      accountEncryptionMode: 'e2ee',
       metadata: currentMetadata,
       agentState: { requests: {} },
       storedContentMode: 'plain',
-      encryptionKey: credentials.encryption.secret,
-      encryptionVariant: 'legacy',
     });
 
     const result = await updateSessionMetadataWithRetry({
       token: credentials.token,
       credentials,
       sessionId: 'sess_layout1_noop',
+      accountEncryptionCurrentness: e2eeCurrentness(credentials),
       rawSession: {
         metadataLayoutVersion: 1,
         metadata: fields.sharedMetadata.ciphertext,
         metadataVersion: 3,
-        ownerMetadata: fields.ownerMetadata.ciphertext,
+        ownerMetadata: fields.ownerMetadata,
         agentState: fields.agentState,
         agentStateVersion: 7,
         encryptionMode: 'plain',
@@ -759,7 +1072,7 @@ describe('updateSessionMetadataWithRetry', () => {
     expect(patchSessionMetadataMock).not.toHaveBeenCalled();
   });
 
-  it('refetches the authoritative layout-1 owner tuple after HTTP 409 before rebuilding the retry', async () => {
+  it('follows authoritative owner metadata after HTTP 409', async () => {
     const credentials = {
       token: 'token-1',
       encryption: {
@@ -769,6 +1082,7 @@ describe('updateSessionMetadataWithRetry', () => {
     };
     const initial = buildSessionMetadataEnvelopeFields({
       credentials,
+      accountEncryptionMode: 'e2ee',
       metadata: {
         path: '/private/initial',
         host: 'initial-host',
@@ -776,11 +1090,10 @@ describe('updateSessionMetadataWithRetry', () => {
       },
       agentState: { requests: {} },
       storedContentMode: 'plain',
-      encryptionKey: credentials.encryption.secret,
-      encryptionVariant: 'legacy',
     });
     const authoritative = buildSessionMetadataEnvelopeFields({
       credentials,
+      accountEncryptionMode: 'e2ee',
       metadata: {
         path: '/private/authoritative',
         host: 'authoritative-host',
@@ -788,8 +1101,6 @@ describe('updateSessionMetadataWithRetry', () => {
       },
       agentState: { requests: { concurrent: { createdAt: 2 } } },
       storedContentMode: 'plain',
-      encryptionKey: credentials.encryption.secret,
-      encryptionVariant: 'legacy',
     });
     patchSessionMetadataEnvelopeTupleMock
       .mockResolvedValueOnce({
@@ -811,22 +1122,26 @@ describe('updateSessionMetadataWithRetry', () => {
       metadataLayoutVersion: 1,
       metadata: authoritative.sharedMetadata.ciphertext,
       metadataVersion: 4,
-      ownerMetadata: authoritative.ownerMetadata.ciphertext,
+      ownerMetadata: authoritative.ownerMetadata,
       agentState: authoritative.agentState,
       agentStateVersion: 6,
       encryptionMode: 'plain',
       dataEncryptionKey: null,
     });
+    fetchAccountEncryptionCurrentnessMock.mockResolvedValue(
+      e2eeCurrentness(credentials),
+    );
 
     await updateSessionMetadataWithRetry({
       token: credentials.token,
       credentials,
       sessionId: 'sess_layout_conflict',
+      accountEncryptionCurrentness: e2eeCurrentness(credentials),
       rawSession: {
         metadataLayoutVersion: 1,
         metadata: initial.sharedMetadata.ciphertext,
         metadataVersion: 3,
-        ownerMetadata: initial.ownerMetadata.ciphertext,
+        ownerMetadata: initial.ownerMetadata,
         agentState: initial.agentState,
         agentStateVersion: 5,
         encryptionMode: 'plain',
@@ -834,6 +1149,7 @@ describe('updateSessionMetadataWithRetry', () => {
       },
       updater: (metadata) => ({
         ...metadata,
+        path: '/private/requested',
         summary: { text: 'Requested', updatedAt: 3 },
       }),
       maxAttempts: 2,
@@ -841,22 +1157,32 @@ describe('updateSessionMetadataWithRetry', () => {
 
     expect(fetchSessionByIdCompatMock).toHaveBeenCalledTimes(1);
     expect(patchSessionMetadataEnvelopeTupleMock).toHaveBeenCalledTimes(2);
+    const firstAttempt =
+      patchSessionMetadataEnvelopeTupleMock.mock.calls[0]?.[0];
     const retry = patchSessionMetadataEnvelopeTupleMock.mock.calls[1]?.[0];
+    expect(firstAttempt.patch).toMatchObject({
+      expectedOwnerMetadata: initial.ownerMetadata,
+      ownerMetadata: { t: 'encrypted' },
+    });
     expect(retry.patch).toMatchObject({
       mode: 'owner',
-      expectedOwnerMetadataCiphertext:
-        authoritative.ownerMetadata.ciphertext,
+      expectedOwnerMetadata: authoritative.ownerMetadata,
+      ownerMetadata: { t: 'encrypted' },
       sharedMetadata: { expectedVersion: 4 },
       agentState: { expectedVersion: 6 },
     });
-    expect(openSessionOwnerMetadataV1({
+    const openedRetryOwner = openSessionOwnerMetadataEnvelopeV1({
+      accountMode: 'e2ee',
       material: {
         type: 'legacy',
         secret: credentials.encryption.secret,
       },
-      ciphertext: retry.patch.ownerMetadata.ciphertext,
-    })?.workspace).toMatchObject({
-      path: '/private/authoritative',
+      envelope: retry.patch.ownerMetadata,
+    });
+    expect(openedRetryOwner.ok).toBe(true);
+    if (!openedRetryOwner.ok) throw new Error('expected encrypted retry owner metadata');
+    expect(openedRetryOwner.ownerMetadata.workspace).toMatchObject({
+      path: '/private/requested',
       host: 'authoritative-host',
     });
     expect(JSON.parse(retry.patch.agentState.ciphertext)).toEqual({
@@ -864,7 +1190,281 @@ describe('updateSessionMetadataWithRetry', () => {
     });
   });
 
-  it('replays through the shared tuple owner when an ambiguous layout-1 write left the exact source unchanged', async () => {
+  async function expectRetiredDisplayTitleMutationStopsBeforeRetry(params: Readonly<{
+    updater: (metadata: Record<string, unknown>) => Record<string, unknown>;
+    retire: () => void;
+    assertCurrent: () => void;
+    signal?: AbortSignal;
+    expectedCode: string;
+  }>) {
+    const credentials = {
+      token: 'token-1',
+      encryption: null,
+    };
+    const initial = buildSessionMetadataEnvelopeFields({
+      credentials,
+      accountEncryptionMode: 'plain',
+      metadata: {
+        path: '/private/initial',
+        host: 'initial-host',
+        summary: { text: 'Before', updatedAt: 1 },
+      },
+      agentState: null,
+      storedContentMode: 'plain',
+    });
+    const authoritative = buildSessionMetadataEnvelopeFields({
+      credentials,
+      accountEncryptionMode: 'plain',
+      metadata: {
+        path: '/private/authoritative',
+        host: 'authoritative-host',
+        summary: { text: 'Concurrent', updatedAt: 2 },
+      },
+      agentState: null,
+      storedContentMode: 'plain',
+    });
+    patchSessionMetadataEnvelopeTupleMock
+      .mockImplementationOnce(async () => {
+        params.retire();
+        return {
+          success: false,
+          error: 'session_metadata_version_conflict',
+          metadataLayoutVersion: 1,
+          sharedMetadata: { version: 4 },
+          agentState: { version: 6 },
+        };
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        metadataLayoutVersion: 1,
+        sharedMetadata: { version: 5 },
+        ownerMetadata: { version: 5 },
+        agentState: { version: 7 },
+      });
+    fetchSessionByIdCompatMock.mockResolvedValue({
+      id: 'sess_display_title_conflict',
+      metadataLayoutVersion: 1,
+      metadata: authoritative.sharedMetadata.ciphertext,
+      metadataVersion: 4,
+      ownerMetadata: authoritative.ownerMetadata,
+      agentState: authoritative.agentState,
+      agentStateVersion: 6,
+      encryptionMode: 'plain',
+      dataEncryptionKey: null,
+    });
+
+    await expect(updateSessionMetadataWithRetry({
+      token: credentials.token,
+      credentials,
+      sessionId: 'sess_display_title_conflict',
+      accountEncryptionCurrentness: plainCurrentness,
+      rawSession: {
+        metadataLayoutVersion: 1,
+        metadata: initial.sharedMetadata.ciphertext,
+        metadataVersion: 3,
+        ownerMetadata: initial.ownerMetadata,
+        agentState: initial.agentState,
+        agentStateVersion: 5,
+        encryptionMode: 'plain',
+        dataEncryptionKey: null,
+      },
+      updater: params.updater,
+      maxAttempts: 2,
+      currentness: {
+        ...(params.signal ? { signal: params.signal } : {}),
+        assertCurrent: params.assertCurrent,
+      },
+    })).rejects.toMatchObject({ code: params.expectedCode });
+
+    expect(fetchSessionByIdCompatMock).not.toHaveBeenCalled();
+    expect(patchSessionMetadataEnvelopeTupleMock).toHaveBeenCalledTimes(1);
+    expect(patchSessionMetadataMock).not.toHaveBeenCalled();
+  }
+
+  it('stops a retired display-title set after its first CAS conflict', async () => {
+    const operation = new AbortController();
+    const cancellation = Object.assign(
+      new Error('Session title mutation was aborted'),
+      { code: 'plugin_operation_aborted' },
+    );
+    await expectRetiredDisplayTitleMutationStopsBeforeRetry({
+      updater: (metadata) => writeSessionStateFieldToMetadata(
+        metadata,
+        'display.title',
+        { title: 'Requested', staleBehavior: 'bump-if-value-changed' },
+      ),
+      retire: () => operation.abort(),
+      assertCurrent: () => {
+        if (operation.signal.aborted) throw cancellation;
+      },
+      signal: operation.signal,
+      expectedCode: 'plugin_operation_aborted',
+    });
+  });
+
+  it('stops a retired display-title clear after its first CAS conflict', async () => {
+    let current = true;
+    const retirement = Object.assign(
+      new Error('Session title mutation requires the current plugin invocation'),
+      { code: 'plugin_session_display_title_scope_unavailable' },
+    );
+    await expectRetiredDisplayTitleMutationStopsBeforeRetry({
+      updater: (metadata) => clearSessionStateFieldFromMetadata(
+        metadata,
+        'display.title',
+      ),
+      retire: () => { current = false; },
+      assertCurrent: () => {
+        if (!current) throw retirement;
+      },
+      expectedCode: 'plugin_session_display_title_scope_unavailable',
+    });
+  });
+
+  it('refreshes the authoritative Session and Account snapshot after every consecutive HTTP 409', async () => {
+    const credentials = {
+      token: 'token-1',
+      encryption: {
+        type: 'legacy' as const,
+        secret: new Uint8Array(32).fill(29),
+      },
+    };
+    const initial = buildSessionMetadataEnvelopeFields({
+      credentials,
+      accountEncryptionMode: 'e2ee',
+      metadata: { path: '/private/initial', host: 'initial-host' },
+      agentState: { requests: {} },
+      storedContentMode: 'plain',
+    });
+    const firstAuthoritative = buildSessionMetadataEnvelopeFields({
+      credentials,
+      accountEncryptionMode: 'e2ee',
+      metadata: { path: '/private/first', host: 'first-host' },
+      agentState: { requests: { first: { createdAt: 2 } } },
+      storedContentMode: 'plain',
+    });
+    const secondAuthoritative = buildSessionMetadataEnvelopeFields({
+      credentials,
+      accountEncryptionMode: 'e2ee',
+      metadata: { path: '/private/second', host: 'second-host' },
+      agentState: { requests: { second: { createdAt: 3 } } },
+      storedContentMode: 'plain',
+    });
+    patchSessionMetadataEnvelopeTupleMock
+      .mockResolvedValueOnce({
+        success: false,
+        error: 'session_metadata_version_conflict',
+        metadataLayoutVersion: 1,
+        sharedMetadata: { version: 4 },
+        agentState: { version: 6 },
+      })
+      .mockResolvedValueOnce({
+        success: false,
+        error: 'session_metadata_version_conflict',
+        metadataLayoutVersion: 1,
+        sharedMetadata: { version: 5 },
+        agentState: { version: 7 },
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        metadataLayoutVersion: 1,
+        sharedMetadata: { version: 6 },
+        ownerMetadata: { version: 6 },
+        agentState: { version: 8 },
+      });
+    fetchSessionByIdCompatMock
+      .mockResolvedValueOnce({
+        id: 'sess_layout_consecutive_conflicts',
+        metadataLayoutVersion: 1,
+        metadata: firstAuthoritative.sharedMetadata.ciphertext,
+        metadataVersion: 4,
+        ownerMetadata: firstAuthoritative.ownerMetadata,
+        agentState: firstAuthoritative.agentState,
+        agentStateVersion: 6,
+        encryptionMode: 'plain',
+        dataEncryptionKey: null,
+      })
+      .mockResolvedValueOnce({
+        id: 'sess_layout_consecutive_conflicts',
+        metadataLayoutVersion: 1,
+        metadata: secondAuthoritative.sharedMetadata.ciphertext,
+        metadataVersion: 5,
+        ownerMetadata: secondAuthoritative.ownerMetadata,
+        agentState: secondAuthoritative.agentState,
+        agentStateVersion: 7,
+        encryptionMode: 'plain',
+        dataEncryptionKey: null,
+      });
+    const initialCurrentness = e2eeCurrentness(credentials);
+    const firstCurrentness = {
+      ...initialCurrentness,
+      version: 2,
+      updatedAt: 2,
+    };
+    const secondCurrentness = {
+      ...initialCurrentness,
+      version: 3,
+      updatedAt: 3,
+    };
+    fetchAccountEncryptionCurrentnessMock
+      .mockResolvedValueOnce(firstCurrentness)
+      .mockResolvedValueOnce(secondCurrentness);
+
+    await updateSessionMetadataWithRetry({
+      token: credentials.token,
+      credentials,
+      sessionId: 'sess_layout_consecutive_conflicts',
+      accountEncryptionCurrentness: initialCurrentness,
+      rawSession: {
+        metadataLayoutVersion: 1,
+        metadata: initial.sharedMetadata.ciphertext,
+        metadataVersion: 3,
+        ownerMetadata: initial.ownerMetadata,
+        agentState: initial.agentState,
+        agentStateVersion: 5,
+        encryptionMode: 'plain',
+        dataEncryptionKey: null,
+      },
+      updater: (metadata) => ({
+        ...metadata,
+        path: '/private/requested',
+      }),
+      maxAttempts: 3,
+    });
+
+    expect(fetchSessionByIdCompatMock).toHaveBeenCalledTimes(2);
+    expect(fetchAccountEncryptionCurrentnessMock).toHaveBeenCalledTimes(2);
+    expect(patchSessionMetadataEnvelopeTupleMock).toHaveBeenCalledTimes(3);
+    expect(
+      patchSessionMetadataEnvelopeTupleMock.mock.calls.map(
+        ([request]) => ({
+          expectedOwnerMetadata: request.patch.expectedOwnerMetadata,
+          sharedMetadataVersion: request.patch.sharedMetadata.expectedVersion,
+          agentStateVersion: request.patch.agentState.expectedVersion,
+        }),
+      ),
+    ).toEqual([
+      {
+        expectedOwnerMetadata: initial.ownerMetadata,
+        sharedMetadataVersion: 3,
+        agentStateVersion: 5,
+      },
+      {
+        expectedOwnerMetadata: firstAuthoritative.ownerMetadata,
+        sharedMetadataVersion: 4,
+        agentStateVersion: 6,
+      },
+      {
+        expectedOwnerMetadata: secondAuthoritative.ownerMetadata,
+        sharedMetadataVersion: 5,
+        agentStateVersion: 7,
+      },
+    ]);
+  });
+
+  it.each(['ECONNABORTED', 'ECONNRESET'] as const)(
+    'replays through the shared tuple owner when an ambiguous %s layout-1 write left the exact source unchanged',
+    async (code) => {
     const credentials = {
       token: 'token-1',
       encryption: {
@@ -874,14 +1474,13 @@ describe('updateSessionMetadataWithRetry', () => {
     };
     const fields = buildSessionMetadataEnvelopeFields({
       credentials,
+      accountEncryptionMode: 'e2ee',
       metadata: { path: '/private', host: 'private-host' },
       agentState: null,
       storedContentMode: 'plain',
-      encryptionKey: credentials.encryption.secret,
-      encryptionVariant: 'legacy',
     });
-    const ambiguous = Object.assign(new Error('request timed out'), {
-      code: 'ECONNABORTED',
+    const ambiguous = Object.assign(new Error('request acknowledgement was lost'), {
+      code,
     });
     patchSessionMetadataEnvelopeTupleMock
       .mockRejectedValueOnce(ambiguous)
@@ -895,22 +1494,26 @@ describe('updateSessionMetadataWithRetry', () => {
       metadataLayoutVersion: 1,
       metadata: fields.sharedMetadata.ciphertext,
       metadataVersion: 1,
-      ownerMetadata: fields.ownerMetadata.ciphertext,
+      ownerMetadata: fields.ownerMetadata,
       agentState: fields.agentState,
       agentStateVersion: 1,
       encryptionMode: 'plain',
       dataEncryptionKey: null,
     });
+    fetchAccountEncryptionCurrentnessMock.mockResolvedValue(
+      e2eeCurrentness(credentials),
+    );
 
     await expect(updateSessionMetadataWithRetry({
       token: credentials.token,
       credentials,
       sessionId: 'sess_layout_ambiguous',
+      accountEncryptionCurrentness: e2eeCurrentness(credentials),
       rawSession: {
         metadataLayoutVersion: 1,
         metadata: fields.sharedMetadata.ciphertext,
         metadataVersion: 1,
-        ownerMetadata: fields.ownerMetadata.ciphertext,
+        ownerMetadata: fields.ownerMetadata,
         agentState: fields.agentState,
         agentStateVersion: 1,
         encryptionMode: 'plain',
@@ -928,5 +1531,6 @@ describe('updateSessionMetadataWithRetry', () => {
     expect(patchSessionMetadataEnvelopeTupleMock).toHaveBeenCalledTimes(2);
     expect(fetchSessionByIdCompatMock).toHaveBeenCalledTimes(1);
     expect(patchSessionMetadataMock).not.toHaveBeenCalled();
-  });
+    },
+  );
 });

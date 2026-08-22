@@ -12,7 +12,7 @@ import {
   ConnectedAccountDaemonControlResponseSchema,
   ConnectedAccountDaemonCommandSchema,
 } from '@/api/machine/rpcHandlers.connectedAccounts';
-import type { Credentials } from '@/persistence';
+import type { StoredCredentials } from '@/persistence';
 import {
   callMachineRpc as callMachineRpcRuntime,
 } from '@/session/transport/rpc/machineRpc';
@@ -27,7 +27,7 @@ export type ConnectedAccountDaemonClient = Readonly<{
 }>;
 
 export function createConnectedAccountDaemonClient(params: Readonly<{
-  credentials: Credentials;
+  credentials: StoredCredentials;
   machineId: string;
   callMachineRpc?: typeof callMachineRpcRuntime;
 }>): ConnectedAccountDaemonClient {

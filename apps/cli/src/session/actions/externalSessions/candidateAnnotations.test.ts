@@ -1,10 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+    type AccountEncryptionCurrentnessResponse,
+    createPlainSessionOwnerMetadataEnvelopeV1,
     resolveExternalSessionsSourceKey,
-    sealSessionOwnerMetadataV1,
     SessionOwnerMetadataV1Schema,
 } from '@happier-dev/protocol';
 
+import { tryDecryptSessionOwnerMetadataView } from '@/session/transport/encryption/sessionEncryptionContext';
 import { annotateExternalSessionCandidates } from './candidateAnnotations';
 import { resolveExternalSessionCandidateIdentityKey } from './candidateQuery';
 
@@ -14,16 +16,24 @@ vi.mock('@/session/transport/http/sessionsHttp', () => ({
     fetchSessionsPage: fetchSessionsPageMock,
 }));
 
+const plainAccountEncryptionCurrentness = {
+    mode: 'plain',
+    version: 1,
+    signingKeyFingerprint: null,
+    contentKeyFingerprint: null,
+    updatedAt: 1,
+} satisfies AccountEncryptionCurrentnessResponse;
+
+const getPlainAccountEncryptionCurrentness = async () => plainAccountEncryptionCurrentness;
+
 describe('annotateExternalSessionCandidates', () => {
     it('reads layout-v1 owner metadata when annotating linked and imported candidates', async () => {
         const secret = new Uint8Array(32).fill(7);
-        const sealOwnerMetadata = (
+        const createOwnerMetadataEnvelope = (
             ownerMetadata: Parameters<typeof SessionOwnerMetadataV1Schema.parse>[0],
-        ) => sealSessionOwnerMetadataV1({
-            material: { type: 'legacy', secret },
-            ownerMetadata: SessionOwnerMetadataV1Schema.parse(ownerMetadata),
-            randomBytes: (length) => new Uint8Array(length).fill(3),
-        });
+        ) => createPlainSessionOwnerMetadataEnvelopeV1(
+            SessionOwnerMetadataV1Schema.parse(ownerMetadata),
+        );
         fetchSessionsPageMock.mockReset();
         fetchSessionsPageMock
             .mockResolvedValueOnce({
@@ -32,7 +42,7 @@ describe('annotateExternalSessionCandidates', () => {
                     encryptionMode: 'plain',
                     metadataLayoutVersion: 1,
                     metadata: JSON.stringify({ v: 1 }),
-                    ownerMetadata: sealOwnerMetadata({
+                    ownerMetadata: createOwnerMetadataEnvelope({
                         v: 1,
                         workspace: { machineId: 'machine-1' },
                         nativeSession: {
@@ -51,7 +61,7 @@ describe('annotateExternalSessionCandidates', () => {
                     encryptionMode: 'plain',
                     metadataLayoutVersion: 1,
                     metadata: JSON.stringify({ v: 1 }),
-                    ownerMetadata: sealOwnerMetadata({
+                    ownerMetadata: createOwnerMetadataEnvelope({
                         v: 1,
                         workspace: { machineId: 'machine-1' },
                         history: {
@@ -94,24 +104,31 @@ describe('annotateExternalSessionCandidates', () => {
                 })!,
                 resolveSourceKey: resolveExternalSessionsSourceKey,
             },
+        }, {
+            fetchPage: fetchSessionsPageMock,
+            decryptMetadata: tryDecryptSessionOwnerMetadataView,
+            getAccountEncryptionCurrentness: getPlainAccountEncryptionCurrentness,
         });
 
-        expect(result).toEqual([
-            expect.objectContaining({
-                remoteSessionId: 'remote-linked',
-                linkedSessionId: 'linked-session',
-                materializedThrough: 100,
-            }),
-            expect.objectContaining({
-                remoteSessionId: 'remote-imported',
-                linkedSessionId: 'imported-session',
-                imported: true,
-                materializedThrough: 80,
-            }),
-        ]);
+        expect(result).toEqual({
+            annotationsIncomplete: false,
+            candidates: [
+                expect.objectContaining({
+                    remoteSessionId: 'remote-linked',
+                    linkedSessionId: 'linked-session',
+                    materializedThrough: 100,
+                }),
+                expect.objectContaining({
+                    remoteSessionId: 'remote-imported',
+                    linkedSessionId: 'imported-session',
+                    imported: true,
+                    materializedThrough: 80,
+                }),
+            ],
+        });
     });
 
-    it('projects live links, conversion tombstones, and publication time from canonical session owners', async () => {
+    it('projects live links, released conversion tombstones, and publication time from canonical session owners', async () => {
         const fetchPage = vi.fn()
             .mockResolvedValueOnce({
                 sessions: [{
@@ -133,7 +150,7 @@ describe('annotateExternalSessionCandidates', () => {
                         machineId: 'machine-1',
                         externalHistoryImportV1: {
                             v: 1,
-                            agentId: 'codex',
+                            providerId: 'codex',
                             remoteSessionId: 'remote-imported',
                             importedAtMs: 90,
                             source: { kind: 'codexHome', home: 'user' },
@@ -162,31 +179,35 @@ describe('annotateExternalSessionCandidates', () => {
         }, {
             fetchPage,
             decryptMetadata: ({ rawSession }) => rawSession.metadata as Record<string, unknown>,
+            getAccountEncryptionCurrentness: getPlainAccountEncryptionCurrentness,
         });
 
-        expect(result).toEqual([
-            expect.objectContaining({
-                remoteSessionId: 'remote-linked',
-                linkedSessionId: 'linked-session',
-                materializedThrough: 100,
-            }),
-            expect.objectContaining({
-                remoteSessionId: 'remote-imported',
-                linkedSessionId: 'imported-session',
-                imported: true,
-                materializedThrough: 80,
-            }),
-        ]);
+        expect(result).toEqual({
+            annotationsIncomplete: false,
+            candidates: [
+                expect.objectContaining({
+                    remoteSessionId: 'remote-linked',
+                    linkedSessionId: 'linked-session',
+                    materializedThrough: 100,
+                }),
+                expect.objectContaining({
+                    remoteSessionId: 'remote-imported',
+                    linkedSessionId: 'imported-session',
+                    imported: true,
+                    materializedThrough: 80,
+                }),
+            ],
+        });
     });
 
-    it('caps active and archived scans without starting a second lookup per candidate', async () => {
+    it('marks candidate annotations incomplete when the bounded active or archived scan stops early', async () => {
         const fetchPage = vi.fn(async ({ cursor }: { cursor?: string }) => ({
             sessions: [],
             hasNext: true,
             nextCursor: cursor ? `${cursor}-next` : 'next',
         }));
 
-        await annotateExternalSessionCandidates({
+        const result = await annotateExternalSessionCandidates({
             credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array([1]) } },
             machineId: 'machine-1',
             agentId: 'codex',
@@ -203,9 +224,17 @@ describe('annotateExternalSessionCandidates', () => {
         }, {
             fetchPage,
             decryptMetadata: () => null,
+            getAccountEncryptionCurrentness: getPlainAccountEncryptionCurrentness,
         });
 
         expect(fetchPage).toHaveBeenCalledTimes(4);
+        expect(result).toMatchObject({
+            annotationsIncomplete: true,
+            candidates: [
+                { remoteSessionId: 'remote-1' },
+                { remoteSessionId: 'remote-2' },
+            ],
+        });
     });
 
     it('annotates only the project-qualified candidate when native ids collide', async () => {
@@ -265,17 +294,21 @@ describe('annotateExternalSessionCandidates', () => {
         }, {
             fetchPage,
             decryptMetadata: ({ rawSession }) => rawSession.metadata as Record<string, unknown>,
+            getAccountEncryptionCurrentness: getPlainAccountEncryptionCurrentness,
         });
 
-        expect(result).toEqual([
-            expect.not.objectContaining({ linkedSessionId: expect.anything() }),
-            expect.objectContaining({
-                candidateKey: resolveExternalSessionCandidateIdentityKey({
-                    remoteSessionId: 'duplicate-native-id',
-                    linkData: { projectId: 'project-b' },
+        expect(result).toEqual({
+            annotationsIncomplete: false,
+            candidates: [
+                expect.not.objectContaining({ linkedSessionId: expect.anything() }),
+                expect.objectContaining({
+                    candidateKey: resolveExternalSessionCandidateIdentityKey({
+                        remoteSessionId: 'duplicate-native-id',
+                        linkData: { projectId: 'project-b' },
+                    }),
+                    linkedSessionId: 'linked-project-b',
                 }),
-                linkedSessionId: 'linked-project-b',
-            }),
-        ]);
+            ],
+        });
     });
 });

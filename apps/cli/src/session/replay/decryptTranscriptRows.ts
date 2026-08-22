@@ -16,7 +16,7 @@ type EncryptedRowLike = Readonly<{
 }>;
 
 export function decryptTranscriptRows(params: Readonly<{
-  ctx: SessionEncryptionContext;
+  ctx: SessionEncryptionContext | null;
   rows: ReadonlyArray<EncryptedRowLike>;
 }>): DecryptedTranscriptRow[] {
   const out: DecryptedTranscriptRow[] = [];
@@ -35,7 +35,7 @@ export function decryptTranscriptRows(params: Readonly<{
       } else {
         const ciphertextBase64 =
           content && typeof content === 'object' && content.t === 'encrypted' ? content.c : null;
-        if (typeof ciphertextBase64 !== 'string' || ciphertextBase64.trim().length === 0) continue;
+        if (!params.ctx || typeof ciphertextBase64 !== 'string' || ciphertextBase64.trim().length === 0) continue;
         decrypted = decryptSessionPayload({ ctx: params.ctx, ciphertextBase64 }) as any;
       }
 

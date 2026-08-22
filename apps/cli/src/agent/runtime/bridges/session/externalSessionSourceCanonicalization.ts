@@ -78,12 +78,16 @@ export async function canonicalizeLinkedExternalSessionSource(params: Readonly<{
   }
 
   if (providerOps?.resolveLinkIdentity) {
-    const resolved = await providerOps.resolveLinkIdentity({
-      remoteSessionId: params.remoteSessionId,
-      source: params.source,
-      runtimeDescriptor: runtimeIdentity.runtimeDescriptorV1,
-      metadata: params.metadata,
-    });
+    const resolved = await resolveExternalSessionLinkIdentityFromSurface(
+      {
+        agentId: params.agentId,
+        remoteSessionId: params.remoteSessionId,
+        source: params.source,
+        runtimeDescriptor: runtimeIdentity.runtimeDescriptorV1,
+        metadata: params.metadata,
+      },
+      providerOps,
+    );
     return {
       remoteSessionId: resolved.remoteSessionId,
       source: resolved.source,

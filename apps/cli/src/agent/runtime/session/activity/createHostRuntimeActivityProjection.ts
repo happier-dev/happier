@@ -48,13 +48,13 @@ export type HostRuntimeActivityProjection = Readonly<{
 
 export function resolveAgentRuntimeActivitySubscriber(params: Readonly<{
   applicability: RuntimeActivityApplicability;
-  subscribeCanonicalAgentSessionEvents?: AgentRuntimeActivitySubscriber;
+  subscribeAgentSessionRuntimeEvents?: AgentRuntimeActivitySubscriber;
 }>): AgentRuntimeActivitySubscriber | null {
   if (params.applicability !== 'supported') return null;
-  if (!params.subscribeCanonicalAgentSessionEvents) {
+  if (!params.subscribeAgentSessionRuntimeEvents) {
     throw new Error('Supported Runtime Activity requires an activated canonical agent-runtime producer');
   }
-  return params.subscribeCanonicalAgentSessionEvents;
+  return params.subscribeAgentSessionRuntimeEvents;
 }
 
 const IDLE: HostRuntimeActivitySnapshot = Object.freeze({

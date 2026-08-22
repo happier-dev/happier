@@ -1,11 +1,13 @@
+import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import axios from 'axios';
 
 import { createAuthenticationHttpStatusError, isAuthenticationStatus } from '@/api/client/httpStatusError';
-import type { Credentials } from '@/persistence';
+import type { StoredCredentials } from '@/persistence';
 import { configuration } from '@/configuration';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { resolveSessionEncryptionContextFromCredentials } from '@/session/transport/encryption/sessionEncryptionContext';
 import { decryptTranscriptRows } from '@/session/replay/decryptTranscriptRows';
+import { throwIfSessionTranscriptStoredContentUnavailableResponse } from '@/api/session/sessionTranscriptStoredContentUnavailable';
 
 type RawTranscriptRow = Readonly<{
   seq?: unknown;
@@ -21,7 +23,7 @@ function normalizePositiveInt(value: unknown): number | null {
 }
 
 export async function resolveForkCutoffSeqInclusive(params: Readonly<{
-  credentials: Credentials;
+  credentials: StoredCredentials;
   parentSessionId: string;
   parentRawSession: Readonly<{ encryptionMode?: unknown; dataEncryptionKey?: unknown }>;
   targetSeqInclusive: number;
@@ -32,6 +34,7 @@ export async function resolveForkCutoffSeqInclusive(params: Readonly<{
   const serverUrl = resolveServerHttpBaseUrl();
   const response = await axios.get(`${serverUrl}/v1/sessions/${params.parentSessionId}/messages`, {
     headers: {
+      ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
       Authorization: `Bearer ${params.credentials.token}`,
       'Content-Type': 'application/json',
     },
@@ -43,6 +46,7 @@ export async function resolveForkCutoffSeqInclusive(params: Readonly<{
   if (isAuthenticationStatus(response.status)) {
     throw createAuthenticationHttpStatusError(response.status, 'Authentication failed while resolving fork cutoff');
   }
+  throwIfSessionTranscriptStoredContentUnavailableResponse(response.status, response.data);
   if (response.status !== 200) {
     throw new Error(`Unexpected status from /v1/sessions/:id/messages: ${response.status}`);
   }

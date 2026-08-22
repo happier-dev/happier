@@ -10,32 +10,37 @@ export type RunnerTerminationEvent = RunnerTerminationReason;
 export type RunnerTerminationOutcome = Readonly<{
   exitCode: number;
   /**
-   * Whether it is safe to archive the Happy session.
+   * Human-readable description of why the runner terminated, for diagnostics only.
    *
-   * If the runner crashes, we avoid archiving so the daemon can respawn and
-   * reattach to the same Happy session id.
+   * Termination never decides Happy session archiving. A runner that exits leaves its
+   * session inactive and resumable; archiving is a user-intent action requested through
+   * the session archive owner, not a consequence of the runtime finishing.
    */
-  archive: boolean;
-  archiveReason?: string;
+  terminationReason: string;
 }>;
 
 export function computeRunnerTerminationOutcome(reason: RunnerTerminationReason): RunnerTerminationOutcome {
-  if (reason.kind === 'unhandledRejection' || reason.kind === 'uncaughtException') {
-    return { exitCode: 1, archive: false };
+  if (reason.kind === 'unhandledRejection') {
+    return { exitCode: 1, terminationReason: 'Unhandled rejection' };
+  }
+
+  if (reason.kind === 'uncaughtException') {
+    return { exitCode: 1, terminationReason: 'Uncaught exception' };
   }
 
   if (reason.kind === 'killSession') {
-    return { exitCode: 0, archive: true, archiveReason: 'Killed by user' };
+    return { exitCode: 0, terminationReason: 'Killed by user' };
   }
 
   if (reason.kind === 'signal') {
+    const terminationReason = `Signal ${reason.signal}`;
     if (reason.signal === 'SIGTERM' || reason.signal === 'SIGINT') {
-      return { exitCode: 0, archive: true, archiveReason: `Signal ${reason.signal}` };
+      return { exitCode: 0, terminationReason };
     }
-    return { exitCode: 1, archive: false };
+    return { exitCode: 1, terminationReason };
   }
 
   const code = Number.isFinite(reason.code) ? Math.trunc(reason.code) : 1;
-  if (code === 0) return { exitCode: 0, archive: true, archiveReason: 'Exited normally' };
-  return { exitCode: Math.max(1, code), archive: false };
+  if (code === 0) return { exitCode: 0, terminationReason: 'Exited normally' };
+  return { exitCode: Math.max(1, code), terminationReason: `Exited with code ${code}` };
 }

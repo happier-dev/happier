@@ -1,4 +1,4 @@
-import type { Credentials } from '@/persistence';
+import type { StoredCredentials } from '@/persistence';
 
 import { openSessionDataEncryptionKey } from '@/api/client/openSessionDataEncryptionKey';
 import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
@@ -9,7 +9,7 @@ import { decryptTranscriptReplaySlice } from './decryptTranscriptReplaySlice';
 import type { HappierReplayDialogItem } from './types';
 
 export async function hydrateReplayDialogFromTranscript(params: Readonly<{
-  credentials: Credentials;
+  credentials: StoredCredentials;
   previousSessionId: string;
   limit: number;
   maxTextChars?: number;
@@ -62,7 +62,7 @@ export async function hydrateReplayDialogFromTranscript(params: Readonly<{
     };
   }
 
-  if (params.credentials.encryption.type !== 'dataKey') {
+  if (params.credentials.encryption?.type !== 'dataKey') {
     return null;
   }
 

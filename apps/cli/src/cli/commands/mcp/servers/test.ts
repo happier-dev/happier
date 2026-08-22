@@ -21,17 +21,16 @@ export async function cmdMcpServersTest(
   opts: Readonly<{ json: boolean }>,
 ): Promise<void> {
   const commandEnv = deps.env ?? process.env;
-  const credentials = await deps.readCredentials();
+  const credentials = await deps.readStoredCredentials();
   if (!credentials) {
     if (opts.json) {
-      printJsonEnvelope({ ok: false, kind: 'mcp_servers_test', error: { code: 'not_authenticated' } }, { exitCode: 1 });
+      await printJsonEnvelope({ ok: false, kind: 'mcp_servers_test', error: { code: 'not_authenticated' } }, { exitCode: 1 });
       return;
     }
     console.error(chalk.red('Error:'), 'Not authenticated. Run "happier auth login" first.');
     process.exitCode = 1;
     return;
   }
-
   const serverRef = readFlagValue(argv, '--mcp-server') ?? readFlagValue(argv, '--server');
   const directory = readFlagValue(argv, '--dir') ?? process.cwd();
   if (!serverRef) throw new Error('Usage: happier mcp servers test --mcp-server <name|id> [--dir <path>] [--json]');
@@ -56,7 +55,9 @@ export async function cmdMcpServersTest(
     if (item.enabled !== true) throw new Error(`MCP server disabled for this target: ${server.name}`);
 
     const savedSecretsById = indexSavedSecretsByIdFromAccountSettings(ctx.settings);
-    const settingsSecretsKey = deriveSettingsSecretsKeyForCredentials(credentials);
+    const settingsSecretsKey = credentials.encryption
+      ? deriveSettingsSecretsKeyForCredentials(credentials)
+      : null;
     const settingsSecretsReadKeys = deriveSettingsSecretsReadKeysForCredentials(credentials);
 
     const materialized = await materializeMcpServerConfigRecord({
@@ -77,7 +78,7 @@ export async function cmdMcpServersTest(
     const durationMs = Math.max(0, deps.nowMs() - startedAt);
 
     if (opts.json) {
-      printJsonEnvelope({
+      await printJsonEnvelope({
         ok: true,
         kind: 'mcp_servers_test',
         data: {
@@ -94,7 +95,7 @@ export async function cmdMcpServersTest(
   } catch (error) {
     const message = redactMcpServerProbeError(error);
     if (opts.json) {
-      printJsonEnvelope({
+      await printJsonEnvelope({
         ok: false,
         kind: 'mcp_servers_test',
         error: {

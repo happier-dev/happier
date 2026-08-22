@@ -25,7 +25,7 @@ const LOCAL_POLICY_BY_FEATURE: Readonly<Partial<Record<FeatureId, FeatureLocalPo
   // them operator-opt-in on top of the gate.
   'browser.automation.injectedPage': (env) => parseBooleanEnv(env.HAPPIER_FEATURE_BROWSER_AUTOMATION_INJECTED_PAGE__ENABLED, false),
   'browser.automation.eval': (env) => parseBooleanEnv(env.HAPPIER_FEATURE_BROWSER_AUTOMATION_EVAL__ENABLED, false),
-  // The plugin UI tiers (hostedWeb / structuredMessages / reactNativeBundles)
+  // The plugin UI tiers (hostedWeb / reactNativeBundles)
   // are now server-represented + default-ALLOW kill-switches (§4.1/§13.5.3): they deliberately have
   // NO local-policy entry so the unlisted-id fallback returns true and the server bit governs. A
   // hardcoded force-close here would override the now-ON server bit (a server-represented decision
@@ -33,8 +33,6 @@ const LOCAL_POLICY_BY_FEATURE: Readonly<Partial<Record<FeatureId, FeatureLocalPo
   // derivation (5.1/5.2) still governs actual render. The finer dev-only hot-reload tier stays
   // client-represented + fail-closed (operator opt-in on top of the gate).
   'plugins.ui.reactNativeBundles.devHotReload': (env) => parseBooleanEnv(env.HAPPIER_FEATURE_PLUGINS_UI_REACT_NATIVE_BUNDLES_DEV_HOT_RELOAD__ENABLED, false),
-  channelBridges: (env) => parseBooleanEnv(env.HAPPIER_FEATURE_CHANNEL_BRIDGES__ENABLED, true),
-  'channelBridges.telegram': (env) => parseBooleanEnv(env.HAPPIER_FEATURE_CHANNEL_BRIDGES_TELEGRAM__ENABLED, true),
 };
 
 export function resolveCliLocalFeaturePolicyEnabled(featureId: FeatureId, env: NodeJS.ProcessEnv): boolean {

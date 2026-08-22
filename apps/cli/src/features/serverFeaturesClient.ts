@@ -15,15 +15,18 @@ function isEndpointMissing(status: number): boolean {
 export async function fetchServerFeaturesSnapshot(params: {
   serverUrl: string;
   timeoutMs?: number;
+  signal?: AbortSignal;
 }): Promise<CliServerFeaturesSnapshot> {
   const timeoutMs = params.timeoutMs ?? 6000;
 
   try {
-    const response = await withAbortTimeout(timeoutMs, async (signal) =>
-      await fetch(`${normalizeBaseUrl(params.serverUrl)}/v1/features`, {
+    const response = await withAbortTimeout(
+      timeoutMs,
+      async (signal) => await fetch(`${normalizeBaseUrl(params.serverUrl)}/v1/features`, {
         method: 'GET',
         signal,
       }),
+      params.signal,
     );
 
     if (!response.ok) {

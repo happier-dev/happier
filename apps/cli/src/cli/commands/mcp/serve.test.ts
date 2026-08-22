@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { McpCommandDeps } from './deps';
 import { runMcpServeCommand } from './serve';
 import { disableMcpStdioConsolePatch } from '@/mcp/server/mcpStdioConsolePatch';
+import { accountSettingsParse } from '@happier-dev/protocol';
 
 const env = process.env;
 
@@ -20,7 +21,7 @@ describe('happier mcp serve (env hardening)', () => {
 
     const connect = vi.fn(async () => {});
     const deps: McpCommandDeps = {
-      readCredentials: async () => credentials,
+      readStoredCredentials: async () => credentials,
       bootstrapAccountSettingsContext: vi.fn(async () => ({}) as any),
       updateAccountSettingsV2WithRetry: vi.fn(async () => ({ version: 1 }) as any),
       ensureMachineIdForCredentials: vi.fn(async () => ({ machineId: 'machine-1' })),
@@ -72,7 +73,7 @@ describe('happier mcp serve (env hardening)', () => {
       toolNames: [],
     }) as any);
     const deps: McpCommandDeps = {
-      readCredentials: async () => credentials,
+      readStoredCredentials: async () => credentials,
       bootstrapAccountSettingsContext: vi.fn(async () => ({ settings: {} }) as any),
       updateAccountSettingsV2WithRetry: vi.fn(async () => ({ version: 1 }) as any),
       ensureMachineIdForCredentials: vi.fn(async () => ({ machineId: 'machine-1' })),
@@ -113,7 +114,7 @@ describe('happier mcp serve (env hardening)', () => {
 
     const connect = vi.fn(async () => {});
     const deps: McpCommandDeps = {
-      readCredentials: async () => credentials,
+      readStoredCredentials: async () => credentials,
       bootstrapAccountSettingsContext: vi.fn(async () => ({
         source: 'network',
         settingsVersion: 1,
@@ -162,7 +163,7 @@ describe('happier mcp serve (env hardening)', () => {
     };
 
     const deps: McpCommandDeps = {
-      readCredentials: async () => credentials,
+      readStoredCredentials: async () => credentials,
       bootstrapAccountSettingsContext: vi.fn(async () => ({}) as any),
       updateAccountSettingsV2WithRetry: vi.fn(async () => ({ version: 1 }) as any),
       ensureMachineIdForCredentials: vi.fn(async () => ({ machineId: 'machine-1' })),
@@ -191,7 +192,7 @@ describe('happier mcp serve (env hardening)', () => {
     process.env.HAPPIER_WEBAPP_URL = 'http://attacker-webapp.example.test';
     process.env.HAPPIER_ACTIVE_SERVER_ID = 'attacker';
 
-    const readCredentials = vi.fn(async () => {
+    const readStoredCredentials = vi.fn(async () => {
       if (
         process.env.HAPPIER_SERVER_URL
         || process.env.HAPPIER_LOCAL_SERVER_URL
@@ -202,12 +203,15 @@ describe('happier mcp serve (env hardening)', () => {
         throw new Error('server_selection_env_override_not_cleared_before_credentials');
       }
 
-      return { token: 't' } as any;
+      return {
+        token: 't',
+        encryption: { type: 'legacy' as const, secret: new Uint8Array(32) },
+      };
     });
 
     await expect(
       runMcpServeCommand(['serve'], {
-        readCredentials,
+        readStoredCredentials,
         ensureMachineIdForCredentials: async () => ({ machineId: 'machine_1' }),
         bootstrapAccountSettingsContext: async () => ({
           settings: {
@@ -224,7 +228,57 @@ describe('happier mcp serve (env hardening)', () => {
       }),
     ).resolves.toBeUndefined();
 
-    expect(readCredentials).toHaveBeenCalledTimes(1);
+    expect(readStoredCredentials).toHaveBeenCalledTimes(1);
+  });
+
+  it('starts the plain Settings-backed MCP server with token-only credentials', async () => {
+    const credentials = { token: 'plain-token', encryption: null } as const;
+    const ensureMachineIdForCredentials = vi.fn(async () => ({ machineId: 'machine_1' }));
+    const bootstrapAccountSettingsContext = vi.fn(async () => ({
+      source: 'network' as const,
+      settings: accountSettingsParse({
+        actionsSettingsV1: {
+          v: 1,
+          actions: {},
+        },
+      }),
+      settingsVersion: 1,
+      loadedAtMs: 1,
+      settingsSecretsReadKeys: [],
+      whenRefreshed: null,
+    }));
+    const createExternalMcpServer = vi.fn(() => ({
+      // Boundary fixture: only connect behavior is exercised by this command test.
+      mcp: { connect: async () => {} } as any,
+      toolNames: [],
+    }));
+    const connectMcpStdio = vi.fn(async () => {});
+
+    await expect(runMcpServeCommand(['serve'], {
+      readStoredCredentials: async () => credentials,
+      ensureMachineIdForCredentials,
+      bootstrapAccountSettingsContext,
+      createExternalMcpServer,
+      connectMcpStdio,
+      updateAccountSettingsV2WithRetry: vi.fn(async () => ({} as any)),
+      detectProviderMcpServers: vi.fn(async () => ({} as any)),
+      probeMcpStdioServerTools: vi.fn(async () => []),
+      randomUUID: () => 'uuid',
+      nowMs: () => 0,
+    })).resolves.toBeUndefined();
+
+    expect(ensureMachineIdForCredentials).toHaveBeenCalledWith(credentials);
+    expect(bootstrapAccountSettingsContext).toHaveBeenCalledWith(expect.objectContaining({
+      credentials,
+      mode: 'blocking',
+      refresh: 'force',
+    }));
+    expect(createExternalMcpServer).toHaveBeenCalledWith({
+      credentials,
+      defaultSessionId: null,
+      pluginToolCatalog: [],
+    });
+    expect(connectMcpStdio).toHaveBeenCalledOnce();
   });
 
   it('clears env server-selection overrides before fetching account settings', async () => {
@@ -248,7 +302,10 @@ describe('happier mcp serve (env hardening)', () => {
 
     await expect(
       runMcpServeCommand(['serve'], {
-        readCredentials: async () => ({ token: 't' }) as any,
+        readStoredCredentials: async () => ({
+          token: 't',
+          encryption: { type: 'legacy' as const, secret: new Uint8Array(32) },
+        }),
         ensureMachineIdForCredentials: async () => ({ machineId: 'machine_1' }),
         bootstrapAccountSettingsContext,
         createExternalMcpServer: () => ({ mcp: { connect: async () => {} } as any, toolNames: [] }),

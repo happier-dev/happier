@@ -265,6 +265,47 @@ describe('fork connected-service child materialization identity', () => {
     expect(spawnSession).not.toHaveBeenCalled();
   });
 
+  it('fails closed before spawning when provider-native fork returns owner-private Session state', async () => {
+    const fork = vi.fn().mockResolvedValue({
+      providerSessionId: 'codex-child-thread',
+      launch: {
+        sessionStateUpdates: [{
+          fieldId: 'runtime.externalSessionOperation',
+          value: 'private-operation',
+        }],
+      },
+    });
+    const spawnSession = vi.fn<ForkSpawnSession>()
+      .mockResolvedValue({ type: 'success', sessionId: 'child-native' });
+
+    const result = await attemptProviderNativeFork({
+      requestedStrategy: 'provider_native',
+      credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array([1]) } },
+      parentSessionId: 'parent-session',
+      parentSession: createParentRawSessionFixture(),
+      parentMetadata: {},
+      directory: '/tmp/project',
+      forkPoint: { type: 'latest' },
+      targetSeqInclusive: 10,
+      effectiveCutoffSeqInclusive: 10,
+      spawnNonce: 'private-state-nonce',
+      forkBackendResolution: createBuiltInForkResolution(),
+      inheritedForkOverrides: { metadata: {}, spawn: {} },
+      forkSurface: { fork } as ForkSurfaceV1,
+      spawnSession,
+      stopSession: vi.fn(),
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
+      errorMessage: expect.stringMatching(/unsupported field.*runtime\.externalSessionOperation/i),
+    });
+    expect(spawnSession).not.toHaveBeenCalled();
+    expect(mocks.fetchForkChildSessionOrThrow).not.toHaveBeenCalled();
+    expect(mocks.updateSessionMetadataWithRetry).not.toHaveBeenCalled();
+  });
+
   it('does not fall back after provider-native auto fork times out waiting for webhook', async () => {
     const fork = vi.fn().mockResolvedValue({
       providerSessionId: 'codex-child-thread',
@@ -669,6 +710,40 @@ describe('fork connected-service child materialization identity', () => {
     expect(fork).toHaveBeenCalled();
     expect(mocks.createConfiguredAcpBackend).not.toHaveBeenCalled();
     expect(spawnSession).not.toHaveBeenCalled();
+  });
+
+  it('fails closed before spawning when ACP latest fork returns owner-private Session state', async () => {
+    const fork = vi.fn().mockResolvedValue({
+      providerSessionId: 'vendor-child-acp',
+      launch: {
+        sessionStateUpdates: [{
+          fieldId: 'runtime.externalSessionOperation',
+          value: 'private-operation',
+        }],
+      },
+    });
+    const spawnSession = vi.fn<ForkSpawnSession>();
+
+    const result = await attemptAcpLatestFork({
+      requestedStrategy: 'acp_fork_latest',
+      credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array([1]) } },
+      parentSessionId: 'parent-session',
+      parentMetadata: {},
+      directory: '/tmp/project',
+      effectiveCutoffSeqInclusive: 10,
+      spawnNonce: 'private-state-acp',
+      forkIsConfiguredAcp: true,
+      forkBackendResolution: createConfiguredAcpForkResolution(),
+      inheritedForkOverrides: { metadata: {}, spawn: {} },
+      forkSurface: { fork } as ForkSurfaceV1,
+      spawnSession,
+      stopSession: vi.fn(),
+    });
+
+    expect(result).toBeNull();
+    expect(spawnSession).not.toHaveBeenCalled();
+    expect(mocks.fetchForkChildSessionOrThrow).not.toHaveBeenCalled();
+    expect(mocks.updateSessionMetadataWithRetry).not.toHaveBeenCalled();
   });
 
   it('does not fall back after ACP latest auto fork times out waiting for webhook', async () => {

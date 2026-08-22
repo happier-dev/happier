@@ -3,7 +3,15 @@ import { mkdtemp, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const { fatalSpy } = vi.hoisted(() => ({
+  fatalSpy: vi.fn(),
+}));
+
+vi.mock('@/ui/logger', () => ({
+  logger: { fatal: fatalSpy },
+}));
 
 import { registerRunnerTerminationHandlers } from './lifecycle/runnerTerminationHandlers';
 
@@ -12,6 +20,10 @@ function createFakeProcess() {
 }
 
 describe('registerRunnerTerminationHandlers', () => {
+  beforeEach(() => {
+    fatalSpy.mockClear();
+  });
+
   it('forces process exit even if onTerminate hangs (bounded by env timeout)', async () => {
     vi.useFakeTimers();
     const previousTimeout = process.env.HAPPIER_RUNNER_TERMINATION_TIMEOUT_MS;
@@ -61,13 +73,39 @@ describe('registerRunnerTerminationHandlers', () => {
     });
 
     try {
-      fakeProcess.emit('unhandledRejection', new Error('boom'), Promise.resolve());
+      const error = new Error('boom');
+      fakeProcess.emit('unhandledRejection', error, Promise.resolve());
       fakeProcess.emit('uncaughtException', new Error('ignored')); // should be ignored after first termination
 
       await handlers.whenTerminated;
 
       expect(onTerminate).toHaveBeenCalledTimes(1);
+      expect(fatalSpy).toHaveBeenCalledTimes(1);
+      expect(fatalSpy).toHaveBeenCalledWith(error);
       expect(exit).toHaveBeenCalledTimes(1);
+      expect(exit).toHaveBeenCalledWith(1);
+    } finally {
+      handlers.dispose();
+    }
+  });
+
+  it('durably reports an uncaughtException exactly once before exiting non-zero', async () => {
+    const fakeProcess = createFakeProcess();
+    const exit = vi.fn();
+    const error = new Error('uncaught boom');
+    const handlers = registerRunnerTerminationHandlers({
+      process: fakeProcess,
+      exit,
+      onTerminate: async () => undefined,
+    });
+
+    try {
+      fakeProcess.emit('uncaughtException', error);
+      fakeProcess.emit('unhandledRejection', new Error('ignored'), Promise.resolve());
+      await handlers.whenTerminated;
+
+      expect(fatalSpy).toHaveBeenCalledTimes(1);
+      expect(fatalSpy).toHaveBeenCalledWith(error);
       expect(exit).toHaveBeenCalledWith(1);
     } finally {
       handlers.dispose();
@@ -90,6 +128,7 @@ describe('registerRunnerTerminationHandlers', () => {
       fakeProcess.emit('unhandledRejection', new Error('ignored'), Promise.resolve());
 
       await expect(Promise.race([handlers.whenTerminated, Promise.resolve('nope')])).resolves.toBe('nope');
+      expect(fatalSpy).not.toHaveBeenCalled();
       expect(onTerminate).not.toHaveBeenCalled();
       expect(exit).not.toHaveBeenCalled();
 
@@ -101,11 +140,25 @@ describe('registerRunnerTerminationHandlers', () => {
     }
   });
 
-  it('archives on SIGTERM (exit 0) by default outcome', async () => {
+  // Termination does not decide archiving — that authority was removed, and this
+  // is the test that has to notice if it comes back.
+  //
+  // It is deliberately written to assert AFTER termination rather than inside the
+  // callback. Production wraps `onTerminate` in a `.catch(() => undefined)`, so an
+  // assertion that throws in there is swallowed and the test passes no matter what
+  // it claimed. That is exactly how this test previously asserted `archive === true`
+  // — the opposite of the shipped contract — while staying green.
+  it('gives the termination callback an outcome with no archive authority', async () => {
     const fakeProcess = createFakeProcess();
     const exit = vi.fn();
+    let observedOutcome: unknown = null;
+    let callbackError: unknown = null;
     const onTerminate = vi.fn(async (_event, outcome) => {
-      expect(outcome.archive).toBe(true);
+      try {
+        observedOutcome = outcome;
+      } catch (error) {
+        callbackError = error;
+      }
     });
 
     const handlers = registerRunnerTerminationHandlers({
@@ -118,6 +171,13 @@ describe('registerRunnerTerminationHandlers', () => {
       fakeProcess.emit('SIGTERM');
       await handlers.whenTerminated;
 
+      expect(callbackError).toBeNull();
+      expect(onTerminate).toHaveBeenCalledTimes(1);
+      // The control that makes the assertion below meaningful: the callback really
+      // ran and really received an outcome, so `archive` being absent is a fact
+      // about the contract rather than about an outcome nobody looked at.
+      expect(observedOutcome).toEqual({ exitCode: 0, terminationReason: 'Signal SIGTERM' });
+      expect(Object.keys(observedOutcome as object)).not.toContain('archive');
       expect(exit).toHaveBeenCalledWith(0);
     } finally {
       handlers.dispose();

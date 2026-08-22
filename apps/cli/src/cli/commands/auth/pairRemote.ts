@@ -2,6 +2,7 @@ import spawn from 'cross-spawn';
 import { createServerUrlComparableKey } from '@happier-dev/protocol';
 
 import { approveTerminalAuthRequest } from '@/auth/terminalAuthApproval';
+import { writeJsonStdout } from '@/cli/output/jsonEnvelope';
 import { safeBashSingleQuote } from '@/capabilities/systemTasks/ssh/sshTransport';
 import { configuration } from '@/configuration';
 import { promptForCurrentMachineReachableServerUrl } from '@/server/reachability/promptCurrentMachineReachableServerUrl';
@@ -396,7 +397,7 @@ export async function handleAuthPairRemote(argsRaw: string[], deps: Partial<Pair
         };
       }
     }
-    console.log(JSON.stringify(envelope));
+    await writeJsonStdout(envelope);
     return;
   }
 

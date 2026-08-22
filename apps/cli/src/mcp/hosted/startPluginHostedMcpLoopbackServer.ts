@@ -3,9 +3,9 @@ import type { AddressInfo } from 'node:net';
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import type { McpServerSpecV1 } from '@happier-dev/plugin-sdk/experimental/mcp';
 
 import { assertHostedMcpHandlerSpec, registerHostedMcpHandlers } from './handlers';
+import type { PluginHostedMcpServerSpec } from './runtimeTypes';
 import type { HostedMcpRuntimeEndpoint } from '../runtimeTypes';
 
 export type PluginHostedMcpLoopbackServer = Readonly<{
@@ -27,7 +27,7 @@ function closeHttpServer(server: ReturnType<typeof createServer>): Promise<void>
 
 export async function startPluginHostedMcpLoopbackServer(params: Readonly<{
     pluginId: string;
-    spec: McpServerSpecV1;
+    spec: PluginHostedMcpServerSpec;
 }>): Promise<PluginHostedMcpLoopbackServer> {
     assertHostedMcpHandlerSpec(params);
     const requestCleanups = new Set<() => Promise<void>>();

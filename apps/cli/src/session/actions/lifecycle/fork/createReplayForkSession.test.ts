@@ -5,20 +5,39 @@ import { SPAWN_SESSION_ERROR_CODES } from '@/rpc/handlers/registerSessionHandler
 import type { ForkSurfaceV1 } from '@happier-dev/agents';
 import { ProviderConnectionIdSchema } from '@happier-dev/protocol';
 
-const createReplaySeededSessionMock = vi.fn();
+const getOrCreateSessionByTagMock = vi.fn();
 const resolveReplaySeedDraftMock = vi.fn();
-const archiveSessionBestEffortMock = vi.fn();
-
-vi.mock('@/session/replay/createReplaySeededSession', () => ({
-  createReplaySeededSession: (...args: unknown[]) => createReplaySeededSessionMock(...args),
-}));
+const archiveSessionOnceInactiveMock = vi.fn();
+const fetchSessionOrganizationPlacementMock = vi.fn();
+const validateStoredAuthTokenAgainstActiveServerMock = vi.fn();
+const fetchAccountEncryptionCurrentnessMock = vi.fn();
+const sendSessionMessageMock = vi.fn();
 
 vi.mock('@/session/replay/resolveReplaySeedDraft', () => ({
   resolveReplaySeedDraft: (...args: unknown[]) => resolveReplaySeedDraftMock(...args),
 }));
 
-vi.mock('./forkChildSessionRecovery', () => ({
-  archiveSessionBestEffort: (...args: unknown[]) => archiveSessionBestEffortMock(...args),
+vi.mock('@/session/transport/http/sessionsHttp', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/session/transport/http/sessionsHttp')>(),
+  getOrCreateSessionByTag: (...args: unknown[]) => getOrCreateSessionByTagMock(...args),
+  fetchSessionOrganizationPlacement: (...args: unknown[]) => fetchSessionOrganizationPlacementMock(...args),
+}));
+
+vi.mock('@/auth/validateStoredAuthTokenAgainstActiveServer', () => ({
+  validateStoredAuthTokenAgainstActiveServer: (...args: unknown[]) =>
+    validateStoredAuthTokenAgainstActiveServerMock(...args),
+}));
+
+vi.mock('@/api/client/connectedServiceCredentialApi', () => ({
+  fetchAccountEncryptionCurrentness: (...args: unknown[]) => fetchAccountEncryptionCurrentnessMock(...args),
+}));
+
+vi.mock('@/session/services/archiveSessionOnceInactive', () => ({
+  archiveSessionOnceInactive: (...args: unknown[]) => archiveSessionOnceInactiveMock(...args),
+}));
+
+vi.mock('@/session/services/sendSessionMessage', () => ({
+  sendSessionMessage: (...args: unknown[]) => sendSessionMessageMock(...args),
 }));
 
 import { createReplayForkSession } from './createReplayForkSession';
@@ -61,14 +80,19 @@ function createBuiltInForkResolution(): ForkBackendResolution {
 describe('createReplayForkSession', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    createReplaySeededSessionMock.mockResolvedValue({ sessionId: 'child-session' });
+    getOrCreateSessionByTagMock.mockResolvedValue({ session: { id: 'child-session' }, created: true });
     resolveReplaySeedDraftMock.mockResolvedValue({
+      status: 'seeded',
       seedDraft: 'Replay this conversation',
       dialog: [],
       summaryText: null,
       sourceCutoffSeqInclusive: 3,
       referencedSessionMediaWorkspacePaths: [],
     });
+    fetchSessionOrganizationPlacementMock.mockResolvedValue({ folderId: null, tagIds: [] });
+    validateStoredAuthTokenAgainstActiveServerMock.mockResolvedValue({ state: 'valid' });
+    fetchAccountEncryptionCurrentnessMock.mockResolvedValue({ mode: 'plain', version: 1 });
+    archiveSessionOnceInactiveMock.mockResolvedValue({ archivedAt: 1 });
   });
 
   it('uses provider replay child launch directory hints for spawning', async () => {
@@ -76,7 +100,6 @@ describe('createReplayForkSession', () => {
         directory: '/tmp/provider-child-worktree',
         environmentVariables: { PROVIDER_CHILD: '1' },
     });
-    createReplaySeededSessionMock.mockResolvedValueOnce({ sessionId: 'child-session' });
     const spawnSession = vi.fn<ForkSpawnSession>()
       .mockResolvedValue({ type: 'success', sessionId: 'child-session' });
 
@@ -85,6 +108,7 @@ describe('createReplayForkSession', () => {
       parentSessionId: 'parent-session',
       parentMetadata: {
         model: 'fast',
+        externalSessionOperation: { operationClaimId: 'legacy-private-claim' },
         externalSessionOperationV1: {
           v: 1,
           progress: { operationId: 'private-operation', revision: 4 },
@@ -97,6 +121,14 @@ describe('createReplayForkSession', () => {
           status: 'running',
           phase: 'publishing',
         },
+        compatibilityMetadata: { owner: 'private' },
+        ownerProjection: { owner: 'private' },
+        operationClaimId: 'claim-private',
+        fence: { token: 'private' },
+        paths: { staging: '/private/staging' },
+        host: { pid: 123 },
+        runtime: { custody: 'private' },
+        custody: { generation: 'private' },
       },
       directory: '/tmp/parent-worktree',
       effectiveCutoffSeqInclusive: 3,
@@ -119,15 +151,6 @@ describe('createReplayForkSession', () => {
     expect(resolveReplayChildLaunch).toHaveBeenCalledWith({
       parentSessionId: 'parent-session',
       parentMetadata: {
-        model: 'fast',
-        externalSessionOperationPresentationV1: {
-          v: 1,
-          operationId: 'private-operation',
-          revision: 4,
-          kind: 'materialize',
-          status: 'running',
-          phase: 'publishing',
-        },
       },
       directory: '/tmp/parent-worktree',
       forkPoint: { kind: 'latest' },
@@ -136,9 +159,40 @@ describe('createReplayForkSession', () => {
       directory: '/tmp/provider-child-worktree',
       environmentVariables: { PROVIDER_CHILD: '1' },
     }));
-    expect(createReplaySeededSessionMock).toHaveBeenCalledWith(expect.objectContaining({
-      directory: '/tmp/provider-child-worktree',
+    expect(spawnSession).toHaveBeenCalledWith(expect.objectContaining({
+      existingSessionId: 'child-session',
     }));
+  });
+
+  it('fails closed before creating a replay child when launch hints contain owner-private Session state', async () => {
+    const resolveReplayChildLaunch = vi.fn().mockResolvedValue({
+      sessionStateUpdates: [{
+        fieldId: 'runtime.externalSessionOperation',
+        value: 'private-operation',
+      }],
+    });
+    const spawnSession = vi.fn<ForkSpawnSession>();
+
+    await expect(createReplayForkSession({
+      credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array([1]) } },
+      parentSessionId: 'parent-session',
+      parentMetadata: {},
+      directory: '/tmp/parent-worktree',
+      effectiveCutoffSeqInclusive: 3,
+      spawnNonce: 'private-state-replay',
+      forkPointType: 'latest',
+      replaySummaryRunner: null,
+      replayMaxSeedChars: undefined,
+      maxTextChars: undefined,
+      forkBackendResolution: createBuiltInForkResolution(),
+      inheritedForkOverrides: { metadata: {}, spawn: {} },
+      forkSurface: { resolveReplayChildLaunch } as ForkSurfaceV1,
+      spawnSession,
+    })).rejects.toThrow(/unsupported field.*runtime\.externalSessionOperation/i);
+
+    expect(resolveReplaySeedDraftMock).not.toHaveBeenCalled();
+    expect(getOrCreateSessionByTagMock).not.toHaveBeenCalled();
+    expect(spawnSession).not.toHaveBeenCalled();
   });
 
   it('uses the caller spawn nonce as the replay child tag', async () => {
@@ -166,7 +220,7 @@ describe('createReplayForkSession', () => {
     });
 
     expect(result).toEqual({ ok: true, childSessionId: 'child-session' });
-    expect(createReplaySeededSessionMock).toHaveBeenCalledWith(expect.objectContaining({
+    expect(getOrCreateSessionByTagMock).toHaveBeenCalledWith(expect.objectContaining({
       tag: 'fork:stable-nonce',
     }));
     expect(spawnSession).toHaveBeenCalledWith(expect.objectContaining({
@@ -243,14 +297,14 @@ describe('createReplayForkSession', () => {
       ok: false,
       errorCode: SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT,
     });
-    expect(archiveSessionBestEffortMock).not.toHaveBeenCalled();
+    expect(archiveSessionOnceInactiveMock).not.toHaveBeenCalled();
   });
 
   it('creates replay child metadata and spawn options with a fresh connected-service identity', async () => {
     const createdMetadata: Record<string, unknown>[] = [];
-    createReplaySeededSessionMock.mockImplementationOnce(async (input: { metadata: Record<string, unknown> }) => {
+    getOrCreateSessionByTagMock.mockImplementationOnce(async (input: { metadata: Record<string, unknown> }) => {
       createdMetadata.push(input.metadata);
-      return { sessionId: 'child-session' };
+      return { session: { id: 'child-session' }, created: true };
     });
     const spawnSession = vi.fn<ForkSpawnSession>()
       .mockImplementation(async (options) => {
@@ -300,9 +354,9 @@ describe('createReplayForkSession', () => {
 
   it('does not add a connected-service identity to replay children without connected services', async () => {
     const createdMetadata: Record<string, unknown>[] = [];
-    createReplaySeededSessionMock.mockImplementationOnce(async (input: { metadata: Record<string, unknown> }) => {
+    getOrCreateSessionByTagMock.mockImplementationOnce(async (input: { metadata: Record<string, unknown> }) => {
       createdMetadata.push(input.metadata);
-      return { sessionId: 'child-session' };
+      return { session: { id: 'child-session' }, created: true };
     });
     const spawnSession = vi.fn<ForkSpawnSession>()
       .mockResolvedValue({ type: 'success', sessionId: 'child-session' });
@@ -332,5 +386,39 @@ describe('createReplayForkSession', () => {
     expect(result).toEqual({ ok: true, childSessionId: 'child-session' });
     expect(spawnSession.mock.calls[0]?.[0]).not.toHaveProperty('connectedServiceMaterializationIdentityV1');
     expect(createdMetadata[0]).not.toHaveProperty('connectedServiceMaterializationIdentityV1');
+  });
+
+  it('bounds a `latest` fork seed by the cutoff the lifecycle already admitted', async () => {
+    const spawnSession = vi.fn<ForkSpawnSession>()
+      .mockResolvedValue({ type: 'success', sessionId: 'child-session' });
+
+    const result = await createReplayForkSession({
+      credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array([1]) } },
+      parentSessionId: 'parent-session',
+      parentMetadata: {},
+      directory: '/tmp/parent-worktree',
+      effectiveCutoffSeqInclusive: 41,
+      spawnNonce: 'latest-cutoff-bound',
+      forkPointType: 'latest',
+      replaySummaryRunner: null,
+      replayMaxSeedChars: undefined,
+      maxTextChars: undefined,
+      forkBackendResolution: createBuiltInForkResolution(),
+      inheritedForkOverrides: { metadata: {}, spawn: {} },
+      forkSurface: null,
+      spawnSession,
+    });
+
+    expect(result).toEqual({ ok: true, childSessionId: 'child-session' });
+    // Retrieval must not re-resolve "latest": a row committed after the
+    // lifecycle admitted seq 41 would otherwise enter the child's seed while
+    // its recorded lineage still names 41.
+    expect(resolveReplaySeedDraftMock).toHaveBeenCalledWith(expect.objectContaining({
+      source: {
+        kind: 'fork_chain',
+        previousSessionId: 'parent-session',
+        upToSeqInclusive: 41,
+      },
+    }));
   });
 });

@@ -5,6 +5,7 @@ import { resolveSignalExitCode, runManagedChildCommand } from '../../../scripts/
 
 const HEAP_LIMIT_REGEX = /(^|\s)--max-old-space-size(=|\s)\d+(\s|$)/;
 export const DEFAULT_CLI_NODE_HEAP_LIMIT_MB = 8192;
+export const DEFAULT_CLI_PKGROLL_NODE_HEAP_LIMIT_MB = 12288;
 
 export function hasMaxOldSpaceSize(nodeOptions) {
   return HEAP_LIMIT_REGEX.test(String(nodeOptions ?? ''));

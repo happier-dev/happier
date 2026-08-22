@@ -14,8 +14,14 @@ import {
   readExternalSessionOperationRecord,
   writeExternalSessionOperationRecord,
 } from './operationRecordStore';
-import { createExternalSessionTakeoverAdmissionActionExecutor } from './takeoverAdmissionAction';
-import { createExternalSessionPersistedTakeoverAdmissionOwner } from './persistedTakeoverAdmission';
+import {
+  createExternalSessionTakeoverAdmissionActionExecutor,
+  isExternalSessionPersistedTakeoverAdmissionReady,
+} from './takeoverAdmissionAction';
+import {
+  buildPersistedTakeoverRetiredMetadata,
+  createExternalSessionPersistedTakeoverAdmissionOwner,
+} from './persistedTakeoverAdmission';
 import type {
   PersistedTakeoverAdmissionOutcome,
 } from '@/daemon/spawn/persistedTakeoverAdmission';
@@ -69,6 +75,29 @@ function deferredAdmissionOutcome() {
   return { outcome, settle };
 }
 
+const publisherPrecondition = Object.freeze({
+  machineId: 'machine-1',
+  committedFenceMs: 1,
+});
+
+function persistedAdmissionWaiterCorrelation<T extends Readonly<{
+  operationId: string;
+  attemptId: string;
+}>>(input: T): T & Readonly<{ mode: 'persisted' }> {
+  return { ...input, mode: 'persisted' };
+}
+
+function persistedAdmissionCorrelation<T extends Readonly<{
+  sessionId: string;
+  operationId: string;
+  attemptId: string;
+}>>(input: T): T & Readonly<{
+  mode: 'persisted';
+  publisherPrecondition: typeof publisherPrecondition;
+}> {
+  return { ...input, mode: 'persisted', publisherPrecondition };
+}
+
 function admissionReadyRecord(): ExternalSessionOperationRecordV1 {
   const publication = {
     materializationPublicationId: 'publication-1',
@@ -93,6 +122,7 @@ function admissionReadyRecord(): ExternalSessionOperationRecordV1 {
     },
     plan: 'takeover' as const,
     targetStorageMode: 'persisted' as const,
+    targetDirectory: '/local/selected/workspace',
     targetRuntimeMode: 'terminal' as const,
   };
   return {
@@ -135,7 +165,117 @@ function admissionReadyRecord(): ExternalSessionOperationRecordV1 {
   };
 }
 
+function runtimeBoundReadyRecord(): ExternalSessionOperationRecordV1 {
+  const base = admissionReadyRecord();
+  const {
+    publication: _publication,
+    retryTargetPhase: _retryTargetPhase,
+    ...withoutPublication
+  } = base;
+  const {
+    acceptedThroughServerSeq: _acceptedThroughServerSeq,
+    acknowledgedBatchId: _acknowledgedBatchId,
+    ...checkpoint
+  } = base.checkpoint;
+  return {
+    ...withoutPublication,
+    status: 'running',
+    phase: 'spawning',
+    currentStorageState: 'hosted',
+    checkpoint,
+    bindings: {
+      operationClaimId: 'admission-claim-1',
+      targetRuntimeAttemptId: 'attempt-1',
+    },
+  };
+}
+
+function externalLinkedAdmissionReadyRecord(): ExternalSessionOperationRecordV1 {
+  const request = {
+    v: 1 as const,
+    idempotencyKey: 'takeover-external-linked-admission-1',
+    sessionId: 'session-external-linked-admission-1',
+    source: {
+      machineId: 'machine-1',
+      remoteSessionId: 'remote-1',
+      qualifiedIdentity: {
+        v: 1 as const,
+        agent: { pluginId: 'com.example.agent', localId: 'example' },
+        source: { kind: 'jsonl', contractVersion: 1 as const },
+      },
+      linkGeneration: 'link-1',
+      sourceGeneration: 'source-1',
+      contributionGeneration: 'contribution-1',
+    },
+    plan: 'takeover' as const,
+    targetStorageMode: 'external-linked' as const,
+    targetDirectory: '/local/selected/workspace',
+    targetRuntimeMode: 'terminal' as const,
+  };
+  return {
+    v: 1,
+    operationId: 'external-takeover:external-linked-admission-1',
+    revision: 7,
+    request,
+    status: 'running',
+    phase: 'admitting',
+    timeline: resolveExternalSessionOperationTimelineV1(request),
+    createdAtMs: 1,
+    updatedAtMs: 2,
+    priorStableStorage: { state: 'machine_only' },
+    currentStorageState: 'machine_only',
+    checkpoint: {
+      sourcePagesRead: 0,
+      stagedItemCount: 0,
+      importedItemCount: 0,
+      requiredItemFailures: {
+        total: 0,
+        record: 0,
+        media: 0,
+        conversion: 0,
+        diagnosticsTruncated: false,
+        diagnostics: [],
+      },
+    },
+    bindings: {
+      operationClaimId: 'external-linked-admission-claim',
+      targetRuntimeAttemptId: 'attempt-a',
+    },
+    progressProjection: { acknowledgedRevision: null },
+    canonicalOwnerEvidence: { linkedSessionRevision: 4 },
+    fence: { kind: 'none' },
+  };
+}
+
 describe('external-session persisted takeover admission action', () => {
+  it('writes the canonical agentId-only conversion tombstone', () => {
+    expect(buildPersistedTakeoverRetiredMetadata({
+      metadata: {
+        externalSessionV1: {
+          v: 1,
+          agentId: 'codex',
+          machineId: 'machine-1',
+          remoteSessionId: 'remote-1',
+          source: { kind: 'codexHome', home: 'user' },
+        },
+      },
+      linked: {
+        agentId: 'codex',
+        remoteSessionId: 'remote-1',
+        source: { kind: 'codexHome', home: 'user' },
+      },
+      importedAtMs: 100,
+    })).toEqual({
+      externalHistoryImportV1: {
+        v: 1,
+        agentId: 'codex',
+        remoteSessionId: 'remote-1',
+        importedAtMs: 100,
+        source: { kind: 'codexHome', home: 'user' },
+      },
+    });
+  });
+
   it('re-establishes follow suspension after daemon restart before rereading snapshot admission authority', async () => {
     const activeServerDir = await mkdtemp(
       join(tmpdir(), 'happier-takeover-follow-recovery-'),
@@ -165,7 +305,7 @@ describe('external-session persisted takeover admission action', () => {
         pendingBlockedCount: 0,
         currentStorageState: 'snapshot_complete',
         acceptedThroughServerSeq: null,
-        active: false,
+        active: true,
         thinking: false,
       },
       metadata: {},
@@ -217,6 +357,97 @@ describe('external-session persisted takeover admission action', () => {
         reason: 'takeover',
       });
       expect(order).toEqual(['suspend', 'load', 'resolve']);
+    } finally {
+      await rm(activeServerDir, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps an explicit external-linked admission rejection precommit', async () => {
+    const activeServerDir = await mkdtemp(join(
+      tmpdir(),
+      'happier-external-linked-admission-rejection-',
+    ));
+    const record = externalLinkedAdmissionReadyRecord();
+    const waiter = createPersistedTakeoverAdmissionWaiter();
+    const correlation = {
+      mode: 'external_linked' as const,
+      sessionId: record.request.sessionId,
+      operationId: record.operationId,
+      attemptId: 'attempt-a',
+      publisherPrecondition,
+    };
+    const admission = waiter.register({
+      mode: 'external_linked',
+      operationId: record.operationId,
+      attemptId: 'attempt-a',
+    });
+    const sendHistoricalCommand = vi.fn(async () => ({
+      v: 1 as const,
+      kind: 'error' as const,
+      errorCode: 'storage_mode_conflict' as const,
+      message: 'The server rejected this exact admission attempt.',
+    }));
+    const linked = {
+      rawSession: {
+        id: record.request.sessionId,
+        metadataVersion: 4,
+        seq: 3,
+        pendingVersion: 2,
+        pendingCount: 0,
+        pendingBlockedCount: 0,
+        currentStorageState: 'machine_only',
+        acceptedThroughServerSeq: null,
+        materializationPublicationId: null,
+        materializedThroughSourceAt: null,
+        publishedThroughServerSeq: null,
+        active: true,
+        thinking: false,
+      },
+      metadata: {},
+      sessionPath: '/workspace',
+      agentId: 'example',
+      machineId: record.request.source.machineId,
+      remoteSessionId: record.request.source.remoteSessionId,
+      linkGeneration: record.request.source.linkGeneration,
+      source: { kind: 'jsonl', path: '/tmp/session.jsonl' },
+      codexBackendMode: null,
+    } as never;
+    try {
+      await writeExternalSessionOperationRecord(activeServerDir, record);
+      const owner = createExternalSessionPersistedTakeoverAdmissionOwner({
+        activeServerDir,
+        admissionWaiter: waiter,
+        isFollowSuspended: () => true,
+        suspendFollow: async () => undefined,
+        sendHistoricalCommand,
+        loadExternalLinkedCurrent: async () => ({
+          linked,
+          pluginGeneration: record.request.source.contributionGeneration,
+          quiescenceIdentity: 'verified-source-and-process',
+          permitsAdmission: true,
+          hostedOwnerSessionId: null,
+        }),
+        nowMs: () => 20,
+      });
+
+      await expect(owner.admit(correlation)).rejects.toThrow(
+        'external_linked_takeover_admission_storage_mode_conflict',
+      );
+      await expect(admission.outcome).resolves.toEqual({
+        status: 'failed',
+        errorCode: 'external_linked_takeover_admission_storage_mode_conflict',
+      });
+      await expect(owner.reconcileRuntimeBindingFailure(correlation))
+        .resolves.toBeNull();
+      await expect(readExternalSessionOperationRecord(
+        activeServerDir,
+        record.operationId,
+      )).resolves.toMatchObject({
+        status: 'running',
+        phase: 'admitting',
+        bindings: { targetRuntimeAttemptId: 'attempt-a' },
+      });
+      expect(sendHistoricalCommand).toHaveBeenCalledOnce();
     } finally {
       await rm(activeServerDir, { recursive: true, force: true });
     }
@@ -280,14 +511,14 @@ describe('external-session persisted takeover admission action', () => {
           }),
         );
         expect(completed.ok).toBe(true);
-        expect(waiter.settle({
+        expect(waiter.settle(persistedAdmissionWaiterCorrelation({
           operationId: initial.operationId,
           attemptId: 'attempt-a',
-        }, { status: 'committed' })).toBe(false);
-        expect(waiter.settle({
+        }), { status: 'committed' })).toBe(false);
+        expect(waiter.settle(persistedAdmissionWaiterCorrelation({
           operationId: initial.operationId,
           attemptId: 'attempt-b',
-        }, { status: 'committed' })).toBe(true);
+        }), { status: 'committed' })).toBe(true);
         return {
           type: 'success' as const,
           sessionId: initial.request.sessionId,
@@ -339,6 +570,7 @@ describe('external-session persisted takeover admission action', () => {
       });
       expect(spawnSession).toHaveBeenCalledWith(expect.objectContaining({
         persistedTakeoverAdmission: {
+          mode: 'persisted',
           operationId: initial.operationId,
           attemptId: 'attempt-b',
         },
@@ -350,17 +582,146 @@ describe('external-session persisted takeover admission action', () => {
         suspendFollow: async () => undefined,
         sendHistoricalCommand: vi.fn(),
       });
-      await expect(owner.runtimeBound({
+      await expect(owner.runtimeBound(persistedAdmissionCorrelation({
         sessionId: initial.request.sessionId,
         operationId: initial.operationId,
         attemptId: 'attempt-a',
-      })).rejects.toThrow('persisted_takeover_runtime_bound_operation_mismatch');
+      }))).rejects.toThrow('persisted_takeover_runtime_bound_operation_mismatch');
       expect((
         await readExternalSessionOperationRecord(
           activeServerDir,
           initial.operationId,
         )
       )?.bindings.targetRuntimeAttemptId).toBe('attempt-b');
+      expect(release).toHaveBeenCalledOnce();
+    } finally {
+      await rm(activeServerDir, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps a retry recoverable when its fenced spawn loses the agent before spawn', async () => {
+    const activeServerDir = await mkdtemp(
+      join(tmpdir(), 'happier-takeover-runtime-fenced-spawn-'),
+    );
+    const waiter = createPersistedTakeoverAdmissionWaiter();
+    const release = vi.fn(async () => undefined);
+    try {
+      const base = admissionReadyRecord();
+      const {
+        publication: _publication,
+        ...withoutPublication
+      } = base;
+      const {
+        acceptedThroughServerSeq: _acceptedThroughServerSeq,
+        acknowledgedBatchId: _acknowledgedBatchId,
+        ...checkpoint
+      } = base.checkpoint;
+      const initial: ExternalSessionOperationRecordV1 = {
+        ...withoutPublication,
+        status: 'failed',
+        phase: 'spawning',
+        currentStorageState: 'hosted',
+        checkpoint,
+        bindings: {
+          operationClaimId: 'attempt-a-claim',
+          targetRuntimeAttemptId: 'attempt-a',
+        },
+        retryTargetPhase: 'spawning',
+        error: {
+          code: 'spawn_failed',
+          message: 'Attempt A exited before runtime binding.',
+          retryable: true,
+          occurredAtMs: 3,
+        },
+      };
+      await writeExternalSessionOperationRecord(activeServerDir, initial);
+      const owner = createExternalSessionPersistedTakeoverAdmissionOwner({
+        activeServerDir,
+        admissionWaiter: waiter,
+        isFollowSuspended: () => true,
+        suspendFollow: async () => undefined,
+        sendHistoricalCommand: vi.fn(),
+        nowMs: () => 102,
+      });
+      const attemptIds = ['attempt-b'];
+      const spawnSession = vi.fn();
+      const spawnResolvedTakeoverSessionWithAgentLoss = vi
+        .fn()
+        .mockResolvedValueOnce({
+          ok: false as const,
+          code: 'agent_unavailable' as const,
+        });
+      const executor = createExternalSessionTakeoverAdmissionActionExecutor({
+        activeServerDir,
+        operationExclusion: {
+          acquire: vi.fn(async (operationRequest) => ({
+            status: 'acquired' as const,
+            claim: {
+              record: {
+                schemaVersion: 1 as const,
+                claimId: `claim-${attemptIds[0]}`,
+                ownerId: 'takeover-admission-test',
+                request: operationRequest,
+                acquiredAtMs: 1,
+                renewedAtMs: 1,
+                expiresAtMs: 20_001,
+              },
+              renew: async () => true,
+              release,
+            },
+          })),
+        },
+        prepareSpawn: async () => resolvedSpawn({
+          directory: '/workspace',
+          existingSessionId: initial.request.sessionId,
+        }),
+        reconcileRuntimeBindingFailure: owner.reconcileRuntimeBindingFailure,
+        spawnResolvedTakeoverSession: spawnResolvedTakeoverSessionWithAgentLoss,
+        spawnSession,
+        admissionWaiter: waiter,
+        isHostedAdmissionAvailable: () => true,
+        createAttemptId: () => attemptIds.shift()!,
+        nowMs: () => 100,
+      });
+
+      const firstRetry = await executor.retry({
+        sessionId: initial.request.sessionId,
+        operationId: initial.operationId,
+        revision: initial.revision,
+      });
+      expect(firstRetry).toMatchObject({
+        ok: true,
+        progress: {
+          status: 'failed',
+          phase: 'spawning',
+          currentStorageState: 'hosted',
+          retryTargetPhase: 'spawning',
+          error: { code: 'spawn_failed', retryable: true },
+        },
+      });
+      expect(spawnSession).not.toHaveBeenCalled();
+
+      const recoverable = await readExternalSessionOperationRecord(
+        activeServerDir,
+        initial.operationId,
+      );
+      expect(recoverable).toMatchObject({
+        status: 'failed',
+        phase: 'spawning',
+        currentStorageState: 'hosted',
+        bindings: { targetRuntimeAttemptId: 'attempt-b' },
+        retryTargetPhase: 'spawning',
+      });
+      expect(
+        isExternalSessionPersistedTakeoverAdmissionReady(recoverable!),
+      ).toBe(true);
+      await expect(owner.runtimeBound(persistedAdmissionCorrelation({
+        sessionId: initial.request.sessionId,
+        operationId: initial.operationId,
+        attemptId: 'attempt-a',
+      }))).rejects.toThrow(
+        'persisted_takeover_runtime_bound_operation_mismatch',
+      );
       expect(release).toHaveBeenCalledOnce();
     } finally {
       await rm(activeServerDir, { recursive: true, force: true });
@@ -482,6 +843,175 @@ describe('external-session persisted takeover admission action', () => {
     }
   });
 
+  it('keeps runtime-bound success authoritative when terminal staging cleanup outlives the admission timeout', async () => {
+    vi.useFakeTimers();
+    const activeServerDir = await mkdtemp(
+      join(tmpdir(), 'happier-takeover-runtime-cleanup-timeout-'),
+    );
+    let releaseCleanup!: () => void;
+    let announceCleanupStarted!: () => void;
+    const cleanupStarted = new Promise<void>((resolve) => {
+      announceCleanupStarted = resolve;
+    });
+    const cleanupBlocked = new Promise<void>((resolve) => {
+      releaseCleanup = resolve;
+    });
+    const cleanupTerminalStaging = vi.fn(async () => {
+      announceCleanupStarted();
+      await cleanupBlocked;
+      return 'cleaned' as const;
+    });
+    let runtimeBound: Promise<void> | null = null;
+    try {
+      const initial = runtimeBoundReadyRecord();
+      await writeExternalSessionOperationRecord(activeServerDir, initial);
+      const waiter = createPersistedTakeoverAdmissionWaiter({ timeoutMs: 20 });
+      const admission = waiter.register(persistedAdmissionWaiterCorrelation({
+        operationId: initial.operationId,
+        attemptId: 'attempt-1',
+      }));
+      const owner = createExternalSessionPersistedTakeoverAdmissionOwner({
+        activeServerDir,
+        admissionWaiter: waiter,
+        isFollowSuspended: () => true,
+        suspendFollow: async () => undefined,
+        sendHistoricalCommand: vi.fn(),
+        cleanupTerminalStaging,
+        nowMs: () => 102,
+      });
+
+      let runtimeBoundSettled = false;
+      runtimeBound = owner.runtimeBound(persistedAdmissionCorrelation({
+        sessionId: initial.request.sessionId,
+        operationId: initial.operationId,
+        attemptId: 'attempt-1',
+      })).finally(() => {
+        runtimeBoundSettled = true;
+      });
+      await cleanupStarted;
+      expect(cleanupTerminalStaging).toHaveBeenCalledOnce();
+
+      await vi.advanceTimersByTimeAsync(20);
+
+      await expect(admission.outcome).resolves.toEqual({ status: 'committed' });
+      expect(runtimeBoundSettled).toBe(false);
+      await expect(readExternalSessionOperationRecord(
+        activeServerDir,
+        initial.operationId,
+      )).resolves.toMatchObject({
+        status: 'completed',
+        phase: 'finalizing',
+        currentStorageState: 'hosted',
+        bindings: { targetRuntimeAttemptId: 'attempt-1' },
+        terminalResult: { kind: 'completed' },
+      });
+      await expect(owner.runtimeBound(persistedAdmissionCorrelation({
+        sessionId: initial.request.sessionId,
+        operationId: initial.operationId,
+        attemptId: 'attempt-1',
+      }))).resolves.toBeUndefined();
+
+      releaseCleanup();
+      await expect(runtimeBound).resolves.toBeUndefined();
+      await expect(readExternalSessionOperationRecord(
+        activeServerDir,
+        initial.operationId,
+      )).resolves.not.toMatchObject({
+        status: 'failed',
+        error: { code: 'spawn_failed' },
+      });
+    } finally {
+      releaseCleanup();
+      await runtimeBound?.catch(() => undefined);
+      await rm(activeServerDir, { recursive: true, force: true });
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps runtime-bound success authoritative when its request aborts during terminal staging cleanup', async () => {
+    const activeServerDir = await mkdtemp(
+      join(tmpdir(), 'happier-takeover-runtime-cleanup-abort-'),
+    );
+    let releaseCleanup!: () => void;
+    let announceCleanupStarted!: () => void;
+    const cleanupStarted = new Promise<void>((resolve) => {
+      announceCleanupStarted = resolve;
+    });
+    const cleanupBlocked = new Promise<void>((resolve) => {
+      releaseCleanup = resolve;
+    });
+    const cleanupTerminalStaging = vi.fn(async () => {
+      announceCleanupStarted();
+      await cleanupBlocked;
+      return 'cleaned' as const;
+    });
+    let runtimeBound: Promise<void> | null = null;
+    try {
+      const initial = runtimeBoundReadyRecord();
+      await writeExternalSessionOperationRecord(activeServerDir, initial);
+      const waiter = createPersistedTakeoverAdmissionWaiter({ timeoutMs: 5_000 });
+      const admission = waiter.register(persistedAdmissionWaiterCorrelation({
+        operationId: initial.operationId,
+        attemptId: 'attempt-1',
+      }));
+      const owner = createExternalSessionPersistedTakeoverAdmissionOwner({
+        activeServerDir,
+        admissionWaiter: waiter,
+        isFollowSuspended: () => true,
+        suspendFollow: async () => undefined,
+        sendHistoricalCommand: vi.fn(),
+        cleanupTerminalStaging,
+        nowMs: () => 102,
+      });
+      const controller = new AbortController();
+      let runtimeBoundSettled = false;
+      runtimeBound = owner.runtimeBound(persistedAdmissionCorrelation({
+        sessionId: initial.request.sessionId,
+        operationId: initial.operationId,
+        attemptId: 'attempt-1',
+        signal: controller.signal,
+      })).finally(() => {
+        runtimeBoundSettled = true;
+      });
+      await cleanupStarted;
+      expect(cleanupTerminalStaging).toHaveBeenCalledOnce();
+
+      controller.abort();
+
+      await expect(admission.outcome).resolves.toEqual({ status: 'committed' });
+      expect(runtimeBoundSettled).toBe(false);
+      await expect(readExternalSessionOperationRecord(
+        activeServerDir,
+        initial.operationId,
+      )).resolves.toMatchObject({
+        status: 'completed',
+        phase: 'finalizing',
+        currentStorageState: 'hosted',
+        bindings: { targetRuntimeAttemptId: 'attempt-1' },
+        terminalResult: { kind: 'completed' },
+      });
+      await expect(owner.runtimeBound(persistedAdmissionCorrelation({
+        sessionId: initial.request.sessionId,
+        operationId: initial.operationId,
+        attemptId: 'attempt-1',
+      }))).resolves.toBeUndefined();
+
+      releaseCleanup();
+      await expect(runtimeBound).resolves.toBeUndefined();
+      await expect(readExternalSessionOperationRecord(
+        activeServerDir,
+        initial.operationId,
+      )).resolves.not.toMatchObject({
+        status: 'failed',
+        error: { code: 'spawn_failed' },
+      });
+    } finally {
+      releaseCleanup();
+      await runtimeBound?.catch(() => undefined);
+      await rm(activeServerDir, { recursive: true, force: true });
+    }
+  });
+
   it('keeps the imported snapshot authoritative when spawn fails before admit', async () => {
     const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-takeover-pre-admit-spawn-failure-'));
     const waiter = createPersistedTakeoverAdmissionWaiter({ timeoutMs: 5_000 });
@@ -573,6 +1103,8 @@ describe('external-session persisted takeover admission action', () => {
       const recordsDir = join(
         activeServerDir,
         'external-session-operations',
+        'by-account',
+        `sub-${createHash('sha256').update('vitest', 'utf8').digest('hex').slice(0, 32)}`,
         'records',
       );
       await mkdir(recordsDir, { recursive: true });
@@ -698,6 +1230,7 @@ describe('external-session persisted takeover admission action', () => {
         existingSessionId: 'session-1',
         transcriptStorage: 'persisted',
         persistedTakeoverAdmission: {
+          mode: 'persisted',
           operationId: initial.operationId,
           attemptId: 'attempt-1',
         },
@@ -889,10 +1422,10 @@ describe('external-session persisted takeover admission action', () => {
         },
       );
       expect(converged.ok).toBe(true);
-      waiter.settle({
+      waiter.settle(persistedAdmissionWaiterCorrelation({
         operationId: initial.operationId,
         attemptId: 'attempt-1',
-      }, { status: 'committed' });
+      }), { status: 'committed' });
 
       await expect(resultPromise).resolves.toMatchObject({
         ok: true,
@@ -996,10 +1529,10 @@ describe('external-session persisted takeover admission action', () => {
         },
       );
       expect(converged.ok).toBe(true);
-      waiter.settle({
+      waiter.settle(persistedAdmissionWaiterCorrelation({
         operationId: initial.operationId,
         attemptId: 'attempt-1',
-      }, { status: 'committed' });
+      }), { status: 'committed' });
 
       await expect(resultPromise).resolves.toMatchObject({
         ok: true,

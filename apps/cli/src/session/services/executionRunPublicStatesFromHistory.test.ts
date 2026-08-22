@@ -392,4 +392,89 @@ describe('listExecutionRunPublicStatesFromHistoryRows', () => {
 
         expect(runs).toEqual([]);
     });
+
+    it('reports no start when the history carries no usable start instant, rather than borrowing the end', () => {
+        // `minNumber` deliberately skips non-finite candidates, so a row whose creation instant is
+        // unusable contributes no start evidence. With the finish instant present and the start
+        // absent, the honest answer is the unknown sentinel 0 — never the finish, which would report
+        // the run as having taken zero time (D-8).
+        const runs = listExecutionRunPublicStatesFromHistoryRows([
+            {
+                id: 'result-row',
+                createdAt: Number.NaN,
+                role: 'agent',
+                raw: {
+                    role: 'agent',
+                    content: {
+                        type: 'acp',
+                        agentId: 'claude',
+                        data: {
+                            type: 'tool-result',
+                            callId: 'call_hist_no_start',
+                            output: {
+                                _happier: {
+                                    canonicalToolName: 'SubAgentRun',
+                                },
+                                runId: 'run_hist_no_start',
+                                callId: 'call_hist_no_start',
+                                sidechainId: 'call_hist_no_start',
+                                intent: 'review',
+                                backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+                                permissionMode: 'workspace_write',
+                                retentionPolicy: 'ephemeral',
+                                runClass: 'bounded',
+                                ioMode: 'request_response',
+                                status: 'succeeded',
+                                finishedAtMs: 20_000,
+                            },
+                        },
+                    },
+                },
+            },
+        ]);
+
+        expect(runs).toHaveLength(1);
+        expect(runs[0]?.startedAtMs).toBe(0);
+        expect(runs[0]?.finishedAtMs).toBe(20_000);
+    });
+
+    it('still uses a genuinely recorded start instant', () => {
+        const runs = listExecutionRunPublicStatesFromHistoryRows([
+            {
+                id: 'result-row',
+                createdAt: Number.NaN,
+                role: 'agent',
+                raw: {
+                    role: 'agent',
+                    content: {
+                        type: 'acp',
+                        agentId: 'claude',
+                        data: {
+                            type: 'tool-result',
+                            callId: 'call_hist_known_start',
+                            output: {
+                                _happier: {
+                                    canonicalToolName: 'SubAgentRun',
+                                },
+                                runId: 'run_hist_known_start',
+                                callId: 'call_hist_known_start',
+                                sidechainId: 'call_hist_known_start',
+                                intent: 'review',
+                                backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+                                permissionMode: 'workspace_write',
+                                retentionPolicy: 'ephemeral',
+                                runClass: 'bounded',
+                                ioMode: 'request_response',
+                                status: 'succeeded',
+                                startedAtMs: 4_000,
+                                finishedAtMs: 20_000,
+                            },
+                        },
+                    },
+                },
+            },
+        ]);
+
+        expect(runs[0]?.startedAtMs).toBe(4_000);
+    });
 });

@@ -591,6 +591,93 @@ describe('sessionHandoffPrepareTargetJobStore', () => {
     }
   });
 
+  it('reads predecessor V2 cleanup-retry recovery actions through the current recovery owner', async () => {
+    const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-handoff-prepare-predecessor-cleanup-'));
+    try {
+      const jobsDirectory = join(activeServerDir, 'session-handoff', 'prepare-target-jobs');
+      const jobId = 'prepare_predecessor_cleanup_1';
+      const handoffId = 'handoff_predecessor_cleanup_1';
+      await mkdir(jobsDirectory, { recursive: true });
+      const jobPath = join(jobsDirectory, `${jobId}.json`);
+      await writeFile(jobPath, JSON.stringify({
+        schemaVersion: 2,
+        recordKind: 'prepared_target',
+        jobId,
+        handoffId,
+        sessionId: 'session-predecessor-cleanup-1',
+        createdAtMs: 10,
+        updatedAtMs: 20,
+        status: {
+          handoffId,
+          jobId,
+          status: 'awaiting_recovery',
+          phase: 'cutover',
+          recoveryActions: ['retry_target_cleanup', 'keep_stopped'],
+        },
+        prepareTargetResult: {
+          handoffId,
+          status: {
+            handoffId,
+            jobId,
+            status: 'ready_for_cutover',
+            phase: 'cutover',
+            recoveryActions: [],
+          },
+          remoteSessionId: 'claude-session-predecessor-cleanup',
+          directSource: {
+            kind: 'claudeConfig',
+            configDir: null,
+            projectId: null,
+          },
+          resume: {
+            directory: '/repo',
+            agent: 'claude',
+            resume: 'claude-session-predecessor-cleanup',
+            transcriptStorage: 'direct',
+            approvedNewDirectoryCreation: true,
+          },
+        },
+        transitionRevision: 4,
+        resume: {
+          status: 'attempted',
+          attemptId: 'predecessor-runtime-attempt-cleanup',
+          acceptedAtMs: 19,
+        },
+        terminal: {
+          status: 'aborting',
+          operationId: 'abort-predecessor-cleanup',
+          claimedRevision: 4,
+        },
+        targetCleanup: {
+          status: 'failed',
+          reason: 'failed',
+          attemptedAtMs: 20,
+        },
+      }), 'utf8');
+
+      const predecessorBytes = await readFile(jobPath);
+      const store = createSessionHandoffPrepareTargetJobStore({ activeServerDir });
+      await expect(store.read(jobId)).resolves.toMatchObject({
+        schemaVersion: 2,
+        recordKind: 'prepared_target',
+        status: {
+          status: 'awaiting_recovery',
+          recoveryActions: ['keep_stopped'],
+        },
+        terminal: {
+          status: 'aborting',
+          operationId: 'abort-predecessor-cleanup',
+        },
+        targetCleanup: {
+          status: 'failed',
+        },
+      });
+      expect(await readFile(jobPath)).toEqual(predecessorBytes);
+    } finally {
+      await rm(activeServerDir, { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
+
   it('serializes concurrent Resume attempts so only one transition wins', async () => {
     const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-handoff-prepare-resume-race-'));
     try {

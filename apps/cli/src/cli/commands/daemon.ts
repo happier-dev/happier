@@ -19,11 +19,14 @@ import { getLatestDaemonLog } from '@/ui/logger';
 import { runDoctorCommand } from '@/ui/doctor';
 import { listDaemonStatusesForAllKnownServers, stopAllDaemonsBestEffort } from '@/daemon/multiDaemon';
 import { spawnDetachedDaemonStartSync } from '@/daemon/runtime/spawnDetachedDaemonStartSync';
-import { readCredentials, readSettings } from '@/persistence';
+import { readSettings, readStoredCredentials } from '@/persistence';
 import { configuration } from '@/configuration';
 import { decodeJwtPayload } from '@/cloud/decodeJwtPayload';
 import { readPositiveIntEnv } from '@/utils/readPositiveIntEnv';
-import { waitForDaemonRunningWithinBudget } from '@/daemon/waitForDaemonRunningWithinBudget';
+import {
+  hasObservableDaemonStartProcessExited,
+  waitForDaemonRunningWithinBudget,
+} from '@/daemon/waitForDaemonRunningWithinBudget';
 import { readDaemonStartWaitPollMs, readDaemonStartWaitTimeoutMs } from '@/daemon/startupWaitDefaults';
 import { readDaemonStatusSnapshot } from '@/daemon/statusSnapshot';
 import { restartDaemonAndWait } from '@/daemon/restartDaemonAndWait';
@@ -45,10 +48,11 @@ import {
 import { resolveDaemonServiceCliRuntimeFromEnv } from '@/daemon/service/cli';
 
 import type { CommandContext } from '@/cli/commandRegistry';
+import { writeJsonStdout } from '@/cli/output/jsonEnvelope';
 import { cmd, errorFrame, kv, neutral, ok, sectionTitle, warn } from '@happier-dev/cli-common/output';
 
-function printDaemonJson(payload: unknown): void {
-  process.stdout.write(`${JSON.stringify(payload)}\n`);
+async function printDaemonJson(payload: unknown): Promise<void> {
+  await writeJsonStdout(payload);
 }
 
 function flattenDaemonMessage(title: string, lines: readonly string[]): string {
@@ -114,6 +118,7 @@ function printDaemonHelp(): void {
     sectionTitle('Usage:'),
     `  ${cmd('happier daemon start')}                 Start the daemon (detached)`,
     `  ${cmd('happier daemon start --takeover')}      Start and take over an existing manual relay runtime`,
+    `  ${cmd('happier daemon start --plugin-recovery')}  Start without externally installed plugin activation for repair`,
     `  ${cmd('happier daemon restart')}               Restart the daemon (stop → start)`,
     `  ${cmd('happier daemon restart --restart-session-runners')}  Restart the daemon, then refresh daemon-started session runners`,
     `  ${cmd('happier daemon restart-session-runners')}  Refresh stale daemon-started session runners`,
@@ -166,6 +171,14 @@ export async function handleDaemonCliCommand(context: CommandContext): Promise<v
     process.exit(0);
   }
 
+  if (daemonSubcommand === 'database-worker') {
+    // Hidden subcommand: one daemon-database entry owns this child while its
+    // synchronous SQLite driver runs here. It never joins daemon control flow.
+    const { runDaemonDatabaseWorkerChild } = await import('@/plugins/runtime/context/daemonDatabaseWorkerEntry');
+    await runDaemonDatabaseWorkerChild();
+    process.exit(0);
+  }
+
   if (daemonSubcommand === 'plugin-packed-test-host') {
     // Hidden restricted daemon mode used only by the public packed-author flow.
     // It hosts the production G3 plugin owner over authenticated loopback HTTP.
@@ -187,7 +200,7 @@ export async function handleDaemonCliCommand(context: CommandContext): Promise<v
         console.log(neutral('No active sessions this daemon is aware of (they might have been started by a previous version of the daemon)'));
       } else {
         console.log(sectionTitle('Active sessions'));
-        console.log(JSON.stringify(sessions, null, 2));
+        await writeJsonStdout(sessions, { pretty: true });
       }
     } catch {
       console.log(warn('No daemon running'));
@@ -214,11 +227,12 @@ export async function handleDaemonCliCommand(context: CommandContext): Promise<v
   if (daemonSubcommand === 'start') {
     const jsonRequested = args.includes('--json');
     const takeoverRequested = args.includes('--takeover');
+    const pluginRecoveryRequested = args.includes('--plugin-recovery');
     const ownership = await evaluateCurrentDaemonOwner();
     const startupSource = resolveDaemonStartupSourceFromEnv(process.env);
     if (ownership.kind === 'compatible') {
       if (jsonRequested) {
-        printDaemonJson({
+        await printDaemonJson({
           ok: true,
           status: 'already_running',
           relay: configuration.serverUrl,
@@ -243,7 +257,7 @@ export async function handleDaemonCliCommand(context: CommandContext): Promise<v
         owner: takeoverDecision.owner,
       });
       if (jsonRequested) {
-        printDaemonJson({
+        await printDaemonJson({
           ok: false,
           error: 'owner_conflict',
           message: flattenDaemonMessage(message.title, message.lines),
@@ -265,7 +279,7 @@ export async function handleDaemonCliCommand(context: CommandContext): Promise<v
           services: startupServiceConflict.services,
         });
         if (jsonRequested) {
-          printDaemonJson({
+          await printDaemonJson({
             ok: false,
             error: 'installed_background_service_conflict',
             message: flattenDaemonMessage(message.title, message.lines),
@@ -281,11 +295,12 @@ export async function handleDaemonCliCommand(context: CommandContext): Promise<v
       console.log(warn('Taking over the current manual relay runtime before starting a new relay...'));
     }
 
-    const spawnOptions = takeoverRequested
+    const spawnOptions = takeoverRequested || pluginRecoveryRequested
       ? {
         env: {
           ...process.env,
-          HAPPIER_DAEMON_TAKEOVER: '1',
+          ...(takeoverRequested ? { HAPPIER_DAEMON_TAKEOVER: '1' } : {}),
+          ...(pluginRecoveryRequested ? { HAPPIER_DAEMON_PLUGIN_RECOVERY: '1' } : {}),
         },
       }
       : {};
@@ -296,6 +311,7 @@ export async function handleDaemonCliCommand(context: CommandContext): Promise<v
     const pollMs = readDaemonStartWaitPollMs();
     const started = await waitForDaemonRunningWithinBudget({
       isRunning: () => checkIfDaemonRunningAndCleanupStaleState(),
+      shouldAbort: () => hasObservableDaemonStartProcessExited(child),
       timeoutMs,
       pollMs,
     });
@@ -303,7 +319,7 @@ export async function handleDaemonCliCommand(context: CommandContext): Promise<v
     if (started) {
       let account: string | undefined;
       try {
-        const creds = await readCredentials();
+        const creds = await readStoredCredentials();
         const payload = creds?.token ? decodeJwtPayload(creds.token) : null;
         const sub = typeof payload?.sub === 'string' ? payload.sub : '';
         if (sub) account = sub;
@@ -311,7 +327,7 @@ export async function handleDaemonCliCommand(context: CommandContext): Promise<v
         // ignore
       }
       if (jsonRequested) {
-        printDaemonJson({
+        await printDaemonJson({
           ok: true,
           status: 'started',
           relay: configuration.serverUrl,
@@ -329,7 +345,7 @@ export async function handleDaemonCliCommand(context: CommandContext): Promise<v
       const latestDaemonLog = await getLatestDaemonLog().catch(() => null);
       if (inspection.status === 'starting') {
         if (jsonRequested) {
-          printDaemonJson({
+          await printDaemonJson({
             ok: true,
             status: 'starting',
             relay: configuration.serverUrl,
@@ -348,7 +364,7 @@ export async function handleDaemonCliCommand(context: CommandContext): Promise<v
       }
 
       if (jsonRequested) {
-        printDaemonJson({
+        await printDaemonJson({
           ok: false,
           error: 'start_failed',
           message: 'Failed to start daemon',
@@ -367,6 +383,7 @@ export async function handleDaemonCliCommand(context: CommandContext): Promise<v
 
   if (daemonSubcommand === 'start-sync') {
     const takeoverRequested = args.includes('--takeover');
+    const pluginRecoveryRequested = args.includes('--plugin-recovery');
     const ownership = await evaluateCurrentDaemonOwner();
     const startupSource = resolveDaemonStartupSourceFromEnv(process.env);
     if (ownership.kind === 'compatible' && startupSource !== 'self-restart') {
@@ -409,22 +426,16 @@ export async function handleDaemonCliCommand(context: CommandContext): Promise<v
       console.log(warn('Taking over the current manual relay runtime before starting a new relay...'));
     }
 
-    await startDaemon({ takeover: takeoverRequested });
+    await startDaemon({
+      takeover: takeoverRequested,
+      ...(pluginRecoveryRequested ? { pluginRecovery: true } : {}),
+    });
     process.exit(0);
   }
 
   if (daemonSubcommand === 'stop') {
     const stopSessions = args.includes('--kill-sessions');
-    const transferManagedLocalServices = args.includes('--transfer-managed-local-services');
-    if (stopSessions && transferManagedLocalServices) {
-      console.error(errorFrame('Error:', [
-        '`happier daemon stop --transfer-managed-local-services` cannot be combined with `--kill-sessions`.',
-      ]));
-      process.exit(1);
-    }
-    const stopOptions = transferManagedLocalServices
-      ? { transferManagedLocalServices: true as const }
-      : { stopSessions };
+    const stopOptions = { stopSessions };
     if (args.includes('--all')) {
       await stopAllDaemonsBestEffort(stopOptions);
       process.exit(0);
@@ -449,7 +460,7 @@ export async function handleDaemonCliCommand(context: CommandContext): Promise<v
     const sessionIdOption = parseDaemonSessionIdOption(args);
     if (sessionIdOption.kind === 'invalid') {
       if (jsonRequested) {
-        printDaemonJson({
+        await printDaemonJson({
           ok: false,
           error: 'session_id_required',
           message: sessionIdOption.message,
@@ -470,7 +481,7 @@ export async function handleDaemonCliCommand(context: CommandContext): Promise<v
           reason: 'daemon_restart_session_runners_command',
         });
         if (jsonRequested) {
-          printDaemonJson({ kind: 'single', result });
+          await printDaemonJson({ kind: 'single', result });
         } else {
           console.log(ok(`Session runner restart request completed (${result.status})`));
         }
@@ -481,7 +492,7 @@ export async function handleDaemonCliCommand(context: CommandContext): Promise<v
           reason: 'daemon_restart_session_runners_command',
         });
         if (jsonRequested) {
-          printDaemonJson({ kind: 'bulk', result });
+          await printDaemonJson({ kind: 'bulk', result });
         } else {
           printRestartAllSessionRunnersText(result);
         }
@@ -489,7 +500,7 @@ export async function handleDaemonCliCommand(context: CommandContext): Promise<v
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to restart session runners';
       if (jsonRequested) {
-        printDaemonJson({ ok: false, error: 'restart_session_runners_failed', message });
+        await printDaemonJson({ ok: false, error: 'restart_session_runners_failed', message });
       } else {
         console.error(errorFrame('Failed to restart session runners', [message]));
       }
@@ -505,7 +516,7 @@ export async function handleDaemonCliCommand(context: CommandContext): Promise<v
     if (restartSessionRunners && stopSessions) {
       const message = '`happier daemon restart --restart-session-runners` cannot be combined with `--kill-sessions`.';
       if (jsonRequested) {
-        printDaemonJson({
+        await printDaemonJson({
           ok: false,
           error: 'restart_session_runners_kill_sessions_conflict',
           message,
@@ -518,7 +529,7 @@ export async function handleDaemonCliCommand(context: CommandContext): Promise<v
     if (args.includes('--all')) {
       const message = '`happier daemon restart --all` is not supported yet.';
       if (jsonRequested) {
-        printDaemonJson({
+        await printDaemonJson({
           ok: false,
           error: 'restart_all_unsupported',
           message,
@@ -540,7 +551,7 @@ export async function handleDaemonCliCommand(context: CommandContext): Promise<v
         owner: ownership.owner,
       });
       if (jsonRequested) {
-        printDaemonJson({
+        await printDaemonJson({
           ok: false,
           error: 'owner_conflict',
           message: flattenDaemonMessage(message.title, message.lines),
@@ -567,7 +578,7 @@ export async function handleDaemonCliCommand(context: CommandContext): Promise<v
           services: startupServiceConflict.services,
         });
         if (jsonRequested) {
-          printDaemonJson({
+          await printDaemonJson({
             ok: false,
             error: 'installed_background_service_conflict',
             message: flattenDaemonMessage(message.title, message.lines),
@@ -604,7 +615,7 @@ export async function handleDaemonCliCommand(context: CommandContext): Promise<v
 
     if (started) {
       if (jsonRequested) {
-        printDaemonJson({
+        await printDaemonJson({
           ok: true,
           status: 'restarted',
           relay: configuration.serverUrl,
@@ -632,7 +643,7 @@ export async function handleDaemonCliCommand(context: CommandContext): Promise<v
       ? 'Session runner restart failed after daemon restart'
       : 'Failed to restart daemon';
     if (jsonRequested) {
-      printDaemonJson({
+      await printDaemonJson({
         ok: false,
         error: sessionRunnerRestart ? 'session_runner_restart_failed_after_daemon_restart' : 'restart_failed',
         message: failureMessage,
@@ -710,18 +721,18 @@ export async function handleDaemonCliCommand(context: CommandContext): Promise<v
             },
           };
         }));
-        process.stdout.write(`${JSON.stringify({
+        await writeJsonStdout({
           active: {
             serverId: configuration.activeServerId,
             relayUrl: activeRelayUrl,
             comparableKey: activeComparableKey,
           },
           entries,
-        })}\n`);
+        });
         process.exit(0);
       }
       const snapshot = await readDaemonStatusSnapshot();
-      process.stdout.write(`${JSON.stringify(snapshot)}\n`);
+      await writeJsonStdout(snapshot);
       process.exit(0);
     }
 

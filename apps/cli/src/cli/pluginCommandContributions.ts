@@ -19,7 +19,7 @@ import {
 import {
   compilePluginJsonSchema,
   isValidPluginJsonSchemaValue,
-} from '@/plugins/runtime/invocation/services/jsonSchemaValidation';
+} from '@happier-dev/protocol';
 
 export type PluginCommandProjectionEntry = Readonly<{
   qualifiedId: string;
@@ -116,7 +116,6 @@ export function resolvePluginCommandProjection(params: Readonly<{
   const admitted: PluginCommandProjectionEntry[] = [];
 
   for (const command of params.registry.commands ?? []) {
-    if (command.provenance !== 'external') continue;
     const qualifiedId = qualifiedCommandId(command);
     if (!qualifiedId) continue;
     const path = command.definition.path.map((segment) => segment.trim());
@@ -248,8 +247,7 @@ function findCommandContribution(
   qualifiedId: string,
 ): ResolvedCommandContribution | null {
   return (registry.commands ?? []).find((candidate) => (
-    candidate.provenance === 'external'
-    && candidate.pluginId
+    candidate.pluginId
     && `${candidate.pluginId}/${candidate.definition.id}` === qualifiedId
   )) ?? null;
 }
@@ -329,12 +327,12 @@ function resolvePluginCommandInvocation(params: Readonly<{
   };
 }
 
-function printPluginCommandFailure(
+async function printPluginCommandFailure(
   args: readonly string[],
   failure: Extract<PluginCommandExecutionResult, { ok: false }>,
-): void {
+): Promise<void> {
   if (wantsJson(args)) {
-    printJsonEnvelope({
+    await printJsonEnvelope({
       ok: false,
       kind: 'plugin_command',
       error: {
@@ -394,7 +392,7 @@ export async function handlePluginCommandCliCommand(
     .then((registry) => Object.freeze({ ok: true as const, registry }))
     .catch(() => Object.freeze({ ok: false as const }));
   if (!registryResult.ok) {
-    printPluginCommandFailure(context.args, {
+    await printPluginCommandFailure(context.args, {
       ok: false,
       code: 'plugin_command_registry_unavailable',
       message: 'Plugin command registry is unavailable',
@@ -415,7 +413,7 @@ export async function handlePluginCommandCliCommand(
   if (asksForHelp) {
     const text = renderPluginCommandHelp({ projection, root, args: context.args });
     if (wantsJson(context.args)) {
-      printJsonEnvelope({
+      await printJsonEnvelope({
         ok: true,
         kind: 'plugin_command_help',
         data: { root, text },
@@ -432,7 +430,7 @@ export async function handlePluginCommandCliCommand(
     args: context.args,
   });
   if ('ok' in invocation) {
-    printPluginCommandFailure(context.args, invocation);
+    await printPluginCommandFailure(context.args, invocation);
     return;
   }
   await ensureDaemonRunningForSessionCommand();
@@ -464,11 +462,11 @@ export async function handlePluginCommandCliCommand(
         result: attempt.result.result,
       };
   if (!result.ok) {
-    printPluginCommandFailure(context.args, result);
+    await printPluginCommandFailure(context.args, result);
     return;
   }
   if (wantsJson(context.args)) {
-    printJsonEnvelope({
+    await printJsonEnvelope({
       ok: true,
       kind: 'plugin_command',
       data: {

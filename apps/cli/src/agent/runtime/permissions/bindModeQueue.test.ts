@@ -40,7 +40,7 @@ describe('registerPermissionModeMessageQueueBinding', () => {
     modelId: 'default',
   }) {
     const queueCalls: Array<{
-      type: 'push' | 'clear';
+      type: 'push' | 'isolate' | 'clear';
       message: PermissionModeQueuedPrompt;
       mode: PermissionModeQueuedPromptMode;
     }> = [];
@@ -54,6 +54,8 @@ describe('registerPermissionModeMessageQueueBinding', () => {
       queue: {
         push: (message: PermissionModeQueuedPrompt, mode: PermissionModeQueuedPromptMode) =>
           queueCalls.push({ type: 'push', message, mode }),
+        pushIsolate: (message: PermissionModeQueuedPrompt, mode: PermissionModeQueuedPromptMode) =>
+          queueCalls.push({ type: 'isolate', message, mode }),
         pushIsolateAndClear: (message: PermissionModeQueuedPrompt, mode: PermissionModeQueuedPromptMode) =>
           queueCalls.push({ type: 'clear', message, mode }),
       },
@@ -72,7 +74,14 @@ describe('registerPermissionModeMessageQueueBinding', () => {
 
     return {
       bindSession: binding.bindSession,
+      releaseRejectedBeforeProviderPromptIdentity: (binding as {
+        releaseRejectedBeforeProviderPromptIdentity: (
+          session: typeof sessionHarness.session,
+          message: PermissionModeQueuedPrompt,
+        ) => void;
+      }).releaseRejectedBeforeProviderPromptIdentity,
       emit: sessionHarness.emit,
+      session: sessionHarness.session,
       getCurrentPermissionMode: () => currentPermissionMode,
       getMetadata: sessionHarness.getMetadata,
       queueCalls,
@@ -99,9 +108,91 @@ describe('registerPermissionModeMessageQueueBinding', () => {
     ]);
   });
 
+  it('releases only the active binding identity after a proven pre-provider rejection', () => {
+    const harness = createHarness();
+    const localId = 'local-retry-after-pre-effect-rejection';
+    const retry = {
+      role: 'user' as const,
+      content: { type: 'text' as const, text: 'retry this exact pending input' },
+      localId,
+      meta: {},
+    } as UserMessage;
+
+    harness.emit(retry);
+    harness.emit(retry);
+    expect(harness.queueCalls).toHaveLength(1);
+
+    harness.releaseRejectedBeforeProviderPromptIdentity({
+      onUserMessage: () => undefined,
+      updateMetadata: () => undefined,
+    }, {
+      text: retry.content.text,
+      localId,
+      localIds: [localId],
+    });
+    harness.emit(retry);
+    expect(harness.queueCalls).toHaveLength(1);
+
+    harness.releaseRejectedBeforeProviderPromptIdentity(harness.session, {
+      text: retry.content.text,
+      localId,
+      localIds: [localId],
+    });
+    harness.emit(retry);
+
+    expect(harness.queueCalls).toMatchObject([
+      { type: 'push', message: { localId } },
+      { type: 'push', message: { localId } },
+    ]);
+  });
+
+  it('releases the exact local id and committed sequence after durable pre-provider retirement', () => {
+    const localId = 'local-retry-with-seq';
+    const queueCalls: Array<{ message: PermissionModeQueuedPrompt }> = [];
+    let userMessageHandler: ((message: UserMessage) => boolean | void) | null = null;
+    const session = {
+      onUserMessage: (handler: (message: UserMessage) => boolean | void) => {
+        userMessageHandler = handler;
+      },
+      updateMetadata: () => undefined,
+      getCommittedUserMessageSeq: (candidateLocalId: string) => candidateLocalId === localId ? 42 : null,
+    };
+    const binding = registerPermissionModeMessageQueueBinding({
+      session,
+      queue: {
+        push: (message: PermissionModeQueuedPrompt) => queueCalls.push({ message }),
+        pushIsolate: (message: PermissionModeQueuedPrompt) => queueCalls.push({ message }),
+        pushIsolateAndClear: (message: PermissionModeQueuedPrompt) => queueCalls.push({ message }),
+      },
+      getCurrentPermissionMode: () => 'default' as PermissionMode,
+      setCurrentPermissionMode: () => undefined,
+    });
+    const retry = {
+      role: 'user' as const,
+      content: { type: 'text' as const, text: 'retry only after custody retirement' },
+      localId,
+      meta: {},
+    } as UserMessage;
+
+    expect(userMessageHandler!(retry)).toBe(true);
+    expect(userMessageHandler!(retry)).toBe(true);
+    expect(queueCalls).toHaveLength(1);
+
+    binding.releaseRejectedBeforeProviderPromptIdentity(session, {
+      text: retry.content.text,
+      localId,
+      localIds: [localId],
+      userMessageSeq: 42,
+      userMessageSeqs: [42],
+    });
+
+    expect(userMessageHandler!(retry)).toBe(true);
+    expect(queueCalls).toHaveLength(2);
+  });
+
   it('preserves canonical structured input and never steers it through the text-only path', async () => {
     const sessionHarness = createSessionHarness();
-    const queueCalls: Array<{ type: 'push' | 'clear'; message: PermissionModeQueuedPrompt }> = [];
+    const queueCalls: Array<{ type: 'push' | 'isolate' | 'clear'; message: PermissionModeQueuedPrompt }> = [];
     const steerText = vi.fn(async () => undefined);
     const structuredInput = {
       v: 1 as const,
@@ -120,6 +211,7 @@ describe('registerPermissionModeMessageQueueBinding', () => {
       session: sessionHarness.session,
       queue: {
         push: (message: PermissionModeQueuedPrompt) => queueCalls.push({ type: 'push', message }),
+        pushIsolate: (message: PermissionModeQueuedPrompt) => queueCalls.push({ type: 'isolate', message }),
         pushIsolateAndClear: (message: PermissionModeQueuedPrompt) => queueCalls.push({ type: 'clear', message }),
       },
       getCurrentPermissionMode: () => 'default',
@@ -136,10 +228,6 @@ describe('registerPermissionModeMessageQueueBinding', () => {
       content: { type: 'text', text: 'inspect this image' },
       localId: 'local-image-1',
       meta: {
-        happier: {
-          kind: 'attachments.v1',
-          payload: { attachments: [structuredInput.imageInputs[0]] },
-        },
         happierStructuredInputV1: structuredInput,
       },
     } as UserMessage);
@@ -147,7 +235,7 @@ describe('registerPermissionModeMessageQueueBinding', () => {
 
     expect(steerText).not.toHaveBeenCalled();
     expect(queueCalls).toEqual([{
-      type: 'clear',
+      type: 'isolate',
       message: {
         text: 'inspect this image',
         localId: 'local-image-1',
@@ -155,6 +243,164 @@ describe('registerPermissionModeMessageQueueBinding', () => {
         structuredInput,
       },
     }]);
+  });
+
+  // The steer path renders only the provenance block, so it has no place to put the
+  // `@session` reference projection. That is safe only because a mention can exist solely
+  // inside the structured-input envelope, and a message carrying that envelope is never
+  // steerable — it queues and reaches the prompt loop, which does render the reference
+  // block. If the structured-input steer exclusion is ever relaxed, this test fails and the
+  // steer dispatch must start supplying `sessionReferenceBlock` itself.
+  it('queues a Session-mention message instead of steering it, keeping the reference projection reachable', async () => {
+    const sessionHarness = createSessionHarness();
+    const queueCalls: Array<{ type: 'push' | 'isolate' | 'clear'; message: PermissionModeQueuedPrompt }> = [];
+    const steerText = vi.fn(async () => undefined);
+    const structuredInput = {
+      v: 1 as const,
+      mentions: [{
+        kind: 'session' as const,
+        ref: 'session:source-session',
+        token: '@session:source',
+        start: 0,
+        end: 15,
+      }],
+    };
+
+    registerPermissionModeMessageQueueBinding({
+      session: sessionHarness.session,
+      queue: {
+        push: (message: PermissionModeQueuedPrompt) => queueCalls.push({ type: 'push', message }),
+        pushIsolate: (message: PermissionModeQueuedPrompt) => queueCalls.push({ type: 'isolate', message }),
+        pushIsolateAndClear: (message: PermissionModeQueuedPrompt) => queueCalls.push({ type: 'clear', message }),
+      },
+      getCurrentPermissionMode: () => 'default',
+      setCurrentPermissionMode: () => undefined,
+      inFlightSteer: {
+        supportsInFlightSteer: () => true,
+        isTurnInFlight: () => true,
+        steerText,
+      },
+    });
+
+    sessionHarness.emit({
+      role: 'user',
+      content: { type: 'text', text: 'compare with @session:source' },
+      localId: 'local-mention-1',
+      meta: {
+        happierStructuredInputV1: structuredInput,
+      },
+    } as UserMessage);
+    await Promise.resolve();
+
+    expect(steerText).not.toHaveBeenCalled();
+    expect(queueCalls).toHaveLength(1);
+    expect(queueCalls[0]?.message.structuredInput).toEqual(structuredInput);
+  });
+
+  it('carries only the exact admitted SessionMedia items alongside their Composer refs', () => {
+    const harness = createHarness();
+    const media = {
+      id: 'media-review-1',
+      role: 'input' as const,
+      category: 'attachment' as const,
+      mediaKind: 'image' as const,
+      mimeType: 'image/png',
+      name: 'review.png',
+      path: '.happier/uploads/messages/session-1/local-review/review.png',
+      sizeBytes: 67,
+      sha256: 'a'.repeat(64),
+      origin: { source: 'user-upload' as const },
+    };
+
+    harness.emit({
+      role: 'user',
+      content: { type: 'text', text: 'inspect this review image' },
+      localId: 'local-review',
+      meta: {
+        happierStructuredInputV1: {
+          v: 1,
+          composerAttachments: [{
+            v: 1,
+            instanceId: 'review-media-1',
+            attachment: { pluginId: 'acme.review', localId: 'review-media' },
+            key: 'review-image',
+            value: { reviewId: '42' },
+            presentation: { label: 'Review image', typeLabel: 'Review media' },
+            content: { kind: 'sessionMedia', mediaId: media.id },
+          }],
+        },
+        happier: {
+          kind: 'session_media.v1',
+          payload: { media: [media] },
+        },
+      },
+    } as UserMessage);
+
+    expect(harness.queueCalls).toMatchObject([{
+      type: 'isolate',
+      message: {
+        localId: 'local-review',
+        structuredInput: {
+          composerAttachments: [{ content: { kind: 'sessionMedia', mediaId: media.id } }],
+        },
+        sessionMedia: [media],
+      },
+    }]);
+  });
+
+  it('rejects a malformed canonical envelope instead of falling back to a text-only prompt', () => {
+    const harness = createHarness();
+
+    harness.emit({
+      role: 'user',
+      content: { type: 'text', text: 'do not dispatch forged attachment data' },
+      localId: 'forged-canonical-input',
+      meta: {
+        happierStructuredInputV1: {
+          v: 1,
+          resolvedComposerAttachments: [{ instanceId: 'forged' }],
+        },
+      },
+    } as UserMessage);
+
+    expect(harness.queueCalls).toEqual([]);
+    expect(harness.rejectPromptBeforeProvider).toHaveBeenCalledWith({
+      localIds: ['forged-canonical-input'],
+      userMessageSeq: null,
+    });
+  });
+
+  it('does not decode a raw attachment envelope as structured input', () => {
+    const harness = createHarness();
+    const attachment = {
+      v: 1,
+      instanceId: 'review-instance-1',
+      attachment: { pluginId: 'acme.review-comments', localId: 'review-comment' },
+      key: 'review-42',
+      value: { reviewId: '42' },
+      presentation: { label: 'Review #42', typeLabel: 'Review comment' },
+    };
+
+    harness.emit({
+      role: 'user',
+      content: { type: 'text', text: 'inspect this review' },
+      localId: 'raw-attachment-without-admission',
+      meta: {
+        happier: {
+          kind: 'attachments.v1',
+          payload: { attachments: [attachment] },
+        },
+      },
+    } as UserMessage);
+
+    expect(harness.queueCalls).toMatchObject([{
+      type: 'push',
+      message: {
+        text: 'inspect this review',
+        localId: 'raw-attachment-without-admission',
+      },
+    }]);
+    expect(harness.queueCalls[0]?.message.structuredInput).toBeUndefined();
   });
 
   it('threads the committed user-message seq into the queued prompt for exact local-command replay suppression', () => {
@@ -171,6 +417,7 @@ describe('registerPermissionModeMessageQueueBinding', () => {
       },
       queue: {
         push: (message: PermissionModeQueuedPrompt) => queueCalls.push({ message }),
+        pushIsolate: (message: PermissionModeQueuedPrompt) => queueCalls.push({ message }),
         pushIsolateAndClear: (message: PermissionModeQueuedPrompt) => queueCalls.push({ message }),
       },
       getCurrentPermissionMode: () => 'default' as PermissionMode,
@@ -211,6 +458,7 @@ describe('registerPermissionModeMessageQueueBinding', () => {
       },
       queue: {
         push: (message: PermissionModeQueuedPrompt) => queueCalls.push({ message }),
+        pushIsolate: (message: PermissionModeQueuedPrompt) => queueCalls.push({ message }),
         pushIsolateAndClear: (message: PermissionModeQueuedPrompt) => queueCalls.push({ message }),
       },
       getCurrentPermissionMode: () => 'default' as PermissionMode,
@@ -444,6 +692,38 @@ describe('registerPermissionModeMessageQueueBinding', () => {
     ]);
   });
 
+  it.each(['/clear', '/compact preserve the summary'])('isolates structured input even when %s is non-steerable', (text) => {
+    const harness = createHarness();
+
+    harness.emit({
+      role: 'user',
+      content: { type: 'text', text },
+      localId: `local-structured-${text.startsWith('/clear') ? 'clear' : 'compact'}`,
+      meta: {
+        happierStructuredInputV1: {
+          v: 1,
+          skillMentions: [{ name: 'review', path: '/skills/review/SKILL.md' }],
+        },
+      },
+    } as UserMessage);
+
+    expect(harness.queueCalls).toMatchObject([
+      {
+        type: 'isolate',
+        message: {
+          text,
+          localId: `local-structured-${text.startsWith('/clear') ? 'clear' : 'compact'}`,
+          localIds: [`local-structured-${text.startsWith('/clear') ? 'clear' : 'compact'}`],
+          structuredInput: {
+            v: 1,
+            skillMentions: [{ name: 'review', path: '/skills/review/SKILL.md' }],
+          },
+        },
+        mode: { permissionMode: 'default' },
+      },
+    ]);
+  });
+
   it('passes the user message local id when steering an in-flight turn', async () => {
     const sessionHarness = createSessionHarness();
     const queueCalls: PermissionModeQueuedPrompt[] = [];
@@ -453,6 +733,9 @@ describe('registerPermissionModeMessageQueueBinding', () => {
       session: sessionHarness.session,
       queue: {
         push: (message: PermissionModeQueuedPrompt) => {
+          queueCalls.push(message);
+        },
+        pushIsolate: (message: PermissionModeQueuedPrompt) => {
           queueCalls.push(message);
         },
         pushIsolateAndClear: (message: PermissionModeQueuedPrompt) => {

@@ -11,12 +11,16 @@ describe('finalizeSessionChildEnvironment', () => {
         HAPPIER_SESSION_PROFILE_ID: 'ambient-profile',
         HAPPIER_SESSION_ATTACH_FILE: '/tmp/ambient-attach.json',
         HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON: 'ambient-selections',
+        HAPPIER_AGENT_RUNTIME_RUNNER_BOOTSTRAP_FILE:
+          '/tmp/ambient-runner-bootstrap.json',
         HAPPIER_STACK_PROCESS_KIND: 'plugin-spoof',
         TMUX_SESSION_NAME: 'ambient-tmux',
       },
       canonicalSessionControlEnvironment: {
         HAPPIER_SESSION_PROFILE_ID: 'canonical-profile',
         HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON: 'canonical-selections',
+        HAPPIER_AGENT_RUNTIME_RUNNER_BOOTSTRAP_FILE:
+          '/tmp/canonical-runner-bootstrap.json',
       },
       enableCgroupSelfMigration: false,
       stackProcessKind: 'session',
@@ -27,6 +31,8 @@ describe('finalizeSessionChildEnvironment', () => {
       SAFE_VALUE: 'kept',
       HAPPIER_SESSION_PROFILE_ID: 'canonical-profile',
       HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON: 'canonical-selections',
+      HAPPIER_AGENT_RUNTIME_RUNNER_BOOTSTRAP_FILE:
+        '/tmp/canonical-runner-bootstrap.json',
       HAPPIER_STACK_PROCESS_KIND: 'session',
     });
     expect(env.HAPPIER_SESSION_ATTACH_FILE).toBeUndefined();

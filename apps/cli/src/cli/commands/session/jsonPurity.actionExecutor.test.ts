@@ -147,7 +147,7 @@ describe('happier session --json output purity', () => {
       ok: true,
       sessionId: 'sess-1',
       rawSession: { id: 'sess-1', metadata: {}, encryptionMode: 'plain' },
-      ctx: { type: 'plain' as const },
+      ctx: null,
       mode: 'plain' as const,
     });
     resolveSessionIdOrPrefix.mockResolvedValue({ ok: true, sessionId: 'sess-1' });

@@ -44,6 +44,12 @@ function createUnboundConnectedAccountsOwner(): StablePluginConnectedAccountsOwn
         materialize: async () => {
             throw new Error('Connected Account materialization is outside this dispatch proof.');
         },
+        listAccounts: async () => {
+            throw new Error('Connected Account listing is outside this fixture');
+        },
+        materializeListedAccount: async () => {
+            throw new Error('Exact-listed Connected Account materialization is outside this fixture');
+        },
         watch: () => Object.freeze({ dispose() {} }),
     });
 }
@@ -322,6 +328,7 @@ describe('first-party native Agent production dispatch', () => {
                         directory: happyHomeDir,
                         metadata: createTestMetadata({ path: happyHomeDir }),
                         machineId: `machine-${agentId}`,
+                        agentTargetKey: `backend:${agentId}`,
                         session,
                         transcriptSession: session,
                         messageBuffer: new MessageBuffer(),
@@ -333,6 +340,15 @@ describe('first-party native Agent production dispatch', () => {
                         getPermissionMode: () => 'read-only' as const,
                         setThinking: () => undefined,
                         memoryRecallGuidanceEnabled: false,
+                        runnerProcessIdentity: null,
+                        startupModelSelection: null,
+                        runWithTerminalModelSelection: async (effect) => ({
+                            status: 'completed',
+                            value: await effect(null, async (localEffect) => ({
+                                status: 'completed',
+                                value: await localEffect(),
+                            })),
+                        }),
                     } satisfies HostSessionRuntimeFactoryParams;
                     const processBoundary = processBoundaries.get(agentId);
                     if (!processBoundary) {

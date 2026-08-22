@@ -17,8 +17,10 @@ import {
   argvValue,
   defaultNameFromUrl,
   defaultWebappUrlFromServerUrl,
+  isInteractiveTerminal,
   normalizeUrlOrThrow,
 } from '../server/commandUtilities';
+import { runServerSelectionBackgroundServiceFollowUp } from '../backgroundServiceFollowUp';
 
 import { createServerUrlComparableKey } from '@happier-dev/protocol';
 
@@ -96,7 +98,7 @@ async function cmdInspectTarget(args: string[]): Promise<void> {
   };
 
   if (json) {
-    printJsonEnvelope({ ok: true, kind: 'relay_inspect_target', data: payload });
+    await printJsonEnvelope({ ok: true, kind: 'relay_inspect_target', data: payload });
     return;
   }
 
@@ -300,7 +302,7 @@ async function cmdSet(args: string[], options: CmdSetOptions = {}): Promise<void
   };
 
   if (json) {
-    printJsonEnvelope({ ok: true, kind: 'relay_set', data: payload });
+    await printJsonEnvelope({ ok: true, kind: 'relay_set', data: payload });
     return;
   }
 
@@ -314,6 +316,14 @@ async function cmdSet(args: string[], options: CmdSetOptions = {}): Promise<void
     console.log(warn(`Relay unchanged: ${upserted.name} (${upserted.id})`));
   }
   console.log(`  ${upserted.serverUrl}`);
+
+  // Saving a profile changes nothing for a running daemon; activating one does.
+  if (used) {
+    await runServerSelectionBackgroundServiceFollowUp({
+      interactive: isInteractiveTerminal(),
+      targetServerUrl: upserted.serverUrl,
+    });
+  }
 }
 
 async function cmdUse(args: string[], options: CmdSetOptions = {}): Promise<void> {
@@ -342,7 +352,7 @@ async function cmdAuth(args: string[]): Promise<void> {
       await redirectConsoleLogToStderr(async () => {
         await handleAuthCommand(['login', ...passThrough]);
       });
-      printJsonEnvelope({
+      await printJsonEnvelope({
         ok: true,
         kind: 'relay_auth',
         data: {

@@ -175,6 +175,47 @@ describe('importSessionHandoffAgentBundle', () => {
         });
     });
 
+    it('fails closed when handoff import returns owner-private Session state', async () => {
+        const importBundle = vi.fn(async () => ({
+            ok: true as const,
+            value: {
+                providerSessionId: 'private-session-1',
+                source: {
+                    kind: 'codexHome',
+                    home: 'user',
+                },
+                launch: {
+                    sessionStateUpdates: [{
+                        fieldId: 'runtime.externalSessionOperation',
+                        value: 'private-operation',
+                    }],
+                },
+            },
+        }));
+        resolveExecutionSurfaces.mockResolvedValueOnce({
+            terminalRuntime: null,
+            externalSession: null,
+            attach: null,
+            handoff: {
+                exportBundle: vi.fn(),
+                importBundle,
+            },
+            fork: null,
+            checkpoint: null,
+        });
+        const { importSessionHandoffAgentBundle } = await import('./import');
+
+        await expect(importSessionHandoffAgentBundle({
+            bundle: {
+                agentId: 'codex',
+                remoteSessionId: 'private-session-1',
+                files: [],
+            },
+            targetPath: '/repo',
+        })).rejects.toThrow(/unsupported field.*runtime\.externalSessionOperation/i);
+        expect(importBundle).toHaveBeenCalledOnce();
+    });
+
     it.each([
         'target_identity_conflict',
         'agent_version_unsupported',

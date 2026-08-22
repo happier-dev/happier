@@ -1,7 +1,7 @@
 import type {
   SessionSummaryShardV1,
   SessionSynopsisV1,
-  SessionSystemRecord,
+  LegacyHostSessionSystemRecord as SessionSystemRecord,
 } from '@happier-dev/protocol';
 
 import type {
@@ -20,6 +20,7 @@ import {
   type MemorySystemRecordPayload,
   openMemorySystemRecordPayload,
 } from './memorySystemRecords';
+import { AccountEncryptionMaterialUnavailableError } from '@/api/client/encryptionKey';
 
 export type FetchMemorySummaryShardSystemRecordsDeps = Readonly<{
   fetchSessionSystemRecordsPage: typeof fetchSessionSystemRecordsPage;
@@ -45,6 +46,9 @@ export async function fetchMemorySummaryShardSystemRecords(params: Readonly<{
   limit?: number;
   fetchSessionSystemRecordsPage?: FetchMemorySummaryShardSystemRecordsDeps['fetchSessionSystemRecordsPage'];
 }>): Promise<SessionSummaryShardV1[]> {
+  if (params.mode === 'e2ee' && !params.ctx) {
+    throw new AccountEncryptionMaterialUnavailableError();
+  }
   const fetchPage = params.fetchSessionSystemRecordsPage ?? fetchSessionSystemRecordsPage;
   const out: SessionSummaryShardV1[] = [];
   let cursor: string | undefined;
@@ -62,6 +66,7 @@ export async function fetchMemorySummaryShardSystemRecords(params: Readonly<{
     for (const record of page.records) {
       const payload = openMemorySystemRecordPayload({
         namespace: record.namespace,
+        mode: params.mode,
         kind: MEMORY_SYSTEM_RECORD_KINDS.summaryShard,
         content: record.content,
         ctx: params.ctx,
@@ -86,6 +91,9 @@ export async function fetchLatestMemorySynopsisSystemRecord(params: Readonly<{
   ctx?: SessionEncryptionContext;
   fetchLatestSessionSystemRecord?: FetchLatestMemorySynopsisSystemRecordDeps['fetchLatestSessionSystemRecord'];
 }>): Promise<SessionSynopsisV1 | null> {
+  if (params.mode === 'e2ee' && !params.ctx) {
+    throw new AccountEncryptionMaterialUnavailableError();
+  }
   const fetchLatest = params.fetchLatestSessionSystemRecord ?? fetchLatestSessionSystemRecord;
   const record: SessionSystemRecord | null = await fetchLatest({
     token: params.token,
@@ -96,6 +104,7 @@ export async function fetchLatestMemorySynopsisSystemRecord(params: Readonly<{
   if (!record) return null;
   const payload = openMemorySystemRecordPayload({
     namespace: record.namespace,
+    mode: params.mode,
     kind: MEMORY_SYSTEM_RECORD_KINDS.synopsis,
     content: record.content,
     ctx: params.ctx,

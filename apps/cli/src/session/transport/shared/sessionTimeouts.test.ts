@@ -6,7 +6,6 @@ import {
   resolveSessionControlWaitIdleConfirmMs,
   resolveSessionControlStopPollIntervalMs,
   resolveSessionControlStopTimeoutMs,
-  resolveSessionArchiveMetadataTimeoutMs,
   resolveSessionCriticalMetadataDrainTimeoutMs,
 } from './sessionTimeouts';
 
@@ -16,7 +15,6 @@ describe('sessionControlTimeouts', () => {
   const prevWaitIdleConfirm = process.env.HAPPIER_SESSION_WAIT_IDLE_CONFIRM_MS;
   const prevStopTimeout = process.env.HAPPIER_SESSION_STOP_TIMEOUT_MS;
   const prevStopPollInterval = process.env.HAPPIER_SESSION_STOP_POLL_INTERVAL_MS;
-  const prevArchiveMetadata = process.env.HAPPIER_SESSION_ARCHIVE_METADATA_TIMEOUT_MS;
   const prevCriticalMetadataDrain = process.env.HAPPIER_SESSION_CRITICAL_METADATA_DRAIN_TIMEOUT_MS;
 
   afterEach(() => {
@@ -34,9 +32,6 @@ describe('sessionControlTimeouts', () => {
 
     if (prevStopPollInterval === undefined) delete process.env.HAPPIER_SESSION_STOP_POLL_INTERVAL_MS;
     else process.env.HAPPIER_SESSION_STOP_POLL_INTERVAL_MS = prevStopPollInterval;
-
-    if (prevArchiveMetadata === undefined) delete process.env.HAPPIER_SESSION_ARCHIVE_METADATA_TIMEOUT_MS;
-    else process.env.HAPPIER_SESSION_ARCHIVE_METADATA_TIMEOUT_MS = prevArchiveMetadata;
 
     if (prevCriticalMetadataDrain === undefined) delete process.env.HAPPIER_SESSION_CRITICAL_METADATA_DRAIN_TIMEOUT_MS;
     else process.env.HAPPIER_SESSION_CRITICAL_METADATA_DRAIN_TIMEOUT_MS = prevCriticalMetadataDrain;
@@ -67,10 +62,8 @@ describe('sessionControlTimeouts', () => {
     expect(resolveSessionControlStopPollIntervalMs()).toBe(200);
   });
 
-  it('defaults metadata shutdown budgets to 3s', () => {
-    delete process.env.HAPPIER_SESSION_ARCHIVE_METADATA_TIMEOUT_MS;
+  it('defaults the critical metadata drain budget to 3s', () => {
     delete process.env.HAPPIER_SESSION_CRITICAL_METADATA_DRAIN_TIMEOUT_MS;
-    expect(resolveSessionArchiveMetadataTimeoutMs()).toBe(3_000);
     expect(resolveSessionCriticalMetadataDrainTimeoutMs()).toBe(3_000);
   });
 
@@ -99,10 +92,8 @@ describe('sessionControlTimeouts', () => {
     expect(resolveSessionControlStopPollIntervalMs()).toBe(12);
   });
 
-  it('reads metadata shutdown budgets from env', () => {
-    process.env.HAPPIER_SESSION_ARCHIVE_METADATA_TIMEOUT_MS = '123';
+  it('reads the critical metadata drain budget from env', () => {
     process.env.HAPPIER_SESSION_CRITICAL_METADATA_DRAIN_TIMEOUT_MS = '456';
-    expect(resolveSessionArchiveMetadataTimeoutMs()).toBe(123);
     expect(resolveSessionCriticalMetadataDrainTimeoutMs()).toBe(456);
   });
 
@@ -112,14 +103,12 @@ describe('sessionControlTimeouts', () => {
     process.env.HAPPIER_SESSION_WAIT_IDLE_CONFIRM_MS = '0';
     process.env.HAPPIER_SESSION_STOP_TIMEOUT_MS = '0';
     process.env.HAPPIER_SESSION_STOP_POLL_INTERVAL_MS = 'nan';
-    process.env.HAPPIER_SESSION_ARCHIVE_METADATA_TIMEOUT_MS = '-10';
     process.env.HAPPIER_SESSION_CRITICAL_METADATA_DRAIN_TIMEOUT_MS = 'nope';
     expect(resolveSessionControlSocketConnectTimeoutMs()).toBe(10_000);
     expect(resolveSessionControlSocketAckTimeoutMs()).toBe(10_000);
     expect(resolveSessionControlWaitIdleConfirmMs()).toBe(250);
     expect(resolveSessionControlStopTimeoutMs()).toBe(10_000);
     expect(resolveSessionControlStopPollIntervalMs()).toBe(200);
-    expect(resolveSessionArchiveMetadataTimeoutMs()).toBe(3_000);
     expect(resolveSessionCriticalMetadataDrainTimeoutMs()).toBe(3_000);
   });
 });

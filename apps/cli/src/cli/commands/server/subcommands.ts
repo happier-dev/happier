@@ -1,7 +1,6 @@
 import chalk from 'chalk';
 
 import { configuration, reloadConfiguration } from '@/configuration';
-import { readCredentials } from '@/persistence';
 import {
   addServerProfile,
   getActiveServerProfile,
@@ -11,7 +10,7 @@ import {
   upsertServerProfileByUrl,
   useServerProfile,
 } from '@/server/serverProfiles';
-import { probeServerVersion } from '@/server/serverTest';
+import { probeServerVersion, type ProbeServerVersionResult } from '@/server/serverTest';
 
 import {
   argvValue,
@@ -33,12 +32,7 @@ import {
   isLoopbackHttpServerUrl,
 } from '@/server/serverUrlClassification';
 import { createServerUrlComparableKey } from '@happier-dev/protocol';
-import { resolveInstalledDaemonServiceInventoryForCurrentRelay } from '@/daemon/ownership/daemonServiceInventory';
-import { resolveDaemonServiceCliRuntimeFromEnv } from '@/daemon/service/cli';
-import {
-  runDefaultFollowingBackgroundServiceServerChangeFollowUp,
-  resolveInstalledDefaultFollowingDaemonServiceModes,
-} from '../backgroundServiceFollowUp.js';
+import { runServerSelectionBackgroundServiceFollowUp } from '../backgroundServiceFollowUp.js';
 
 export async function runServerSubcommand(subcommand: string, args: string[]): Promise<boolean> {
   switch (subcommand) {
@@ -144,6 +138,44 @@ function shouldAutoInferPublicServerUrl(): boolean {
   return ['1', 'true', 'yes', 'on'].includes(raw);
 }
 
+function relayProbeFailureDetailLines(result: Extract<ProbeServerVersionResult, { ok: false }>): readonly string[] {
+  return [
+    `  url: ${result.url}`,
+    ...(result.status ? [`  status: ${result.status}`] : []),
+    `  error: ${result.error}`,
+  ];
+}
+
+async function assertRelayUrlAnswersBeforePersisting(params: Readonly<{
+  probeUrl: string;
+  interactive: boolean;
+}>): Promise<void> {
+  const result = await probeServerVersion(params.probeUrl);
+  if (result.ok) return;
+
+  const headline = `No Happier relay answered at ${params.probeUrl}.`;
+  const detailLines = relayProbeFailureDetailLines(result);
+  if (!params.interactive) {
+    throw relayUnreachableError([
+      headline,
+      ...detailLines,
+      '  Nothing was saved. Check the URL, or pass --yes to save it anyway.',
+    ].join('\n'));
+  }
+
+  console.log(chalk.yellow(headline));
+  for (const line of detailLines) console.log(chalk.gray(line));
+  const answer = await promptInput('Save this relay profile anyway? [y/N]: ');
+  if (parseYesNoWithDefault(answer, false)) return;
+  throw relayUnreachableError(`Relay not saved: ${params.probeUrl} did not answer a version check.`);
+}
+
+function relayUnreachableError(message: string): Error {
+  const error: Error & { code?: string } = new Error(message);
+  error.code = 'server_unreachable';
+  return error;
+}
+
 function resolveTailscaleServeStatusTimeoutMs(): number {
   const raw = Number.parseInt(String(process.env.HAPPIER_TAILSCALE_SERVE_STATUS_TIMEOUT_MS ?? ''), 10);
   return Number.isFinite(raw) && raw > 0 ? raw : 750;
@@ -153,7 +185,7 @@ async function cmdList(args: string[]): Promise<void> {
   const active = await getActiveServerProfile();
   const profiles = await listServerProfiles();
   if (wantsJson(args)) {
-    printJsonEnvelope({
+    await printJsonEnvelope({
       ok: true,
       kind: 'server_list',
       data: {
@@ -182,7 +214,7 @@ async function cmdList(args: string[]): Promise<void> {
 async function cmdCurrent(args: string[]): Promise<void> {
   const active = await getActiveServerProfile();
   if (wantsJson(args)) {
-    printJsonEnvelope({
+    await printJsonEnvelope({
       ok: true,
       kind: 'server_current',
       data: { active: summarizeProfile(active) },
@@ -204,7 +236,7 @@ async function cmdAdd(args: string[]): Promise<void> {
     args,
     commandName: 'add',
     valueFlags: ['--name', '--server-url', '--local-server-url', '--public-server-url', '--webapp-url'],
-    booleanFlags: ['--use', '--no-use', '--start-daemon', '--install-service', '--json'],
+    booleanFlags: ['--use', '--no-use', '--start-daemon', '--install-service', '--json', '--yes'],
   });
   const json = wantsJson(args);
   const interactive = isInteractiveTerminal() && !json;
@@ -218,6 +250,7 @@ async function cmdAdd(args: string[]): Promise<void> {
   let shouldUse = hasUse;
   let startDaemon = args.includes('--start-daemon');
   let installService = args.includes('--install-service');
+  const assumeYes = args.includes('--yes');
 
   if (json && (startDaemon || installService)) {
     const err: any = new Error('Unsupported in --json mode: --start-daemon/--install-service');
@@ -334,11 +367,15 @@ async function cmdAdd(args: string[]): Promise<void> {
     ? normalizeUrlOrThrow(webappUrlRaw, '--webapp-url')
     : defaultWebappUrlFromServerUrl(serverUrl);
 
+  if (!assumeYes) {
+    await assertRelayUrlAnswersBeforePersisting({ probeUrl: localServerUrl || serverUrl, interactive });
+  }
+
   const created = await addServerProfile({ name, serverUrl, ...(localServerUrl ? { localServerUrl } : {}), webappUrl, use: shouldUse });
   const active = shouldUse ? created : await getActiveServerProfile();
 
   if (json) {
-    printJsonEnvelope({
+    await printJsonEnvelope({
       ok: true,
       kind: 'server_add',
       data: { created: summarizeProfile(created), active: summarizeProfile(active), used: shouldUse },
@@ -384,7 +421,7 @@ async function cmdUse(args: string[]): Promise<void> {
   const active = await useServerProfile(identifier);
   reloadConfiguration();
   if (json) {
-    printJsonEnvelope({ ok: true, kind: 'server_use', data: { active: summarizeProfile(active) } });
+    await printJsonEnvelope({ ok: true, kind: 'server_use', data: { active: summarizeProfile(active) } });
     return;
   }
   console.log(chalk.green(`✓ Active relay: ${active.name} (${active.id})`));
@@ -404,7 +441,7 @@ async function cmdRemove(args: string[]): Promise<void> {
   const out = await removeServerProfile(identifier, { force });
   reloadConfiguration();
   if (json) {
-    printJsonEnvelope({
+    await printJsonEnvelope({
       ok: true,
       kind: 'server_remove',
       data: { removed: summarizeProfile(out.removed), active: summarizeProfile(out.active) },
@@ -422,7 +459,7 @@ async function cmdTest(args: string[]): Promise<void> {
   const profile = identifier ? await getServerProfile(identifier) : await getActiveServerProfile();
   const result = await probeServerVersion(profile.localServerUrl ?? profile.serverUrl);
   if (json) {
-    printJsonEnvelope(
+    await printJsonEnvelope(
       {
         ok: true,
         kind: 'server_test',
@@ -514,7 +551,7 @@ async function cmdSet(args: string[]): Promise<void> {
   const created = await upsertServerProfileByUrl({ name: 'custom', serverUrl, ...(localServerUrl ? { localServerUrl } : {}), webappUrl, use: true });
   reloadConfiguration();
   if (json) {
-    printJsonEnvelope({ ok: true, kind: 'server_set', data: { active: summarizeProfile(created) } });
+    await printJsonEnvelope({ ok: true, kind: 'server_set', data: { active: summarizeProfile(created) } });
     return;
   }
   console.log(chalk.green(`✓ Active relay: ${created.name} (${created.id})`));
@@ -523,28 +560,5 @@ async function cmdSet(args: string[]): Promise<void> {
   await runServerSelectionBackgroundServiceFollowUp({
     interactive: isInteractiveTerminal(),
     targetServerUrl: created.serverUrl,
-  });
-}
-
-async function runServerSelectionBackgroundServiceFollowUp(params: Readonly<{
-  interactive: boolean;
-  targetServerUrl: string;
-}>): Promise<void> {
-  const runtime = resolveDaemonServiceCliRuntimeFromEnv({ processEnv: process.env });
-  const services = await resolveInstalledDaemonServiceInventoryForCurrentRelay(runtime);
-  const installedDefaultFollowingServiceModes = resolveInstalledDefaultFollowingDaemonServiceModes(services);
-  if (installedDefaultFollowingServiceModes.length === 0) {
-    return;
-  }
-
-  const credentials = await readCredentials().catch(() => null);
-  await runDefaultFollowingBackgroundServiceServerChangeFollowUp({
-    interactive: params.interactive,
-    promptInput,
-    runCliAction,
-    targetServerUrl: params.targetServerUrl,
-    authState: credentials ? 'logged_in' : 'logged_out',
-    log: console.log,
-    services,
   });
 }

@@ -20,6 +20,10 @@ import type {
   HostSessionRuntimeRunOptions,
 } from '@/agent/runtime/session/loop/runHostSessionRuntime';
 import { formatProviderPromptErrorMessage } from '@/agent/runtime/formatProviderPromptErrorMessage';
+import {
+  buildPluginHostSessionRuntimeOptions,
+  buildPluginSessionBindingInput,
+} from '@/plugins/runtime/runtimeCore/plugin/sessionLaunch';
 import { createCatalogProviderSessionIdentityRuntime } from '@/agent/acp/runtime/createProviderSessionIdentityRuntime';
 import type { AcpRuntimeBackend } from '@/agent/acp/runtime/createAcpRuntime';
 import type {
@@ -118,7 +122,9 @@ function createSessionRuntimePlan(
     exec?: Pick<ExecRuntimeServiceV1, 'systemTools'>;
   }>,
 ) {
-  const opts = sessionParams as HostSessionRuntimeRunOptions;
+  const opts: HostSessionRuntimeRunOptions = buildPluginHostSessionRuntimeOptions(
+    buildPluginSessionBindingInput(sessionParams),
+  );
   const configuredBackendId = resolveConfiguredAcpBackendIdFromSessionParams(definition, opts);
   const sessionFlavor = configuredBackendId ? `acp:${configuredBackendId}` : definition.backendId;
   const TerminalDisplay: HostSessionRuntimeConfig['terminalDisplay'] = (props) =>

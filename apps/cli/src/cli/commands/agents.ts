@@ -122,8 +122,8 @@ function agentProbeResultKey(method: AgentProbeMethod): 'models' | 'modes' | 'co
     return 'configOptions';
 }
 
-function printUnknownAgentJsonEnvelope(kind: string, agentId: string): void {
-    printJsonEnvelope({
+async function printUnknownAgentJsonEnvelope(kind: string, agentId: string): Promise<void> {
+    await printJsonEnvelope({
         ok: false,
         kind,
         error: {
@@ -310,7 +310,7 @@ export async function handleAgentsCommand(args: string[]): Promise<void> {
 
     if (subcommand === 'list' || subcommand === 'status') {
         if (json) {
-            printJsonEnvelope({
+            await printJsonEnvelope({
                 ok: true,
                 kind: subcommand === 'list' ? 'agents_list' : 'agents_status',
                 data: {
@@ -338,7 +338,7 @@ export async function handleAgentsCommand(args: string[]): Promise<void> {
         const agentRow = agentRowsById.get(agentId);
         if (!agentRow) {
             if (json) {
-                printUnknownAgentJsonEnvelope(kind, agentId);
+                await printUnknownAgentJsonEnvelope(kind, agentId);
                 return;
             }
             throw new Error(`Unknown agent id: ${agentId}`);
@@ -366,7 +366,7 @@ export async function handleAgentsCommand(args: string[]): Promise<void> {
                 const code = typeof result.error?.code === 'string' ? result.error.code : 'probe_failed';
                 const message = typeof result.error?.message === 'string' ? result.error.message : `Agent probe failed: ${method}`;
                 if (json) {
-                    printJsonEnvelope({
+                    await printJsonEnvelope({
                         ok: false,
                         kind,
                         error: { code, message, agentId, method },
@@ -379,7 +379,7 @@ export async function handleAgentsCommand(args: string[]): Promise<void> {
         }
 
         if (json) {
-            printJsonEnvelope({
+            await printJsonEnvelope({
                 ok: true,
                 kind,
                 data: {
@@ -412,7 +412,7 @@ export async function handleAgentsCommand(args: string[]): Promise<void> {
         const agentRow = agentRowsById.get(agentIdRaw);
         if (!agentRow) {
             if (json) {
-                printUnknownAgentJsonEnvelope(kind, agentIdRaw);
+                await printUnknownAgentJsonEnvelope(kind, agentIdRaw);
                 return;
             }
             throw new Error(`Unknown agent id: ${agentIdRaw}`);
@@ -420,7 +420,7 @@ export async function handleAgentsCommand(args: string[]): Promise<void> {
         if (!agentRow.runtimeSpec) {
             const message = `Agent '${agentIdRaw}' does not publish a CLI installation recipe.`;
             if (json) {
-                printJsonEnvelope({
+                await printJsonEnvelope({
                     ok: false,
                     kind,
                     error: { code: 'agent_install_unsupported', message, agentId: agentIdRaw },
@@ -433,7 +433,7 @@ export async function handleAgentsCommand(args: string[]): Promise<void> {
         const result = await runAgentsInstall(agentRow.runtimeSpec, flags);
         if (json) {
             if (result.ok) {
-                printJsonEnvelope(
+                await printJsonEnvelope(
                     {
                         ok: true,
                         kind,
@@ -448,7 +448,7 @@ export async function handleAgentsCommand(args: string[]): Promise<void> {
                 );
                 return;
             }
-            printJsonEnvelope(
+            await printJsonEnvelope(
                 {
                     ok: false,
                     kind,
@@ -489,7 +489,7 @@ export async function handleAgentsCommand(args: string[]): Promise<void> {
             agentIds = await resolveAgentsSetupSelection(args.slice(1), agentRows);
         } catch (error) {
             if (json && error instanceof UnsupportedAgentsSetupSelectionError) {
-                printJsonEnvelope({
+                await printJsonEnvelope({
                     ok: false,
                     kind,
                     error: {
@@ -504,7 +504,7 @@ export async function handleAgentsCommand(args: string[]): Promise<void> {
         }
         if (agentIds.length === 0) {
             if (json) {
-                printJsonEnvelope({ ok: true, kind, data: { agents: [] } });
+                await printJsonEnvelope({ ok: true, kind, data: { agents: [] } });
                 return;
             }
             console.log(neutral('(no agents selected)'));
@@ -525,7 +525,7 @@ export async function handleAgentsCommand(args: string[]): Promise<void> {
 
         if (json) {
             if (allOk) {
-                printJsonEnvelope(
+                await printJsonEnvelope(
                     {
                         ok: true,
                         kind,
@@ -544,7 +544,7 @@ export async function handleAgentsCommand(args: string[]): Promise<void> {
                 );
                 return;
             }
-            printJsonEnvelope(
+            await printJsonEnvelope(
                 {
                     ok: false,
                     kind,
@@ -609,7 +609,7 @@ export async function handleAgentsCommand(args: string[]): Promise<void> {
     }
 
     if (json) {
-        printJsonEnvelope({ ok: false, kind, error: { code: 'unknown_subcommand' } }, { exitCode: 1 });
+        await printJsonEnvelope({ ok: false, kind, error: { code: 'unknown_subcommand' } }, { exitCode: 1 });
         return;
     }
 
@@ -626,7 +626,7 @@ export async function handleAgentsCliCommand(context: CommandContext): Promise<v
         if (wantsJson(args)) {
             const subcommand = String(args[0] ?? '').trim();
             const kind = subcommand ? `agents_${subcommand}` : 'agents_unknown';
-            printJsonEnvelope(
+            await printJsonEnvelope(
                 {
                     ok: false,
                     kind,

@@ -1,5 +1,5 @@
-import type { Credentials } from '@/persistence';
-import { readCredentials } from '@/persistence';
+import type { StoredCredentials } from '@/persistence';
+import { readStoredCredentials } from '@/persistence';
 import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
 import { authAndSetupMachineIfNeeded } from '@/ui/auth';
 
@@ -7,8 +7,8 @@ export type SessionCommandResumeDelegationDecision =
   | Readonly<{ kind: 'delegate'; sessionId: string }>
   | Readonly<{ kind: 'continue' }>;
 
-type ReadCredentials = () => Promise<Credentials | null>;
-type EnsureAuth = () => Promise<Readonly<{ credentials: Credentials }>>;
+type ReadCredentials = () => Promise<StoredCredentials | null>;
+type EnsureAuth = () => Promise<Readonly<{ credentials: StoredCredentials }>>;
 type FetchSessionById = (params: Readonly<{
   token: string;
   sessionId: string;
@@ -64,7 +64,7 @@ export function readSessionCommandResumeFlagValue(
 async function resolveCredentials(params: Readonly<{
   readCredentialsFn: ReadCredentials;
   ensureAuthFn: EnsureAuth;
-}>): Promise<Credentials | null> {
+}>): Promise<StoredCredentials | null> {
   const existing = await params.readCredentialsFn();
   if (existing) return existing;
   return (await params.ensureAuthFn()).credentials;
@@ -78,7 +78,7 @@ export async function resolveSessionCommandResumeDelegation(
   const sessionId = readSessionCommandResumeFlagValue(params.args, params.resumeFlags);
   if (!sessionId) return continueDecision;
 
-  const readCredentialsFn = params.readCredentialsFn ?? readCredentials;
+  const readCredentialsFn = params.readCredentialsFn ?? readStoredCredentials;
   const ensureAuthFn = params.ensureAuthFn ?? authAndSetupMachineIfNeeded;
   const fetchSessionByIdFn = params.fetchSessionByIdFn ?? fetchSessionById;
 

@@ -25,6 +25,7 @@ describe('buildResumeSelectionModel', () => {
 
     const model = await buildResumeSelectionModel({
       credentials,
+      accountEncryptionMode: 'plain',
       accountSettings: accountSettingsParse({}),
       contributionRegistry: null,
       fetchSessionsPageFn: vi.fn(async () => ({
@@ -69,6 +70,7 @@ describe('buildResumeSelectionModel', () => {
 
     const model = await buildResumeSelectionModel({
       credentials,
+      accountEncryptionMode: 'plain',
       accountSettings: accountSettingsParse({}),
       contributionRegistry: null,
       fetchSessionsPageFn: vi.fn(async () => ({

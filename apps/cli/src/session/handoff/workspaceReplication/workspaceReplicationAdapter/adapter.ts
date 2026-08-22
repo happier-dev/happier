@@ -23,6 +23,7 @@ import {
 } from '@/session/media/referencedPaths';
 import { createWorkspaceReplicationEngine } from '@/workspaces/replication/engine';
 import { createWorkspaceReplicationBaselineStore } from '@/workspaces/replication/baseline/workspaceReplicationBaselineStore';
+import { isTerminalWorkspaceReplicationJobStatus } from '@/workspaces/replication/jobs/workspaceReplicationJobTerminalStatuses';
 import { createWorkspaceReplicationSourceOfferFromManifest } from '@/workspaces/replication/transport/createWorkspaceReplicationSourceOffer';
 import { assertWorkspaceReplicationDigestsAllowedByManifest } from '@/workspaces/replication/transport/workspaceReplicationAllowedDigests';
 import { assertSafeWorkspaceReplicationPackId } from '@/workspaces/replication/transport/workspaceReplicationPackId';
@@ -139,13 +140,6 @@ function resolveSafeWorkspaceFilePath(params: Readonly<{
   return absolutePath;
 }
 
-const TERMINAL_WORKSPACE_REPLICATION_JOB_STATUSES = new Set<string>([
-  'completed',
-  'aborted',
-  'failed',
-  'awaiting_recovery',
-]);
-
 type WorkspaceReplicationJobStatus =
   Awaited<ReturnType<ReturnType<typeof createWorkspaceReplicationEngine>['getJobStatus']>>;
 
@@ -158,7 +152,7 @@ async function waitForTerminalWorkspaceReplicationJob(params: Readonly<{
   while (true) {
     await params.assertCanContinue?.();
     const record = await params.engine.getJobStatus(params.jobId);
-    if (TERMINAL_WORKSPACE_REPLICATION_JOB_STATUSES.has(record.status.status)) {
+    if (isTerminalWorkspaceReplicationJobStatus(record.status.status)) {
       return record;
     }
     await new Promise<void>((resolve) => {

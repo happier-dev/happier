@@ -1,9 +1,10 @@
 import { createHash } from 'node:crypto';
 
 import {
-    RuntimeEventV1Schema,
-    type RuntimeEventV1,
+    AgentSessionRuntimeEventSchema,
+    type AgentSessionRuntimeEvent,
 } from '@happier-dev/protocol';
+import { classifyPrimarySessionRuntimeIssue } from '@/agent/runtime/session/errors/classifyPrimarySessionRuntimeIssue';
 
 import type { RuntimeSessionTurnMutationV1 } from '@/api/session/client/transport/mutations/createRuntimeSessionClientDurableMutationOutbox';
 
@@ -12,7 +13,9 @@ const ACCEPTED_BEGIN_PUBLISH_RETRY_DELAY_MS = 50;
 
 export type SessionTurnLifecycleMutationPort = Readonly<{
     sessionId: string;
-    enqueueSessionTurnMutation?: (mutation: RuntimeSessionTurnMutationV1) => void | Promise<void>;
+    enqueueSessionTurnMutation?: (
+        mutation: RuntimeSessionTurnMutationV1,
+    ) => void | Readonly<{ terminalStatusOverride: 'failed' }> | Promise<void | Readonly<{ terminalStatusOverride: 'failed' }>>;
 }>;
 
 type SessionTurnLifecycleParams = Readonly<{
@@ -26,7 +29,7 @@ type SessionTurnLifecycleParams = Readonly<{
 }>;
 
 export type SessionTurnLifecycle = Readonly<{
-    observeRuntimeEvent(event: RuntimeEventV1): void;
+    observeRuntimeEvent(event: AgentSessionRuntimeEvent): void;
     hasActiveTurn(): boolean;
     drainAcceptedLifecycle(): Promise<void>;
 }>;
@@ -38,7 +41,7 @@ function delay(ms: number): Promise<void> {
 function stableMutationId(params: Readonly<{
     sessionId: string;
     action: RuntimeSessionTurnMutationV1['action'];
-    event: RuntimeEventV1;
+    event: AgentSessionRuntimeEvent;
 }>): string {
     const digest = createHash('sha256')
         .update(JSON.stringify({
@@ -58,7 +61,7 @@ function buildMutationBase(params: Readonly<{
     session: SessionTurnLifecycleMutationPort;
     agentId?: string;
     action: RuntimeSessionTurnMutationV1['action'];
-    event: RuntimeEventV1;
+    event: AgentSessionRuntimeEvent;
 }>): Pick<RuntimeSessionTurnMutationV1, 'v' | 'sessionId' | 'mutationId' | 'observedAt' | 'agentId'> {
     return {
         v: 1,
@@ -78,14 +81,8 @@ export function createSessionTurnLifecycle(params: SessionTurnLifecycleParams): 
     let lastActiveTurnTouchAtMs: number | null = null;
     const knownTurnIds = new Set<string>();
     const terminalStatusByTurnId = new Map<string, 'completed' | 'ineligible'>();
-    const pendingRollbackEligibilityByTurnId = new Map<string, RuntimeSessionTurnMutationV1>();
     let acceptedLifecycleTail = Promise.resolve();
     const turnsWithMarkerButNoAcceptedBegin = new Set<string>();
-
-    function isFollowingMutationStillApplicable(mutation: RuntimeSessionTurnMutationV1): boolean {
-        return mutation.action !== 'mark_rollback_eligible'
-            || terminalStatusByTurnId.get(mutation.turnId) === 'completed';
-    }
 
     async function publishAcceptedBeginMarker(
         lifecycle: Readonly<{
@@ -113,7 +110,6 @@ export function createSessionTurnLifecycle(params: SessionTurnLifecycleParams): 
             turnId: string;
             terminalStatus?: 'completed' | 'failed';
         }>,
-        followingMutation?: RuntimeSessionTurnMutationV1,
     ): void {
         const enqueue = params.session.enqueueSessionTurnMutation;
         if (!enqueue) return;
@@ -121,9 +117,9 @@ export function createSessionTurnLifecycle(params: SessionTurnLifecycleParams): 
         if (!params.onAcceptedTurnLifecycle) {
             try {
                 void Promise.resolve(enqueue(mutation))
-                    .then(async () => {
-                        if (followingMutation && isFollowingMutationStillApplicable(followingMutation)) {
-                            await enqueue(followingMutation);
+                    .then(async (admission) => {
+                        if (admission?.terminalStatusOverride === 'failed' && 'turnId' in mutation) {
+                            terminalStatusByTurnId.set(mutation.turnId, 'ineligible');
                         }
                     })
                     .catch(() => undefined);
@@ -151,24 +147,26 @@ export function createSessionTurnLifecycle(params: SessionTurnLifecycleParams): 
             if (mutationTurnId && turnsWithMarkerButNoAcceptedBegin.has(mutationTurnId)) {
                 return;
             }
+            let admission: void | Readonly<{ terminalStatusOverride: 'failed' }>;
             try {
-                await enqueue(mutation);
+                admission = await enqueue(mutation);
             } catch {
                 return;
             }
+            if (admission?.terminalStatusOverride === 'failed' && mutationTurnId) {
+                terminalStatusByTurnId.set(mutationTurnId, 'ineligible');
+            }
             if (!acceptedLifecycle) return;
+            const acceptedLifecycleAfterAdmission =
+                admission?.terminalStatusOverride === 'failed'
+                && acceptedLifecycle.event === 'assistant_message_end'
+                    ? { ...acceptedLifecycle, terminalStatus: 'failed' as const }
+                    : acceptedLifecycle;
             try {
-                await params.onAcceptedTurnLifecycle?.(acceptedLifecycle);
+                await params.onAcceptedTurnLifecycle?.(acceptedLifecycleAfterAdmission);
             } catch {
                 // A failed terminal clear safely retains the exact marker. Observed exit
                 // settlement can then close the stale turn idempotently.
-            }
-            if (followingMutation && isFollowingMutationStillApplicable(followingMutation)) {
-                try {
-                    await enqueue(followingMutation);
-                } catch {
-                    // Rollback eligibility remains optional when its durable admission fails.
-                }
             }
         });
     }
@@ -194,7 +192,6 @@ export function createSessionTurnLifecycle(params: SessionTurnLifecycleParams): 
                 lastActiveTurnTouchAtMs = null;
                 knownTurnIds.add(event.turnId);
                 terminalStatusByTurnId.delete(event.turnId);
-                pendingRollbackEligibilityByTurnId.delete(event.turnId);
                 publish(
                     {
                         ...buildMutationBase({ session: params.session, agentId: params.agentId, action: 'begin', event }),
@@ -238,26 +235,9 @@ export function createSessionTurnLifecycle(params: SessionTurnLifecycleParams): 
                 return;
             }
 
-            if (event.kind === 'turn-input-appended') {
-                if (!hasKnownTurn(event.turnId)) return;
-                publish({
-                        ...buildMutationBase({ session: params.session, agentId: params.agentId, action: 'append_transcript_anchors', event }),
-                        action: 'append_transcript_anchors',
-                        turnId: event.turnId,
-                        ...(event.agentTurnId ? { agentTurnId: event.agentTurnId } : {}),
-                        transcriptAnchors: {
-                            ...(typeof event.userMessageSeq === 'number' ? { userMessageSeqs: [event.userMessageSeq] } : {}),
-                        },
-                    } satisfies RuntimeSessionTurnMutationV1,
-                );
-                return;
-            }
-
             if (event.kind === 'turn-complete') {
                 if (!hasKnownTurn(event.turnId)) return;
                 terminalStatusByTurnId.set(event.turnId, 'completed');
-                const rollbackEligibility = pendingRollbackEligibilityByTurnId.get(event.turnId);
-                pendingRollbackEligibilityByTurnId.delete(event.turnId);
                 publish(
                     {
                         ...buildMutationBase({ session: params.session, agentId: params.agentId, action: 'complete', event }),
@@ -266,7 +246,6 @@ export function createSessionTurnLifecycle(params: SessionTurnLifecycleParams): 
                         ...(event.agentTurnId ? { agentTurnId: event.agentTurnId } : {}),
                     } satisfies RuntimeSessionTurnMutationV1,
                     { event: 'assistant_message_end', turnId: event.turnId, terminalStatus: 'completed' },
-                    rollbackEligibility,
                 );
                 if (activeTurnId === event.turnId) {
                     activeTurnId = null;
@@ -278,14 +257,18 @@ export function createSessionTurnLifecycle(params: SessionTurnLifecycleParams): 
             if (event.kind === 'turn-failed') {
                 if (!hasKnownTurn(event.turnId)) return;
                 terminalStatusByTurnId.set(event.turnId, 'ineligible');
-                pendingRollbackEligibilityByTurnId.delete(event.turnId);
                 publish(
                     {
                         ...buildMutationBase({ session: params.session, agentId: params.agentId, action: 'fail', event }),
                         action: 'fail',
                         turnId: event.turnId,
                         ...(event.agentTurnId ? { agentTurnId: event.agentTurnId } : {}),
-                        issue: event.issue,
+                        issue: classifyPrimarySessionRuntimeIssue({
+                            cause: 'session_error',
+                            error: event.diagnostic,
+                            occurredAt: event.emittedAtMs,
+                            ...(event.agentTurnId ? { agentTurnId: event.agentTurnId } : {}),
+                        }),
                     } satisfies RuntimeSessionTurnMutationV1,
                     { event: 'assistant_message_end', turnId: event.turnId, terminalStatus: 'failed' },
                 );
@@ -299,14 +282,13 @@ export function createSessionTurnLifecycle(params: SessionTurnLifecycleParams): 
             if (event.kind === 'turn-cancelled') {
                 if (!hasKnownTurn(event.turnId)) return;
                 terminalStatusByTurnId.set(event.turnId, 'ineligible');
-                pendingRollbackEligibilityByTurnId.delete(event.turnId);
                 publish(
                     {
                         ...buildMutationBase({ session: params.session, agentId: params.agentId, action: 'cancel', event }),
                         action: 'cancel',
                         turnId: event.turnId,
                         ...(event.agentTurnId ? { agentTurnId: event.agentTurnId } : {}),
-                        ...(event.reason ? { reason: event.reason } : {}),
+                        reason: event.cause,
                     } satisfies RuntimeSessionTurnMutationV1,
                     { event: 'turn_cancelled', turnId: event.turnId },
                 );
@@ -317,62 +299,9 @@ export function createSessionTurnLifecycle(params: SessionTurnLifecycleParams): 
                 return;
             }
 
-            if (event.kind === 'turn-rollback-boundary-observed') {
-                if (!hasKnownTurn(event.turnId)) return;
-                const mutation = {
-                        ...buildMutationBase({ session: params.session, agentId: params.agentId, action: 'mark_rollback_eligible', event }),
-                        action: 'mark_rollback_eligible',
-                        turnId: event.turnId,
-                        ...(event.agentTurnId ? { agentTurnId: event.agentTurnId } : {}),
-                        ...(typeof event.agentRollbackOrdinal === 'number'
-                            ? { agentRollbackOrdinal: event.agentRollbackOrdinal }
-                            : {}),
-                        transcriptAnchors: {
-                            ...(typeof event.startUserMessageSeq === 'number'
-                                ? { startUserMessageSeq: event.startUserMessageSeq }
-                                : {}),
-                            ...(typeof event.startSeqInclusive === 'number'
-                                ? { startSeqInclusive: event.startSeqInclusive }
-                                : {}),
-                            ...(event.endSeqInclusive !== undefined
-                                ? { endSeqInclusive: event.endSeqInclusive }
-                                : {}),
-                            ...(event.providerCheckpoint !== undefined
-                                ? { providerCheckpoint: event.providerCheckpoint }
-                                : {}),
-                        },
-                    } satisfies RuntimeSessionTurnMutationV1;
-                const terminalStatus = terminalStatusByTurnId.get(event.turnId);
-                if (terminalStatus === 'ineligible') return;
-                if (terminalStatus === 'completed') {
-                    publish(mutation);
-                    return;
-                }
-                pendingRollbackEligibilityByTurnId.set(event.turnId, mutation);
-                return;
-            }
-
-            if (event.kind === 'turn-rollback-applied') {
-                terminalStatusByTurnId.set(event.turnId, 'ineligible');
-                pendingRollbackEligibilityByTurnId.delete(event.turnId);
-                publish({
-                        ...buildMutationBase({ session: params.session, agentId: params.agentId, action: 'mark_rolled_back', event }),
-                        action: 'mark_rolled_back',
-                        turnId: event.turnId,
-                        restoredToTurnId: event.restoredToTurnId,
-                        ...(event.agentTurnId ? { agentTurnId: event.agentTurnId } : {}),
-                        ...(typeof event.agentRollbackOrdinal === 'number'
-                            ? { agentRollbackOrdinal: event.agentRollbackOrdinal }
-                            : {}),
-                    } satisfies RuntimeSessionTurnMutationV1,
-                );
-                return;
-            }
-
-            if (event.kind === 'session-ended') {
+            if (event.kind === 'runtime-ended') {
                 if (!activeTurnId) return;
                 terminalStatusByTurnId.set(activeTurnId, 'ineligible');
-                pendingRollbackEligibilityByTurnId.delete(activeTurnId);
                 activeTurnId = null;
             }
         },
@@ -383,7 +312,7 @@ export function observeRuntimeMessageForSessionTurnLifecycle(params: Readonly<{
     lifecycle: SessionTurnLifecycle;
     message: unknown;
 }>): void {
-    const parsed = RuntimeEventV1Schema.safeParse(params.message);
+    const parsed = AgentSessionRuntimeEventSchema.safeParse(params.message);
     if (!parsed.success) return;
     params.lifecycle.observeRuntimeEvent(parsed.data);
 }

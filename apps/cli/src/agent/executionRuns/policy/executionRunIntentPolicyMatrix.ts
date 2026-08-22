@@ -32,6 +32,12 @@ export const EXECUTION_RUN_INTENT_POLICY_MATRIX: Readonly<Record<ExecutionRunInt
     allowedIoModes: ['request_response', 'streaming'],
     invariant: 'Keep delegate structured-output behavior and long-lived steering semantics.',
   },
+  task: {
+    allowedRetentionPolicies: ['ephemeral'],
+    allowedRunClasses: ['bounded'],
+    allowedIoModes: ['request_response'],
+    invariant: 'Keep generic task execution bounded, detached-safe, and non-interactive.',
+  },
   voice_agent: {
     allowedRetentionPolicies: ['resumable'],
     allowedRunClasses: ['long_lived'],

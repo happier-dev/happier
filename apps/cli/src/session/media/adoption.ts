@@ -252,7 +252,7 @@ async function adoptSessionMediaEnvelope(params: Readonly<{
   workingDirectory: string;
   sourceReadRoots?: readonly string[];
   onCreatedWorkspacePath?: (path: string) => void;
-  onAdoptedStagedWorkspacePath?: (path: string) => void;
+  onPersistedWorkspacePath?: (path: string) => void;
 }>): Promise<unknown> {
   const envelope = asRecord(params.envelope);
   if (!envelope || envelope.kind !== SESSION_MEDIA_ENVELOPE_KIND) return params.envelope;
@@ -304,8 +304,8 @@ async function adoptSessionMediaEnvelope(params: Readonly<{
       });
       if (result.success) {
         adoptedMedia.push(result.item);
+        params.onPersistedWorkspacePath?.(result.item.path);
         if (result.created) params.onCreatedWorkspacePath?.(result.item.path);
-        params.onAdoptedStagedWorkspacePath?.(result.item.path);
       } else {
         failures.push(buildUnavailableMediaFailure({ index, mediaRecord, code: result.code }));
       }
@@ -367,6 +367,7 @@ async function adoptSessionMediaEnvelope(params: Readonly<{
 
     if (result.success) {
       adoptedMedia.push(result.item);
+      params.onPersistedWorkspacePath?.(result.item.path);
       if (result.created) params.onCreatedWorkspacePath?.(result.item.path);
     } else {
       failures.push(buildUnavailableMediaFailure({ index, mediaRecord, code: result.code }));
@@ -629,7 +630,7 @@ export async function adoptSessionMediaMetadataForManagedSession(params: Readonl
   workingDirectory: string | null;
   sourceReadRoots?: readonly string[];
   onCreatedWorkspacePath?: (path: string) => void;
-  onAdoptedStagedWorkspacePath?: (path: string) => void;
+  onPersistedWorkspacePath?: (path: string) => void;
 }>): Promise<Record<string, unknown>> {
   if (!params.workingDirectory) return params.raw;
   const meta = asRecord(params.raw.meta);
@@ -643,7 +644,7 @@ export async function adoptSessionMediaMetadataForManagedSession(params: Readonl
     workingDirectory: params.workingDirectory,
     sourceReadRoots: params.sourceReadRoots,
     onCreatedWorkspacePath: params.onCreatedWorkspacePath,
-    onAdoptedStagedWorkspacePath: params.onAdoptedStagedWorkspacePath,
+    onPersistedWorkspacePath: params.onPersistedWorkspacePath,
   });
   const secondary = await adoptSessionMediaEnvelope({
     envelope: nextMeta.happierMedia,
@@ -652,7 +653,7 @@ export async function adoptSessionMediaMetadataForManagedSession(params: Readonl
     workingDirectory: params.workingDirectory,
     sourceReadRoots: params.sourceReadRoots,
     onCreatedWorkspacePath: params.onCreatedWorkspacePath,
-    onAdoptedStagedWorkspacePath: params.onAdoptedStagedWorkspacePath,
+    onPersistedWorkspacePath: params.onPersistedWorkspacePath,
   });
 
   if (primary === undefined) {

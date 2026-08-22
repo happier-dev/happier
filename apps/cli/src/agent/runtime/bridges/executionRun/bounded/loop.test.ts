@@ -92,7 +92,7 @@ describe('executeBoundedBackendRun', () => {
         ioMode: 'request_response',
       },
       controllers: new Map([['run_liveness_active_1', ctrl]]),
-      sendAcp: () => {},
+      sendAcp: async () => {},
       parentProvider: 'codex',
       getNowMs: () => 1,
       boundedTimeoutMs: 10,
@@ -138,7 +138,7 @@ describe('executeBoundedBackendRun', () => {
                 ioMode: 'request_response',
             },
             controllers: new Map([['run_no_liveness_proof_1', ctrl]]),
-            sendAcp: () => {},
+            sendAcp: async () => {},
             parentProvider: 'codex',
             getNowMs: () => 1,
             boundedTimeoutMs: 10,
@@ -195,7 +195,7 @@ describe('executeBoundedBackendRun', () => {
         ioMode: 'request_response',
       },
       controllers: new Map([['run_typed_provider_timeout_1', ctrl]]),
-      sendAcp: () => {},
+      sendAcp: async () => {},
       parentProvider: 'codex',
       getNowMs: () => 1,
       boundedTimeoutMs: 250,
@@ -214,6 +214,58 @@ describe('executeBoundedBackendRun', () => {
           status: 'timeout',
           error: expect.objectContaining({ code: 'provider_inactivity_timeout' }),
           livenessProbe,
+        }),
+        isError: true,
+      }),
+    );
+  });
+
+  it('preserves a non-timeout typed controller failure in the terminal result', async () => {
+    const childSessionId = 'child_session_output_limit' as SessionId;
+    const outputLimit = Object.assign(new Error('Execution-run task output exceeded the configured limit.'), {
+      executionRunErrorCode: 'execution_run_output_limit_exceeded',
+    });
+    const runtime = createRuntime({
+      async waitForTurnCompletion() {
+        throw outputLimit;
+      },
+    });
+    const ctrl = createController(runtime, childSessionId);
+    const finishRun = vi.fn<FinishExecutionRun>();
+
+    await executeBoundedBackendRun({
+      runId: 'run_output_limit_1',
+      callId: 'subagent_run_output_limit_1',
+      sidechainId: 'subagent_run_output_limit_1',
+      startedAtMs: 0,
+      params: {
+        sessionId: null,
+        intent: 'task',
+        backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+        instructions: 'produce output',
+        permissionMode: 'read_only',
+        retentionPolicy: 'ephemeral',
+        runClass: 'bounded',
+        ioMode: 'request_response',
+      },
+      controllers: new Map([['run_output_limit_1', ctrl]]),
+      sendAcp: async () => {},
+      parentProvider: 'codex',
+      getNowMs: () => 1,
+      boundedTimeoutMs: null,
+      finishRun,
+    });
+
+    expect(finishRun).toHaveBeenCalledWith(
+      'run_output_limit_1',
+      expect.objectContaining({
+        status: 'failed',
+        error: expect.objectContaining({ code: 'execution_run_output_limit_exceeded' }),
+      }),
+      expect.objectContaining({
+        output: expect.objectContaining({
+          status: 'failed',
+          error: expect.objectContaining({ code: 'execution_run_output_limit_exceeded' }),
         }),
         isError: true,
       }),

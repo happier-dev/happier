@@ -4,11 +4,12 @@ import type {
   AgentSessionRealtimeHandle,
   AgentSessionRealtimeLifecycleEvent,
   AgentSessionRealtimeStartResult,
-  ExperimentalAgentSessionRealtimeRuntime,
-} from '@happier-dev/plugin-sdk/experimental/agent-runtime/realtime';
+  AgentSessionRealtimeRuntime as ExperimentalAgentSessionRealtimeRuntime,
+} from '@happier-dev/plugin-sdk/agents/runtime';
 import {
   AgentSessionRealtimeStartRequestV1Schema,
-  type PluginVoiceProviderContributionV1,
+  type PluginContributionIdentityV1,
+  type VoiceProviderContribution,
 } from '@happier-dev/protocol';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { describe, expect, it, vi } from 'vitest';
@@ -30,20 +31,34 @@ const declaration = {
   roles: ['realtime_conversation'],
   platforms: ['web'],
   capabilities: {
-    readiness: { requirements: [] },
     turn: { cancelResponse: false, bargeIn: false },
+    tools: { effectCalls: 'none' },
   },
-  execution: { kind: 'experimental_agent_session_realtime', agent: agentRef },
+  execution: {
+    kind: 'experimental_agent_session_realtime',
+    agent: agentRef,
+    supportedRuntimeVersions: ['1.2.3'],
+  },
+  settings: {
+    schemaVersion: 2,
+    fields: [],
+    connectedServicesBinding: {
+      id: 'globalConnectedServices',
+      title: 'Codex account',
+      agent: agentRef,
+      serviceIds: ['openai-codex'],
+    },
+  },
   client: {
     artifactId: 'voice-runtime-web',
     modulePath: './ui/voice',
     exportName: 'activate',
   },
-} satisfies PluginVoiceProviderContributionV1;
+} satisfies VoiceProviderContribution;
 const alternateDeclaration = {
   ...declaration,
   id: alternateProviderRef.localId,
-} satisfies PluginVoiceProviderContributionV1;
+} satisfies VoiceProviderContribution;
 
 function resolveCanonicalSdpMaxBytes(): number {
   const accepts = (offerSdp: string) => AgentSessionRealtimeStartRequestV1Schema.safeParse({
@@ -125,13 +140,10 @@ function trackStopRequiredRetirement(fixture: ReturnType<typeof runtimeFixture>)
 }
 
 type Handler = (raw: unknown, context?: RpcHandlerContext) => Promise<unknown>;
-type ResolveDeclaration = Parameters<
-  typeof registerAgentSessionRealtimeVoiceRpc
->[0]['resolveDeclaration'];
 
 function register(
   runtime: unknown,
-  resolveDeclaration: ResolveDeclaration = (ref) => (
+  resolveEligibleConversation: (ref: PluginContributionIdentityV1) => unknown = (ref) => (
     ref.pluginId === providerRef.pluginId && ref.localId === providerRef.localId
       ? declaration
       : null
@@ -157,14 +169,12 @@ function register(
     getHappierSessionId: options?.getHappierSessionId ?? (() => 'session-1'),
     ownerId: 'owner-1',
     agentGeneration: 'daemon-generation-1',
-    policyAgentRef: agentRef,
-    resolveDeclaration,
     isGenerationCurrent: options?.isGenerationCurrent ?? (() => true),
     resolveProviderGeneration: () => 'provider-generation-1',
     resolveRetirementSignal: options?.resolveRetirementSignal
       ?? (() => options?.retirementSignal ?? null),
     resolveConversation: ({ runtime: candidate, provider }) => (
-      resolveDeclaration(provider)
+      resolveEligibleConversation(provider)
         ? {
             conversation:
               (candidate as ExperimentalAgentSessionRealtimeRuntime)
@@ -236,6 +246,51 @@ describe('Agent-session realtime Voice session RPC', () => {
     expect(fixture.handle.dispose).toHaveBeenCalledTimes(1);
   });
 
+  it('takes declaration eligibility from the Voice conversation resolver', async () => {
+    const fixture = runtimeFixture();
+    const handlers = new Map<string, Handler>();
+    const registration = registerAgentSessionRealtimeVoiceRpc({
+      rpc: {
+        registerHandler: (method, handler: RpcHandler) => {
+          handlers.set(method, async (raw, context) => await handler(
+            raw,
+            context ?? { signal: new AbortController().signal },
+          ));
+        },
+      },
+      runtime: fixture.runtime,
+      getHappierSessionId: () => 'session-1',
+      ownerId: 'owner-1',
+      agentGeneration: 'daemon-generation-1',
+      isGenerationCurrent: () => true,
+      resolveProviderGeneration: () => 'provider-generation-1',
+      resolveRetirementSignal: () => null,
+      resolveConversation: ({ provider, runtime: candidate }) => (
+        provider.pluginId === providerRef.pluginId
+        && provider.localId === providerRef.localId
+          ? {
+              conversation:
+                (candidate as ExperimentalAgentSessionRealtimeRuntime)
+                  .realtimeConversation,
+              retirementSignal: null,
+            }
+          : null
+      ),
+    });
+
+    await expect(handlers.get(
+      SESSION_RPC_METHODS.SESSION_AGENT_REALTIME_INSPECT,
+    )?.({
+      v: 1,
+      provider: providerRef,
+    })).resolves.toEqual({
+      ok: true,
+      status: 'available',
+      transport: 'webrtc',
+    });
+    registration.dispose();
+  });
+
   it('settles a pre-aborted public WATCH without retaining a waiter or blocking RPC idle', async () => {
     let markAuthorizationStarted!: () => void;
     const authorizationStarted = new Promise<void>((resolve) => {
@@ -264,12 +319,6 @@ describe('Agent-session realtime Voice session RPC', () => {
       getHappierSessionId: () => 'session-1',
       ownerId: 'owner-1',
       agentGeneration: 'daemon-generation-1',
-      policyAgentRef: agentRef,
-      resolveDeclaration: (ref) => (
-        ref.pluginId === providerRef.pluginId && ref.localId === providerRef.localId
-          ? declaration
-          : null
-      ),
       isGenerationCurrent: () => true,
       resolveProviderGeneration: () => 'provider-generation-1',
       resolveRetirementSignal: () => null,

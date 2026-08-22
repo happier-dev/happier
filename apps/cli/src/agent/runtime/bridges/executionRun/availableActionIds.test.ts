@@ -9,6 +9,7 @@ describe('getExecutionRunAvailableActionIds', () => {
   it('exposes retained review proposals only for the matching succeeded run', () => {
     const catalog = buildExecutionRunProfileCatalog([{
       pluginId: 'happier.review.coderabbit',
+      immutableGenerationId: 'immutable-coderabbit',
       definition: {
         id: 'review', intent: 'review', title: 'Review', promptAsset: 'review-prompt', compatibleAgents: ['coderabbit'],
         defaults: { retention: 'ephemeral', runClass: 'bounded', io: 'streaming' },
@@ -66,5 +67,44 @@ describe('getExecutionRunAvailableActionIds', () => {
     };
 
     expect(getExecutionRunAvailableActionIds(run, null, catalog)).toContain('acme-review-promote');
+  });
+
+  it('does not expose session-bound review comments for a detached run', () => {
+    const catalog = buildExecutionRunProfileCatalog([{
+      pluginId: 'acme.review',
+      immutableGenerationId: 'immutable-review',
+      definition: {
+        id: 'review', intent: 'review', title: 'Review', promptAsset: 'review-prompt', compatibleAgents: ['claude'],
+        defaults: { retention: 'ephemeral', runClass: 'bounded', io: 'streaming' },
+        actions: [{ kind: 'hostAction', actionId: 'reviews.comments.create' }],
+      },
+    }]);
+    const run: ExecutionRunState = {
+      runId: 'run_1',
+      callId: 'call_1',
+      sidechainId: 'sidechain_1',
+      sessionId: null,
+      depth: 0,
+      intent: 'review',
+      profileId: 'acme.review/review',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      backendId: 'claude',
+      instructions: 'Review this change',
+      permissionMode: 'read_only',
+      retentionPolicy: 'ephemeral',
+      runClass: 'bounded',
+      ioMode: 'request_response',
+      structuredMeta: {
+        kind: 'review_findings.v2',
+        payload: {
+          runRef: { runId: 'run_1', callId: 'call_1', backendId: 'claude' },
+          proposedComments: [{ body: 'Fix.', anchor: { kind: 'file', filePath: 'src/a.ts' } }],
+        },
+      },
+      status: 'succeeded',
+      startedAtMs: 1,
+    };
+
+    expect(getExecutionRunAvailableActionIds(run, null, catalog)).not.toContain('reviews.comments.create');
   });
 });

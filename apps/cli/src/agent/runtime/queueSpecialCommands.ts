@@ -2,6 +2,7 @@ import { parseSpecialCommand } from '@/cli/parsers/specialCommands';
 
 export type SpecialCommandQueue<Mode, Message> = {
   push: (message: Message, mode: Mode) => void;
+  pushIsolate: (message: Message, mode: Mode) => void;
   pushIsolateAndClear: (message: Message, mode: Mode) => void;
 };
 

@@ -14,6 +14,7 @@ import {
 } from '@/agent/executionRuns/profiles/intentRegistry';
 import { createExecutionRunSidechainStreamText } from './sidechainStreamText';
 import { createStreamedTranscriptWriter, type StreamedTranscriptWriterSession } from '@/api/session/streamedTranscriptWriter';
+import type { ExecutionRunTranscriptPublisher } from './executionRunTranscriptPublisher';
 import type { ExecutionRunHostRuntime } from './executionRunHostRuntime';
 import type { ExecutionRunPermissionRequestStoreProvider } from './executionRunPermissionResponseTarget';
 
@@ -30,7 +31,7 @@ export async function resumeBackendControllerForResumableRun(args: Readonly<{
     permissionMode: string;
     accountSettings?: Readonly<Record<string, unknown>> | null;
   }) => ExecutionRunHostRuntime;
-  sendAcp: (provider: ACPProvider, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => void;
+  sendAcp: ExecutionRunTranscriptPublisher;
   parentProvider: ACPProvider;
   streamedTranscriptSession: StreamedTranscriptWriterSession | null;
   getPermissionRequestStore?: ExecutionRunPermissionRequestStoreProvider | null;
@@ -97,7 +98,8 @@ export async function resumeBackendControllerForResumableRun(args: Readonly<{
       const profile = args.profileCatalog
         ? resolveExecutionRunIntentProfileFromCatalog(args.profileCatalog, args.run.intent, args.run.profileId)
         : resolveExecutionRunIntentProfile(args.run.intent);
-      const shouldMaterializeInTranscript = profile.transcriptMaterialization !== 'none';
+      const shouldMaterializeInTranscript = args.run.sessionId !== null
+        && profile.transcriptMaterialization !== 'none';
       return shouldMaterializeInTranscript && args.streamedTranscriptSession && args.run.ioMode === 'streaming'
         ? createStreamedTranscriptWriter({
             provider: args.parentProvider,
@@ -125,8 +127,11 @@ export async function resumeBackendControllerForResumableRun(args: Readonly<{
   const profile = args.profileCatalog
     ? resolveExecutionRunIntentProfileFromCatalog(args.profileCatalog, args.run.intent, args.run.profileId)
     : resolveExecutionRunIntentProfile(args.run.intent);
-  const shouldMaterializeInTranscript = profile.transcriptMaterialization !== 'none';
-  const sendAcp = shouldMaterializeInTranscript ? args.sendAcp : (() => {});
+  const shouldMaterializeInTranscript = args.run.sessionId !== null
+    && profile.transcriptMaterialization !== 'none';
+  const sendAcp: ExecutionRunTranscriptPublisher = shouldMaterializeInTranscript
+    ? args.sendAcp
+    : async () => {};
   const computeSidechainStreamText = createExecutionRunSidechainStreamText(profile);
 
   const onMessage = createExecutionRunControllerMessageHandler({

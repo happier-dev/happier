@@ -1,6 +1,5 @@
-import type {
-    McpServerSpecV1,
-} from '@happier-dev/plugin-sdk/experimental/mcp';
+import type { McpDiscoveredEndpoint as PluginMcpDiscoveredEndpoint } from '@happier-dev/plugin-sdk/mcp';
+import type { DaemonMcpServersDetectWarningV1 } from '@happier-dev/protocol';
 
 export type HostedMcpRuntimeEndpoint =
     | Readonly<{ kind: 'registryOnly' }>
@@ -18,6 +17,10 @@ export type McpSessionResolutionInput = Readonly<{
     workspaceId?: string | null;
     directory?: string | null;
 }>;
+export type ResolvedMcpEndpointDiscoveryResult = Readonly<{
+    endpoints: readonly PluginMcpDiscoveredEndpoint[];
+    warnings?: readonly DaemonMcpServersDetectWarningV1[];
+}>;
 export type ResolvedSessionMcpScope = Readonly<{
     sessionId: string;
     accountId?: string | null;
@@ -28,10 +31,13 @@ export type ResolvedSessionMcpScope = Readonly<{
 export type ResolvedSessionMcpTransport =
     | Readonly<{ kind: 'hosted' }>
     | Readonly<{ kind: 'stdio' }>
-    | Readonly<{ kind: 'managed'; url?: string }>
     | Readonly<{ kind: 'http' | 'sse'; url: string }>;
 
-export type ResolvedSessionMcpServer = Omit<McpServerSpecV1, 'transport'> & Readonly<{
+export type ResolvedSessionMcpServer = Readonly<{
+    id: string;
+    name: string;
+    title?: string | null;
+    description?: string | null;
     transport: ResolvedSessionMcpTransport;
     scope: ResolvedSessionMcpScope;
 }>;

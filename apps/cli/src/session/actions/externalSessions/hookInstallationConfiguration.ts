@@ -23,7 +23,7 @@ import {
 import {
     AGENT_EXTERNAL_SESSION_HOOK_LIMITS,
     type AgentExternalSessionHookInstallationVariant,
-} from '@happier-dev/plugin-sdk/experimental/sessions';
+} from '@happier-dev/plugin-sdk/sessions/external';
 
 import { withJsonOwnerFileLock } from '@/utils/fs/jsonOwnerFileLock';
 import { writeBytesAtomic, writeJsonAtomic } from '@/utils/fs/writeJsonAtomic';

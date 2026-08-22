@@ -1,15 +1,19 @@
 import { randomUUID } from 'node:crypto';
 
-import type {
-  TerminalHostAdapter,
-  TerminalHostHandle,
-  TerminalInjectionDuplicateRisk,
-  TerminalInjectionFailurePhase,
-  TerminalInputInjectionResult,
-  TerminalInputState,
-  TerminalPromptInput,
+import {
+  resolveTerminalPromptWriteTimeoutMs,
+  type TerminalHostAdapter,
+  type TerminalHostHandle,
+  type TerminalInjectionDuplicateRisk,
+  type TerminalInjectionFailurePhase,
+  type TerminalInputInjectionResult,
+  type TerminalInputState,
+  type TerminalPromptInput,
 } from '@happier-dev/agents';
-import type { TerminalPromptSubmitVerificationPolicy } from '../terminalHost/promptSubmitVerification';
+import {
+  resolveTerminalPromptSubmissionFailureReason,
+  type TerminalPromptSubmitVerificationPolicy,
+} from '../terminalHost/promptSubmitVerification';
 
 import { createTmuxTerminalControlPort } from './control';
 import { resolveTmuxPromptSubmitDelayMs } from './env';
@@ -146,17 +150,25 @@ export function createTmuxTerminalHostAdapter(params?: Readonly<{
     // multi-line steer-veto parser sees dialogs/prompts above the bottom composer. Replaces
     // the old captureCurrentInput + isUserTyping(50,2) path that did three captures and fed a
     // single line into the parser.
-    const before = await handleTmux.captureCurrentInput(target);
-    const beforeCursor = await handleTmux.captureCursorPosition(target);
-    await wait(DEFAULT_INPUT_STABILITY_DELAY_MS);
-    const after = await handleTmux.captureCurrentInput(target);
-    const cursor = await handleTmux.captureCursorPosition(target);
-    return {
-      stable: before === after && cursorPositionsEqual(beforeCursor, cursor),
-      currentInput: after,
-      ...(cursor !== null ? { cursor } : {}),
-      observedAt: now(),
-    };
+    try {
+      const before = await handleTmux.captureCurrentInput(target);
+      const beforeCursor = await handleTmux.captureCursorPosition(target);
+      await wait(DEFAULT_INPUT_STABILITY_DELAY_MS);
+      const after = await handleTmux.captureCurrentInput(target);
+      const cursor = await handleTmux.captureCursorPosition(target);
+      return {
+        stable: before === after && cursorPositionsEqual(beforeCursor, cursor),
+        currentInput: after,
+        ...(cursor !== null ? { cursor } : {}),
+        observedAt: now(),
+      };
+    } catch {
+      return {
+        stable: false,
+        currentInput: '',
+        observedAt: now(),
+      };
+    }
   }
 
   return {
@@ -236,18 +248,17 @@ export function createTmuxTerminalHostAdapter(params?: Readonly<{
         bufferName: createTmuxPromptBufferName(),
         submitDelayMs: resolveTmuxPromptSubmitDelayMs(),
         submitRetryDelayMs: resolveTmuxPromptSubmitDelayMs(),
-        timeoutMs: input.scheduling.timeoutMs,
+        timeoutMs: input.scheduling.timeoutMs ?? resolveTerminalPromptWriteTimeoutMs(input.text),
         wait,
-        ...(params?.promptSubmitVerification?.shouldVerifyBeforeSubmit(input.text)
+        ...(params?.promptSubmitVerification?.shouldVerifyAfterSubmit(input.text)
           ? {
-              verifyBeforeSubmit: async ({ text }) => params.promptSubmitVerification?.verifyBeforeSubmit({
+              verifyStagedBeforeSubmit: async ({ text }) => (
+                params.promptSubmitVerification?.verifyBeforeSubmitStaging
+                ?? params.promptSubmitVerification?.verifyAfterSubmit
+              )?.({
                 promptText: text,
                 screenText: normalizeCapturedScreen(await handleTmux.captureCurrentInput(targetFromHandle(handle))),
               }) ?? false,
-            }
-          : {}),
-        ...(params?.promptSubmitVerification?.shouldVerifyAfterSubmit(input.text)
-          ? {
               verifyAfterSubmit: async ({ text }) => params.promptSubmitVerification?.verifyAfterSubmit({
                 promptText: text,
                 screenText: normalizeCapturedScreen(await handleTmux.captureCurrentInput(targetFromHandle(handle))),
@@ -266,11 +277,13 @@ export function createTmuxTerminalHostAdapter(params?: Readonly<{
       });
 
       if (!typed.success) {
-        const reason = typed.reason === 'submit_failed'
-          ? 'submit_failed'
-          : typed.reason === 'timeout'
-            ? 'timeout'
-            : 'write_failed';
+        const reason = typed.reason === 'verification_failed'
+          ? resolveTerminalPromptSubmissionFailureReason(typed.reason)
+          : typed.reason === 'submit_failed'
+            ? 'submit_failed'
+            : typed.reason === 'timeout'
+              ? 'timeout'
+              : 'write_failed';
         return failedInjectionResult({
           handle,
           reason,

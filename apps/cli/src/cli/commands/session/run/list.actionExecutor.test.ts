@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { captureConsoleJsonOutput } from '@/testkit/logger/captureOutput';
 
@@ -21,11 +21,11 @@ vi.mock('@/session/services/executionRuns', () => ({
 }));
 
 describe('happier session run list', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
   it('routes read-only list requests directly through the session read service', async () => {
-    const ctx = {
-      encryptionKey: new Uint8Array([1, 2, 3, 4]),
-      encryptionVariant: 'legacy',
-    } as const;
     resolveSessionTransportContext.mockResolvedValueOnce({
       ok: true,
       sessionId: 'sess-1',
@@ -34,7 +34,7 @@ describe('happier session run list', () => {
         active: false,
         metadata: {},
       },
-      ctx,
+      ctx: null,
       mode: 'plain',
     });
     listExecutionRuns.mockResolvedValueOnce({
@@ -83,7 +83,7 @@ describe('happier session run list', () => {
         token: 'token_test',
         sessionId: 'sess-1',
         mode: 'plain',
-        ctx,
+        ctx: null,
         request: {
           backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
           status: 'running',
@@ -104,5 +104,65 @@ describe('happier session run list', () => {
     } finally {
       output.restore();
     }
+  });
+
+  it('rejects an out-of-range limit before reading credentials', async () => {
+    const readCredentialsFn = vi.fn(async () => null);
+    const { cmdSessionRunList } = await import('./list');
+
+    await expect(cmdSessionRunList(['session', 'run', 'sess-prefix', '--limit', '201'], { readCredentialsFn }))
+      .rejects.toMatchObject({ code: 'invalid_arguments' });
+
+    expect(readCredentialsFn).not.toHaveBeenCalled();
+  });
+
+  it('rejects an unsupported status before reading credentials', async () => {
+    const readCredentialsFn = vi.fn(async () => null);
+    const { cmdSessionRunList } = await import('./list');
+
+    await expect(cmdSessionRunList(
+      ['session', 'run', 'sess-prefix', '--status', 'queued'],
+      { readCredentialsFn },
+    )).rejects.toMatchObject({
+      code: 'invalid_arguments',
+      message: 'Invalid --status "queued". Expected one of: running, succeeded, failed, cancelled, timeout.',
+    });
+
+    expect(readCredentialsFn).not.toHaveBeenCalled();
+    expect(resolveSessionTransportContext).not.toHaveBeenCalled();
+  });
+
+  it('rejects a malformed backend target before reading credentials', async () => {
+    const readCredentialsFn = vi.fn(async () => null);
+    const { cmdSessionRunList } = await import('./list');
+
+    await expect(cmdSessionRunList(
+      ['session', 'run', 'sess-prefix', '--backend', 'claude,codex'],
+      { readCredentialsFn },
+    )).rejects.toThrow('Usage: happier session run list');
+
+    expect(readCredentialsFn).not.toHaveBeenCalled();
+    expect(resolveSessionTransportContext).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['--status', {
+      code: 'invalid_arguments',
+      message: 'Invalid --status "". Expected one of: running, succeeded, failed, cancelled, timeout.',
+    }],
+    ['--backend', {
+      message: expect.stringContaining('Usage: happier session run list'),
+    }],
+  ] as const)('rejects %s without a value before reading credentials', async (flag, expectedError) => {
+    const readCredentialsFn = vi.fn(async () => null);
+    const { cmdSessionRunList } = await import('./list');
+
+    await expect(cmdSessionRunList(
+      ['session', 'run', 'sess-prefix', flag],
+      { readCredentialsFn },
+    )).rejects.toMatchObject(expectedError);
+
+    expect(readCredentialsFn).not.toHaveBeenCalled();
+    expect(resolveSessionTransportContext).not.toHaveBeenCalled();
   });
 });

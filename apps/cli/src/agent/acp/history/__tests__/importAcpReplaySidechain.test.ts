@@ -3,13 +3,25 @@ import { describe, expect, it, vi } from 'vitest';
 import { importAcpReplaySidechainV1 } from '../importAcpReplaySidechain';
 import type { AcpReplaySidechainSessionClient } from '@/agent/acp/sessionClient';
 import type { ACPMessageData } from '@/api/session/sessionMessageTypes';
+import type { TranscriptSessionPort } from '@/api/session/transcriptPort';
 import { logger } from '@/utils/logger';
 
-function createFakeSession() {
-  const committed: Array<{ provider: string; body: ACPMessageData; localId: string }> = [];
+function createFakeSession(params?: Readonly<{
+  admission?: (
+    body: ACPMessageData,
+    opts: Parameters<NonNullable<TranscriptSessionPort['enqueueAgentMessageCommitted']>>[2],
+  ) => Promise<Readonly<{ persisted: boolean; delivered: boolean }>>;
+}>) {
+  const committed: Array<{
+    provider: string;
+    body: ACPMessageData;
+    localId: string;
+    opts: Parameters<NonNullable<TranscriptSessionPort['enqueueAgentMessageCommitted']>>[2];
+  }> = [];
   const session: AcpReplaySidechainSessionClient = {
-    async sendAgentMessageCommitted(provider, body, opts) {
-      committed.push({ provider, body, localId: opts.localId });
+    async enqueueAgentMessageCommitted(provider, body, opts) {
+      committed.push({ provider, body, localId: opts.localId, opts });
+      return await params?.admission?.(body, opts) ?? { persisted: true, delivered: false };
     },
   };
   return { session, committed };
@@ -46,6 +58,62 @@ describe('importAcpReplaySidechainV1', () => {
     expect(committed[2].body.sidechainId).toBe('tool_task_1');
     if (committed[2].body.type !== 'tool-result') throw new Error('expected tool-result');
     expect(committed[2].body.callId).toBe('sc:tool_task_1:t1');
+    expect(committed.map((entry) => entry.opts.provenance)).toEqual([
+      { kind: 'non_dependent', source: 'sidechain' },
+      { kind: 'non_dependent', source: 'sidechain' },
+      { kind: 'non_dependent', source: 'sidechain' },
+    ]);
+  });
+
+  it('keeps replay order and stable local ids when delivery is deferred after durable admission', async () => {
+    const { session, committed } = createFakeSession();
+    const input = {
+      session,
+      provider: 'opencode' as const,
+      remoteSessionId: 'ses_123',
+      sidechainId: 'tool_task_1',
+      replay: [
+        { type: 'message', role: 'agent', text: 'first' },
+        { type: 'message', role: 'agent', text: 'second' },
+      ],
+    };
+
+    await importAcpReplaySidechainV1(input);
+    const firstRunLocalIds = committed.map((entry) => entry.localId);
+    await importAcpReplaySidechainV1(input);
+
+    expect(committed.map((entry) => entry.body)).toEqual([
+      { type: 'message', message: 'first', sidechainId: 'tool_task_1' },
+      { type: 'message', message: 'second', sidechainId: 'tool_task_1' },
+      { type: 'message', message: 'first', sidechainId: 'tool_task_1' },
+      { type: 'message', message: 'second', sidechainId: 'tool_task_1' },
+    ]);
+    expect(committed.slice(2).map((entry) => entry.localId)).toEqual(firstRunLocalIds);
+    expect(committed.map((entry) => entry.opts.provenance)).toEqual([
+      { kind: 'non_dependent', source: 'sidechain' },
+      { kind: 'non_dependent', source: 'sidechain' },
+      { kind: 'non_dependent', source: 'sidechain' },
+      { kind: 'non_dependent', source: 'sidechain' },
+    ]);
+  });
+
+  it('fails and stops when durable custody rejects a sidechain replay row', async () => {
+    const { session, committed } = createFakeSession({
+      admission: async () => ({ persisted: false, delivered: false }),
+    });
+
+    await expect(importAcpReplaySidechainV1({
+      session,
+      provider: 'opencode',
+      remoteSessionId: 'ses_123',
+      sidechainId: 'tool_task_1',
+      replay: [
+        { type: 'message', role: 'agent', text: 'first' },
+        { type: 'message', role: 'agent', text: 'must not be admitted' },
+      ],
+    })).rejects.toThrow(/durable custody/i);
+
+    expect(committed).toHaveLength(1);
   });
 
   it('imports think tool calls as thinking messages and skips their tool results', async () => {

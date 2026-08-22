@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { parseSessionCreateSpawnOptions } from './parseSessionCreateSpawnOptions';
 
 describe('parseSessionCreateSpawnOptions', () => {
-  it('parses runtime-v2 session create flags into session.spawn_new input', () => {
+  it('parses runtime-v2 session create flags into the CLI spawn request', () => {
     const runtimeDescriptorV1 = {
       v: 1,
       agentId: 'codex',
@@ -83,10 +83,9 @@ describe('parseSessionCreateSpawnOptions', () => {
     ]);
 
     expect(parsed.json).toBe(true);
-    expect(parsed.actionInput).toEqual({
-      path: '/tmp/project',
+    expect(parsed.spawnRequest).toEqual({
+      directory: '/tmp/project',
       backendTargetKey: 'backend:codex',
-      agentId: 'codex',
       title: 'My title',
       tag: 'tag-1',
       initialMessage: 'Hello',
@@ -128,18 +127,17 @@ describe('parseSessionCreateSpawnOptions', () => {
     const parsed = parseSessionCreateSpawnOptions([
       'create', '--backend', 'backend:codex', '--model', 'openrouter/model-a', '--provider-connection', 'pc_work',
     ]);
-    expect(parsed.actionInput).toMatchObject({ modelId: 'openrouter/model-a', providerConnectionId: 'pc_work' });
+    expect(parsed.spawnRequest).toMatchObject({ modelId: 'openrouter/model-a', providerConnectionId: 'pc_work' });
   });
 
-  it('carries the concrete Agent identity for strict plugin-backed agent shorthands', () => {
+  it('preserves plugin-backed agent shorthand for the strict V2 normalizer', () => {
     const parsed = parseSessionCreateSpawnOptions([
       'create',
       '--backend',
       'grok',
     ]);
 
-    expect(parsed.actionInput).toMatchObject({
-      agentId: 'grok',
+    expect(parsed.spawnRequest).toMatchObject({
       backendTargetKey: 'agent:grok',
     });
   });
@@ -181,14 +179,14 @@ describe('parseSessionCreateSpawnOptions', () => {
       selection: 'profile',
       id: 'work',
     });
-    expect(parsed.actionInput).not.toHaveProperty('connectedServices');
+    expect(parsed.spawnRequest).not.toHaveProperty('connectedServices');
   });
 
   it('supports --auth-json while rejecting competing shortcut and JSON inputs', () => {
     expect(parseSessionCreateSpawnOptions([
       'create',
       '--auth-json', '{"v":1,"bindingsByServiceId":{"openai-codex":{"source":"native"}}}',
-    ]).actionInput).toHaveProperty('connectedServices');
+    ]).spawnRequest).toHaveProperty('connectedServices');
 
     expect(() => parseSessionCreateSpawnOptions([
       'create',
@@ -202,6 +200,6 @@ describe('parseSessionCreateSpawnOptions', () => {
       'create',
       '--backend', 'backend:codex',
       '--launch-profile', 'work',
-    ]).actionInput).toMatchObject({ profileId: 'work' });
+    ]).spawnRequest).toMatchObject({ profileId: 'work' });
   });
 });

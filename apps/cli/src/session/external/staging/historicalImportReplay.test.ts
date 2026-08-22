@@ -1,8 +1,19 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
+
+import type { ExternalSessionTranscriptRawMessageV1 } from '@happier-dev/protocol';
+import type { LoadedLinkedExternalSession } from '@/api/session/external/takeover/loadLinkedExternalSession';
+import {
+    prepareExternalSessionHistoricalImportItem,
+    readExternalSessionHistoricalImportStagedItem,
+    stageExternalSessionHistoricalImportItem,
+    validateExternalSessionHistoricalImportStagedItem,
+} from '@/api/session/external/import/importExternalSessionTranscript';
+import type { StoredCredentials } from '@/persistence';
 
 import {
     EXTERNAL_SESSION_HISTORICAL_IMPORT_DIAGNOSTIC_CAP,
@@ -13,11 +24,18 @@ import {
     type ExternalSessionOperationPrivateStagingStore,
 } from './operationPrivateStaging';
 
+type HistoricalImportBatchWriteInput = Parameters<
+    Parameters<typeof createExternalSessionHistoricalImportReplay>[0]['writeHistoricalBatch']
+>[0];
+
 const temporaryDirectories: string[] = [];
 
-async function createStore(): Promise<ExternalSessionOperationPrivateStagingStore> {
-    const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-historical-import-replay-'));
-    temporaryDirectories.push(activeServerDir);
+async function createStore(
+    existingActiveServerDir?: string,
+): Promise<ExternalSessionOperationPrivateStagingStore> {
+    const activeServerDir = existingActiveServerDir
+        ?? await mkdtemp(join(tmpdir(), 'happier-historical-import-replay-'));
+    if (!existingActiveServerDir) temporaryDirectories.push(activeServerDir);
     return createExternalSessionOperationPrivateStagingStore({
         activeServerDir,
         limits: {
@@ -25,6 +43,17 @@ async function createStore(): Promise<ExternalSessionOperationPrivateStagingStor
             aggregate: { maxItems: 200, maxBytes: 200_000 },
         },
     });
+}
+
+async function readReplayGroups(
+    staging: ExternalSessionOperationPrivateStagingStore,
+    operationId: string,
+) {
+    const groups = [];
+    for await (const group of staging.streamReplayGroups(operationId)) {
+        groups.push(group);
+    }
+    return groups;
 }
 
 const capturedSource = Object.freeze({
@@ -189,27 +218,29 @@ describe('historical import replay', () => {
             staging,
             sourceGeneration: 'source-generation-1',
             maxBatchItems: 2,
-            prepareStagedItem: async (value, mode) => {
-                const original = value as ReturnType<typeof item>;
-                const prepared = mode === 'validate'
-                    ? original
-                    : original.localId === 'history:grows-during-publish'
-                        ? {
-                            ...original,
-                            content: {
-                                t: 'plain' as const,
-                                v: { role: 'user', text: 'é'.repeat(2_000) },
-                            },
-                        }
-                        : original;
-                return {
-                    ok: true as const,
-                    item: prepared,
-                    ...(mode === 'publish'
-                        ? { cleanup: cleanups.get(original.localId)! }
-                        : {}),
-                };
-            },
+            createPreparationPhase: async (mode) => ({
+                prepareStagedItem: async (value) => {
+                    const original = value as ReturnType<typeof item>;
+                    const prepared = mode === 'validate'
+                        ? original
+                        : original.localId === 'history:grows-during-publish'
+                            ? {
+                                ...original,
+                                content: {
+                                    t: 'plain' as const,
+                                    v: { role: 'user', text: 'é'.repeat(2_000) },
+                                },
+                            }
+                            : original;
+                    return {
+                        ok: true as const,
+                        item: prepared,
+                        ...(mode === 'publish'
+                            ? { cleanup: cleanups.get(original.localId)! }
+                            : {}),
+                    };
+                },
+            }),
             isBatchWithinSerializedByteLimit: ({ items }) =>
                 new TextEncoder().encode(JSON.stringify(items)).byteLength <= 500,
             writeHistoricalBatch,
@@ -262,22 +293,24 @@ describe('historical import replay', () => {
             staging,
             sourceGeneration: 'source-generation-1',
             maxBatchItems: 2,
-            prepareStagedItem: async (value, mode) => {
-                const original = value as ReturnType<typeof item>;
-                if (
-                    mode === 'publish'
-                    && original.localId === 'history:media-fails'
-                ) {
-                    return { ok: false as const, category: 'media' as const };
-                }
-                return {
-                    ok: true as const,
-                    item: original,
-                    ...(mode === 'publish' && original.localId === 'history:prepared'
-                        ? { cleanup: cleanupPrepared }
-                        : {}),
-                };
-            },
+            createPreparationPhase: async (mode) => ({
+                prepareStagedItem: async (value) => {
+                    const original = value as ReturnType<typeof item>;
+                    if (
+                        mode === 'publish'
+                        && original.localId === 'history:media-fails'
+                    ) {
+                        return { ok: false as const, category: 'media' as const };
+                    }
+                    return {
+                        ok: true as const,
+                        item: original,
+                        ...(mode === 'publish' && original.localId === 'history:prepared'
+                            ? { cleanup: cleanupPrepared }
+                            : {}),
+                    };
+                },
+            }),
             isBatchWithinSerializedByteLimit: () => true,
             writeHistoricalBatch,
         });
@@ -577,6 +610,27 @@ describe('historical import replay', () => {
 
     it('replays every content-addressed split batch after a group-checkpoint crash', async () => {
         const staging = await createStore();
+        const sharedMedia = [{
+            workingDirectory: '/workspace',
+            candidateWorkspaceRelativePath: '.happier/uploads/generated/session/message/shared.png',
+        }] as const;
+        await staging.beginOperation({
+            operationId: 'operation-ack-crash-predecessor',
+            representation: 'content',
+            capturedSource,
+        });
+        await staging.recordCreatedWorkspaceMedia({
+            operationId: 'operation-ack-crash-predecessor',
+            media: sharedMedia,
+        });
+        await staging.pauseOperation({
+            operationId: 'operation-ack-crash-predecessor',
+            expiresAtMs: 1,
+        });
+        await staging.markExpiredPausedWorkDiscardRequired({
+            operationId: 'operation-ack-crash-predecessor',
+            nowMs: 1,
+        });
         await staging.beginOperation({
             operationId: 'operation-ack-crash',
             representation: 'content',
@@ -626,6 +680,13 @@ describe('historical import replay', () => {
             staging: crashingStaging,
             sourceGeneration: 'source-generation-1',
             maxBatchItems: 1,
+            createPreparationPhase: async () => ({
+                prepareStagedItem: async (value) => ({
+                    ok: true as const,
+                    item: value as ReturnType<typeof item>,
+                    workspaceMedia: sharedMedia,
+                }),
+            }),
             isBatchWithinSerializedByteLimit: ({ items }) => (
                 new TextEncoder().encode(JSON.stringify(items)).byteLength
             ) <= 50_000,
@@ -633,11 +694,24 @@ describe('historical import replay', () => {
         });
         await expect(crashingProcess.resume('operation-ack-crash'))
             .rejects.toThrow('simulated crash after server acknowledgment');
+        await expect(staging.readCreatedWorkspaceMediaForCleanup({
+            operationId: 'operation-ack-crash-predecessor',
+        })).resolves.toEqual([]);
+        await expect(staging.readCreatedWorkspaceMediaForCleanup({
+            operationId: 'operation-ack-crash',
+        })).resolves.toEqual(sharedMedia);
 
         const restartedProcess = createExternalSessionHistoricalImportReplay({
             staging: durableStaging,
             sourceGeneration: 'source-generation-1',
             maxBatchItems: 1,
+            createPreparationPhase: async () => ({
+                prepareStagedItem: async (value) => ({
+                    ok: true as const,
+                    item: value as ReturnType<typeof item>,
+                    workspaceMedia: sharedMedia,
+                }),
+            }),
             isBatchWithinSerializedByteLimit: ({ items }) => (
                 new TextEncoder().encode(JSON.stringify(items)).byteLength
             ) <= 50_000,
@@ -657,6 +731,165 @@ describe('historical import replay', () => {
             acknowledgedItemCount: 2,
         });
     });
+
+    it.each(['legacy', 'dataKey'] as const)(
+        'replays byte-identical E2EE content after a lost server acknowledgment (%s)',
+        async (encryptionVariant) => {
+            const activeServerDir = await mkdtemp(
+                join(tmpdir(), 'happier-historical-import-replay-e2ee-'),
+            );
+            temporaryDirectories.push(activeServerDir);
+            const staging = await createStore(activeServerDir);
+            const operationId = `operation-e2ee-ack-crash-${encryptionVariant}`;
+            const sessionId = `session-e2ee-ack-crash-${encryptionVariant}`;
+            const rawItem: ExternalSessionTranscriptRawMessageV1 = {
+                id: `provider-item-${encryptionVariant}`,
+                localId: `provider-item-${encryptionVariant}`,
+                createdAtMs: 123,
+                messageRole: 'agent',
+                raw: { role: 'agent', content: { type: 'output', data: 'accepted once' } },
+            };
+            const stagedItem = await stageExternalSessionHistoricalImportItem({
+                item: rawItem,
+                workingDirectory: null,
+                sourceReadRoots: [],
+            });
+            await staging.beginOperation({
+                operationId,
+                representation: 'content',
+                capturedSource,
+            });
+            await staging.appendPageGroup({
+                operationId,
+                captureIndex: 0,
+                groupId: 'only-page',
+                items: [stagedItem],
+                sourceRead: finalSourcePage,
+            });
+            await staging.completeCapture({ operationId });
+
+            const key = new Uint8Array(32).fill(encryptionVariant === 'legacy' ? 7 : 11);
+            const credentials: StoredCredentials = encryptionVariant === 'legacy'
+                ? { token: 'token', encryption: { type: 'legacy', secret: key } }
+                : {
+                    token: 'token',
+                    encryption: { type: 'dataKey', publicKey: key, machineKey: key },
+                };
+            const linked: LoadedLinkedExternalSession = {
+                rawSession: {
+                    id: sessionId,
+                    encryptionMode: 'e2ee',
+                    dataEncryptionKey: null,
+                } as LoadedLinkedExternalSession['rawSession'],
+                metadata: {},
+                sessionPath: null,
+                agentId: 'opencode',
+                machineId: 'machine-1',
+                remoteSessionId: `remote-${encryptionVariant}`,
+                linkGeneration: 'generation-1',
+                source: {
+                    kind: 'opencodeServer',
+                    baseUrl: 'http://127.0.0.1:4096',
+                    directory: '/workspace',
+                },
+                codexBackendMode: null,
+            };
+            const phaseModes: Array<'validate' | 'publish'> = [];
+            const publishPreparations = vi.fn();
+            const batchEffectRevalidations = vi.fn();
+            const createPreparationPhase = async (mode: 'validate' | 'publish') => {
+                phaseModes.push(mode);
+                return {
+                    prepareStagedItem: async (value: unknown) => {
+                        const staged = readExternalSessionHistoricalImportStagedItem(value);
+                        if (!staged) return { ok: false as const, category: 'record' as const };
+                        if (mode === 'validate') {
+                            return {
+                                ok: true as const,
+                                item: validateExternalSessionHistoricalImportStagedItem({
+                                    staged,
+                                    linked,
+                                    credentials,
+                                    sessionId,
+                                }),
+                            };
+                        }
+                        publishPreparations();
+                        return {
+                            ok: true as const,
+                            item: await prepareExternalSessionHistoricalImportItem({
+                                item: staged.item,
+                                linked,
+                                credentials,
+                                sessionId,
+                                workingDirectory: null,
+                                sourceReadRoots: [],
+                            }),
+                        };
+                    },
+                    ...(mode === 'publish'
+                        ? { revalidateBeforeBatchEffect: async () => { batchEffectRevalidations(); } }
+                        : {}),
+                };
+            };
+
+            let acceptedItem: HistoricalImportBatchWriteInput['items'][number] | undefined;
+            let persistedStableItemCount = 0;
+            const writeHistoricalBatch = vi.fn(async (input: HistoricalImportBatchWriteInput) => {
+                const candidate = input.items[0]!;
+                if (acceptedItem && !isDeepStrictEqual(acceptedItem, candidate)) {
+                    return { ok: false as const, error: 'batch_conflict' };
+                }
+                if (!acceptedItem) {
+                    acceptedItem = candidate;
+                    persistedStableItemCount += 1;
+                }
+                return {
+                    ok: true as const,
+                    batchId: input.batchId,
+                    acceptedThroughServerSeq: 1,
+                };
+            });
+            const durableStaging = staging as ExternalSessionOperationPrivateStagingStore;
+            let crashOnce = true;
+            const crashingStaging: ExternalSessionOperationPrivateStagingStore = Object.freeze({
+                ...durableStaging,
+                async acknowledgeReplayGroup(input) {
+                    if (crashOnce) {
+                        crashOnce = false;
+                        throw new Error('simulated lost server acknowledgment');
+                    }
+                    return await durableStaging.acknowledgeReplayGroup(input);
+                },
+            });
+            const createReplay = (replayStaging: ExternalSessionOperationPrivateStagingStore) =>
+                createExternalSessionHistoricalImportReplay({
+                    staging: replayStaging,
+                    sourceGeneration: 'source-generation-1',
+                    maxBatchItems: 1,
+                    createPreparationPhase,
+                    isBatchWithinSerializedByteLimit: ({ items }) => (
+                        new TextEncoder().encode(JSON.stringify(items)).byteLength
+                    ) <= 50_000,
+                    writeHistoricalBatch,
+                });
+
+            await expect(createReplay(crashingStaging).resume(operationId))
+                .rejects.toThrow('simulated lost server acknowledgment');
+            const restartedStaging = await createStore(activeServerDir);
+            await expect(createReplay(restartedStaging).resume(operationId)).resolves.toEqual({
+                status: 'completed',
+                acceptedThroughServerSeq: 1,
+            });
+            expect(writeHistoricalBatch).toHaveBeenCalledTimes(2);
+            expect(writeHistoricalBatch.mock.calls[1]![0].items)
+                .toEqual(writeHistoricalBatch.mock.calls[0]![0].items);
+            expect(persistedStableItemCount).toBe(1);
+            expect(phaseModes).toEqual(['validate', 'publish', 'validate', 'publish']);
+            expect(publishPreparations).toHaveBeenCalledTimes(2);
+            expect(batchEffectRevalidations).toHaveBeenCalledTimes(2);
+        },
+    );
 
     it('cleans media prepared for the refused and later unsent batches without touching accepted media', async () => {
         const staging = await createStore();
@@ -685,12 +918,14 @@ describe('historical import replay', () => {
             sourceGeneration: 'source-generation-1',
             maxBatchItems: 1,
             isBatchWithinSerializedByteLimit: () => true,
-            prepareStagedItem: async (value, mode) => ({
-                ok: true as const,
-                item: value as ReturnType<typeof item>,
-                ...(mode === 'publish'
-                    ? { cleanup: cleanups.get((value as ReturnType<typeof item>).localId)! }
-                    : {}),
+            createPreparationPhase: async (mode) => ({
+                prepareStagedItem: async (value) => ({
+                    ok: true as const,
+                    item: value as ReturnType<typeof item>,
+                    ...(mode === 'publish'
+                        ? { cleanup: cleanups.get((value as ReturnType<typeof item>).localId)! }
+                        : {}),
+                }),
             }),
             writeHistoricalBatch: async (batch) => {
                 batchIndex += 1;
@@ -712,6 +947,446 @@ describe('historical import replay', () => {
         expect(cleanups.get('history:accepted')).not.toHaveBeenCalled();
         expect(cleanups.get('history:refused')).toHaveBeenCalledOnce();
         expect(cleanups.get('history:unsent')).toHaveBeenCalledOnce();
+    });
+
+    it('discards an E2EE prepared receipt after a definitive first-batch rejection', async () => {
+        const staging = await createStore();
+        const operationId = 'operation-e2ee-definitive-rejection';
+        await staging.beginOperation({
+            operationId,
+            representation: 'content',
+            capturedSource,
+        });
+        await staging.appendPageGroup({
+            operationId,
+            captureIndex: 0,
+            groupId: 'only-page',
+            items: [item('definitive-rejection')],
+            sourceRead: finalSourcePage,
+        });
+        await staging.completeCapture({ operationId });
+
+        let publishAttempt = 0;
+        const publishedCiphertexts: string[] = [];
+        let writeAttempt = 0;
+        const replay = createExternalSessionHistoricalImportReplay({
+            staging,
+            sourceGeneration: 'source-generation-1',
+            maxBatchItems: 1,
+            createPreparationPhase: async (mode) => ({
+                prepareStagedItem: async (value) => {
+                    const original = value as ReturnType<typeof item>;
+                    return {
+                        ok: true as const,
+                        item: {
+                            ...original,
+                            content: {
+                                t: 'encrypted' as const,
+                                c: mode === 'publish'
+                                    ? `publish-ciphertext-${++publishAttempt}`
+                                    : 'validation-ciphertext',
+                            },
+                        },
+                    };
+                },
+            }),
+            isBatchWithinSerializedByteLimit: () => true,
+            writeHistoricalBatch: async (batch) => {
+                publishedCiphertexts.push(
+                    (batch.items[0]!.content as { c: string }).c,
+                );
+                writeAttempt += 1;
+                return writeAttempt === 1
+                    ? { ok: false as const, error: 'server_rejected' }
+                    : {
+                        ok: true as const,
+                        batchId: batch.batchId,
+                        acceptedThroughServerSeq: 1,
+                    };
+            },
+        });
+
+        await expect(replay.resume(operationId)).resolves.toMatchObject({
+            status: 'awaiting_user_resume',
+            reason: 'historical_import_failed',
+        });
+        await expect(replay.resume(operationId)).resolves.toEqual({
+            status: 'completed',
+            acceptedThroughServerSeq: 1,
+        });
+        expect(publishedCiphertexts).toEqual([
+            'publish-ciphertext-1',
+            'publish-ciphertext-2',
+        ]);
+    });
+
+    it('revalidates after retaining an E2EE receipt and immediately before its first socket effect', async () => {
+        const durableStaging = await createStore();
+        const operationId = 'operation-e2ee-revalidate-after-receipt';
+        await durableStaging.beginOperation({
+            operationId,
+            representation: 'content',
+            capturedSource,
+        });
+        await durableStaging.appendPageGroup({
+            operationId,
+            captureIndex: 0,
+            groupId: 'only-page',
+            items: [item('revalidate-after-receipt')],
+            sourceRead: finalSourcePage,
+        });
+        await durableStaging.completeCapture({ operationId });
+
+        let currentAuthority = 'authority-1';
+        const authorityChangingStaging: ExternalSessionOperationPrivateStagingStore = Object.freeze({
+            ...durableStaging,
+            async persistPreparedReplayGroup(input) {
+                const persisted = await durableStaging.persistPreparedReplayGroup(input);
+                currentAuthority = 'authority-2';
+                return persisted;
+            },
+        });
+        const writeHistoricalBatch = vi.fn(async (batch: Readonly<{ batchId: string }>) => ({
+            ok: true as const,
+            batchId: batch.batchId,
+            acceptedThroughServerSeq: 1,
+        }));
+        const replay = createExternalSessionHistoricalImportReplay({
+            staging: authorityChangingStaging,
+            sourceGeneration: 'source-generation-1',
+            maxBatchItems: 1,
+            createPreparationPhase: async (mode) => ({
+                prepareStagedItem: async (value) => ({
+                    ok: true as const,
+                    item: {
+                        ...(value as ReturnType<typeof item>),
+                        content: { t: 'encrypted' as const, c: 'prepared-ciphertext' },
+                    },
+                }),
+                ...(mode === 'publish'
+                    ? {
+                        revalidateBeforeBatchEffect: async () => {
+                            if (currentAuthority !== 'authority-1') {
+                                throw new Error('source_changed');
+                            }
+                        },
+                    }
+                    : {}),
+            }),
+            isBatchWithinSerializedByteLimit: () => true,
+            writeHistoricalBatch,
+        });
+
+        await expect(replay.resume(operationId)).rejects.toThrow('source_changed');
+        expect(writeHistoricalBatch).not.toHaveBeenCalled();
+        const replayGroups = await readReplayGroups(durableStaging, operationId);
+        expect(replayGroups).toEqual([
+            expect.objectContaining({ groupId: 'only-page' }),
+        ]);
+        expect(replayGroups[0]!.preparedItems).toBeUndefined();
+    });
+
+    it('revalidates before transferring discarded workspace-media custody after retaining an E2EE receipt', async () => {
+        const durableStaging = await createStore();
+        const predecessorOperationId = 'operation-e2ee-media-custody-predecessor';
+        const operationId = 'operation-e2ee-media-custody-successor';
+        const sharedMedia = [{
+            workingDirectory: '/workspace',
+            candidateWorkspaceRelativePath: '.happier/uploads/generated/session/message/fenced.png',
+        }] as const;
+        await durableStaging.beginOperation({
+            operationId: predecessorOperationId,
+            representation: 'content',
+            capturedSource,
+        });
+        await durableStaging.recordCreatedWorkspaceMedia({
+            operationId: predecessorOperationId,
+            media: sharedMedia,
+        });
+        await durableStaging.pauseOperation({
+            operationId: predecessorOperationId,
+            expiresAtMs: 1,
+        });
+        await durableStaging.markExpiredPausedWorkDiscardRequired({
+            operationId: predecessorOperationId,
+            nowMs: 1,
+        });
+        await durableStaging.beginOperation({
+            operationId,
+            representation: 'content',
+            capturedSource,
+        });
+        await durableStaging.appendPageGroup({
+            operationId,
+            captureIndex: 0,
+            groupId: 'only-page',
+            items: [item('revalidate-before-media-custody')],
+            sourceRead: finalSourcePage,
+        });
+        await durableStaging.completeCapture({ operationId });
+
+        let currentAuthority = 'authority-1';
+        const transferDiscardedWorkspaceMediaOwnership = vi.fn(async (
+            input: Parameters<
+                ExternalSessionOperationPrivateStagingStore['transferDiscardedWorkspaceMediaOwnership']
+            >[0],
+        ) => await durableStaging.transferDiscardedWorkspaceMediaOwnership(input));
+        const authorityChangingStaging: ExternalSessionOperationPrivateStagingStore = Object.freeze({
+            ...durableStaging,
+            async persistPreparedReplayGroup(input) {
+                const persisted = await durableStaging.persistPreparedReplayGroup(input);
+                currentAuthority = 'authority-2';
+                return persisted;
+            },
+            transferDiscardedWorkspaceMediaOwnership,
+        });
+        const writeHistoricalBatch = vi.fn(async (batch: Readonly<{ batchId: string }>) => ({
+            ok: true as const,
+            batchId: batch.batchId,
+            acceptedThroughServerSeq: 1,
+        }));
+        const replay = createExternalSessionHistoricalImportReplay({
+            staging: authorityChangingStaging,
+            sourceGeneration: 'source-generation-1',
+            maxBatchItems: 1,
+            createPreparationPhase: async (mode) => ({
+                prepareStagedItem: async (value) => ({
+                    ok: true as const,
+                    item: {
+                        ...(value as ReturnType<typeof item>),
+                        content: { t: 'encrypted' as const, c: 'prepared-ciphertext' },
+                    },
+                    workspaceMedia: sharedMedia,
+                }),
+                ...(mode === 'publish'
+                    ? {
+                        revalidateBeforeBatchEffect: async () => {
+                            if (currentAuthority !== 'authority-1') {
+                                throw new Error('source_changed');
+                            }
+                        },
+                    }
+                    : {}),
+            }),
+            isBatchWithinSerializedByteLimit: () => true,
+            writeHistoricalBatch,
+        });
+
+        await expect(replay.resume(operationId)).rejects.toThrow('source_changed');
+        expect(transferDiscardedWorkspaceMediaOwnership).not.toHaveBeenCalled();
+        expect(writeHistoricalBatch).not.toHaveBeenCalled();
+        await expect(durableStaging.readCreatedWorkspaceMediaForCleanup({
+            operationId: predecessorOperationId,
+        })).resolves.toEqual(sharedMedia);
+        await expect(durableStaging.readCreatedWorkspaceMediaForCleanup({
+            operationId,
+        })).resolves.toEqual([]);
+        const replayGroups = await readReplayGroups(durableStaging, operationId);
+        expect(replayGroups[0]!.preparedItems).toBeUndefined();
+    });
+
+    it('creates fresh validation and publication snapshots for every replay attempt', async () => {
+        const staging = await createStore();
+        await staging.beginOperation({
+            operationId: 'operation-fresh-phase-snapshots',
+            representation: 'content',
+            capturedSource,
+        });
+        await staging.appendPageGroup({
+            operationId: 'operation-fresh-phase-snapshots',
+            captureIndex: 0,
+            groupId: 'only-page',
+            items: [item('snapshot')],
+            sourceRead: finalSourcePage,
+        });
+        await staging.completeCapture({ operationId: 'operation-fresh-phase-snapshots' });
+
+        let authorityVersion = 1;
+        const phaseSnapshots: Array<Readonly<{
+            mode: 'validate' | 'publish';
+            authorityVersion: number;
+        }>> = [];
+        const publishedTexts: string[] = [];
+        let writeAttempt = 0;
+        const replay = createExternalSessionHistoricalImportReplay({
+            staging,
+            sourceGeneration: 'source-generation-1',
+            maxBatchItems: 1,
+            createPreparationPhase: async (mode) => {
+                const phaseAuthorityVersion = authorityVersion;
+                phaseSnapshots.push({ mode, authorityVersion: phaseAuthorityVersion });
+                return {
+                    prepareStagedItem: async (value) => ({
+                        ok: true as const,
+                        item: {
+                            ...(value as ReturnType<typeof item>),
+                            content: {
+                                t: 'plain' as const,
+                                v: { text: `authority-${phaseAuthorityVersion}` },
+                            },
+                        },
+                    }),
+                    ...(mode === 'publish'
+                        ? { revalidateBeforeBatchEffect: async () => undefined }
+                        : {}),
+                };
+            },
+            isBatchWithinSerializedByteLimit: () => true,
+            writeHistoricalBatch: async (batch) => {
+                writeAttempt += 1;
+                publishedTexts.push(
+                    String((batch.items[0]!.content as { v: { text: string } }).v.text),
+                );
+                return writeAttempt === 1
+                    ? { ok: false as const, error: 'server_unavailable' }
+                    : {
+                        ok: true as const,
+                        batchId: batch.batchId,
+                        acceptedThroughServerSeq: 1,
+                    };
+            },
+        });
+
+        await expect(replay.resume('operation-fresh-phase-snapshots')).resolves.toMatchObject({
+            status: 'awaiting_user_resume',
+            reason: 'historical_import_failed',
+        });
+        authorityVersion = 2;
+        await expect(replay.resume('operation-fresh-phase-snapshots')).resolves.toEqual({
+            status: 'completed',
+            acceptedThroughServerSeq: 1,
+        });
+        expect(phaseSnapshots).toEqual([
+            { mode: 'validate', authorityVersion: 1 },
+            { mode: 'publish', authorityVersion: 1 },
+            { mode: 'validate', authorityVersion: 2 },
+            { mode: 'publish', authorityVersion: 2 },
+        ]);
+        expect(publishedTexts).toEqual(['authority-1', 'authority-2']);
+    });
+
+    it('revalidates a publication phase after item preparation and before the first batch effect', async () => {
+        const staging = await createStore();
+        await staging.beginOperation({
+            operationId: 'operation-publication-currentness',
+            representation: 'content',
+            capturedSource,
+        });
+        await staging.appendPageGroup({
+            operationId: 'operation-publication-currentness',
+            captureIndex: 0,
+            groupId: 'only-page',
+            items: [item('link-change')],
+            sourceRead: finalSourcePage,
+        });
+        await staging.completeCapture({ operationId: 'operation-publication-currentness' });
+
+        let currentLink = 'link-1';
+        const cleanupPrepared = vi.fn(async () => undefined);
+        const writeHistoricalBatch = vi.fn(async (batch: Readonly<{ batchId: string }>) => ({
+            ok: true as const,
+            batchId: batch.batchId,
+            acceptedThroughServerSeq: 1,
+        }));
+        const replay = createExternalSessionHistoricalImportReplay({
+            staging,
+            sourceGeneration: 'source-generation-1',
+            maxBatchItems: 1,
+            createPreparationPhase: async (mode) => {
+                const phaseLink = currentLink;
+                return {
+                    prepareStagedItem: async (value) => {
+                        if (mode === 'publish') currentLink = 'link-2';
+                        return {
+                            ok: true as const,
+                            item: value as ReturnType<typeof item>,
+                            ...(mode === 'publish' ? { cleanup: cleanupPrepared } : {}),
+                        };
+                    },
+                    ...(mode === 'publish'
+                        ? {
+                            revalidateBeforeBatchEffect: async () => {
+                                if (currentLink !== phaseLink) {
+                                    throw new Error('source_changed');
+                                }
+                            },
+                        }
+                        : {}),
+                };
+            },
+            isBatchWithinSerializedByteLimit: () => true,
+            writeHistoricalBatch,
+        });
+
+        await expect(replay.resume('operation-publication-currentness'))
+            .rejects.toThrow('source_changed');
+        expect(writeHistoricalBatch).not.toHaveBeenCalled();
+        expect(cleanupPrepared).toHaveBeenCalledOnce();
+    });
+
+    it('revalidates again before a later split-batch effect and preserves accepted cleanup custody', async () => {
+        const staging = await createStore();
+        await staging.beginOperation({
+            operationId: 'operation-split-batch-currentness',
+            representation: 'content',
+            capturedSource,
+        });
+        await staging.appendPageGroup({
+            operationId: 'operation-split-batch-currentness',
+            captureIndex: 0,
+            groupId: 'split-page',
+            items: [item('accepted'), item('stale-before-effect')],
+            sourceRead: finalSourcePage,
+        });
+        await staging.completeCapture({ operationId: 'operation-split-batch-currentness' });
+
+        let currentLink = 'link-1';
+        const cleanups = new Map([
+            ['history:accepted', vi.fn(async () => undefined)],
+            ['history:stale-before-effect', vi.fn(async () => undefined)],
+        ]);
+        const writeHistoricalBatch = vi.fn(async (batch: HistoricalImportBatchWriteInput) => {
+            currentLink = 'link-2';
+            return {
+                ok: true as const,
+                batchId: batch.batchId,
+                acceptedThroughServerSeq: 1,
+            };
+        });
+        const replay = createExternalSessionHistoricalImportReplay({
+            staging,
+            sourceGeneration: 'source-generation-1',
+            maxBatchItems: 1,
+            createPreparationPhase: async (mode) => {
+                const phaseLink = currentLink;
+                return {
+                    prepareStagedItem: async (value) => ({
+                        ok: true as const,
+                        item: value as ReturnType<typeof item>,
+                        ...(mode === 'publish'
+                            ? { cleanup: cleanups.get((value as ReturnType<typeof item>).localId)! }
+                            : {}),
+                    }),
+                    ...(mode === 'publish'
+                        ? {
+                            revalidateBeforeBatchEffect: async () => {
+                                if (currentLink !== phaseLink) {
+                                    throw new Error('source_changed');
+                                }
+                            },
+                        }
+                        : {}),
+                };
+            },
+            isBatchWithinSerializedByteLimit: () => true,
+            writeHistoricalBatch,
+        });
+
+        await expect(replay.resume('operation-split-batch-currentness'))
+            .rejects.toThrow('source_changed');
+        expect(writeHistoricalBatch).toHaveBeenCalledOnce();
+        expect(cleanups.get('history:accepted')).not.toHaveBeenCalled();
+        expect(cleanups.get('history:stale-before-effect')).toHaveBeenCalledOnce();
     });
 
     it('never replays an incomplete capture', async () => {

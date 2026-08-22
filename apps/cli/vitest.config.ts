@@ -1,10 +1,11 @@
 import { configDefaults, defineConfig } from 'vitest/config'
+import { realpathSync } from 'node:fs'
 import { resolve } from 'node:path'
+import { tmpdir } from 'node:os'
 
 import dotenv from 'dotenv'
 import { resolveVitestFeatureTestExcludeGlobs } from '../../scripts/testing/featureTestGating'
 import {
-    workspacePackageAliases,
     workspacePackageOptimizationExcludes,
     workspacePackageSourcesPlugin,
 } from './scripts/vitestWorkspacePackageResolution'
@@ -26,6 +27,13 @@ if (mergedTestEnv.HAPPIER_SERVER_URL && !mergedTestEnv.HAPPIER_WEBAPP_URL) {
 // Clear it by default so feature tests can opt-in explicitly per case.
 mergedTestEnv.HAPPIER_FEATURE_POLICY_ENV = '';
 
+// Claude's own `CLAUDE_CONFIG_DIR` outranks Happier's `HAPPIER_CLAUDE_CONFIG_DIR`
+// in the Agent's config-root resolver. A developer or agent session that exports
+// it would silently redirect every External Sessions source validation to that
+// ambient root and fail tests that stub only the Happier variable. Clear it so a
+// case that needs a config root sets one explicitly.
+mergedTestEnv.CLAUDE_CONFIG_DIR = '';
+
 export default defineConfig({
     test: {
         // Keep per-file module isolation so cross-file mocks/env mutations cannot leak.
@@ -41,7 +49,7 @@ export default defineConfig({
         testTimeout: 30_000,
         hookTimeout: 30_000,
         setupFiles: ['./src/vitestSetup.ts'],
-        include: ['src/**/*.test.ts', 'scripts/**/*.test.ts'],
+        include: ['src/**/*.test.{ts,tsx}', 'scripts/**/*.test.ts'],
         exclude: [
             ...configDefaults.exclude,
             '**/*.slow.test.ts',
@@ -72,12 +80,23 @@ export default defineConfig({
     },
     resolve: {
         alias: [
-            ...workspacePackageAliases,
             {
                 find: '@',
                 replacement: resolve('./src'),
             },
+            { find: /^react$/u, replacement: resolve('../ui/node_modules/react/index.js') },
+            { find: /^react\/jsx-runtime$/u, replacement: resolve('../ui/node_modules/react/jsx-runtime.js') },
+            { find: /^react\/jsx-dev-runtime$/u, replacement: resolve('../ui/node_modules/react/jsx-dev-runtime.js') },
+            { find: /^react-dom\/client$/u, replacement: resolve('../ui/node_modules/react-dom/client.js') },
+            { find: /^react-dom$/u, replacement: resolve('../ui/node_modules/react-dom/index.js') },
+            { find: /^react-native$/u, replacement: resolve('../ui/node_modules/react-native-web/dist/index.js') },
         ],
+        dedupe: ['react', 'react-dom'],
+    },
+    server: {
+        fs: {
+            allow: [resolve('../..'), realpathSync(tmpdir())],
+        },
     },
     plugins: [workspacePackageSourcesPlugin],
 })

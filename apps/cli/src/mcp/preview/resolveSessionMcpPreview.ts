@@ -28,7 +28,8 @@ function createBuiltInMcpPreviewEntry(): BuiltInMcpPreviewEntryV1 {
 }
 
 function formatWarning(warning: DaemonMcpServersDetectWarningV1): string {
-  return `${warning.provider}:${warning.code}${warning.path ? `:${warning.path}` : ''}`;
+  const provider = warning.provider ?? 'unattributed';
+  return `${provider}:${warning.code}${warning.path ? `:${warning.path}` : ''}`;
 }
 
 export function resolveSessionMcpPreview(params: Readonly<{

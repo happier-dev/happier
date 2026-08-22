@@ -6,8 +6,13 @@ import type { AgentMessageHandler, SessionId } from '@/agent/core/AgentMessage';
 import type { ExecutionRunParentSessionPermissionRequestEnvelope } from '@/agent/executionRuns/policy/executionRunPermissionInteractionPolicy';
 import type { ExecutionRunBackendController } from '@/agent/executionRuns/controllers/types';
 import { appendExecutionRunControllerHostBarrier } from '@/agent/executionRuns/controllers/failureSignal';
+import type { ExecutionRunTranscriptPublisher } from '../executionRunTranscriptPublisher';
 import type { ExecutionRunState } from '../executionRunTypes';
-import { readBackendTargetRefV2, readRuntimeDescriptorV1 } from '@happier-dev/protocol';
+import {
+  AGENT_SESSION_RUNTIME_LIMITS_CANDIDATE_V1,
+  readBackendTargetRefV2,
+  readRuntimeDescriptorV1,
+} from '@happier-dev/protocol';
 import { normalizePermissionRequestOptionsForAcp } from '@/agent/acp/bridge/acpCommonHandlers';
 import {
   buildExecutionRunParentSessionPermissionRequestEnvelope,
@@ -15,6 +20,14 @@ import {
 } from '@/agent/executionRuns/policy/executionRunPermissionInteractionPolicy';
 import type { ExecutionRunPermissionRequestStoreProvider } from '../executionRunPermissionResponseTarget';
 import type { ExecutionRunPermissionCapability } from '../executionRunHostRuntime';
+import { createExecutionRunCodedError } from '../errors';
+
+const EXECUTION_RUN_TASK_OUTPUT_LIMIT_ERROR_CODE = 'execution_run_output_limit_exceeded';
+const EXECUTION_RUN_TASK_OUTPUT_LIMIT_ERROR_MESSAGE = 'Execution-run task output exceeded the configured limit.';
+const EXECUTION_RUN_TASK_OUTPUT_DELTA_MAX_CODE_UNITS =
+  AGENT_SESSION_RUNTIME_LIMITS_CANDIDATE_V1.deltaTextMaxCodeUnits;
+const EXECUTION_RUN_TASK_OUTPUT_TOTAL_MAX_CODE_UNITS =
+  AGENT_SESSION_RUNTIME_LIMITS_CANDIDATE_V1.p0MeasuredCandidates.transcriptTextMaxCodeUnits;
 
 function readNonEmptyString(value: unknown): string | null {
   if (typeof value !== 'string') return null;
@@ -108,7 +121,7 @@ export function createExecutionRunControllerMessageHandler(args: Readonly<{
   sidechainId: string;
   ioMode: ExecutionRunState['ioMode'];
   computeSidechainStreamText: (fullText: string) => string | null;
-  sendAcp: (provider: ACPProvider, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => void;
+  sendAcp: ExecutionRunTranscriptPublisher;
   parentProvider: ACPProvider;
   runs: Map<string, ExecutionRunState>;
   backendSupportsResume: boolean;
@@ -118,8 +131,14 @@ export function createExecutionRunControllerMessageHandler(args: Readonly<{
   onPublicStateUpdated?: (runId: string) => void;
   onModelOutput?: () => void;
 }>): AgentMessageHandler {
+  const publishTranscriptFact = (provider: ACPProvider, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }): void => {
+    args.ctrl.pendingHostBarrier = appendExecutionRunControllerHostBarrier(
+      args.ctrl.pendingHostBarrier,
+      () => args.sendAcp(provider, body, opts),
+    );
+  };
   const forwarder = createAcpAgentMessageForwarder({
-    sendAcp: args.sendAcp,
+    sendAcp: publishTranscriptFact,
     provider: args.parentProvider,
     sidechainId: args.sidechainId,
     makeId: () => randomUUID(),
@@ -148,6 +167,27 @@ export function createExecutionRunControllerMessageHandler(args: Readonly<{
     if (args.ctrl.childSessionId) {
       void args.ctrl.backend.cancel(args.ctrl.childSessionId).catch(() => {});
     }
+  }
+
+  function terminalizeTaskOutputLimit(): void {
+    const error = createExecutionRunCodedError(
+      EXECUTION_RUN_TASK_OUTPUT_LIMIT_ERROR_CODE,
+      EXECUTION_RUN_TASK_OUTPUT_LIMIT_ERROR_MESSAGE,
+    );
+    args.ctrl.failureSignal?.fail(error);
+    if (args.ctrl.childSessionId) {
+      void args.ctrl.backend.cancel(args.ctrl.childSessionId).catch(() => {});
+    }
+  }
+
+  function exceedsTaskOutputLimit(msg: Extract<Parameters<AgentMessageHandler>[0], { type: 'model-output' }>): boolean {
+    if (args.runs.get(args.runId)?.intent !== 'task') return false;
+    if (typeof msg.fullText === 'string') {
+      return msg.fullText.length > EXECUTION_RUN_TASK_OUTPUT_TOTAL_MAX_CODE_UNITS;
+    }
+    if (typeof msg.textDelta !== 'string') return false;
+    return msg.textDelta.length > EXECUTION_RUN_TASK_OUTPUT_DELTA_MAX_CODE_UNITS
+      || args.ctrl.buffer.length + msg.textDelta.length > EXECUTION_RUN_TASK_OUTPUT_TOTAL_MAX_CODE_UNITS;
   }
 
   function readEffectivePermissionCapability(): ExecutionRunPermissionCapability {
@@ -242,13 +282,14 @@ export function createExecutionRunControllerMessageHandler(args: Readonly<{
       const toolName = readNonEmptyString(providerMetadata?.toolName)
         ?? readNonEmptyString(msg.reason)
         ?? 'unknown';
+      const parentSessionId = run.sessionId;
       const mode = resolveExecutionRunPermissionInteractionMode({
         intent: run.intent,
         runClass: run.runClass,
         ioMode: run.ioMode,
         retentionPolicy: run.retentionPolicy,
         permissionMode: run.permissionMode,
-        parentSessionId: run.sessionId,
+        parentSessionId,
         backendCapabilities: {
           canRespondToPermission: readEffectivePermissionCapability() === 'responds',
           canSurfaceParentSessionPrompt: runtimeKind !== null,
@@ -262,13 +303,13 @@ export function createExecutionRunControllerMessageHandler(args: Readonly<{
         return;
       }
 
-      if (mode !== 'prompt_in_parent_session' || !runtimeKind) {
+      if (mode !== 'prompt_in_parent_session' || !runtimeKind || parentSessionId === null) {
         return;
       }
 
       const providerRequestId = readNonEmptyString(msg.id) ?? randomUUID();
       const envelope = buildExecutionRunParentSessionPermissionRequestEnvelope({
-        sessionId: run.sessionId,
+        sessionId: parentSessionId,
         runId: args.runId,
         callId: run.callId,
         sidechainId: args.sidechainId,
@@ -316,9 +357,15 @@ export function createExecutionRunControllerMessageHandler(args: Readonly<{
       args.ctrl.streamWriter.flushAll({ reason: 'tool-call-boundary' });
     }
 
+    if (msg.type !== 'model-output') {
+      forwarder.forward(msg);
+      return;
+    }
+    if (exceedsTaskOutputLimit(msg)) {
+      terminalizeTaskOutputLimit();
+      return;
+    }
     forwarder.forward(msg);
-
-    if (msg.type !== 'model-output') return;
     const prevFullText = args.ctrl.buffer;
     if (typeof msg.fullText === 'string') {
       args.ctrl.buffer = msg.fullText;

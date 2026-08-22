@@ -8,8 +8,8 @@ import { dispatchProviderNativeFork } from '@/session/fork/providerNativeForkDis
 import { createConnectedServiceForkLaunchContext } from '@/session/fork/connectedServiceForkLaunchContext';
 import { updateSessionMetadataWithRetry } from '@/session/metadata/updateSessionMetadataWithRetry';
 import { isAmbiguousSpawnSessionFailure } from '@/session/shared/spawnNonce';
-import { applySessionStateUpdatesToMetadata } from '@happier-dev/agents/session/state/metadataWriters';
 import { readRuntimeDescriptorV1FromMetadata } from '@happier-dev/protocol';
+import { applyAgentAuthoredSessionStateUpdatesToMetadata } from '@/agent/runtime/state/agentAuthoredSessionStateUpdates';
 
 import {
     archiveSessionBestEffort,
@@ -47,8 +47,13 @@ export async function attemptProviderNativeFork(params: Readonly<{
     spawnSession: ForkSpawnSession;
     stopSession: ForkStopSession;
 }>): Promise<ForkStrategyAttemptResult> {
+    // `native` is the generic user intent the fork strategy modal sends: try
+    // every native path this Session supports, in the existing order. It differs
+    // from `auto` only at the tail, where it must not fall through to Replay.
     const shouldAttemptProviderNative =
-        params.requestedStrategy === 'auto' || params.requestedStrategy === 'provider_native';
+        params.requestedStrategy === 'auto'
+        || params.requestedStrategy === 'native'
+        || params.requestedStrategy === 'provider_native';
 
     if (
         !shouldAttemptProviderNative
@@ -78,9 +83,10 @@ export async function attemptProviderNativeFork(params: Readonly<{
                 errorMessage: 'Provider-native fork returned an empty providerSessionId',
             };
         }
-        const launchMetadata = applySessionStateUpdatesToMetadata(
+        const launchMetadata = applyAgentAuthoredSessionStateUpdatesToMetadata(
             {},
             nativeFork.launch.sessionStateUpdates ?? [],
+            'fork.launch.sessionStateUpdates',
         );
         const runtimeDescriptorV1 = readRuntimeDescriptorV1FromMetadata(launchMetadata) ?? undefined;
         const runtimeSelection = readCanonicalSpawnRuntimeSelection({ runtimeDescriptorV1 });
@@ -171,13 +177,10 @@ export async function attemptProviderNativeFork(params: Readonly<{
         return { ok: true, childSessionId };
     } catch (error) {
         if (isAuthenticationError(error)) throw error;
-        if (params.requestedStrategy === 'provider_native') {
-            return {
-                ok: false,
-                errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
-                errorMessage: error instanceof Error ? error.message : 'Provider-native fork failed',
-            };
-        }
-        return null;
+        return {
+            ok: false,
+            errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
+            errorMessage: 'Provider-native fork outcome is unknown. Check the existing child session before retrying.',
+        };
     }
 }

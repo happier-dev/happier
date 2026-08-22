@@ -1,9 +1,13 @@
-import type { Credentials } from '@/persistence';
+import type { StoredCredentials } from '@/persistence';
 import {
   createSessionStateSyncEngine,
   type SessionStateFieldWriteValue,
 } from '@happier-dev/agents';
 import type { SessionStateCapabilitiesV1, SessionStateFieldId } from '@happier-dev/protocol';
+import {
+  assertSessionMetadataMutationCurrentness,
+  type SessionMetadataMutationCurrentness,
+} from '@/session/metadata/updateSessionMetadataWithRetry';
 
 import {
   updateSessionMetadataForTarget,
@@ -63,13 +67,15 @@ function resolveMetadataPortFailureCode(
 }
 
 export async function updateSessionStateFieldForTarget<F extends SessionStateFieldId>(params: Readonly<{
-  credentials: Credentials;
+  credentials: StoredCredentials;
   idOrPrefix: string;
   fieldId: F;
   value: SessionStateFieldWriteValue<F>;
   metadataReason: string;
+  currentness?: SessionMetadataMutationCurrentness;
   maxAttempts?: number;
 }>): Promise<UpdateSessionMetadataForTargetResult> {
+  assertSessionMetadataMutationCurrentness(params.currentness);
   let targetResult: UpdateSessionMetadataForTargetResult | null = null;
   let portFailureCode: UpdateSessionMetadataForTargetResult extends infer Result
     ? Result extends Readonly<{ ok: false; code: infer Code }>
@@ -82,10 +88,12 @@ export async function updateSessionStateFieldForTarget<F extends SessionStateFie
     metadataPort: {
       update: async (sessionId, updater, opts) => {
         try {
+          assertSessionMetadataMutationCurrentness(params.currentness);
           const result = await updateSessionMetadataForTarget({
             credentials: params.credentials,
             idOrPrefix: sessionId,
             updater,
+            currentness: params.currentness,
             ...(typeof opts.maxAttempts === 'number' ? { maxAttempts: opts.maxAttempts } : {}),
           });
           targetResult = result;
@@ -102,10 +110,13 @@ export async function updateSessionStateFieldForTarget<F extends SessionStateFie
                 : 'unknown_error',
           };
         } catch (error) {
+          assertSessionMetadataMutationCurrentness(params.currentness);
           portFailureCode = resolveMetadataPortFailureCode(error);
           return {
             ok: false,
-            reason: portFailureCode === 'session_not_found' || portFailureCode === 'session_id_ambiguous'
+            reason: portFailureCode === 'session_not_found'
+              || portFailureCode === 'session_id_ambiguous'
+              || portFailureCode === 'encryption_material_unavailable'
               ? 'unknown_error'
               : portFailureCode,
           };
@@ -124,6 +135,7 @@ export async function updateSessionStateFieldForTarget<F extends SessionStateFie
     mirrorToProvider: false,
   });
 
+  assertSessionMetadataMutationCurrentness(params.currentness);
   if (targetResult) return targetResult;
   if (!writeResult.ok) {
     return { ok: false, code: writeResult.reason === 'unsupported' ? 'unsupported' : portFailureCode };

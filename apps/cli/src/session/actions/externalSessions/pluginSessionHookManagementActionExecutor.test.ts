@@ -164,21 +164,6 @@ function createHost(
   };
 }
 
-function createPagedHost(
-  readPage: (
-    input: PluginSessionHookStatusInputV1,
-  ) => PluginSessionHookStatusResponseV1 | Promise<PluginSessionHookStatusResponseV1>,
-): PluginSessionHookManagementHost & Readonly<{ calls: HostCall[] }> {
-  const host = createHost(inventory([]));
-  return {
-    ...host,
-    async status(input) {
-      host.calls.push({ operation: 'status', input });
-      return await readPage(input);
-    },
-  };
-}
-
 function createExecutor(host: PluginSessionHookManagementHost) {
   return createPluginSessionHookManagementActionExecutor({
     machineId: 'machine-1',
@@ -378,142 +363,64 @@ describe('plugin session-hook management ActionSpec executor', () => {
     const executeResult = await createExecutor(host).execute(actionId, input);
 
     expect(executeResult).toMatchObject({ ok: true, result: { ok: true } });
-    expect(host.calls).toEqual(
-      mutation === 'install' || mutation === 'enable'
-        ? [{ operation: mutation, input }]
-        : [
-            { operation: 'status', input: statusQuery },
-            { operation: mutation, input },
-          ],
-    );
-  });
-
-  it('selects the requested installation among multiple durable rows', async () => {
-    const host = createHost(inventory([
-      { state: 'installed_disabled', installationId: 'installation-other' },
-      { state: 'installed_enabled', installationId: 'installation-target' },
-    ]));
-    const input = { ...target, installationId: 'installation-target' } as const;
-
-    await expect(createExecutor(host).execute(
-      'plugins.sessionHooks.disable',
-      input,
-    )).resolves.toMatchObject({ ok: true, result: { ok: true } });
-    expect(host.calls).toEqual([
-      { operation: 'status', input: statusQuery },
-      { operation: 'disable', input },
-    ]);
-  });
-
-  it('selects a requested installation returned on a later exact-Agent page', async () => {
-    const host = createPagedHost((input) => (
-      input.intent === 'passive_inventory' && input.cursor === undefined
-    )
-      ? inventory(
-          [{ state: 'installed_disabled', installationId: 'installation-other' }],
-          { nextCursor: 'cursor-2' },
-        )
-      : inventory([{
-          state: 'installed_enabled',
-          installationId: 'installation-target',
-        }]));
-    const input = { ...target, installationId: 'installation-target' } as const;
-
-    await expect(createExecutor(host).execute(
-      'plugins.sessionHooks.disable',
-      input,
-    )).resolves.toMatchObject({ ok: true, result: { ok: true } });
-    expect(host.calls).toEqual([
-      { operation: 'status', input: statusQuery },
-      {
-        operation: 'status',
-        input: { ...statusQuery, cursor: 'cursor-2' },
-      },
-      { operation: 'disable', input },
-    ]);
+    expect(host.calls).toEqual([{ operation: mutation, input }]);
   });
 
   it.each([
-    ['plugins.sessionHooks.disable', 'installed_disabled'],
-    ['plugins.sessionHooks.uninstall', 'not_installed'],
-  ] as const)('rejects %s from invalid state %s without mutation', async (
+    'plugins.sessionHooks.disable',
+    'plugins.sessionHooks.uninstall',
+  ] as const)('lets %s reach the locked host while the inventory reports a diagnostic', async (
     actionId,
-    state,
   ) => {
-    const current = state === 'not_installed'
-      ? inventory([{ state }])
-      : inventory([{ state, installationId: 'installation-1' }]);
-    const host = createHost(current);
+    // An unreadable NEIGHBOURING installation record is exactly when a user most
+    // needs to disable or remove the one they can see. A page-level diagnostic
+    // describes other rows; it must not veto a mutation the locked custody owner
+    // can complete.
+    const host = createHost(inventory(
+      [{ state: 'installed_enabled', installationId: 'installation-1' }],
+      { diagnostics: [{ code: 'installation_record_read_failed', retryable: true }] },
+    ));
+    const input = { ...target, installationId: 'installation-1' } as const;
 
-    await expect(createExecutor(host).execute(actionId, {
-      ...target,
-      installationId: 'installation-1',
-    })).resolves.toMatchObject({
-      ok: true,
-      result: {
-        ok: false,
-        diagnostic: { code: 'operation_failed', retryable: false },
-      },
-    });
-    expect(host.calls).toEqual([{ operation: 'status', input: statusQuery }]);
+    await expect(createExecutor(host).execute(actionId, input))
+      .resolves.toMatchObject({ ok: true, result: { ok: true } });
+    expect(host.calls).toEqual([{
+      operation: actionId === 'plugins.sessionHooks.disable' ? 'disable' : 'uninstall',
+      input,
+    }]);
   });
 
-  it('rejects an installation identity replaced since the status read', async () => {
-    const host = createHost(inventory([{
-      state: 'installed_enabled',
-      installationId: 'installation-current',
-    }]));
+  it.each([
+    'plugins.sessionHooks.disable',
+    'plugins.sessionHooks.enable',
+    'plugins.sessionHooks.uninstall',
+  ] as const)(
+    'forwards the locked host refusal for %s without adding a second verdict',
+    async (actionId) => {
+      // The host resolves the durable custody record under the per-installation
+      // mutation lock, so a stale or already-replaced identity is ITS answer.
+      // The executor must relay it, not pre-empt it from an unlocked read.
+      const refuse = vi.fn(async () => ({
+        ok: false as const,
+        diagnostic: { code: 'installation_replaced' as const, retryable: false },
+      }));
+      const host = createHost(
+        inventory([{ state: 'installed_enabled', installationId: 'installation-current' }]),
+        { disable: refuse, enable: refuse, uninstall: refuse },
+      );
+      const input = { ...target, installationId: 'installation-stale' } as const;
 
-    await expect(createExecutor(host).execute(
-      'plugins.sessionHooks.disable',
-      { ...target, installationId: 'installation-stale' },
-    )).resolves.toMatchObject({
-      ok: true,
-      result: {
-        ok: false,
-        diagnostic: { code: 'installation_replaced', retryable: false },
-      },
-    });
-    expect(host.calls).toEqual([{ operation: 'status', input: statusQuery }]);
-  });
-
-  it('rejects duplicate rows for the requested installation', async () => {
-    const host = createHost(inventory([
-      { state: 'installed_enabled', installationId: 'installation-1' },
-      { state: 'installed_disabled', installationId: 'installation-1' },
-    ]));
-
-    await expect(createExecutor(host).execute(
-      'plugins.sessionHooks.disable',
-      { ...target, installationId: 'installation-1' },
-    )).resolves.toMatchObject({
-      ok: true,
-      result: {
-        ok: false,
-        diagnostic: { code: 'operation_failed', retryable: false },
-      },
-    });
-    expect(host.calls).toEqual([{ operation: 'status', input: statusQuery }]);
-  });
-
-  it('checks installation identity before rejecting an invalid current state', async () => {
-    const host = createHost(inventory([{
-      state: 'installed_disabled',
-      installationId: 'installation-current',
-    }]));
-
-    await expect(createExecutor(host).execute(
-      'plugins.sessionHooks.disable',
-      { ...target, installationId: 'installation-stale' },
-    )).resolves.toMatchObject({
-      ok: true,
-      result: {
-        ok: false,
-        diagnostic: { code: 'installation_replaced', retryable: false },
-      },
-    });
-    expect(host.calls).toEqual([{ operation: 'status', input: statusQuery }]);
-  });
+      await expect(createExecutor(host).execute(actionId, input)).resolves.toMatchObject({
+        ok: true,
+        result: {
+          ok: false,
+          diagnostic: { code: 'installation_replaced', retryable: false },
+        },
+      });
+      expect(refuse).toHaveBeenCalledWith(input);
+      expect(host.calls.some((call) => call.operation === 'status')).toBe(false);
+    },
+  );
 
   it('maps thrown host failures to a privacy-safe retryable diagnostic', async () => {
     const host = createHost(inventory([{ state: 'not_installed' }]), {

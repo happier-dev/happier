@@ -1,113 +1,124 @@
-import { randomUUID } from 'node:crypto';
+import type {
+  ActionExecuteResult,
+  ActionExecutorContext,
+  BackendTargetRefV1,
+  ExecutionRunIntent,
+} from '@happier-dev/protocol';
 
-import type { AgentMessage } from '@/agent/core/AgentMessage';
-import { createExecutionRunRuntime } from '@/agent/runtime/bridges/executionRun/runtime/create';
-import type { ExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';
-import { configuration } from '@/configuration';
-import type { BackendTargetRefV1 } from '@happier-dev/protocol';
+import { readStoredCredentials, type StoredCredentials } from '@/persistence';
+import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 
-export type EphemeralExecutionRunTextPromptRuntimeFactory = (opts: Readonly<{
-  cwd: string;
-  runId: string;
-  backendId: string;
-  backendTarget?: BackendTargetRefV1;
-  modelId?: string;
-  permissionMode: string;
-  start: Readonly<{ sessionId: string; intent: string; retentionPolicy: 'ephemeral' }>;
-}>) => ExecutionRunHostRuntime;
+type ExecutionRunStartAction = (
+  input: unknown,
+  context: ActionExecutorContext,
+) => Promise<ActionExecuteResult>;
 
-function createDefaultRuntimeFactory(): EphemeralExecutionRunTextPromptRuntimeFactory {
-  return (opts) =>
-    createExecutionRunRuntime({
-      cwd: opts.cwd,
-      runId: opts.runId,
-      backendId: opts.backendId,
-      ...(opts.backendTarget ? { backendTarget: opts.backendTarget } : {}),
-      modelId: opts.modelId,
-      permissionMode: opts.permissionMode,
-      start: opts.start,
-    });
+export type EphemeralExecutionRunTextPromptStartAction = ExecutionRunStartAction;
+
+function readRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
 }
 
+function stableFailure(code: string): Error & Readonly<{ code: string }> {
+  return Object.assign(new Error(code), { code });
+}
+
+function normalizeNonEmptyString(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  return trimmed || undefined;
+}
+
+function normalizeWaitTimeoutSeconds(timeoutMs: unknown): number | undefined {
+  if (typeof timeoutMs !== 'number' || !Number.isFinite(timeoutMs) || timeoutMs < 1) {
+    return undefined;
+  }
+  const seconds = Math.ceil(timeoutMs / 1_000);
+  return Number.isSafeInteger(seconds) && seconds >= 1 ? seconds : undefined;
+}
+
+function readCanonicalTextResult(result: ActionExecuteResult): string {
+  if (!result.ok) throw stableFailure(result.errorCode);
+
+  const started = readRecord(result.result);
+  const wait = readRecord(started.wait);
+  if (wait.ok !== true) {
+    const code = normalizeNonEmptyString(wait.code) ?? 'execution_run_wait_unavailable';
+    throw stableFailure(code);
+  }
+  if (wait.status !== 'succeeded') {
+    throw stableFailure('execution_run_failed');
+  }
+
+  const observation = readRecord(wait.result);
+  const output = observation.latestToolResult;
+  if (typeof output !== 'string') {
+    throw stableFailure('execution_run_output_invalid');
+  }
+  return output.trim();
+}
+
+async function createCanonicalStartAction(params: Readonly<{
+  credentials?: StoredCredentials | null;
+  signal?: AbortSignal;
+}>): Promise<ExecutionRunStartAction> {
+  const credentials = params.credentials ?? await readStoredCredentials();
+  if (!credentials) throw stableFailure('not_authenticated');
+
+  const executor = createCliActionExecutorFromCredentials({ credentials });
+  const bound = params.signal
+    ? executor.bindInvocation(params.signal)
+    : executor;
+  return async (input, context) => await bound.execute(
+    'execution.run.start',
+    input,
+    context,
+  );
+}
+
+/**
+ * Thin compatibility adapter for the former text-prompt helper. Run identity,
+ * runtime selection, output collection, cancellation, and waiting now belong
+ * to the incumbent execution.run.start Action and its existing waiter.
+ */
 export async function runEphemeralExecutionRunTextPrompt(params: Readonly<{
-  cwd: string;
   sessionId: string;
-  backendId: string;
-  backendTarget?: BackendTargetRefV1;
+  backendTarget: BackendTargetRefV1;
   modelId?: string;
   permissionMode: string;
-  intent: string;
+  intent: ExecutionRunIntent;
   prompt: string;
-  createRuntime?: EphemeralExecutionRunTextPromptRuntimeFactory;
-  configureSession?: (sessionId: string) => Promise<void>;
+  credentials?: StoredCredentials | null;
+  signal?: AbortSignal;
   timeoutMs?: number | null;
+  executeStart?: EphemeralExecutionRunTextPromptStartAction;
 }>): Promise<string> {
-  const intent = String(params.intent ?? '').trim() || 'execution_run';
-  const runId = `${intent}_${randomUUID()}`;
-  const createRuntime = params.createRuntime ?? createDefaultRuntimeFactory();
-
-  const runtime = createRuntime({
-    cwd: params.cwd,
-    runId,
-    backendId: params.backendId,
-    ...(params.backendTarget ? { backendTarget: params.backendTarget } : {}),
-    modelId: params.modelId,
-    permissionMode: params.permissionMode,
-    start: {
-      sessionId: params.sessionId,
-      intent,
-      retentionPolicy: 'ephemeral',
-    },
+  params.signal?.throwIfAborted();
+  const executeStart = params.executeStart ?? await createCanonicalStartAction({
+    ...(params.credentials !== undefined ? { credentials: params.credentials } : {}),
+    ...(params.signal ? { signal: params.signal } : {}),
   });
-
-  const handler = (msg: AgentMessage) => {
-    if (msg.type !== 'model-output') return;
-    if (typeof msg.fullText === 'string') {
-      buffer = msg.fullText;
-      sawFullText = true;
-      return;
-    }
-    if (typeof msg.textDelta === 'string' && !sawFullText) {
-      buffer += msg.textDelta;
-    }
-  };
-
-  let buffer = '';
-  let sawFullText = false;
-
-  const unsubscribeMessages = runtime.subscribeMessages(handler);
-
-  try {
-    const started = await runtime.provisionSession();
-    if (params.configureSession) {
-      await params.configureSession(started.sessionId);
-    }
-    await runtime.sendPrompt(started.sessionId, params.prompt);
-
-    const timeoutMs =
-      typeof params.timeoutMs === 'number' && Number.isFinite(params.timeoutMs) && params.timeoutMs >= 1
-        ? Math.floor(params.timeoutMs)
-        : typeof configuration.executionRunsBoundedTimeoutMs === 'number'
-          && Number.isFinite(configuration.executionRunsBoundedTimeoutMs)
-          && configuration.executionRunsBoundedTimeoutMs >= 1
-          ? Math.floor(configuration.executionRunsBoundedTimeoutMs)
-          : null;
-
-    if (runtime.waitForTurnCompletion) {
-      if (typeof timeoutMs === 'number') {
-        await runtime.waitForTurnCompletion(timeoutMs);
-      } else {
-        await runtime.waitForTurnCompletion();
-      }
-    }
-
-    return buffer.trim();
-  } finally {
-    unsubscribeMessages();
-    try {
-      await runtime.dispose();
-    } catch {
-      // best-effort
-    }
-  }
+  const modelId = normalizeNonEmptyString(params.modelId);
+  const waitTimeoutSeconds = normalizeWaitTimeoutSeconds(params.timeoutMs);
+  const result = await executeStart({
+    intent: params.intent,
+    backendTarget: params.backendTarget,
+    ...(modelId ? { modelId } : {}),
+    permissionMode: params.permissionMode,
+    retentionPolicy: 'ephemeral',
+    runClass: 'bounded',
+    ioMode: 'request_response',
+    instructions: params.prompt,
+    waitForCompletion: true,
+    ...(waitTimeoutSeconds !== undefined
+      ? { waitTimeoutSeconds }
+      : {}),
+  }, {
+    surface: 'cli',
+    defaultSessionId: params.sessionId,
+    ...(params.signal ? { signal: params.signal } : {}),
+  });
+  return readCanonicalTextResult(result);
 }

@@ -1,17 +1,19 @@
 import chalk from 'chalk';
 import { randomUUID } from 'node:crypto';
-import { AGENTS_CORE, isAgentId } from '@happier-dev/agents';
+import { SessionSpawnNewResultV1Schema, type SessionSpawnNewInputV2 } from '@happier-dev/protocol';
 
 import { hasFlag } from '@/cli/commands/shared/argvFlags';
-import { printJsonEnvelope } from '@/cli/output/jsonEnvelope';
+import { printJsonEnvelope, writeJsonStdout } from '@/cli/output/jsonEnvelope';
 import { mapUnknownErrorToControlError } from '@/cli/control/controlErrorMapping';
-import type { Credentials } from '@/persistence';
+import type { StoredCredentials } from '@/persistence';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 import { normalizeActionExecuteResult } from '@/cli/commands/session/shared/normalizeActionExecuteResult';
 import { tryHandleApprovalRequestCreated } from '@/cli/commands/session/shared/tryHandleApprovalRequestCreated';
 import { SESSION_HELP_LINES } from '@/cli/commands/session/shared/sessionCommandUsage';
 import { parseSessionCreateSpawnOptions } from './create/parseSessionCreateSpawnOptions';
+import { normalizeSessionCreateSpawnRequest } from './create/normalizeSessionCreateSpawnRequest';
 import { resolveConnectedServicesLaunchAuthWithInventory } from '@/cli/connectedServicesLaunchAuth';
+import { resolveCatalogAgentConnectedServiceIds } from '@/agent/catalog/registry';
 
 const SESSION_CREATE_USAGE = `Usage: ${SESSION_HELP_LINES.create}`;
 
@@ -25,20 +27,23 @@ function hasSpawnNonce(details: unknown): boolean {
 async function resolveSessionCreateConnectedServices(params: Readonly<{
   executor: ReturnType<typeof createCliActionExecutorFromCredentials>;
   parsedOptions: ReturnType<typeof parseSessionCreateSpawnOptions>;
-}>): Promise<Record<string, unknown>> {
+  input: SessionSpawnNewInputV2;
+  agentId: string;
+}>): Promise<SessionSpawnNewInputV2> {
   const intent = params.parsedOptions.connectedServicesAuthIntent;
-  if (!intent || intent.kind === 'default') return params.parsedOptions.actionInput;
+  if (!intent || intent.kind === 'default') return params.input;
 
-  const rawAgentId = params.parsedOptions.actionInput.agentId;
-  if (!isAgentId(rawAgentId)) throw new Error('connected_service_auth_unsupported');
-  const supportedServiceIds = AGENTS_CORE[rawAgentId].connectedServices?.supportedServiceIds ?? [];
+  const supportedServiceIds = resolveCatalogAgentConnectedServiceIds(params.agentId);
+  if (supportedServiceIds.length === 0) {
+    throw new Error('connected_service_auth_unsupported');
+  }
   const connectedServices = await resolveConnectedServicesLaunchAuthWithInventory({
     intent,
     supportedServiceIds,
     listInventory: async () => {
       const inventoryResult = normalizeActionExecuteResult(await params.executor.execute(
         'sessions.spawn.connected_services.list',
-        { agentId: rawAgentId, includeUnavailable: false },
+        { agentId: params.agentId, includeUnavailable: false },
         { surface: 'cli', defaultSessionId: null },
       ));
       if (!inventoryResult.ok) {
@@ -48,25 +53,25 @@ async function resolveSessionCreateConnectedServices(params: Readonly<{
     },
   });
   return connectedServices
-    ? { ...params.parsedOptions.actionInput, connectedServices }
-    : params.parsedOptions.actionInput;
+    ? { ...params.input, connectedServices }
+    : params.input;
 }
 
 export async function cmdSessionCreate(
   argv: string[],
-  deps: Readonly<{ readCredentialsFn: () => Promise<Credentials | null> }>,
+  deps: Readonly<{ readCredentialsFn: () => Promise<StoredCredentials | null> }>,
 ): Promise<void> {
   if (hasFlag(argv, '--help') || hasFlag(argv, '-h')) {
     throw new Error(SESSION_CREATE_USAGE);
   }
   const parsedOptions = parseSessionCreateSpawnOptions(argv);
-  const { json, backendRaw, backendTargetKey, spawnAttemptId, resumeSpawnAttempt, actionInput } = parsedOptions;
+  const { json, backendRaw, backendTargetKey, spawnAttemptId, resumeSpawnAttempt } = parsedOptions;
   const effectiveSpawnAttemptId = spawnAttemptId ?? randomUUID();
 
   const credentials = await deps.readCredentialsFn();
   if (!credentials) {
     if (json) {
-      printJsonEnvelope({ ok: false, kind: 'session_create', error: { code: 'not_authenticated' } });
+      await printJsonEnvelope({ ok: false, kind: 'session_create', error: { code: 'not_authenticated' } });
       return;
     }
     console.error(chalk.red('Error:'), 'Not authenticated. Run "happier auth login" first.');
@@ -80,9 +85,12 @@ export async function cmdSessionCreate(
   const executor = createCliActionExecutorFromCredentials({ credentials });
   let actionRes;
   try {
+    const normalizedSpawn = await normalizeSessionCreateSpawnRequest(parsedOptions.spawnRequest);
     const resolvedActionInput = await resolveSessionCreateConnectedServices({
       executor,
       parsedOptions,
+      input: normalizedSpawn.input,
+      agentId: normalizedSpawn.agentId,
     });
     actionRes = await executor.execute(
       'session.spawn_new',
@@ -97,7 +105,7 @@ export async function cmdSessionCreate(
   } catch (error) {
     const mapped = mapUnknownErrorToControlError(error);
     if (json) {
-      printJsonEnvelope({
+      await printJsonEnvelope({
         ok: false,
         kind: 'session_create',
         error: {
@@ -117,7 +125,7 @@ export async function cmdSessionCreate(
   if (!result.ok) {
     const isAmbiguousSpawn = hasSpawnNonce(result.details);
     if (json) {
-      printJsonEnvelope({
+      await printJsonEnvelope({
         ok: false,
         kind: 'session_create',
         error: {
@@ -138,35 +146,57 @@ export async function cmdSessionCreate(
       ...(result.details !== undefined ? { details: result.details } : {}),
     });
   }
-  const created = result.data as any;
-  if (tryHandleApprovalRequestCreated({ envelopeKind: 'session_create', json, result: created })) {
+  const rawCreated = result.data;
+  if (await tryHandleApprovalRequestCreated({ envelopeKind: 'session_create', json, result: rawCreated })) {
     return;
   }
-  if (!created || typeof created !== 'object') {
+  const parsedCreated = SessionSpawnNewResultV1Schema.safeParse(rawCreated);
+  if (!parsedCreated.success) {
     throw new Error('session_create_failed');
   }
+  const created = parsedCreated.data;
   if (created.type === 'error') {
-    const code = typeof created.errorCode === 'string' ? created.errorCode : 'session_create_failed';
+    const code = created.code;
     if (json) {
-      printJsonEnvelope({
+      await printJsonEnvelope({
         ok: false,
         kind: 'session_create',
         error: {
           code,
-          ...(typeof created.errorMessage === 'string' && created.errorMessage.trim().length > 0 ? { message: created.errorMessage } : {}),
-          ...(typeof created.host === 'string' && created.host.trim().length > 0 ? { host: created.host } : {}),
+          ...(created.retryable ? { retryable: true } : {}),
         },
       });
       return;
     }
     throw Object.assign(new Error(code), { code });
   }
+  if (created.type === 'pending') {
+    if (json) {
+      await printJsonEnvelope({
+        ok: false,
+        kind: 'session_create',
+        error: {
+          code: 'session_create_pending',
+          ...(created.retryWithSameCreationKey ? { retryWithSameCreationKey: true } : {}),
+          outcome: created.outcome,
+          spawnAttemptId: effectiveSpawnAttemptId,
+        },
+      });
+      return;
+    }
+    throw Object.assign(new Error('session_create_pending'), { code: 'session_create_pending' });
+  }
+
+  const output = {
+    created: created.disposition === 'created',
+    session: { id: created.sessionId },
+  };
 
   if (json) {
-    printJsonEnvelope({ ok: true, kind: 'session_create', data: { session: created.session, created: created.created } });
+    await printJsonEnvelope({ ok: true, kind: 'session_create', data: output });
     return;
   }
 
   console.log(chalk.green('✓'), 'session created');
-  console.log(JSON.stringify({ created: true, session: created.session }, null, 2));
+  await writeJsonStdout(output, { pretty: true });
 }

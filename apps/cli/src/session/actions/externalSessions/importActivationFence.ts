@@ -22,8 +22,11 @@ function requiresPublicationFence(
     if (actionId === 'sessions.external.materialize.start') return true;
     if (actionId === 'sessions.external.takeover.start') {
         const parsed = ExternalSessionTakeoverStartInputV1Schema.safeParse(input);
-        return parsed.success
-            && parsed.data.request.targetStorageMode === 'persisted';
+        // A start this owner cannot parse is not proven exempt from the fence.
+        // Admitting it would let an unverified durable takeover start bypass
+        // the runtime-bound hosted-admission requirement entirely.
+        if (!parsed.success) return true;
+        return parsed.data.request.targetStorageMode === 'persisted';
     }
     if (
         actionId === 'sessions.external.operation.resume'
@@ -43,9 +46,9 @@ function supportsPublicationFence(
     requiredVersion: number,
 ): boolean {
     if (serverSnapshot?.status !== 'ready') return false;
-    const version = serverSnapshot.features.capabilities.compatibility
-        ?.externalSessionImport
-        ?.currentPublicationFenceVersion;
+    const version = serverSnapshot.features.capabilities.session
+        .externalImport
+        ?.publicationFenceVersion;
     return typeof version === 'number'
         && version >= requiredVersion;
 }

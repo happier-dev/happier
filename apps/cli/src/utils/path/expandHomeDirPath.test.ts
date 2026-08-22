@@ -1,9 +1,15 @@
+import { join } from 'node:path';
+
 import { describe, expect, it } from 'vitest';
 
 import {
   canonicalAbsolutePathsEqual,
   expandHomeDirPath,
+  isCanonicalAbsolutePathInsideRoot,
+  resolveAbsolutePathFromWorkingDirectory,
   resolveCanonicalAbsolutePath,
+  resolveCanonicalAbsoluteChildPathComparisonIdentity,
+  resolveCanonicalAbsolutePathComparisonIdentity,
 } from './expandHomeDirPath';
 
 describe('CLI path canonicalization', () => {
@@ -49,6 +55,50 @@ describe('CLI path canonicalization', () => {
     )).toBe(true);
   });
 
+  it('contains Windows paths across mixed separators without confusing siblings or dot-prefixed children', () => {
+    const root = 'C:\\Users\\Alice\\project';
+
+    expect(isCanonicalAbsolutePathInsideRoot(
+      root,
+      'c:/users/alice/project\\build/output.js',
+    )).toBe(true);
+    expect(isCanonicalAbsolutePathInsideRoot(
+      root,
+      'C:\\Users\\Alice\\project-other\\output.js',
+    )).toBe(false);
+    expect(isCanonicalAbsolutePathInsideRoot(
+      root,
+      'C:\\Users\\Alice\\project\\..build\\output.js',
+    )).toBe(true);
+  });
+
+  it('exposes the same portable comparison identity for Windows and home aliases', () => {
+    expect(resolveCanonicalAbsolutePathComparisonIdentity(
+      'C:\\Users\\Alice\\happier\\managed\\staging\\..\\runtime',
+    )).toBe(resolveCanonicalAbsolutePathComparisonIdentity(
+      'c:/users/alice/HAPPIER/managed/runtime/',
+    ));
+
+    const env = { HOME: '/Users/Alice' };
+    expect(resolveCanonicalAbsolutePathComparisonIdentity(
+      '~/projects/acme/',
+      { env, platform: 'darwin' },
+    )).toBe(resolveCanonicalAbsolutePathComparisonIdentity(
+      '/Users/Alice/projects/acme',
+      { env, platform: 'darwin' },
+    ));
+  });
+
+  it('keeps POSIX-root child comparison identity case-sensitive', () => {
+    expect(resolveCanonicalAbsoluteChildPathComparisonIdentity(
+      '/',
+      '.happier/uploads/generated/session/message/File.png',
+    )).not.toBe(resolveCanonicalAbsoluteChildPathComparisonIdentity(
+      '/',
+      '.happier/uploads/generated/session/message/file.png',
+    ));
+  });
+
   it('preserves POSIX case-sensitive identity while normalizing separator input', () => {
     const upper = resolveCanonicalAbsolutePath('/Users/Alice\\projects/../acme', { platform: 'linux' });
     const lower = resolveCanonicalAbsolutePath('/users/alice/acme', { platform: 'linux' });
@@ -59,5 +109,17 @@ describe('CLI path canonicalization', () => {
     });
     expect(upper?.comparisonKey).not.toBe(lower?.comparisonKey);
     expect(canonicalAbsolutePathsEqual('/Users/Alice/acme', '/users/alice/acme')).toBe(false);
+  });
+
+  it('resolves a user-supplied locator against the working directory without rewriting an absolute spelling', () => {
+    expect(resolveAbsolutePathFromWorkingDirectory('./nested/plugin'))
+      .toBe(join(process.cwd(), 'nested', 'plugin'));
+    expect(resolveAbsolutePathFromWorkingDirectory('  .  ')).toBe(process.cwd());
+    // An already-absolute locator keeps its exact spelling, including a trailing
+    // separator that `resolve` would drop, so it stays the identity the daemon
+    // and the plugin catalog persisted.
+    expect(resolveAbsolutePathFromWorkingDirectory('/tmp/example-plugin/')).toBe('/tmp/example-plugin/');
+    expect(resolveAbsolutePathFromWorkingDirectory('   ')).toBeNull();
+    expect(resolveAbsolutePathFromWorkingDirectory('')).toBeNull();
   });
 });

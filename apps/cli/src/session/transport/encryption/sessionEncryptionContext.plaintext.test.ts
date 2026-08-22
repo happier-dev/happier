@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
+  createPlainSessionOwnerMetadataEnvelopeV1,
   SessionOwnerMetadataV1Schema,
-  sealSessionOwnerMetadataV1,
+  sealSessionOwnerMetadataEnvelopeV1,
 } from '@happier-dev/protocol';
 
 import {
   decryptSessionPayload,
+  deriveSessionInputEqualityTagV1,
   decryptStoredSessionPayload,
   encryptSessionPayload,
   encryptStoredSessionPayload,
@@ -15,31 +17,56 @@ import {
   tryDecryptSessionMetadata,
 } from './sessionEncryptionContext';
 
-describe.each(['legacy', 'dataKey'] as const)('idempotent session payload encryption (%s)', (encryptionVariant) => {
+describe.each(['legacy', 'dataKey'] as const)('session input encryption and equality (%s)', (encryptionVariant) => {
   const ctx = {
     encryptionKey: new Uint8Array(32).fill(7),
     encryptionVariant,
   } as const;
 
-  it('reuses exact ciphertext only for the same local id and frozen payload', () => {
+  it('keeps retry ciphertext randomized while deriving a stable purpose-separated equality tag', () => {
     const payload = { role: 'user', content: { type: 'text', text: 'continue' } };
-    const first = encryptSessionPayload({ ctx, payload, idempotencyKey: 'continuation:one' });
-    const retry = encryptSessionPayload({ ctx, payload, idempotencyKey: 'continuation:one' });
-    const changedPayload = encryptSessionPayload({
+    const requestedAction = { v: 1 as const, kind: 'send_now' as const };
+    const first = encryptSessionPayload({ ctx, payload });
+    const retry = encryptSessionPayload({ ctx, payload });
+    const firstTag = deriveSessionInputEqualityTagV1({
       ctx,
-      payload: { role: 'user', content: { type: 'text', text: 'different' } },
-      idempotencyKey: 'continuation:one',
+      sessionId: 'session-one',
+      requestEnvelope: payload,
+      requestedAction,
     });
-    const changedIdentity = encryptSessionPayload({ ctx, payload, idempotencyKey: 'continuation:two' });
+    const retryTag = deriveSessionInputEqualityTagV1({
+      ctx,
+      sessionId: 'session-one',
+      requestEnvelope: payload,
+      requestedAction,
+    });
+    const changedPayloadTag = deriveSessionInputEqualityTagV1({
+      ctx,
+      sessionId: 'session-one',
+      requestEnvelope: { role: 'user', content: { type: 'text', text: 'different' } },
+      requestedAction,
+    });
+    const changedSessionTag = deriveSessionInputEqualityTagV1({
+      ctx,
+      sessionId: 'session-two',
+      requestEnvelope: payload,
+      requestedAction,
+    });
+    const changedActionTag = deriveSessionInputEqualityTagV1({
+      ctx,
+      sessionId: 'session-one',
+      requestEnvelope: payload,
+      requestedAction: { v: 1, kind: 'enqueue' },
+    });
 
-    expect(retry).toBe(first);
-    expect(changedPayload).not.toBe(first);
-    expect(changedIdentity).not.toBe(first);
+    expect(retry).not.toBe(first);
+    expect(retryTag).toBe(firstTag);
+    expect(firstTag).toMatch(/^[A-Za-z0-9_-]{43}$/u);
+    expect(changedPayloadTag).not.toBe(firstTag);
+    expect(changedSessionTag).not.toBe(firstTag);
+    expect(changedActionTag).not.toBe(firstTag);
     expect(decryptSessionPayload({ ctx, ciphertextBase64: first })).toEqual(payload);
-    expect(decryptSessionPayload({ ctx, ciphertextBase64: changedPayload })).toEqual({
-      role: 'user',
-      content: { type: 'text', text: 'different' },
-    });
+    expect(decryptSessionPayload({ ctx, ciphertextBase64: retry })).toEqual(payload);
   });
 
   it('keeps ordinary sends randomly encrypted when no idempotency key is supplied', () => {
@@ -55,11 +82,6 @@ describe.each(['legacy', 'dataKey'] as const)('idempotent session payload encryp
 });
 
 describe('decryptStoredSessionPayload (plaintext)', () => {
-  const ctx = {
-    encryptionKey: new Uint8Array(32).fill(1),
-    encryptionVariant: 'legacy',
-  } as const;
-
   it('resolves stored content mode from session.encryptionMode', () => {
     expect(resolveSessionStoredContentEncryptionMode(undefined)).toBe('e2ee');
     expect(resolveSessionStoredContentEncryptionMode({})).toBe('e2ee');
@@ -70,7 +92,7 @@ describe('decryptStoredSessionPayload (plaintext)', () => {
   it('parses JSON when mode is plain', () => {
     const res = decryptStoredSessionPayload({
       mode: 'plain',
-      ctx,
+      ctx: null,
       value: '{"type":"user","text":"hi"}',
     });
     expect(res).toEqual({ type: 'user', text: 'hi' });
@@ -79,7 +101,7 @@ describe('decryptStoredSessionPayload (plaintext)', () => {
   it('stringifies JSON when mode is plain', () => {
     const wire = encryptStoredSessionPayload({
       mode: 'plain',
-      ctx,
+      ctx: null,
       payload: { type: 'user', text: 'hi' },
     });
     expect(wire).toBe('{"type":"user","text":"hi"}');
@@ -88,7 +110,7 @@ describe('decryptStoredSessionPayload (plaintext)', () => {
   it('returns null when plaintext JSON is malformed', () => {
     const res = decryptStoredSessionPayload({
       mode: 'plain',
-      ctx,
+      ctx: null,
       value: '{',
     });
     expect(res).toBeNull();
@@ -97,7 +119,7 @@ describe('decryptStoredSessionPayload (plaintext)', () => {
   it('decrypts plaintext session metadata without using encryption', () => {
     const credentials = {
       token: 't',
-      encryption: { type: 'legacy', secret: new Uint8Array(32).fill(9) },
+      encryption: null,
     } as const;
 
     const res = tryDecryptSessionMetadata({
@@ -109,6 +131,19 @@ describe('decryptStoredSessionPayload (plaintext)', () => {
     });
 
     expect(res).toEqual({ flavor: 'default', host: 'example', path: '/tmp' });
+  });
+
+  it('keeps retained encrypted metadata locked for token-only credentials', () => {
+    expect(tryDecryptSessionMetadata({
+      credentials: {
+        token: 't',
+        encryption: null,
+      },
+      rawSession: {
+        encryptionMode: 'e2ee',
+        metadata: 'retained-ciphertext',
+      },
+    })).toBeNull();
   });
 
   it('strictly parses layout-v1 shared metadata and rejects owner-only or future-layout fields', () => {
@@ -157,7 +192,32 @@ describe('decryptStoredSessionPayload (plaintext)', () => {
     })).toBeNull();
   });
 
-  it('opens owner metadata with account credentials even when transcript storage is plain', () => {
+  it('opens a plain owner envelope without account encryption material', () => {
+    const ownerMetadata = SessionOwnerMetadataV1Schema.parse({
+      v: 1,
+      workspace: {
+        path: '/private/worktree',
+        machineId: 'machine-private',
+      },
+    });
+    const envelope = createPlainSessionOwnerMetadataEnvelopeV1(
+      ownerMetadata,
+    );
+
+    expect(tryDecryptSessionOwnerMetadata({
+      credentials: {
+        token: 'token-only',
+        encryption: null,
+      },
+      accountEncryptionMode: 'plain',
+      rawSession: {
+        metadataLayoutVersion: 1,
+        ownerMetadata: envelope,
+      },
+    })).toEqual(ownerMetadata);
+  });
+
+  it('opens an encrypted owner envelope for an E2EE Account independently of Session mode', () => {
     const machineKey = new Uint8Array(32).fill(11);
     const credentials = {
       token: 't',
@@ -180,7 +240,7 @@ describe('decryptStoredSessionPayload (plaintext)', () => {
         },
       },
     });
-    const ciphertext = sealSessionOwnerMetadataV1({
+    const envelope = sealSessionOwnerMetadataEnvelopeV1({
       material: { type: 'dataKey', machineKey },
       ownerMetadata,
       randomBytes: (length) => new Uint8Array(length).fill(7),
@@ -188,10 +248,10 @@ describe('decryptStoredSessionPayload (plaintext)', () => {
 
     const opened = tryDecryptSessionOwnerMetadata({
       credentials,
+      accountEncryptionMode: 'e2ee',
       rawSession: {
-        encryptionMode: 'plain',
         metadataLayoutVersion: 1,
-        ownerMetadata: ciphertext,
+        ownerMetadata: envelope,
       },
     });
 
@@ -200,10 +260,81 @@ describe('decryptStoredSessionPayload (plaintext)', () => {
 
     expect(tryDecryptSessionOwnerMetadata({
       credentials,
+      accountEncryptionMode: 'e2ee',
       rawSession: {
-        encryptionMode: 'plain',
+        metadataLayoutVersion: 1,
+        ownerMetadata: envelope,
+      },
+    })).toEqual(ownerMetadata);
+    expect(tryDecryptSessionOwnerMetadata({
+      credentials: {
+        token: 'token-only',
+        encryption: null,
+      },
+      accountEncryptionMode: 'e2ee',
+      rawSession: {
+        metadataLayoutVersion: 1,
+        ownerMetadata: envelope,
+      },
+    })).toBeNull();
+    expect(tryDecryptSessionOwnerMetadata({
+      credentials,
+      accountEncryptionMode: 'e2ee',
+      rawSession: {
         metadataLayoutVersion: 1,
         ownerMetadata: JSON.stringify(ownerMetadata),
+      },
+    })).toBeNull();
+  });
+
+  it('fails owner-envelope content that disagrees with persisted Account mode closed', () => {
+    const machineKey = new Uint8Array(32).fill(17);
+    const credentials = {
+      token: 't',
+      encryption: {
+        type: 'dataKey',
+        publicKey: new Uint8Array(32).fill(18),
+        machineKey,
+      },
+    } as const;
+    const ownerMetadata = SessionOwnerMetadataV1Schema.parse({
+      v: 1,
+      workspace: {
+        path: '/private/worktree',
+        machineId: 'machine-private',
+      },
+    });
+    const encryptedEnvelope = sealSessionOwnerMetadataEnvelopeV1({
+      material: { type: 'dataKey', machineKey },
+      ownerMetadata,
+      randomBytes: (length) => new Uint8Array(length).fill(19),
+    });
+    const plainEnvelope = createPlainSessionOwnerMetadataEnvelopeV1(
+      ownerMetadata,
+    );
+
+    expect(tryDecryptSessionOwnerMetadata({
+      credentials,
+      accountEncryptionMode: 'plain',
+      rawSession: {
+        metadataLayoutVersion: 1,
+        ownerMetadata: encryptedEnvelope,
+      },
+    })).toBeNull();
+    expect(tryDecryptSessionOwnerMetadata({
+      credentials,
+      accountEncryptionMode: 'e2ee',
+      rawSession: {
+        metadataLayoutVersion: 1,
+        ownerMetadata: plainEnvelope,
+      },
+    })).toBeNull();
+    expect(tryDecryptSessionOwnerMetadata({
+      credentials,
+      accountEncryptionMode: 'e2ee',
+      rawSession: {
+        metadataLayoutVersion: 1,
+        ownerMetadata: plainEnvelope,
       },
     })).toBeNull();
   });
@@ -225,7 +356,7 @@ describe('decryptStoredSessionPayload (plaintext)', () => {
         },
       },
     });
-    const ownerMetadataCiphertext = sealSessionOwnerMetadataV1({
+    const ownerMetadataEnvelope = sealSessionOwnerMetadataEnvelopeV1({
       material: { type: 'legacy', secret },
       ownerMetadata,
       randomBytes: (length) => new Uint8Array(length).fill(5),
@@ -233,11 +364,19 @@ describe('decryptStoredSessionPayload (plaintext)', () => {
 
     expect(tryDecryptSessionOwnerMetadataView({
       credentials,
+      accountEncryptionMode: 'e2ee',
       rawSession: {
-        encryptionMode: 'plain',
+        encryptionMode: 'e2ee',
         metadataLayoutVersion: 1,
-        metadata: JSON.stringify({ v: 1 }),
-        ownerMetadata: ownerMetadataCiphertext,
+        metadata: encryptStoredSessionPayload({
+          mode: 'e2ee',
+          ctx: {
+            encryptionKey: secret,
+            encryptionVariant: 'legacy',
+          },
+          payload: { v: 1 },
+        }),
+        ownerMetadata: ownerMetadataEnvelope,
       },
     })).toMatchObject({
       path: '/private/worktree',
@@ -248,4 +387,63 @@ describe('decryptStoredSessionPayload (plaintext)', () => {
       },
     });
   });
+
+  it.each([
+    { accountMode: 'plain', sessionMode: 'e2ee' },
+    { accountMode: 'e2ee', sessionMode: 'plain' },
+  ] as const)(
+    'reads External Sessions owner state when Account=$accountMode and Session=$sessionMode',
+    ({ accountMode, sessionMode }) => {
+      const secret = new Uint8Array(32).fill(23);
+      const credentials = {
+        token: 't',
+        encryption: { type: 'legacy', secret },
+      } as const;
+      const ownerMetadata = SessionOwnerMetadataV1Schema.parse({
+        v: 1,
+        nativeSession: {
+          externalSessionV1: {
+            v: 1,
+            agentId: 'codex',
+            machineId: 'machine-private',
+            remoteSessionId: 'external-private',
+            source: { kind: 'codexHome', home: 'user' },
+            linkedAtMs: 1,
+          },
+        },
+      });
+      const ownerMetadataEnvelope = accountMode === 'plain'
+        ? createPlainSessionOwnerMetadataEnvelopeV1(ownerMetadata)
+        : sealSessionOwnerMetadataEnvelopeV1({
+            material: { type: 'legacy', secret },
+            ownerMetadata,
+            randomBytes: (length) => new Uint8Array(length).fill(24),
+          });
+      const sharedMetadata = { v: 1 as const };
+
+      expect(tryDecryptSessionOwnerMetadataView({
+        credentials,
+        accountEncryptionMode: accountMode,
+        rawSession: {
+          encryptionMode: sessionMode,
+          metadataLayoutVersion: 1,
+          metadata: sessionMode === 'plain'
+            ? JSON.stringify(sharedMetadata)
+            : encryptStoredSessionPayload({
+                mode: 'e2ee',
+                ctx: {
+                  encryptionKey: secret,
+                  encryptionVariant: 'legacy',
+                },
+                payload: sharedMetadata,
+              }),
+          ownerMetadata: ownerMetadataEnvelope,
+        },
+      })).toMatchObject({
+        externalSessionV1: {
+          remoteSessionId: 'external-private',
+        },
+      });
+    },
+  );
 });

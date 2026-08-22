@@ -10,10 +10,10 @@ import type {
 } from '@happier-dev/protocol';
 import { createScmCapabilitiesFromBackendCapabilities } from '@happier-dev/protocol';
 import type {
-    ScmBackendRuntimeHandlerInput,
-    ScmBackendRuntimeRegistration,
-} from '@happier-dev/plugin-sdk/experimental/scm';
-import { readCurrentScmBackendRuntimeServices } from '@happier-dev/plugin-sdk/experimental/scm/backend';
+    BackendRuntimeHandlerInput as ScmBackendRuntimeHandlerInput,
+    BackendRuntimeRegistration as ScmBackendRuntimeRegistration,
+} from '@happier-dev/plugin-sdk/scm/backend';
+import { readCurrentBackendRuntimeServices as readCurrentScmBackendRuntimeServices } from '@happier-dev/plugin-sdk/scm/backend';
 
 import { createRegisteredScmBackendRegistry } from './registeredScmBackendRegistry';
 import type { ScmBackend } from '../types';

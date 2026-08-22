@@ -11,9 +11,8 @@ import {
     ensureExternalSessionLink,
     type ExternalSessionIndexedTagLookupProof,
 } from '@/api/session/external/linking/ensureExternalSessionLink';
-import { resolveCurrentExternalSessionAgentIdentity } from '@/api/session/external/linking/qualifiedLinkIdentityRegistry';
 import { validateExternalMachineSource } from '@/api/session/external/security/validateExternalMachineSource';
-import { readCredentials } from '@/persistence';
+import { readStoredCredentials } from '@/persistence';
 import { configuration } from '@/configuration';
 import { logger } from '@/utils/logger';
 
@@ -24,10 +23,6 @@ import {
     hydrateExternalSessionCandidateThroughAgentSource,
 } from './candidateQuery';
 import {
-    resolveExternalSessionSourceKeyOwner,
-    resolveExternalSessionSurfaceOps,
-} from './providerOpsResolution';
-import {
     externalSessionsError,
     internalErrorResponse,
     mapExternalSessionProviderFailureToExternalSessionsError,
@@ -35,6 +30,7 @@ import {
 
 export async function executeExternalSessionCandidatesListAction(
     raw: unknown,
+    options: Readonly<{ signal?: AbortSignal }> = {},
 ): Promise<ExternalSessionsCandidatesListResponse> {
     const parsed = ExternalSessionsCandidatesListRequestSchema.safeParse(raw);
     if (!parsed.success) return externalSessionsError('invalid_request') satisfies ExternalSessionsCandidatesListResponse;
@@ -52,14 +48,11 @@ export async function executeExternalSessionCandidatesListAction(
         const limit = parsed.data.limit ?? resolveDefaultCandidatesLimit();
         const startedAtMs = Date.now();
         const startMemory = process.memoryUsage();
-        const providerOps = await resolveExternalSessionSurfaceOps(agentId);
+        const providerOps = validatedSource.providerOps;
         if (!providerOps.listCandidates) {
             return externalSessionsError('agent_unavailable', 'candidates_list_not_supported') satisfies ExternalSessionsCandidatesListResponse;
         }
-        const currentAgent = await resolveCurrentExternalSessionAgentIdentity(agentId);
-        if (!currentAgent) {
-            return externalSessionsError('agent_unavailable', 'external_session_agent_unavailable') satisfies ExternalSessionsCandidatesListResponse;
-        }
+        const currentAgent = validatedSource.currentAgent;
         const res = await executeExternalSessionCandidateQuery({
             activeServerDir: configuration.activeServerDir,
             agentIdentity: currentAgent.identity,
@@ -71,23 +64,22 @@ export async function executeExternalSessionCandidatesListAction(
             listCandidates: async (request) => await providerOps.listCandidates!({
                 source,
                 ...request,
+                ...(options.signal ? { signal: options.signal } : {}),
             }),
             hydrateCandidate: async (candidate) => (
                 await hydrateExternalSessionCandidateThroughAgentSource({
                     source,
                     candidate,
                     providerOps,
+                    ...(options.signal ? { signal: options.signal } : {}),
                 })
             ),
         });
-        const credentials = await readCredentials().catch(() => null);
+        const credentials = await readStoredCredentials().catch(() => null);
         if (!credentials) {
             return externalSessionsError('agent_unavailable', 'not_authenticated') satisfies ExternalSessionsCandidatesListResponse;
         }
-        const sourceKeyOwner = await resolveExternalSessionSourceKeyOwner(agentId, source);
-        if (!sourceKeyOwner) {
-            return externalSessionsError('invalid_request', 'external_session_source_invalid') satisfies ExternalSessionsCandidatesListResponse;
-        }
+        const sourceKeyOwner = validatedSource.sourceKeyOwner;
         const qualifiedIdentity = buildLinkedExternalSessionQualifiedIdentityV1({
             agent: currentAgent.identity,
             sourceKind: source.kind,
@@ -100,14 +92,32 @@ export async function executeExternalSessionCandidatesListAction(
                 canonicalResolvedSourceKey: sourceKeyOwner.sourceKey,
             }),
         };
-        const candidates = await annotateExternalSessionCandidates({
-            credentials,
-            machineId: parsed.data.machineId,
-            agentId,
-            source,
-            candidates: res.candidates,
-            sourceKeyOwner,
-        });
+        /**
+         * Link/import annotation retrieves Account encryption currentness and scans the
+         * bounded active and archived Session pages. A preparing index republishes the
+         * same partial prefix on every progress round-trip — hundreds of them for one
+         * browse open — so annotating a partial page repeats that whole retrieval for
+         * rows that are already presented as partial and carry no title either. It runs
+         * for a complete generation only; `link.ensure` is idempotent, so opening an
+         * already-linked partial row still resolves to its existing Session.
+         */
+        const annotationResult = res.preparation
+            ? {
+                candidates: res.candidates,
+                // A partial candidate index has no matching complete Session
+                // annotation pass. Its missing positive link/import projections
+                // are therefore intentionally typed as incomplete rather than
+                // interpreted as negative facts by a consumer.
+                annotationsIncomplete: res.candidates.length > 0,
+            }
+            : await annotateExternalSessionCandidates({
+                credentials,
+                machineId: parsed.data.machineId,
+                agentId,
+                source,
+                candidates: res.candidates,
+                sourceKeyOwner,
+            });
         logger.debug('[externalSessions.actions.candidates] list finished', {
             agentId,
             elapsedMs: Date.now() - startedAtMs,
@@ -115,9 +125,10 @@ export async function executeExternalSessionCandidatesListAction(
             searchMode: searchMode ?? 'default',
             cursorPresent: Boolean(cursor),
             limit,
-            returnedCandidates: candidates.length,
+            returnedCandidates: annotationResult.candidates.length,
             hasNextCursor: Boolean(res.nextCursor),
             searchIncomplete: Boolean(res.searchIncomplete),
+            annotationsIncomplete: annotationResult.annotationsIncomplete,
             preparation: res.preparation?.kind,
             preparationScanned: res.preparation?.scanned,
             heapDeltaBytes: process.memoryUsage().heapUsed - startMemory.heapUsed,
@@ -125,9 +136,10 @@ export async function executeExternalSessionCandidatesListAction(
         });
         return {
             ok: true,
-            candidates: [...candidates],
+            candidates: [...annotationResult.candidates],
             nextCursor: res.nextCursor,
             ...(res.searchIncomplete ? { searchIncomplete: true } : {}),
+            ...(annotationResult.annotationsIncomplete ? { annotationsIncomplete: true } : {}),
             ...(res.preparation ? { preparation: res.preparation } : {}),
             autoLinkPolicyScopeV1,
         } satisfies ExternalSessionsCandidatesListResponse;
@@ -163,6 +175,8 @@ export async function executeExternalSessionLinkEnsureAction(
             env: process.env,
         });
     } catch (error) {
+        const providerFailure = mapExternalSessionProviderFailureToExternalSessionsError(error);
+        if (providerFailure) return providerFailure satisfies ExternalSessionLinkEnsureResponse;
         return internalErrorResponse(
             'external_session_link_ensure.validate_source',
             error,
@@ -173,7 +187,7 @@ export async function executeExternalSessionLinkEnsureAction(
         return externalSessionsError(validatedSource.errorCode ?? 'invalid_request', validatedSource.error) satisfies ExternalSessionLinkEnsureResponse;
     }
 
-    const credentials = await readCredentials().catch(() => null);
+    const credentials = await readStoredCredentials().catch(() => null);
     if (!credentials) {
         return externalSessionsError('agent_unavailable', 'not_authenticated') satisfies ExternalSessionLinkEnsureResponse;
     }
@@ -207,9 +221,18 @@ export async function executeExternalSessionLinkEnsureAction(
                 ? { deadlineAtMs: options.deadlineAtMs }
                 : {}),
         }, {
-            resolveExternalSessionProviderOps: resolveExternalSessionSurfaceOps,
-            resolveCurrentAgent: resolveCurrentExternalSessionAgentIdentity,
-            resolveSourceKeyOwner: resolveExternalSessionSourceKeyOwner,
+            resolveExternalSessionProviderOps: async () => validatedSource.providerOps,
+            resolveCurrentAgent: async () => validatedSource.currentAgent,
+            resolveSourceKeyOwner: async (_agentId, source) => {
+                const sourceKey = validatedSource.sourceKeyOwner.resolveSourceKey(source);
+                if (!sourceKey) return null;
+                return sourceKey === validatedSource.sourceKeyOwner.sourceKey
+                    ? validatedSource.sourceKeyOwner
+                    : Object.freeze({
+                        ...validatedSource.sourceKeyOwner,
+                        sourceKey,
+                    });
+            },
         });
         return { ok: true, sessionId: res.sessionId, created: res.created } satisfies ExternalSessionLinkEnsureResponse;
     } catch (error) {

@@ -28,7 +28,7 @@ describe('happier session actions --json contract', () => {
       ok: true,
       sessionId: 'sess_protocol_actions_execute_1',
       rawSession: { id: 'sess_protocol_actions_execute_1', metadata: {} },
-      ctx: { type: 'plain' as const },
+      ctx: null,
       mode: 'plain' as const,
     });
     execute.mockResolvedValue({ ok: true, result: { started: true } });

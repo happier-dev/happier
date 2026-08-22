@@ -9,6 +9,10 @@ import {
     OS_USER_FILESYSTEM_ACCESS_POLICY,
     type FilesystemAccessPolicy,
 } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
+import {
+    authorizeExactAllowedReadFile,
+    type ExactAllowedReadFile,
+} from '@/rpc/handlers/fileSystem/accessPolicy/exactAllowedReadFile';
 
 import type { DownloadTransferSource } from './downloadTransferSource';
 import { buildZipArchive } from '../download/buildZipArchive';
@@ -33,6 +37,7 @@ export async function resolveWorkspaceFileDownloadSource(input: Readonly<{
     asZip: unknown;
     accessPolicy?: FilesystemAccessPolicy;
     additionalAllowedReadDirs?: readonly string[];
+    additionalAllowedReadFiles?: readonly ExactAllowedReadFile[];
     sessionRpcTransferMaxBytes?: number | null;
 }>): Promise<WorkspaceFileDownloadSourceResult> {
     const path = typeof input.path === 'string' ? input.path : '';
@@ -41,18 +46,32 @@ export async function resolveWorkspaceFileDownloadSource(input: Readonly<{
         return { success: false, error: 'Missing path' };
     }
 
-    const validation = validatePath(
+    const directoryValidation = validatePath(
         path,
         input.workingDirectory,
         input.additionalAllowedReadDirs,
         input.accessPolicy ?? OS_USER_FILESYSTEM_ACCESS_POLICY,
     );
-    if (!validation.valid || !validation.resolvedPath) {
-        return { success: false, error: validation.error ?? 'Access denied' };
+    let resolvedPath: string;
+    if (directoryValidation.valid && directoryValidation.resolvedPath) {
+        resolvedPath = directoryValidation.resolvedPath;
+    } else {
+        const exactFileValidation = authorizeExactAllowedReadFile({
+            targetPath: path,
+            workingDirectory: input.workingDirectory,
+            allowedFiles: input.additionalAllowedReadFiles,
+        });
+        if (!exactFileValidation.valid) {
+            return {
+                success: false,
+                error: exactFileValidation.error ?? directoryValidation.error ?? 'Access denied',
+            };
+        }
+        resolvedPath = exactFileValidation.resolvedPath;
     }
 
     if (!asZip) {
-        const sourceStats = await stat(validation.resolvedPath);
+        const sourceStats = await stat(resolvedPath);
         if (!sourceStats.isFile()) {
             return { success: false, error: 'Download is only supported for files' };
         }
@@ -66,10 +85,10 @@ export async function resolveWorkspaceFileDownloadSource(input: Readonly<{
         return {
             success: true,
             source: {
-                filePath: validation.resolvedPath,
+                filePath: resolvedPath,
                 deleteFileOnClose: false,
                 sizeBytes: sourceStats.size,
-                name: basename(validation.resolvedPath),
+                name: basename(resolvedPath),
             },
         };
     }
@@ -77,7 +96,7 @@ export async function resolveWorkspaceFileDownloadSource(input: Readonly<{
     const zipPath = createTempDownloadZipPath();
     try {
         await buildZipArchive({
-            sourcePath: validation.resolvedPath,
+            sourcePath: resolvedPath,
             zipPath,
             excludedTopLevelDirs: configuration.filesZipExcludedTopLevelDirs,
             maxEntryCount: configuration.filesZipMaxEntryCount,
@@ -101,7 +120,7 @@ export async function resolveWorkspaceFileDownloadSource(input: Readonly<{
                 filePath: zipPath,
                 deleteFileOnClose: true,
                 sizeBytes: zipStats.size,
-                name: `${basename(validation.resolvedPath)}.zip`,
+                name: `${basename(resolvedPath)}.zip`,
             },
         };
     } catch (error) {

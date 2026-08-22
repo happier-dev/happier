@@ -68,6 +68,8 @@ describe('dispatchCli root help', () => {
     expect(ensureMergedAgentCommandRegistryLoadedSpy).toHaveBeenCalled();
     expect(output.logs).toContainEqual(expect.stringContaining('happier - AI CLI On the Go'));
     expect(output.logs).toContainEqual(expect.stringContaining('happier codex'));
+    expect(output.logs).toContainEqual(expect.stringContaining('happier resume [<session-id-or-prefix>]'));
+    expect(output.logs.join('\n')).not.toMatch(/^\s*happier sessions(?:\s|$)/m);
     expect(output.logs).not.toContainEqual(expect.stringContaining('Claude Code Options'));
   });
 
@@ -106,7 +108,7 @@ describe('dispatchCli root help', () => {
     expect(output.logs).toEqual([packageJson.version]);
   });
 
-  it('routes the plural sessions alias without invoking the default backend handler', async () => {
+  it('routes the hidden plural sessions compatibility alias without invoking the default backend handler', async () => {
     await dispatchCli({
       args: ['sessions', '--help'],
       rawArgv: ['happier', 'sessions', '--help'],

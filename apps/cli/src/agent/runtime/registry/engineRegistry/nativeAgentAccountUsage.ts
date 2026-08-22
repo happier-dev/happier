@@ -1,11 +1,13 @@
 import {
+    buildProviderAccountUsageRecordId,
     ConnectedServiceUsageSourceV1Schema,
+    ProviderAccountUsageRecordKeyV1Schema,
     ProviderAccountUsageSnapshotV1Schema,
     type ConnectedServiceId,
     type ConnectedServiceUsageSourceV1,
     type ProviderAccountUsageSnapshotV1,
 } from '@happier-dev/protocol';
-import type { AgentSessionHostServices } from '@happier-dev/plugin-sdk/agent-runtime';
+import type { AgentSessionHostServices } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import {
     notifyDaemonProviderAccountUsageAdoption,
@@ -16,6 +18,7 @@ import {
     type ProviderAccountUsageAdoptionV1,
 } from '@/daemon/connectedServices/accountUsage/adoption';
 import {
+    HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY,
     resolveConnectedServiceRuntimeAuthContextFromEnv,
     resolveConnectedServiceRuntimeAuthContextFromSessionMetadata,
 } from '@/daemon/connectedServices/connectedServiceChildEnvironment';
@@ -55,7 +58,7 @@ type SnapshotRequest = Readonly<{
     sessionId: string;
     snapshot: ProviderAccountUsageSnapshotV1;
     source?: ConnectedServiceUsageSourceV1 | null;
-    credentialFingerprint?: string | null;
+    deriveCredentialFingerprintFromSource?: true;
     policyDisposition?: 'evidence_only';
 }>;
 type PendingSnapshot = Readonly<{
@@ -77,6 +80,32 @@ function readTrimmedString(value: unknown): string | null {
     return trimmed.length > 0 ? trimmed : null;
 }
 
+/**
+ * Host-only authority for accepting the public Agent account-usage observation
+ * and assigning its persisted record identity. Plugin callers never supply a
+ * host `recordId` or parse the Protocol persistence schema themselves.
+ */
+export function canonicalizeAgentAccountUsageSnapshot(
+    value: unknown,
+): ProviderAccountUsageSnapshotV1 | null {
+    const semanticSnapshot = isRecord(value) ? value : null;
+    const semanticRecordKey = isRecord(semanticSnapshot?.recordKey)
+        ? semanticSnapshot.recordKey
+        : null;
+    const parsedRecordKey = ProviderAccountUsageRecordKeyV1Schema.safeParse(
+        semanticRecordKey,
+    );
+    const parsed = ProviderAccountUsageSnapshotV1Schema.safeParse(
+        semanticSnapshot && parsedRecordKey.success
+            ? {
+                ...semanticSnapshot,
+                recordId: buildProviderAccountUsageRecordId(parsedRecordKey.data),
+            }
+            : value,
+    );
+    return parsed.success ? parsed.data : null;
+}
+
 function throwIfAborted(signal: AbortSignal | undefined, message: string): void {
     if (!signal?.aborted) return;
     throw signal.reason instanceof Error ? signal.reason : new Error(message);
@@ -89,7 +118,7 @@ function snapshotPendingKey(request: SnapshotRequest): string {
             ? `${source.serviceId}\u0001${source.profileId}\u0001profile`
             : `${source.serviceId}\u0001${source.profileId}\u0001group_member\u0001${source.groupId}\u0001${source.groupGeneration ?? ''}`
         : '';
-    return `${request.sessionId}\u0000${request.snapshot.recordId}\u0000${sourceKey}\u0000${request.credentialFingerprint ?? ''}`;
+    return `${request.sessionId}\u0000${request.snapshot.recordId}\u0000${sourceKey}`;
 }
 
 export function createNativeAgentAccountUsageService(params: Readonly<{
@@ -142,21 +171,10 @@ export function createNativeAgentAccountUsageService(params: Readonly<{
                     || status === 'source_linked'
                     || status === 'duplicate'
                     || status === 'older'
-                    || status === 'credential_fingerprint_mismatch'
                 ) {
-                    const recordId = typeof resultRecord.recordId === 'string'
-                        ? resultRecord.recordId
-                        : request.snapshot.recordId;
-                    const persisted = typeof resultRecord.persisted === 'boolean'
-                        ? resultRecord.persisted
-                        : undefined;
                     return {
                         status: 'recorded',
-                        result: {
-                            status: 'recorded',
-                            recordId,
-                            ...(persisted === undefined ? {} : { persisted }),
-                        },
+                        result: { status: 'recorded' },
                     };
                 }
                 return { status: 'rejected' };
@@ -231,6 +249,64 @@ export function createNativeAgentAccountUsageService(params: Readonly<{
     if (params.signal.aborted) dispose();
     else params.signal.addEventListener('abort', dispose, { once: true });
 
+    const parseSourceAddress = (value: unknown): Readonly<{
+        serviceId: string;
+        env: Readonly<Record<string, string | undefined>> | null;
+    }> | null => {
+        if (!isRecord(value)) return null;
+        const serviceId = readTrimmedString(value.serviceId);
+        if (!serviceId) return null;
+        const serializedSelection = isRecord(value.env)
+            ? readTrimmedString(value.env[HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY])
+            : null;
+        const env = serializedSelection
+            ? { [HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY]: serializedSelection }
+            : null;
+        return { serviceId, env };
+    };
+
+    const resolveSourceAddress = (address: Readonly<{
+        serviceId: string;
+        env: Readonly<Record<string, string | undefined>> | null;
+    }>): Readonly<{
+        publicSource: Awaited<ReturnType<AgentAccountUsageService['resolveSourceContext']>>;
+        connectedServiceSource: ConnectedServiceUsageSourceV1 | null;
+    }> | null => {
+        const context = address.env
+            ? resolveConnectedServiceRuntimeAuthContextFromEnv(
+                address.env,
+                address.serviceId as ConnectedServiceId,
+            )
+            : resolveConnectedServiceRuntimeAuthContextFromSessionMetadata(
+                params.session,
+                address.serviceId as ConnectedServiceId,
+            );
+        if (!context?.profileId) return null;
+        const source = {
+            serviceId: context.serviceId,
+            profileId: context.profileId,
+            bindingKind: context.groupId ? 'group_member' : 'profile',
+            ...(context.groupId ? { groupId: context.groupId } : {}),
+            ...(context.groupId
+                && context.groupGeneration !== null
+                && context.groupGeneration !== undefined
+                ? { groupGeneration: context.groupGeneration }
+                : {}),
+        } as const;
+        const connectedServiceSource = ConnectedServiceUsageSourceV1Schema.safeParse(source);
+        return {
+            publicSource: Object.freeze({
+                serviceId: source.serviceId,
+                profileId: source.profileId,
+                bindingKind: source.bindingKind,
+                ...(source.bindingKind === 'group_member' ? { groupId: source.groupId } : {}),
+            }),
+            connectedServiceSource: connectedServiceSource.success
+                ? connectedServiceSource.data
+                : null,
+        };
+    };
+
     return Object.freeze({
         async resolveSourceContext(
             input: Parameters<AgentAccountUsageService['resolveSourceContext']>[0],
@@ -240,41 +316,8 @@ export function createNativeAgentAccountUsageService(params: Readonly<{
                 options?.signal,
                 'Provider account usage source-context resolution aborted',
             );
-            const request: Readonly<Record<string, unknown>> = isRecord(input as unknown)
-                ? input as unknown as Readonly<Record<string, unknown>>
-                : {};
-            const serviceId = readTrimmedString(request.serviceId);
-            if (!serviceId) return null;
-            const env = isRecord(request.env)
-                ? Object.fromEntries(
-                    Object.entries(request.env).filter(
-                        (entry): entry is [string, string | undefined] => (
-                            typeof entry[1] === 'string' || entry[1] === undefined
-                        ),
-                    ),
-                )
-                : null;
-            const context = env
-                ? resolveConnectedServiceRuntimeAuthContextFromEnv(
-                    env,
-                    serviceId as ConnectedServiceId,
-                )
-                : resolveConnectedServiceRuntimeAuthContextFromSessionMetadata(
-                    params.session,
-                    serviceId as ConnectedServiceId,
-                );
-            if (!context?.profileId) return null;
-            return ConnectedServiceUsageSourceV1Schema.parse({
-                serviceId: context.serviceId,
-                profileId: context.profileId,
-                bindingKind: context.groupId ? 'group_member' : 'profile',
-                ...(context.groupId ? { groupId: context.groupId } : {}),
-                ...(context.groupId
-                    && context.groupGeneration !== null
-                    && context.groupGeneration !== undefined
-                    ? { groupGeneration: context.groupGeneration }
-                    : {}),
-            });
+            const address = parseSourceAddress(input);
+            return address ? resolveSourceAddress(address)?.publicSource ?? null : null;
         },
         async recordSnapshot(
             input: Parameters<NativeAgentAccountUsageService['recordSnapshot']>[0],
@@ -289,8 +332,8 @@ export function createNativeAgentAccountUsageService(params: Readonly<{
             if (requestedSessionId && requestedSessionId !== params.sessionId) {
                 return { status: 'rejected', reason: 'session_mismatch' };
             }
-            const parsed = ProviderAccountUsageSnapshotV1Schema.safeParse(request.snapshot);
-            if (!parsed.success) {
+            const parsed = canonicalizeAgentAccountUsageSnapshot(request.snapshot);
+            if (!parsed) {
                 return { status: 'rejected', reason: 'invalid_snapshot' };
             }
             if (
@@ -299,97 +342,21 @@ export function createNativeAgentAccountUsageService(params: Readonly<{
             ) {
                 return { status: 'rejected', reason: 'invalid_snapshot' };
             }
-            const appliedIdentity = isRecord(request.appliedIdentity)
-                ? request.appliedIdentity
-                : null;
-            const appliedServiceId = readTrimmedString(appliedIdentity?.serviceId);
-            const appliedProfileId = readTrimmedString(appliedIdentity?.profileId);
-            const appliedProviderAccountId = readTrimmedString(
-                appliedIdentity?.providerAccountId,
-            );
-            const appliedGroupId = readTrimmedString(appliedIdentity?.groupId);
-            const appliedGeneration = appliedIdentity?.groupGeneration;
-            const appliedObservedAtMs = appliedIdentity?.observedAtMs;
-            const appliedFingerprint = appliedIdentity?.credentialFingerprint;
-            const exactAppliedSource = appliedIdentity
-                && appliedServiceId
-                && appliedServiceId === parsed.data.providerId
-                && appliedProfileId
-                && appliedProviderAccountId
-                && parsed.data.accountSubject.kind === 'providerSubject'
-                && parsed.data.accountSubject.id === appliedProviderAccountId
-                && typeof appliedObservedAtMs === 'number'
-                && Number.isSafeInteger(appliedObservedAtMs)
-                && appliedObservedAtMs >= 0
-                && (
-                    appliedFingerprint === null
-                    || (
-                        typeof appliedFingerprint === 'string'
-                        && /^sha256:[a-f0-9]{8}$/u.test(appliedFingerprint)
-                    )
-                )
-                && (
-                    (
-                        appliedGroupId
-                        && typeof appliedGeneration === 'number'
-                        && Number.isSafeInteger(appliedGeneration)
-                        && appliedGeneration >= 0
-                    )
-                    || (!appliedGroupId && appliedGeneration === null)
-                )
-                ? ConnectedServiceUsageSourceV1Schema.safeParse({
-                    serviceId: appliedServiceId,
-                    profileId: appliedProfileId,
-                    bindingKind: appliedGroupId ? 'group_member' : 'profile',
-                    ...(appliedGroupId
-                        ? {
-                            groupId: appliedGroupId,
-                            groupGeneration: appliedGeneration,
-                        }
-                        : {}),
-                })
-                : null;
-            if (
-                request.appliedIdentity != null
-                && (!exactAppliedSource || !exactAppliedSource.success)
-            ) {
-                return { status: 'rejected', reason: 'invalid_snapshot' };
-            }
-            if (exactAppliedSource?.success && request.source != null) {
-                const requestedSource = ConnectedServiceUsageSourceV1Schema.safeParse(
-                    request.source,
-                );
-                const requested = requestedSource.success ? requestedSource.data : null;
-                const applied = exactAppliedSource.data;
-                const sameSource = requested !== null
-                    && requested.serviceId === applied.serviceId
-                    && requested.profileId === applied.profileId
-                    && requested.bindingKind === applied.bindingKind
-                    && (
-                        requested.bindingKind === 'profile'
-                            ? applied.bindingKind === 'profile'
-                            : applied.bindingKind === 'group_member'
-                                && requested.groupId === applied.groupId
-                                && requested.groupGeneration === applied.groupGeneration
-                    );
-                if (!sameSource) {
-                    return { status: 'rejected', reason: 'invalid_snapshot' };
-                }
-            }
-            const parsedSource = exactAppliedSource?.success
-                ? exactAppliedSource
-                : request.source == null
-                    ? { success: true as const, data: undefined }
-                    : ConnectedServiceUsageSourceV1Schema.safeParse(request.source);
-            if (!parsedSource.success) {
+            const sourceAddress = request.source == null
+                ? null
+                : parseSourceAddress(request.source);
+            const resolvedSource = sourceAddress ? resolveSourceAddress(sourceAddress) : null;
+            if (request.source != null && (!sourceAddress || !resolvedSource)) {
                 return { status: 'rejected', reason: 'invalid_snapshot' };
             }
             const pendingSnapshot: SnapshotRequest = {
                 sessionId: params.sessionId,
-                snapshot: parsed.data,
-                ...(parsedSource.data ? { source: parsedSource.data } : {}),
-                ...(exactAppliedSource?.success && typeof appliedFingerprint === 'string'
-                    ? { credentialFingerprint: appliedFingerprint }
+                snapshot: parsed,
+                ...(resolvedSource?.connectedServiceSource
+                    ? {
+                        source: resolvedSource.connectedServiceSource,
+                        deriveCredentialFingerprintFromSource: true as const,
+                    }
                     : {}),
                 ...(request.policyDisposition === 'evidence_only'
                     ? { policyDisposition: 'evidence_only' as const }
@@ -445,30 +412,12 @@ export function createNativeAgentAccountUsageService(params: Readonly<{
                 if (response?.ok === true) {
                     const result = response.result;
                     if (isRecord(result)) {
-                        const fromRecordId = typeof result.fromRecordId === 'string'
-                            ? result.fromRecordId
-                            : parsed.data.fromRecordId;
-                        const toRecordId = typeof result.toRecordId === 'string'
-                            ? result.toRecordId
-                            : parsed.data.toRecordId;
                         const status = result.status === 'already_adopted'
                             ? 'already_adopted'
                             : 'adopted';
-                        const persisted = typeof result.persisted === 'boolean'
-                            ? result.persisted
-                            : undefined;
-                        return {
-                            status,
-                            fromRecordId,
-                            toRecordId,
-                            ...(persisted === undefined ? {} : { persisted }),
-                        };
+                        return { status };
                     }
-                    return {
-                        status: 'adopted',
-                        fromRecordId: parsed.data.fromRecordId,
-                        toRecordId: parsed.data.toRecordId,
-                    };
+                    return { status: 'adopted' };
                 }
                 return response?.error
                     ? { status: 'unavailable', reason: 'daemon_unavailable' }

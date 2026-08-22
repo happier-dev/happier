@@ -55,7 +55,7 @@ export async function handleAcpSessionNotification(params: Readonly<{
   prepareToolUpdate?: (
     update: SessionUpdate,
     context: Readonly<{ toolCallCountSincePrompt: number }>,
-  ) => Promise<SessionUpdate>;
+  ) => Promise<SessionUpdate | null>;
   createHandlerContext: () => HandlerContext;
   setToolCallCountSincePrompt: (count: number) => void;
   getToolCallCountSincePrompt?: () => number;
@@ -353,6 +353,7 @@ export async function handleAcpSessionNotification(params: Readonly<{
           toolCallCountSincePrompt: (params.getToolCallCountSincePrompt?.() ?? 0) + 1,
         })
       : update;
+    if (prepared === null) continue;
     handleOneUpdate(prepared);
   }
 }

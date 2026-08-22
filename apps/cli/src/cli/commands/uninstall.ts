@@ -1,6 +1,7 @@
 import { basename } from 'node:path';
 
 import type { CommandContext } from '@/cli/commandRegistry';
+import { writeJsonStdout } from '@/cli/output/jsonEnvelope';
 import {
     applyCliUninstallPlan,
     buildCliUninstallPlan,
@@ -57,8 +58,8 @@ function resolveInvokerName(): string | null {
     return null;
 }
 
-function printJson(data: unknown): void {
-    process.stdout.write(`${JSON.stringify(data)}\n`);
+async function printJson(data: unknown): Promise<void> {
+    await writeJsonStdout(data);
 }
 
 function resolveProcessUid(): number | null {
@@ -94,7 +95,7 @@ export async function handleUninstallCliCommand(context: CommandContext): Promis
 
     if (plan.kind === 'unsupported-install-source') {
         if (flags.json) {
-            printJson({
+            await printJson({
                 ok: false,
                 error: 'unsupported_install_source',
                 source: plan.source,
@@ -107,7 +108,7 @@ export async function handleUninstallCliCommand(context: CommandContext): Promis
 
     if (plan.kind === 'active-installation-not-found') {
         if (flags.json) {
-            printJson({ ok: false, error: 'active_installation_not_found' });
+            await printJson({ ok: false, error: 'active_installation_not_found' });
             return;
         }
         throw new Error('Could not determine the active Happier installation to uninstall.');
@@ -116,7 +117,7 @@ export async function handleUninstallCliCommand(context: CommandContext): Promis
     const previewOnly = flags.dryRun || !flags.yes;
     if (previewOnly) {
         if (flags.json) {
-            printJson(plan.kind === 'npm-global-installation'
+            await printJson(plan.kind === 'npm-global-installation'
                 ? {
                     ok: true,
                     executed: false,
@@ -164,7 +165,7 @@ export async function handleUninstallCliCommand(context: CommandContext): Promis
         const invokerName = installations.activeInvocation?.invokerName?.trim() || resolveInvokerName() || 'happier';
         const manualCommand = `sudo ${invokerName} uninstall --yes`;
         if (flags.json) {
-            printJson({
+            await printJson({
                 ok: false,
                 error: 'root_privileges_required',
                 manualCommands: [manualCommand],
@@ -180,7 +181,7 @@ export async function handleUninstallCliCommand(context: CommandContext): Promis
     });
 
     if (flags.json) {
-        printJson({
+        await printJson({
             ok: true,
             executed: true,
             removedPaths: result.removedPaths,

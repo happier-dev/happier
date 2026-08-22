@@ -72,7 +72,6 @@ describe('engineRegistry (Antigravity External Sessions)', () => {
               expect.objectContaining({
                 family: 'agents',
                 localId: ANTIGRAVITY_AGENT_ID,
-                requiredFields: ['factory', 'externalSessions'],
               }),
             ]),
             bound: expect.arrayContaining([
@@ -140,10 +139,11 @@ describe('engineRegistry (Antigravity External Sessions)', () => {
             sourceRevision: expect.any(String),
           },
           remoteSessionId: conversationId,
-          externalSessionMetadata: {
-            linkData: { sourceRevision: expect.any(String) },
-          },
         });
+        // The transcript revision is canonical on the resolved source; projecting it as
+        // vendor metadata would be rejected by the session-metadata owner allow-list.
+        expect(linked.vendorMetadata).toEqual({});
+        expect(linked.externalSessionMetadata).toEqual({ linkData: {} });
 
         const page = await externalSession.pageTranscript!({
           source: linked.source,
@@ -155,11 +155,21 @@ describe('engineRegistry (Antigravity External Sessions)', () => {
         expect(page.items).toEqual([
           expect.objectContaining({
             messageRole: 'user',
-            raw: { type: 'text', text: 'registered prompt' },
+            raw: {
+              role: 'user',
+              content: { type: 'text', text: 'registered prompt' },
+            },
           }),
           expect.objectContaining({
             messageRole: 'agent',
-            raw: { type: 'text', text: 'registered answer' },
+            raw: {
+              role: 'agent',
+              content: {
+                type: 'acp',
+                agentId: ANTIGRAVITY_AGENT_ID,
+                data: { type: 'message', message: 'registered answer' },
+              },
+            },
           }),
         ]);
         expect(page.tailCursor).toMatch(/^happier_external_cursor_v1:/);
@@ -181,7 +191,14 @@ describe('engineRegistry (Antigravity External Sessions)', () => {
           outcome: 'advanced',
           items: [{
             messageRole: 'agent',
-            raw: { type: 'text', text: 'registered follow-up' },
+            raw: {
+              role: 'agent',
+              content: {
+                type: 'acp',
+                agentId: ANTIGRAVITY_AGENT_ID,
+                data: { type: 'message', message: 'registered follow-up' },
+              },
+            },
           }],
           nextCursor: expect.stringMatching(/^happier_external_cursor_v1:/),
           boundary: expect.any(String),

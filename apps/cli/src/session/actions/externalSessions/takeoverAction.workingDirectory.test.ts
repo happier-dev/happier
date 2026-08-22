@@ -100,7 +100,7 @@ vi.mock('@/daemon/sessionRegistry', () => ({
 }));
 
 vi.mock('@/persistence', () => ({
-    readCredentials: async () => ({
+    readStoredCredentials: async () => ({
         token: 'token-1',
         encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3]) },
     }),

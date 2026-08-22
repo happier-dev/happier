@@ -30,7 +30,6 @@ describe('createHappierMcpServer', () => {
     const fakeClient = {
       sessionId: 'sess_mcp_tool_names_1',
       rpcHandlerManager: { invokeLocal: async () => ({}) },
-      sendProviderMessage: () => {},
       updateMetadata: () => {},
     } as any;
 
@@ -53,7 +52,6 @@ describe('createHappierMcpServer', () => {
     const fakeClient = {
       sessionId: 'sess_mcp_tool_names_account_settings_1',
       rpcHandlerManager: { invokeLocal: async () => ({}) },
-      sendProviderMessage: () => {},
       updateMetadata: () => {},
     } as any;
 
@@ -104,7 +102,6 @@ describe('createHappierMcpServer', () => {
     createHappierMcpServer({
       sessionId: 'sess_mcp_live_settings_1',
       rpcHandlerManager: { invokeLocal: async () => ({}) },
-      sendProviderMessage: () => {},
       updateMetadata: () => {},
     } as any, {
       getAccountSettings: () => currentAccountSettings,
@@ -138,6 +135,55 @@ describe('createHappierMcpServer', () => {
         id: 'review.start',
       },
     });
+
+    const planResult = await handler({ id: 'subagents.plan.start' });
+    expect(planResult.isError).toBe(false);
+    expect(JSON.parse(planResult.content[0].text)).toMatchObject({
+      actionSpec: {
+        kindVersion: 1,
+        inputSchema: {
+          type: 'object',
+          properties: {
+            backendTargetKeys: {
+              type: 'array',
+              minItems: 1,
+              items: {
+                anyOf: expect.arrayContaining([
+                  expect.objectContaining({
+                    type: 'string',
+                    pattern: '^(agent|acpBackend):.+$',
+                  }),
+                ]),
+              },
+            },
+            permissionMode: {
+              description: expect.any(String),
+            },
+          },
+        },
+      },
+    });
+
+    const spawnResult = await handler({ id: 'session.spawn_new' });
+    expect(spawnResult.isError).toBe(false);
+    expect(JSON.parse(spawnResult.content[0].text)).toMatchObject({
+      actionSpec: {
+        inputSchema: {
+          properties: {
+            executionTarget: {
+              properties: {
+                serverId: { minLength: 1, maxLength: 191 },
+              },
+            },
+            organizationPlacement: {
+              properties: {
+                tagIds: { type: 'array', maxItems: 500 },
+              },
+            },
+          },
+        },
+      },
+    });
   });
 
   it('uses account action settings for in-session MCP approval policy when provided', async () => {
@@ -165,7 +211,6 @@ describe('createHappierMcpServer', () => {
     createHappierMcpServer({
       sessionId: 'sess_mcp_approval_policy_1',
       rpcHandlerManager: { invokeLocal: async () => ({}) },
-      sendProviderMessage: () => {},
       updateMetadata: () => {},
     } as any, {
       accountSettings: {
@@ -222,7 +267,6 @@ describe('createHappierMcpServer', () => {
     createHappierMcpServer({
       sessionId: 'sess_mcp_live_spawn_policy_1',
       rpcHandlerManager: { invokeLocal: async () => ({}) },
-      sendProviderMessage: () => {},
       updateMetadata: () => {},
     } as any, {
       getAccountSettings: () => currentAccountSettings,
@@ -289,7 +333,6 @@ describe('createHappierMcpServer', () => {
     createHappierMcpServer({
       sessionId: 'sess_mcp_live_permission_1',
       rpcHandlerManager: { invokeLocal: async () => ({}) },
-      sendProviderMessage: () => {},
       updateMetadata: () => {},
       getMetadataSnapshot: () => ({ permissionMode: 'default', permissionModeUpdatedAt: 1 }),
       getPermissionMode: () => 'yolo',
@@ -329,7 +372,6 @@ describe('createHappierMcpServer', () => {
     createHappierMcpServer({
       sessionId: 'sess_mcp_live_backend_target_1',
       rpcHandlerManager: { invokeLocal: async () => ({}) },
-      sendProviderMessage: () => {},
       updateMetadata: () => {},
       getMetadataSnapshot: () => ({ path: '/repo/current' }),
       getBackendTarget: () => ({
@@ -368,7 +410,6 @@ describe('createHappierMcpServer', () => {
     createHappierMcpServer({
       sessionId: 'sess_mcp_live_location_1',
       rpcHandlerManager: { invokeLocal: async () => ({}) },
-      sendProviderMessage: () => {},
       updateMetadata: () => {},
       getMetadataSnapshot: () => ({
         permissionMode: 'bypassPermissions',
@@ -413,7 +454,6 @@ describe('createHappierMcpServer', () => {
     createHappierMcpServer({
       sessionId: 'sess_mcp_payload_1',
       rpcHandlerManager: { invokeLocal },
-      sendProviderMessage: () => {},
       updateMetadata: () => {},
     } as any);
 
@@ -443,7 +483,6 @@ describe('createHappierMcpServer', () => {
     createHappierMcpServer({
       sessionId: 'sess_mcp_payload_2',
       rpcHandlerManager: { invokeLocal },
-      sendProviderMessage: () => {},
       updateMetadata: () => {},
       executionRuns: {
         start: vi.fn(),
@@ -484,7 +523,6 @@ describe('createHappierMcpServer', () => {
     createHappierMcpServer({
       sessionId: 'sess_mcp_payload_3',
       rpcHandlerManager: { invokeLocal },
-      sendProviderMessage: () => {},
       updateMetadata: () => {},
     } as any);
 
@@ -520,7 +558,6 @@ describe('createHappierMcpServer', () => {
     createHappierMcpServer({
       sessionId: 'sess_mcp_prompt_registry_1',
       rpcHandlerManager: { invokeLocal },
-      sendProviderMessage: () => {},
       updateMetadata: () => {},
     } as any);
 
@@ -570,7 +607,6 @@ describe('createHappierMcpServer', () => {
     createHappierMcpServer({
       sessionId: 'sess_mcp_session_control_1',
       rpcHandlerManager: { invokeLocal: async () => ({}) },
-      sendProviderMessage: () => {},
       updateMetadata: () => {},
     } as any);
 
@@ -605,7 +641,6 @@ describe('createHappierMcpServer', () => {
     const fakeClient = {
       sessionId: 'sess_mcp_surface_1',
       rpcHandlerManager: { invokeLocal: async () => ({}) },
-      sendProviderMessage: () => {},
       updateMetadata: () => {},
     } as any;
 
@@ -644,7 +679,6 @@ describe('createHappierMcpServer', () => {
       {
         sessionId: 'sess_change_title_1',
         rpcHandlerManager: { invokeLocal: async () => ({}) },
-        sendProviderMessage: () => {},
         updateMetadata: () => {},
       } as any,
       { credentials: null },
@@ -690,7 +724,6 @@ describe('createHappierMcpServer', () => {
       {
         sessionId: 'sess_change_title_refresh_1',
         rpcHandlerManager: { invokeLocal: async () => ({}) },
-        sendProviderMessage: () => {},
         updateMetadata,
       } as any,
       { credentials: null },
@@ -705,6 +738,10 @@ describe('createHappierMcpServer', () => {
   });
 
   it('routes direct-exposed execution_run_start through the shared action executor path', async () => {
+    const activeTurnAuthority = {
+      kind: 'admittedSessionInputV1',
+      admittedPermissionCeiling: 'default',
+    } as const;
     const invokeLocal = vi.fn(async (method: string, params: unknown) => {
       if (method === 'execution.run.start' || method === 'execution.run.send') {
         return {
@@ -745,8 +782,10 @@ describe('createHappierMcpServer', () => {
       {
         sessionId: 'sess_execution_run_start_1',
         rpcHandlerManager: { invokeLocal },
-        sendProviderMessage: () => {},
         updateMetadata: () => {},
+        // The mutable Session mode has widened since this turn was admitted.
+        getPermissionMode: () => 'yolo',
+        getActiveTurnCausalPermissionAuthority: () => activeTurnAuthority,
       } as any,
       {
         credentials: null,
@@ -785,6 +824,8 @@ describe('createHappierMcpServer', () => {
       ioMode: 'request_response',
     }), expect.objectContaining({
       surface: 'agent',
+      callerPermissionMode: 'yolo',
+      causalPermissionAuthority: activeTurnAuthority,
     }));
     expect(invokeLocal).not.toHaveBeenCalled();
   });

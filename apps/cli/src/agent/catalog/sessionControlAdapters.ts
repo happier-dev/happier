@@ -1,12 +1,12 @@
-import type { AgentId } from '@happier-dev/agents';
-
+import type { CatalogAgentId } from './ids';
+import { findCatalogEntry } from './registry';
 import { resolveCatalogAgentId } from './resolution';
+import { readAgentCatalogSnapshot } from './snapshot';
 import type {
   SessionCatalogControlAdapter,
   SessionGoalControlAdapter,
   SessionUsageLimitRecoveryControlAdapter,
 } from './types';
-import { getResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { readAgentSessionCapabilities } from '@/plugins/projection/registry/agentContributionDefinition';
 import {
   createNativeInactiveCatalogAdapter,
@@ -14,9 +14,9 @@ import {
   createNativeInactiveUsageAdapter,
 } from './nativeInactiveSessionControlAdapters';
 
-function resolveInactiveCapabilities(catalogId: AgentId) {
+function resolveInactiveCapabilities(catalogId: CatalogAgentId) {
   const sessions = readAgentSessionCapabilities(
-    getResolvedContributionRegistry().agentDefinitionsById
+    readAgentCatalogSnapshot().agentDefinitionsById
       .get(catalogId)
       ?.richDefinition
       ?.definition,
@@ -39,28 +39,31 @@ function resolveInactiveCapabilities(catalogId: AgentId) {
 }
 
 export async function resolveInactiveSessionGoalControls(
-  agentId?: AgentId | null,
+  agentId?: CatalogAgentId | null,
 ): Promise<SessionGoalControlAdapter | null> {
   const catalogId = resolveCatalogAgentId(agentId);
+  if (!catalogId) return null;
   const native = resolveInactiveCapabilities(catalogId).goals;
   if (!native.get && !native.set && !native.clear) return null;
   return createNativeInactiveGoalAdapter({ agentId: catalogId, native });
 }
 
 export async function resolveInactiveSessionCatalogControls(
-  agentId?: AgentId | null,
+  agentId?: CatalogAgentId | null,
 ): Promise<SessionCatalogControlAdapter | null> {
   const catalogId = resolveCatalogAgentId(agentId);
+  if (!catalogId) return null;
   const native = resolveInactiveCapabilities(catalogId).catalog;
   if (!native.vendorPlugins && !native.skills) return null;
   return createNativeInactiveCatalogAdapter({ agentId: catalogId, native });
 }
 
 export async function resolveInactiveSessionUsageLimitRecoveryControls(
-  agentId?: AgentId | null,
+  agentId?: CatalogAgentId | null,
 ): Promise<SessionUsageLimitRecoveryControlAdapter | null> {
   const catalogId = resolveCatalogAgentId(agentId);
-  const entry = getResolvedContributionRegistry().catalogEntriesById[catalogId];
+  if (!catalogId) return null;
+  const entry = findCatalogEntry(catalogId);
   const backoffPolicy = entry?.sessionUsageLimitRecoveryBackoffPolicy ?? null;
   const native = resolveInactiveCapabilities(catalogId).usage;
   if (!backoffPolicy && !native.checkNow && !native.consumeResetCredit) return null;

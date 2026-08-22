@@ -29,9 +29,12 @@ export function failureSignal(): ExecutionRunControllerFailureSignal {
 
 export function appendExecutionRunControllerHostBarrier(
   currentBarrier: Promise<void> | undefined,
-  nextBarrier: Promise<void>,
+  nextBarrier: Promise<unknown> | (() => Promise<unknown>),
 ): Promise<void> {
-  return currentBarrier ? currentBarrier.then(() => nextBarrier) : nextBarrier;
+  const startNext = async (): Promise<void> => {
+    await (typeof nextBarrier === 'function' ? nextBarrier() : nextBarrier);
+  };
+  return currentBarrier ? currentBarrier.then(startNext) : startNext();
 }
 
 export function readExecutionRunControllerHostBarrier(ctrl: Readonly<{

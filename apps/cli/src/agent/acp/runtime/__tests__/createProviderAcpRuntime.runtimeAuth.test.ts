@@ -5,7 +5,10 @@ import { createApprovedPermissionHandler } from '@/testkit/backends/permissionHa
 import { createFakeAcpRuntimeBackend } from '@/testkit/backends/acpRuntimeBackend';
 import { createMutableApiSessionClientFixture } from '@/testkit/backends/sessionFixtures';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
-import { RuntimeEventV1Schema, type RuntimeEventV1 } from '@happier-dev/protocol';
+import {
+  AgentSessionRuntimeEventV1Schema,
+  type AgentSessionRuntimeEventV1,
+} from '@happier-dev/protocol';
 import {
   CONNECTED_SERVICE_RUNTIME_AUTH_FAILURE_REPORT_TIMEOUT_MS,
   resetConnectedServiceRuntimeAuthFailureReportDedupeForTests,
@@ -43,7 +46,7 @@ describe('createCatalogProviderAcpRuntime (runtime auth failures)', () => {
         sessionId: 'happy-session-1',
       },
     });
-    const runtimeEvents: RuntimeEventV1[] = [];
+    const runtimeEvents: AgentSessionRuntimeEventV1[] = [];
 
     const runtime = createCatalogProviderAcpRuntime({
       provider: 'opencode',
@@ -57,7 +60,7 @@ describe('createCatalogProviderAcpRuntime (runtime auth failures)', () => {
       createBackend: async () => backend,
     });
     runtime.subscribeRuntimeEvents((message) => {
-      runtimeEvents.push(RuntimeEventV1Schema.parse(message));
+      runtimeEvents.push(AgentSessionRuntimeEventV1Schema.parse(message));
     });
 
     await runtime.sendTurnPrompt('session setup');
@@ -86,7 +89,7 @@ describe('createCatalogProviderAcpRuntime (runtime auth failures)', () => {
         sessionId: 'happy-native-session-1',
       },
     });
-    const runtimeEvents: RuntimeEventV1[] = [];
+    const runtimeEvents: AgentSessionRuntimeEventV1[] = [];
     const classifyRuntimeAuthFailure = vi.fn(async () => ({
       kind: 'usage_limit',
       serviceId: 'claude-subscription',
@@ -117,7 +120,7 @@ describe('createCatalogProviderAcpRuntime (runtime auth failures)', () => {
       },
     });
     runtime.subscribeRuntimeEvents((message) => {
-      runtimeEvents.push(RuntimeEventV1Schema.parse(message));
+      runtimeEvents.push(AgentSessionRuntimeEventV1Schema.parse(message));
     });
 
     await runtime.sendTurnPrompt('session setup');
@@ -134,11 +137,12 @@ describe('createCatalogProviderAcpRuntime (runtime auth failures)', () => {
     await vi.waitFor(() => {
       expect(classifyRuntimeAuthFailure).toHaveBeenCalledOnce();
       const turnFailed = runtimeEvents.find((event) => event.kind === 'turn-failed');
-      expect(turnFailed?.issue.usageLimit).toMatchObject({
-        recoverability: 'wait',
-        providerLimitId: 'five_hour',
+      expect(turnFailed?.diagnostic).toMatchObject({
+        code: 'usage_limit',
+        severity: 'error',
+        details: { source: 'usage_limit' },
       });
-      expect(turnFailed?.issue.usageLimit?.connectedService).toBeUndefined();
+      expect(JSON.stringify(turnFailed)).not.toContain('five_hour');
     });
     expect(notifyDaemonConnectedServiceRuntimeAuthFailure).not.toHaveBeenCalled();
   });
@@ -169,7 +173,7 @@ describe('createCatalogProviderAcpRuntime (runtime auth failures)', () => {
         sessionId: 'happy-session-1',
       },
     });
-    const runtimeEvents: RuntimeEventV1[] = [];
+    const runtimeEvents: AgentSessionRuntimeEventV1[] = [];
     const classifyRuntimeAuthFailure = vi.fn(async () => ({
       kind: 'usage_limit',
       serviceId: 'openai',
@@ -204,7 +208,7 @@ describe('createCatalogProviderAcpRuntime (runtime auth failures)', () => {
       },
     });
     runtime.subscribeRuntimeEvents((message) => {
-      runtimeEvents.push(RuntimeEventV1Schema.parse(message));
+      runtimeEvents.push(AgentSessionRuntimeEventV1Schema.parse(message));
     });
 
     await runtime.sendTurnPrompt('session setup');
@@ -227,10 +231,12 @@ describe('createCatalogProviderAcpRuntime (runtime auth failures)', () => {
     expect(notifyDaemonConnectedServiceRuntimeAuthFailure).not.toHaveBeenCalled();
     await vi.waitFor(() => {
       const turnFailed = runtimeEvents.find((event) => event.kind === 'turn-failed');
-      expect(turnFailed?.issue.usageLimit).toMatchObject({
-        recoverability: 'wait',
+      expect(turnFailed?.diagnostic).toMatchObject({
+        code: 'usage_limit',
+        severity: 'error',
+        details: { source: 'usage_limit' },
       });
-      expect(turnFailed?.issue.usageLimit?.connectedService).toBeUndefined();
+      expect(JSON.stringify(turnFailed)).not.toContain('connectedService');
     });
   });
 
@@ -330,15 +336,13 @@ describe('createCatalogProviderAcpRuntime (runtime auth failures)', () => {
       })
     );
     const backend = createFakeAcpRuntimeBackend({ sessionId: 'opencode-session-1' });
-    const sendSessionEvent = vi.fn();
     const session = createMutableApiSessionClientFixture({
       overrides: {
         sessionId: 'happy-session-1',
-        sendSessionEvent,
       },
     });
     const messageBuffer = new MessageBuffer();
-    const runtimeEvents: RuntimeEventV1[] = [];
+    const runtimeEvents: AgentSessionRuntimeEventV1[] = [];
     const classifyRuntimeAuthFailure = vi.fn(async () => daemonClassification);
 
     const runtime = createCatalogProviderAcpRuntime({
@@ -356,7 +360,7 @@ describe('createCatalogProviderAcpRuntime (runtime auth failures)', () => {
       },
     });
     runtime.subscribeRuntimeEvents((message) => {
-      runtimeEvents.push(RuntimeEventV1Schema.parse(message));
+      runtimeEvents.push(AgentSessionRuntimeEventV1Schema.parse(message));
     });
 
     await runtime.sendTurnPrompt('session setup');
@@ -385,9 +389,6 @@ describe('createCatalogProviderAcpRuntime (runtime auth failures)', () => {
         && message.content === 'Connected-service recovery hit a temporary provider failure; retry scheduled.'
       )).toBe(true);
     });
-    expect(sendSessionEvent).not.toHaveBeenCalledWith(expect.objectContaining({
-      type: 'connected-service-runtime-auth-recovery',
-    }));
     await flushAsyncRuntimeHandlers();
     expect(runtimeEvents.filter((event) => event.kind === 'turn-failed')).toHaveLength(1);
   });
@@ -411,7 +412,7 @@ describe('createCatalogProviderAcpRuntime (runtime auth failures)', () => {
       },
     });
     const messageBuffer = new MessageBuffer();
-    const runtimeEvents: RuntimeEventV1[] = [];
+    const runtimeEvents: AgentSessionRuntimeEventV1[] = [];
     const classifyRuntimeAuthFailure = vi.fn(async () => ({
       kind: 'auth_expired',
       serviceId: 'openai',
@@ -441,7 +442,7 @@ describe('createCatalogProviderAcpRuntime (runtime auth failures)', () => {
       },
     });
     runtime.subscribeRuntimeEvents((message) => {
-      runtimeEvents.push(RuntimeEventV1Schema.parse(message));
+      runtimeEvents.push(AgentSessionRuntimeEventV1Schema.parse(message));
     });
 
     await runtime.sendTurnPrompt('session setup');
@@ -458,7 +459,11 @@ describe('createCatalogProviderAcpRuntime (runtime auth failures)', () => {
     await vi.waitFor(() => {
       expect(classifyRuntimeAuthFailure).toHaveBeenCalledOnce();
       const turnFailed = runtimeEvents.find((event) => event.kind === 'turn-failed');
-      expect(turnFailed?.issue.source).toBe('auth_error');
+      expect(turnFailed?.diagnostic).toMatchObject({
+        code: 'auth_error',
+        severity: 'error',
+        details: { source: 'auth_error' },
+      });
     });
   });
 
@@ -474,9 +479,14 @@ describe('createCatalogProviderAcpRuntime (runtime auth failures)', () => {
       },
     });
     const backend = createFakeAcpRuntimeBackend({ sessionId: 'opencode-session-1' });
+    const enqueueSessionEventCommitted = vi.fn(async () => ({
+      persisted: true,
+      delivered: false,
+    }));
     const session = createMutableApiSessionClientFixture({
       overrides: {
         sessionId: 'happy-session-1',
+        enqueueSessionEventCommitted,
       },
     });
     const messageBuffer = new MessageBuffer();
@@ -529,6 +539,11 @@ describe('createCatalogProviderAcpRuntime (runtime auth failures)', () => {
         message.type === 'status'
         && message.content === 'Connected-service account group has no eligible fallback account; waiting for group recovery.'
       )).toHaveLength(1);
+      expect(enqueueSessionEventCommitted).toHaveBeenCalledTimes(1);
+    });
+    expect(enqueueSessionEventCommitted).toHaveBeenCalledWith({
+      type: 'message',
+      message: 'Connected-service account group has no eligible fallback account; waiting for group recovery.',
     });
   });
 

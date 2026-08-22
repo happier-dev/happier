@@ -11,13 +11,22 @@ import {
 import { readActionsSettingsFromEnv } from '@/settings/actionsSettings';
 import { createCliApprovalsArtifactStore } from './approvals/artifactStore';
 import { createTargetActionCurrentIntentAdapter } from './approvals/targetActionCurrentIntent';
-import type { Credentials } from '@/persistence';
+import type { StoredCredentials } from '@/persistence';
 import { createDaemonPluginActionExecutor } from './createDaemonPluginActionExecutor';
+import type { RuntimeActionExecute } from '@happier-dev/protocol';
+import type {
+  ExternalSessionPluginAdmissionOwner,
+} from './externalSessions/pluginExternalSessionAdmissionOwner';
 
-type CliActionExecutorParams = Parameters<typeof createCliActionExecutorHarness>[0] & CliTranscriptActionExecutorOptions;
+type CliActionExecutorParams = Parameters<typeof createCliActionExecutorHarness>[0]
+  & CliTranscriptActionExecutorOptions
+  & Readonly<{
+    runtimeActionExecute?: RuntimeActionExecute;
+    externalSessionPluginAdmissionOwner?: ExternalSessionPluginAdmissionOwner;
+  }>;
 
 export function createCredentialedTargetActionCurrentIntent(
-  credentials: Credentials,
+  credentials: StoredCredentials,
 ): (request: TargetActionCurrentIntentRequest) => Promise<TargetActionCurrentIntentResult> {
   const store = createCliApprovalsArtifactStore({ credentials });
   return createTargetActionCurrentIntentAdapter({
@@ -29,13 +38,30 @@ export function createCredentialedTargetActionCurrentIntent(
 export function createCliActionExecutor(
   params: CliActionExecutorParams,
 ): ReturnType<typeof createCliActionExecutorHarness>['executor'] {
-  const base = createCliActionExecutorHarness(params).executor;
-  const daemonAware = createDaemonPluginActionExecutor({ base });
   const transcriptFollowLeaseRegistry = params.transcriptFollowLeaseRegistry
     ?? createSessionTranscriptFollowLeaseRegistry({
       maxLeases: 16,
       idleTtlMs: DEFAULT_SESSION_TRANSCRIPT_FOLLOW_LEASE_IDLE_TTL_MS,
     });
+  const base = createCliActionExecutorHarness(
+    params,
+    {
+      ...(params.runtimeActionExecute
+        ? { runtimeActionExecute: params.runtimeActionExecute }
+        : {}),
+      sessionTranscriptAction: async ({ actionId, input, context }) => await executeCliTranscriptAction({
+        actionId,
+        input,
+        context,
+        defaultSessionId: params.sessionId,
+        options: {
+          ...params,
+          transcriptFollowLeaseRegistry,
+        },
+      }),
+    },
+  ).executor;
+  const daemonAware = createDaemonPluginActionExecutor({ base });
   return {
     execute: async (actionId, input, context) => {
       const resolvedContext = {
@@ -43,20 +69,6 @@ export function createCliActionExecutor(
         surface: context?.surface ?? 'cli',
         actionsSettings: readActionsSettingsFromEnv() as any,
       };
-      const transcriptAction = await executeCliTranscriptAction({
-        actionId,
-        input,
-        context: resolvedContext,
-        defaultSessionId: params.sessionId,
-        options: {
-          ...params,
-          transcriptFollowLeaseRegistry,
-        },
-      });
-      if (transcriptAction) {
-        return transcriptAction;
-      }
-
       return await daemonAware.execute(actionId, input, resolvedContext);
     },
   };

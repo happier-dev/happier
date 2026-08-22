@@ -12,7 +12,7 @@ import type {
     AgentExternalSessionHookResolveInstallationResult,
     AgentExternalSessionHooksContribution,
     AgentExternalSessionsContribution,
-} from '@happier-dev/plugin-sdk/experimental/sessions';
+} from '@happier-dev/plugin-sdk/sessions/external';
 
 import type { DetectCliSnapshot } from '@/capabilities/snapshots/cliSnapshot';
 import type { QualifiedExternalSessionHookListener } from '@/plugins/runtime/hooks/session/qualifiedExternalSessionHookTransport';
@@ -191,6 +191,11 @@ function cliSnapshot(): DetectCliSnapshot {
 
 function createFixture(input: Readonly<{
     cold?: boolean;
+    currentAgentWithoutHooks?: Readonly<{
+        agentId: string;
+        identity: Readonly<{ pluginId: string; localId: string }>;
+        cold?: boolean;
+    }>;
     listener?: Promise<QualifiedExternalSessionHookListener>;
     isFeatureEnabled?: () => boolean;
     installationVariant?: AgentExternalSessionHookInstallationVariant;
@@ -233,16 +238,46 @@ function createFixture(input: Readonly<{
         retirementSignal: retirement.signal,
         isCurrent: () => current,
     };
-    const runtimes = new Map<string, typeof runtime>();
+    type FixtureRuntime = Omit<
+        typeof runtime,
+        'agentId' | 'externalSessionHooks'
+    > & Readonly<{
+        agentId: string;
+        externalSessionHooks?: typeof hooks;
+    }>;
+    const runtimes = new Map<string, FixtureRuntime>();
     if (!input.cold) runtimes.set(agentId, runtime);
+    const unsupported = input.currentAgentWithoutHooks;
+    const unsupportedRuntime = unsupported
+        ? {
+            ...runtime,
+            agentId: unsupported.agentId,
+            externalSessionHooks: undefined,
+        }
+        : null;
     const activate = vi.fn(async () => {
         runtimes.set(agentId, runtime);
+        if (unsupportedRuntime) {
+            runtimes.set(unsupportedRuntime.agentId, unsupportedRuntime);
+        }
         return [];
     });
-    const agentDefinitionsById = new Map([[
+    const agentDefinitionsById = new Map<string, Readonly<{
+        id: string;
+        identity: Readonly<{ pluginId: string; localId: string }>;
+    }>>([[
         agentId,
         { id: agentId, identity: agent },
     ]]);
+    if (unsupported && unsupportedRuntime) {
+        agentDefinitionsById.set(unsupported.agentId, {
+            id: unsupported.agentId,
+            identity: unsupported.identity,
+        });
+        if (!unsupported.cold) {
+            runtimes.set(unsupported.agentId, unsupportedRuntime);
+        }
+    }
     if (input.duplicateAgentDefinition) {
         agentDefinitionsById.set(
             'happier.agent.fixture/agents/duplicate',
@@ -277,11 +312,15 @@ function createFixture(input: Readonly<{
             secretFile: '/tmp/session-start.secret',
         },
     }));
+    const readCredentialState = vi.fn<
+        QualifiedExternalSessionHookListener['readCredentialState']
+    >(() => ({ state: 'enabled' }));
     const listener = {
         port: 1234,
         createOrReuseCredential,
         restoreCredential,
         rotateCredential: vi.fn(createOrReuseCredential),
+        readCredentialState,
         enable: vi.fn(() => ({ state: 'active' })),
         disable: vi.fn(() => ({ state: 'disabled' })),
         disableDurableCredential: vi.fn(() => ({ state: 'disabled' })),
@@ -412,6 +451,97 @@ describe('createPluginSessionHookManagementHost', () => {
         expect(fixture.activate).not.toHaveBeenCalled();
         expect(fixture.detectCliSnapshot).not.toHaveBeenCalled();
         expect(fixture.resolveInstallation).not.toHaveBeenCalled();
+    });
+
+    it('projects a current External Sessions Agent without hook support as passive unsupported truth', async () => {
+        const unsupportedAgent = {
+            pluginId: 'happier.agent.fixture',
+            localId: 'without-hooks',
+        } as const;
+        const fixture = createFixture({
+            currentAgentWithoutHooks: {
+                agentId: 'without-hooks',
+                identity: unsupportedAgent,
+            },
+        });
+
+        await expect(fixture.host.status({
+            machineId: 'machine-1',
+            intent: 'passive_inventory',
+            limit: 50,
+        })).resolves.toMatchObject({
+            ok: true,
+            rows: [
+                {
+                    agent,
+                    status: { state: 'not_installed' },
+                },
+                {
+                    agent: unsupportedAgent,
+                    status: {
+                        state: 'unsupported',
+                        reason: 'installation_unsupported',
+                    },
+                },
+            ],
+        });
+
+        await expect(fixture.host.status({
+            machineId: 'machine-1',
+            intent: 'passive_inventory',
+            agent: unsupportedAgent,
+            limit: 50,
+        })).resolves.toMatchObject({
+            ok: true,
+            rows: [
+                {
+                    agent: unsupportedAgent,
+                    status: {
+                        state: 'unsupported',
+                        reason: 'installation_unsupported',
+                    },
+                },
+            ],
+        });
+
+        await expect(fixture.host.status({
+            machineId: 'machine-1',
+            intent: 'install_preview',
+            agent: unsupportedAgent,
+        })).resolves.toEqual({
+            ok: false,
+            diagnostic: {
+                code: 'installation_unsupported',
+                retryable: false,
+            },
+        });
+
+        expect(fixture.activate).not.toHaveBeenCalled();
+        expect(fixture.detectCliSnapshot).not.toHaveBeenCalled();
+        expect(fixture.resolveInstallation).not.toHaveBeenCalled();
+
+        const cold = createFixture({
+            cold: true,
+            currentAgentWithoutHooks: {
+                agentId: 'without-hooks',
+                identity: unsupportedAgent,
+                cold: true,
+            },
+        });
+        await expect(cold.host.status({
+            machineId: 'machine-1',
+            intent: 'install_preview',
+            agent: unsupportedAgent,
+        })).resolves.toEqual({
+            ok: false,
+            diagnostic: {
+                code: 'installation_unsupported',
+                retryable: false,
+            },
+        });
+        expect(cold.activate).toHaveBeenCalledOnce();
+        expect(cold.detectCliSnapshot).not.toHaveBeenCalled();
+        expect(cold.resolveInstallation).not.toHaveBeenCalled();
     });
 
     it('activates and resolves exactly one cold-Agent install preview and fails closed when activation fails', async () => {
@@ -584,6 +714,23 @@ describe('createPluginSessionHookManagementHost', () => {
         });
 
         expect(fixture.resolveInstallation).toHaveBeenCalledOnce();
+    });
+
+    it('propagates caller cancellation into the Agent installation-resolution signal', async () => {
+        const fixture = createFixture();
+        const caller = new AbortController();
+
+        await fixture.host.status({
+            machineId: 'machine-1',
+            intent: 'install_preview',
+            agent,
+        }, { signal: caller.signal });
+
+        const resolutionRequest = fixture.resolveInstallation.mock.calls[0]?.[0];
+        if (!resolutionRequest) throw new Error('expected installation resolution');
+        expect(resolutionRequest.signal.aborted).toBe(false);
+        caller.abort();
+        expect(resolutionRequest.signal.aborted).toBe(true);
     });
 
     it('fails the whole status request when the authoritative registry is unavailable', async () => {
@@ -847,6 +994,33 @@ describe('createPluginSessionHookManagementHost', () => {
         expect(fixture.detectCliSnapshot).not.toHaveBeenCalled();
         expect(fixture.resolveInstallation).not.toHaveBeenCalled();
         expect(fixture.applyInstallationAction).not.toHaveBeenCalled();
+    });
+
+    it('rejects an active installation recheck before Agent readiness when its ingress principal is not enabled', async () => {
+        const fixture = createFixture();
+        fixture.listener.readCredentialState.mockReturnValue({
+            state: 'revoked',
+        });
+
+        await expect(fixture.host.status({
+            machineId: 'machine-1',
+            intent: 'installation_recheck',
+            agent,
+            installationId: fixtureHostInstallationId,
+        })).resolves.toMatchObject({
+            ok: true,
+            rows: [{
+                status: {
+                    state: 'needs_attention',
+                    installationId: fixtureHostInstallationId,
+                    diagnostic: { code: 'listener_unavailable' },
+                },
+            }],
+            nextCursor: null,
+        });
+
+        expect(fixture.detectCliSnapshot).not.toHaveBeenCalled();
+        expect(fixture.resolveInstallation).not.toHaveBeenCalled();
     });
 
     it('hydrates every inventory page without config writes and queues one reload pass', async () => {
@@ -1609,10 +1783,28 @@ describe('createPluginSessionHookManagementHost', () => {
             state: 'unavailable',
             reason: 'missing',
         });
+        missing.listener.readCredentialState.mockReturnValue({
+            state: 'revoked',
+        });
         await missing.host.hydrate({ reason: 'bootstrap' });
         expect(missing.listener.createOrReuseCredential).not.toHaveBeenCalled();
         expect(missing.listener.enable).not.toHaveBeenCalled();
         expect(missing.applyInstallationAction).not.toHaveBeenCalled();
+        await expect(missing.host.status({
+            machineId: 'machine-1',
+            intent: 'passive_inventory',
+            agent,
+            limit: 50,
+        })).resolves.toMatchObject({
+            ok: true,
+            rows: [{
+                status: {
+                    state: 'needs_attention',
+                    installationId: fixtureHostInstallationId,
+                    diagnostic: { code: 'listener_unavailable' },
+                },
+            }],
+        });
 
         const reload = createFixture({
             dependencyOverrides: {
@@ -1822,6 +2014,22 @@ describe('createPluginSessionHookManagementHost', () => {
         expect(fixture.listener.enable).not.toHaveBeenCalled();
     });
 
+    it('rejects a different expected preview when an otherwise-current installation already exists', async () => {
+        const fixture = createFixture();
+
+        await expect(fixture.host.install({
+            machineId: 'machine-1',
+            agent,
+            expectedPreviewId: `hook-install-preview:v1:${'0'.repeat(64)}`,
+        })).resolves.toMatchObject({
+            ok: false,
+            diagnostic: { code: 'concurrent_edit', retryable: true },
+        });
+
+        expect(fixture.listener.createOrReuseCredential).not.toHaveBeenCalled();
+        expect(fixture.applyInstallationAction).not.toHaveBeenCalled();
+    });
+
     it('does not publish install or enable ingress after its runtime lease retires', async () => {
         const install = createFixture({
             dependencyOverrides: {
@@ -1970,6 +2178,53 @@ describe('createPluginSessionHookManagementHost', () => {
         await disposal;
         expect(fixture.listener.enable).not.toHaveBeenCalled();
         expect(fixture.release).toHaveBeenCalledOnce();
+    });
+
+    it('threads caller cancellation into the canonical custody currentness fence', async () => {
+        let enteredCommit!: () => void;
+        const commitEntered = new Promise<void>((resolve) => {
+            enteredCommit = resolve;
+        });
+        let releaseCommit!: () => void;
+        const commitGate = new Promise<void>((resolve) => {
+            releaseCommit = resolve;
+        });
+        const applyInstallationAction: PluginSessionHookManagementHostDependencies[
+            'applyInstallationAction'
+        ] = vi.fn(async (request) => {
+            enteredCommit();
+            await commitGate;
+            return request.isCurrent && !await request.isCurrent()
+                ? { ok: false as const, code: 'generation_mismatch' as const }
+                : {
+                    ok: true as const,
+                    state: 'installed_enabled' as const,
+                    changedConfiguration: false,
+                    revision: 2,
+                };
+        });
+        const fixture = createFixture({
+            dependencyOverrides: {
+                applyInstallationAction,
+                readInstallationRecord: async () => null,
+            },
+        });
+        const caller = new AbortController();
+        const install = fixture.host.install({
+            machineId: 'machine-1',
+            agent,
+            expectedPreviewId: fixtureExpectedPreviewId,
+        }, { signal: caller.signal });
+        await commitEntered;
+        caller.abort(new Error('caller canceled'));
+        releaseCommit();
+
+        await expect(install).resolves.toMatchObject({
+            ok: false,
+            diagnostic: { code: 'installation_replaced' },
+        });
+        expect(fixture.listener.enable).not.toHaveBeenCalled();
+        await fixture.host.dispose();
     });
 
     it('uninstalls custody before listener-independent credential cleanup when listener startup failed', async () => {

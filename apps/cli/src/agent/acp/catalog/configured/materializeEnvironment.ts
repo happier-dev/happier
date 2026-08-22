@@ -1,6 +1,5 @@
-import type { Credentials } from '@/persistence';
+import type { StoredCredentials } from '@/persistence';
 import {
-  deriveSettingsSecretsKeyForCredentials,
   deriveSettingsSecretsReadKeysForCredentials,
   indexSavedSecretsByIdFromAccountSettings,
   resolveMcpValueRefPlaintext,
@@ -11,12 +10,11 @@ import type { ResolvedConfiguredAcpBackend } from './resolveBackend';
 export function materializeConfiguredAcpEnvironment(params: Readonly<{
   backend: ResolvedConfiguredAcpBackend;
   accountSettings: Readonly<Record<string, unknown>>;
-  credentials: Credentials;
+  credentials: StoredCredentials;
   processEnv?: NodeJS.ProcessEnv;
 }>): Record<string, string> {
   const processEnv = params.processEnv ?? process.env;
   const savedSecretsById = indexSavedSecretsByIdFromAccountSettings(params.accountSettings);
-  const settingsSecretsKey = deriveSettingsSecretsKeyForCredentials(params.credentials);
   const settingsSecretsReadKeys = deriveSettingsSecretsReadKeysForCredentials(params.credentials);
 
   const env: Record<string, string> = {};
@@ -24,7 +22,7 @@ export function materializeConfiguredAcpEnvironment(params: Readonly<{
     const resolved = resolveMcpValueRefPlaintext({
       valueRef,
       savedSecretsById,
-      settingsSecretsKey,
+      settingsSecretsKey: null,
       settingsSecretsReadKeys,
       processEnv,
     });

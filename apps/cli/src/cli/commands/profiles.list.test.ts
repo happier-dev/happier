@@ -11,7 +11,7 @@ afterEach(() => {
 
 describe('happier profiles list --json', () => {
   it('lists built-in profiles when unauthenticated', async () => {
-    vi.spyOn(persistenceModule, 'readCredentials').mockResolvedValue(null);
+    vi.spyOn(persistenceModule, 'readStoredCredentials').mockResolvedValue(null);
     const bootstrapSpy = vi.spyOn(accountSettingsModule, 'bootstrapAccountSettingsContext');
     const output = captureConsoleLogAndMuteStdout();
 
@@ -38,10 +38,10 @@ describe('happier profiles list --json', () => {
   it('includes custom profiles when authenticated', async () => {
     const credentials = {
       token: 'x',
-      encryption: { type: 'legacy', secret: new Uint8Array(32) },
-    } as any;
+      encryption: null,
+    } as const;
 
-    vi.spyOn(persistenceModule, 'readCredentials').mockResolvedValue(credentials);
+    vi.spyOn(persistenceModule, 'readStoredCredentials').mockResolvedValue(credentials);
     const bootstrapSpy = vi.spyOn(accountSettingsModule, 'bootstrapAccountSettingsContext').mockResolvedValue({
       source: 'network',
       settings: {
@@ -101,7 +101,7 @@ describe('happier profiles list --json', () => {
       encryption: { type: 'legacy', secret: new Uint8Array(32) },
     } as any;
 
-    vi.spyOn(persistenceModule, 'readCredentials').mockResolvedValue(credentials);
+    vi.spyOn(persistenceModule, 'readStoredCredentials').mockResolvedValue(credentials);
     vi.spyOn(accountSettingsModule, 'bootstrapAccountSettingsContext').mockResolvedValue({
       source: 'network',
       settings: {

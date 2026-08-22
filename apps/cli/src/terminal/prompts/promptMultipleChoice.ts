@@ -23,8 +23,14 @@ export type MultipleChoiceOption<TId extends string> = Readonly<{
 export async function promptMultipleChoice<TId extends string>(
   message: string,
   options: readonly MultipleChoiceOption<TId>[],
-  config: Readonly<{ defaultId: TId; maxAttempts?: number }>,
+  config: Readonly<{
+    defaultId: TId;
+    maxAttempts?: number;
+    /** Injected by callers that already own their input seam (setup). */
+    promptInputFn?: typeof promptInput;
+  }>,
 ): Promise<TId> {
+  const readAnswer = config.promptInputFn ?? promptInput;
   if (options.length === 0) {
     throw new Error('promptMultipleChoice requires at least one option');
   }
@@ -33,7 +39,7 @@ export async function promptMultipleChoice<TId extends string>(
   const fullPrompt = `${message.trimEnd()} ${suffix}`;
 
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-    const raw = (await promptInput(fullPrompt)).trim().toLowerCase();
+    const raw = (await readAnswer(fullPrompt)).trim().toLowerCase();
     if (raw === '') return config.defaultId;
     const match = options.find((o) => o.keys.some((k) => k.toLowerCase() === raw));
     if (match) return match.id;

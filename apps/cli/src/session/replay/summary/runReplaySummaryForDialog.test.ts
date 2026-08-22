@@ -6,7 +6,14 @@ import { runReplaySummaryForDialog, type ReplaySummaryTextPromptRunner } from '.
 
 describe('runReplaySummaryForDialog', () => {
   it('uses the configured runner and includes dialog messages in the summarizer prompt', async () => {
-    const calls: Array<{ backendTarget: unknown; modelId?: string; permissionMode?: string; prompt: string }> = [];
+    const calls: Array<{
+      sessionId: string;
+      backendTarget: unknown;
+      modelId?: string;
+      permissionMode?: string;
+      intent: string;
+      prompt: string;
+    }> = [];
 
     const runner: LlmTaskRunnerConfigV1 = {
       v: 1,
@@ -25,9 +32,11 @@ describe('runReplaySummaryForDialog', () => {
       deps: {
         runTextPrompt: (async (args) => {
           calls.push({
+            sessionId: args.sessionId,
             backendTarget: (args as any).backendTarget,
             modelId: args.modelId,
             permissionMode: args.permissionMode,
+            intent: args.intent,
             prompt: args.prompt,
           });
           return 'SUMMARY_OK';
@@ -37,9 +46,11 @@ describe('runReplaySummaryForDialog', () => {
 
     expect(out).toBe('SUMMARY_OK');
     expect(calls).toHaveLength(1);
+    expect(calls[0]?.sessionId).toBe('sess_parent');
     expect(calls[0]?.backendTarget).toEqual({ kind: 'builtInAgent', agentId: 'claude' });
     expect(calls[0]?.modelId).toBe('default');
     expect(calls[0]?.permissionMode).toBe('no_tools');
+    expect(calls[0]?.intent).toBe('task');
     expect(String(calls[0]?.prompt ?? '')).toContain('User: hello');
     expect(String(calls[0]?.prompt ?? '')).toContain('Assistant: world');
     expect(String(calls[0]?.prompt ?? '')).toContain('## Goal');

@@ -47,10 +47,10 @@ export function resolveBackendRuntimeOwner(params: Readonly<{
     agent?: ResolvedAgentContribution | null;
     engineEntry?: RuntimeRegistryBackendEngineEntry;
     manifestOnlyPluginRuntime: boolean;
-    nativeAgentRuntimeCarrier?: boolean;
+    runnerAgentSessionRuntimeSource?: boolean;
 }>): BackendRuntimeOwnerResolution {
     const pluginOwnerExists = params.engineEntry?.hasPrimaryRuntime === true
-        || params.nativeAgentRuntimeCarrier === true
+        || params.runnerAgentSessionRuntimeSource === true
         || params.manifestOnlyPluginRuntime;
     const pluginOwner = pluginOwnerExists
         ? createPluginRuntimeOwnerCandidate({

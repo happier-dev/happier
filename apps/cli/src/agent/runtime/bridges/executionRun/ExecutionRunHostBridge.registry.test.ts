@@ -114,6 +114,7 @@ describe('ExecutionRunManager execution-run registry integration', () => {
       registry,
       changedPluginIds: [],
       durableRevision: 1,
+      runningSessionDisposition: 'retainRunningSessions',
     });
     if (!adoption.ok) {
       throw new Error('Failed to publish the test plugin runtime registry');
@@ -172,7 +173,7 @@ describe('ExecutionRunManager execution-run registry integration', () => {
             summary: 'ok',
           }),
         ),
-      sendAcp: () => {},
+      sendAcp: async () => {},
       getNowMs: () => 1_700_000_000_000,
     });
 
@@ -218,20 +219,20 @@ describe('ExecutionRunManager execution-run registry integration', () => {
 
     // Marker writes are best-effort and may lag the terminal promise. Poll briefly until the
     // terminal marker is visible to avoid brittle timing assumptions.
-    let marker: any = null;
+    let marker: Awaited<ReturnType<typeof listExecutionRunMarkers>>[number] | null = null;
     for (let i = 0; i < 25; i += 1) {
       const markers = await listExecutionRunMarkers();
       marker = markers.find((m) => m.runId === started.runId) ?? null;
       if (marker?.status === 'succeeded') break;
       await new Promise((resolve) => setTimeout(resolve, 10));
     }
-    expect(marker).not.toBeNull();
-    expect(marker?.status).toBe('succeeded');
-    expect(marker?.intent).toBe('review');
-    expect(marker?.backendTarget).toEqual({ kind: 'backend', backendId: TEST_PRIMARY_BACKEND_ID, sourceKind: 'built_in' });
-    expect(marker?.permissionMode).toBe('read_only');
-    expect(typeof marker?.startedAtMs).toBe('number');
-    expect(typeof marker?.updatedAtMs).toBe('number');
+    if (!marker) throw new Error('Expected terminal execution-run marker');
+    expect(marker.status).toBe('succeeded');
+    expect(marker.intent).toBe('review');
+    expect(marker.backendTarget).toEqual({ kind: 'backend', backendId: TEST_PRIMARY_BACKEND_ID, sourceKind: 'built_in' });
+    expect(marker).not.toHaveProperty('permissionMode');
+    expect(typeof marker.startedAtMs).toBe('number');
+    expect(typeof marker.updatedAtMs).toBe('number');
   }, 60_000);
 
   it('consumes the current contributed profile launch facts and rejects the same selection after removal', async () => {
@@ -256,19 +257,19 @@ describe('ExecutionRunManager execution-run registry integration', () => {
         });
         return runtime;
       },
-      sendAcp: () => {},
+      sendAcp: async () => {},
       getNowMs: () => 1_700_000_000_000,
       resolveExecutionRunProfileCatalog: async () => {
         catalogReads += 1;
         const profileCatalog = buildExecutionRunProfileCatalog(profilePresent ? [{
           pluginId: 'acme.memory',
+          immutableGenerationId: 'immutable-memory-1',
           definition: {
             id: 'memory', intent: 'memory_hints', title: 'Acme memory hints', promptAsset: 'memory-prompt',
             compatibleAgents: [TEST_PRIMARY_BACKEND_ID],
             defaults: { retention: 'ephemeral', runClass: 'bounded', io: 'streaming' },
           },
         }] : [], {
-          generationId: 'registry:generation-1',
           resolvePromptAssetBlocks: async () => [{
             id: 'plugin_prompt_asset.acme.memory/memory-prompt',
             scope: 'session',
@@ -291,7 +292,7 @@ describe('ExecutionRunManager execution-run registry integration', () => {
 
     const started = await manager.start({
       sessionId: 'parent_session_1', intent: 'memory_hints', profileId: 'acme.memory/memory',
-      profileGenerationId: 'registry:generation-1',
+      profileGenerationId: 'immutable-memory-1',
       backendTarget: { kind: 'builtInAgent', agentId: TEST_PRIMARY_BACKEND_ID },
       instructions: 'Recall this repository.', permissionMode: 'read_only',
       retentionPolicy: 'resumable', runClass: 'long_lived', ioMode: 'request_response',
@@ -306,7 +307,6 @@ describe('ExecutionRunManager execution-run registry integration', () => {
       engineRegistry: expect.objectContaining({
         contributions: expect.objectContaining({
           agentDefinitionsById: expect.any(Map),
-          agentRuntimeDefinitionsById: expect.any(Map),
         }),
       }),
     }));
@@ -314,7 +314,7 @@ describe('ExecutionRunManager execution-run registry integration', () => {
     profilePresent = false;
     await expect(manager.start({
       sessionId: 'parent_session_1', intent: 'memory_hints', profileId: 'acme.memory/memory',
-      profileGenerationId: 'registry:generation-1',
+      profileGenerationId: 'immutable-memory-1',
       backendTarget: { kind: 'builtInAgent', agentId: TEST_PRIMARY_BACKEND_ID },
       instructions: 'Recall again.', permissionMode: 'read_only',
       retentionPolicy: 'ephemeral', runClass: 'bounded', ioMode: 'streaming',
@@ -333,7 +333,7 @@ describe('ExecutionRunManager execution-run registry integration', () => {
       parentProvider: TEST_PRIMARY_BACKEND_ID,
       cwd: workspaceDir,
       createRuntime,
-      sendAcp: () => {},
+      sendAcp: async () => {},
       resolveExecutionRunProfileCatalog: async () => buildExecutionRunProfileCatalog() as never,
     });
 
@@ -367,7 +367,7 @@ describe('ExecutionRunManager execution-run registry integration', () => {
       parentProvider: TEST_PRIMARY_BACKEND_ID,
       cwd: workspaceDir,
       createRuntime: () => createStaticRuntime('unused'),
-      sendAcp: () => {},
+      sendAcp: async () => {},
       resolveExecutionRunProfileCatalog: async () => ({
         profileCatalog: buildExecutionRunProfileCatalog(),
         engineRegistry,
@@ -400,7 +400,7 @@ describe('ExecutionRunManager execution-run registry integration', () => {
       parentProvider: TEST_PRIMARY_BACKEND_ID,
       cwd: workspaceDir,
       createRuntime: () => createStaticRuntime('ok'),
-      sendAcp: () => {},
+      sendAcp: async () => {},
       getNowMs: () => nowMs,
     });
 
@@ -433,11 +433,11 @@ describe('ExecutionRunManager execution-run registry integration', () => {
 
     const markers = await listExecutionRunMarkers();
     const marker = markers.find((m) => m.runId === started.runId) ?? null;
-    expect(marker).not.toBeNull();
-    expect(marker?.status).toBe('running');
-    expect(marker?.permissionMode).toBe('read_only');
-    expect(marker?.lastActivityAtMs).toBe(nowMs);
-    expect(marker?.updatedAtMs).toBe(nowMs);
+    if (!marker) throw new Error('Expected running execution-run marker');
+    expect(marker.status).toBe('running');
+    expect(marker).not.toHaveProperty('permissionMode');
+    expect(marker.lastActivityAtMs).toBe(nowMs);
+    expect(marker.updatedAtMs).toBe(nowMs);
 
     const stopped = await manager.stop(started.runId);
     expect(stopped.ok).toBe(true);
@@ -468,7 +468,7 @@ describe('ExecutionRunManager execution-run registry integration', () => {
         runtimeInputs.push(opts);
         return createResumableStaticRuntime('ok');
       },
-      sendAcp: () => {},
+      sendAcp: async () => {},
       getNowMs: () => 1_700_000_000_000,
     });
 
@@ -506,7 +506,7 @@ describe('ExecutionRunManager execution-run registry integration', () => {
         observedBackendIds.push(opts.backendId);
         return createStaticRuntime('ok');
       },
-      sendAcp: () => {},
+      sendAcp: async () => {},
       getNowMs: () => 1_700_000_000_000,
     });
 
@@ -574,7 +574,7 @@ describe('ExecutionRunManager execution-run registry integration', () => {
           },
         });
       },
-      sendAcp: () => {},
+      sendAcp: async () => {},
       getNowMs: () => 1_700_000_000_000,
     });
 

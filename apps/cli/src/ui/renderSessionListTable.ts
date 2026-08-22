@@ -1,4 +1,7 @@
-import type { CliSessionRowModel } from '@/cli/output/session/buildCliSessionRowModel';
+import {
+  UNKNOWN_CLI_SESSION_AGENT_LABEL,
+  type CliSessionRowModel,
+} from '@/cli/output/session/buildCliSessionRowModel';
 import { padLeft, padRight, truncateEnd } from '@/ui/sessionTableLayout';
 import { formatSessionUpdatedAtForCli, shortenSessionIdForCli } from '@/ui/sessionListFormatting';
 
@@ -125,7 +128,7 @@ export function renderSessionListTable(params: Readonly<{
     lines.push(
       renderRow([
         shortenSessionIdForCli(row.id),
-        row.agentId,
+        row.agentId ?? UNKNOWN_CLI_SESSION_AGENT_LABEL,
         formatSessionUpdatedAtForCli(row.updatedAt, nowMs),
         row.active ? 'yes' : '',
         toResumeCell(row),

@@ -50,9 +50,32 @@ describe('memory system record helpers', () => {
     expect(content).toEqual({ t: 'plain', v: payload });
     expect(openMemorySystemRecordPayload({
       namespace: MEMORY_SYSTEM_RECORD_NAMESPACE,
+      mode: 'plain',
       kind: MEMORY_SYSTEM_RECORD_KINDS.summaryShard,
       content,
     })).toEqual(payload);
+  });
+
+  it('fails closed when an E2EE Session receives a plaintext memory record envelope', async () => {
+    const { AccountEncryptionMaterialUnavailableError } = await import('@/api/client/encryptionKey');
+    const {
+      MEMORY_SYSTEM_RECORD_KINDS,
+      openMemorySystemRecordPayload,
+    } = await import('./memorySystemRecords');
+
+    expect(() => openMemorySystemRecordPayload({
+      mode: 'e2ee',
+      kind: MEMORY_SYSTEM_RECORD_KINDS.synopsis,
+      content: {
+        t: 'plain',
+        v: {
+          v: 1,
+          seqTo: 25,
+          updatedAtMs: 12345,
+          synopsis: 'This must not be reinterpreted as E2EE content.',
+        },
+      },
+    })).toThrow(AccountEncryptionMaterialUnavailableError);
   });
 
   it('seals encrypted synopsis payloads and opens them with the session encryption context', async () => {
@@ -82,9 +105,50 @@ describe('memory system record helpers', () => {
     if (content.t !== 'encrypted') return;
     expect(decryptSessionPayload({ ctx, ciphertextBase64: content.c })).toEqual(payload);
     expect(openMemorySystemRecordPayload({
+      mode: 'e2ee',
       kind: MEMORY_SYSTEM_RECORD_KINDS.synopsis,
       content,
       ctx,
     })).toEqual(payload);
+  });
+
+  it('reports encrypted payloads without session key material as typed unavailable', async () => {
+    const { AccountEncryptionMaterialUnavailableError } = await import('@/api/client/encryptionKey');
+    const {
+      MEMORY_SYSTEM_RECORD_KINDS,
+      openMemorySystemRecordPayload,
+      sealMemorySystemRecordPayload,
+    } = await import('./memorySystemRecords');
+
+    const ctx: SessionEncryptionContext = {
+      encryptionKey: new Uint8Array(32).fill(7),
+      encryptionVariant: 'legacy',
+    };
+    const content = sealMemorySystemRecordPayload({
+      mode: 'e2ee',
+      ctx,
+      kind: MEMORY_SYSTEM_RECORD_KINDS.synopsis,
+      payload: {
+        v: 1,
+        seqTo: 25,
+        updatedAtMs: 12345,
+        synopsis: 'Retained encrypted Memory data.',
+      },
+    });
+
+    expect(() => openMemorySystemRecordPayload({
+      mode: 'e2ee',
+      kind: MEMORY_SYSTEM_RECORD_KINDS.synopsis,
+      content,
+    })).toThrow(AccountEncryptionMaterialUnavailableError);
+    expect(() => openMemorySystemRecordPayload({
+      mode: 'e2ee',
+      kind: MEMORY_SYSTEM_RECORD_KINDS.synopsis,
+      content,
+      ctx: {
+        encryptionKey: new Uint8Array(32).fill(8),
+        encryptionVariant: 'legacy',
+      },
+    })).toThrow(AccountEncryptionMaterialUnavailableError);
   });
 });

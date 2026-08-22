@@ -4,18 +4,15 @@ import {
 import type {
     ResolvedAgentContribution,
     ResolvedAgentRuntimeContribution,
-    ResolvedCatalogEntry,
     ResolvedContributionRegistry,
 } from '@/plugins/projection/registry/types';
 import {
     resolveExecutableManagedDependenciesRegistry,
 } from '@/plugins/projection/registry/managedDependencyExecutables';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
-import {
-    createEmptyBackendExecutionSurfaces,
-    type BackendExecutionSurfaces,
-    type EngineAdapterResolution,
-    type EngineResolutionSelectedSource,
+import type {
+    EngineAdapterResolution,
+    EngineResolutionSelectedSource,
 } from '../engineRegistryTypes';
 import type { RuntimeRegistryBackendEngineEntry } from './runtimeOwnerResolution';
 
@@ -49,13 +46,59 @@ function readCurrentAgentRuntimeKind(agent: ResolvedAgentContribution): string |
  */
 export function resolveEngineRuntimeContribution(
     contributions: Pick<ResolvedContributionRegistry, 'agentDefinitionsById'>,
-    agentId: string,
+    backendId: string,
 ): ResolvedAgentRuntimeContribution | null {
+    const direct =
+        contributions.agentDefinitionsById.get(backendId);
+    const owned = direct
+        ? []
+        : [...contributions.agentDefinitionsById.values()]
+            .filter((candidate) =>
+                candidate.definition.ownedBackendIds
+                    ?.includes(backendId)
+            );
+    if (!direct && owned.length !== 1) return null;
+    const agent = direct ?? owned[0];
+    if (!agent) return null;
+    return projectEngineRuntimeContributionFromAgent(agent, backendId);
+}
+
+/**
+ * Resolves the one execution backend that a catalog Agent can safely address.
+ *
+ * An Agent id is a direct engine key only when the canonical Agent projection
+ * declares no distinct backend ids. A sole declared backend is authoritative;
+ * ambiguous aliases intentionally fail closed rather than making consumers
+ * infer that an Agent id and backend id are interchangeable.
+ */
+export function resolveEngineBackendIdForCatalogAgent(
+    contributions: Pick<ResolvedContributionRegistry, 'agentDefinitionsById'>,
+    agentId: string,
+): string | null {
     const agent = contributions.agentDefinitionsById.get(agentId);
     if (!agent) return null;
+
+    const declaredBackendIds = agent.definition.ownedBackendIds ?? [];
+    const backendId = declaredBackendIds.length === 0
+        ? agentId
+        : declaredBackendIds.includes(agentId)
+            ? agentId
+            : declaredBackendIds.length === 1
+                ? declaredBackendIds[0] ?? null
+                : null;
+    if (!backendId) return null;
+
+    const resolved = resolveEngineRuntimeContribution(contributions, backendId);
+    return resolved?.agentId === agentId ? resolved.id : null;
+}
+
+export function projectEngineRuntimeContributionFromAgent(
+    agent: ResolvedAgentContribution,
+    backendId: string,
+): ResolvedAgentRuntimeContribution {
     const runtimeKind = readCurrentAgentRuntimeKind(agent);
     return Object.freeze({
-        id: agent.id,
+        id: backendId,
         agentId: agent.id,
         provenance: agent.provenance,
         source: agent.source,
@@ -69,7 +112,6 @@ export function resolveEngineRuntimeContribution(
         ...(agent.sourceSpec ? { sourceSpec: agent.sourceSpec } : {}),
         ...(agent.pluginId ? { pluginId: agent.pluginId } : {}),
         ...(agent.manifestPath ? { manifestPath: agent.manifestPath } : {}),
-        ...(agent.manifestDigest ? { manifestDigest: agent.manifestDigest } : {}),
         ...(agent.daemonEntryPath !== undefined ? { daemonEntryPath: agent.daemonEntryPath } : {}),
         ...(agent.devDaemonEntryPath !== undefined ? { devDaemonEntryPath: agent.devDaemonEntryPath } : {}),
     });
@@ -90,9 +132,6 @@ export function createPluginExecInstallablesRegistry(
     return registry.descriptors.length > 0 ? registry : undefined;
 }
 
-type BackendSurfaceKind = NonNullable<ResolvedAgentRuntimeContribution['surfaceHandlers']>[number]['kind'];
-type CatalogSurfaceOmissions = Readonly<Partial<Record<BackendSurfaceKind, true>>>;
-
 export function toEngineSelectedSource(
     backendProvenance: EngineAdapterResolution['provenance'],
     providerRuntimePreference?: 'system-first' | 'managed-first' | null,
@@ -107,49 +146,4 @@ export function toEngineSelectedSource(
         return 'system';
     }
     return undefined;
-}
-
-function resolveCatalogSurfaceOmissions(backend: ResolvedAgentRuntimeContribution): CatalogSurfaceOmissions {
-    const omissions: Partial<Record<BackendSurfaceKind, true>> = {};
-    for (const surfaceHandler of backend.surfaceHandlers ?? []) {
-        if (surfaceHandler.support === 'unsupported') {
-            continue;
-        }
-        omissions[surfaceHandler.kind] = true;
-    }
-    return omissions;
-}
-
-async function resolveCatalogExecutionSurfacesForEntry(
-    entry: ResolvedCatalogEntry,
-    omissions: CatalogSurfaceOmissions = {},
-): Promise<BackendExecutionSurfaces> {
-    const replayChildLaunch = !omissions.fork && entry.resolveReplayChildLaunch
-        ? {
-            resolveReplayChildLaunch: async (
-                request: Parameters<NonNullable<NonNullable<BackendExecutionSurfaces['fork']>['resolveReplayChildLaunch']>>[0],
-            ) => await entry.resolveReplayChildLaunch!(request.parentMetadata),
-        }
-        : null;
-    return {
-        terminalRuntime: null,
-        externalSession: null,
-        attach: !omissions.attach && entry.getProviderAttachOps ? await entry.getProviderAttachOps() : null,
-        handoff: !omissions.handoff && entry.getHandoffSurface ? await entry.getHandoffSurface() : null,
-        fork: replayChildLaunch,
-        // CHKPT-5 owns product checkpoint/restore orchestration. Catalog-only
-        // backend entries must not claim checkpoint readiness from surface shape
-        // existence; provider checkpoint leaves are consumed through declared
-        // plugin/engine surfaces and operation-specific availability.
-        checkpoint: null,
-    };
-}
-
-export async function resolveCatalogExecutionSurfacesForFirstPartyBackend(params: Readonly<{
-    backend: ResolvedAgentRuntimeContribution;
-    entry?: ResolvedCatalogEntry | null;
-}>): Promise<BackendExecutionSurfaces> {
-    return params.entry
-        ? await resolveCatalogExecutionSurfacesForEntry(params.entry, resolveCatalogSurfaceOmissions(params.backend))
-        : createEmptyBackendExecutionSurfaces();
 }

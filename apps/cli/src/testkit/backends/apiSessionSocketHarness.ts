@@ -1,6 +1,39 @@
 import { vi } from 'vitest';
+import type { SessionTurnMutationV1 } from '@happier-dev/protocol';
 
 type SocketEventHandler = (...args: unknown[]) => void;
+
+export function createSessionTurnMutationAppliedReceipt(mutation: SessionTurnMutationV1) {
+    return {
+        v: mutation.v,
+        sessionId: mutation.sessionId,
+        mutationId: mutation.mutationId,
+        ...('turnId' in mutation && mutation.turnId ? { turnId: mutation.turnId } : {}),
+        action: mutation.action,
+        decision: 'applied' as const,
+        observedAt: mutation.observedAt,
+        appliedAt: mutation.observedAt + 1,
+    };
+}
+
+export function createSessionTurnMutationAppliedSocketAck(mutation: SessionTurnMutationV1) {
+    return {
+        result: 'success' as const,
+        applied: true,
+        receipt: createSessionTurnMutationAppliedReceipt(mutation),
+    };
+}
+
+export function createSessionTurnMutationAppliedHttpResponse(mutation: SessionTurnMutationV1) {
+    return {
+        status: 200,
+        data: {
+            success: true as const,
+            applied: true,
+            receipt: createSessionTurnMutationAppliedReceipt(mutation),
+        },
+    };
+}
 
 export type ApiSessionSocketStub = {
     id: string;

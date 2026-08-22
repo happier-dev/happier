@@ -1,22 +1,20 @@
 import chalk from 'chalk';
 
-import type { Credentials } from '@/persistence';
+import type { StoredCredentials } from '@/persistence';
 import { ExecutionRunTurnStreamStartRequestSchema } from '@happier-dev/protocol';
 
-import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
-import { hasFlag } from '@/cli/commands/shared/argvFlags';
+import { wantsJson, printJsonEnvelope, writeJsonStdout } from '@/cli/output/jsonEnvelope';
+import { hasFlag, readCommandPositionals } from '@/cli/commands/shared/argvFlags';
 import { SESSION_HELP_LINES } from '@/cli/commands/session/shared/sessionCommandUsage';
 import { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
 import { startExecutionRunStream } from '@/session/services/executionRuns';
 
 export async function cmdSessionRunStreamStart(
   argv: string[],
-  deps: Readonly<{ readCredentialsFn: () => Promise<Credentials | null> }>,
+  deps: Readonly<{ readCredentialsFn: () => Promise<StoredCredentials | null> }>,
 ): Promise<void> {
   const json = wantsJson(argv);
-  const idOrPrefix = String(argv[2] ?? '').trim();
-  const runId = String(argv[3] ?? '').trim();
-  const message = String(argv[4] ?? '').trim();
+  const [idOrPrefix = '', runId = '', message = ''] = readCommandPositionals(argv, { startIndex: 2 });
   const resume = hasFlag(argv, '--resume');
 
   if (!idOrPrefix || !runId || !message) {
@@ -26,7 +24,7 @@ export async function cmdSessionRunStreamStart(
   const credentials = await deps.readCredentialsFn();
   if (!credentials) {
     if (json) {
-      printJsonEnvelope({ ok: false, kind: 'session_run_stream_start', error: { code: 'not_authenticated' } });
+      await printJsonEnvelope({ ok: false, kind: 'session_run_stream_start', error: { code: 'not_authenticated' } });
       return;
     }
     console.error(chalk.red('Error:'), 'Not authenticated. Run "happier auth login" first.');
@@ -36,7 +34,7 @@ export async function cmdSessionRunStreamStart(
   const sessionTarget = await resolveSessionTransportContext({ credentials, idOrPrefix });
   if (!sessionTarget.ok) {
     if (json) {
-      printJsonEnvelope({
+      await printJsonEnvelope({
         ok: false,
         kind: 'session_run_stream_start',
         error: { code: sessionTarget.code, ...(sessionTarget.candidates ? { candidates: sessionTarget.candidates } : {}) },
@@ -45,13 +43,27 @@ export async function cmdSessionRunStreamStart(
     }
     throw new Error(sessionTarget.code);
   }
-  const { sessionId, ctx, mode } = sessionTarget;
+  const { sessionId } = sessionTarget;
   const request = ExecutionRunTurnStreamStartRequestSchema.parse({ runId, message, ...(resume ? { resume: true } : {}) });
-  const result = await startExecutionRunStream({ token: credentials.token, sessionId, mode, ctx, request });
+  const result = sessionTarget.mode === 'plain'
+    ? await startExecutionRunStream({
+        token: credentials.token,
+        sessionId,
+        mode: sessionTarget.mode,
+        ctx: sessionTarget.ctx,
+        request,
+      })
+    : await startExecutionRunStream({
+        token: credentials.token,
+        sessionId,
+        mode: sessionTarget.mode,
+        ctx: sessionTarget.ctx,
+        request,
+      });
 
   if (!result.ok) {
     if (json) {
-      printJsonEnvelope({
+      await printJsonEnvelope({
         ok: false,
         kind: 'session_run_stream_start',
         error: { code: result.code, ...(result.message ? { message: result.message } : {}) },
@@ -62,10 +74,10 @@ export async function cmdSessionRunStreamStart(
   }
 
   if (json) {
-    printJsonEnvelope({ ok: true, kind: 'session_run_stream_start', data: { sessionId, runId, ...(result.data as any) } });
+    await printJsonEnvelope({ ok: true, kind: 'session_run_stream_start', data: { sessionId, runId, ...(result.data as any) } });
     return;
   }
 
   console.log(chalk.green('✓'), 'run stream started');
-  console.log(JSON.stringify(result.data, null, 2));
+  await writeJsonStdout(result.data, { pretty: true });
 }

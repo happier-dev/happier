@@ -24,6 +24,7 @@ import {
   createApiSessionSocketStub,
 } from '@/testkit/backends/apiSessionSocketHarness';
 import { createAcpTestTransportHandler } from '@/agent/acp/testkit/subprocessHarness';
+import { AgentSessionRuntimeEventV1Schema } from '@happier-dev/protocol';
 
 let sessionSocketStub: ApiSessionSocketStub | null = null;
 let userSocketStub: ApiSessionSocketStub | null = null;
@@ -600,35 +601,39 @@ describe('runPermissionModePromptLoop with ApiSessionClient idle snapshot refres
     }
 
     let emittedMidTurnOverride = false;
-    const sendAgentMessageSpy = vi.spyOn(session, 'sendAgentMessage');
-    sendAgentMessageSpy.mockImplementation(((provider: unknown, body: any, opts?: unknown) => {
-      if (!emittedMidTurnOverride && body?.type === 'task_started') {
-        emittedMidTurnOverride = true;
-        setTimeout(() => {
-          const overrideMetadata = {
-            ...initialMetadata,
-            acpSessionModeOverrideV1: { v: 1, updatedAt: 10, modeId: 'plan' },
-          };
-          const update = {
-            id: 'mid-turn-override',
-            seq: 99,
-            createdAt: Date.now(),
-            body: {
-              t: 'update-session',
-              sid: 's1',
-              id: 's1',
-              metadata: {
-                value: encryptMetadata(overrideMetadata),
-                version: 2,
-              },
-            },
-          };
-          localSessionSocketStub.trigger('update', update);
-          localUserSocketStub.trigger('update', update);
-        }, 20);
+    runtime.subscribeRuntimeEvents((message) => {
+      const parsed = AgentSessionRuntimeEventV1Schema.safeParse(message);
+      if (
+        emittedMidTurnOverride
+        || !parsed.success
+        || parsed.data.kind !== 'turn-start'
+      ) {
+        return;
       }
-      return ApiSessionClient.prototype.sendAgentMessage.call(session, provider as any, body, opts as any);
-    }) as typeof session.sendAgentMessage);
+      emittedMidTurnOverride = true;
+      setTimeout(() => {
+        const overrideMetadata = {
+          ...initialMetadata,
+          acpSessionModeOverrideV1: { v: 1, updatedAt: 10, modeId: 'plan' },
+        };
+        const update = {
+          id: 'mid-turn-override',
+          seq: 99,
+          createdAt: Date.now(),
+          body: {
+            t: 'update-session',
+            sid: 's1',
+            id: 's1',
+            metadata: {
+              value: encryptMetadata(overrideMetadata),
+              version: 2,
+            },
+          },
+        };
+        localSessionSocketStub.trigger('update', update);
+        localUserSocketStub.trigger('update', update);
+      }, 20);
+    });
 
     const abortController = new AbortController();
     let shouldExit = false;

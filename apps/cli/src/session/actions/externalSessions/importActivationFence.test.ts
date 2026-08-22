@@ -11,18 +11,7 @@ import {
 function ready(currentPublicationFenceVersion?: number): CliServerFeaturesSnapshot {
     const features = FeaturesResponseSchema.parse({
         features: {},
-        capabilities: {
-            compatibility: {
-                v: 1,
-                sessionSync: {
-                    v: 1,
-                    enforcement: 'observe',
-                    minimumSessionSyncProtocolVersion: 1,
-                    currentSessionSyncProtocolVersion: 2,
-                    declarationTransport: 'headers-v1',
-                },
-            },
-        },
+        capabilities: {},
     });
     return {
         status: 'ready',
@@ -32,10 +21,10 @@ function ready(currentPublicationFenceVersion?: number): CliServerFeaturesSnapsh
             ...features,
             capabilities: {
                 ...features.capabilities,
-                compatibility: {
-                    ...features.capabilities.compatibility!,
-                    externalSessionImport: {
-                        currentPublicationFenceVersion,
+                session: {
+                    ...features.capabilities.session,
+                    externalImport: {
+                        publicationFenceVersion: currentPublicationFenceVersion,
                     },
                 },
             },
@@ -76,6 +65,7 @@ function takeoverStartInput(
             },
             plan: 'takeover',
             targetStorageMode,
+            targetDirectory: '/workspace/session-1',
             targetRuntimeMode: 'terminal',
         },
     } as const;
@@ -176,6 +166,30 @@ describe('external-session import activation publication fence', () => {
             execute,
         })).resolves.toEqual({ ok: true, result: null });
         expect(execute).toHaveBeenCalledOnce();
+    });
+
+    it('fails the hosted-admission fence closed when a durable takeover start input does not parse', async () => {
+        const execute = vi.fn(async (): Promise<ActionExecuteResult> => ({ ok: true, result: null }));
+        const unparseableStart = {
+            request: {
+                ...takeoverStartInput('persisted').request,
+                targetDirectory: undefined,
+            },
+        };
+
+        await expect(executeExternalSessionImportActivation({
+            actionId: 'sessions.external.takeover.start',
+            input: unparseableStart,
+            serverSnapshot: ready(1),
+            execute,
+        })).resolves.toMatchObject({
+            ok: true,
+            result: {
+                ok: false,
+                error: { code: 'upgrade_required' },
+            },
+        });
+        expect(execute).not.toHaveBeenCalled();
     });
 
     it('requires runtime-bound hosted-admission fence version three before durable takeover start', async () => {

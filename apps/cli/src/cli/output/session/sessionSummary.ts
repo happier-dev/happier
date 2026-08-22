@@ -1,9 +1,10 @@
-import type { Credentials } from '@/persistence';
-import { tryDecryptSessionOwnerMetadataView } from '@/session/transport/encryption/sessionEncryptionContext';
+import type { StoredCredentials } from '@/persistence';
+import { tryDecryptSessionPresentationMetadataView } from '@/session/transport/encryption/sessionEncryptionContext';
 import type { RawSessionListRow, RawSessionRecord } from '@/session/transport/http/sessionsHttp';
 import {
   readSystemSessionMetadataFromMetadata,
   type SessionSummary as ProtocolSessionSummary,
+  type AccountEncryptionCurrentnessResponse,
 } from '@happier-dev/protocol';
 
 export type SessionSummary = Readonly<ProtocolSessionSummary>;
@@ -19,12 +20,14 @@ function readShare(value: unknown): { accessLevel: string; canApprovePermissions
 }
 
 export function summarizeSessionRow(params: Readonly<{
-  credentials: Credentials;
+  credentials: StoredCredentials;
+  accountEncryptionMode: AccountEncryptionCurrentnessResponse['mode'];
   row: RawSessionListRow;
 }>): SessionSummary {
   const id = params.row.id.trim();
-  const metadata = tryDecryptSessionOwnerMetadataView({
+  const metadata = tryDecryptSessionPresentationMetadataView({
     credentials: params.credentials,
+    accountEncryptionMode: params.accountEncryptionMode,
     rawSession: params.row,
   });
   const tag = typeof (metadata as any)?.tag === 'string' ? String((metadata as any).tag) : undefined;
@@ -52,14 +55,21 @@ export function summarizeSessionRow(params: Readonly<{
     ...(isSystem ? { isSystem, systemPurpose: systemMetadata?.key ?? null } : {}),
     ...(readShare(params.row.share) !== undefined ? { share: readShare(params.row.share) } : {}),
     ...((params.row as any)?.encryptionMode ? { encryptionMode: (params.row as any).encryptionMode } : {}),
-    encryption: { type: params.credentials.encryption.type },
+    encryption: params.credentials.encryption
+      ? { type: params.credentials.encryption.type }
+      : null,
   };
 }
 
 export function summarizeSessionRecord(params: Readonly<{
-  credentials: Credentials;
+  credentials: StoredCredentials;
+  accountEncryptionMode: AccountEncryptionCurrentnessResponse['mode'];
   session: RawSessionRecord;
 }>): SessionSummary {
   // The /v2/sessions/:id response includes similar shape, so reuse the same summarization logic.
-  return summarizeSessionRow({ credentials: params.credentials, row: params.session });
+  return summarizeSessionRow({
+    credentials: params.credentials,
+    accountEncryptionMode: params.accountEncryptionMode,
+    row: params.session,
+  });
 }

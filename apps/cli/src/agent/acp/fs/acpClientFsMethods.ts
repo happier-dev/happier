@@ -1,10 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { promises as fs } from 'node:fs';
-import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
+import { dirname, resolve } from 'node:path';
 
 import type { InitializeRequest } from '@agentclientprotocol/sdk';
 
 import { authorizeFilesystemPath } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemPathAuthorization';
+import { isCanonicalAbsolutePathInsideRoot } from '@/utils/path/expandHomeDirPath';
 
 import type { AcpPermissionHandler } from '../permissions/acpPermissionHandler';
 import type { AcpClientConnectionHandlers } from '../connection/types';
@@ -60,14 +61,9 @@ export function createAcpClientFsMethods(params: {
   const rootResolved = resolve(params.cwd);
   const rootRealPromise = fs.realpath(rootResolved).catch(() => rootResolved);
 
-  const isWithinRoot = (root: string, target: string): boolean => {
-    const rel = relative(root, target);
-    return rel === '' || (!rel.startsWith(`..${sep}`) && rel !== '..' && !isAbsolute(rel));
-  };
-
   const isWithinAnyRoot = (roots: string[], target: string): boolean => {
     for (const root of roots) {
-      if (isWithinRoot(root, target)) return true;
+      if (isCanonicalAbsolutePathInsideRoot(root, target)) return true;
     }
     return false;
   };

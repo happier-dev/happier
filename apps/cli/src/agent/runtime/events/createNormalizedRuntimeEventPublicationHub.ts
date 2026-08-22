@@ -1,5 +1,4 @@
 import type { AgentMessage } from '@/agent/core/AgentMessage';
-import { RuntimeEventV1Schema } from '@happier-dev/protocol';
 
 import {
   createNormalizedRuntimeEventWriter,
@@ -48,16 +47,7 @@ export function createNormalizedRuntimeEventPublicationHub<TMessage>(params: Rea
   const ensureUpstreamRegistered = (): void => {
     if (unsubscribeUpstream) return;
     unsubscribeUpstream = params.subscribeUpstream((message) => {
-      const parsedRuntimeEvent = RuntimeEventV1Schema.safeParse(message);
-      if (parsedRuntimeEvent.success && parsedRuntimeEvent.data.kind === 'descriptor-update') {
-        runtimeEventWriter.handleMessage({
-          type: 'event',
-          name: 'runtime.descriptor',
-          payload: parsedRuntimeEvent.data.descriptor,
-        });
-      } else {
-        runtimeEventWriter.handleMessage(message as unknown as AgentMessage);
-      }
+      runtimeEventWriter.handleMessage(message as unknown as AgentMessage);
     });
   };
 

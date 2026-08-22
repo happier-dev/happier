@@ -4,7 +4,10 @@ import {
   readLinkedExternalSessionV1FromMetadata,
   resolveExternalSessionOperationTimelineV1,
   type ExternalSessionOperationActionResponseV1,
+  type ExternalSessionOperationAuthorIntentV1,
   type ExternalSessionOperationRecordV1,
+  type ExternalSessionOperationReferenceV1,
+  type ExternalSessionOperationSharedPresentationV1,
   type ExternalSessionOperationSemanticRequestV1,
   type ExternalSessionOperationSocketCommandV1,
   type ExternalSessionOperationSocketResponseV1,
@@ -13,7 +16,7 @@ import {
 } from '@happier-dev/protocol';
 
 import { loadLinkedExternalSession } from '@/api/session/external/takeover/loadLinkedExternalSession';
-import { readCredentials } from '@/persistence';
+import { readStoredCredentials } from '@/persistence';
 import {
   ExternalSessionOperationClaimLostError,
   maintainExternalSessionOperationClaim,
@@ -23,15 +26,18 @@ import {
 import {
   ExternalSessionOperationRecordReadError,
   ExternalSessionOperationRecordAdmissionError,
-  assertExternalSessionOperationRecordAdmission,
-  externalSessionOperationIdForRequest,
+  projectExternalSessionTakeoverIdempotencyIntent,
+  resolveExternalSessionOperationStartAdmission,
   readExternalSessionOperationRecord,
+  type ExternalSessionOperationPriorTerminalReceiptEvidence,
+  type ExternalSessionOperationSelectedPresentationReader,
   writeExternalSessionOperationRecord,
 } from './operationRecordStore';
 import {
   assertExternalSessionOperationProgressCanBeSelected,
   convergeExternalSessionOperationProgressProjection,
   publishExternalSessionOperationProgress,
+  readExternalSessionOperationSharedPresentation,
   settlePriorTerminalExternalSessionOperationProgressProjections,
 } from './operationProgressPublisher';
 import {
@@ -89,11 +95,16 @@ type TakeoverStartDependencies = Readonly<{
   validateProgressSelection(input: Readonly<{
     sessionId: string;
     progress: ReturnType<typeof projectExternalSessionOperationProgressV1>;
-  }>): Promise<void>;
+    priorTerminalRecords: readonly ExternalSessionOperationRecordV1[];
+    priorTerminalReceiptEvidence?:
+      readonly ExternalSessionOperationPriorTerminalReceiptEvidence[];
+  }>): Promise<ExternalSessionOperationSharedPresentationV1 | undefined>;
   publishProgress(input: Readonly<{
     sessionId: string;
     progress: ReturnType<typeof projectExternalSessionOperationProgressV1>;
     allowDifferentTerminalReplacement?: boolean;
+    expectedDifferentTerminalPresentation?:
+      ExternalSessionOperationSharedPresentationV1;
   }>): Promise<ExternalSessionOperationRecordV1 | void>;
   convergeProgress?(
     record: ExternalSessionOperationRecordV1,
@@ -103,13 +114,39 @@ type TakeoverStartDependencies = Readonly<{
     incoming: ExternalSessionOperationRecordV1,
   ): Promise<void>;
   nowMs?: () => number;
+  readSelectedPresentation?:
+    ExternalSessionOperationSelectedPresentationReader;
 }>;
 
 export type ExternalSessionTakeoverStartActionExecutor = Readonly<{
   start(
     input: unknown,
-    context?: Readonly<{ signal?: AbortSignal }>,
+    context?: Readonly<{
+      signal?: AbortSignal;
+      /** Host-stamped private contextual-author admission evidence. */
+      authorIntent?: ExternalSessionOperationAuthorIntentV1;
+    }>,
   ): Promise<ExternalSessionOperationActionResponseV1>;
+}>;
+
+export type ExternalSessionPluginTakeoverStartActionExecutor =
+  ExternalSessionTakeoverStartActionExecutor & Readonly<{
+  startPluginTakeover(
+    input: unknown,
+    context: Readonly<{
+      authorIntent: Extract<
+        ExternalSessionOperationAuthorIntentV1,
+        { kind: 'takeover' }
+      >;
+      signal?: AbortSignal;
+    }>,
+  ): Promise<
+    | Readonly<{
+      ok: true;
+      operation: ExternalSessionOperationReferenceV1;
+    }>
+    | Extract<ExternalSessionOperationActionResponseV1, { ok: false }>
+  >;
 }>;
 
 export function createDefaultExternalSessionTakeoverStartActionExecutor(
@@ -119,13 +156,16 @@ export function createDefaultExternalSessionTakeoverStartActionExecutor(
     publishProgress: TakeoverStartDependencies['publishProgress'];
     sendHistoricalCommand: TakeoverStartDependencies['sendHistoricalCommand'];
   }>,
-): ExternalSessionTakeoverStartActionExecutor {
+): ExternalSessionPluginTakeoverStartActionExecutor {
   return createExternalSessionTakeoverStartActionExecutor({
     ...input,
     convergeProgress: async (record) => {
       await convergeExternalSessionOperationProgressProjection(
         input.activeServerDir,
         record,
+        {
+          allowSettledTerminalPredecessorReplacement: true,
+        },
       );
       const converged = await readExternalSessionOperationRecord(
         input.activeServerDir,
@@ -143,6 +183,7 @@ export function createDefaultExternalSessionTakeoverStartActionExecutor(
         input.activeServerDir,
         priorTerminalRecords,
         {
+          sessionAdmissionLockHeld: true,
           publish: async (publishInput) =>
             await publishExternalSessionOperationProgress({
               ...publishInput,
@@ -154,7 +195,7 @@ export function createDefaultExternalSessionTakeoverStartActionExecutor(
     validateProgressSelection:
       assertExternalSessionOperationProgressCanBeSelected,
     describeSession: async (intent) => {
-      const credentials = await readCredentials();
+      const credentials = await readStoredCredentials();
       if (!credentials) throw new Error('external_session_takeover_start_unauthenticated');
       const loaded = await loadLinkedExternalSession({
         credentials,
@@ -219,20 +260,6 @@ export function createDefaultExternalSessionTakeoverStartActionExecutor(
   });
 }
 
-function publicIntentForSemanticRequest(
-  request: TakeoverSemanticRequest,
-): TakeoverStartIntent | null {
-  const {
-    sourceGeneration: _sourceGeneration,
-    contributionGeneration: _contributionGeneration,
-    ...source
-  } = request.source;
-  return {
-    ...request,
-    source,
-  };
-}
-
 function classifyStartFailure(error: unknown): ExternalSessionOperationActionResponseV1 {
   const code = error instanceof Error ? error.message : '';
   if (error instanceof ExternalSessionOperationRecordAdmissionError) {
@@ -261,7 +288,7 @@ function classifyStartFailure(error: unknown): ExternalSessionOperationActionRes
 function failure(
   code: Extract<ExternalSessionOperationActionResponseV1, { ok: false }>['error']['code'],
   message: string,
-): ExternalSessionOperationActionResponseV1 {
+): Extract<ExternalSessionOperationActionResponseV1, { ok: false }> {
   return { ok: false, error: { code, message } };
 }
 
@@ -291,23 +318,45 @@ function success(
 }
 
 async function readConvergedTakeoverOperation(
-  dependencies: Pick<TakeoverStartDependencies, 'activeServerDir'>,
-  operationId: string,
+  dependencies: Pick<
+    TakeoverStartDependencies,
+    'activeServerDir' | 'readSelectedPresentation'
+  >,
+  intent: TakeoverStartIntent,
+  nowMs: () => number,
   waitForRelease?: Extract<
     Awaited<ReturnType<ExternalSessionOperationExclusion['acquire']>>,
     { status: 'converged' }
   >['waitForRelease'],
   waitInput?: Readonly<{ signal?: AbortSignal }>,
+  authorIntent?: ExternalSessionOperationAuthorIntentV1,
 ): Promise<
   | Readonly<{ status: 'record'; record: ExternalSessionOperationRecordV1 }>
+  | Readonly<{ status: 'completion_receipt' }>
+  | Readonly<{ status: 'conflict' }>
   | Readonly<{ status: 'retry_acquire' }>
   | Readonly<{ status: 'failed' }>
 > {
-  const published = await readExternalSessionOperationRecord(
-    dependencies.activeServerDir,
-    operationId,
-  );
-  if (published) return { status: 'record', record: published };
+  const resolveDurableAdmission = async () =>
+    await resolveExternalSessionOperationStartAdmission({
+      activeServerDir: dependencies.activeServerDir,
+      durableIdempotencyKey: intent.idempotencyKey,
+      intent,
+      ...(authorIntent ? { authorIntent } : {}),
+      nowMs: nowMs(),
+      readSelectedPresentation:
+        dependencies.readSelectedPresentation
+        ?? readExternalSessionOperationSharedPresentation,
+    });
+  const published = await resolveDurableAdmission();
+  if (published.kind === 'existing_record') {
+    return { status: 'record', record: published.record };
+  }
+  if (published.kind === 'completion_receipt') {
+    return { status: 'completion_receipt' };
+  }
+  if (published.kind === 'conflict') return { status: 'conflict' };
+  if (published.kind === 'legacy_unavailable') return { status: 'failed' };
   if (!waitForRelease) return { status: 'failed' };
   let waited: Awaited<ReturnType<NonNullable<typeof waitForRelease>>>;
   try {
@@ -316,60 +365,85 @@ async function readConvergedTakeoverOperation(
     return { status: 'failed' };
   }
   if (waited.status !== 'ready') return { status: 'failed' };
-  const afterWait = await readExternalSessionOperationRecord(
-    dependencies.activeServerDir,
-    operationId,
-  );
-  return afterWait
-    ? { status: 'record', record: afterWait }
-    : { status: 'retry_acquire' };
+  const afterWait = await resolveDurableAdmission();
+  if (afterWait.kind === 'existing_record') {
+    return { status: 'record', record: afterWait.record };
+  }
+  if (afterWait.kind === 'completion_receipt') {
+    return { status: 'completion_receipt' };
+  }
+  if (afterWait.kind === 'conflict') return { status: 'conflict' };
+  if (afterWait.kind === 'legacy_unavailable') return { status: 'failed' };
+  return { status: 'retry_acquire' };
 }
 
 export function createExternalSessionTakeoverStartActionExecutor(
   dependencies: TakeoverStartDependencies,
-): ExternalSessionTakeoverStartActionExecutor {
+): ExternalSessionPluginTakeoverStartActionExecutor {
   const nowMs = dependencies.nowMs ?? Date.now;
 
-  return Object.freeze({
+  const executor: ExternalSessionPluginTakeoverStartActionExecutor = Object.freeze({
     async start(raw, context) {
       const parsed = ExternalSessionTakeoverStartInputV1Schema.safeParse(raw);
       if (!parsed.success || parsed.data.request.plan !== 'takeover') {
         return failure('invalid_state', 'Invalid takeover operation request.');
       }
       const intent = parsed.data.request;
-      const operationId = externalSessionOperationIdForRequest(intent);
-      let existing: ExternalSessionOperationRecordV1 | null;
+      let admission: Awaited<ReturnType<
+        typeof resolveExternalSessionOperationStartAdmission
+      >>;
       try {
-        existing = await readExternalSessionOperationRecord(
-          dependencies.activeServerDir,
-          operationId,
-        );
+        admission = await resolveExternalSessionOperationStartAdmission({
+          activeServerDir: dependencies.activeServerDir,
+          durableIdempotencyKey: intent.idempotencyKey,
+          intent,
+          ...(context?.authorIntent
+            ? { authorIntent: context.authorIntent }
+            : {}),
+          nowMs: nowMs(),
+          readSelectedPresentation:
+            dependencies.readSelectedPresentation
+            ?? readExternalSessionOperationSharedPresentation,
+        });
       } catch (error) {
-        if (error instanceof ExternalSessionOperationRecordReadError) {
+        if (
+          error instanceof ExternalSessionOperationRecordReadError
+          || error instanceof ExternalSessionOperationRecordAdmissionError
+        ) {
           return failure(
             'internal_error',
-            'Takeover operation record could not be read.',
+            'Takeover operation inventory could not be read.',
           );
         }
         throw error;
       }
-      try {
-        await assertExternalSessionOperationRecordAdmission(
-          dependencies.activeServerDir,
-          {
-            sessionId: intent.sessionId,
-            operationId,
-            idempotencyKey: intent.idempotencyKey,
-          },
+      if (admission.kind === 'conflict') {
+        return failure(
+          'operation_conflict',
+          'Takeover idempotency request changed.',
         );
-      } catch (error) {
-        return classifyStartFailure(error);
       }
-      if (existing) {
+      if (admission.kind === 'legacy_unavailable') {
+        return failure(
+          'source_unavailable',
+          'A legacy takeover operation cannot be safely resumed.',
+        );
+      }
+      if (admission.kind === 'completion_receipt') {
+        return failure(
+          'invalid_state',
+          'The completed takeover no longer has private recovery state.',
+        );
+      }
+      if (admission.kind === 'existing_record') {
+        const existing = admission.record;
         if (
           existing.request.plan !== 'takeover'
-          || JSON.stringify(publicIntentForSemanticRequest(existing.request))
-          !== JSON.stringify(intent)
+          || JSON.stringify(
+            projectExternalSessionTakeoverIdempotencyIntent(existing.request),
+          ) !== JSON.stringify(
+            projectExternalSessionTakeoverIdempotencyIntent(intent),
+          )
         ) {
           return failure('operation_conflict', 'Takeover idempotency request changed.');
         }
@@ -385,6 +459,7 @@ export function createExternalSessionTakeoverStartActionExecutor(
           return classifyStartFailure(error);
         }
       }
+      const operationId = admission.operationId;
       let described: Awaited<ReturnType<TakeoverStartDependencies['describeSession']>>;
       try {
         described = await dependencies.describeSession(intent);
@@ -392,7 +467,13 @@ export function createExternalSessionTakeoverStartActionExecutor(
         return classifyStartFailure(error);
       }
       const request = described.request;
-      if (JSON.stringify(publicIntentForSemanticRequest(request)) !== JSON.stringify(intent)) {
+      if (
+        JSON.stringify(
+          projectExternalSessionTakeoverIdempotencyIntent(request),
+        ) !== JSON.stringify(
+          projectExternalSessionTakeoverIdempotencyIntent(intent),
+        )
+      ) {
         return failure('source_unavailable', 'Linked external session identity changed.');
       }
       const exclusionRequest = {
@@ -403,9 +484,18 @@ export function createExternalSessionTakeoverStartActionExecutor(
         sourceGeneration: request.source.sourceGeneration,
         plan: request.targetStorageMode,
       } as const;
-      let acquired = await dependencies.operationExclusion.acquire(
-        exclusionRequest,
-      );
+      const exclusionAcquireInput = context?.signal
+        ? { signal: context.signal }
+        : undefined;
+      let acquired: Awaited<ReturnType<ExternalSessionOperationExclusion['acquire']>>;
+      try {
+        acquired = await dependencies.operationExclusion.acquire(
+          exclusionRequest,
+          exclusionAcquireInput,
+        );
+      } catch (error) {
+        return classifyStartFailure(error);
+      }
       while (acquired.status === 'converged') {
         let converged: Awaited<ReturnType<
           typeof readConvergedTakeoverOperation
@@ -413,9 +503,11 @@ export function createExternalSessionTakeoverStartActionExecutor(
         try {
           converged = await readConvergedTakeoverOperation(
             dependencies,
-            operationId,
+            intent,
+            nowMs,
             acquired.waitForRelease,
             context?.signal ? { signal: context.signal } : undefined,
+            context?.authorIntent,
           );
         } catch (error) {
           if (error instanceof ExternalSessionOperationRecordReadError) {
@@ -435,13 +527,29 @@ export function createExternalSessionTakeoverStartActionExecutor(
             'Takeover operation convergence could not be observed.',
           );
         }
+        if (converged.status === 'completion_receipt') {
+          return failure(
+            'invalid_state',
+            'The completed takeover no longer has private recovery state.',
+          );
+        }
+        if (converged.status === 'conflict') {
+          return failure(
+            'operation_conflict',
+            'Takeover idempotency request changed.',
+          );
+        }
         if (converged.status === 'record') {
           const convergedRecord = converged.record;
           if (
             convergedRecord.request.plan !== 'takeover'
-            || JSON.stringify(publicIntentForSemanticRequest(
-              convergedRecord.request,
-            )) !== JSON.stringify(intent)
+            || JSON.stringify(
+              projectExternalSessionTakeoverIdempotencyIntent(
+                convergedRecord.request,
+              ),
+            ) !== JSON.stringify(
+              projectExternalSessionTakeoverIdempotencyIntent(intent),
+            )
           ) {
             return failure(
               'operation_conflict',
@@ -462,9 +570,14 @@ export function createExternalSessionTakeoverStartActionExecutor(
             return classifyStartFailure(error);
           }
         }
-        acquired = await dependencies.operationExclusion.acquire(
-          exclusionRequest,
-        );
+        try {
+          acquired = await dependencies.operationExclusion.acquire(
+            exclusionRequest,
+            exclusionAcquireInput,
+          );
+        } catch (error) {
+          return classifyStartFailure(error);
+        }
       }
       if (acquired.status !== 'acquired') {
         return failure('operation_conflict', 'Takeover operation is already active.');
@@ -498,6 +611,8 @@ export function createExternalSessionTakeoverStartActionExecutor(
         const priorStableStorage: ExternalSessionPriorStableStorageV1 =
           authority.priorStableStorage;
         const createdAtMs = nowMs();
+        let expectedDifferentTerminalPresentation:
+          ExternalSessionOperationSharedPresentationV1 | undefined;
         let record = await maintenance.race(
           () => writeExternalSessionOperationRecord(
             dependencies.activeServerDir,
@@ -523,6 +638,9 @@ export function createExternalSessionTakeoverStartActionExecutor(
               progressProjection: {
                 acknowledgedRevision: null,
               },
+              ...(context?.authorIntent
+                ? { authorIntent: context.authorIntent }
+                : {}),
               canonicalOwnerEvidence: {
                 linkedSessionRevision: described.linkedSessionRevision,
                 sourceSnapshotEvidenceRef:
@@ -538,20 +656,45 @@ export function createExternalSessionTakeoverStartActionExecutor(
                     dependencies.settlePriorTerminalProgressProjection,
                 }
                 : {}),
-              validateSessionAdmission: async (_current, incoming) => {
-                await dependencies.validateProgressSelection({
-                  sessionId: incoming.request.sessionId,
-                  progress: projectExternalSessionOperationProgressV1(incoming),
-                });
+              validateSessionAdmission: async (
+                _current,
+                incoming,
+                priorTerminalRecords,
+                priorTerminalReceiptEvidence,
+              ) => {
+                expectedDifferentTerminalPresentation =
+                  await dependencies.validateProgressSelection({
+                    sessionId: incoming.request.sessionId,
+                    progress:
+                      projectExternalSessionOperationProgressV1(incoming),
+                    priorTerminalRecords,
+                    priorTerminalReceiptEvidence,
+                  });
+                return expectedDifferentTerminalPresentation;
               },
+              nowMs,
             },
           ),
         );
+        if (record.operationId !== operationId) {
+          const convergedRecord = dependencies.convergeProgress
+            ? await dependencies.convergeProgress(record)
+            : await dependencies.publishProgress({
+              sessionId: record.request.sessionId,
+              progress: projectExternalSessionOperationProgressV1(record),
+            }) ?? record;
+          return success(convergedRecord);
+        }
         record = await maintenance.race(async () =>
           await dependencies.publishProgress({
             sessionId: request.sessionId,
             progress: projectExternalSessionOperationProgressV1(record),
-            allowDifferentTerminalReplacement: true,
+            ...(expectedDifferentTerminalPresentation
+              ? {
+                allowDifferentTerminalReplacement: true,
+                expectedDifferentTerminalPresentation,
+              }
+              : {}),
           }) ?? record
         );
         return success(record);
@@ -565,5 +708,63 @@ export function createExternalSessionTakeoverStartActionExecutor(
         await acquired.claim.release().catch(() => undefined);
       }
     },
+    async startPluginTakeover(raw, context) {
+      const parsed = ExternalSessionTakeoverStartInputV1Schema.safeParse(raw);
+      if (!parsed.success || parsed.data.request.plan !== 'takeover') {
+        return failure('invalid_state', 'Invalid takeover operation request.');
+      }
+      const result = await executor.start(raw, context);
+      if (result.ok) {
+        return {
+          ok: true,
+          operation: {
+            sessionId: parsed.data.request.sessionId,
+            operationId: result.progress.operationId,
+            revision: result.progress.revision,
+          },
+        };
+      }
+
+      // Once the durable record/receipt exists, a late cancellation, lost
+      // response, projection failure, or other unknown outcome cannot be
+      // relabelled as "no effect". Re-read the canonical admission owner and
+      // return only its public reference.
+      try {
+        const admitted = await resolveExternalSessionOperationStartAdmission({
+          activeServerDir: dependencies.activeServerDir,
+          durableIdempotencyKey: parsed.data.request.idempotencyKey,
+          intent: parsed.data.request,
+          authorIntent: context.authorIntent,
+          nowMs: nowMs(),
+          readSelectedPresentation:
+            dependencies.readSelectedPresentation
+            ?? readExternalSessionOperationSharedPresentation,
+        });
+        if (admitted.kind === 'existing_record') {
+          return {
+            ok: true,
+            operation: {
+              sessionId: admitted.record.request.sessionId,
+              operationId: admitted.record.operationId,
+              revision: admitted.record.revision,
+            },
+          };
+        }
+        if (admitted.kind === 'completion_receipt') {
+          return {
+            ok: true,
+            operation: admitted.receipt.reference,
+          };
+        }
+      } catch {
+        // Preserve the canonical Start failure if the follow-up read cannot
+        // prove that admission committed.
+      }
+      return result as Extract<
+        ExternalSessionOperationActionResponseV1,
+        { ok: false }
+      >;
+    },
   });
+  return executor;
 }

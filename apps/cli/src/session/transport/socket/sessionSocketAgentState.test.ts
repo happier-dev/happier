@@ -723,4 +723,131 @@ describe('waitForIdleViaSocket', () => {
     await expect(promise).resolves.toEqual(expect.objectContaining({ idle: true, observedAt: expect.any(Number) }));
     expect(decrypt).not.toHaveBeenCalled();
   });
+
+  it('does not report idle while the fresh AgentState says the Session is controlled by a local user', async () => {
+    vi.useFakeTimers();
+
+    const socket = createSocketStub();
+    const controlledAgentState = JSON.stringify({ controlledByUser: true, requests: {} });
+    vi.doMock('@/api/session/sockets', () => ({
+      createSessionScopedSocket: () => socket,
+    }));
+    vi.doMock('@/session/transport/http/sessionsHttp', () => ({
+      fetchSessionById: vi.fn().mockResolvedValue({
+        agentState: controlledAgentState,
+        latestTurnStatus: 'completed',
+        pendingPermissionRequestCount: 0,
+        pendingUserActionRequestCount: 0,
+      }),
+    }));
+
+    const { waitForIdleViaSocket } = await import('./sessionSocketAgentState');
+
+    const promise = waitForIdleViaSocket({
+      token: 'token',
+      sessionId: 'sess-1',
+      ctx: { encryptionKey: new Uint8Array(32).fill(1), encryptionVariant: 'dataKey' },
+      sessionEncryptionMode: 'plain',
+      timeoutMs: 1_000,
+      initialTurnActivity: { pendingUserTurns: 0, activeTaskInFlight: false, turnInFlight: false },
+      recheckTurnActivity: async () => ({ pendingUserTurns: 0, activeTaskInFlight: false, turnInFlight: false }),
+      initialAgentStateSummary: { pendingRequestsCount: 0 },
+      initialAgentStateCiphertextBase64: controlledAgentState,
+      preferProjectionUpdates: true,
+    });
+
+    const rejection = expect(promise).rejects.toThrow('timeout');
+
+    await vi.advanceTimersByTimeAsync(1_500);
+
+    await rejection;
+  });
+
+  it('still reports idle from the projected pending-request count when no local user controls the Session', async () => {
+    vi.useFakeTimers();
+
+    const socket = createSocketStub();
+    const uncontrolledAgentState = JSON.stringify({ controlledByUser: false, requests: {} });
+    vi.doMock('@/api/session/sockets', () => ({
+      createSessionScopedSocket: () => socket,
+    }));
+    vi.doMock('@/session/transport/http/sessionsHttp', () => ({
+      fetchSessionById: vi.fn().mockResolvedValue({
+        agentState: uncontrolledAgentState,
+        latestTurnStatus: 'completed',
+        pendingPermissionRequestCount: 0,
+        pendingUserActionRequestCount: 0,
+      }),
+    }));
+
+    const { waitForIdleViaSocket } = await import('./sessionSocketAgentState');
+
+    const promise = waitForIdleViaSocket({
+      token: 'token',
+      sessionId: 'sess-1',
+      ctx: { encryptionKey: new Uint8Array(32).fill(1), encryptionVariant: 'dataKey' },
+      sessionEncryptionMode: 'plain',
+      timeoutMs: 1_000,
+      initialTurnActivity: { pendingUserTurns: 0, activeTaskInFlight: false, turnInFlight: false },
+      recheckTurnActivity: async () => ({ pendingUserTurns: 0, activeTaskInFlight: false, turnInFlight: false }),
+      initialAgentStateSummary: { pendingRequestsCount: 0 },
+      initialAgentStateCiphertextBase64: uncontrolledAgentState,
+      preferProjectionUpdates: true,
+    });
+
+    await vi.advanceTimersByTimeAsync(1_500);
+
+    await expect(promise).resolves.toEqual(expect.objectContaining({ idle: true, observedAt: expect.any(Number) }));
+  });
+
+  it('keeps a locally controlled Session busy when a projection update carries no AgentState', async () => {
+    vi.useFakeTimers();
+
+    const socket = createSocketStub();
+    const controlledAgentState = JSON.stringify({ controlledByUser: true, requests: {} });
+    vi.doMock('@/api/session/sockets', () => ({
+      createSessionScopedSocket: () => socket,
+    }));
+    vi.doMock('@/session/transport/http/sessionsHttp', () => ({
+      fetchSessionById: vi.fn().mockResolvedValue({
+        agentState: controlledAgentState,
+        latestTurnStatus: 'completed',
+        pendingPermissionRequestCount: 0,
+        pendingUserActionRequestCount: 0,
+      }),
+    }));
+
+    const { waitForIdleViaSocket } = await import('./sessionSocketAgentState');
+
+    const promise = waitForIdleViaSocket({
+      token: 'token',
+      sessionId: 'sess-1',
+      ctx: { encryptionKey: new Uint8Array(32).fill(1), encryptionVariant: 'dataKey' },
+      sessionEncryptionMode: 'plain',
+      timeoutMs: 1_000,
+      initialTurnActivity: { pendingUserTurns: 1, activeTaskInFlight: false, turnInFlight: true },
+      recheckTurnActivity: async () => ({ pendingUserTurns: 0, activeTaskInFlight: false, turnInFlight: false }),
+      initialAgentStateCiphertextBase64: controlledAgentState,
+      preferProjectionUpdates: true,
+    });
+
+    const rejection = expect(promise).rejects.toThrow('timeout');
+
+    socket.emit('update', {
+      id: 'u_completed_projection_without_agent_state',
+      seq: 1,
+      createdAt: Date.now(),
+      body: {
+        t: 'update-session',
+        id: 'sess-1',
+        latestTurnStatus: 'completed',
+        pendingPermissionRequestCount: 0,
+        pendingUserActionRequestCount: 0,
+      },
+    });
+
+    await vi.advanceTimersByTimeAsync(1_500);
+
+    await rejection;
+  });
 });

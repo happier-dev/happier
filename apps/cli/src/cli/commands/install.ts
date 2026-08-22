@@ -1,10 +1,14 @@
 import chalk from 'chalk';
 
-import { AGENT_IDS, getAgentCliRuntimeSpec, type AgentId } from '@happier-dev/agents';
+import { getAgentCliRuntimeSpec, isBundledAgentId, type BundledAgentId } from '@happier-dev/agents';
 import type { AgentCliRuntimeDescriptor } from '@happier-dev/cli-common/agents';
 
 import type { CommandContext } from '@/cli/commandRegistry';
-import { requestUserPluginChange, type UserPluginChangeResult } from '@/plugins/daemon/changeClient';
+import {
+  requestUserPluginChange,
+  resolveUserPluginChangeApproval,
+  type UserPluginChangeResult,
+} from '@/plugins/daemon/changeClient';
 import type { PluginChangeRequest } from '@/plugins/daemon/changeContract';
 import { resolveArchiveExpectedIntegrity } from '@/plugins/distribution/archive/integrity';
 import { resolvePluginStorePaths } from '@/plugins/store/paths';
@@ -155,6 +159,8 @@ async function createPluginInstallRequest(
 
 function pluginChangeMessage(result: UserPluginChangeResult): string {
   switch (result.kind) {
+    case 'sourceRootReviewRequired':
+      return `Plugin source-root review is required (pending ${result.pendingChangeId}).`;
     case 'reviewRequired':
       return `Plugin installation review is required (pending ${result.pendingChangeId}).`;
     case 'cancelled':
@@ -176,16 +182,6 @@ function pluginChangeMessage(result: UserPluginChangeResult): string {
   }
 }
 
-function pluginInstallApproval(
-  deps: InstallCliDeps,
-): 'prompt' | 'none' {
-  return (deps.isInteractiveTerminal ?? isInteractiveTerminal)() ? 'prompt' : 'none';
-}
-
-function isAgentId(value: string): value is AgentId {
-  return (AGENT_IDS as readonly string[]).includes(value);
-}
-
 function readInstallableBuiltInProviderRows(registry: Pick<ResolvedContributionRegistry, 'agents'>): ProviderStatusRow[] {
   return registry.agents
     .filter((contribution) => contribution.provenance === 'first_party')
@@ -204,7 +200,7 @@ function readInstallableBuiltInProviderRows(registry: Pick<ResolvedContributionR
 }
 
 function printProviderInstallResult(
-  agentId: AgentId,
+  agentId: BundledAgentId,
   result: Awaited<ReturnType<typeof invokeProviderCliInstallDefault>>,
   log: InstallCliDeps['log'],
 ): void {
@@ -279,7 +275,9 @@ async function runPluginInstallCommand(
 
     const result = await requestUserPluginChange({
       request: { kind: 'update', pluginId },
-      approval: pluginInstallApproval(deps),
+      approval: resolveUserPluginChangeApproval({
+        interactive: (deps.isInteractiveTerminal ?? isInteractiveTerminal)(),
+      }),
     });
     if (result.kind !== 'committed') {
       deps.error(chalk.red('Error:'), pluginChangeMessage(result));
@@ -298,7 +296,9 @@ async function runPluginInstallCommand(
   }
   const result = await requestUserPluginChange({
     request,
-    approval: pluginInstallApproval(deps),
+    approval: resolveUserPluginChangeApproval({
+      interactive: (deps.isInteractiveTerminal ?? isInteractiveTerminal)(),
+    }),
   });
   if (result.kind !== 'committed') {
     deps.error(chalk.red('Error:'), pluginChangeMessage(result));
@@ -348,7 +348,9 @@ export async function runInstallCliCommand(
         deps.log(usage(installableProviderRows));
         return;
       }
-      if (!isAgentId(agentIdRaw)) {
+      // `happy install provider` drives the generated bundled CLI install
+      // recipes, which exist only for bundled Agents.
+      if (!isBundledAgentId(agentIdRaw)) {
         deps.error(chalk.red('Error:'), `Unknown provider id: ${agentIdRaw}`);
         deps.log(usage(installableProviderRows));
         deps.exit(1);

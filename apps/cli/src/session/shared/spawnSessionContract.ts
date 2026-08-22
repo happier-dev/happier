@@ -21,7 +21,7 @@ import {
   type SpawnSessionErrorDetail,
 } from '@happier-dev/protocol';
 
-import type { PermissionMode } from '@/api/types';
+import type { PermissionMode, SessionCreationOutcome } from '@/api/types';
 import type {
   HostPrivatePersistedTakeoverAdmission,
 } from '@/daemon/spawn/persistedTakeoverAdmission';
@@ -116,9 +116,21 @@ export interface SpawnSessionOptions {
    * When set, the daemon treats the spawn request as unique for the purposes of spawn request
    * coalescing (prevents returning a recent success session id for rapid consecutive spawns).
    *
-   * This must not be forwarded into the spawned session process (it is not an environment variable).
+   * It remains in-memory only. Fresh runners may receive it through the protected
+   * `HAPPIER_SESSION_STARTUP_SPAWN_NONCE` environment carrier solely to settle their
+   * own terminal startup result; it is not persisted or exposed as a general child control.
    */
   spawnNonce?: string;
+  /**
+   * Opaque host-derived create-or-rejoin identity for a canonical Session
+   * spawn. It is distinct from the daemon-local spawn nonce and is carried
+   * only through daemon-to-runner transport.
+  */
+  sessionCreationTag?: import('@happier-dev/protocol').SessionCreationTagV1;
+  /** Full immutable create-or-rejoin recipe carried with the admitted tag. */
+  sessionCreationCorrespondence?: import('@happier-dev/protocol').SessionCreationCorrespondenceV1;
+  /** Mutable presentation state committed inside the fresh Session create transaction. */
+  initialTitle?: string;
   /** Ephemeral producer custody promoted by the child after the real session exists. */
   pendingFirstInput?: { text: string; localId: string };
   /**
@@ -183,6 +195,8 @@ export type SpawnSessionResult =
       sessionId?: string;
       spawnNonce?: string;
       sessionIdStatus?: 'pending' | 'available';
+      /** Exact immediate `POST /v1/sessions` transaction fact, when observed. */
+      sessionCreationOutcome?: SessionCreationOutcome;
     }
   | { type: 'requestToApproveDirectoryCreation'; directory: string }
   | {

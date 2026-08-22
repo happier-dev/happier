@@ -154,12 +154,16 @@ describe('session fixtures', () => {
         const mod = await import('./sessionFixtures');
         const seen: string[] = [];
         const session = mod.createBasicSessionClientWithOverrides({
-            sendAgentMessage: (_provider, body) => {
+            enqueueAgentMessageCommitted: async (_provider, body) => {
                 seen.push(String((body as { type?: string })?.type ?? 'unknown'));
+                return { persisted: true, delivered: false };
             },
         });
 
-        session.sendAgentMessage('provider', { type: 'thinking' } as never);
+        await session.enqueueAgentMessageCommitted('provider', { type: 'thinking' } as never, {
+            localId: 'thinking-1',
+            provenance: { kind: 'non_dependent', source: 'background' },
+        });
 
         expect(seen).toEqual(['thinking']);
     });

@@ -14,6 +14,37 @@ import { VoiceAgentManager } from '@/agent/voice/agent/VoiceAgentManager';
 import { ExecutionBudgetRegistry } from '@/daemon/executionBudget/ExecutionBudgetRegistry';
 
 const TEST_BACKEND_ID = `${'summary'}.${'backend'}` as never;
+
+const SUPPORTED_WORKTREE_SCOPE = {
+  kind: 'review_scm_scope.v1',
+  status: 'supported',
+  scmBackendId: 'git',
+  scmMode: 'worktree',
+  repositoryRoot: '/repo',
+  worktreeRoot: '/repo',
+  baseRef: { source: 'default_branch', ref: 'main' },
+  selectedPaths: [],
+  committedPaths: [],
+  uncommittedPaths: [],
+  changedPaths: [],
+  diff: { committedAvailable: true, uncommittedAvailable: true },
+  diagnostics: [],
+} as const;
+
+const SELECTED_PULL_REQUEST_REVIEW_SCOPE = {
+  kind: 'scm_pull_request_review_scope.v1',
+  account: {
+    service: { pluginId: 'happier.scm-github', localId: 'github' },
+    accountId: 'account-7',
+  },
+  pullRequest: { number: 42 },
+  observed: {
+    baseSha: '1111111111111111111111111111111111111111',
+    headSha: '2222222222222222222222222222222222222222',
+    nativeRevision: 'PR_kwDOABCD',
+    observedAtMs: 1_700_000_000_000,
+  },
+} as const;
 type StartExecutionRunArgs = Parameters<typeof startExecutionRun>[0];
 
 const contributionRegistryMock = vi.hoisted(() => ({
@@ -120,7 +151,7 @@ describe('startExecutionRun', () => {
           ioMode: 'request_response',
         },
         parentProvider: TEST_BACKEND_ID,
-        sendAcp: (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
+        sendAcp: async (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
           sent.push({ provider, body, meta: opts?.meta });
         },
         streamedTranscriptSession: null,
@@ -149,10 +180,185 @@ describe('startExecutionRun', () => {
     }
   });
 
+  it('refuses a selected pull request review whose own scope is unreadable, never falling back to the worktree scope beside it', async () => {
+    const runs = new Map<string, ExecutionRunState>();
+    const controllers = new Map<string, ExecutionRunController>();
+    const voiceAgentManager = new VoiceAgentManager({
+      createRuntime: () => {
+        throw new Error('voice runtime should not be used by review runs');
+      },
+    });
+
+    try {
+      const createRuntime = vi.fn(() => createProvisioningRuntime());
+      const finishRun = vi.fn();
+      await expect(startExecutionRun({
+        params: {
+          sessionId: 'session_1',
+          intent: 'review',
+          backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+          // A usable worktree scope and real instructions: everything the
+          // incumbent admission looks at says this run is fine.
+          instructions: 'Review the selected pull request.',
+          intentInput: {
+            scmReviewScope: SUPPORTED_WORKTREE_SCOPE,
+            scmPullRequestReviewScope: {
+              ...SELECTED_PULL_REQUEST_REVIEW_SCOPE,
+              observed: {
+                baseSha: SELECTED_PULL_REQUEST_REVIEW_SCOPE.observed.baseSha,
+                headSha: SELECTED_PULL_REQUEST_REVIEW_SCOPE.observed.headSha,
+              },
+            },
+          },
+          permissionMode: 'read_only',
+          retentionPolicy: 'ephemeral',
+          runClass: 'bounded',
+          ioMode: 'request_response',
+        },
+        parentProvider: TEST_BACKEND_ID,
+        sendAcp: async () => {},
+        streamedTranscriptSession: null,
+        createRuntime,
+        getNowMs: () => 1_700_000_000_000,
+        budgetRegistry: null,
+        runs,
+        controllers,
+        enqueueMarkerWrite: async () => {},
+        writeActivityMarker: async () => {},
+        finishRun,
+        executeBoundedRun: async () => {},
+        send: async () => ({ ok: true }),
+        voiceAgentManager,
+        getDepthByCallId: () => null,
+      })).rejects.toMatchObject({
+        code: 'execution_run_not_allowed',
+        details: { executionRunStart: { v: 1, runCreation: 'noRunCreated' } },
+      });
+
+      expect(createRuntime).not.toHaveBeenCalled();
+      expect(finishRun).not.toHaveBeenCalled();
+      expect(runs.size).toBe(0);
+    } finally {
+      await voiceAgentManager.dispose();
+    }
+  });
+
+  it('starts a review scoped to the selected pull request, and one scoped only to the worktree', async () => {
+    const runs = new Map<string, ExecutionRunState>();
+    const controllers = new Map<string, ExecutionRunController>();
+    const voiceAgentManager = new VoiceAgentManager({
+      createRuntime: () => {
+        throw new Error('voice runtime should not be used by review runs');
+      },
+    });
+
+    try {
+      const createRuntime = vi.fn(() => createProvisioningRuntime());
+      const startWith = async (intentInput: Record<string, unknown>) => await startExecutionRun({
+        params: {
+          sessionId: 'session_1',
+          intent: 'review',
+          backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+          instructions: 'Review the selected pull request.',
+          intentInput,
+          permissionMode: 'read_only',
+          retentionPolicy: 'ephemeral',
+          runClass: 'bounded',
+          ioMode: 'request_response',
+        },
+        parentProvider: TEST_BACKEND_ID,
+        sendAcp: async () => {},
+        streamedTranscriptSession: null,
+        createRuntime,
+        getNowMs: () => 1_700_000_000_000,
+        budgetRegistry: null,
+        runs,
+        controllers,
+        enqueueMarkerWrite: async () => {},
+        writeActivityMarker: async () => {},
+        finishRun: async () => {},
+        executeBoundedRun: async () => {},
+        send: async () => ({ ok: true }),
+        voiceAgentManager,
+        getDepthByCallId: () => null,
+      });
+
+      await startWith({
+        scmReviewScope: SUPPORTED_WORKTREE_SCOPE,
+        scmPullRequestReviewScope: SELECTED_PULL_REQUEST_REVIEW_SCOPE,
+      });
+      await startWith({ scmReviewScope: SUPPORTED_WORKTREE_SCOPE });
+
+      expect(createRuntime).toHaveBeenCalledTimes(2);
+      expect(runs.size).toBe(2);
+    } finally {
+      await voiceAgentManager.dispose();
+    }
+  });
+
+  it('rejects a Session-required profile before creating a detached run or transcript fact', async () => {
+    const runs = new Map<string, ExecutionRunState>();
+    const controllers = new Map<string, ExecutionRunController>();
+    const sendAcp = vi.fn(async () => {});
+    const enqueueMarkerWrite = vi.fn(async () => {});
+    const createRuntime = vi.fn(() => createProvisioningRuntime());
+    const voiceAgentManager = new VoiceAgentManager({
+      createRuntime: () => {
+        throw new Error('voice runtime should not be used by review runs');
+      },
+    });
+
+    try {
+      await expect(startExecutionRun({
+        params: {
+          sessionId: null,
+          intent: 'review',
+          backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+          instructions: 'Review this change.',
+          permissionMode: 'read_only',
+          retentionPolicy: 'ephemeral',
+          runClass: 'bounded',
+          ioMode: 'request_response',
+        },
+        parentProvider: TEST_BACKEND_ID,
+        sendAcp,
+        streamedTranscriptSession: null,
+        createRuntime,
+        getNowMs: () => 1_700_000_000_000,
+        budgetRegistry: null,
+        runs,
+        controllers,
+        enqueueMarkerWrite,
+        writeActivityMarker: async () => {},
+        finishRun: async () => {},
+        executeBoundedRun: async () => {},
+        send: async () => ({ ok: true }),
+        voiceAgentManager,
+        getDepthByCallId: () => null,
+      })).rejects.toMatchObject({
+        code: 'execution_run_not_allowed',
+        details: { executionRunStart: { v: 1, runCreation: 'noRunCreated' } },
+      });
+
+      expect(runs.size).toBe(0);
+      expect(controllers.size).toBe(0);
+      expect(createRuntime).not.toHaveBeenCalled();
+      expect(sendAcp).not.toHaveBeenCalled();
+      expect(enqueueMarkerWrite).not.toHaveBeenCalled();
+    } finally {
+      await voiceAgentManager.dispose();
+    }
+  });
+
   it('finishes cached SCM diff-summary runs without creating a backend runtime', async () => {
     const runs = new Map<string, ExecutionRunState>();
     const controllers = new Map<string, ExecutionRunController>();
-    const finishRun = vi.fn((runId: string, next, toolResult, structuredMeta?: ExecutionRunStructuredMeta) => {
+    let resolveFinishAdmission!: () => void;
+    const finishAdmission = new Promise<void>((resolve) => {
+      resolveFinishAdmission = resolve;
+    });
+    const finishRun = vi.fn(async (runId: string, next, toolResult, structuredMeta?: ExecutionRunStructuredMeta) => {
+      await finishAdmission;
       const current = runs.get(runId);
       if (!current) return;
       runs.set(runId, {
@@ -170,7 +376,7 @@ describe('startExecutionRun', () => {
 
     try {
       const createRuntime = vi.fn(() => createProvisioningRuntime());
-      const started = await startExecutionRun({
+      const startPromise = startExecutionRun({
         params: {
           sessionId: 'session_1',
           intent: 'scm_diff_summary',
@@ -195,7 +401,7 @@ describe('startExecutionRun', () => {
           ioMode: 'streaming',
         },
         parentProvider: TEST_BACKEND_ID,
-        sendAcp: () => {},
+        sendAcp: async () => {},
         streamedTranscriptSession: null,
         createRuntime,
         getNowMs: () => 1_700_000_000_000,
@@ -212,6 +418,18 @@ describe('startExecutionRun', () => {
         voiceAgentManager,
         getDepthByCallId: () => null,
       });
+
+      let startSettled = false;
+      void startPromise.then(() => {
+        startSettled = true;
+      });
+      await vi.waitFor(() => {
+        expect(finishRun).toHaveBeenCalledOnce();
+      });
+      expect(startSettled).toBe(false);
+
+      resolveFinishAdmission();
+      const started = await startPromise;
 
       expect(createRuntime).not.toHaveBeenCalled();
       expect(finishRun).toHaveBeenCalledTimes(1);
@@ -272,7 +490,7 @@ describe('startExecutionRun', () => {
           ioMode: 'streaming',
         },
         parentProvider: TEST_BACKEND_ID,
-        sendAcp: () => {},
+        sendAcp: async () => {},
         streamedTranscriptSession: null,
         createRuntime,
         getNowMs: () => 1_700_000_000_000,
@@ -281,7 +499,7 @@ describe('startExecutionRun', () => {
         controllers,
         enqueueMarkerWrite: async () => {},
         writeActivityMarker: async () => {},
-        finishRun: () => {},
+        finishRun: async () => {},
         executeBoundedRun,
         send: async () => ({ ok: true }),
         voiceAgentManager,
@@ -324,7 +542,7 @@ describe('startExecutionRun', () => {
           ioMode: 'request_response',
         },
         parentProvider: TEST_BACKEND_ID,
-        sendAcp: () => {},
+        sendAcp: async () => {},
         streamedTranscriptSession: null,
         contributions: {
           agentDefinitionsById: new Map(),
@@ -336,7 +554,7 @@ describe('startExecutionRun', () => {
         controllers,
         enqueueMarkerWrite: async () => {},
         writeActivityMarker: async () => {},
-        finishRun: () => {},
+        finishRun: async () => {},
         executeBoundedRun,
         send: async () => ({ ok: true }),
         voiceAgentManager,
@@ -379,7 +597,7 @@ describe('startExecutionRun', () => {
           ioMode: 'request_response',
         },
         parentProvider: TEST_BACKEND_ID,
-        sendAcp: () => {},
+        sendAcp: async () => {},
         streamedTranscriptSession: null,
         contributions: {
           agentDefinitionsById: new Map(),
@@ -391,7 +609,7 @@ describe('startExecutionRun', () => {
         controllers,
         enqueueMarkerWrite: async () => {},
         writeActivityMarker: async () => {},
-        finishRun: () => {},
+        finishRun: async () => {},
         executeBoundedRun,
         send: async () => ({ ok: true }),
         voiceAgentManager,
@@ -433,7 +651,7 @@ describe('startExecutionRun', () => {
         ioMode: 'request_response',
       },
       parentProvider: TEST_BACKEND_ID,
-      sendAcp: () => {},
+      sendAcp: async () => {},
       streamedTranscriptSession: null,
       createRuntime: () => createProvisioningRuntime(),
       getNowMs: () => 1_700_000_000_000,
@@ -442,7 +660,7 @@ describe('startExecutionRun', () => {
       controllers,
       enqueueMarkerWrite: async () => {},
       writeActivityMarker: async () => {},
-      finishRun: () => {},
+      finishRun: async () => {},
       executeBoundedRun: async () => {},
       send: async () => ({ ok: true }),
       voiceAgentManager,
@@ -464,6 +682,119 @@ describe('startExecutionRun', () => {
       for (const runId of runs.keys()) {
         budgetRegistry.releaseExecutionRun(runId);
       }
+      await voiceAgentManager.dispose();
+    }
+  });
+
+  it('releases the acquired execution budget when runtime creation fails before controller registration', async () => {
+    const budgetRegistry = new ExecutionBudgetRegistry({
+      maxConcurrentExecutionRuns: 1,
+      maxConcurrentOneShotTasks: null,
+    });
+    const runs = new Map<string, ExecutionRunState>();
+    const controllers = new Map<string, ExecutionRunController>();
+    const voiceAgentManager = new VoiceAgentManager({
+      createRuntime: () => {
+        throw new Error('voice runtime should not be used by delegate runs');
+      },
+    });
+
+    try {
+      await expect(startExecutionRun({
+        params: {
+          sessionId: 'parent_session_1',
+          intent: 'delegate',
+          backendTarget: { kind: 'builtInAgent', agentId: TEST_BACKEND_ID },
+          permissionMode: 'read_only',
+          retentionPolicy: 'ephemeral',
+          runClass: 'long_lived',
+          ioMode: 'request_response',
+        },
+        parentProvider: TEST_BACKEND_ID,
+        sendAcp: async () => {},
+        streamedTranscriptSession: null,
+        createRuntime: () => {
+          throw new Error('runtime creation failed');
+        },
+        getNowMs: () => 1_700_000_000_000,
+        budgetRegistry,
+        runs,
+        controllers,
+        enqueueMarkerWrite: async () => {},
+        writeActivityMarker: async () => {},
+        finishRun: async () => {},
+        executeBoundedRun: async () => {},
+        send: async () => ({ ok: true }),
+        voiceAgentManager,
+        getDepthByCallId: () => null,
+      })).rejects.toThrow('runtime creation failed');
+
+      expect(budgetRegistry.getInFlightSnapshot()).toEqual({
+        executionRuns: 0,
+        oneShotTasks: 0,
+      });
+      expect(controllers.size).toBe(0);
+    } finally {
+      await voiceAgentManager.dispose();
+    }
+  });
+
+  it('releases the acquired execution budget and disposes the runtime when resume support inspection fails', async () => {
+    const budgetRegistry = new ExecutionBudgetRegistry({
+      maxConcurrentExecutionRuns: 1,
+      maxConcurrentOneShotTasks: null,
+    });
+    const runs = new Map<string, ExecutionRunState>();
+    const controllers = new Map<string, ExecutionRunController>();
+    const dispose = vi.fn(async () => {});
+    const runtime = {
+      ...createProvisioningRuntime(),
+      readResumeSupport: async () => {
+        throw new Error('resume support inspection failed');
+      },
+      dispose,
+    } satisfies TestExecutionRunHostRuntime;
+    const voiceAgentManager = new VoiceAgentManager({
+      createRuntime: () => {
+        throw new Error('voice runtime should not be used by delegate runs');
+      },
+    });
+
+    try {
+      await expect(startExecutionRun({
+        params: {
+          sessionId: 'parent_session_1',
+          intent: 'delegate',
+          backendTarget: { kind: 'builtInAgent', agentId: TEST_BACKEND_ID },
+          permissionMode: 'read_only',
+          retentionPolicy: 'ephemeral',
+          runClass: 'long_lived',
+          ioMode: 'request_response',
+        },
+        parentProvider: TEST_BACKEND_ID,
+        sendAcp: async () => {},
+        streamedTranscriptSession: null,
+        createRuntime: () => runtime,
+        getNowMs: () => 1_700_000_000_000,
+        budgetRegistry,
+        runs,
+        controllers,
+        enqueueMarkerWrite: async () => {},
+        writeActivityMarker: async () => {},
+        finishRun: async () => {},
+        executeBoundedRun: async () => {},
+        send: async () => ({ ok: true }),
+        voiceAgentManager,
+        getDepthByCallId: () => null,
+      })).rejects.toThrow('resume support inspection failed');
+
+      expect(budgetRegistry.getInFlightSnapshot()).toEqual({
+        executionRuns: 0,
+        oneShotTasks: 0,
+      });
+      expect(dispose).toHaveBeenCalledTimes(1);
+      expect(controllers.size).toBe(0);
+    } finally {
       await voiceAgentManager.dispose();
     }
   });
@@ -510,12 +841,13 @@ describe('startExecutionRun', () => {
           ioMode: 'streaming',
         },
         parentProvider: TEST_BACKEND_ID,
-        sendAcp: (_provider, body, opts) => {
+        sendAcp: async (_provider, body, opts) => {
           sent.push({ body, meta: opts?.meta });
         },
         streamedTranscriptSession: {
-          sendAgentMessageCommitted: async (_provider, body, opts) => {
+          enqueueAgentMessageCommitted: async (_provider, body, opts) => {
             commits.push({ body, localId: opts.localId, meta: opts.meta });
+            return { persisted: true, delivered: false };
           },
         },
         createRuntime: () => createScmDiffSummaryStreamingRuntime(),
@@ -525,7 +857,7 @@ describe('startExecutionRun', () => {
         controllers,
         enqueueMarkerWrite: async () => {},
         writeActivityMarker: async () => {},
-        finishRun: (runId, next, toolResult, structuredMeta?: ExecutionRunStructuredMeta) => {
+        finishRun: async (runId, next, toolResult, structuredMeta?: ExecutionRunStructuredMeta) => {
           const current = runs.get(runId);
           if (current) {
             runs.set(runId, {
@@ -541,13 +873,13 @@ describe('startExecutionRun', () => {
           executeBoundedBackendRun({
             ...args,
             controllers,
-            sendAcp: (_provider, body, opts) => {
+            sendAcp: async (_provider, body, opts) => {
               sent.push({ body, meta: opts?.meta });
             },
             parentProvider: TEST_BACKEND_ID,
             getNowMs: () => 1_700_000_000_001,
             boundedTimeoutMs: null,
-            finishRun: (runId, next, toolResult, structuredMeta) => {
+            finishRun: async (runId, next, toolResult, structuredMeta) => {
               const current = runs.get(runId);
               if (current) {
                 runs.set(runId, {
@@ -600,7 +932,7 @@ describe('startExecutionRun', () => {
     process.env.HAPPIER_EXECUTION_RUN_BACKEND_PROVISION_TIMEOUT_MS = '50';
     const runs = new Map<string, ExecutionRunState>();
     const controllers = new Map<string, ExecutionRunController>();
-    const finishRun = vi.fn((runId: string, next) => {
+    const finishRun = vi.fn(async (runId: string, next) => {
       const current = runs.get(runId);
       if (!current) return;
       runs.set(runId, { ...current, ...next });
@@ -634,7 +966,7 @@ describe('startExecutionRun', () => {
           ioMode: 'streaming',
         },
         parentProvider: TEST_BACKEND_ID,
-        sendAcp: () => {},
+        sendAcp: async () => {},
         streamedTranscriptSession: null,
         createRuntime,
         getNowMs: () => 1_700_000_000_000,
@@ -650,6 +982,7 @@ describe('startExecutionRun', () => {
         getDepthByCallId: () => null,
       })).rejects.toMatchObject({
         code: 'execution_run_backend_provision_timeout',
+        details: { executionRunStart: { v: 1, runCreation: 'outcomeUnknown' } },
       });
 
       // The run must land terminal-FAILED (not linger "running" with no process).
@@ -704,7 +1037,7 @@ describe('startExecutionRun', () => {
           ioMode: 'request_response',
         },
         parentProvider: TEST_BACKEND_ID,
-        sendAcp: () => {},
+        sendAcp: async () => {},
         streamedTranscriptSession: null,
         createRuntime: () => oldRuntime,
         getNowMs: () => 1_700_000_000_000,

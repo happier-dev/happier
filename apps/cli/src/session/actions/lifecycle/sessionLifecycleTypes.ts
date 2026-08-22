@@ -5,7 +5,7 @@ import type {
 import type { runReplaySummaryForDialog } from '@/session/replay/summary/runReplaySummaryForDialog';
 import type { BackendExecutionSurfaces } from '@/agent/runtime/registry/engineRegistry';
 import type { StopSessionResult } from '@/daemon/sessions/stopSessionContract';
-import type { AgentSessionOpenRequest } from '@happier-dev/plugin-sdk/agent-runtime';
+import type { AgentSessionOpenRequest } from '@happier-dev/plugin-sdk/agents/runtime';
 
 export type SessionLifecycleActionHandler = (rawParams: unknown) => Promise<unknown>;
 

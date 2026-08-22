@@ -33,7 +33,13 @@ describe('sessionControl.sessionsHttp message commits', () => {
         content: { t: 'plain', v: { type: 'user', text: 'hello' } },
         localId: 'local-1',
       }),
-    ).resolves.toMatchObject({ didWrite: true, messageId: 'msg-1', seq: 7, createdAt: 1234 });
+    ).resolves.toMatchObject({
+      didWrite: true,
+      messageId: 'msg-1',
+      localId: 'local-1',
+      seq: 7,
+      createdAt: 1234,
+    });
 
     expect(postSpy).toHaveBeenCalledWith(
       'http://server.example.test/v2/sessions/sess-1/messages',

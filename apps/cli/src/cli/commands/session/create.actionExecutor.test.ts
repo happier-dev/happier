@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { AGENT_PERMISSION_INTENTS_V1 } from '@happier-dev/protocol';
 
 import { captureConsoleJsonOutput, captureConsoleText } from '@/testkit/logger/captureOutput';
 import { SESSION_HELP_LINES } from './shared/sessionCommandUsage';
@@ -6,15 +7,71 @@ import { handleSessionCommand } from './handleSessionCommand';
 
 const execute = vi.fn();
 const createCliActionExecutorFromCredentials = vi.fn(() => ({ execute }));
+const { readSettings, readAgentCatalogSnapshot } = vi.hoisted(() => ({
+  readSettings: vi.fn(),
+  readAgentCatalogSnapshot: vi.fn(),
+}));
 
 vi.mock('@/session/actions/createCliActionExecutorFromCredentials', () => ({
   createCliActionExecutorFromCredentials,
 }));
 
+vi.mock('@/configuration', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/configuration')>();
+  return {
+    ...actual,
+    configuration: {
+      ...actual.configuration,
+      activeServerId: 'server-1',
+    },
+  };
+});
+
+vi.mock('@/persistence', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/persistence')>();
+  return {
+    ...actual,
+    readSettings,
+  };
+});
+
+vi.mock('@/agent/catalog/snapshot', () => ({
+  readAgentCatalogSnapshot,
+}));
+
 beforeEach(() => {
   execute.mockReset();
   createCliActionExecutorFromCredentials.mockClear();
+  readSettings.mockReset();
+  readSettings.mockResolvedValue({ machineId: 'machine-1' });
+  readAgentCatalogSnapshot.mockReset();
+  readAgentCatalogSnapshot.mockReturnValue({
+    agentDefinitionsById: new Map([
+      ['claude', {
+        id: 'claude',
+        identity: { pluginId: 'happier.agent.claude', localId: 'claude' },
+      }],
+      ['codex', {
+        id: 'codex',
+        identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
+      }],
+    ]),
+  });
 });
+
+function sessionSpawnSuccess(sessionId: string) {
+  return {
+    ok: true,
+    result: {
+      type: 'success' as const,
+      sessionId,
+      disposition: 'created' as const,
+      executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
+      organizationPlacement: { folderId: null, tagIds: [] },
+      initialInput: { status: 'notRequested' as const },
+    },
+  };
+}
 
 describe('happier session create (action executor)', () => {
   it('prints usage and does not execute any action when --help is requested', async () => {
@@ -29,26 +86,22 @@ describe('happier session create (action executor)', () => {
 
       expect(execute).not.toHaveBeenCalled();
       expect(output.text()).toContain(SESSION_HELP_LINES.create);
+      for (const permissionIntent of AGENT_PERMISSION_INTENTS_V1) {
+        expect(output.text()).toContain(permissionIntent);
+      }
+      expect(output.text()).toContain('read_only');
     } finally {
       output.restore();
     }
   });
 
   it('routes through ActionExecutor with the expected action id and args', async () => {
-    execute.mockResolvedValueOnce({
-      ok: true,
-      result: {
-        type: 'success',
-        sessionId: 'sess-1',
-        created: true,
-        session: { id: 'sess-1' },
-      },
-    });
+    execute.mockResolvedValueOnce(sessionSpawnSuccess('sess-1'));
 
     const output = captureConsoleJsonOutput();
     try {
       await handleSessionCommand(
-        ['create', '--path', '/tmp', '--backend', 'agent:claude', '--title', 'My title', '--tag', 'tag-1', '--prompt', 'Hello', '--json'],
+        ['create', '--path', '/tmp', '--backend', 'agent:claude', '--title', 'My title', '--prompt', 'Hello', '--json'],
         {
           readCredentialsFn: async () => ({
             token: 'token_test',
@@ -61,11 +114,13 @@ describe('happier session create (action executor)', () => {
       expect(execute).toHaveBeenCalledWith(
         'session.spawn_new',
         {
-          path: '/tmp',
-          backendTargetKey: 'agent:claude',
-          agentId: 'claude',
+          executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
+          directory: '/tmp',
+          agentTarget: {
+            kind: 'agent',
+            identity: { pluginId: 'happier.agent.claude', localId: 'claude' },
+          },
           title: 'My title',
-          tag: 'tag-1',
           initialMessage: 'Hello',
         },
         { surface: 'cli', defaultSessionId: null, actionRequestId: expect.any(String) },
@@ -84,17 +139,62 @@ describe('happier session create (action executor)', () => {
     }
   });
 
-  it('accepts --backend as an agent id alias and forwards a normalized backendTargetKey', async () => {
+  it('normalizes read_only before executing session.spawn_new', async () => {
+    execute.mockResolvedValueOnce(sessionSpawnSuccess('sess-read-only'));
+
+    const output = captureConsoleJsonOutput();
+    try {
+      await handleSessionCommand(
+        ['create', '--path', '/tmp', '--permission-mode', 'read_only', '--json'],
+        {
+          readCredentialsFn: async () => ({
+            token: 'token_test',
+            encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
+          }),
+        },
+      );
+
+      expect(execute).toHaveBeenCalledWith(
+        'session.spawn_new',
+        expect.objectContaining({ permissionMode: 'read-only' }),
+        { surface: 'cli', defaultSessionId: null, actionRequestId: expect.any(String) },
+      );
+      expect(output.json()).toMatchObject({ ok: true, kind: 'session_create' });
+    } finally {
+      output.restore();
+    }
+  });
+
+  it('returns invalid_arguments for an unknown permission mode without executing an action', async () => {
+    const output = captureConsoleJsonOutput();
+    try {
+      await handleSessionCommand(
+        ['create', '--path', '/tmp', '--permission-mode', 'surprise-me', '--json'],
+        {
+          readCredentialsFn: async () => ({
+            token: 'token_test',
+            encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
+          }),
+        },
+      );
+
+      expect(execute).not.toHaveBeenCalled();
+      expect(output.json()).toMatchObject({
+        ok: false,
+        kind: 'session_create',
+        error: {
+          code: 'invalid_arguments',
+          message: expect.stringMatching(/permission mode/i),
+        },
+      });
+    } finally {
+      output.restore();
+    }
+  });
+
+  it('accepts --backend as an Agent id alias and emits its qualified identity', async () => {
     execute.mockClear();
-    execute.mockResolvedValueOnce({
-      ok: true,
-      result: {
-        type: 'success',
-        sessionId: 'sess-2',
-        created: true,
-        session: { id: 'sess-2' },
-      },
-    });
+    execute.mockResolvedValueOnce(sessionSpawnSuccess('sess-2'));
 
     const output = captureConsoleJsonOutput();
     try {
@@ -111,10 +211,14 @@ describe('happier session create (action executor)', () => {
       expect(execute).toHaveBeenCalledTimes(1);
       expect(execute).toHaveBeenLastCalledWith(
         'session.spawn_new',
-        expect.objectContaining({
-          path: '/tmp',
-          backendTargetKey: 'agent:claude',
-        }),
+        {
+          executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
+          directory: '/tmp',
+          agentTarget: {
+            kind: 'agent',
+            identity: { pluginId: 'happier.agent.claude', localId: 'claude' },
+          },
+        },
         { surface: 'cli', defaultSessionId: null, actionRequestId: expect.any(String) },
       );
     } finally {
@@ -122,17 +226,9 @@ describe('happier session create (action executor)', () => {
     }
   });
 
-  it('accepts --agent as a single-target alias and forwards a normalized backendTargetKey', async () => {
+  it('accepts --agent as a single-target alias and emits its qualified identity', async () => {
     execute.mockClear();
-    execute.mockResolvedValueOnce({
-      ok: true,
-      result: {
-        type: 'success',
-        sessionId: 'sess-3',
-        created: true,
-        session: { id: 'sess-3' },
-      },
-    });
+    execute.mockResolvedValueOnce(sessionSpawnSuccess('sess-3'));
 
     const output = captureConsoleJsonOutput();
     try {
@@ -149,10 +245,14 @@ describe('happier session create (action executor)', () => {
       expect(execute).toHaveBeenCalledTimes(1);
       expect(execute).toHaveBeenLastCalledWith(
         'session.spawn_new',
-        expect.objectContaining({
-          path: '/tmp',
-          backendTargetKey: 'agent:codex',
-        }),
+        {
+          executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
+          directory: '/tmp',
+          agentTarget: {
+            kind: 'agent',
+            identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
+          },
+        },
         { surface: 'cli', defaultSessionId: null, actionRequestId: expect.any(String) },
       );
     } finally {
@@ -172,15 +272,7 @@ describe('happier session create (action executor)', () => {
           items: [],
         },
       })
-      .mockResolvedValueOnce({
-        ok: true,
-        result: {
-          type: 'success',
-          sessionId: 'sess-auth',
-          created: true,
-          session: { id: 'sess-auth' },
-        },
-      });
+      .mockResolvedValueOnce(sessionSpawnSuccess('sess-auth'));
 
     const output = captureConsoleJsonOutput();
     try {
@@ -219,22 +311,14 @@ describe('happier session create (action executor)', () => {
     }
   });
 
-  it('leaves backend target resolution to the action executor when --backend is omitted', async () => {
+  it('resolves the catalog default Agent before invoking the Action', async () => {
     execute.mockClear();
-    execute.mockResolvedValueOnce({
-      ok: true,
-      result: {
-        type: 'success',
-        sessionId: 'sess-3',
-        created: true,
-        session: { id: 'sess-3' },
-      },
-    });
+    execute.mockResolvedValueOnce(sessionSpawnSuccess('sess-3'));
 
     const output = captureConsoleJsonOutput();
     try {
       await handleSessionCommand(
-        ['create', '--path', '/tmp', '--title', 'My title', '--tag', 'tag-1', '--json'],
+        ['create', '--path', '/tmp', '--title', 'My title', '--json'],
         {
           readCredentialsFn: async () => ({
             token: 'token_test',
@@ -247,9 +331,13 @@ describe('happier session create (action executor)', () => {
       expect(execute).toHaveBeenLastCalledWith(
         'session.spawn_new',
         {
-          path: '/tmp',
+          executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
+          directory: '/tmp',
+          agentTarget: {
+            kind: 'agent',
+            identity: { pluginId: 'happier.agent.claude', localId: 'claude' },
+          },
           title: 'My title',
-          tag: 'tag-1',
         },
         { surface: 'cli', defaultSessionId: null, actionRequestId: expect.any(String) },
       );
@@ -315,15 +403,7 @@ describe('happier session create (action executor)', () => {
   });
 
   it('defaults the spawn path from the stack-invoked cwd when --path is omitted', async () => {
-    execute.mockResolvedValueOnce({
-      ok: true,
-      result: {
-        type: 'success',
-        sessionId: 'sess-2',
-        created: true,
-        session: { id: 'sess-2' },
-      },
-    });
+    execute.mockResolvedValueOnce(sessionSpawnSuccess('sess-2'));
 
     const previous = process.env.HAPPIER_STACK_INVOKED_CWD;
     process.env.HAPPIER_STACK_INVOKED_CWD = '/tmp/hstack-invoked-cwd';
@@ -344,7 +424,7 @@ describe('happier session create (action executor)', () => {
       expect(execute).toHaveBeenLastCalledWith(
         'session.spawn_new',
         expect.objectContaining({
-          path: '/tmp/hstack-invoked-cwd',
+          directory: '/tmp/hstack-invoked-cwd',
         }),
         { surface: 'cli', defaultSessionId: null, actionRequestId: expect.any(String) },
       );

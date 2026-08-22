@@ -5,7 +5,9 @@ import type { getSessionHostBridge } from '@/agent/runtime/bridges/session/Sessi
 
 const mocks = vi.hoisted(() => ({
   readCredentials: vi.fn(),
+  readStoredCredentials: vi.fn(),
   fetchSessionByIdCompat: vi.fn(),
+  fetchAccountEncryptionCurrentness: vi.fn(),
   tryDecryptSessionOwnerMetadataView: vi.fn(),
   attemptProviderNativeFork: vi.fn(),
   attemptNativeForkOpen: vi.fn(),
@@ -13,7 +15,38 @@ const mocks = vi.hoisted(() => ({
   createReplayForkSession: vi.fn(),
   isAcpForkEligibleForAgent: vi.fn(),
   evaluateAgentSessionCapabilitySupport: vi.fn(),
+  forkAgentId: 'codex',
   nativeForkOpenModes: [] as string[],
+  /**
+   * Which registry generation declares the Agent. `cold` is the primed module
+   * cache; `runtime` is a plugin reload the cache has not seen yet — the state
+   * an externally installed Agent is in until something re-primes.
+   */
+  declarationSource: 'cold' as 'cold' | 'runtime',
+}));
+
+function buildForkAgentDefinitions() {
+  return new Map([[mocks.forkAgentId, {
+    richDefinition: {
+      definition: {
+        primary: 'sessions',
+        capabilities: {
+          sessions: { open: mocks.nativeForkOpenModes },
+        },
+      },
+    },
+  }]]);
+}
+
+vi.mock('@/plugins/runtime/reload/singleton', () => ({
+  pluginReloadController: {
+    getState: () => ({
+      activeRegistry: mocks.declarationSource === 'runtime'
+        ? { contributes: { agentDefinitionsById: buildForkAgentDefinitions() } }
+        : null,
+    }),
+    isRuntimeRegistryCurrent: () => true,
+  },
 }));
 
 vi.mock('@happier-dev/agents', async (importOriginal) => ({
@@ -25,25 +58,25 @@ vi.mock('@happier-dev/agents', async (importOriginal) => ({
 
 vi.mock('@/plugins/projection/registry/createResolvedContributionRegistry', () => ({
   getResolvedContributionRegistry: () => ({
-    agentDefinitionsById: new Map([['codex', {
-      richDefinition: {
-        definition: {
-          primary: 'sessions',
-          capabilities: {
-            sessions: { open: mocks.nativeForkOpenModes },
-          },
-        },
-      },
-    }]]),
+    agentDefinitionsById: mocks.declarationSource === 'cold'
+      ? buildForkAgentDefinitions()
+      : new Map(),
   }),
 }));
 
 vi.mock('@/persistence', () => ({
   readCredentials: (...args: unknown[]) => mocks.readCredentials(...args),
+  readStoredCredentials: (...args: unknown[]) => mocks.readStoredCredentials(...args),
 }));
 
 vi.mock('@/session/transport/http/sessionsHttp', () => ({
   fetchSessionByIdCompat: (...args: unknown[]) => mocks.fetchSessionByIdCompat(...args),
+}));
+
+vi.mock('@/api/client/connectedServiceCredentialApi', () => ({
+  fetchAccountEncryptionCurrentness: (...args: unknown[]) => (
+    mocks.fetchAccountEncryptionCurrentness(...args)
+  ),
 }));
 
 vi.mock('@/session/transport/encryption/sessionEncryptionContext', () => ({
@@ -94,19 +127,21 @@ const providerBindingV1 = {
 
 function createBridge(params: Readonly<{
   forkSurface?: ForkSurfaceV1 | null;
+  catalogAgentId?: string;
 }>): ReturnType<typeof getSessionHostBridge> {
+  const catalogAgentId = params.catalogAgentId ?? mocks.forkAgentId;
   return {
     resolveSessionForkBackendTarget: vi.fn(async () => ({
       ok: true,
-      catalogAgentId: 'codex',
-      agentHintAgentId: 'codex',
+      catalogAgentId,
+      agentHintAgentId: catalogAgentId,
       backendTargetV2: {
         kind: 'backend',
-        backendId: 'codex',
+        backendId: catalogAgentId,
         sourceKind: 'built_in',
       },
-      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
-      replayFlavor: 'codex',
+      backendTarget: { kind: 'builtInAgent', agentId: catalogAgentId },
+      replayFlavor: catalogAgentId,
       metadataOverlay: {},
       configuredAcp: null,
     })),
@@ -124,15 +159,17 @@ function createBridge(params: Readonly<{
 describe('createForkSessionLifecycleActionHandler', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.readCredentials.mockResolvedValue({
+    mocks.readCredentials.mockResolvedValue(null);
+    mocks.readStoredCredentials.mockResolvedValue({
       token: 'token',
-      encryption: { type: 'legacy', secret: new Uint8Array([1]) },
+      encryption: null,
     });
     mocks.fetchSessionByIdCompat.mockResolvedValue({
       id: 'parent-session',
       seq: 11,
       metadata: '{}',
     });
+    mocks.fetchAccountEncryptionCurrentness.mockResolvedValue({ mode: 'plain', version: 1 });
     mocks.tryDecryptSessionOwnerMetadataView.mockReturnValue({
       path: '/tmp/project',
     });
@@ -142,7 +179,9 @@ describe('createForkSessionLifecycleActionHandler', () => {
     mocks.createReplayForkSession.mockResolvedValue({ ok: true, childSessionId: 'child-replay' });
     mocks.isAcpForkEligibleForAgent.mockReturnValue(false);
     mocks.evaluateAgentSessionCapabilitySupport.mockReturnValue('unsupported');
+    mocks.forkAgentId = 'codex';
     mocks.nativeForkOpenModes.length = 0;
+    mocks.declarationSource = 'cold';
   });
 
   it('routes a declared native fork through child spawn-open and does not invoke legacy or replay owners', async () => {
@@ -182,6 +221,111 @@ describe('createForkSessionLifecycleActionHandler', () => {
     expect(bridge.resolveExecutionSurfaces).not.toHaveBeenCalled();
   });
 
+  it('routes an external Agent that declares native fork without applying built-in policy', async () => {
+    mocks.forkAgentId = 'acme.agent';
+    mocks.declarationSource = 'runtime';
+    mocks.nativeForkOpenModes.push('fork');
+    mocks.attemptNativeForkOpen.mockResolvedValue({
+      ok: true,
+      childSessionId: 'child-external-native-open',
+    });
+    const handler = createForkSessionLifecycleActionHandler({
+      sessionHostBridge: createBridge({ forkSurface: null }),
+      handlers: { spawnSession: vi.fn(), stopSession: vi.fn() },
+    });
+
+    await expect(handler({
+      v: 1,
+      parentSessionId: 'parent-session',
+      forkPoint: { type: 'latest' },
+      strategy: 'provider_native',
+    })).resolves.toEqual({ ok: true, childSessionId: 'child-external-native-open' });
+
+    expect(mocks.attemptNativeForkOpen).toHaveBeenCalledTimes(1);
+    expect(mocks.evaluateAgentSessionCapabilitySupport).not.toHaveBeenCalled();
+    expect(mocks.createReplayForkSession).not.toHaveBeenCalled();
+  });
+
+  it('resolves the generic native intent through the existing native-open policy', async () => {
+    mocks.nativeForkOpenModes.push('create', 'resume', 'fork');
+    mocks.evaluateAgentSessionCapabilitySupport.mockReturnValue('supported');
+    mocks.attemptNativeForkOpen.mockResolvedValue({ ok: true, childSessionId: 'child-native-open' });
+    const handler = createForkSessionLifecycleActionHandler({
+      sessionHostBridge: createBridge({ forkSurface: null }),
+      handlers: { spawnSession: vi.fn(), stopSession: vi.fn() },
+      deps: { awaitAgentSessionOpen: vi.fn() },
+    });
+
+    await expect(handler({
+      v: 1,
+      parentSessionId: 'parent-session',
+      forkPoint: { type: 'seq', upToSeqInclusive: 7 },
+      strategy: 'native',
+    })).resolves.toEqual({ ok: true, childSessionId: 'child-native-open' });
+    expect(mocks.attemptNativeForkOpen).toHaveBeenCalledTimes(1);
+    expect(mocks.createReplayForkSession).not.toHaveBeenCalled();
+  });
+
+  it('resolves the generic native intent through the existing provider-native policy', async () => {
+    mocks.attemptProviderNativeFork.mockResolvedValue({ ok: true, childSessionId: 'child-native' });
+    const handler = createForkSessionLifecycleActionHandler({
+      sessionHostBridge: createBridge({ forkSurface: { fork: vi.fn() } }),
+      handlers: { spawnSession: vi.fn(), stopSession: vi.fn() },
+    });
+
+    await expect(handler({
+      v: 1,
+      parentSessionId: 'parent-session',
+      forkPoint: { type: 'latest' },
+      strategy: 'native',
+    })).resolves.toEqual({ ok: true, childSessionId: 'child-native' });
+    expect(mocks.attemptProviderNativeFork).toHaveBeenCalledWith(
+      expect.objectContaining({ requestedStrategy: 'native' }),
+    );
+    expect(mocks.createReplayForkSession).not.toHaveBeenCalled();
+  });
+
+  it('routes the generic native intent to the ACP lifecycle when the parent is ACP-forkable', async () => {
+    mocks.isAcpForkEligibleForAgent.mockReturnValue(true);
+    mocks.attemptAcpLatestFork.mockResolvedValue({ ok: true, childSessionId: 'child-acp' });
+    const handler = createForkSessionLifecycleActionHandler({
+      sessionHostBridge: createBridge({ forkSurface: { fork: vi.fn() } }),
+      handlers: { spawnSession: vi.fn(), stopSession: vi.fn() },
+    });
+
+    await expect(handler({
+      v: 1,
+      parentSessionId: 'parent-session',
+      forkPoint: { type: 'latest' },
+      strategy: 'native',
+    })).resolves.toEqual({ ok: true, childSessionId: 'child-acp' });
+    expect(mocks.attemptAcpLatestFork).toHaveBeenCalledTimes(1);
+    // `auto` routes an ACP-forkable parent straight to the ACP lifecycle so one
+    // surface invocation has one authoritative persisted strategy; the generic
+    // native intent must inherit exactly that ordering.
+    expect(mocks.attemptProviderNativeFork).not.toHaveBeenCalled();
+    expect(mocks.createReplayForkSession).not.toHaveBeenCalled();
+  });
+
+  it('never falls back to replay when no native path is usable for the generic native intent', async () => {
+    const handler = createForkSessionLifecycleActionHandler({
+      sessionHostBridge: createBridge({ forkSurface: null }),
+      handlers: { spawnSession: vi.fn(), stopSession: vi.fn() },
+    });
+
+    await expect(handler({
+      v: 1,
+      parentSessionId: 'parent-session',
+      forkPoint: { type: 'latest' },
+      strategy: 'native',
+    })).resolves.toEqual({
+      ok: false,
+      errorCode: 'INVALID_REQUEST',
+      errorMessage: 'Requested fork strategy is not supported',
+    });
+    expect(mocks.createReplayForkSession).not.toHaveBeenCalled();
+  });
+
   it('uses the authenticated owner view so native fork receives the private runtime descriptor', async () => {
     const runtimeDescriptorV1 = {
       v: 1 as const,
@@ -193,7 +337,10 @@ describe('createForkSessionLifecycleActionHandler', () => {
       seq: 11,
       metadataLayoutVersion: 1,
       metadata: '{"v":1}',
-      ownerMetadata: 'owner-ciphertext',
+      ownerMetadata: {
+        t: 'encrypted',
+        c: 'owner-ciphertext',
+      },
     });
     mocks.tryDecryptSessionOwnerMetadataView.mockReturnValue({
       path: '/tmp/project',
@@ -231,6 +378,45 @@ describe('createForkSessionLifecycleActionHandler', () => {
         parentMetadata: expect.objectContaining({ runtimeDescriptorV1 }),
       }),
     );
+  });
+
+  it('does not invoke fork or spawn owners when linked-session metadata requires reconciliation', async () => {
+    const bridge = createBridge({ forkSurface: { fork: vi.fn() } });
+    vi.mocked(bridge.resolveSessionForkBackendTarget).mockResolvedValueOnce({
+      ok: false,
+      errorMessage: 'linked_session_reconciliation_required',
+    });
+    mocks.tryDecryptSessionOwnerMetadataView.mockReturnValue({
+      path: '/tmp/project',
+      flavor: 'opencode',
+      externalSessionV1: { v: 1 },
+      directSessionV1: { v: 1 },
+    });
+    const spawnSession = vi.fn();
+    const stopSession = vi.fn();
+    const handler = createForkSessionLifecycleActionHandler({
+      sessionHostBridge: bridge,
+      handlers: { spawnSession, stopSession },
+    });
+
+    await expect(handler({
+      v: 1,
+      parentSessionId: 'parent-session',
+      forkPoint: { type: 'latest' },
+      strategy: 'auto',
+    })).resolves.toEqual({
+      ok: false,
+      errorCode: 'INVALID_REQUEST',
+      errorMessage: 'linked_session_reconciliation_required',
+    });
+
+    expect(bridge.resolveExecutionSurfaces).not.toHaveBeenCalled();
+    expect(mocks.attemptNativeForkOpen).not.toHaveBeenCalled();
+    expect(mocks.attemptProviderNativeFork).not.toHaveBeenCalled();
+    expect(mocks.attemptAcpLatestFork).not.toHaveBeenCalled();
+    expect(mocks.createReplayForkSession).not.toHaveBeenCalled();
+    expect(spawnSession).not.toHaveBeenCalled();
+    expect(stopSession).not.toHaveBeenCalled();
   });
 
   it('passes the bridge-resolved fork surface into provider-native fork attempts', async () => {
@@ -318,6 +504,77 @@ describe('createForkSessionLifecycleActionHandler', () => {
     const secondSpawnNonce = mocks.createReplayForkSession.mock.calls[1]?.[0]?.spawnNonce;
     expect(firstSpawnNonce).toEqual(expect.any(String));
     expect(firstSpawnNonce).toBe(secondSpawnNonce);
+  });
+
+  it('keeps two distinct fork attempts distinct even when their request content is identical', async () => {
+    // `requestId` is the caller's attempt identity. Two deliberate submissions
+    // are two forks, so they must not share a single-flight slot or a spawn
+    // nonce — content alone cannot tell them apart.
+    const handler = createForkSessionLifecycleActionHandler({
+      sessionHostBridge: createBridge({ forkSurface: null }),
+      handlers: {
+        spawnSession: vi.fn(),
+        stopSession: vi.fn(),
+      },
+    });
+    const request = {
+      v: 1,
+      parentSessionId: 'parent-session',
+      forkPoint: { type: 'latest' },
+      strategy: 'replay',
+    } as const;
+
+    await handler({ ...request, requestId: 'attempt-a' });
+    await handler({ ...request, requestId: 'attempt-b' });
+
+    expect(mocks.createReplayForkSession).toHaveBeenCalledTimes(2);
+    const firstSpawnNonce = mocks.createReplayForkSession.mock.calls[0]?.[0]?.spawnNonce;
+    const secondSpawnNonce = mocks.createReplayForkSession.mock.calls[1]?.[0]?.spawnNonce;
+    expect(firstSpawnNonce).toEqual(expect.any(String));
+    expect(firstSpawnNonce).not.toBe(secondSpawnNonce);
+  });
+
+  it('coalesces concurrent deliveries of one fork attempt on its requestId', async () => {
+    // A transport retry of one submission is the same operation whatever its
+    // payload looks like on the wire, so the idempotency key — not the request
+    // content — decides that it joins the in-flight fork.
+    let releaseReplay!: () => void;
+    const replayPromise = new Promise<{ ok: true; childSessionId: string }>((resolve) => {
+      releaseReplay = () => resolve({ ok: true, childSessionId: 'child-replay' });
+    });
+    mocks.createReplayForkSession.mockReturnValue(replayPromise);
+    const handler = createForkSessionLifecycleActionHandler({
+      sessionHostBridge: createBridge({ forkSurface: null }),
+      handlers: {
+        spawnSession: vi.fn(),
+        stopSession: vi.fn(),
+      },
+    });
+
+    const first = handler({
+      v: 1,
+      parentSessionId: 'parent-session',
+      forkPoint: { type: 'latest' },
+      strategy: 'replay',
+      requestId: 'attempt-a',
+      replayMaxSeedChars: 2_000,
+    });
+    const second = handler({
+      v: 1,
+      parentSessionId: 'parent-session',
+      forkPoint: { type: 'latest' },
+      strategy: 'replay',
+      requestId: 'attempt-a',
+      replayMaxSeedChars: 4_000,
+    });
+    releaseReplay();
+    const results = await Promise.all([first, second]);
+
+    expect(results).toEqual([
+      { ok: true, childSessionId: 'child-replay' },
+      { ok: true, childSessionId: 'child-replay' },
+    ]);
+    expect(mocks.createReplayForkSession).toHaveBeenCalledTimes(1);
   });
 
   it('uses distinct spawn nonces for native and replay fork strategy attempts', async () => {

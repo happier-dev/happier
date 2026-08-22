@@ -4,14 +4,13 @@ import {
   PromptAssetMutationResponseV1Schema,
   PromptAssetWriteRequestSchema,
   type PromptAssetMutationResponseV1,
-  type PromptAssetWriteBundleRequest,
-  type PromptAssetWriteRequest,
 } from '@happier-dev/protocol';
 
 import { configuration } from '@/configuration';
-import type { PromptAssetAdapter } from '@/prompts/assets/types';
+import type { PromptAssetAdapter } from '@happier-dev/plugin-sdk/resources';
 
 import type { UploadTransferTarget } from './uploadTransferTarget';
+import { writePromptAsset } from '@/prompts/assets/actions';
 
 export type PromptAssetUploadTarget = UploadTransferTarget<PromptAssetMutationResponseV1> & Readonly<{
   destPath: string;
@@ -35,12 +34,6 @@ function internalPromptAssetWriteResponse(error: string): PromptAssetMutationRes
     errorCode: 'internal_error',
     error,
   });
-}
-
-function isPromptAssetWriteBundleRequest(
-  request: PromptAssetWriteRequest,
-): request is PromptAssetWriteBundleRequest {
-  return Object.prototype.hasOwnProperty.call(request, 'bundleBody');
 }
 
 export function resolvePromptAssetUploadTarget(input: Readonly<{
@@ -104,21 +97,11 @@ export function resolvePromptAssetUploadTarget(input: Readonly<{
           };
         }
 
-        const adapter = input.adapterRegistry.get(parsed.data.assetTypeId);
-        if (!adapter) {
-          return {
-            success: true,
-            path: 'prompt-asset-upload.json',
-            sizeBytes: finalizedSizeBytes,
-            result: invalidPromptAssetWriteResponse('unsupported asset type'),
-          };
-        }
-
         try {
-          const writeRequest = parsed.data;
-          const result = isPromptAssetWriteBundleRequest(writeRequest)
-            ? await adapter.writeBundle(writeRequest)
-            : await adapter.writeDoc(writeRequest);
+          const result = await writePromptAsset({
+            registry: input.adapterRegistry,
+            request: parsed.data,
+          });
 
           return {
             success: true,

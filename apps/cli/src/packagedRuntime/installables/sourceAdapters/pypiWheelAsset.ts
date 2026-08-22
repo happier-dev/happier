@@ -1,10 +1,12 @@
 import { access, mkdir, rm, writeFile } from 'node:fs/promises';
 import { constants as fsConstants } from 'node:fs';
-import { dirname, join, delimiter as PATH_DELIMITER } from 'node:path';
+import { basename, dirname, join, delimiter as PATH_DELIMITER } from 'node:path';
 
 import type { InstallableDependencyDescriptor } from '@happier-dev/protocol';
 import {
   installPypiWheelAsset,
+  isPypiWheelAssetVersionSatisfied,
+  normalizePypiProjectName,
   readInstalledPypiWheelAsset,
   resolvePypiWheelAssetHostCompatibility,
   type PypiWheelAssetHostCompatibility,
@@ -86,9 +88,26 @@ async function resolveCommandOnPath(command: string, env: NodeJS.ProcessEnv = pr
 async function resolveManagedBinPath(
   descriptor: ManagedPypiWheelAssetDescriptor,
   host: SupportedHostCompatibility,
+  installOwnerId: string,
 ): Promise<string | null> {
   const installed = await readInstalledPypiWheelAsset(managedInstallDir(descriptor));
-  if (!installed || installed.metadata.platform !== host.platform) return null;
+  const expectedAssetPath = descriptor.source.assetPathByPlatform[host.platform];
+  const expectedProbeId = descriptor.source.compatibilityProbe ?? null;
+  if (
+    !installed
+    || installed.metadata.installOwnerId !== installOwnerId
+    || installed.metadata.platform !== host.platform
+    || normalizePypiProjectName(installed.metadata.distribution)
+      !== normalizePypiProjectName(descriptor.source.distribution)
+    || !isPypiWheelAssetVersionSatisfied(
+      installed.metadata.version,
+      descriptor.source.versionSpecifier,
+    )
+    || installed.metadata.assetPath !== expectedAssetPath
+    || basename(installed.executablePath) !== basename(expectedAssetPath.replace(/\\/g, '/'))
+    || installed.metadata.compatibilityProbe?.id !== expectedProbeId
+    || installed.metadata.compatibilityProbe.ok !== true
+  ) return null;
   const accessMode = host.platform.startsWith('win32') ? fsConstants.F_OK : fsConstants.X_OK;
   try {
     await access(installed.executablePath, accessMode);
@@ -144,6 +163,7 @@ async function runCompatibilityProbe(params: Readonly<{
 
 async function installManagedPypiWheelAsset(
   descriptor: ManagedPypiWheelAssetDescriptor,
+  installOwnerId: string,
 ): Promise<Readonly<{ ok: true; logPath: string } | { ok: false; errorMessage: string; logPath: string }>> {
   const logPath = join(configuration.logsDir, `install-${descriptor.key}-${Date.now()}.log`);
   const host = resolvePypiWheelAssetHostCompatibility();
@@ -156,6 +176,7 @@ async function installManagedPypiWheelAsset(
   try {
     const installed = await installPypiWheelAsset({
       installRoot: managedInstallDir(descriptor),
+      installOwnerId,
       distribution: descriptor.source.distribution,
       versionSpecifier: descriptor.source.versionSpecifier,
       assetPathByPlatform: descriptor.source.assetPathByPlatform,
@@ -187,6 +208,7 @@ async function installManagedPypiWheelAsset(
 
 export function createManagedPypiWheelAssetRuntimeInstallable(
   descriptor: ManagedPypiWheelAssetDescriptor,
+  installOwnerId: string,
 ): RuntimeInstallableAdapter {
   return {
     key: descriptor.key,
@@ -204,7 +226,9 @@ export function createManagedPypiWheelAssetRuntimeInstallable(
       const command = primaryCommand(descriptor);
       const env = params.env ?? process.env;
       const systemBinPath = descriptor.binary.systemFirst === false ? null : await resolveCommandOnPath(command, env);
-      const managedPath = descriptor.binary.managedFallback === false ? null : await resolveManagedBinPath(descriptor, host);
+      const managedPath = descriptor.binary.managedFallback === false
+        ? null
+        : await resolveManagedBinPath(descriptor, host, installOwnerId);
       const resolvedPath = systemBinPath ?? managedPath;
       if (!resolvedPath) {
         return {
@@ -232,7 +256,9 @@ export function createManagedPypiWheelAssetRuntimeInstallable(
       const env = params.env ?? process.env;
       const preferManaged = params.sourcePreference === 'managed-first';
       const systemBinPath = descriptor.binary.systemFirst === false ? null : await resolveCommandOnPath(command, env);
-      const managedPath = descriptor.binary.managedFallback === false ? null : await resolveManagedBinPath(descriptor, host);
+      const managedPath = descriptor.binary.managedFallback === false
+        ? null
+        : await resolveManagedBinPath(descriptor, host, installOwnerId);
       const resolvedPath = preferManaged ? managedPath ?? systemBinPath : systemBinPath ?? managedPath;
       if (!resolvedPath) {
         return {
@@ -248,7 +274,10 @@ export function createManagedPypiWheelAssetRuntimeInstallable(
         source: resolvedPath === managedPath ? 'managed' : 'system',
       };
     },
-    installOrUpgrade: () => installManagedPypiWheelAsset(descriptor),
+    installOrUpgrade: () => installManagedPypiWheelAsset(
+      descriptor,
+      installOwnerId,
+    ),
     removeManagedInstall: async () => {
       await rm(managedInstallDir(descriptor), { recursive: true, force: true });
     },
@@ -257,16 +286,24 @@ export function createManagedPypiWheelAssetRuntimeInstallable(
       if (descriptor.consent.update === 'required') return;
       const host = resolvePypiWheelAssetHostCompatibility();
       if (!host.ok) return;
-      const binPath = await resolveManagedBinPath(descriptor, host);
+      const binPath = await resolveManagedBinPath(
+        descriptor,
+        host,
+        installOwnerId,
+      );
       if (!binPath) return;
-      await installManagedPypiWheelAsset(descriptor);
+      await installManagedPypiWheelAsset(descriptor, installOwnerId);
     },
   };
 }
 
 export async function getManagedPypiWheelAssetRuntimeInstallableAdapter(
   descriptor: InstallableDependencyDescriptor,
+  installOwnerId: string,
 ): Promise<RuntimeInstallableAdapter | null> {
   if (!isManagedPypiWheelAssetDescriptor(descriptor)) return null;
-  return createManagedPypiWheelAssetRuntimeInstallable(descriptor);
+  return createManagedPypiWheelAssetRuntimeInstallable(
+    descriptor,
+    installOwnerId,
+  );
 }

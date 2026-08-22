@@ -1,7 +1,11 @@
 import type { AccountSettings } from '@happier-dev/protocol';
 
-import { buildCliSessionRowModel, type CliSessionRowModel } from '@/cli/output/session/buildCliSessionRowModel';
-import type { Credentials } from '@/persistence';
+import {
+  buildCliSessionRowModel,
+  UNKNOWN_CLI_SESSION_AGENT_LABEL,
+  type CliSessionRowModel,
+} from '@/cli/output/session/buildCliSessionRowModel';
+import type { StoredCredentials } from '@/persistence';
 import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
 import type { RawSessionListRow } from '@/session/transport/http/sessionsHttp';
 import { compactHomePath } from '@/ui/format/styles';
@@ -89,7 +93,7 @@ function buildBaseRow(rowModel: CliSessionRowModel): SessionActionSelectorRow {
   const path = compactHomePath(rowModel.path) || rowModel.path || '';
   return {
     sessionId: rowModel.id,
-    agentId: rowModel.agentId,
+    agentId: rowModel.agentId ?? UNKNOWN_CLI_SESSION_AGENT_LABEL,
     updatedAt: rowModel.updatedAt,
     title: [rowModel.tag, rowModel.title].filter((value) => typeof value === 'string' && value.trim().length > 0).join(' · '),
     path,
@@ -101,10 +105,11 @@ function buildBaseRow(rowModel: CliSessionRowModel): SessionActionSelectorRow {
 }
 
 export async function buildResumeSelectionModel(params: Readonly<{
-  credentials: Credentials;
+  credentials: StoredCredentials;
   accountSettings: AccountSettings;
   fetchSessionsPageFn: FetchSessionsPageFn;
   contributionRegistry: ResumeContributionRegistry | null;
+  accountEncryptionMode: 'plain' | 'e2ee';
 }>): Promise<ResumeSelectionModel> {
   const page = await params.fetchSessionsPageFn({ token: params.credentials.token, limit: 200 });
   const rows: SessionActionSelectorRow[] = [];
@@ -115,6 +120,7 @@ export async function buildResumeSelectionModel(params: Readonly<{
   for (const rawSession of page.sessions) {
     const rowModel = buildCliSessionRowModel({
       credentials: params.credentials,
+      accountEncryptionMode: params.accountEncryptionMode,
       rawSession,
       accountSettings: params.accountSettings,
       contributionRegistry: params.contributionRegistry,

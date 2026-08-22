@@ -36,20 +36,14 @@ const createStubRuntime = () => {
 };
 
 const resolveBackendEngineAdapterResolutionMock = vi.fn();
-const getExecutionRunBackendDescriptorMock = vi.fn();
 
 vi.mock('@/agent/runtime/registry/engineRegistry', () => ({
   resolveBackendEngineAdapterResolution: (...args: unknown[]) => resolveBackendEngineAdapterResolutionMock(...args),
 }));
 
-vi.mock('@/agent/executionRuns/registry/executionRunBackendRegistry', () => ({
-  getExecutionRunBackendDescriptor: (...args: unknown[]) => getExecutionRunBackendDescriptorMock(...args),
-}));
-
 describe('createExecutionRunRuntime (pi)', () => {
   beforeEach(() => {
     resolveBackendEngineAdapterResolutionMock.mockReset();
-    getExecutionRunBackendDescriptorMock.mockReset();
   });
 
   it('creates the pi execution-run runtime through runtimeCore without using the legacy execution-run registry directly', async () => {
@@ -87,7 +81,6 @@ describe('createExecutionRunRuntime (pi)', () => {
       backendId: 'pi',
       permissionMode: 'read_only',
     }));
-    expect(getExecutionRunBackendDescriptorMock).not.toHaveBeenCalled();
     expect(messages).toEqual(expect.arrayContaining([
       { type: 'model-output', fullText: 'pi-runtime-ready' },
       { type: 'model-output', fullText: 'pi:hello' },
@@ -101,6 +94,38 @@ describe('createExecutionRunRuntime (pi)', () => {
     ]));
     expect('startSession' in executionRuntime).toBe(false);
     expect('onMessage' in executionRuntime).toBe(false);
+  });
+
+  it('carries the initial active-turn authority to the runtime-core backend factory', async () => {
+    const { runtime } = createStubRuntime();
+    const createExecutionRunBackendMock = vi.fn(() => runtime);
+    const causalPermissionAuthority = {
+      kind: 'admittedSessionInputV1',
+      admittedPermissionCeiling: 'default',
+    } as const;
+    resolveBackendEngineAdapterResolutionMock.mockResolvedValue({
+      backendId: 'pi',
+      engineAdapter: {
+        runtimeCore: {
+          createExecutionRunBackend: createExecutionRunBackendMock,
+        },
+      },
+    });
+    const { createExecutionRunRuntime } = await import('./create');
+
+    const executionRuntime = createExecutionRunRuntime({
+      cwd: process.cwd(),
+      backendId: 'pi',
+      permissionMode: 'yolo',
+      causalPermissionAuthority,
+    });
+
+    await expect(executionRuntime.provisionSession()).resolves.toEqual({ sessionId: 'pi-session-1' });
+
+    expect(createExecutionRunBackendMock).toHaveBeenCalledWith(expect.objectContaining({
+      permissionMode: 'yolo',
+      causalPermissionAuthority,
+    }));
   });
 
   it('throws when the built-in backend target is disabled in account settings before creating the runtime shell', async () => {

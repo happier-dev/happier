@@ -1,7 +1,7 @@
 import { startHappyServer, type HappyMcpSessionClient } from '@/mcp/startHappyServer'
 import { resolveNodeBackedMcpServerCommand } from '@/mcp/runtime/resolveNodeBackedMcpServerCommand'
 import type { McpServerConfig } from '@/agent'
-import type { Credentials } from '@/persistence'
+import type { StoredCredentials } from '@/persistence'
 import type { AccountSettings, ActionsSettingsV1 } from '@happier-dev/protocol'
 
 function isTruthyEnvFlag(raw: string | undefined): boolean {
@@ -56,7 +56,7 @@ export async function createHappierMcpBridge(
   session: HappyMcpSessionClient,
   opts: {
     commandMode?: 'direct-script' | 'current-process'
-    credentials?: Credentials | null
+    credentials?: StoredCredentials | null
     accountSettings?: AccountSettings | null
     getAccountSettings?: (() => AccountSettings | null) | null
   } = {},
@@ -71,7 +71,7 @@ export async function createHappierMcpBridgeWithOptions(
   session: HappyMcpSessionClient,
   opts: {
     commandMode?: 'direct-script' | 'current-process'
-    credentials?: Credentials | null
+    credentials?: StoredCredentials | null
     accountSettings?: AccountSettings | null
     getAccountSettings?: (() => AccountSettings | null) | null
   } = {},

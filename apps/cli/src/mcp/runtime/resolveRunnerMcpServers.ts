@@ -1,6 +1,6 @@
 import type { McpServerConfig } from '@/agent';
 import { createHappierMcpBridge } from '@/agent/runtime/createHappierMcpBridge';
-import type { Credentials } from '@/persistence';
+import type { StoredCredentials } from '@/persistence';
 import { logger } from '@/ui/logger';
 import {
   readSessionMcpSelectionV1FromMetadata,
@@ -21,7 +21,7 @@ import type { HappyMcpSessionClient } from '../startHappyServer';
 
 export async function resolveRunnerMcpServers(params: Readonly<{
   session: HappyMcpSessionClient;
-  credentials: Credentials;
+  credentials: StoredCredentials;
   accountSettings: AccountSettings | null;
   machineId: string;
   directory: string;
@@ -55,7 +55,9 @@ export async function resolveRunnerMcpServers(params: Readonly<{
   });
 
   const savedSecretsById = indexSavedSecretsByIdFromAccountSettings(accountSettings);
-  const settingsSecretsKey = deriveSettingsSecretsKeyForCredentials(params.credentials);
+  const settingsSecretsKey = params.credentials.encryption
+    ? deriveSettingsSecretsKeyForCredentials(params.credentials)
+    : null;
   const settingsSecretsReadKeys = deriveSettingsSecretsReadKeysForCredentials(params.credentials);
 
   const materialized = await materializeMcpServerConfigRecord({

@@ -8,10 +8,11 @@ import type {
 } from '@/api/session/sessionClient';
 import { initializeBackendApiContext } from '@/agent/runtime/initializeBackendApiContext';
 import {
+    BackendRunSessionUnavailableError,
     initializeBackendRunSession,
     type InitializeBackendRunSessionOptions,
 } from '@/agent/runtime/initializeBackendRunSession';
-import type { Credentials } from '@/persistence';
+import type { StoredCredentials } from '@/persistence';
 import { configuration } from '@/configuration';
 import { DeferredApiSessionClient } from './DeferredApiSessionClient';
 import type {
@@ -25,9 +26,6 @@ type DeferredStartupBootstrapDeps = Readonly<{
     initializeBackendApiContextFn?: typeof initializeBackendApiContext;
     initializeBackendRunSessionFn?: typeof initializeBackendRunSession;
 }>;
-
-const DEFAULT_BACKGROUND_START_FAILURE_MESSAGE =
-    '[startup-background-error] Failed to initialize Happy session in the background. Local mode may continue, but remote sync/switching could be unavailable.';
 
 class DeferredStartupAuthorityAttachFailure extends Error {
     readonly failure: unknown;
@@ -95,7 +93,7 @@ function createDeferredPushSenderProxy(ref: { current: DeferredStartupPushSender
 }
 
 export async function createDeferredStartupBootstrap(params: Readonly<{
-    credentials: Credentials;
+    credentials: StoredCredentials;
     startedBy: 'terminal' | 'daemon';
     initialMachineId: string;
     machineMetadata: MachineMetadata;
@@ -112,8 +110,6 @@ export async function createDeferredStartupBootstrap(params: Readonly<{
     uiLogPrefix: string;
     startupMetadataOverrides: InitializeBackendRunSessionOptions['startupMetadataOverrides'];
     startupSideEffectsOrder?: InitializeBackendRunSessionOptions['startupSideEffectsOrder'];
-    allowOfflineStub?: boolean;
-    backgroundStartFailureMessage?: string;
     onBackgroundStartFailure?: (error: unknown) => void | Promise<void>;
     onSessionAttached?: (params: Readonly<{
         session: ApiSessionClient;
@@ -122,6 +118,8 @@ export async function createDeferredStartupBootstrap(params: Readonly<{
     onPushSenderReady?: ((pushSender: DeferredStartupPushSender) => void | Promise<void>) | null;
     createInitialRegisteredSessionStateFieldMutations?: DeferredStartupRegisteredStateMutationFactory;
     transformSessionInputBeforeCommit?: ApiSessionClientOptions['transformSessionInputBeforeCommit'];
+    afterComposerAttachmentMessageAccepted?: ApiSessionClientOptions['afterComposerAttachmentMessageAccepted'];
+    machineAdmissionTransport?: ApiSessionClientOptions['machineAdmissionTransport'];
     deps?: DeferredStartupBootstrapDeps;
 }>): Promise<DeferredStartupBootstrapResult> {
     const initializeBackendApiContextFn = params.deps?.initializeBackendApiContextFn ?? initializeBackendApiContext;
@@ -211,6 +209,10 @@ export async function createDeferredStartupBootstrap(params: Readonly<{
                         durableMutationDeliveryInitiallyActive: false,
                         transformSessionInputBeforeCommit:
                             params.transformSessionInputBeforeCommit,
+                        afterComposerAttachmentMessageAccepted:
+                            params.afterComposerAttachmentMessageAccepted,
+                        machineAdmissionTransport:
+                            params.machineAdmissionTransport,
                     }),
             };
 
@@ -227,11 +229,7 @@ export async function createDeferredStartupBootstrap(params: Readonly<{
                         : {}),
                     attachMetadataIdentityPolicy: params.attachMetadataIdentityPolicy,
                     uiLogPrefix: params.uiLogPrefix,
-                    offlineNotify: (message: string) => {
-                        deferredSession.sendSessionEvent({ type: 'message', message });
-                    },
                     startupMetadataOverrides: params.startupMetadataOverrides,
-                    allowOfflineStub: params.allowOfflineStub,
                     startupSideEffectsOrder: params.startupSideEffectsOrder,
                     signal: backgroundController.signal,
                     onSessionSwap: async (nextSession) => {
@@ -259,11 +257,9 @@ export async function createDeferredStartupBootstrap(params: Readonly<{
             }
 
             if (!initializedSession.reportedSessionId) {
-                deferredSession.sendSessionEvent({
-                    type: 'message',
-                    message: 'Server unreachable — continuing in local-only mode.',
-                });
-                return;
+                initializedSession.reconnectionHandle?.cancel();
+                await initializedSession.session.close().catch(() => undefined);
+                throw new BackendRunSessionUnavailableError();
             }
 
             await attachServerSession({
@@ -282,10 +278,7 @@ export async function createDeferredStartupBootstrap(params: Readonly<{
             } catch {
                 // ignore
             }
-            deferredSession.sendSessionEvent({
-                type: 'message',
-                message: params.backgroundStartFailureMessage ?? DEFAULT_BACKGROUND_START_FAILURE_MESSAGE,
-            });
+            throw error;
         }
     };
 

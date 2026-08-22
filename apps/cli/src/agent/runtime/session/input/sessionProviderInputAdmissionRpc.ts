@@ -18,6 +18,7 @@ const admissionRequestSchema = z.union([
     serviceId: z.string().trim().min(1),
     groupId: z.string().trim().min(1),
     epochId: z.string().trim().min(1).optional(),
+    applicationSettled: z.literal(true).optional(),
   }),
 ]).superRefine((request, ctx) => {
   if (
@@ -35,6 +36,10 @@ type AdmissionRequest = z.infer<typeof admissionRequestSchema>;
 export function registerSessionProviderInputAdmissionRpc<Mode, Message>(params: Readonly<{
   consumer: SessionProviderInputConsumer<Mode, Message>;
   rpcHandlerRegistrar: RpcHandlerRegistrar;
+  onApplicationSettled?: (request: Readonly<{
+    serviceId: string;
+    groupId: string;
+  }>) => Promise<void>;
 }>): void {
   params.rpcHandlerRegistrar.registerHandler(
     SESSION_RPC_METHODS.SESSION_PROVIDER_INPUT_ADMISSION,
@@ -58,7 +63,14 @@ export function registerSessionProviderInputAdmissionRpc<Mode, Message>(params: 
         await params.consumer.enforceProviderInputAdmission(disposition);
         return { status: 'enforced' as const };
       }
-      return await params.consumer.clearProviderInputAdmission(request);
+      const result = await params.consumer.clearProviderInputAdmission(request);
+      if (result.status === 'cleared' && request.applicationSettled === true) {
+        await params.onApplicationSettled?.({
+          serviceId: request.serviceId,
+          groupId: request.groupId,
+        }).catch(() => undefined);
+      }
+      return result;
     },
   );
 }

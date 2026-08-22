@@ -2,12 +2,15 @@ import {
   isRuntimeTurnOperations,
   type RuntimeTurnOperations,
 } from '@/agent/runtime/turns/runtimeTurnOperations';
+import type { ProviderBindingLaunchHandoffV1 } from '@/plugins/runtime/providerBindings/handoff';
 import type { HostSessionTerminalRemoteModeLoop } from './terminalRemoteModeRuntime';
 
 export type HostSessionRuntimeFactoryResult<TNativeRuntime extends RuntimeTurnOperations> = Readonly<{
   operations: RuntimeTurnOperations;
   nativeRuntime?: TNativeRuntime | null;
   terminalRemoteModeLoop?: HostSessionTerminalRemoteModeLoop | null;
+  /** Exact non-secret facts admitted while the runtime was constructed. */
+  admittedProviderBindingHandoff?: ProviderBindingLaunchHandoffV1 | null;
 }>;
 
 export function resolveHostSessionRuntimeFactoryResult<TNativeRuntime extends RuntimeTurnOperations>(
@@ -16,6 +19,7 @@ export function resolveHostSessionRuntimeFactoryResult<TNativeRuntime extends Ru
   runtime: RuntimeTurnOperations;
   nativeRuntime: TNativeRuntime | null;
   terminalRemoteModeLoop: HostSessionTerminalRemoteModeLoop | null;
+  admittedProviderBindingHandoff: ProviderBindingLaunchHandoffV1 | null;
 }> {
   if (!createdRuntime || typeof createdRuntime !== 'object' || !('operations' in createdRuntime)) {
     throw new Error('Shared host session runtime requires explicit operations/nativeRuntime binding');
@@ -27,5 +31,7 @@ export function resolveHostSessionRuntimeFactoryResult<TNativeRuntime extends Ru
     runtime: createdRuntime.operations,
     nativeRuntime: createdRuntime.nativeRuntime ?? null,
     terminalRemoteModeLoop: createdRuntime.terminalRemoteModeLoop ?? null,
+    admittedProviderBindingHandoff:
+      createdRuntime.admittedProviderBindingHandoff ?? null,
   };
 }

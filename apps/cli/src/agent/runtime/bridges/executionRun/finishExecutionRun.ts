@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { Buffer } from 'node:buffer';
 
 import type { ACPMessageData, ACPProvider } from '@/api/session/sessionMessageTypes';
 import type { ExecutionRunStructuredMeta } from '@/agent/executionRuns/profiles/ExecutionRunIntentProfile';
@@ -12,11 +13,37 @@ import { readBackendResumableChildSessionId } from '@/agent/executionRuns/contro
 import type { ExecutionRunState } from './executionRunTypes';
 import type { ExecutionBudgetRegistry } from '@/daemon/executionBudget/ExecutionBudgetRegistry';
 import { writeExecutionRunMarker } from '@/daemon/executionRunRegistry';
-import { readBackendTargetRefV2, type ExecutionRunResumeHandle } from '@happier-dev/protocol';
+import {
+  AGENT_SESSION_RUNTIME_LIMITS_CANDIDATE_V1,
+  readBackendTargetRefV2,
+  type ExecutionRunResumeHandle,
+} from '@happier-dev/protocol';
+import type { ExecutionRunTranscriptPublisher } from './executionRunTranscriptPublisher';
+import {
+  createExecutionRunTranscriptCustodyError,
+  isExecutionRunTranscriptCustodyError,
+} from './executionRunTranscriptPublisher';
 
 type EnqueueMarkerWrite = (runId: string, write: () => Promise<void>) => Promise<void>;
 
-type SendAcp = (provider: ACPProvider, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => void;
+function readExecutionRunMarkerResultSizeBytes(value: unknown): number | undefined {
+  let serialized: string | undefined;
+  if (typeof value === 'string') {
+    serialized = value;
+  } else {
+    try {
+      serialized = JSON.stringify(value);
+    } catch {
+      return undefined;
+    }
+  }
+  if (serialized === undefined) return undefined;
+
+  const sizeBytes = Buffer.byteLength(serialized, 'utf8');
+  return sizeBytes <= AGENT_SESSION_RUNTIME_LIMITS_CANDIDATE_V1.p0MeasuredCandidates.sendRequestMaxJsonBytes
+    ? sizeBytes
+    : undefined;
+}
 
 type FinishRunNext = Omit<
   ExecutionRunState,
@@ -41,7 +68,7 @@ type FinishRunNext = Omit<
   finishedAtMs: number;
 };
 
-export function finishExecutionRun(args: Readonly<{
+export async function finishExecutionRun(args: Readonly<{
   runId: string;
   next: FinishRunNext;
   toolResult: { output: any; isError?: boolean; meta?: Record<string, unknown> };
@@ -50,14 +77,14 @@ export function finishExecutionRun(args: Readonly<{
   controllers: Map<string, ExecutionRunController>;
   budgetRegistry: ExecutionBudgetRegistry | null;
   parentProvider: ACPProvider;
-  sendAcp: SendAcp;
+  sendAcp: ExecutionRunTranscriptPublisher;
   enqueueMarkerWrite: EnqueueMarkerWrite;
   terminalMarkerWritePromises: Map<string, Promise<void>>;
   profileCatalog?: ExecutionRunProfileContributionCatalog;
-}>): void {
+}>): Promise<boolean> {
   const existing = args.runs.get(args.runId);
-  if (!existing) return;
-  if (existing.status !== 'running') return;
+  if (!existing) return false;
+  if (existing.status !== 'running') return false;
 
   const resumeHandle: ExecutionRunResumeHandle | null = (() => {
     if (existing.retentionPolicy !== 'resumable') return null;
@@ -68,7 +95,7 @@ export function finishExecutionRun(args: Readonly<{
     return existing.resumeHandle ?? null;
   })();
 
-  const updated: ExecutionRunState = {
+  let updated: ExecutionRunState = {
     ...existing,
     status: args.next.status,
     summary: args.next.summary ?? existing.summary,
@@ -78,16 +105,73 @@ export function finishExecutionRun(args: Readonly<{
     latestToolResult: args.toolResult.output,
     ...(existing.retentionPolicy === 'resumable' ? { resumeHandle } : {}),
   };
-  args.runs.set(args.runId, updated);
-  if (updated.status !== 'running') {
-    args.budgetRegistry?.releaseExecutionRun(args.runId);
-  }
 
-  const livenessProbe = (() => {
-    const output = args.toolResult.output;
-    if (!output || typeof output !== 'object' || Array.isArray(output)) return undefined;
-    return (output as { livenessProbe?: unknown }).livenessProbe;
+  // Claim the single terminal transition before any publication await. Every competing
+  // terminalizer observes this state and converges without publishing another terminal fact.
+  args.runs.set(args.runId, updated);
+  args.budgetRegistry?.releaseExecutionRun(args.runId);
+
+  const mergedMeta = (() => {
+    const base = args.toolResult.meta ? { ...args.toolResult.meta } : {};
+    if (resumeHandle) {
+      (base as any).happierExecutionRun = {
+        resumeHandle,
+      };
+    }
+    return base;
   })();
+  let terminalizationError: unknown = null;
+  let shouldMaterializeInTranscript = false;
+  try {
+    const profile = args.profileCatalog
+      ? resolveExecutionRunIntentProfileFromCatalog(args.profileCatalog, existing.intent, existing.profileId)
+      : resolveExecutionRunIntentProfile(existing.intent);
+    shouldMaterializeInTranscript = existing.sessionId !== null
+      && profile.transcriptMaterialization !== 'none';
+  } catch (error) {
+    terminalizationError = error;
+  }
+  if (!terminalizationError && shouldMaterializeInTranscript) {
+    try {
+      await args.sendAcp(
+        args.parentProvider,
+        {
+          type: 'tool-result',
+          callId: existing.callId,
+          output: args.toolResult.output,
+          id: randomUUID(),
+          ...(args.toolResult.isError ? { isError: true } : {}),
+        },
+        Object.keys(mergedMeta).length > 0 ? { meta: mergedMeta } : undefined,
+      );
+    } catch {
+      terminalizationError = createExecutionRunTranscriptCustodyError();
+    }
+  }
+  if (terminalizationError) {
+    if (isExecutionRunTranscriptCustodyError(terminalizationError)) {
+      const publicationError = terminalizationError as ReturnType<typeof createExecutionRunTranscriptCustodyError>;
+      updated = {
+        ...updated,
+        status: 'failed',
+        summary: publicationError.message,
+        error: { code: publicationError.code, message: publicationError.message },
+      };
+    } else {
+      const message = terminalizationError instanceof Error ? terminalizationError.message : 'Execution failed';
+      updated = {
+        ...updated,
+        status: 'failed',
+        summary: args.next.status === 'failed' ? updated.summary : message,
+        error: args.next.status === 'failed' && updated.error
+          ? updated.error
+          : { code: 'execution_run_failed', message },
+      };
+    }
+  }
+  args.runs.set(args.runId, updated);
+
+  const resultSizeBytes = readExecutionRunMarkerResultSizeBytes(args.toolResult.output);
 
   // Best-effort: update daemon-visible marker for machine-wide run visibility.
   const markerPayload = {
@@ -97,20 +181,17 @@ export function finishExecutionRun(args: Readonly<{
     callId: updated.callId,
     sidechainId: updated.sidechainId,
     intent: updated.intent,
-    backendTarget: updated.backendTarget,
-    ...(updated.display ? { display: updated.display } : {}),
+    backendTarget: readBackendTargetRefV2(updated.backendTarget),
     permissionMode: updated.permissionMode,
+    retentionPolicy: updated.retentionPolicy,
     runClass: updated.runClass,
     ioMode: updated.ioMode,
-    retentionPolicy: updated.retentionPolicy,
     status: updated.status,
     startedAtMs: updated.startedAtMs,
     updatedAtMs: args.next.finishedAtMs,
     finishedAtMs: args.next.finishedAtMs,
-    ...(typeof updated.summary === 'string' && updated.summary.trim().length > 0 ? { summary: updated.summary } : {}),
     ...(updated.error?.code ? { errorCode: updated.error.code } : {}),
-    ...(livenessProbe === undefined ? {} : { diagnostics: { livenessProbe } }),
-    resumeHandle,
+    ...(resultSizeBytes === undefined ? {} : { resultSizeBytes }),
   } as const;
 
   const markerWritePromise = args.enqueueMarkerWrite(args.runId, async (): Promise<void> => {
@@ -138,31 +219,6 @@ export function finishExecutionRun(args: Readonly<{
     ctrl.terminalMarkerWritePromise = trackedMarkerWritePromise;
   }
 
-  const mergedMeta = (() => {
-    const base = args.toolResult.meta ? { ...args.toolResult.meta } : {};
-    if (resumeHandle) {
-      (base as any).happierExecutionRun = {
-        resumeHandle,
-      };
-    }
-    return base;
-  })();
-
-  const profile = args.profileCatalog
-    ? resolveExecutionRunIntentProfileFromCatalog(args.profileCatalog, existing.intent, existing.profileId)
-    : resolveExecutionRunIntentProfile(existing.intent);
-  const shouldMaterializeInTranscript = profile.transcriptMaterialization !== 'none';
-  if (shouldMaterializeInTranscript) {
-    args.sendAcp(
-      args.parentProvider,
-      {
-        type: 'tool-result',
-        callId: existing.callId,
-        output: args.toolResult.output,
-        id: randomUUID(),
-        ...(args.toolResult.isError ? { isError: true } : {}),
-      },
-      Object.keys(mergedMeta).length > 0 ? { meta: mergedMeta } : undefined,
-    );
-  }
+  if (terminalizationError) throw terminalizationError;
+  return true;
 }

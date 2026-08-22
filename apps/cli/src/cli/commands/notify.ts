@@ -1,7 +1,7 @@
 import chalk from 'chalk';
 
 import { ApiClient } from '@/api/api';
-import { readCredentials } from '@/persistence';
+import { readStoredCredentials } from '@/persistence';
 
 import type { CommandContext } from '@/cli/commandRegistry';
 
@@ -82,7 +82,7 @@ ${chalk.bold('Examples:')}
     process.exit(1);
   }
 
-  const credentials = await readCredentials();
+  const credentials = await readStoredCredentials();
   if (!credentials) {
     console.error(chalk.red('Error: Not authenticated. Please run "happier auth login" first.'));
     process.exit(1);

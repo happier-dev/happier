@@ -1,47 +1,87 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type {
-    AgentExternalSessionSource,
     AgentExternalSessionsContribution,
+    AgentExternalSessionsManagedEndpointRead,
+    AgentExternalSessionsManagedEndpointReadResponse,
+    AgentExternalSessionsResult,
+} from '@happier-dev/plugin-sdk/sessions/external';
+import type {
+    AgentExternalSessionSource,
     AgentExternalSessionsListCandidatesRequest,
     AgentExternalSessionsPageTranscriptRequest,
     AgentExternalSessionsReadAfterTranscriptRequest,
     AgentExternalSessionsResolveLinkedIdentityRequest,
     AgentExternalSessionsResolveLinkIdentityRequest,
     AgentExternalSessionsResolveSourceRequest,
-    AgentExternalSessionsResult,
-} from '@happier-dev/plugin-sdk/experimental/sessions';
+} from '@happier-dev/plugin-sdk/sessions/external';
 
 import {
     EXTERNAL_SESSIONS_INVOCATION_POLICY,
     createBoundedAgentExternalSessionsContribution,
+    type BoundedAgentExternalSessionsContribution,
 } from './agentExternalSessionsInvocation';
+import { createUnavailablePluginServices } from '@/plugins/runtime/invocation/services/unavailable';
 
 const identity = Object.freeze({
     pluginId: 'acme.external',
     agentId: 'acme-agent',
     generation: 'generation-7',
+    contributionQualifiedId: 'acme.external/agents/acme-agent',
+    immutableGenerationId: 'immutable-generation-7',
 });
 const source = Object.freeze({ kind: 'fixture', root: '/tmp/sessions' });
+/**
+ * The canonical transcript record every Agent contribution must emit. Fixtures
+ * that only needed "some object" here would no longer be admissible, so they
+ * share this record rather than each inventing a provider-native envelope.
+ */
+const canonicalTranscriptRaw = Object.freeze({
+    role: 'user',
+    content: Object.freeze({ type: 'text', text: 'hello' }),
+});
+const unavailableManagedEndpointRead = async (): Promise<AgentExternalSessionsManagedEndpointReadResponse> => {
+    throw new Error('unavailable');
+};
+const unavailableInvocationExec = createUnavailablePluginServices().exec;
 
-type MethodName = keyof AgentExternalSessionsContribution;
-
-function requestFor(method: 'resolveSource', signal?: AbortSignal): AgentExternalSessionsResolveSourceRequest;
-function requestFor(method: 'listCandidates', signal?: AbortSignal): AgentExternalSessionsListCandidatesRequest;
-function requestFor(method: 'resolveLinkIdentity', signal?: AbortSignal): AgentExternalSessionsResolveLinkIdentityRequest;
-function requestFor(method: 'resolveLinkedIdentity', signal?: AbortSignal): AgentExternalSessionsResolveLinkedIdentityRequest;
-function requestFor(method: 'pageTranscript', signal?: AbortSignal): AgentExternalSessionsPageTranscriptRequest;
-function requestFor(method: 'readAfterTranscript', signal?: AbortSignal): AgentExternalSessionsReadAfterTranscriptRequest;
-function requestFor(
-    method: MethodName,
-    signal = new AbortController().signal,
-): AgentExternalSessionsResolveSourceRequest
+type MethodName =
+    | 'resolveSource'
+    | 'listCandidates'
+    | 'resolveLinkIdentity'
+    | 'resolveLinkedIdentity'
+    | 'pageTranscript'
+    | 'readAfterTranscript';
+type ContributionRequest =
+    | AgentExternalSessionsResolveSourceRequest
     | AgentExternalSessionsListCandidatesRequest
     | AgentExternalSessionsResolveLinkIdentityRequest
     | AgentExternalSessionsResolveLinkedIdentityRequest
     | AgentExternalSessionsPageTranscriptRequest
-    | AgentExternalSessionsReadAfterTranscriptRequest {
-    const invocation = { signal, deadlineAtMs: Number.MAX_SAFE_INTEGER, maxSerializedBytes: Number.MAX_SAFE_INTEGER };
+    | AgentExternalSessionsReadAfterTranscriptRequest;
+type BoundedContributionRequest =
+    | Parameters<BoundedAgentExternalSessionsContribution['resolveSource']>[0]
+    | Parameters<BoundedAgentExternalSessionsContribution['listCandidates']>[0]
+    | Parameters<BoundedAgentExternalSessionsContribution['resolveLinkIdentity']>[0]
+    | Parameters<BoundedAgentExternalSessionsContribution['resolveLinkedIdentity']>[0]
+    | Parameters<BoundedAgentExternalSessionsContribution['pageTranscript']>[0]
+    | Parameters<BoundedAgentExternalSessionsContribution['readAfterTranscript']>[0];
+
+function requestFor(method: 'resolveSource', signal?: AbortSignal): Parameters<BoundedAgentExternalSessionsContribution['resolveSource']>[0];
+function requestFor(method: 'listCandidates', signal?: AbortSignal): Parameters<BoundedAgentExternalSessionsContribution['listCandidates']>[0];
+function requestFor(method: 'resolveLinkIdentity', signal?: AbortSignal): Parameters<BoundedAgentExternalSessionsContribution['resolveLinkIdentity']>[0];
+function requestFor(method: 'resolveLinkedIdentity', signal?: AbortSignal): Parameters<BoundedAgentExternalSessionsContribution['resolveLinkedIdentity']>[0];
+function requestFor(method: 'pageTranscript', signal?: AbortSignal): Parameters<BoundedAgentExternalSessionsContribution['pageTranscript']>[0];
+function requestFor(method: 'readAfterTranscript', signal?: AbortSignal): Parameters<BoundedAgentExternalSessionsContribution['readAfterTranscript']>[0];
+function requestFor(
+    method: MethodName,
+    signal = new AbortController().signal,
+): BoundedContributionRequest {
+    const invocation = {
+        signal,
+        deadlineAtMs: Number.MAX_SAFE_INTEGER,
+        maxSerializedBytes: Number.MAX_SAFE_INTEGER,
+    };
     switch (method) {
         case 'resolveSource':
             return { ...invocation, source };
@@ -84,8 +124,12 @@ function deferred<T>() {
     return { promise, resolve, reject };
 }
 
+function exactOpaqueCodeUnits(maximum: number): string {
+    return "external::/%?=+#[]@!$&'()*+,;🙂".padEnd(maximum, 'x');
+}
+
 function contributionWith(
-    implementation: (method: MethodName, request: unknown) => AgentExternalSessionsResult<unknown> | Promise<AgentExternalSessionsResult<unknown>>,
+    implementation: (method: MethodName, request: ContributionRequest) => AgentExternalSessionsResult<unknown> | Promise<AgentExternalSessionsResult<unknown>>,
 ): AgentExternalSessionsContribution {
     return Object.freeze({
         resolveSource: (request) => implementation('resolveSource', request) as ReturnType<AgentExternalSessionsContribution['resolveSource']>,
@@ -98,7 +142,7 @@ function contributionWith(
 }
 
 async function invoke(
-    contribution: AgentExternalSessionsContribution,
+    contribution: BoundedAgentExternalSessionsContribution,
     method: MethodName,
     signal = new AbortController().signal,
 ): Promise<AgentExternalSessionsResult<unknown>> {
@@ -122,16 +166,254 @@ function createWrapper(params?: Readonly<{
     contribution?: AgentExternalSessionsContribution;
     isCurrent?: () => boolean;
     retirementSignal?: AbortSignal;
+    managedEndpointRead?: Parameters<
+        typeof createBoundedAgentExternalSessionsContribution
+    >[0]['managedEndpointRead'];
+    createInvocationExec?: Parameters<
+        typeof createBoundedAgentExternalSessionsContribution
+    >[0]['createInvocationExec'];
 }>) {
     return createBoundedAgentExternalSessionsContribution({
         contribution: params?.contribution ?? contributionWith((method) => successFor(method)),
         identity,
         isCurrent: params?.isCurrent ?? (() => true),
         retirementSignal: params?.retirementSignal ?? new AbortController().signal,
+        createInvocationExec: params?.createInvocationExec ?? (async () => unavailableInvocationExec),
+        ...(params?.managedEndpointRead
+            ? { managedEndpointRead: params.managedEndpointRead }
+            : {}),
     });
 }
 
 describe('bounded Agent External Sessions invocation', () => {
+    it('stamps generic execution authority instead of requiring it from host-facing requests', async () => {
+        const createInvocationExec = vi.fn(async () => unavailableInvocationExec);
+        const hostSuppliedExec = createUnavailablePluginServices().exec;
+        let receivedRequest: AgentExternalSessionsResolveSourceRequest | undefined;
+        const wrapped = createWrapper({
+            createInvocationExec,
+            contribution: contributionWith((_method, request) => {
+                receivedRequest = request as AgentExternalSessionsResolveSourceRequest;
+                return successFor('resolveSource');
+            }),
+        });
+        const signal = new AbortController().signal;
+        const hostRequest = {
+            source,
+            signal,
+            deadlineAtMs: Number.MAX_SAFE_INTEGER,
+            maxSerializedBytes: Number.MAX_SAFE_INTEGER,
+        } satisfies Parameters<typeof wrapped.resolveSource>[0];
+        // An untyped host caller could still append this property at runtime;
+        // the wrapper must stamp its generation-owned authority over it.
+        const runtimeOnlyHostRequest = { ...hostRequest, exec: hostSuppliedExec };
+
+        await expect(wrapped.resolveSource(runtimeOnlyHostRequest)).resolves.toEqual(successFor('resolveSource'));
+
+        expect(createInvocationExec).toHaveBeenCalledOnce();
+        expect(createInvocationExec).toHaveBeenCalledWith(receivedRequest?.signal);
+        expect(receivedRequest?.exec).toBe(unavailableInvocationExec);
+        expect(receivedRequest?.exec).not.toBe(hostSuppliedExec);
+    });
+
+    it('binds the exact managed endpoint read once before contribution entry and retires it when the contribution settles', async () => {
+        const admittedRead = vi.fn(async () => Object.freeze({
+            ok: true,
+            status: 200,
+            statusText: 'OK',
+            headers: Object.freeze({ 'x-next-cursor': 'cursor-2' }),
+            body: null,
+        }));
+        const replacementRead = vi.fn(async () => Object.freeze({
+            ok: true,
+            status: 299,
+            statusText: 'Replacement',
+            headers: Object.freeze({}),
+            body: null,
+        }));
+        let selectedRead: AgentExternalSessionsManagedEndpointRead = admittedRead;
+        const delegated = vi.fn(async () => selectedRead);
+        let capturedRequest: AgentExternalSessionsResolveSourceRequest | null = null;
+        let inContributionResponse: AgentExternalSessionsManagedEndpointReadResponse | null = null;
+        let current = true;
+        const wrapped = createWrapper({
+            isCurrent: () => current,
+            managedEndpointRead: delegated,
+            contribution: contributionWith(async (_method, request) => {
+                capturedRequest = request as AgentExternalSessionsResolveSourceRequest;
+                expect(delegated).toHaveBeenCalledOnce();
+                expect(delegated).toHaveBeenCalledWith({
+                    identity,
+                    source,
+                    signal: capturedRequest.signal,
+                });
+                selectedRead = replacementRead;
+                inContributionResponse = await capturedRequest.managedEndpointRead({
+                    pathAndQuery: '/session?directory=workspace',
+                    headers: { accept: 'application/json' },
+                });
+                return successFor('resolveSource');
+            }),
+        });
+
+        await wrapped.resolveSource(requestFor('resolveSource'));
+        const endpointRead = capturedRequest!.managedEndpointRead;
+
+        expect(inContributionResponse).toMatchObject({ status: 200, body: null });
+        expect(delegated).toHaveBeenCalledWith({
+            identity,
+            source,
+            signal: capturedRequest!.signal,
+        });
+        expect(admittedRead).toHaveBeenCalledWith({
+            pathAndQuery: '/session?directory=workspace',
+            headers: { accept: 'application/json' },
+        });
+        expect(replacementRead).not.toHaveBeenCalled();
+        expect(Object.keys(endpointRead)).toEqual([]);
+
+        await expect(endpointRead({ pathAndQuery: '/session/status' }))
+            .rejects.toThrow('settled');
+        expect(delegated).toHaveBeenCalledOnce();
+        expect(admittedRead).toHaveBeenCalledOnce();
+        expect(replacementRead).not.toHaveBeenCalled();
+
+        current = false;
+        await expect(endpointRead({
+            pathAndQuery: '/session',
+        })).rejects.toThrow('retired generation');
+        expect(delegated).toHaveBeenCalledOnce();
+        expect(admittedRead).toHaveBeenCalledOnce();
+        expect(replacementRead).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        'resolveSource',
+        'listCandidates',
+        'resolveLinkIdentity',
+        'resolveLinkedIdentity',
+        'pageTranscript',
+        'readAfterTranscript',
+    ] as const)('binds managed endpoint authority before %s contribution entry', async (method) => {
+        const delegated = vi.fn(async () => unavailableManagedEndpointRead);
+        const wrapped = createWrapper({
+            managedEndpointRead: delegated,
+            contribution: contributionWith((calledMethod, request) => {
+                expect(calledMethod).toBe(method);
+                expect(delegated).toHaveBeenCalledOnce();
+                expect(delegated).toHaveBeenCalledWith({
+                    identity,
+                    source,
+                    signal: request.signal,
+                });
+                expect(request.exec).toBe(unavailableInvocationExec);
+                return successFor(calledMethod);
+            }),
+        });
+
+        await expect(invoke(wrapped, method)).resolves.toMatchObject({ ok: true });
+        expect(delegated).toHaveBeenCalledOnce();
+    });
+
+    it('cancels a late managed endpoint response body after successful contribution settlement', async () => {
+        const started = deferred<void>();
+        const response = deferred<AgentExternalSessionsManagedEndpointReadResponse>();
+        const cancelBody = vi.fn();
+        const exactRead = vi.fn(async () => {
+            started.resolve();
+            return await response.promise;
+        });
+        let retainedRead: Promise<AgentExternalSessionsManagedEndpointReadResponse> | null = null;
+        const wrapped = createWrapper({
+            managedEndpointRead: vi.fn(async () => exactRead),
+            contribution: contributionWith(async (_method, request) => {
+                const invocation = request as AgentExternalSessionsResolveSourceRequest;
+                retainedRead = invocation.managedEndpointRead({
+                    pathAndQuery: '/session',
+                });
+                void retainedRead.catch(() => undefined);
+                await started.promise;
+                return successFor('resolveSource');
+            }),
+        });
+
+        await expect(wrapped.resolveSource(requestFor('resolveSource')))
+            .resolves.toMatchObject({ ok: true });
+        const body = new ReadableStream<Uint8Array>({
+            cancel: cancelBody,
+        });
+        response.resolve(Object.freeze({
+            ok: true,
+            status: 200,
+            statusText: 'OK',
+            headers: Object.freeze({}),
+            body,
+        }));
+
+        await expect(retainedRead).rejects.toThrow('settled');
+        expect(cancelBody).toHaveBeenCalledOnce();
+    });
+
+    it('rejects unavailable managed endpoint reads before delegation effects', async () => {
+        let managedEndpointReadError: unknown = null;
+        const wrapped = createWrapper({
+            contribution: contributionWith(async (_method, request) => {
+                const invocation = request as AgentExternalSessionsResolveSourceRequest;
+                try {
+                    await invocation.managedEndpointRead({
+                        pathAndQuery: '/session',
+                    });
+                } catch (error) {
+                    managedEndpointReadError = error;
+                }
+                return successFor('resolveSource');
+            }),
+        });
+
+        await expect(wrapped.resolveSource(requestFor('resolveSource')))
+            .resolves.toMatchObject({ ok: true });
+        expect(managedEndpointReadError).toEqual(expect.objectContaining({
+            message: expect.stringContaining('unavailable'),
+        }));
+    });
+
+    it.each([
+        ['Authorization', 'Bearer caller-secret'],
+        ['Proxy-Authorization', 'Basic proxy-secret'],
+        ['Cookie', 'session=caller-secret'],
+        ['X-Api-Key', 'caller-secret'],
+    ] as const)(
+        'rejects managed endpoint %s before the bound endpoint can fetch',
+        async (name, value) => {
+            const exactRead = vi.fn(unavailableManagedEndpointRead);
+            const delegated = vi.fn(async () => exactRead);
+            let rejection: unknown;
+            const wrapped = createWrapper({
+                managedEndpointRead: delegated,
+                contribution: contributionWith(async (_method, request) => {
+                    try {
+                        await request.managedEndpointRead({
+                            pathAndQuery: '/session',
+                            headers: { [name]: value },
+                        });
+                    } catch (error) {
+                        rejection = error;
+                    }
+                    return successFor('resolveSource');
+                }),
+            });
+
+            await expect(wrapped.resolveSource(requestFor('resolveSource')))
+                .resolves.toMatchObject({ ok: true });
+            expect(rejection).toBeInstanceOf(Error);
+            expect((rejection as Error).message).toContain(
+                'cannot supply authentication',
+            );
+            expect(delegated).toHaveBeenCalledOnce();
+            expect(exactRead).not.toHaveBeenCalled();
+        },
+    );
+
     it.each([
         ['resolveSource', 262_144, undefined],
         ['listCandidates', 1_048_576, 50],
@@ -162,6 +444,56 @@ describe('bounded Agent External Sessions invocation', () => {
             maxSerializedBytes,
             ...(maxItems === undefined ? {} : { maxItems }),
         });
+        expect(vi.getTimerCount()).toBe(0);
+        vi.useRealTimers();
+    });
+
+    it('uses the earlier caller-owned absolute deadline for a paged admission', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(1_000);
+        const observed = vi.fn();
+        const wrapped = createWrapper({
+            contribution: contributionWith((calledMethod, request) => {
+                observed(calledMethod, request);
+                return successFor(calledMethod);
+            }),
+        });
+
+        const resultPromise = wrapped.pageTranscript({
+            ...requestFor('pageTranscript'),
+            deadlineAtMs: 2_000,
+        });
+        await vi.advanceTimersByTimeAsync(0);
+
+        await expect(resultPromise).resolves.toMatchObject({ ok: true });
+        expect(observed).toHaveBeenCalledWith(
+            'pageTranscript',
+            expect.objectContaining({ deadlineAtMs: 2_000 }),
+        );
+        expect(vi.getTimerCount()).toBe(0);
+        vi.useRealTimers();
+    });
+
+    it('rejects an expired whole-admission deadline before the Agent leaf runs', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(2_000);
+        const observed = vi.fn();
+        const wrapped = createWrapper({
+            contribution: contributionWith((calledMethod) => {
+                observed(calledMethod);
+                return successFor(calledMethod);
+            }),
+        });
+
+        await expect(wrapped.pageTranscript({
+            ...requestFor('pageTranscript'),
+            deadlineAtMs: 2_000,
+        })).resolves.toEqual({
+            ok: false,
+            code: 'timeout',
+            retryable: true,
+        });
+        expect(observed).not.toHaveBeenCalled();
         expect(vi.getTimerCount()).toBe(0);
         vi.useRealTimers();
     });
@@ -277,7 +609,11 @@ describe('bounded Agent External Sessions invocation', () => {
         const caller = new AbortController();
         const retirement = new AbortController();
         let current = true;
-        const called = vi.fn(() => pending.promise);
+        const entered = deferred<void>();
+        const called = vi.fn(() => {
+            entered.resolve();
+            return pending.promise;
+        });
         const wrapped = createWrapper({
             contribution: contributionWith(called),
             isCurrent: () => current,
@@ -285,7 +621,7 @@ describe('bounded Agent External Sessions invocation', () => {
         });
 
         const cancelledResult = wrapped.resolveSource(requestFor('resolveSource', caller.signal));
-        await Promise.resolve();
+        await entered.promise;
         caller.abort();
         current = false;
         retirement.abort();
@@ -310,7 +646,7 @@ describe('bounded Agent External Sessions invocation', () => {
     ] as const)('accepts zero and exactly-max %s items, then rejects max-plus-one', async (method, field, maximum) => {
         const item = method === 'listCandidates'
             ? { remoteSessionId: 'remote-1', updatedAtMs: 1 }
-            : { id: 'item-1', createdAtMs: 1, raw: {} };
+            : { id: 'item-1', createdAtMs: 1, raw: canonicalTranscriptRaw };
         for (const count of [0, maximum]) {
             const wrapped = createWrapper({
                 contribution: contributionWith(() => ({
@@ -340,7 +676,7 @@ describe('bounded Agent External Sessions invocation', () => {
 
     it('accepts exactly-max readAfter items and rejects max-plus-one', async () => {
         const maximum = EXTERNAL_SESSIONS_INVOCATION_POLICY.readAfterTranscript.maxItems;
-        const item = { id: 'item-1', createdAtMs: 1, raw: {} };
+        const item = { id: 'item-1', createdAtMs: 1, raw: canonicalTranscriptRaw };
         const value = (count: number) => ({
             outcome: 'advanced',
             items: Array.from({ length: count }, () => item),
@@ -363,6 +699,632 @@ describe('bounded Agent External Sessions invocation', () => {
             retryable: false,
         });
     });
+
+    it.each([
+        ['candidate remote Session id', 'remoteSessionId', EXTERNAL_SESSIONS_INVOCATION_POLICY.idMaxCodeUnits],
+        ['candidate title', 'title', EXTERNAL_SESSIONS_INVOCATION_POLICY.titleMaxCodeUnits],
+    ] as const)(
+        'accepts the exact %s code-unit bound without normalizing punctuation and rejects first-over',
+        async (_label, field, maximum) => {
+            const exact = exactOpaqueCodeUnits(maximum);
+            const call = async (value: string) => {
+                const candidate = {
+                    remoteSessionId: 'remote-1',
+                    updatedAtMs: 1,
+                    [field]: value,
+                };
+                const wrapped = createWrapper({
+                    contribution: contributionWith(() => ({
+                        ok: true,
+                        value: { candidates: [candidate], nextCursor: null },
+                    })),
+                });
+                return await wrapped.listCandidates(requestFor('listCandidates'));
+            };
+
+            await expect(call(exact)).resolves.toMatchObject({
+                ok: true,
+                value: { candidates: [{ [field]: exact }] },
+            });
+            await expect(call(`${exact}x`)).resolves.toEqual({
+                ok: false,
+                code: 'agent_error',
+                retryable: false,
+            });
+        },
+    );
+
+    it.each([
+        'resolveLinkIdentity',
+        'resolveLinkedIdentity',
+        'pageTranscript',
+        'readAfterTranscript',
+    ] as const)(
+        'accepts an exact remote Session id for %s and rejects first-over before leaf admission',
+        async (method) => {
+            const exact = exactOpaqueCodeUnits(EXTERNAL_SESSIONS_INVOCATION_POLICY.idMaxCodeUnits);
+            const called = vi.fn();
+            const wrapped = createWrapper({
+                contribution: contributionWith((calledMethod) => {
+                    called(calledMethod);
+                    return successFor(calledMethod);
+                }),
+            });
+            const call = async (remoteSessionId: string) => {
+                switch (method) {
+                    case 'resolveLinkIdentity':
+                        return await wrapped.resolveLinkIdentity({
+                            ...requestFor('resolveLinkIdentity'),
+                            remoteSessionId,
+                        });
+                    case 'resolveLinkedIdentity':
+                        return await wrapped.resolveLinkedIdentity({
+                            ...requestFor('resolveLinkedIdentity'),
+                            remoteSessionId,
+                        });
+                    case 'pageTranscript':
+                        return await wrapped.pageTranscript({
+                            ...requestFor('pageTranscript'),
+                            remoteSessionId,
+                        });
+                    case 'readAfterTranscript':
+                        return await wrapped.readAfterTranscript({
+                            ...requestFor('readAfterTranscript'),
+                            remoteSessionId,
+                        });
+                }
+            };
+
+            await expect(call(exact)).resolves.toMatchObject({ ok: true });
+            await expect(call(`${exact}x`)).resolves.toEqual({
+                ok: false,
+                code: 'invalid_request',
+                retryable: false,
+            });
+            expect(called).toHaveBeenCalledOnce();
+        },
+    );
+
+    it.each(['resolveLinkIdentity', 'resolveLinkedIdentity'] as const)(
+        'accepts the exact resolved remote Session id returned by %s and rejects first-over',
+        async (method) => {
+            const exact = exactOpaqueCodeUnits(EXTERNAL_SESSIONS_INVOCATION_POLICY.idMaxCodeUnits);
+            const call = async (remoteSessionId: string) => {
+                const wrapped = createWrapper({
+                    contribution: contributionWith(() => ({
+                        ok: true,
+                        value: { source, remoteSessionId, linkData: { key: 'value' } },
+                    })),
+                });
+                return method === 'resolveLinkIdentity'
+                    ? await wrapped.resolveLinkIdentity(requestFor('resolveLinkIdentity'))
+                    : await wrapped.resolveLinkedIdentity(requestFor('resolveLinkedIdentity'));
+            };
+
+            await expect(call(exact)).resolves.toMatchObject({
+                ok: true,
+                value: { remoteSessionId: exact },
+            });
+            await expect(call(`${exact}x`)).resolves.toEqual({
+                ok: false,
+                code: 'agent_error',
+                retryable: false,
+            });
+        },
+    );
+
+    it.each([
+        ['pageTranscript', 'id'],
+        ['pageTranscript', 'localId'],
+        ['readAfterTranscript', 'id'],
+        ['readAfterTranscript', 'localId'],
+    ] as const)(
+        'accepts the exact %s item %s code-unit bound and rejects first-over',
+        async (method, field) => {
+            const exact = exactOpaqueCodeUnits(EXTERNAL_SESSIONS_INVOCATION_POLICY.idMaxCodeUnits);
+            const call = async (value: string) => {
+                const item = {
+                    id: 'item-1',
+                    createdAtMs: 1,
+                    raw: canonicalTranscriptRaw,
+                    [field]: value,
+                };
+                const wrapped = createWrapper({
+                    contribution: contributionWith(() => ({
+                        ok: true,
+                        value: method === 'pageTranscript'
+                            ? { items: [item], nextCursor: null }
+                            : {
+                                outcome: 'advanced',
+                                items: [item],
+                                nextCursor: 'native-next',
+                                boundary: 'item-1',
+                            },
+                    })),
+                });
+                return method === 'pageTranscript'
+                    ? await wrapped.pageTranscript(requestFor('pageTranscript'))
+                    : await wrapped.readAfterTranscript(requestFor('readAfterTranscript'));
+            };
+
+            await expect(call(exact)).resolves.toMatchObject({
+                ok: true,
+                value: { items: [{ [field]: exact }] },
+            });
+            await expect(call(`${exact}x`)).resolves.toEqual({
+                ok: false,
+                code: 'agent_error',
+                retryable: false,
+            });
+        },
+    );
+
+    it.each(['pageTranscript', 'readAfterTranscript'] as const)(
+        'admits a bounded sidechain identity returned by %s and rejects malformed values',
+        async (method) => {
+            const sidechainId = 's'.repeat(191);
+            const call = async (value: unknown) => {
+                const item = {
+                    id: 'item-sidechain-1',
+                    createdAtMs: 1,
+                    sidechainId: value,
+                    raw: canonicalTranscriptRaw,
+                };
+                const wrapped = createWrapper({
+                    contribution: contributionWith(() => ({
+                        ok: true,
+                        value: method === 'pageTranscript'
+                            ? { items: [item], nextCursor: null }
+                            : {
+                                outcome: 'advanced',
+                                items: [item],
+                                nextCursor: 'native-next',
+                                boundary: 'item-sidechain-1',
+                            },
+                    })),
+                });
+                return method === 'pageTranscript'
+                    ? await wrapped.pageTranscript(requestFor('pageTranscript'))
+                    : await wrapped.readAfterTranscript(requestFor('readAfterTranscript'));
+            };
+
+            await expect(call(sidechainId)).resolves.toMatchObject({
+                ok: true,
+                value: { items: [{ sidechainId }] },
+            });
+            await expect(call(` ${sidechainId} `)).resolves.toMatchObject({
+                ok: true,
+                value: { items: [{ sidechainId }] },
+            });
+            await expect(call(null)).resolves.toMatchObject({
+                ok: true,
+                value: { items: [{ sidechainId: null }] },
+            });
+            await expect(call(`${sidechainId}s`)).resolves.toEqual({
+                ok: false,
+                code: 'agent_error',
+                retryable: false,
+            });
+            await expect(call('')).resolves.toEqual({
+                ok: false,
+                code: 'agent_error',
+                retryable: false,
+            });
+        },
+    );
+
+    describe('transcript item raw record', () => {
+        const callWithRaw = async (
+            method: 'pageTranscript' | 'readAfterTranscript',
+            raw: unknown,
+        ) => {
+            const item = { id: 'item-1', createdAtMs: 1, raw };
+            const wrapped = createWrapper({
+                contribution: contributionWith(() => ({
+                    ok: true,
+                    value: method === 'pageTranscript'
+                        ? { items: [item], nextCursor: null }
+                        : {
+                            outcome: 'advanced',
+                            items: [item],
+                            nextCursor: 'native-next',
+                            boundary: 'item-1',
+                        },
+                })),
+            });
+            return method === 'pageTranscript'
+                ? await wrapped.pageTranscript(requestFor('pageTranscript'))
+                : await wrapped.readAfterTranscript(requestFor('readAfterTranscript'));
+        };
+
+        it.each(['pageTranscript', 'readAfterTranscript'] as const)(
+            'admits canonical user and agent transcript records returned by %s',
+            async (method) => {
+                await expect(callWithRaw(method, {
+                    role: 'user',
+                    content: { type: 'text', text: 'hello' },
+                })).resolves.toMatchObject({
+                    ok: true,
+                    value: { items: [{ raw: { role: 'user', content: { type: 'text', text: 'hello' } } }] },
+                });
+                await expect(callWithRaw(method, {
+                    role: 'agent',
+                    content: {
+                        type: 'codex',
+                        data: { type: 'message', message: 'done' },
+                    },
+                })).resolves.toMatchObject({
+                    ok: true,
+                    value: { items: [{ raw: { role: 'agent' } }] },
+                });
+            },
+        );
+
+        it.each([
+            'source_fact',
+            'terminal_origin',
+            'host_prompt_echo',
+        ] as const)('preserves the exact terminal user projection %s', async (userProjection) => {
+            const item = {
+                id: 'user-item-1',
+                createdAtMs: 1,
+                messageRole: 'user' as const,
+                userProjection,
+                raw: {
+                    role: 'user' as const,
+                    content: { type: 'text' as const, text: 'hello' },
+                },
+            };
+            const wrapped = createWrapper({
+                contribution: contributionWith(() => ({
+                    ok: true,
+                    value: { items: [item], nextCursor: null },
+                })),
+            });
+
+            await expect(wrapped.pageTranscript(
+                requestFor('pageTranscript'),
+            )).resolves.toMatchObject({
+                ok: true,
+                value: { items: [{ userProjection }] },
+            });
+        });
+
+        it('rejects an unknown terminal user projection before returning the page', async () => {
+            const wrapped = createWrapper({
+                contribution: contributionWith(() => ({
+                    ok: true,
+                    value: {
+                        items: [{
+                            id: 'user-item-1',
+                            createdAtMs: 1,
+                            messageRole: 'user',
+                            userProjection: 'guessed_from_text',
+                            raw: {
+                                role: 'user',
+                                content: { type: 'text', text: 'hello' },
+                            },
+                        }],
+                        nextCursor: null,
+                    },
+                })),
+            });
+
+            await expect(wrapped.pageTranscript(
+                requestFor('pageTranscript'),
+            )).resolves.toEqual({
+                ok: false,
+                code: 'agent_error',
+                retryable: false,
+            });
+        });
+
+        it.each([
+            ['a provider-native envelope', { type: 'codex_event', payload: { kind: 'token_count' } }],
+            ['an empty object', {}],
+            ['an unknown role', { role: 'tool', content: { type: 'text', text: 'x' } }],
+            ['a user record without text content', { role: 'user', content: { type: 'output' } }],
+            ['an unknown envelope field', { role: 'user', content: { type: 'text', text: 'x' }, meta: { provider: 'legacy' } }],
+            ['an unknown user-content field', { role: 'user', content: { type: 'text', text: 'x', providerTag: 'legacy' } }],
+            ['a non-object record', 'hello'],
+        ] as const)(
+            'rejects %s as a transcript item raw record',
+            async (_label, raw) => {
+                await expect(callWithRaw('pageTranscript', raw)).resolves.toEqual({
+                    ok: false,
+                    code: 'agent_error',
+                    retryable: false,
+                });
+                await expect(callWithRaw('readAfterTranscript', raw)).resolves.toEqual({
+                    ok: false,
+                    code: 'agent_error',
+                    retryable: false,
+                });
+            },
+        );
+
+        it('rejects a compatibility messageRole that contradicts the canonical raw envelope', async () => {
+            const wrapped = createWrapper({
+                contribution: contributionWith(() => ({
+                    ok: true,
+                    value: {
+                        items: [{
+                            id: 'item-1',
+                            createdAtMs: 1,
+                            messageRole: 'agent',
+                            raw: {
+                                role: 'user',
+                                content: { type: 'text', text: 'hello' },
+                            },
+                        }],
+                        nextCursor: null,
+                    },
+                })),
+            });
+
+            await expect(wrapped.pageTranscript(
+                requestFor('pageTranscript'),
+            )).resolves.toEqual({
+                ok: false,
+                code: 'agent_error',
+                retryable: false,
+            });
+        });
+
+        it('rejects a user-only projection attached to an Agent envelope', async () => {
+            const wrapped = createWrapper({
+                contribution: contributionWith(() => ({
+                    ok: true,
+                    value: {
+                        items: [{
+                            id: 'item-1',
+                            createdAtMs: 1,
+                            userProjection: 'source_fact',
+                            raw: {
+                                role: 'agent',
+                                content: { type: 'text', text: 'hello' },
+                            },
+                        }],
+                        nextCursor: null,
+                    },
+                })),
+            });
+
+            await expect(wrapped.pageTranscript(
+                requestFor('pageTranscript'),
+            )).resolves.toEqual({
+                ok: false,
+                code: 'agent_error',
+                retryable: false,
+            });
+        });
+
+        it.each([
+            { type: 'message', message: 'bare semantic body' },
+            { type: 'acp', data: { type: 'message', message: 'missing agent identity' } },
+        ])('rejects a non-canonical current Agent envelope %#', async (content) => {
+            await expect(callWithRaw('pageTranscript', {
+                role: 'agent',
+                content,
+            })).resolves.toEqual({
+                ok: false,
+                code: 'agent_error',
+                retryable: false,
+            });
+        });
+
+        it('admits a transcript record nested deeper than the link-data depth bound', async () => {
+            let output: unknown = 'leaf';
+            for (let depth = 0; depth < 12; depth += 1) output = { nested: output };
+            await expect(callWithRaw('pageTranscript', {
+                role: 'agent',
+                content: {
+                    type: 'codex',
+                    data: {
+                        type: 'tool-call-result',
+                        callId: 'call-1',
+                        id: 'tool-1',
+                        output,
+                    },
+                },
+            })).resolves.toMatchObject({
+                ok: true,
+                value: { items: [{ raw: { role: 'agent' } }] },
+            });
+        });
+
+        it('rejects accessor, prototype, cyclic, and non-finite transcript raw carriers', async () => {
+            const accessor: Record<string, unknown> = { role: 'user' };
+            Object.defineProperty(accessor, 'content', {
+                enumerable: true,
+                get: () => ({ type: 'text', text: 'x' }),
+            });
+            const cyclic: Record<string, unknown> = {
+                role: 'user',
+                content: { type: 'text', text: 'x' },
+            };
+            cyclic.self = cyclic;
+            const carriers: readonly unknown[] = [
+                accessor,
+                Object.assign(Object.create({ inherited: true }), {
+                    role: 'user',
+                    content: { type: 'text', text: 'x' },
+                }),
+                cyclic,
+                { role: 'user', content: { type: 'text', text: 'x' }, ordinal: Number.NaN },
+            ];
+            for (const raw of carriers) {
+                await expect(callWithRaw('pageTranscript', raw)).resolves.toEqual({
+                    ok: false,
+                    code: 'agent_error',
+                    retryable: false,
+                });
+            }
+        });
+    });
+
+    it.each([
+        ['read-after boundary', 2_000, (value: string) => ({ boundary: value })],
+        ['read-after diagnostic code', 128, (value: string) => ({
+            boundary: 'item-1',
+            diagnostics: [{ code: value, count: 1, positions: [0] }],
+        })],
+    ] as const)(
+        'accepts the exact %s code-unit bound and rejects first-over',
+        async (_label, maximum, fields) => {
+            const exact = exactOpaqueCodeUnits(maximum);
+            const call = async (value: string) => {
+                const wrapped = createWrapper({
+                    contribution: contributionWith(() => ({
+                        ok: true,
+                        value: {
+                            outcome: 'advanced',
+                            items: [{ id: 'item-1', createdAtMs: 1, raw: canonicalTranscriptRaw }],
+                            nextCursor: 'native-next',
+                            ...fields(value),
+                        },
+                    })),
+                });
+                return await wrapped.readAfterTranscript(requestFor('readAfterTranscript'));
+            };
+
+            await expect(call(exact)).resolves.toMatchObject({ ok: true });
+            await expect(call(`${exact}x`)).resolves.toEqual({
+                ok: false,
+                code: 'agent_error',
+                retryable: false,
+            });
+        },
+    );
+
+    it.each([
+        ['source kind', EXTERNAL_SESSIONS_INVOCATION_POLICY.sourceKindMaxCodeUnits],
+        ['list search term', EXTERNAL_SESSIONS_INVOCATION_POLICY.searchMaxCodeUnits],
+    ] as const)(
+        'accepts the exact %s input code-unit bound and rejects first-over before leaf admission',
+        async (field, maximum) => {
+            const exact = exactOpaqueCodeUnits(maximum);
+            const called = vi.fn();
+            const wrapped = createWrapper({
+                contribution: contributionWith((method) => {
+                    called(method);
+                    return successFor(method);
+                }),
+            });
+            const call = async (value: string) => field === 'source kind'
+                ? await wrapped.resolveSource({
+                    ...requestFor('resolveSource'),
+                    source: { kind: value },
+                })
+                : await wrapped.listCandidates({
+                    ...requestFor('listCandidates'),
+                    searchTerm: value,
+                });
+
+            await expect(call(exact)).resolves.toMatchObject({ ok: true });
+            await expect(call(`${exact}x`)).resolves.toEqual({
+                ok: false,
+                code: 'invalid_request',
+                retryable: false,
+            });
+            expect(called).toHaveBeenCalledOnce();
+        },
+    );
+
+    it('accepts an exact failure message and preserves the current first-over failure mapping', async () => {
+        const exact = exactOpaqueCodeUnits(EXTERNAL_SESSIONS_INVOCATION_POLICY.failureMessageMaxCodeUnits);
+        const call = async (message: string) => {
+            const wrapped = createWrapper({
+                contribution: contributionWith(() => ({
+                    ok: false,
+                    code: 'source_unreachable',
+                    message,
+                    retryable: true,
+                })),
+            });
+            return await wrapped.resolveSource(requestFor('resolveSource'));
+        };
+
+        await expect(call(exact)).resolves.toEqual({
+            ok: false,
+            code: 'source_unreachable',
+            message: exact,
+            retryable: true,
+        });
+        await expect(call(`${exact}x`)).resolves.toEqual({
+            ok: false,
+            code: 'agent_error',
+            retryable: false,
+        });
+    });
+
+    it.each([
+        ['listCandidates', 'nextCursor'],
+        ['pageTranscript', 'nextCursor'],
+        ['pageTranscript', 'tailCursor'],
+        ['readAfterTranscript', 'nextCursor'],
+    ] as const)(
+        'accepts an exact native %s %s and rejects first-over',
+        async (method, field) => {
+            const exact = exactOpaqueCodeUnits(EXTERNAL_SESSIONS_INVOCATION_POLICY.nativeCursorMaxCodeUnits);
+            const call = async (cursor: string) => {
+                const wrapped = createWrapper({
+                    contribution: contributionWith(() => ({
+                        ok: true,
+                        value: method === 'listCandidates'
+                            ? { candidates: [], nextCursor: cursor }
+                            : method === 'pageTranscript'
+                                ? { items: [], nextCursor: null, [field]: cursor }
+                                : {
+                                    outcome: 'advanced',
+                                    items: [{ id: 'item-1', createdAtMs: 1, raw: canonicalTranscriptRaw }],
+                                    nextCursor: cursor,
+                                    boundary: 'item-1',
+                                },
+                    })),
+                });
+                return await invoke(wrapped, method);
+            };
+
+            await expect(call(exact)).resolves.toMatchObject({
+                ok: true,
+                value: { [field]: expect.stringMatching(/^happier_external_cursor_v1:/) },
+            });
+            await expect(call(`${exact}x`)).resolves.toEqual({
+                ok: false,
+                code: 'agent_error',
+                retryable: false,
+            });
+        },
+    );
+
+    it.each(['listCandidates', 'pageTranscript', 'readAfterTranscript'] as const)(
+        'passes an exact native %s cursor through opaquely and rejects first-over before leaf admission',
+        async (method) => {
+            const exact = exactOpaqueCodeUnits(EXTERNAL_SESSIONS_INVOCATION_POLICY.nativeCursorMaxCodeUnits);
+            const observed = vi.fn();
+            const wrapped = createWrapper({
+                contribution: contributionWith((calledMethod, request) => {
+                    observed(calledMethod, request);
+                    return successFor(calledMethod);
+                }),
+            });
+            const call = async (cursor: string) => method === 'listCandidates'
+                ? await wrapped.listCandidates({ ...requestFor('listCandidates'), cursor })
+                : method === 'pageTranscript'
+                    ? await wrapped.pageTranscript({ ...requestFor('pageTranscript'), cursor })
+                    : await wrapped.readAfterTranscript({ ...requestFor('readAfterTranscript'), cursor });
+
+            await expect(call(exact)).resolves.toMatchObject({ ok: true });
+            expect(observed).toHaveBeenCalledWith(method, expect.objectContaining({ cursor: exact }));
+            await expect(call(`${exact}x`)).resolves.toEqual({
+                ok: false,
+                code: 'invalid_request',
+                retryable: false,
+            });
+            expect(observed).toHaveBeenCalledOnce();
+        },
+    );
 
     it.each(['listCandidates', 'pageTranscript', 'readAfterTranscript'] as const)(
         'rejects a zero-capacity %s request before leaf admission',
@@ -444,6 +1406,36 @@ describe('bounded Agent External Sessions invocation', () => {
         });
     });
 
+    it.each([
+        { hasMore: true, nextCursor: null },
+        { hasMore: false, nextCursor: 'native-next-cursor' },
+    ] as const)(
+        'rejects contradictory paged continuation metadata before it can become a host cursor',
+        async ({ hasMore, nextCursor }) => {
+            const pageTranscript = vi.fn(async (_request: AgentExternalSessionsPageTranscriptRequest) => ({
+                ok: true as const,
+                value: {
+                    items: [],
+                    nextCursor,
+                    hasMore,
+                },
+            }));
+            const wrapped = createWrapper({
+                contribution: {
+                    ...contributionWith((method) => successFor(method)),
+                    pageTranscript,
+                } satisfies AgentExternalSessionsContribution,
+            });
+
+            await expect(wrapped.pageTranscript(requestFor('pageTranscript'))).resolves.toEqual({
+                ok: false,
+                code: 'agent_error',
+                retryable: false,
+            });
+            expect(pageTranscript).toHaveBeenCalledOnce();
+        },
+    );
+
     it('counts canonical UTF-8 bytes across the whole result envelope inclusively', async () => {
         const maximum = EXTERNAL_SESSIONS_INVOCATION_POLICY.resolveSource.maxSerializedBytes;
         const makeResult = (padding: string) => ({
@@ -498,7 +1490,6 @@ describe('bounded Agent External Sessions invocation', () => {
     it.each([
         ['listCandidates', { candidates: [{ remoteSessionId: 'remote-1', updatedAtMs: 1, linkData: { value: Number.NaN } }], nextCursor: null }],
         ['resolveLinkIdentity', { source, remoteSessionId: 'remote-1', linkData: { value: Number.NaN } }],
-        ['pageTranscript', { items: [{ id: 'item-1', createdAtMs: 1, raw: { value: Number.NaN } }], nextCursor: null }],
     ] as const)('rejects malformed linkData returned by %s', async (method, value) => {
         const wrapped = createWrapper({
             contribution: contributionWith(() => ({ ok: true, value })),
@@ -510,15 +1501,13 @@ describe('bounded Agent External Sessions invocation', () => {
         });
     });
 
-    it.each(['listCandidates', 'resolveLinkIdentity', 'resolveLinkedIdentity', 'pageTranscript'] as const)(
+    it.each(['listCandidates', 'resolveLinkIdentity', 'resolveLinkedIdentity'] as const)(
         'rejects over-64KiB linkData returned by %s',
         async (method) => {
             const oversizedLinkData = { padding: 'x'.repeat(65_536) };
             const value = method === 'listCandidates'
                 ? { candidates: [{ remoteSessionId: 'remote-1', updatedAtMs: 1, linkData: oversizedLinkData }], nextCursor: null }
-                : method === 'pageTranscript'
-                    ? { items: [{ id: 'item-1', createdAtMs: 1, raw: oversizedLinkData }], nextCursor: null }
-                    : { source, remoteSessionId: 'remote-1', linkData: oversizedLinkData };
+                : { source, remoteSessionId: 'remote-1', linkData: oversizedLinkData };
             const wrapped = createWrapper({
                 contribution: contributionWith(() => ({ ok: true, value })),
             });
@@ -529,6 +1518,46 @@ describe('bounded Agent External Sessions invocation', () => {
             });
         },
     );
+
+    it('admits bounded transcript-media roots from resolved source evidence without placing them in link data', async () => {
+        const transcriptMediaReadRoots = ['/tmp/external-media-one', '/tmp/external-media-two'];
+        const wrapped = createWrapper({
+            contribution: contributionWith((method) => {
+                if (method === 'resolveSource') {
+                    return {
+                        ok: true,
+                        value: { source, transcriptMediaReadRoots },
+                    };
+                }
+                if (method === 'resolveLinkedIdentity') {
+                    return {
+                        ok: true,
+                        value: {
+                            source,
+                            remoteSessionId: 'remote-1',
+                            linkData: { key: 'value' },
+                            transcriptMediaReadRoots,
+                        },
+                    };
+                }
+                return successFor(method);
+            }),
+        });
+
+        await expect(wrapped.resolveSource(requestFor('resolveSource'))).resolves.toEqual({
+            ok: true,
+            value: { source, transcriptMediaReadRoots },
+        });
+        await expect(wrapped.resolveLinkedIdentity(requestFor('resolveLinkedIdentity'))).resolves.toEqual({
+            ok: true,
+            value: {
+                source,
+                remoteSessionId: 'remote-1',
+                linkData: { key: 'value' },
+                transcriptMediaReadRoots,
+            },
+        });
+    });
 
     it('rejects accessor, prototype, unknown-field, and non-finite output carriers', async () => {
         const accessor = {};
@@ -672,6 +1701,7 @@ describe('bounded Agent External Sessions invocation', () => {
             identity: { ...identity, generation: 'generation-8' },
             isCurrent: () => true,
             retirementSignal: new AbortController().signal,
+            createInvocationExec: async () => unavailableInvocationExec,
         });
         await expect(replacement.listCandidates({
             ...requestFor('listCandidates'),
@@ -756,7 +1786,7 @@ describe('bounded Agent External Sessions invocation', () => {
                         ok: true,
                         value: {
                             outcome: 'advanced',
-                            items: [{ id: 'item-1', createdAtMs: 1, raw: {} }],
+                            items: [{ id: 'item-1', createdAtMs: 1, raw: canonicalTranscriptRaw }],
                             nextCursor: 'native-current-continuation',
                             boundary: 'item-1',
                         },

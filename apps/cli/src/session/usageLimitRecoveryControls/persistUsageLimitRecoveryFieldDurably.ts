@@ -14,6 +14,29 @@ export type StageUsageLimitRecoveryMutation = (
   mutation: DaemonUsageLimitRecoveryFieldMutation,
 ) => Promise<void>;
 
+export function cancelLatestUsageLimitRecoveryInMetadataAfterExplicitStop(
+  metadata: Record<string, unknown>,
+): Record<string, unknown> {
+  const parsed = SessionStateUsageLimitRecoveryValueSchema.safeParse(
+    metadata[SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY],
+  );
+  if (
+    !parsed.success
+    || parsed.data.status === 'cancelled'
+    || parsed.data.status === 'exhausted'
+    || parsed.data.status === 'paused'
+  ) return metadata;
+
+  return {
+    ...metadata,
+    [SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY]: {
+      ...parsed.data,
+      status: 'cancelled',
+      nextCheckAtMs: null,
+    },
+  };
+}
+
 function isExactDaemonUsageLimitRecoveryMutation(
   mutation: RegisteredSessionStateFieldMutationV1 | undefined,
 ): mutation is DaemonUsageLimitRecoveryFieldMutation {

@@ -21,6 +21,8 @@ import {
   type ExecutionRunTimeoutError,
 } from '../errors';
 import { logger } from '@/ui/logger';
+import type { ExecutionRunTranscriptPublisher } from '../executionRunTranscriptPublisher';
+import { settleExecutionRunController } from '../settleExecutionRunController';
 
 const UNPROBEABLE_LIVENESS_SETTLE_GRACE_MS = 50;
 const MAX_UNPROBEABLE_LIVENESS_SETTLE_GRACE_MS = 250;
@@ -32,8 +34,8 @@ export async function executeBoundedBackendRun(args: Readonly<{
   startedAtMs: number;
   params: ExecutionRunManagerStartParams;
   profileCatalog?: ExecutionRunProfileContributionCatalog;
-  controllers: ReadonlyMap<string, ExecutionRunController>;
-  sendAcp: (provider: ACPProvider, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => void;
+  controllers: Map<string, ExecutionRunController>;
+  sendAcp: ExecutionRunTranscriptPublisher;
   parentProvider: ACPProvider;
   getNowMs: () => number;
   boundedTimeoutMs: number | null;
@@ -43,7 +45,8 @@ export async function executeBoundedBackendRun(args: Readonly<{
   const profile = args.profileCatalog
     ? resolveExecutionRunIntentProfileFromCatalog(args.profileCatalog, params.intent, params.profileId)
     : resolveExecutionRunIntentProfile(params.intent);
-  const shouldMaterializeInTranscript = profile.transcriptMaterialization !== 'none';
+  const shouldMaterializeInTranscript = params.sessionId !== null
+    && profile.transcriptMaterialization !== 'none';
   const ctrl = args.controllers.get(runId);
   if (!ctrl) return;
   if (ctrl.kind !== 'backend') return;
@@ -379,13 +382,13 @@ export async function executeBoundedBackendRun(args: Readonly<{
     if (shouldMaterializeInTranscript && (shouldEmitFinalSidechainMessageWhenStreamed || !streamed)) {
       // Even when streaming progress, emit a final terminal summary line so users get a clear completion status.
       if (sidechainMessage && sidechainMessage.trim().length > 0) {
-        args.sendAcp(args.parentProvider, { type: 'message', message: sidechainMessage.trim(), sidechainId });
+        await args.sendAcp(args.parentProvider, { type: 'message', message: sidechainMessage.trim(), sidechainId });
       }
     }
 
     await backendCtrl.streamWriter?.flushAll({ reason: 'turn-end' });
 
-    args.finishRun(
+    await args.finishRun(
       runId,
       { status: completion.status, summary: completion.summary, finishedAtMs },
       { output: completion.toolResultOutput, meta: completion.toolResultMeta },
@@ -404,7 +407,7 @@ export async function executeBoundedBackendRun(args: Readonly<{
       await backendCtrl.streamWriter?.flushAll({ reason: 'abort', interruptedReason: message });
       const finishedAtMs = args.getNowMs();
       const livenessProbe = e && typeof e === 'object' ? (e as ExecutionRunTimeoutError).livenessProbe : null;
-      args.finishRun(
+      await args.finishRun(
         runId,
         { status: 'timeout', summary: message, finishedAtMs, error: { code: executionRunErrorCode, message } },
         {
@@ -426,9 +429,9 @@ export async function executeBoundedBackendRun(args: Readonly<{
     }
     await backendCtrl.streamWriter?.flushAll({ reason: 'abort', interruptedReason: message });
     const finishedAtMs = args.getNowMs();
-    args.finishRun(
+    await args.finishRun(
       runId,
-      { status: 'failed', summary: message, finishedAtMs, error: { code: 'execution_run_failed', message } },
+      { status: 'failed', summary: message, finishedAtMs, error: { code: executionRunErrorCode, message } },
       {
         output: {
           status: 'failed',
@@ -438,22 +441,16 @@ export async function executeBoundedBackendRun(args: Readonly<{
           sidechainId,
           finishedAtMs,
           startedAtMs,
-          error: { code: 'execution_run_failed', message },
+          error: { code: executionRunErrorCode, message },
         },
         isError: true,
       },
     );
   } finally {
-    try {
-      await backendCtrl.backend.dispose();
-    } catch {
-      // ignore
-    }
-    try {
-      await backendCtrl.terminalMarkerWritePromise;
-    } catch {
-      // ignore
-    }
-    backendCtrl.resolveTerminal();
+    await settleExecutionRunController({
+      runId,
+      controller: backendCtrl,
+      controllers: args.controllers,
+    });
   }
 }

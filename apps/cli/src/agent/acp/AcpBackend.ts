@@ -287,6 +287,11 @@ export interface AcpBackendOptions {
   /** Environment variable names to remove from the final child environment */
   unsetEnv?: readonly string[];
 
+  /** Runner-private final child-launch substitution seam. */
+  transformAgentChildLaunchEnvironment?: (
+    environment: Readonly<Record<string, string>>,
+  ) => Readonly<Record<string, string>>;
+
   /** MCP servers to make available to the agent */
   mcpServers?: Record<string, McpServerConfig>;
 
@@ -322,6 +327,12 @@ export interface AcpBackendOptions {
   /** Provider-owned pure augmentation of normalized ACP model metadata. */
   projectModel?: SessionModelProjector;
 
+  /** Provider-owned projection for non-standard prompt usage fields and accounting semantics. */
+  projectPromptUsage?: (input: Readonly<{
+    usage: unknown;
+    promptResponse: unknown;
+  }>) => unknown;
+
   /** Private child-host seam that awaits a complete projected model snapshot. */
   prepareSessionModels?: (
     sessionResponse: unknown,
@@ -339,7 +350,13 @@ export interface AcpBackendOptions {
   prepareToolUpdate?: (
     update: SessionUpdate,
     context: Readonly<{ toolCallCountSincePrompt: number }>,
-  ) => Promise<SessionUpdate>;
+  ) => Promise<SessionUpdate | null>;
+
+  /** Host-owned raw `session/prompt` transform immediately before ACP dispatch. */
+  transformPromptRequest?: (
+    request: PromptRequest,
+    options: Readonly<{ signal: AbortSignal }>,
+  ) => Promise<PromptRequest>;
 
   /** Closed custom ACP methods registered on the canonical client connection. */
   extensions?: ReadonlyArray<AcpExtensionRegistration>;
@@ -408,7 +425,10 @@ export class AcpBackend implements CatalogAcpBackend, ExecutionRunHostRuntime {
     return this.acceptsImageInput;
   }
 
-  private settlePendingPromptSubmissionEffect(turnGeneration: number): boolean {
+  private settlePendingPromptSubmissionEffect(
+    turnGeneration: number,
+    acceptanceKind: 'transport_write' | 'correlated_provider_effect',
+  ): boolean {
     if (
       !this.pendingPromptSubmissionEffectResolver
       || this.pendingPromptSubmissionTurnGeneration !== turnGeneration
@@ -416,10 +436,43 @@ export class AcpBackend implements CatalogAcpBackend, ExecutionRunHostRuntime {
       return false;
     }
     const resolveProviderEffect = this.pendingPromptSubmissionEffectResolver;
+    this.pendingPromptSubmissionAcceptanceKind = acceptanceKind;
     this.pendingPromptSubmissionEffectResolver = null;
     this.pendingPromptSubmissionTurnGeneration = null;
     resolveProviderEffect();
     return true;
+  }
+
+  private observeAcpTransportMessageWritten(message: unknown): void {
+    const record = asRecord(message);
+    if (record?.method !== 'session/prompt') return;
+    const params = asRecord(record.params);
+    const sessionId = typeof params?.sessionId === 'string' ? params.sessionId : null;
+    if (!sessionId) return;
+    const waiterIndex = this.promptTransportWriteWaiters.findIndex(
+      (waiter) => waiter.sessionId === sessionId,
+    );
+    if (waiterIndex < 0) return;
+    const [waiter] = this.promptTransportWriteWaiters.splice(waiterIndex, 1);
+    waiter?.resolve();
+  }
+
+  private createAcpPromptTransportWriteReceipt(sessionId: string): Readonly<{
+    written: Promise<void>;
+    cancel: () => void;
+  }> {
+    let waiter!: { sessionId: string; resolve: () => void };
+    const written = new Promise<void>((resolve) => {
+      waiter = { sessionId, resolve };
+      this.promptTransportWriteWaiters.push(waiter);
+    });
+    return {
+      written,
+      cancel: () => {
+        const index = this.promptTransportWriteWaiters.indexOf(waiter);
+        if (index >= 0) this.promptTransportWriteWaiters.splice(index, 1);
+      },
+    };
   }
 
   /** Host-private sink for provider evidence correlated by the public session owner. */
@@ -433,7 +486,7 @@ export class AcpBackend implements CatalogAcpBackend, ExecutionRunHostRuntime {
     const failureMessage = outcome.kind === 'failed'
       ? redactBugReportSensitiveText(outcome.message ?? 'Provider reported prompt failure').trim().slice(0, 1_024)
       : '';
-    this.settlePendingPromptSubmissionEffect(this.turnGeneration);
+    this.settlePendingPromptSubmissionEffect(this.turnGeneration, 'correlated_provider_effect');
     this.finalizeTurnOutcome(
       outcome.kind === 'completed'
         ? { kind: 'completed', stopReason: 'end_turn' }
@@ -568,7 +621,7 @@ export class AcpBackend implements CatalogAcpBackend, ExecutionRunHostRuntime {
   }
 
   private buildSpawnEnv(): NodeJS.ProcessEnv {
-    return finalizeSessionChildEnvironment({
+    const environment = finalizeSessionChildEnvironment({
       environment: buildScopedProcessEnv({
         baseEnv: process.env,
         explicitEnv: this.options.env,
@@ -577,6 +630,17 @@ export class AcpBackend implements CatalogAcpBackend, ExecutionRunHostRuntime {
       enableCgroupSelfMigration: false,
       stackProcessKind: null,
     });
+    if (!this.options.transformAgentChildLaunchEnvironment) {
+      return environment;
+    }
+    return this.options.transformAgentChildLaunchEnvironment(
+      Object.freeze(Object.fromEntries(
+        Object.entries(environment).filter(
+          (entry): entry is [string, string] =>
+            typeof entry[1] === 'string',
+        ),
+      )),
+    );
   }
 
   private async cleanupInitializedProcessConnection(params: { graceMs: number }): Promise<void> {
@@ -853,7 +917,11 @@ export class AcpBackend implements CatalogAcpBackend, ExecutionRunHostRuntime {
     });
 
     // Create ndJSON stream for ACP
-    const stream = createAcpNdJsonStream(writable, filteredReadable);
+    const stream = createAcpNdJsonStream(writable, filteredReadable, {
+      onMessageWritten: (message) => {
+        this.observeAcpTransportMessageWritten(message);
+      },
+    });
 
     const clientHandlers = createAcpClientHandlers({
       onSessionUpdate: (notification) => this.handleSessionUpdate(notification),
@@ -1584,6 +1652,11 @@ export class AcpBackend implements CatalogAcpBackend, ExecutionRunHostRuntime {
   private sawAssistantMessageSincePrompt = false;
   private pendingPromptSubmissionTurnGeneration: number | null = null;
   private pendingPromptSubmissionEffectResolver: (() => void) | null = null;
+  private pendingPromptSubmissionAcceptanceKind: 'transport_write' | 'correlated_provider_effect' | null = null;
+  private promptTransportWriteWaiters: Array<{
+    sessionId: string;
+    resolve: () => void;
+  }> = [];
   private responseCompletionTimeoutMs: number | null = null;
   private responseCompletionTimeout: NodeJS.Timeout | null = null;
   private responseCompletionTimeoutRejecter: (() => void) | null = null;
@@ -1644,7 +1717,7 @@ export class AcpBackend implements CatalogAcpBackend, ExecutionRunHostRuntime {
         // Same-turn provider traffic proves the prompt reached provider custody. Release the
         // submission waiter before closing the turn so the hard-cap outcome remains observable
         // instead of being replaced later by the prompt-RPC liveness timeout.
-        this.settlePendingPromptSubmissionEffect(turnGeneration);
+        this.settlePendingPromptSubmissionEffect(turnGeneration, 'correlated_provider_effect');
       }
       this.finalizeTurnOutcome({ kind: 'timed_out', capMs });
     }, capMs);
@@ -1927,6 +2000,7 @@ export class AcpBackend implements CatalogAcpBackend, ExecutionRunHostRuntime {
     this.sawAssistantMessageSincePrompt = false;
     this.pendingPromptSubmissionTurnGeneration = null;
     this.pendingPromptSubmissionEffectResolver = null;
+    this.pendingPromptSubmissionAcceptanceKind = null;
     this.clearResponseCompletionTimeout();
     if (this.postPromptCompletionIdleTimeout) {
       clearTimeout(this.postPromptCompletionIdleTimeout);
@@ -1982,16 +2056,24 @@ export class AcpBackend implements CatalogAcpBackend, ExecutionRunHostRuntime {
         ? [{ type: 'text', text: prompt }]
         : [...prompt];
 
-      const promptRequest: PromptRequest = {
+      const rawPromptRequest: PromptRequest = {
         sessionId: this.acpSessionId,
         prompt: contentBlocks,
         ...(options.metadata ? { _meta: options.metadata } : {}),
       };
+      const promptRequest = this.options.transformPromptRequest
+        ? await this.options.transformPromptRequest(rawPromptRequest, {
+            signal: this.connection.signal,
+          })
+        : rawPromptRequest;
 
       const emitPromptUsage = (promptResponse: any): void => {
         const observation = buildAcpPromptUsageObservation({
           provider: this.options.agentName,
           promptResponse,
+          ...(this.options.projectPromptUsage
+            ? { projectUsage: this.options.projectPromptUsage }
+            : {}),
         });
         const telemetry = observation ? buildTokenCountAgentMessageFromUsageObservation(observation) : null;
         if (telemetry) {
@@ -2007,6 +2089,10 @@ export class AcpBackend implements CatalogAcpBackend, ExecutionRunHostRuntime {
       });
       const promptLivenessTimeoutMs = resolvePromptLivenessTimeoutMs(this.transport);
       let promptLivenessTimeout: ReturnType<typeof setTimeout> | null = null;
+      const promptTransportWriteReceipt = this.createAcpPromptTransportWriteReceipt(promptRequest.sessionId);
+      void promptTransportWriteReceipt.written.then(() => {
+        this.settlePendingPromptSubmissionEffect(turnGeneration, 'transport_write');
+      });
       const promptPromise = this.connection.peer.prompt(promptRequest);
       this.rawPromptRequest = promptPromise;
       this.rawPromptRequestTurnGeneration = turnGeneration;
@@ -2020,6 +2106,10 @@ export class AcpBackend implements CatalogAcpBackend, ExecutionRunHostRuntime {
         }
       };
       void promptPromise.then(clearRawPromptOwnership, clearRawPromptOwnership);
+      void promptPromise.then(
+        () => promptTransportWriteReceipt.cancel(),
+        () => promptTransportWriteReceipt.cancel(),
+      );
       const promptRaceInputs: Promise<unknown>[] = [
         promptPromise,
         correlatedProviderEffect,
@@ -2045,19 +2135,53 @@ export class AcpBackend implements CatalogAcpBackend, ExecutionRunHostRuntime {
       }
       logger.debug('[AcpBackend] Prompt request sent to ACP connection');
 
+      const scheduleNoUpdateCompletionIfNeeded = (): void => {
+        if (
+          !this.waitingForResponse
+          || this.toolCalls.activeCalls().length > 0
+          || this.sawSessionUpdateSincePrompt
+        ) return;
+        const noUpdatesTimeoutMs = resolvePostPromptNoUpdatesTimeoutMs(this.transport);
+        if (noUpdatesTimeoutMs === null) return;
+        const graceMs = Math.max(100, noUpdatesTimeoutMs);
+        this.postPromptCompletionIdleTimeout = setTimeout(() => {
+          this.postPromptCompletionIdleTimeout = null;
+          if (this.responseCompletionError) return;
+          if (!this.waitingForResponse) return;
+          if (this.sawSessionUpdateSincePrompt) return;
+          if (this.toolCalls.activeCalls().length > 0) return;
+          const exitCode = this.process?.exitCode;
+          if (typeof exitCode === 'number' && Number.isFinite(exitCode) && exitCode !== 0) {
+            this.failPendingResponseWait(new Error(`Exit code: ${exitCode}`));
+            return;
+          }
+          const signalCode = this.process?.signalCode;
+          if (typeof signalCode === 'string' && signalCode.trim().length > 0) {
+            this.failPendingResponseWait(new Error(`Signal: ${signalCode}`));
+            return;
+          }
+          this.emitIdleStatus();
+        }, graceMs);
+      };
+
       if (promptSubmissionEvidence === promptLivenessTimeoutSentinel) {
+        promptTransportWriteReceipt.cancel();
         throw new Error(
           `Timeout waiting for the ACP prompt response or correlated provider-effect evidence after ${promptLivenessTimeoutMs}ms`,
         );
       }
 
       if (promptSubmissionEvidence === correlatedProviderEffectSentinel) {
-        // A host-private completion signal is correlated to this exact prompt id. It proves
-        // provider effect even when the ACP request response itself remains stranded.
+        promptTransportWriteReceipt.cancel();
+        const acceptanceKind = this.pendingPromptSubmissionAcceptanceKind;
+        this.pendingPromptSubmissionAcceptanceKind = null;
+        // A successful transport write proves provider custody. A host-private completion
+        // signal can independently prove correlated provider effect if it wins first.
         this.pendingPromptResponseTurnGeneration = turnGeneration;
         void promptPromise
           .then((res: any) => {
-            this.handlePromptResponseForTurn(res, turnGeneration, emitPromptUsage);
+            const completedTurn = this.handlePromptResponseForTurn(res, turnGeneration, emitPromptUsage);
+            if (!completedTurn) scheduleNoUpdateCompletionIfNeeded();
           })
           .catch((error) => {
             if (this.pendingPromptResponseTurnGeneration === turnGeneration) {
@@ -2067,11 +2191,15 @@ export class AcpBackend implements CatalogAcpBackend, ExecutionRunHostRuntime {
             if (this.disposed || turnGeneration !== this.turnGeneration || this.closedTurnGeneration === turnGeneration) return;
             handlePromptError(error);
           });
-        return { kind: 'accepted_by_correlated_provider_effect' };
+        return acceptanceKind === 'transport_write'
+          ? { kind: 'accepted_by_transport_write' }
+          : { kind: 'accepted_by_correlated_provider_effect' };
       }
 
       this.pendingPromptSubmissionEffectResolver = null;
       this.pendingPromptSubmissionTurnGeneration = null;
+      this.pendingPromptSubmissionAcceptanceKind = null;
+      promptTransportWriteReceipt.cancel();
 
       const promptResponse: any = promptSubmissionEvidence;
 
@@ -2091,45 +2219,13 @@ export class AcpBackend implements CatalogAcpBackend, ExecutionRunHostRuntime {
       //
       // Guard: only emit when we are still waiting (i.e. no idle was already observed), there are
       // no active tool calls, and we have *not yet observed any session/update traffic* for this prompt.
-      if (this.waitingForResponse && this.toolCalls.activeCalls().length === 0 && this.sawSessionUpdateSincePrompt === false) {
-        // Don't resolve immediately: give stderr/process-exit handlers a chance to surface errors
-        // before we declare the turn complete (prevents swallowing "exit non-zero" or auth errors).
-        const noUpdatesTimeoutMs = resolvePostPromptNoUpdatesTimeoutMs(this.transport);
-        // NOTE: When an ACP agent crashes/exits shortly after responding to session/prompt, the
-        // subprocess exit can race with our "no updates" idle fallback. Use a small minimum grace
-        // to reduce flakes and avoid incorrectly treating a failed turn as complete.
-        if (noUpdatesTimeoutMs === null) {
-          return { kind: 'accepted_by_prompt_response' };
-        }
-        const graceMs = Math.max(100, noUpdatesTimeoutMs);
-
-        this.postPromptCompletionIdleTimeout = setTimeout(() => {
-          this.postPromptCompletionIdleTimeout = null;
-          if (this.responseCompletionError) return;
-          if (!this.waitingForResponse) return;
-          if (this.sawSessionUpdateSincePrompt) return;
-          if (this.toolCalls.activeCalls().length > 0) return;
-          // If the subprocess has already exited (but the exit handler hasn't run yet),
-          // prefer surfacing the exit as a response completion error instead of declaring
-          // the turn complete.
-          const exitCode = this.process?.exitCode;
-          if (typeof exitCode === 'number' && Number.isFinite(exitCode) && exitCode !== 0) {
-            this.failPendingResponseWait(new Error(`Exit code: ${exitCode}`));
-            return;
-          }
-          const signalCode = this.process?.signalCode;
-          if (typeof signalCode === 'string' && signalCode.trim().length > 0) {
-            this.failPendingResponseWait(new Error(`Signal: ${signalCode}`));
-            return;
-          }
-          this.emitIdleStatus();
-        }, graceMs);
-      }
+      scheduleNoUpdateCompletionIfNeeded();
 
       return { kind: 'accepted_by_prompt_response' };
     } catch (error) {
       this.pendingPromptSubmissionEffectResolver = null;
       this.pendingPromptSubmissionTurnGeneration = null;
+      this.pendingPromptSubmissionAcceptanceKind = null;
       const normalizedError = handlePromptError(error);
       if (error instanceof RequestError && !this.sawSessionUpdateSincePrompt) {
         return { kind: 'rejected_before_effect', error: normalizedError };
@@ -2159,14 +2255,50 @@ export class AcpBackend implements CatalogAcpBackend, ExecutionRunHostRuntime {
       text: prompt,
     };
 
-    const promptRequest: PromptRequest = {
+    const rawPromptRequest: PromptRequest = {
       sessionId: this.acpSessionId,
       prompt: [contentBlock],
     };
+    const promptRequest = this.options.transformPromptRequest
+      ? await this.options.transformPromptRequest(rawPromptRequest, {
+          signal: this.connection.signal,
+        })
+      : rawPromptRequest;
 
     // Intentionally do not toggle `waitingForResponse` or tool-call counters here.
     // This method is used for in-flight steering while a primary prompt is already running.
-    await this.connection.peer.prompt(promptRequest);
+    const turnGeneration = this.turnGeneration;
+    const transportWriteReceipt = this.createAcpPromptTransportWriteReceipt(promptRequest.sessionId);
+    const transportWriteSentinel = Symbol('acp-steer-transport-write');
+    const promptPromise = this.connection.peer.prompt(promptRequest);
+    let outcome: unknown;
+    try {
+      outcome = await Promise.race([
+        promptPromise,
+        transportWriteReceipt.written.then(
+          (): typeof transportWriteSentinel => transportWriteSentinel,
+        ),
+      ]);
+    } catch (error) {
+      transportWriteReceipt.cancel();
+      throw error;
+    }
+    if (outcome !== transportWriteSentinel) {
+      transportWriteReceipt.cancel();
+      this.handlePromptResponseForTurn(outcome, turnGeneration, () => {});
+      return;
+    }
+    void promptPromise.then(
+      (response) => {
+        this.handlePromptResponseForTurn(response, turnGeneration, () => {});
+      },
+      (error: unknown) => {
+        if (this.disposed || !this.waitingForResponse) return;
+        const normalizedError = error instanceof Error ? error : new Error(String(error));
+        this.failPendingResponseWait(normalizedError);
+        this.emit({ type: 'status', status: 'error', detail: normalizedError.message });
+      },
+    );
   }
 
   async setSessionMode(sessionId: SessionId, modeId: string): Promise<void> {
@@ -2527,7 +2659,7 @@ export class AcpBackend implements CatalogAcpBackend, ExecutionRunHostRuntime {
       && rawPromptRequest !== null
       && this.rawPromptRequest === rawPromptRequest
     ) {
-      this.settlePendingPromptSubmissionEffect(cancelledTurnGeneration);
+      this.settlePendingPromptSubmissionEffect(cancelledTurnGeneration, 'correlated_provider_effect');
       // An acknowledged ACP cancellation closes this turn's provider custody even when the
       // original prompt RPC settles later. Release only the local request owner so a successor
       // prompt can start; the old response remains fenced by its closed turn generation.

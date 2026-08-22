@@ -1844,16 +1844,16 @@ describe('AcpBackend.waitForResponseComplete', () => {
         const started = await backend.startSession();
         emitted.length = 0;
         const sending = backend.sendPrompt(started.sessionId, 'hi');
+        await expect(sending).resolves.toEqual({ kind: 'accepted_by_transport_write' });
+        const waitForCompletion = backend.waitForResponseComplete(2_000) as Promise<unknown>;
         await expect(Promise.race([
-          sending.then(() => 'completed' as const),
+          waitForCompletion.then(() => 'completed' as const),
           new Promise<'timer'>((resolve) => setTimeout(() => resolve('timer'), 250)),
         ])).resolves.toBe('timer');
         expect(emitted.filter((message) => (
           message.type === 'status' && message.status === 'idle'
         ))).toHaveLength(0);
 
-        await expect(sending).resolves.toEqual({ kind: 'accepted_by_prompt_response' });
-        const waitForCompletion = backend.waitForResponseComplete(2_000) as Promise<unknown>;
         await expect(waitForCompletion).resolves.toEqual({ kind: 'completed', stopReason: 'end_turn' });
       } finally {
         await backendForCleanup?.dispose().catch(() => {});

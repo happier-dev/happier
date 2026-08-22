@@ -96,13 +96,13 @@ function debugCliStart(rawArgv: readonly string[]): void {
     .catch(() => undefined);
 }
 
-function failClosedReservedRootCommand(args: readonly string[], command: string): boolean {
+async function failClosedReservedRootCommand(args: readonly string[], command: string): Promise<boolean> {
   if (!findCommandSurfaceEntry(command)) return false;
 
   const suggestedCommand = resolveUnknownCommandSuggestion(command);
   const message = buildUnknownCommandMessage(command, suggestedCommand);
   if (wantsJson(args)) {
-    printJsonEnvelope(
+    await printJsonEnvelope(
       {
         ok: false,
         kind: 'cli_dispatch',
@@ -123,9 +123,9 @@ function failClosedReservedRootCommand(args: readonly string[], command: string)
   return true;
 }
 
-function rejectTmuxInvocation(args: readonly string[], message: string): void {
+async function rejectTmuxInvocation(args: readonly string[], message: string): Promise<void> {
   if (wantsJson(args)) {
-    printJsonEnvelope(
+    await printJsonEnvelope(
       {
         ok: false,
         kind: 'cli_dispatch',
@@ -151,7 +151,7 @@ async function launchCommandInTmux(
     const { startHappyHeadlessInTmux } = await import('@/integrations/tmux/startHeadlessSession');
     await startHappyHeadlessInTmux(args, json ? { output: 'silent' } : undefined);
     if (json) {
-      printJsonEnvelope({
+      await printJsonEnvelope({
         ok: true,
         kind: 'cli_dispatch',
         data: {
@@ -163,7 +163,7 @@ async function launchCommandInTmux(
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
     if (json) {
-      printJsonEnvelope(
+      await printJsonEnvelope(
         {
           ok: false,
           kind: 'cli_dispatch',
@@ -270,7 +270,7 @@ export async function dispatchCli(params: Readonly<{
     !commandDescriptor
     && subcommand
     && !isStaticCommandSurfaceProviderPlaceholder(subcommand)
-    && failClosedReservedRootCommand(args, subcommand)
+    && await failClosedReservedRootCommand(args, subcommand)
   ) {
     return;
   }
@@ -301,7 +301,7 @@ export async function dispatchCli(params: Readonly<{
       if (idx !== -1) args.splice(idx, 1);
     } else {
       if (pluginTmuxMode === 'forbidden' || (subcommand && !isTmuxAllowedCommand(subcommand))) {
-        rejectTmuxInvocation(args, '--tmux can only be used when starting a session.');
+        await rejectTmuxInvocation(args, '--tmux can only be used when starting a session.');
         return;
       }
       await launchCommandInTmux(args, subcommand);
@@ -309,7 +309,7 @@ export async function dispatchCli(params: Readonly<{
     }
   }
   if (pluginTmuxMode === 'forbidden' && isRunningInTmux && !isHelpOrVersionRequest) {
-    rejectTmuxInvocation(args, 'This plugin command cannot run inside tmux.');
+    await rejectTmuxInvocation(args, 'This plugin command cannot run inside tmux.');
     return;
   }
   if (pluginTmuxMode === 'required' && !isRunningInTmux && !isHelpOrVersionRequest) {
@@ -345,7 +345,7 @@ export async function dispatchCli(params: Readonly<{
     }
     return;
   }
-  if (subcommand && failClosedReservedRootCommand(args, subcommand)) {
+  if (subcommand && await failClosedReservedRootCommand(args, subcommand)) {
     return;
   }
 

@@ -8,7 +8,8 @@ import {
 import type {
     AgentExternalSessionObservationContribution,
     AgentExternalSessionsContribution,
-} from '@happier-dev/plugin-sdk/experimental/sessions';
+    AgentExternalSessionsManagedEndpointRead,
+} from '@happier-dev/plugin-sdk/sessions/external';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -22,6 +23,7 @@ import { projectRuntimeTranscriptEvent } from '@/agent/runtime/session/transcrip
 import type {
     HostExternalTranscriptFollowEvent,
 } from '@/session/external/privateContract';
+import { createUnavailablePluginServices } from '@/plugins/runtime/invocation/services/unavailable';
 
 import { mapPluginExternalTranscriptItem } from './pluginExternalSessionsAdapter';
 import { createExternalSessionTerminalFollowProjector } from './terminalFollowProjection';
@@ -29,6 +31,7 @@ import { createExternalSessionTerminalFollowProjector } from './terminalFollowPr
 const mocks = vi.hoisted(() => ({
     loadLinkedExternalSession: vi.fn(),
     readCredentials: vi.fn(),
+    readStoredCredentials: vi.fn(),
     resolveExternalSessionObservationLinkInput: vi.fn(),
     resolveGenerationBoundExternalSessionFollowSurface: vi.fn(),
 }));
@@ -38,6 +41,7 @@ vi.mock('@/api/session/external/takeover/loadLinkedExternalSession', () => ({
 }));
 vi.mock('@/persistence', () => ({
     readCredentials: mocks.readCredentials,
+    readStoredCredentials: mocks.readStoredCredentials,
 }));
 vi.mock('@/api/session/external/leases/resolveExternalSessionObservationLinkInput', () => ({
     resolveExternalSessionObservationLinkInput:
@@ -50,11 +54,19 @@ vi.mock('@/session/actions/externalSessions/providerOpsResolution', () => ({
 
 import { createExternalSessionFollowHostOperation } from './followHostOperation';
 
+const unavailableManagedEndpointRead: AgentExternalSessionsManagedEndpointRead =
+    async () => {
+        throw new Error('Managed endpoint read is unavailable in this file-backed fixture');
+    };
+const unavailableInvocationExec = createUnavailablePluginServices().exec;
+
 function invocation() {
     return {
         signal: new AbortController().signal,
         deadlineAtMs: Date.now() + 30_000,
         maxSerializedBytes: 524_288,
+        managedEndpointRead: unavailableManagedEndpointRead,
+        exec: unavailableInvocationExec,
     };
 }
 
@@ -100,7 +112,7 @@ describe('Codex terminal follow projection', () => {
         );
     });
 
-    it('projects only a post-cursor assistant append through the durable writer', async () => {
+    it('fails closed when a post-cursor Codex user row has no authoritative origin classification', async () => {
         const root = await mkdtemp(join(
             tmpdir(),
             'happier-codex-terminal-follow-projection-',
@@ -220,25 +232,14 @@ describe('Codex terminal follow projection', () => {
             throw new Error('Expected a Codex transcript advance');
         }
 
-        await project({
+        await expect(project({
             kind: 'data',
             items: after.value.items.map(mapPluginExternalTranscriptItem),
             fromCursor: initial.value.tailCursor,
             nextCursor: after.value.nextCursor,
-        });
+        })).rejects.toThrow('external_session_terminal_transcript_item_invalid');
 
-        expect(enqueueAgentMessageCommitted).toHaveBeenCalledOnce();
-        expect(enqueueAgentMessageCommitted).toHaveBeenCalledWith(
-            'codex',
-            { type: 'message', message: marker },
-            {
-                localId: expect.stringContaining('codex:'),
-                provenance: {
-                    kind: 'non_dependent',
-                    source: 'external',
-                },
-            },
-        );
+        expect(enqueueAgentMessageCommitted).not.toHaveBeenCalled();
         expect(session.sendUserTextMessage).not.toHaveBeenCalled();
         expect(session.sendAgentMessageCommitted).not.toHaveBeenCalled();
     });
@@ -374,7 +375,8 @@ describe('Codex terminal follow projection', () => {
             return result.value;
         };
 
-        mocks.readCredentials.mockResolvedValue({ token: 'token' });
+        mocks.readCredentials.mockResolvedValue(null);
+        mocks.readStoredCredentials.mockResolvedValue({ token: 'token', encryption: null });
         mocks.loadLinkedExternalSession.mockResolvedValue({
             ok: true,
             session: linkedSession,
@@ -385,6 +387,7 @@ describe('Codex terminal follow projection', () => {
         mocks.resolveGenerationBoundExternalSessionFollowSurface
             .mockResolvedValue({
                 resource,
+                immutablePluginGenerationId: pluginGeneration,
                 providerOps: {
                     pageTranscript,
                     readAfterTranscript,
@@ -453,6 +456,12 @@ describe('Codex terminal follow projection', () => {
         const terminalLifecycle = new AbortController();
         const terminalFollow =
             createHostTerminalTranscriptFollowService({
+                loadCommittedLocalIdBaseline: async () => ({
+                    localIds: new Set(initial.value.items.map(
+                        (item) => item.localId ?? item.id,
+                    )),
+                    complete: true,
+                }),
                 followProviderSession: async (request, followListener) =>
                     await operation.execute({
                         pluginId: qualifiedLinkIdentity.agent.pluginId,
@@ -468,9 +477,10 @@ describe('Codex terminal follow projection', () => {
                         },
                         source: linkedSource.source,
                         options: {
-                            ...(request.cursor
-                                ? { cursor: request.cursor }
-                                : {}),
+                            ...(request.initialReplay ? { initialReplay: true } : {}),
+                            ...(request.admissionDeadlineAtMs === undefined
+                                ? {}
+                                : { admissionDeadlineAtMs: request.admissionDeadlineAtMs }),
                             signal: request.signal,
                         },
                         listener: followListener,
@@ -485,11 +495,9 @@ describe('Codex terminal follow projection', () => {
             const result = await terminalFollow.bindProviderSession({
                 agentId: 'codex',
                 providerSessionId: remoteSessionId,
-                cursor: initial.value.tailCursor,
             });
             expect(result).toMatchObject({
                 status: 'following',
-                startingCursor: initial.value.tailCursor,
             });
             expect(enqueueAgentMessageCommitted).not.toHaveBeenCalled();
 
@@ -514,13 +522,13 @@ describe('Codex terminal follow projection', () => {
             expect(enqueueAgentMessageCommitted).toHaveBeenLastCalledWith(
                 'codex',
                 { type: 'message', message: externalMarker },
-                {
+                expect.objectContaining({
                     localId: expect.stringContaining('codex:'),
                     provenance: {
                         kind: 'non_dependent',
                         source: 'external',
                     },
-                },
+                }),
             );
             await followLeaseManager.requestTranscriptRefresh({
                 sessionId,
@@ -560,28 +568,26 @@ describe('Codex terminal follow projection', () => {
                 session,
                 provider: 'codex',
                 event: {
-                    kind: 'transcript-agent-message-committed',
+                    kind: 'transcript-message-committed',
+                    sequence: 2,
                     sessionId,
                     emittedAtMs: Date.parse('2026-07-29T09:00:04.000Z'),
-                    agentId: 'codex',
-                    localId: 'hosted-runtime-marker',
-                    body: {
-                        type: 'message',
-                        message: hostedMarker,
-                    },
+                    messageId: 'hosted-runtime-marker',
+                    role: 'assistant',
+                    text: hostedMarker,
                 },
             });
             expect(enqueueAgentMessageCommitted).toHaveBeenCalledTimes(2);
             expect(enqueueAgentMessageCommitted).toHaveBeenLastCalledWith(
                 'codex',
                 { type: 'message', message: hostedMarker },
-                {
+                expect.objectContaining({
                     localId: 'hosted-runtime-marker',
                     provenance: {
                         kind: 'non_dependent',
                         source: 'external',
                     },
-                },
+                }),
             );
             expect(JSON.stringify(enqueueAgentMessageCommitted.mock.calls))
                 .not.toContain(lateExternalMarker);

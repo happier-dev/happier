@@ -11,13 +11,27 @@ import { captureConsoleJsonOutput } from '@/testkit/logger/captureOutput';
 
 import { deriveBoxPublicKeyFromSeed } from '@happier-dev/protocol';
 
-const { mockIo } = vi.hoisted(() => ({
+const { mockIo, openSessionDataEncryptionKeySpy } = vi.hoisted(() => ({
   mockIo: vi.fn(),
+  openSessionDataEncryptionKeySpy: vi.fn(),
 }));
 
 vi.mock('socket.io-client', () => ({
   io: mockIo,
 }));
+
+vi.mock('@/api/client/openSessionDataEncryptionKey', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/api/client/openSessionDataEncryptionKey')>();
+  return {
+    ...actual,
+    openSessionDataEncryptionKey: (
+      ...args: Parameters<typeof actual.openSessionDataEncryptionKey>
+    ) => {
+      openSessionDataEncryptionKeySpy(...args);
+      return actual.openSessionDataEncryptionKey(...args);
+    },
+  };
+});
 
 describe('happier session send plaintext sessions (integration)', () => {
   const envKeys = ['HAPPIER_SERVER_URL', 'HAPPIER_WEBAPP_URL', 'HAPPIER_HOME_DIR'] as const;
@@ -48,6 +62,7 @@ describe('happier session send plaintext sessions (integration)', () => {
     latestTurnStatusObservedAt = 1;
     visibleMessageByLocalId = null;
     transcriptMessages = [];
+    openSessionDataEncryptionKeySpy.mockClear();
 
     const sessionId = 'sess_integration_send_plain_123';
     const metadataPlain = JSON.stringify({
@@ -252,15 +267,10 @@ describe('happier session send plaintext sessions (integration)', () => {
     bindApiSessionSocketSequenceMock(mockIo, [rpcSocket, committedSocket]);
 
     try {
-      const machineKeySeed = new Uint8Array(32).fill(8);
       await handleSessionCommand(['send', 'sess_integration_send_plain_123', 'Hello from controller', '--json'], {
         readCredentialsFn: async () => ({
           token: 'token_test',
-          encryption: {
-            type: 'dataKey',
-            publicKey: deriveBoxPublicKeyFromSeed(machineKeySeed),
-            machineKey: machineKeySeed,
-          },
+          encryption: null,
         }),
       });
 
@@ -275,6 +285,7 @@ describe('happier session send plaintext sessions (integration)', () => {
       expect(last?.v?.content?.text).toBe('Hello from controller');
       expect(last?.v?.meta?.permissionMode).toBe('safe-yolo');
       expect(last?.v?.meta).not.toHaveProperty('model');
+      expect(openSessionDataEncryptionKeySpy).not.toHaveBeenCalled();
     } finally {
       output.restore();
     }

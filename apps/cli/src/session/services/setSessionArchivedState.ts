@@ -1,4 +1,4 @@
-import type { Credentials } from '@/persistence';
+import type { StoredCredentials } from '@/persistence';
 import { resolveSessionIdOrPrefix } from '@/session/query/resolveSessionId';
 import { archiveSessionOnceInactive } from './archiveSessionOnceInactive';
 import { requestSessionStop } from './requestSessionStop';
@@ -19,12 +19,12 @@ export async function archiveSessionByIdBestEffort(params: Readonly<{ token: str
 }
 
 export async function setSessionArchivedState(params: Readonly<{
-  credentials: Credentials;
+  credentials: StoredCredentials;
   idOrPrefix: string;
   archived: boolean;
 }>): Promise<
   | Readonly<{ ok: true; sessionId: string; archivedAt: number | null }>
-  | Readonly<{ ok: false; code: 'session_not_found' | 'session_id_ambiguous' | 'unsupported'; candidates?: string[] }>
+  | Readonly<{ ok: false; code: 'session_not_found' | 'session_id_ambiguous' | 'session_lookup_timeout' | 'unsupported'; candidates?: string[] }>
 > {
   const resolved = await resolveSessionIdOrPrefix({
     credentials: params.credentials,

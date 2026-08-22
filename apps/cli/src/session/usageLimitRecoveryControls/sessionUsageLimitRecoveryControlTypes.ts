@@ -1,16 +1,13 @@
-import type { AgentId } from '@happier-dev/agents';
 import type { SessionUsageLimitRecoveryResumePromptModeV1 } from '@happier-dev/protocol';
 
-import type { Credentials } from '@/persistence';
-import type {
-  SessionEncryptionContext,
-  SessionStoredContentEncryptionMode,
-} from '@/session/transport/encryption/sessionEncryptionContext';
+import type { CatalogAgentId } from '@/agent/catalog/ids';
+import type { StoredCredentials } from '@/persistence';
+import type { SessionStoredContentCryptoContext } from '@/session/transport/encryption/sessionEncryptionContext';
 import type { RawSessionRecord } from '@/session/transport/http/sessionsHttp';
 
 export type SessionUsageLimitRecoveryControlAdapterParams = Readonly<{
   token: string;
-  credentials?: Credentials;
+  credentials?: StoredCredentials;
   sessionId: string;
   rawSession: RawSessionRecord;
   metadata: Record<string, unknown>;
@@ -19,9 +16,7 @@ export type SessionUsageLimitRecoveryControlAdapterParams = Readonly<{
   cwd: string | null;
   issueFingerprint?: string;
   resumePromptMode?: SessionUsageLimitRecoveryResumePromptModeV1;
-  ctx: SessionEncryptionContext;
-  mode: SessionStoredContentEncryptionMode;
-}>;
+}> & SessionStoredContentCryptoContext;
 
 export type SessionUsageLimitRecoveryControlAdapter = Readonly<{
   checkNow?: (params: SessionUsageLimitRecoveryControlAdapterParams) => Promise<unknown>;
@@ -44,5 +39,5 @@ export type SessionUsageLimitRecoveryReadinessProbeResult =
   | Readonly<{ status: 'unavailable'; errorCode: string }>;
 
 export type ResolveSessionUsageLimitRecoveryControlAdapter = (
-  agentId?: AgentId | null,
+  agentId?: CatalogAgentId | null,
 ) => Promise<SessionUsageLimitRecoveryControlAdapter | null>;

@@ -280,12 +280,15 @@ describe('materializeMcpServerConfigRecord', () => {
       expect(cfg.env?.HAPPIER_MCP_STDIO_LAUNCHER_CONFIG_FILE).toBeTruthy();
       expect(cfg.env?.API_KEY).toBeUndefined();
 
-      const distEntrypoint = join(projectPath(), 'dist', 'mcp', 'launchers', 'stdioMcpServerLauncher.mjs');
       const sourceEntrypoint = join(projectPath(), 'src', 'mcp', 'launchers', 'stdioMcpServerLauncher.ts');
       const tsxHookPath = resolveTsxImportHookPath();
+      // `resolvePackagedRuntimeEntrypoint` owns the candidate order (package-dist,
+      // then dist, across every packaged runtime root), so ask it rather than
+      // re-deriving one directory here: a checkout that carries only one of them
+      // must not read as "no packaged entrypoint".
       const packagedEntrypoint = resolvePackagedRuntimeEntrypoint('mcp/launchers/stdioMcpServerLauncher.mjs');
       const expectedArgs =
-        !existsSync(distEntrypoint) && existsSync(sourceEntrypoint) && typeof tsxHookPath === 'string' && tsxHookPath.length > 0
+        !existsSync(packagedEntrypoint) && existsSync(sourceEntrypoint) && typeof tsxHookPath === 'string' && tsxHookPath.length > 0
           ? [
               '--no-warnings',
               '--no-deprecation',

@@ -10,6 +10,7 @@ import type { AcpPermissionHandler } from '@/agent/acp/permissions/acpPermission
 import type { AcpReplayBackend } from '../acpRuntimeBackendContract';
 
 import type { BoundedToolCallNameCache } from '../createBoundedToolCallNameCache';
+import type { AcpSendFn } from '@/agent/acp/bridge/acpSessionForwarding';
 
 type ToolResultMessage = Extract<AgentMessage, { type: 'tool-result' }>;
 
@@ -35,6 +36,7 @@ export function handleAcpRuntimeToolResultMessage(params: {
     onToolResult?: (params: { toolName: string; callId: string; result: unknown }) => void;
   };
   createReplayBackend?: () => Promise<AcpReplayBackend>;
+  publishTranscriptAgentMessageCommitted: AcpSendFn;
 }): void {
   const msg = params.msg;
   const callId = msg.callId;
@@ -123,7 +125,7 @@ export function handleAcpRuntimeToolResultMessage(params: {
           // Fallback: if we can't replay-import, at least persist the Task output as a sidechain message.
           if (!replayImported && fallbackSidechainText) {
             try {
-              await params.session.sendAgentMessageCommitted(
+              params.publishTranscriptAgentMessageCommitted(
                 params.transcriptProvider,
                 { type: 'message', message: fallbackSidechainText, sidechainId: callId },
                 { localId: randomUUID(), meta: { importedFrom: 'acp-sidechain', remoteSessionId, sidechainId: callId } },

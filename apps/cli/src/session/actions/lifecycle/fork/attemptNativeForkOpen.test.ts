@@ -227,12 +227,6 @@ describe('attemptNativeForkOpen', () => {
                 },
             },
         },
-        {
-            label: 'a missing completed open',
-            attestation: {
-                status: 'timeout' as const,
-            },
-        },
     ])('does not publish provider-native provenance after $label', async ({ label, attestation }) => {
         const spawnSession = vi.fn(async () => ({ type: 'success' as const, sessionId: 'host-child' }));
         const stopSession = vi.fn();
@@ -273,6 +267,36 @@ describe('attemptNativeForkOpen', () => {
             },
         );
         expect(mocks.archiveSessionBestEffort).toHaveBeenCalledWith('token', 'host-child');
+    });
+
+    it('preserves the child when native fork open attestation times out after dispatch', async () => {
+        const spawnSession = vi.fn(async () => ({ type: 'success' as const, sessionId: 'host-child' }));
+        const stopSession = vi.fn();
+
+        await expect(attemptNativeForkOpen({
+            credentials,
+            parentSessionId: 'host-parent',
+            parentMetadata,
+            directory: '/source',
+            forkPoint: { type: 'latest' },
+            targetSeqInclusive: 12,
+            effectiveCutoffSeqInclusive: 12,
+            spawnNonce: 'fork:native-open-timeout',
+            forkBackendResolution,
+            inheritedForkOverrides: { spawn: {}, metadata: {} },
+            spawnSession,
+            stopSession,
+            awaitAgentSessionOpen: vi.fn(async () => ({ status: 'timeout' as const })),
+        })).resolves.toMatchObject({
+            ok: false,
+            errorCode: 'UNEXPECTED',
+            errorMessage: expect.stringContaining('outcome is unknown'),
+        });
+
+        expect(mocks.updateSessionMetadataWithRetry).not.toHaveBeenCalled();
+        expect(mocks.fetchForkChildSessionOrThrow).not.toHaveBeenCalled();
+        expect(mocks.cleanupForkChildBestEffort).not.toHaveBeenCalled();
+        expect(mocks.archiveSessionBestEffort).not.toHaveBeenCalled();
     });
 
     it('runs stop-then-archive recovery when fork metadata finalization fails', async () => {

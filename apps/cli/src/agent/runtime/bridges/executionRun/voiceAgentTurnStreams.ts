@@ -217,29 +217,67 @@ export async function startVoiceAgentTurnStream(args: Readonly<{
       }
     }
 
-    const started = await args.voiceAgentManager.startTurnStream({ voiceAgentId: ctrl.voiceAgentId, userText });
+    const transcriptWriter = args.transcriptWriter;
+    const pendingTurn: PendingVoiceAgentTranscriptTurn | null = transcriptWriter
+      && ctrl.transcript.persistenceMode === 'persistent'
+      && (!args.params.userTranscript || transcriptWriter.appendAssistantTextCommitted)
+      ? {
+          mode: args.params.userTranscript ? 'assistant_only' as const : 'legacy_pair' as const,
+          user: args.params.userTranscript
+            ? null
+            : {
+                text: transcriptUserText,
+                localId: `voice_agent_user:${randomUUID()}`,
+                meta: userMeta,
+              },
+          assistant: null,
+          commitInFlight: null,
+        }
+      : null;
+    if (pendingTurn) {
+      ctrl.pendingTranscriptTurnByExternalStreamId.set(externalStreamId, pendingTurn);
+    }
+
+    const started = await args.voiceAgentManager.startTurnStream({
+      voiceAgentId: ctrl.voiceAgentId,
+      userText,
+      ...(pendingTurn && transcriptWriter
+        ? {
+            onTurnFinal: async (assistantText: string) => {
+              if (ctrl.pendingTranscriptTurnByExternalStreamId.get(externalStreamId) !== pendingTurn) {
+                throw new Error('Persistent voice-agent turn is no longer current');
+              }
+              if (!pendingTurn.assistant) {
+                pendingTurn.assistant = {
+                  text: assistantText,
+                  meta: {
+                    sentFrom: 'voice_agent',
+                    source: 'cli',
+                    happier: {
+                      kind: 'voice_agent_turn.v1',
+                      payload: {
+                        v: 1,
+                        epoch: ctrl.transcript.epoch,
+                        role: 'assistant',
+                        voiceAgentId: ctrl.voiceAgentId,
+                        runId: args.runId,
+                        streamId: externalStreamId,
+                        ts: Date.now(),
+                      },
+                    },
+                  },
+                };
+              }
+              await commitPendingTranscriptTurn(externalStreamId, pendingTurn, transcriptWriter);
+            },
+          }
+        : {}),
+    });
     ctrl.externalStreamIdByInternal.set(started.streamId, externalStreamId);
     ctrl.internalStreamIdByExternal.set(externalStreamId, started.streamId);
-    if (
-      args.transcriptWriter
-      && ctrl.transcript.persistenceMode === 'persistent'
-      && (!args.params.userTranscript || args.transcriptWriter.appendAssistantTextCommitted)
-    ) {
-      ctrl.pendingTranscriptTurnByExternalStreamId.set(externalStreamId, {
-        mode: args.params.userTranscript ? 'assistant_only' : 'legacy_pair',
-        user: args.params.userTranscript
-          ? null
-          : {
-              text: transcriptUserText,
-              localId: `voice_agent_user:${randomUUID()}`,
-              meta: userMeta,
-            },
-        assistant: null,
-        commitInFlight: null,
-      });
-    }
     return { ok: true, streamId: externalStreamId };
   } catch (e) {
+    ctrl.pendingTranscriptTurnByExternalStreamId.delete(externalStreamId);
     if (e instanceof VoiceAgentError) {
       if (e.code === 'VOICE_AGENT_BUSY') return { ok: false, errorCode: 'execution_run_busy', error: e.message };
       if (e.code === 'VOICE_AGENT_NOT_FOUND') return { ok: false, errorCode: 'execution_run_not_found', error: e.message };
@@ -314,44 +352,6 @@ export async function readVoiceAgentTurnStream(args: Readonly<{
     }
     const projectedEvents = read.events.map((event) =>
       projectVoiceOutputEventToExternalStream(event, internalStreamId, externalStreamId));
-
-    // Persist assistant completion once per stream (optional).
-    if (args.transcriptWriter && ctrl.transcript.persistenceMode === 'persistent') {
-      const projectedTerminalEvent = read.terminalEvent
-        ? projectVoiceOutputEventToExternalStream(read.terminalEvent, internalStreamId, externalStreamId)
-        : null;
-      const finalEvent = projectedTerminalEvent?.t === 'voice_output'
-        && projectedTerminalEvent.output.kind === 'turn_final'
-        ? projectedTerminalEvent
-        : projectedEvents.find(
-        (event) => event.t === 'voice_output' && event.output.kind === 'turn_final',
-      );
-      const assistantText = finalEvent?.t === 'voice_output' && finalEvent.output.kind === 'turn_final'
-        ? finalEvent.output.text
-        : null;
-      if (assistantText !== null) {
-        let pendingTurn = ctrl.pendingTranscriptTurnByExternalStreamId.get(externalStreamId) ?? null;
-        const meta = {
-          sentFrom: 'voice_agent',
-          source: 'cli',
-          happier: {
-            kind: 'voice_agent_turn.v1',
-            payload: {
-              v: 1,
-              epoch: ctrl.transcript.epoch,
-              role: 'assistant',
-              voiceAgentId: ctrl.voiceAgentId,
-              runId: args.runId,
-              streamId: externalStreamId,
-              ts: Date.now(),
-            },
-          },
-        };
-        if (!pendingTurn) throw new Error('Persistent voice-agent turn is missing its durable transcript state');
-        if (!pendingTurn.assistant) pendingTurn.assistant = { text: assistantText, meta };
-        await commitPendingTranscriptTurn(externalStreamId, pendingTurn, args.transcriptWriter);
-      }
-    }
 
     // Best-effort: reflect activity for machine-wide run listing.
     await args.writeActivityMarker(args.runId, args.getNowMs(), { force: true });

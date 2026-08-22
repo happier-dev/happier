@@ -32,15 +32,8 @@ function resolveSessionControlTimeoutMs(): number {
 }
 
 function resolveModelConfigOptionId(provider: string): string {
-  try {
-    return getAgentModelConfig(provider as AgentId).acpModelConfigOptionId ?? 'model';
-  } catch (error) {
-    logger.debug(
-      `[${provider}] Failed to resolve provider model config option id; falling back to "model"`,
-      error
-    );
-    return 'model';
-  }
+  // An Agent that contributes no bundled model facts uses the ACP default.
+  return getAgentModelConfig(provider as AgentId)?.acpModelConfigOptionId ?? 'model';
 }
 
 function normalizeSessionConfigOptionValue(value: string | number | boolean | null): string | null {

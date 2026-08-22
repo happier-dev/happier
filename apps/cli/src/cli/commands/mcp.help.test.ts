@@ -7,12 +7,12 @@ describe('happier mcp --help', () => {
   it('prints usage for --help without requiring authentication', async () => {
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const readCredentials = vi.fn(async () => null);
+    const readStoredCredentials = vi.fn(async () => null);
 
     try {
-      await handleMcpCommand(['--help'], { readCredentials } satisfies Partial<McpCommandDeps>);
+      await handleMcpCommand(['--help'], { readStoredCredentials } satisfies Partial<McpCommandDeps>);
 
-      expect(readCredentials).not.toHaveBeenCalled();
+      expect(readStoredCredentials).not.toHaveBeenCalled();
       const output = logSpy.mock.calls.flat().join('\n');
       expect(output).toContain('happier mcp');
       expect(output).toContain('happier mcp serve');
@@ -26,12 +26,12 @@ describe('happier mcp --help', () => {
   it('prints usage for `servers --help` without requiring authentication', async () => {
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const readCredentials = vi.fn(async () => null);
+    const readStoredCredentials = vi.fn(async () => null);
 
     try {
-      await handleMcpCommand(['servers', '--help'], { readCredentials } satisfies Partial<McpCommandDeps>);
+      await handleMcpCommand(['servers', '--help'], { readStoredCredentials } satisfies Partial<McpCommandDeps>);
 
-      expect(readCredentials).not.toHaveBeenCalled();
+      expect(readStoredCredentials).not.toHaveBeenCalled();
       const output = logSpy.mock.calls.flat().join('\n');
       expect(output).toContain('happier mcp servers');
       expect(output).toContain('happier mcp servers list');
@@ -45,12 +45,12 @@ describe('happier mcp --help', () => {
   it('prints usage when `servers` subcommand is missing', async () => {
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const readCredentials = vi.fn(async () => null);
+    const readStoredCredentials = vi.fn(async () => null);
 
     try {
-      await handleMcpCommand(['servers'], { readCredentials } satisfies Partial<McpCommandDeps>);
+      await handleMcpCommand(['servers'], { readStoredCredentials } satisfies Partial<McpCommandDeps>);
 
-      expect(readCredentials).not.toHaveBeenCalled();
+      expect(readStoredCredentials).not.toHaveBeenCalled();
       const output = logSpy.mock.calls.flat().join('\n');
       expect(output).toContain('happier mcp servers');
       expect(output).toContain('happier mcp servers list');
@@ -60,4 +60,3 @@ describe('happier mcp --help', () => {
     }
   });
 });
-

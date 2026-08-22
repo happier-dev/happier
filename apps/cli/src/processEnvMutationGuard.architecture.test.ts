@@ -22,6 +22,11 @@ const BOOTSTRAP_MUTATION_ALLOWLIST: Readonly<Record<string, string>> = Object.fr
 
 const PROCESS_ENV_MUTATION_PATTERN = /(?:\bdelete\s+process\.env(?:\.[A-Za-z_$][\w$]*|\[[^\]]+\])|\bprocess\.env(?:\.[A-Za-z_$][\w$]*|\[[^\]]+\])\s*(?:\?\?=|\|\|=|&&=|=(?!=))|\bObject\.assign\s*\(\s*process\.env\b)/gu;
 
+const RETIRED_MANAGED_SERVICE_ENDPOINT_PROJECTION_ENV_IDENTIFIERS = Object.freeze([
+  'HAPPIER_MANAGED_SERVICE_ENDPOINT_PROJECTION_ROOT_ENV_KEY',
+  'HAPPIER_MANAGED_SERVER_ENDPOINT_PROJECTION_ROOT',
+]);
+
 function listProductionTypeScriptFiles(directory: string): string[] {
   return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
     const path = resolve(directory, entry.name);
@@ -49,6 +54,17 @@ function mutationLocations(path: string): readonly string[] {
 }
 
 describe('process.env mutation architecture guard', () => {
+  it('keeps managed-service endpoint projection request-scoped instead of process-global', () => {
+    const offenders = listProductionTypeScriptFiles(SOURCE_ROOT).flatMap((path) => {
+      const source = readFileSync(path, 'utf8');
+      return RETIRED_MANAGED_SERVICE_ENDPOINT_PROJECTION_ENV_IDENTIFIERS
+        .filter((identifier) => source.includes(identifier))
+        .map((identifier) => `${identifier}: ${relative(SOURCE_ROOT, path)}`);
+    });
+
+    expect(offenders).toEqual([]);
+  });
+
   it('keeps runtime process.env mutation inside reviewed process-bootstrap owners', () => {
     const mutations = listProductionTypeScriptFiles(SOURCE_ROOT).flatMap((path) => mutationLocations(path));
     const unexpected = mutations.filter((location) => {

@@ -36,6 +36,7 @@ function createModeQueue() {
     model?: string;
     suppressUserEcho?: boolean;
     providerPromptAlreadyResolved?: boolean;
+    inputContextBlock?: string;
   }, PermissionModeQueuedPrompt>(
     (mode) => JSON.stringify(mode),
     {
@@ -59,6 +60,21 @@ function createRuntime() {
     resetOrDisposeRuntime: vi.fn(async () => undefined),
     shouldResumeAfterPermissionModeChange: vi.fn(() => true),
   };
+}
+
+function createSelectedToolBindings() {
+  return [{
+    tool: {
+      toolId: 'example.agent-context-companion/review-summary-tool',
+      actionId: 'review-summary',
+      name: 'review_summary',
+      title: 'Review summary',
+      description: 'Summarize the bounded review transcript.',
+      inputSchema: { type: 'object', additionalProperties: false },
+      surfaces: ['agent', 'mcp'],
+    },
+    expectedContributorImmutableGenerationId: 'generation-g',
+  }] as const;
 }
 
 async function runSingleSpecialCommand(params: Readonly<{
@@ -163,7 +179,7 @@ describe('runPermissionModePromptLoop hook dispatch', () => {
     expect(result.confirmUserMessageLocallyConsumed).toHaveBeenCalledTimes(1);
   });
 
-  it('runs the shared Pending pump only for the genuinely steerable active-turn lifecycle', async () => {
+  it('keeps the shared Pending pump armed through a non-steerable settling window until the turn ends', async () => {
     const session = createMutableApiSessionClientFixture<Metadata>({
       overrides: { sessionId: 'session-active-turn-pump' } as Partial<Parameters<typeof runPermissionModePromptLoop>[0]['session']>,
     });
@@ -190,11 +206,16 @@ describe('runPermissionModePromptLoop hook dispatch', () => {
       canSteerPrompt: () => boolean;
     };
     let steerable = false;
+    let resolveTurnCompletion: () => void = () => undefined;
+    const turnCompletion = new Promise<void>((resolve) => { resolveTurnCompletion = resolve; });
     runtime.supportsInFlightSteer = vi.fn(() => true);
     runtime.canSteerPrompt = vi.fn(() => steerable);
     runtime.beginTurnLifecycle.mockImplementation(() => { steerable = false; });
     runtime.sendTurnPrompt.mockImplementation(async () => { steerable = true; });
-    runtime.waitForTurnCompletion.mockImplementation(async () => { steerable = false; });
+    runtime.waitForTurnCompletion.mockImplementation(async () => {
+      steerable = false;
+      await turnCompletion;
+    });
     const abortController = new AbortController();
     let shouldExit = false;
 
@@ -226,7 +247,10 @@ describe('runPermissionModePromptLoop hook dispatch', () => {
     await pumpStarted;
     expect(pumpPendingWhileActive).toHaveBeenCalledTimes(1);
     expect(pumpPendingWhileActive.mock.calls[0]?.[0].abortSignal.aborted).toBe(false);
+    await vi.waitFor(() => expect(runtime.waitForTurnCompletion).toHaveBeenCalledTimes(1));
+    expect(await pumpPendingWhileActive.mock.calls[0]?.[0].shouldContinue?.()).toBe(true);
 
+    resolveTurnCompletion();
     await loop;
     expect(pumpPendingWhileActive.mock.calls[0]?.[0].abortSignal.aborted).toBe(true);
   });
@@ -290,9 +314,9 @@ describe('runPermissionModePromptLoop hook dispatch', () => {
     expect(logCall?.length).toBe(1);
   });
 
-  it('does not infer active-turn Pending steerability from turn-in-flight alone', async () => {
+  it('arms the active-turn Pending pump for send-now interrupt when in-flight steer is unsupported', async () => {
     const session = createMutableApiSessionClientFixture<Metadata>({
-      overrides: { sessionId: 'session-active-turn-pump-no-exact-steerability' } as Partial<Parameters<typeof runPermissionModePromptLoop>[0]['session']>,
+      overrides: { sessionId: 'session-active-turn-pump-send-now-without-steer' } as Partial<Parameters<typeof runPermissionModePromptLoop>[0]['session']>,
     });
     session.__setMetadata(createTestMetadata({ permissionMode: 'default', permissionModeUpdatedAt: 0 }));
     const queue = createModeQueue();
@@ -302,13 +326,14 @@ describe('runPermissionModePromptLoop hook dispatch', () => {
       session,
       reconcileWhenEmpty: 'skip',
     });
-    const pumpPendingWhileActive = vi.spyOn(inputConsumer, 'pumpPendingWhileActive');
+    const pumpPendingWhileActive = vi.spyOn(inputConsumer, 'pumpPendingWhileActive')
+      .mockImplementation(async () => undefined);
     const runtime = createRuntime() as ReturnType<typeof createRuntime> & {
       supportsInFlightSteer: () => boolean;
-      isTurnInFlight: () => boolean;
+      canSteerPrompt: () => boolean;
     };
-    runtime.supportsInFlightSteer = vi.fn(() => true);
-    runtime.isTurnInFlight = vi.fn(() => true);
+    runtime.supportsInFlightSteer = vi.fn(() => false);
+    runtime.canSteerPrompt = vi.fn(() => false);
     let shouldExit = false;
 
     await runPermissionModePromptLoop({
@@ -336,7 +361,8 @@ describe('runPermissionModePromptLoop hook dispatch', () => {
       formatPromptErrorMessage: (error) => `Error: ${String(error)}`,
     } as Parameters<typeof runPermissionModePromptLoop>[0]);
 
-    expect(pumpPendingWhileActive).not.toHaveBeenCalled();
+    expect(runtime.supportsInFlightSteer()).toBe(false);
+    expect(pumpPendingWhileActive).toHaveBeenCalledTimes(1);
   });
 
   it('keeps a dequeued compact command behind enforcement that wins before provider dispatch', async () => {
@@ -532,7 +558,11 @@ describe('runPermissionModePromptLoop hook dispatch', () => {
       permissionModeUpdatedAt: 0,
     }));
     const queue = createModeQueue();
-    queue.push({ text: 'hello', localId: 'local-1' }, { permissionMode: 'default' });
+    const inputContextBlock = '<happier_input_context v="1">\nsource_kind="automation"\n</happier_input_context>';
+    queue.push({ text: 'hello', localId: 'local-1', inputContextBlock }, {
+      permissionMode: 'default',
+      inputContextBlock,
+    });
     const runtime = createRuntime();
     const messageBuffer = new MessageBuffer();
     let shouldExit = false;
@@ -582,10 +612,163 @@ describe('runPermissionModePromptLoop hook dispatch', () => {
       prompt: 'SYSTEM\n\nhello',
       messages: [{ role: 'user', content: 'SYSTEM\n\nhello' }],
     }));
-    expect(runtime.sendTurnPrompt).toHaveBeenCalledWith('SYSTEM\n\nhello [context]', {
+    expect(runtime.sendTurnPrompt).toHaveBeenCalledWith(`${inputContextBlock}\n\nSYSTEM\n\nhello [context]`, {
       localId: 'local-1',
       localIds: ['local-1'],
     });
+  });
+
+  it('resolves Agent composition at the next-turn boundary before fresh static prompt contributions', async () => {
+    const session = createMutableApiSessionClientFixture<Metadata>({
+      overrides: { sessionId: 'session-composition-boundary' } as Partial<Parameters<typeof runPermissionModePromptLoop>[0]['session']>,
+    });
+    session.__setMetadata(createTestMetadata({
+      permissionMode: 'default',
+      permissionModeUpdatedAt: 0,
+    }));
+    const queue = createModeQueue();
+    queue.push({ text: 'review this', localId: 'local-composition' }, { permissionMode: 'default' });
+    const runtime = createRuntime();
+    const order: string[] = [];
+    runtime.beginTurnLifecycle.mockImplementation(() => { order.push('begin-turn'); });
+    runtime.sendTurnPrompt.mockImplementation(async () => { order.push('provider-send'); });
+    const setActiveAgentCompositionToolSelection = vi.fn((selection: unknown) => {
+      order.push(selection === null ? 'clear-tools' : 'set-tools');
+    });
+    let shouldExit = false;
+    const resolveAgentCompositionBeforeDispatch = vi.fn(async () => {
+      order.push('composition');
+      return {
+        managedPluginIds: ['example.agent-context-companion'],
+        selectedTools: [{
+          pluginId: 'example.agent-context-companion',
+          localId: 'review-summary-tool',
+        }],
+        selectedToolBindings: createSelectedToolBindings(),
+        prompt: 'COMPOSITION',
+      };
+    });
+    const resolveFreshSessionSystemPrompt = vi.fn(async (args: {
+      excludePluginIds?: readonly string[];
+    }) => {
+      order.push('fresh-static');
+      expect(args.excludePluginIds).toEqual(['example.agent-context-companion']);
+      return 'SYSTEM';
+    });
+
+    await runPermissionModePromptLoop({
+      providerName: 'Test Provider',
+      agentMessageType: 'qwen',
+      explicitPermissionMode: undefined,
+      session,
+      messageQueue: queue,
+      permissionHandler: { setPermissionMode: vi.fn(), reset: vi.fn() },
+      runtime: runtime as unknown as Parameters<typeof runPermissionModePromptLoop>[0]['runtime'],
+      createOverrideSynchronizer: () => ({
+        syncFromMetadata: () => undefined,
+        flushPendingAfterStart: async () => undefined,
+      }),
+      messageBuffer: new MessageBuffer(),
+      shouldExit: () => shouldExit,
+      getAbortSignal: () => new AbortController().signal,
+      keepAlive: () => undefined,
+      setThinking: () => undefined,
+      sendReady: () => { shouldExit = true; },
+      currentPermissionModeUpdatedAt: 0,
+      setCurrentPermissionMode: () => undefined,
+      setCurrentPermissionModeUpdatedAt: () => undefined,
+      resolveAgentCompositionBeforeDispatch,
+      resolveFreshSessionSystemPrompt,
+      setActiveAgentCompositionToolSelection,
+      formatPromptErrorMessage: (error) => `Error: ${String(error)}`,
+    } as Parameters<typeof runPermissionModePromptLoop>[0]);
+
+    expect(resolveAgentCompositionBeforeDispatch).toHaveBeenCalledTimes(1);
+    expect(resolveFreshSessionSystemPrompt).toHaveBeenCalledTimes(1);
+    expect(order).toEqual([
+      'composition',
+      'fresh-static',
+      'set-tools',
+      'begin-turn',
+      'provider-send',
+      'clear-tools',
+    ]);
+    expect(setActiveAgentCompositionToolSelection).toHaveBeenNthCalledWith(1, {
+      managedPluginIds: ['example.agent-context-companion'],
+      selectedTools: [{
+        pluginId: 'example.agent-context-companion',
+        localId: 'review-summary-tool',
+      }],
+      selectedToolBindings: createSelectedToolBindings(),
+    });
+    expect(setActiveAgentCompositionToolSelection).toHaveBeenLastCalledWith(null);
+    expect(runtime.sendTurnPrompt).toHaveBeenCalledWith('SYSTEM\n\nCOMPOSITION\n\nreview this', {
+      localId: 'local-composition',
+      localIds: ['local-composition'],
+    });
+  });
+
+  it('clears the active composition tool selection when turn completion aborts', async () => {
+    const session = createMutableApiSessionClientFixture<Metadata>({
+      overrides: { sessionId: 'session-composition-abort' } as Partial<Parameters<typeof runPermissionModePromptLoop>[0]['session']>,
+    });
+    session.__setMetadata(createTestMetadata({
+      permissionMode: 'default',
+      permissionModeUpdatedAt: 0,
+    }));
+    const queue = createModeQueue();
+    queue.push({ text: 'review this', localId: 'local-composition-abort' }, { permissionMode: 'default' });
+    const runtime = createRuntime();
+    runtime.waitForTurnCompletion.mockImplementation(async () => {
+      const abortError = new Error('turn cancelled');
+      abortError.name = 'AbortError';
+      throw abortError;
+    });
+    const setActiveAgentCompositionToolSelection = vi.fn();
+
+    await runPermissionModePromptLoop({
+      providerName: 'Test Provider',
+      agentMessageType: 'qwen',
+      explicitPermissionMode: undefined,
+      session,
+      messageQueue: queue,
+      permissionHandler: { setPermissionMode: vi.fn(), reset: vi.fn() },
+      runtime: runtime as unknown as Parameters<typeof runPermissionModePromptLoop>[0]['runtime'],
+      createOverrideSynchronizer: () => ({
+        syncFromMetadata: () => undefined,
+        flushPendingAfterStart: async () => undefined,
+      }),
+      messageBuffer: new MessageBuffer(),
+      shouldExit: () => false,
+      getAbortSignal: () => new AbortController().signal,
+      keepAlive: () => undefined,
+      setThinking: () => undefined,
+      sendReady: () => undefined,
+      currentPermissionModeUpdatedAt: 0,
+      setCurrentPermissionMode: () => undefined,
+      setCurrentPermissionModeUpdatedAt: () => undefined,
+      resolveAgentCompositionBeforeDispatch: async () => ({
+        managedPluginIds: ['example.agent-context-companion'],
+        selectedTools: [{
+          pluginId: 'example.agent-context-companion',
+          localId: 'review-summary-tool',
+        }],
+        selectedToolBindings: createSelectedToolBindings(),
+        prompt: 'COMPOSITION',
+      }),
+      setActiveAgentCompositionToolSelection,
+      formatPromptErrorMessage: (error) => `Error: ${String(error)}`,
+    } as Parameters<typeof runPermissionModePromptLoop>[0]).catch(() => undefined);
+
+    expect(setActiveAgentCompositionToolSelection).toHaveBeenNthCalledWith(1, {
+      managedPluginIds: ['example.agent-context-companion'],
+      selectedTools: [{
+        pluginId: 'example.agent-context-companion',
+        localId: 'review-summary-tool',
+      }],
+      selectedToolBindings: createSelectedToolBindings(),
+    });
+    expect(setActiveAgentCompositionToolSelection).toHaveBeenLastCalledWith(null);
   });
 
   it('applies agent.context.before message-list replacements even when prompt is unchanged', async () => {

@@ -16,7 +16,6 @@ import type {
 } from '@happier-dev/protocol';
 import type { AnyTerminalRuntimeOps } from '@/agent/terminalRuntime/providers/types';
 import type { CommandDispatchPolicy } from '@/agent/runtime/registry/commandContracts';
-import type { AgentCliLaunchSpec } from '@/packagedRuntime/managedTools/requireAgentCliLaunchSpec';
 import type { SessionCatalogControlAdapter } from '@/session/catalogControls/sessionCatalogControlTypes';
 import type { SessionGoalControlAdapter } from '@/session/goalControls/sessionGoalControlTypes';
 import type {
@@ -24,11 +23,12 @@ import type {
   SessionUsageLimitRecoveryControlAdapter,
 } from '@/session/usageLimitRecoveryControls/sessionUsageLimitRecoveryControlTypes';
 import type { Metadata } from '@/api/types';
-import type { TrackedSession } from '@/daemon/types';
 import type { PromptBlockV1 } from '@happier-dev/protocol';
 import type { TerminalPromptSubmitVerificationPolicy } from '@/integrations/terminalHost/promptSubmitVerification';
 import type { BoundTerminalHostAttachmentInfo } from '@/terminal/attachment/terminalAttachmentInfo';
 import type { RuntimeActivityApplicability } from '@/agent/runtime/session/activity/runtimeActivityApplicability';
+import type { RuntimeInstallableAdapter } from '@/packagedRuntime/installables/registry';
+import type { InstallableDependencyDescriptor } from '@happier-dev/protocol';
 
 export type {
   CatalogAgentId,
@@ -36,11 +36,7 @@ export type {
   VendorResumeSupportLevel,
 } from '@/agent/catalog/ids';
 import type { CatalogAgentId, CatalogAgentLookupId, VendorResumeSupportLevel } from '@/agent/catalog/ids';
-import type {
-  BackendSessionLaunchHintsV1,
-  HandoffSurfaceV1,
-} from '@happier-dev/agents';
-export type { AgentCliLaunchSpec };
+import type { AgentRuntimeSurfaces } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { CodexBackendMode } from '@happier-dev/protocol';
 import type {
   PreflightSessionControlsProbeAdapter,
@@ -54,10 +50,6 @@ import type {
 import type { ConnectedServiceRefreshCoordinator } from '@/daemon/connectedServices/refresh/ConnectedServiceRefreshCoordinator';
 import type { ConnectedServiceQuotaFetcherDescriptor } from '@/daemon/connectedServices/quotas/types';
 import type { ConnectedServiceProviderRuntimeAuthAdapter } from '@/daemon/connectedServices/runtimeAuth/types';
-import type {
-  ConnectedServiceRuntimeAuthSelectionMaterializer,
-  ConnectedServiceRuntimeAuthSelectionMaterializerParams,
-} from '@/daemon/connectedServices/sessionAuthSwitch/runtimeAuthSelectionMaterializerTypes';
 import type {
   VerifyResumeReachableInput,
   VerifyResumeReachableResult,
@@ -87,19 +79,7 @@ export type {
 export type { ConnectedServicesMaterializer };
 export type { ConnectedServiceMaterializedHomeFreshness };
 export type { ConnectedServiceProviderRuntimeAuthAdapter };
-export type {
-  ConnectedServiceRuntimeAuthSelectionMaterializer,
-  ConnectedServiceRuntimeAuthSelectionMaterializerParams,
-};
 export type { SessionUsageLimitRecoveryControlAdapter };
-
-export type ManagedServerShutdownCleanup = () => Promise<void>;
-
-export type ManagedServerClaimDescriptor = Readonly<{
-  agentId: CatalogAgentLookupId;
-  statePathEnvKey: string;
-  isExpectedProcessCommand: (command: string) => boolean;
-}>;
 
 export type VendorResumeSupportParams = Readonly<{
   experimentalCodexAcp?: boolean;
@@ -131,62 +111,18 @@ export type SessionHandoffAgentBundleRecordExtractor = (
 ) => readonly unknown[];
 
 export type ProviderRuntimeLocalHandoffMetadataBuilder = (params: Readonly<{
-  metadata: Readonly<Record<string, unknown>>;
-  trackedSession: TrackedSession;
+  machineId: string | null;
+  workingDirectory: string | null;
+  transcriptStorage: string | null;
+  environmentVariables: Readonly<Record<string, string | undefined>> | null;
   vendorResumeId: string;
 }>) => Partial<Pick<Metadata, 'claudeSessionId' | 'codexSessionId' | 'opencodeSessionId' | 'externalSessionV1'>>;
-
-export type ProviderReplayChildLaunchResolver = (
-  parentMetadata: Readonly<Record<string, unknown>>,
-) => BackendSessionLaunchHintsV1 | null | Promise<BackendSessionLaunchHintsV1 | null>;
 
 export type ProviderTerminalAttachmentRetirementHook = (params: Readonly<{
   happyHomeDir: string;
   sessionId: string;
   attachmentInfo: BoundTerminalHostAttachmentInfo;
 }>) => Promise<void>;
-
-export type ProviderAttachScope = 'local' | 'remote';
-
-export type ProviderAttachEligibility =
-  | Readonly<{
-      eligible: true;
-      scope: ProviderAttachScope;
-      metadata: Record<string, unknown>;
-    }>
-  | Readonly<{
-      eligible: false;
-      reason: string;
-    }>;
-
-export type ProviderAttachReachability =
-  | Readonly<{ reachable: true }>
-  | Readonly<{ reachable: false; reason: string }>;
-
-/**
- * Host-projected runtime binding hook.
- *
- * This is intentionally an internal host seam (not a plugin ABI).
- * It exists to let built-in backends provide an operational host binding
- * implementation so the engine registry can avoid falling back to legacy
- * registries/runners during the migration.
- */
-export type ProviderAttachOps = Readonly<{
-  evaluateAvailability: (params: Readonly<{
-    sessionId: string;
-    metadata: Record<string, unknown>;
-    currentMachineId: string | null;
-    sessionMachineId: string | null;
-    hasLocalAttachmentInfo: boolean;
-  }>) => ProviderAttachEligibility | Promise<ProviderAttachEligibility>;
-  probeReachability?: (params: Readonly<{
-    metadata: Record<string, unknown>;
-  }>) => Promise<ProviderAttachReachability>;
-  attach: (params: Readonly<{
-    sessionId: string;
-    metadata: Record<string, unknown>;
-  }>) => Promise<number | false>;
-}>;
 
 export type ConnectedServiceStateSharingDescriptorEntry = Readonly<{
   path: string;
@@ -347,8 +283,14 @@ export type ConnectedServiceSwitchContinuityParams = Readonly<{
   runtimeAuthSelection?: unknown;
 }>;
 
+export type ConnectedServicePersistedSessionMetadata = Readonly<Partial<{
+  piSessionFile: string;
+  codexBackendMode: string;
+  codexSessionId: string;
+}>>;
+
 export type ConnectedServicePersistedSessionCandidateParams = Readonly<{
-  metadata: unknown;
+  metadata: ConnectedServicePersistedSessionMetadata;
 }>;
 
 export type ConnectedServiceDaemonAuthBridgeRefresh = (input: Readonly<{
@@ -396,6 +338,15 @@ export type AgentCatalogEntry = Readonly<{
   runtimeActivityApplicability?: RuntimeActivityApplicability;
   /** Host-private binding from this Agent CLI to one same-plugin declared system tool. */
   agentCliSystemTool?: Readonly<{ toolId: string }>;
+  resolvePetDiscoveryHomePath?: (env: NodeJS.ProcessEnv) => string;
+  resolvePetDiscoveryHomeEntries?: (params: Readonly<{
+    source: Readonly<Record<string, unknown>>;
+    activeServerDir: string;
+    env: NodeJS.ProcessEnv;
+  }>) => Promise<readonly Readonly<{ homePath: string }>[]>;
+  getRuntimeInstallableAdapter?: (
+    descriptor: InstallableDependencyDescriptor,
+  ) => Promise<RuntimeInstallableAdapter | null>;
   connectedServiceIds?: readonly ConnectedServiceId[];
   connectedAccountRequestAuthUses?: readonly ConnectedAccountRequestAuthUseV1[];
   cliSubcommand: CatalogAgentLookupId;
@@ -501,7 +452,9 @@ export type AgentCatalogEntry = Readonly<{
    * The daemon owns credential storage and refresh orchestration; executable-agent
    * leaves own service-specific request projection and response semantics.
    */
-  getConnectedServiceDaemonAuthBridgeRefresh?: () => Promise<ConnectedServiceDaemonAuthBridgeRefresh | null>;
+  getConnectedServiceDaemonAuthBridgeRefresh?: (
+    serviceId: ConnectedServiceId,
+  ) => Promise<ConnectedServiceDaemonAuthBridgeRefresh | null>;
   /**
    * Optional provider-owned quota fetcher descriptor.
    *
@@ -510,13 +463,6 @@ export type AgentCatalogEntry = Readonly<{
    * catalog hook instead of static daemon imports.
    */
   getConnectedServiceQuotaFetcherDescriptor?: () => Promise<ConnectedServiceQuotaFetcherDescriptor | null>;
-  /**
-   * Optional provider-owned runtime auth selection materializer.
-   *
-   * Shared auth-switch code resolves credentials and group metadata, then lets the
-   * provider attach runtime-specific helpers without branching on provider ids.
-   */
-  materializeConnectedServiceRuntimeAuthSelection?: ConnectedServiceRuntimeAuthSelectionMaterializer;
   /**
    * Optional provider-owned connected-service state/config sharing descriptor.
    */
@@ -569,35 +515,13 @@ export type AgentCatalogEntry = Readonly<{
     input: ConnectedServicePersistedSessionCandidateParams,
   ) => string | null;
   /**
-   * Optional provider-owned managed-server launch spec used to identify and validate host-managed processes.
+   * Optional host-bound surfaces layered onto a built-in Agent runtime lease.
    *
-   * This keeps backend-specific launch identity shaping behind the catalog instead of hard-coding it in the host.
+   * This is a construction input to the single `AgentRuntime.surfaces` owner,
+   * not a parallel catalog execution-surface projection. It exists for leaves
+   * such as attach that require host-owned executable resolution.
    */
-  getManagedServerLaunchSpec?: () => Promise<AgentCliLaunchSpec | null>;
-  /**
-   * Optional provider-owned managed-server shutdown cleanup.
-   *
-   * Daemon shutdown invokes this hook for providers that host long-lived managed
-   * server processes, while the backend owns the process identity and safety checks.
-   */
-  getManagedServerShutdownCleanup?: () => Promise<ManagedServerShutdownCleanup | null>;
-  /**
-   * Optional provider-owned managed-server claim descriptor for daemon auth-switch cleanup.
-   *
-   * The daemon owns tracked child-process inventory; providers own how to identify
-   * their managed server state path and process command.
-   */
-  getManagedServerClaimDescriptor?: () => Promise<ManagedServerClaimDescriptor | null>;
-  /**
-   * Optional provider-owned attach operations for shared local-control backends.
-   *
-   * Keep provider-specific attach eligibility and execution in the backend folder
-   * and expose it through this catalog hook instead of branching in shared CLI code.
-   *
-   * @deprecated Transitional built-in catalog bridge. Do not add consumers;
-   * migrate attach behavior to its canonical native contribution owner.
-   */
-  getProviderAttachOps?: () => Promise<ProviderAttachOps>;
+  resolveHostAgentRuntimeSurfaces?: () => Promise<AgentRuntimeSurfaces>;
   /**
    * Optional provider-owned terminal-runtime adapter surface.
    *
@@ -638,22 +562,6 @@ export type AgentCatalogEntry = Readonly<{
    */
   getTerminalPromptSubmitVerificationPolicy?: () => Promise<TerminalPromptSubmitVerificationPolicy>;
   /**
-   * Optional provider-owned replay child launch shaping.
-   *
-   * Host fork orchestration owns strategy selection, child-session creation, replay
-   * seed construction, metadata persistence, and native `sessions.open({ kind: 'fork' })`.
-   * This pure leaf can only project provider metadata into replay child launch hints.
-   */
-  resolveReplayChildLaunch?: ProviderReplayChildLaunchResolver;
-  /**
-   * Optional provider-owned session handoff bundle export/import operations.
-   *
-   * The host-private contribution factory receives the provider-scoped command
-   * runner and keeps provider bundle logic out of shared session handoff core.
-   * This is intentionally separate from public `AgentRuntime`.
-   */
-  getHandoffSurface?: () => Promise<HandoffSurfaceV1 | null>;
-  /**
    * Optional provider-owned handoff provider-bundle record extractor.
    *
    * Shared media continuity code applies provider-agnostic path validation after this hook
@@ -667,6 +575,22 @@ export type AgentCatalogEntry = Readonly<{
    * provider-specific resume ids and external-session source metadata.
    */
   buildRuntimeLocalHandoffMetadata?: ProviderRuntimeLocalHandoffMetadataBuilder;
+  /**
+   * Optional Agent-owned derivation of this Agent's own session log for a vendor
+   * resume id.
+   *
+   * The handoff brief may point the incoming Agent at the log the departing one
+   * kept. An Agent that PERSISTS that path declares
+   * `vendorResumeContinuityProofField` and the host reads it out of metadata
+   * agent-agnostically; this hook is for an Agent that persists nothing and can
+   * only DERIVE the path — Codex names its rollout file after the thread id under
+   * a date-partitioned sessions root. The host resolves the vendor resume id and
+   * verifies the returned path against the filesystem; the Agent owns only the
+   * "where would that id's log be" step.
+   */
+  resolveAgentNativeSessionLogPath?: (
+    input: Readonly<{ vendorResumeId: string }>,
+  ) => Promise<string | null> | string | null;
   /**
    * Optional provider-owned permission-mode normalization for daemon `happy session` forwarding.
    *

@@ -1,9 +1,10 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { resolveAgentStateRequestCoverageOptions } from '@happier-dev/agents';
 import { accountSettingsParse } from '@happier-dev/protocol';
 import type { AgentState } from '@/api/types';
-import { AgentStateRequestStore } from './agentStateRequestStore';
+import { logger } from '@/ui/logger';
+import { AgentStateRequestStore, type PermissionResponseClaim } from './agentStateRequestStore';
 
 const localPermissionBridgeCoverageOptions = resolveAgentStateRequestCoverageOptions({ kind: 'localPermissionBridge' });
 const LOCAL_PERMISSION_BRIDGE_REQUEST_SOURCE = localPermissionBridgeCoverageOptions.equivalentSources?.[0] ?? '';
@@ -39,6 +40,10 @@ async function flushMicrotasks(): Promise<void> {
 }
 
 describe('AgentStateRequestStore', () => {
+    afterEach(() => {
+        vi.restoreAllMocks();
+    });
+
     it('publishes and completes a request', () => {
         const session = new FakeSession();
         const store = new AgentStateRequestStore({
@@ -80,6 +85,48 @@ describe('AgentStateRequestStore', () => {
                 answers: { a: 'b' },
             }),
         );
+    });
+
+    it('does not rejoin a present-user response from a canceled completed request', async () => {
+        const session = new FakeSession();
+        const store = new AgentStateRequestStore({
+            session,
+            logPrefix: '[Test]',
+        });
+        const claim = {
+            version: 1,
+            origin: 'presentUser',
+            actor: {
+                kind: 'accountUser',
+                accountId: 'account-owner',
+                relationship: 'owner',
+            },
+            decision: 'abort',
+            scope: 'request',
+        } satisfies PermissionResponseClaim;
+
+        store.publishRequest({
+            requestId: 'canceled-present-response',
+            toolName: 'Bash',
+            toolInput: { command: ['bash', '-lc', 'echo hi'] },
+            createdAt: 1,
+        });
+        await store.completeRequest({
+            requestId: 'canceled-present-response',
+            status: 'denied',
+            decision: 'abort',
+            extraCompletedFields: { permissionDecisionActorV1: claim.actor },
+        });
+        await store.cancelAllRequests({
+            reason: 'Session ended',
+            decision: 'abort',
+            requestIds: ['canceled-present-response'],
+        });
+
+        expect(store.readCompletedPermissionResponseClaim({
+            requestId: 'canceled-present-response',
+            claim,
+        })).toEqual({ status: 'conflict' });
     });
 
     it('skips publishing a generated local-bridge request covered by a recent canonical cancellation', () => {
@@ -387,7 +434,179 @@ describe('AgentStateRequestStore', () => {
         );
     });
 
-    it('preserves response target metadata when recording completed requests directly', () => {
+    it('replays completed response targets after failed delivery and leaves the terminal projection idempotent', async () => {
+        const session = new FakeSession();
+        const store = new AgentStateRequestStore({
+            session,
+            logPrefix: '[Test]',
+        });
+        const failedDelivery = vi.fn(async () => false);
+        const debug = vi.spyOn(logger, 'debug').mockImplementation(() => undefined);
+
+        const unregisterFailedDelivery = store.registerResponseTargetHandler('test_target', failedDelivery);
+        store.publishRequest({
+            requestId: 'req-recoverable-delivery',
+            toolName: 'Bash',
+            toolInput: { command: ['bash', '-lc', 'echo hi'] },
+            createdAt: 123,
+            responseTarget: { kind: 'test_target', requestOwner: 'owner-1' },
+        });
+        await store.completeRequest({
+            requestId: 'req-recoverable-delivery',
+            status: 'approved',
+            decision: 'approved',
+        });
+        await flushMicrotasks();
+
+        expect(failedDelivery).toHaveBeenCalledTimes(1);
+        expect(debug).toHaveBeenCalledWith(expect.stringContaining('Response target handler did not deliver'));
+        unregisterFailedDelivery();
+
+        const recoveredDelivery = vi.fn(async () => true as never);
+        const unregisterRecoveredDelivery = store.registerResponseTargetHandler('test_target', recoveredDelivery);
+        await flushMicrotasks();
+
+        expect(recoveredDelivery).toHaveBeenCalledTimes(1);
+        expect(recoveredDelivery).toHaveBeenCalledWith(expect.objectContaining({
+            requestId: 'req-recoverable-delivery',
+            responseTarget: { kind: 'test_target', requestOwner: 'owner-1' },
+            completedRequest: expect.objectContaining({
+                status: 'approved',
+                decision: 'approved',
+            }),
+        }));
+
+        unregisterRecoveredDelivery();
+        const repeatDelivery = vi.fn(async () => true as never);
+        store.registerResponseTargetHandler('test_target', repeatDelivery);
+        await flushMicrotasks();
+
+        expect(repeatDelivery).toHaveBeenCalledTimes(1);
+        expect(session.agentState.completedRequests!['req-recoverable-delivery']).toEqual(
+            expect.objectContaining({
+                status: 'approved',
+                decision: 'approved',
+                responseTarget: { kind: 'test_target', requestOwner: 'owner-1' },
+            }),
+        );
+        debug.mockRestore();
+    });
+
+    it('replays matching completed response targets after every authoritative session rebind', async () => {
+        const sessionA = new FakeSession();
+        const sessionB = new FakeSession();
+        sessionA.sessionId = 'session-a';
+        sessionB.sessionId = 'session-b';
+        sessionB.agentState.completedRequests!['delivered'] = {
+            tool: 'Bash',
+            arguments: { command: ['bash', '-lc', 'echo delivered'] },
+            createdAt: 1,
+            completedAt: 2,
+            status: 'approved',
+            decision: 'approved',
+            responseTarget: { kind: 'test_target' },
+        };
+        sessionB.agentState.completedRequests!['returned-false'] = {
+            tool: 'Bash',
+            arguments: { command: ['bash', '-lc', 'echo returned-false'] },
+            createdAt: 1,
+            completedAt: 2,
+            status: 'approved',
+            decision: 'approved',
+            responseTarget: { kind: 'test_target' },
+        };
+        sessionB.agentState.completedRequests!['throws'] = {
+            tool: 'Bash',
+            arguments: { command: ['bash', '-lc', 'echo throws'] },
+            createdAt: 1,
+            completedAt: 2,
+            status: 'approved',
+            decision: 'approved',
+            responseTarget: { kind: 'test_target' },
+        };
+        sessionB.agentState.completedRequests!['rejects'] = {
+            tool: 'Bash',
+            arguments: { command: ['bash', '-lc', 'echo rejects'] },
+            createdAt: 1,
+            completedAt: 2,
+            status: 'approved',
+            decision: 'approved',
+            responseTarget: { kind: 'test_target' },
+        };
+        sessionB.agentState.completedRequests!['other-target'] = {
+            tool: 'Bash',
+            arguments: { command: ['bash', '-lc', 'echo other-target'] },
+            createdAt: 1,
+            completedAt: 2,
+            status: 'approved',
+            decision: 'approved',
+            responseTarget: { kind: 'other_target' },
+        };
+        sessionB.agentState.completedRequests!['malformed-target'] = {
+            tool: 'Bash',
+            arguments: { command: ['bash', '-lc', 'echo malformed-target'] },
+            createdAt: 1,
+            completedAt: 2,
+            status: 'approved',
+            decision: 'approved',
+            responseTarget: { kind: '   ' },
+        };
+
+        const store = new AgentStateRequestStore({
+            session: sessionA,
+            logPrefix: '[Test]',
+        });
+        const dispatches: string[] = [];
+        const debug = vi.spyOn(logger, 'debug').mockImplementation(() => undefined);
+        const unsubscribe = store.registerResponseTargetHandler('test_target', (dispatch) => {
+            dispatches.push(dispatch.requestId);
+            if (dispatch.requestId === 'returned-false') return false;
+            if (dispatch.requestId === 'throws') throw new Error('delivery failed');
+            if (dispatch.requestId === 'rejects') return Promise.reject(new Error('delivery rejected'));
+            return true;
+        });
+
+        store.updateSession(sessionB);
+        await flushMicrotasks();
+
+        expect(dispatches.sort()).toEqual(['delivered', 'rejects', 'returned-false', 'throws']);
+
+        // Completed response targets remain the durable source of truth, so
+        // every authoritative rebind attempts delivery again without an ack
+        // ledger or a Channels-local replay path.
+        store.updateSession(sessionB);
+        await flushMicrotasks();
+
+        expect(dispatches.sort()).toEqual([
+            'delivered',
+            'delivered',
+            'rejects',
+            'rejects',
+            'returned-false',
+            'returned-false',
+            'throws',
+            'throws',
+        ]);
+
+        unsubscribe();
+        store.updateSession(sessionB);
+        await flushMicrotasks();
+        expect(dispatches).toHaveLength(8);
+
+        const disposedStore = new AgentStateRequestStore({
+            session: sessionA,
+            logPrefix: '[Disposed Test]',
+        });
+        const disposedHandler = vi.fn();
+        disposedStore.registerResponseTargetHandler('test_target', disposedHandler);
+        disposedStore.dispose();
+        disposedStore.updateSession(sessionB);
+        await flushMicrotasks();
+        expect(disposedHandler).not.toHaveBeenCalled();
+        debug.mockRestore();
+    });
+
+    it('preserves response target metadata when recording completed requests directly', async () => {
         const session = new FakeSession();
         const store = new AgentStateRequestStore({
             session,
@@ -398,7 +617,7 @@ describe('AgentStateRequestStore', () => {
         store.registerResponseTargetHandler('test_target', (dispatch) => {
             dispatches.push(dispatch);
         });
-        store.recordCompletedRequest({
+        await store.recordCompletedRequest({
             requestId: 'req-recorded',
             toolName: 'Bash',
             toolInput: { command: ['bash', '-lc', 'echo hi'] },
@@ -568,5 +787,60 @@ describe('AgentStateRequestStore', () => {
         expect(session.agentState.completedRequests!['req-2']).toEqual(
             expect.objectContaining({ status: 'canceled', decision: 'abort', reason: 'Session ended' }),
         );
+    });
+
+    it('keeps an opaque first-answer claim outstanding through lifecycle cancellation paths', async () => {
+        const session = new FakeSession();
+        const store = new AgentStateRequestStore({
+            session,
+            logPrefix: '[Test]',
+        });
+        const owner = { kind: 'plugin' as const, pluginId: 'happier.channels', runtimeId: 'channels-runtime' };
+        store.publishRequest({
+            requestId: 'opaque-claim',
+            toolName: 'Bash',
+            toolInput: { command: ['bash', '-lc', 'echo hi'] },
+            createdAt: 1,
+            owner,
+        });
+        const opaqueClaim = { predecessor: 'unrecognized-first-answer-claim' };
+        session.agentState.requests!['opaque-claim'].permissionResponseClaimV1 = opaqueClaim;
+
+        await store.cancelAllRequests({
+            reason: 'Session ended',
+            decision: 'abort',
+            requestIds: ['opaque-claim'],
+        });
+        await store.cancelRequestsByOwner({
+            owner,
+            reason: 'plugin_deactivated',
+            decision: 'abort',
+            requestIds: ['opaque-claim'],
+        });
+        await expect(store.completeRequest({
+            requestId: 'opaque-claim',
+            status: 'canceled',
+            decision: 'abort',
+            reason: 'caller_aborted',
+            fallback: {
+                toolName: 'Bash',
+                toolInput: { command: ['bash', '-lc', 'echo hi'] },
+                createdAt: 1,
+                owner,
+            },
+        })).resolves.toBe(false);
+        await expect(store.recordCompletedRequest({
+            requestId: 'opaque-claim',
+            toolName: 'Bash',
+            toolInput: { command: ['bash', '-lc', 'echo hi'] },
+            status: 'approved',
+            decision: 'approved',
+            owner,
+        })).resolves.toBe(false);
+
+        expect(session.agentState.requests!['opaque-claim']).toEqual(expect.objectContaining({
+            permissionResponseClaimV1: opaqueClaim,
+        }));
+        expect(session.agentState.completedRequests!['opaque-claim']).toBeUndefined();
     });
 });

@@ -1,4 +1,4 @@
-import type { PromptAssetAdapter } from '@/prompts/assets/types';
+import type { PromptAssetAdapter } from '@happier-dev/plugin-sdk/resources';
 import { createSkillMdPromptAssetAdapter } from '@/prompts/assets/adapters/skillMd/createSkillMdPromptAssetAdapter';
 
 export function createAgentsSkillPromptAssetAdapter(params?: Readonly<{

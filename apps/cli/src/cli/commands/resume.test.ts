@@ -14,7 +14,7 @@ import {
   ProviderConnectionIdSchema,
   sealAccountScopedBlobCiphertext,
   sealEncryptedDataKeyEnvelopeV1,
-  sealSessionOwnerMetadataV1,
+  createPlainSessionOwnerMetadataEnvelopeV1,
   SessionOwnerMetadataV1Schema,
 } from '@happier-dev/protocol';
 
@@ -30,6 +30,8 @@ import type { ResolvedContributionRegistry } from '@/plugins/projection/registry
 import * as persistenceModule from '@/persistence';
 import * as authModule from '@/ui/auth';
 import * as accountSettingsModule from '@/settings/accountSettings/bootstrapAccountSettingsContext';
+import { AccountSettingsEncryptionMaterialUnavailableError } from '@/settings/accountSettings/accountSettingsEncryptionMaterial';
+import { AccountSettingsStaleError } from '@/settings/accountSettings/accountSettingsRefreshError';
 import * as daemonEnsureModule from '@/daemon/ensureDaemon';
 import * as daemonControlClientModule from '@/daemon/controlClient';
 
@@ -88,6 +90,72 @@ describe('happier resume', () => {
     } finally {
       logSpy.mockRestore();
       errorSpy.mockRestore();
+    }
+  });
+
+  it.each([
+    [
+      'retained encrypted settings without account encryption material',
+      new AccountSettingsEncryptionMaterialUnavailableError(),
+    ],
+    [
+      'corrupt encrypted settings',
+      Object.assign(new Error('The account settings payload could not be decrypted.'), {
+        code: 'ACCOUNT_SETTINGS_DECRYPT_FAILED' as const,
+      }),
+    ],
+    [
+      'unavailable current settings',
+      new AccountSettingsStaleError(),
+    ],
+  ])('does not resume with empty defaults when %s', async (_caseName, settingsError) => {
+    const fetchSessionByIdFn = vi.fn(async () => null);
+    const resolveContributionRegistryFn = vi.fn(async () => null);
+
+    await expect(handleResumeCommand(['session-1'], {
+      readCredentialsFn: async () => ({
+        token: 'token-only',
+        encryption: null,
+      }),
+      readAccountSettingsFn: async () => {
+        throw settingsError;
+      },
+      fetchSessionByIdFn,
+      resolveContributionRegistryFn,
+    })).rejects.toBe(settingsError);
+
+    expect(fetchSessionByIdFn).not.toHaveBeenCalled();
+    expect(resolveContributionRegistryFn).not.toHaveBeenCalled();
+  });
+
+  it('awaits a provisional empty Settings refresh and preserves its typed locked outcome', async () => {
+    const settingsError = new AccountSettingsEncryptionMaterialUnavailableError();
+    const bootstrapSpy = vi.spyOn(
+      accountSettingsModule,
+      'bootstrapAccountSettingsContext',
+    ).mockResolvedValueOnce({
+      source: 'none',
+      settings: accountSettingsParse({}),
+      settingsVersion: 0,
+      loadedAtMs: Date.now(),
+      settingsSecretsReadKeys: [],
+      whenRefreshed: Promise.reject(settingsError),
+    });
+    const fetchSessionByIdFn = vi.fn(async () => null);
+
+    try {
+      await expect(handleResumeCommand(['session-1'], {
+        readCredentialsFn: async () => ({
+          token: 'token-only',
+          encryption: null,
+        }),
+        fetchSessionByIdFn,
+        resolveContributionRegistryFn: async () => null,
+      })).rejects.toBe(settingsError);
+
+      expect(fetchSessionByIdFn).not.toHaveBeenCalled();
+    } finally {
+      bootstrapSpy.mockRestore();
     }
   });
 
@@ -319,11 +387,7 @@ describe('happier resume', () => {
         v: 1,
         summary: { text: 'Shared resume title', updatedAt: 123 },
       }),
-      ownerMetadata: sealSessionOwnerMetadataV1({
-        material: { type: 'legacy', secret: credentials.encryption.secret },
-        ownerMetadata,
-        randomBytes: deterministicRandomBytesFactory(),
-      }),
+      ownerMetadata: createPlainSessionOwnerMetadataEnvelopeV1(ownerMetadata),
       active: false,
       activeAt: 0,
     });
@@ -373,7 +437,10 @@ describe('happier resume', () => {
         readCredentialsFn: async () => credentials,
         fetchSessionByIdFn: async () => ({
           ...rawSession,
-          ownerMetadata: 'not-owner-ciphertext',
+          ownerMetadata: {
+            t: 'encrypted',
+            c: 'not-owner-ciphertext',
+          },
         }),
         readAccountSettingsFn: async () => accountSettingsParse({ schemaVersion: 6, codexBackendMode: 'acp' }),
         resolveAgentHandlerFn: async () => unreadableAgentHandler,
@@ -676,7 +743,7 @@ describe('happier resume', () => {
               manifestPath: join(pluginRoot, '.happier-plugin', 'plugin.json'),
             },
             compatibility: { status: 'unknown', diagnostics: [] },
-            install: { mode: 'link', manifestVersion: '1.0.0', manifestDigest: null, installedPath: null },
+            install: { mode: 'link', manifestVersion: '1.0.0', installedPath: null },
             state: { enabled: true },
           },
         },
@@ -774,7 +841,7 @@ describe('happier resume', () => {
     }
   });
 
-  it('materializes connected-service auth from persisted Codex metadata before direct terminal resume dispatch', async () => {
+  it('dispatches persisted Connected Services intent without a raw credential-materialization callback', async () => {
     const home = await mkdtemp(join(tmpdir(), 'happier-resume-connected-home-'));
     const directory = await mkdtemp(join(tmpdir(), 'happier-resume-connected-dir-'));
     const prevHome = process.env.HAPPIER_HOME_DIR;
@@ -909,37 +976,23 @@ describe('happier resume', () => {
       };
 
       const agentHandler: CommandHandler = vi.fn(async (context) => {
-        const resolveEnvironment = context.directSessionLaunch?.resolveConnectedServiceEnvironment;
-        expect(resolveEnvironment).toBeTypeOf('function');
-        const scoped = await resolveEnvironment!(context.directSessionLaunch?.connectedServices ?? null);
-        expect(scoped).not.toBeNull();
-        const codexHome = scoped?.environment.CODEX_HOME;
-        expect(codexHome).toBeTypeOf('string');
-        expect(process.env.CODEX_HOME).toBe(prevCodexHome);
-        expect(JSON.parse(scoped?.environment.HAPPIER_SESSION_CONNECTED_SERVICES_BINDINGS_JSON ?? 'null')).toEqual(connectedServices);
-        expect(JSON.parse(scoped?.environment.HAPPIER_SESSION_CONNECTED_SERVICE_MATERIALIZATION_IDENTITY_V1_JSON ?? 'null')).toEqual({
-          v: 1,
-          id: materializationIdentity.id,
-          createdAt: materializationIdentity.createdAtMs,
-        });
-        expect(JSON.parse(scoped?.environment.HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON ?? '[]')).toEqual([
-          {
-            kind: 'profile',
-            serviceId: 'openai-codex',
-            profileId: 'work',
-            credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS',
-          },
-        ]);
-        expect(JSON.parse(scoped?.environment.HAPPIER_CONNECTED_SERVICE_MATERIALIZED_ENV_KEYS_JSON ?? '[]')).toEqual([
-          'CODEX_HOME',
-        ]);
-        const auth = JSON.parse(await readFile(join(codexHome!, 'auth.json'), 'utf8')) as Record<string, unknown>;
-        expect(auth.access_token).toBe('connected-access');
-        await scoped?.cleanupOnExit?.();
+        expect(context.directSessionLaunch?.connectedServices).toEqual(
+          connectedServices,
+        );
+        expect(context.directSessionLaunch).not.toHaveProperty(
+          'resolveConnectedServiceEnvironment',
+        );
       });
 
       await handleResumeCommand(['sid_connected_1'], {
         readCredentialsFn: async () => credentials,
+        getAccountEncryptionCurrentnessFn: async () => ({
+          mode: 'e2ee',
+          version: 1,
+          signingKeyFingerprint: null,
+          contentKeyFingerprint: null,
+          updatedAt: now,
+        }),
         fetchSessionByIdFn: async () => rawSession,
         readAccountSettingsFn: async () => accountSettingsParse({
           schemaVersion: 6,
@@ -1133,7 +1186,7 @@ describe('happier resume', () => {
         token: 'token-group-owner',
         encryption: { type: 'legacy', secret: new Uint8Array(32).fill(13) },
       };
-      const readCredentialsSpy = vi.spyOn(persistenceModule, 'readCredentials').mockResolvedValue(credentials);
+      const readCredentialsSpy = vi.spyOn(persistenceModule, 'readStoredCredentials').mockResolvedValue(credentials);
       const ensureMachineSpy = vi.spyOn(authModule, 'ensureMachineIdForCredentials').mockResolvedValue({ machineId: 'machine-group-owner' } as never);
       const bootstrapSpy = vi.spyOn(accountSettingsModule, 'bootstrapAccountSettingsContext').mockResolvedValue({
         source: 'none',
@@ -1153,7 +1206,9 @@ describe('happier resume', () => {
         ok: true,
         capability: {
           attemptId: 'attempt-resume-group-owner',
-          tokenFilePath: '/private/foreground-token.json',
+          admissionFilePath: '/private/foreground-admission.json',
+          bootstrapFilePath: '/private/foreground-bootstrap.json',
+          authorityFilePath: '/private/foreground-authority.json',
           descriptor: {
             v: 1,
             pluginId: 'happier.agent.codex',
@@ -1161,12 +1216,6 @@ describe('happier resume', () => {
             agentId: 'codex',
             backendId: 'codex',
             generation: 'generation-1',
-            factoryControls: {
-              continuation: false,
-              goals: false,
-              catalog: false,
-              usageLimitRecovery: false,
-            },
           },
         },
         launchPolicy: {

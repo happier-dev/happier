@@ -1,75 +1,33 @@
-import { posix, win32 } from 'node:path';
+import { isAbsolute, resolve } from 'node:path';
 import {
   expandHomeDirPath,
   resolveHomeDirFromEnvironment,
-} from '@happier-dev/cli-common/agents';
+} from '@happier-dev/cli-common/path';
 
 export {
+  canonicalAbsolutePathsEqual,
   expandHomeDirPath,
+  isCanonicalAbsolutePathInsideRoot,
+  resolveCanonicalAbsoluteChildPathComparisonIdentity,
+  resolveCanonicalAbsolutePath,
+  resolveCanonicalAbsolutePathComparisonIdentity,
   resolveHomeDirFromEnvironment,
-} from '@happier-dev/cli-common/agents';
-
-function pathApi(platform: NodeJS.Platform) {
-  return platform === 'win32' ? win32 : posix;
-}
-
-export type CanonicalAbsolutePath = Readonly<{
-  path: string;
-  comparisonKey: string;
-}>;
+} from '@happier-dev/cli-common/path';
+export type { CanonicalAbsolutePath } from '@happier-dev/cli-common/path';
 
 /**
- * Resolves persisted or environment-provided CLI input to the native absolute
- * path that filesystem and child-process consumers must use. The comparison
- * identity is derived from that execution value and is case-folded only on
- * Windows, where path identity is case-insensitive.
+ * Resolves a locator the user typed on the command line to the absolute path
+ * that identifies it everywhere else — including inside the daemon, whose
+ * working directory is never the one the command was typed in.
+ *
+ * A relative locator is anchored to the caller's working directory. An
+ * already-absolute locator keeps its exact spelling, so the identity a caller
+ * persists or sends over the wire is the one the user typed. A blank locator
+ * resolves to `null` rather than silently becoming the working directory
+ * itself, leaving the caller's own validation to reject it.
  */
-export function resolveCanonicalAbsolutePath(
-  value: string,
-  options: Readonly<{
-    env?: NodeJS.ProcessEnv;
-    platform?: NodeJS.Platform;
-  }> = {},
-): CanonicalAbsolutePath | null {
-  const env = options.env ?? process.env;
-  const platform = options.platform ?? process.platform;
-  const api = pathApi(platform);
-  const expanded = expandHomeDirPath(value.trim(), env, platform);
-  const nativeSeparators = platform === 'win32'
-    ? expanded.replaceAll('/', '\\')
-    : expanded.replaceAll('\\', '/');
-  const normalizedPath = api.normalize(nativeSeparators);
-  if (!api.isAbsolute(normalizedPath)) return null;
-  const root = api.parse(normalizedPath).root;
-  const path = normalizedPath.length > root.length
-    ? normalizedPath.replace(/[\\/]+$/, '')
-    : normalizedPath;
-  return {
-    path,
-    comparisonKey: platform === 'win32' ? path.toLowerCase() : path,
-  };
-}
-
-function inferAbsolutePathPlatform(value: string): NodeJS.Platform | null {
-  // Recognize Windows drive and UNC syntax before POSIX. A forward-slash UNC
-  // path is also POSIX-absolute, but it must retain Windows case/separator
-  // semantics when compared with the equivalent backslash spelling.
-  if (/^(?:[A-Za-z]:[\\/]|[\\/]{2}[^\\/]+[\\/][^\\/]+)/u.test(value)) {
-    return 'win32';
-  }
-  if (posix.isAbsolute(value)) return 'linux';
-  if (win32.isAbsolute(value)) return 'win32';
-  return null;
-}
-
-export function canonicalAbsolutePathsEqual(left: string, right: string): boolean {
-  const leftPlatform = inferAbsolutePathPlatform(left);
-  const rightPlatform = inferAbsolutePathPlatform(right);
-  if (!leftPlatform || leftPlatform !== rightPlatform) return false;
-
-  const leftCanonical = resolveCanonicalAbsolutePath(left, { platform: leftPlatform });
-  const rightCanonical = resolveCanonicalAbsolutePath(right, { platform: rightPlatform });
-  return leftCanonical !== null
-    && rightCanonical !== null
-    && leftCanonical.comparisonKey === rightCanonical.comparisonKey;
+export function resolveAbsolutePathFromWorkingDirectory(value: string): string | null {
+  const expanded = expandHomeDirPath(String(value ?? '').trim());
+  if (!expanded) return null;
+  return isAbsolute(expanded) ? expanded : resolve(expanded);
 }

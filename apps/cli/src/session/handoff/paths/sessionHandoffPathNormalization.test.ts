@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { join } from 'node:path';
 
 import {
     expandHomeRelativePath,
@@ -23,10 +24,11 @@ describe('sessionHandoffPathNormalization', () => {
     });
 
     it('expandHomeRelativePath expands ~/', () => {
+        const homeDir = '/home/guest';
         expect(expandHomeRelativePath({
             path: '~/.happier/wsrepl-qa-fixtures/large-repo',
-            homeDir: '/home/guest',
-        })).toBe('/home/guest/.happier/wsrepl-qa-fixtures/large-repo');
+            homeDir,
+        })).toBe(join(homeDir, '.happier', 'wsrepl-qa-fixtures', 'large-repo'));
     });
 
     it('toHomeRelativePath normalizes Windows home-contained absolute paths to forward-slash ~/ syntax', () => {
@@ -44,31 +46,35 @@ describe('sessionHandoffPathNormalization', () => {
     });
 
     it('expandHomeRelativePath expands ~\\ on Windows-style home paths', () => {
+        const homeDir = 'C:\\Users\\alice';
         expect(expandHomeRelativePath({
             path: '~\\projects\\demo',
-            homeDir: 'C:\\Users\\alice',
-        })).toBe('C:\\Users\\alice/projects/demo');
+            homeDir,
+        })).toBe(join(homeDir, 'projects', 'demo'));
     });
 
     it('normalizeSessionHandoffTargetPathForLocalMachine rebases /.happier/ paths onto the local home', () => {
+        const homeDir = '/home/leeroy.guest';
         expect(normalizeSessionHandoffTargetPathForLocalMachine({
             requestedTargetPath: '/Users/leeroy/.happier/wsrepl-qa-fixtures/large-repo',
-            homeDir: '/home/leeroy.guest',
-        })).toBe('/home/leeroy.guest/.happier/wsrepl-qa-fixtures/large-repo');
+            homeDir,
+        })).toBe(join(homeDir, '.happier', 'wsrepl-qa-fixtures', 'large-repo'));
     });
 
     it('normalizeSessionHandoffTargetPathForLocalMachine rebases /Users/<user>/ paths onto the local home', () => {
+        const homeDir = '/home/guest';
         expect(normalizeSessionHandoffTargetPathForLocalMachine({
             requestedTargetPath: '/Users/alice/projects/demo',
-            homeDir: '/home/guest',
-        })).toBe('/home/guest/projects/demo');
+            homeDir,
+        })).toBe(join(homeDir, 'projects', 'demo'));
     });
 
     it('normalizeSessionHandoffTargetPathForLocalMachine rebases Windows home-rooted paths onto the local home', () => {
+        const homeDir = '/home/guest';
         expect(normalizeSessionHandoffTargetPathForLocalMachine({
             requestedTargetPath: 'C:\\Users\\alice\\projects\\demo',
-            homeDir: '/home/guest',
-        })).toBe('/home/guest/projects/demo');
+            homeDir,
+        })).toBe(join(homeDir, 'projects', 'demo'));
     });
 
     it('normalizeSessionHandoffTargetPathForLocalMachine leaves paths already rooted under the local home unchanged', () => {

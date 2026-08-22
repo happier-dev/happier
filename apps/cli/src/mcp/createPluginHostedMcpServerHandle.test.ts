@@ -1,13 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
-import type { McpServerSpecV1 } from '@happier-dev/plugin-sdk/experimental/mcp';
-
 import {
     createPluginHostedMcpServerHandle,
     createPluginHostedMcpServerRegistry,
 } from './createPluginHostedMcpServerHandle';
+import type { PluginHostedMcpServerSpec } from './hosted/runtimeTypes';
 
-function makeSpec(id: string): McpServerSpecV1 {
+function makeSpec(id: string): PluginHostedMcpServerSpec {
     return Object.freeze({
         id,
         name: `name-${id}`,
@@ -41,7 +40,7 @@ describe('createPluginHostedMcpServerRegistry', () => {
 
     it('rejects invalid registry-only hosted handler specs before storing registry state', async () => {
         const registry = createPluginHostedMcpServerRegistry();
-        const spec: McpServerSpecV1 = {
+        const spec: PluginHostedMcpServerSpec = {
             ...makeSpec('s1'),
             hosted: {
                 tools: [
@@ -75,7 +74,7 @@ describe('createPluginHostedMcpServerRegistry', () => {
                     },
                 ],
             },
-        } as McpServerSpecV1;
+        } as PluginHostedMcpServerSpec;
 
         await expect(createPluginHostedMcpServerHandle({
             pluginId: 'plugin-a',
@@ -129,7 +128,7 @@ describe('createPluginHostedMcpServerRegistry', () => {
 
     it('starts explicit hosted endpoint exposure as one registry transaction', async () => {
         const registry = createPluginHostedMcpServerRegistry();
-        const spec: McpServerSpecV1 = {
+        const spec: PluginHostedMcpServerSpec = {
             ...makeSpec('s1'),
             transport: {
                 kind: 'hosted',
@@ -171,7 +170,7 @@ describe('createPluginHostedMcpServerRegistry', () => {
 
     it('removes registry state when explicit hosted endpoint exposure fails to start', async () => {
         const registry = createPluginHostedMcpServerRegistry();
-        const spec: McpServerSpecV1 = {
+        const spec: PluginHostedMcpServerSpec = {
             ...makeSpec('s1'),
             transport: {
                 kind: 'hosted',
@@ -193,7 +192,7 @@ describe('createPluginHostedMcpServerRegistry', () => {
 
     it('rejects non-loopback or secret-bearing hosted endpoint descriptors', async () => {
         const registry = createPluginHostedMcpServerRegistry();
-        const spec: McpServerSpecV1 = {
+        const spec: PluginHostedMcpServerSpec = {
             ...makeSpec('s1'),
             transport: {
                 kind: 'hosted',
@@ -221,7 +220,7 @@ describe('createPluginHostedMcpServerRegistry', () => {
 
     it('rejects registry-only endpoint metadata for explicit loopback exposure requests', async () => {
         const registry = createPluginHostedMcpServerRegistry();
-        const spec: McpServerSpecV1 = {
+        const spec: PluginHostedMcpServerSpec = {
             ...makeSpec('s1'),
             transport: {
                 kind: 'hosted',
@@ -244,7 +243,7 @@ describe('createPluginHostedMcpServerRegistry', () => {
 
     it('rejects hosted endpoint paths because descriptors expose only loopback connection metadata', async () => {
         const registry = createPluginHostedMcpServerRegistry();
-        const spec: McpServerSpecV1 = {
+        const spec: PluginHostedMcpServerSpec = {
             ...makeSpec('s1'),
             transport: {
                 kind: 'hosted',

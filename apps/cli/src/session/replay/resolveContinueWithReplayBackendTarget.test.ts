@@ -1,8 +1,31 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const { readAgentCatalogSnapshot } = vi.hoisted(() => ({
+  readAgentCatalogSnapshot: vi.fn(),
+}));
+
+vi.mock('@/agent/catalog/snapshot', () => ({
+  readAgentCatalogSnapshot,
+}));
 
 import { resolveContinueWithReplayBackendTarget } from './resolveContinueWithReplayBackendTarget';
 
 describe('resolveContinueWithReplayBackendTarget', () => {
+  beforeEach(() => {
+    readAgentCatalogSnapshot.mockReturnValue({
+      agentDefinitionsById: new Map(),
+      catalogEntriesById: {
+        claude: { id: 'claude', cliSubcommand: 'claude', vendorResumeSupport: 'supported' },
+        opencode: { id: 'opencode', cliSubcommand: 'opencode', vendorResumeSupport: 'supported' },
+        'acme-agent': {
+          id: 'acme-agent',
+          cliSubcommand: 'acme-agent',
+          vendorResumeSupport: 'supported',
+        },
+      },
+    });
+  });
+
   it('resolves built-in replay targets from legacy agent-only input', () => {
     expect(resolveContinueWithReplayBackendTarget({ agent: 'claude' })).toMatchObject({
       ok: true,
@@ -14,6 +37,30 @@ describe('resolveContinueWithReplayBackendTarget', () => {
       backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
       replayFlavor: 'claude',
       agentHintAgentId: 'claude',
+    });
+  });
+
+  it('resolves an active external Agent replay target through the exact catalog projection', () => {
+    expect(resolveContinueWithReplayBackendTarget({
+      agent: 'acme-agent',
+      backendTarget: { kind: 'backend', backendId: 'acme-agent', sourceKind: 'built_in' },
+    })).toMatchObject({
+      ok: true,
+      backendTargetV2: {
+        kind: 'backend',
+        backendId: 'acme-agent',
+        sourceKind: 'built_in',
+      },
+      backendTarget: { kind: 'builtInAgent', agentId: 'acme-agent' },
+      replayFlavor: 'acme-agent',
+      agentHintAgentId: 'acme-agent',
+    });
+  });
+
+  it('rejects unavailable legacy Agent identities instead of treating their generic V1 carrier as active', () => {
+    expect(resolveContinueWithReplayBackendTarget({ agent: 'missing-agent' })).toEqual({
+      ok: false,
+      errorMessage: 'Unknown agent id',
     });
   });
 

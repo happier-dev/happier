@@ -1,15 +1,19 @@
+import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import axios from 'axios';
 
 import {
+  decodePlainArtifactStoredContent,
+  isPlainArtifactDataKeyMarker,
   PromptStacksV1Schema,
   openEncryptedDataKeyEnvelopeV1,
   resolvePromptStackSystemAppendBlocksV1,
 } from '@happier-dev/protocol';
 
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { ArtifactEncryptionMaterialUnavailableError } from '@/session/actions/approvals/artifactStore';
 
 import { decodeBase64, decryptWithDataKey } from '../../../api/encryption';
-import type { Credentials } from '../../../persistence';
+import type { Credentials, StoredCredentials } from '../../../persistence';
 import { deriveKey } from '../../../utils/deriveKey';
 
 export type PromptArtifactRecord = Readonly<{
@@ -19,6 +23,12 @@ export type PromptArtifactRecord = Readonly<{
 }>;
 
 type FetchPromptArtifactRecord = (artifactId: string) => Promise<PromptArtifactRecord | null>;
+
+function readPromptArtifactBody(value: unknown): string | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const body = (value as { body?: unknown }).body;
+  return typeof body === 'string' ? body : null;
+}
 
 async function openPromptArtifactDataEncryptionKey(params: Readonly<{
   credentials: Credentials;
@@ -35,12 +45,13 @@ async function openPromptArtifactDataEncryptionKey(params: Readonly<{
 }
 
 async function fetchPromptArtifactRecordFromApi(params: Readonly<{
-  credentials: Credentials;
+  credentials: StoredCredentials;
   artifactId: string;
 }>): Promise<PromptArtifactRecord | null> {
   try {
     const response = await axios.get(`${resolveServerHttpBaseUrl()}/v1/artifacts/${encodeURIComponent(params.artifactId)}`, {
       headers: {
+        ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
         Authorization: `Bearer ${params.credentials.token}`,
         'Content-Type': 'application/json',
       },
@@ -49,6 +60,9 @@ async function fetchPromptArtifactRecordFromApi(params: Readonly<{
     });
 
     if (response.status === 404) return null;
+    if (response.status === 500 && response.data?.error === 'Failed to get artifact') {
+      throw new ArtifactEncryptionMaterialUnavailableError();
+    }
     if (response.status < 200 || response.status >= 300) return null;
 
     const record = response.data as Record<string, unknown>;
@@ -57,14 +71,15 @@ async function fetchPromptArtifactRecordFromApi(params: Readonly<{
       body: typeof record.body === 'string' ? record.body : null,
       dataEncryptionKey: typeof record.dataEncryptionKey === 'string' ? record.dataEncryptionKey : '',
     };
-  } catch {
+  } catch (error) {
+    if (error instanceof ArtifactEncryptionMaterialUnavailableError) throw error;
     return null;
   }
 }
 
 export async function resolveCliPromptStackSystemAppendBlocks(args: Readonly<{
   surface: 'coding' | 'voice';
-  credentials: Credentials;
+  credentials: StoredCredentials;
   settings: unknown;
   profileId?: string | null | undefined;
   cache?: Map<string, string | null>;
@@ -95,17 +110,42 @@ export async function resolveCliPromptStackSystemAppendBlocks(args: Readonly<{
         return null;
       }
 
-      const dataEncryptionKey = await openPromptArtifactDataEncryptionKey({
-        credentials: args.credentials,
-        encryptedDataEncryptionKeyBase64: artifact.dataEncryptionKey,
-      });
-      if (!dataEncryptionKey) {
-        cache.set(artifactId, null);
-        return null;
+      if (isPlainArtifactDataKeyMarker(artifact.dataEncryptionKey)) {
+        const decoded = decodePlainArtifactStoredContent(artifact.body);
+        if (decoded === null) {
+          throw new ArtifactEncryptionMaterialUnavailableError();
+        }
+        const body = readPromptArtifactBody(decoded);
+        cache.set(artifactId, body);
+        return body;
+      }
+      if (!args.credentials.encryption) {
+        throw new ArtifactEncryptionMaterialUnavailableError();
       }
 
-      const decrypted = decryptWithDataKey(decodeBase64(artifact.body), dataEncryptionKey) as { body?: unknown } | null;
-      const body = typeof decrypted?.body === 'string' ? decrypted.body : null;
+      let dataEncryptionKey: Uint8Array | null;
+      try {
+        dataEncryptionKey = await openPromptArtifactDataEncryptionKey({
+          credentials: args.credentials,
+          encryptedDataEncryptionKeyBase64: artifact.dataEncryptionKey,
+        });
+      } catch {
+        throw new ArtifactEncryptionMaterialUnavailableError();
+      }
+      if (!dataEncryptionKey) {
+        throw new ArtifactEncryptionMaterialUnavailableError();
+      }
+
+      let decrypted: unknown;
+      try {
+        decrypted = decryptWithDataKey(decodeBase64(artifact.body), dataEncryptionKey);
+      } catch {
+        throw new ArtifactEncryptionMaterialUnavailableError();
+      }
+      if (decrypted === null) {
+        throw new ArtifactEncryptionMaterialUnavailableError();
+      }
+      const body = readPromptArtifactBody(decrypted);
       cache.set(artifactId, body);
       return body;
     },
